@@ -35,7 +35,10 @@
 //     different change under the same name; and a decision never touches a comment: accept drops
 //     the change's record and leaves a comment bound to it (`suggestionId`) as it was, open or
 //     resolved, so the ids in a sent message stay addressable and resolving stays the person's own
-//     act (decision 42, 2026-09-09; before it, accept marked the bound comments resolved);
+//     act (decision 42, 2026-09-09; before it, accept marked the bound comments resolved). Every
+//     decision — accept, reject, the ones a save carries — reads its staged sidecar back before the
+//     rename lands it and refuses `internal` with nothing written if a comment differs from the loaded
+//     one in anything but `anchorAt` (requireCommentsUntouched);
 //   * the same for the decisions a `save` carries from the editor: every accepted or rejected id must
 //     be rooted in a change the sidecar holds or the comments log already records as decided — the id
 //     itself or a fragment of it (`<id>~n`, the engine's split scheme) — else `no-change` by id and
@@ -292,6 +295,11 @@ const WRITE_SHIFTS = Symbol('romp.writeShifts');
 // False means the file changed under the sidecar by an edit nobody recorded — a direct write, an
 // editor without the sidecar — and the recorded changes cannot vouch for where a tied passage went.
 const TEXT_AS_WRITTEN = Symbol('romp.textAsWritten');
+// Where stageSidecar staged the store's next bytes: the temp file the rename lands, stamped on the
+// store object at the stage under a symbol key so saveStore's JSON never carries it. A decision's
+// self-check (requireCommentsUntouched) reads the staged sidecar back through it, between the stage
+// and the rename; outside that window the path is stale (renamed away, or discarded).
+const STAGED = Symbol('romp.staged');
 // The files the viewer shows as an image or a PDF: the kernel's _PREVIEW_MIME extensions (the media
 // half of GET /file), mirrored here because a region comment can exist only on a file the viewer
 // renders as media. `status` on such a file answers the hash of its bytes (fileHash); on any other
@@ -2456,7 +2464,7 @@ function afterDecision(ctx, paths, store, text) {
 // open, which follows a link planted under that name in a checked-out `.trackchanges/` and
 // replaces the link's target with the sidecar's bytes. The staged name carries a random token
 // nobody can plant a link under, and both names saveStore will use are confirmed empty first.
-function stageSidecar(root, storePath, store, text) {
+export function stageSidecar(root, storePath, store, text) {
   refreshAnchorAts(store, text);
   const tmp = `${storePath}.romp-fc-${tempToken()}.tmp`;
   for (const p of [tmp, `${tmp}.tmp`]) {
@@ -2468,15 +2476,17 @@ function stageSidecar(root, storePath, store, text) {
     discardSidecar(tmp);
     throw e;
   }
+  store[STAGED] = tmp;
   return tmp;
 }
 function commitSidecar(tmp, storePath) { fs.renameSync(tmp, storePath); }
-function discardSidecar(tmp) {
+export function discardSidecar(tmp) {
   try { fs.unlinkSync(tmp); } catch { /* ignore */ }
   try { fs.unlinkSync(`${tmp}.tmp`); } catch { /* ignore */ }
 }
 // Stage and land in one step, for the verbs whose sidecar write has nothing to interleave (the
-// comment, reply and resolve of withSidecar, and reject's sidecar-before-file order).
+// comment, reply and resolve of withSidecar). The decisions (accept, reject, save) take the two steps
+// apart, with the self-check on the staged bytes between them (requireCommentsUntouched).
 function landSidecar(root, storePath, store, text) {
   const staged = stageSidecar(root, storePath, store, text);
   try {
@@ -2495,21 +2505,30 @@ function cannotRecord(ctx, paths, e, then, what) {
   return new Refusal('unreadable', `cannot record ${what || 'the decision'} in the comments log for ${ctx.shown} (${tilde(paths.logPath)}): ${whyOf(e)}; ${then}`);
 }
 
-// A decision never touches a comment (decision 42, 2026-09-09): the comments a decision stages are
-// the loaded ones, field for field, apart from `anchorAt`, the romp-only position every sidecar write
-// refreshes against the current text (refreshAnchorAts, in stageSidecar). The check runs before the
-// stage, on the store as the verb leaves it; a difference is a fault in this script, and it refuses
-// with nothing written rather than land a comment a decision changed.
-function commentsApartFromAnchorAt(comments) {
+// A decision never touches a comment (decision 42, 2026-09-09): the comments in the sidecar a decision
+// stages are the loaded ones, field for field, apart from `anchorAt`, the romp-only position every
+// sidecar write refreshes against the current text (refreshAnchorAts, in stageSidecar). Each decision
+// verb takes the comments as loaded (commentsApartFromAnchorAt, before it changes anything), stages
+// the sidecar, and then checks the STAGED bytes, read back from the temp file the rename would land
+// (store[STAGED]): everything between the load and the bytes is covered — the verb's own steps, the
+// refresh, saveStore — and the check sits between the stage and the rename, so a difference, a fault
+// in this script, refuses `internal` with the stage discarded and nothing written rather than land a
+// comment a decision changed. The first version checked before the stage and so compared the store
+// with itself (the seen slice's review, 2026-09-09); a check on a store nothing has staged is that
+// mistake again, and throws.
+export function commentsApartFromAnchorAt(comments) {
   return JSON.stringify((comments || []).map((c) => {
     if (!c || typeof c !== 'object') return c;
     const { anchorAt, ...rest } = c;   // eslint-disable-line no-unused-vars
     return rest;
   }));
 }
-function requireCommentsUntouched(ctx, store, loadedComments, verb) {
+export function requireCommentsUntouched(ctx, store, loadedComments, verb) {
   if (!store) return;
-  if (commentsApartFromAnchorAt(store.comments) !== loadedComments) {
+  const at = store[STAGED];
+  if (!at) throw new Error(`requireCommentsUntouched before the stage: the ${verb} has staged nothing to check`);
+  const staged = JSON.parse(fs.readFileSync(at, 'utf8'));
+  if (commentsApartFromAnchorAt(staged.comments) !== loadedComments) {
     throw new Refusal('internal', `the ${verb} would have changed a comment in ${ctx.shown}, which a decision never does; nothing was changed — reload and retry`);
   }
 }
@@ -2520,10 +2539,11 @@ function requireCommentsUntouched(ctx, store, loadedComments, verb) {
 // the ids a sent message named still answer to track-reply, and it is NOT marked resolved (decision
 // 42, 2026-09-09: resolving is the person's own act; the accept used to resolve the bound comments,
 // and comments the session's edits had answered left the visible list with nothing said). The
-// self-check (requireCommentsUntouched) holds that for every decision, here and in save.
-// The writes, in order: the sidecar's bytes staged beside it, the log entry, the rename that lands
-// the sidecar. A failed stage or append refuses with nothing changed (the change is still pending,
-// the log says nothing); the rename is the one step after the append, and its failure — a
+// self-check (requireCommentsUntouched) holds that for every decision — here, in reject and in save —
+// on the staged bytes, before the rename that lands them.
+// The writes, in order: the sidecar's bytes staged beside it and checked, the log entry, the rename
+// that lands the sidecar. A failed stage, check or append refuses with nothing changed (the change is
+// still pending, the log says nothing); the rename is the one step after the append, and its failure — a
 // destination made immutable, a race on the directory — refuses saying the log already holds the
 // decision (`logged: true`), so the person knows the entry counts a decision that did not land. An ok
 // reply says `logged: true` too, as save's, set-tracked's, log-edit's and log-send's do: the entry landed
@@ -2532,15 +2552,20 @@ function doAccept(ctx, all) {
   const { file, root, paths, store } = loadForDecision(ctx, false);
   const decided = decidedChanges(ctx, store, all);
   const ids = decided.map((h) => h.id);
-  const loadedComments = commentsApartFromAnchorAt(store.comments);
+  const loadedComments = commentsApartFromAnchorAt(store.comments);   // as loaded: decidedChanges read the records alone
   store.suggestions = (all ? engine.acceptAll(store.suggestions) : engine.acceptSuggestions(store.suggestions, ids)).suggestions;
-  requireCommentsUntouched(ctx, store, loadedComments, all ? 'accept-all' : 'accept');
   store[WRITE_SHIFTS] = { settled: decided };   // the accepted insertions stand in the text; the refresh reads their shift before the records go
   let staged;
   try {
     staged = stageSidecar(root, paths.storePath, store, file.text);
   } catch (e) {
     throw cannotWriteSidecar(ctx, paths, e);
+  }
+  try {
+    requireCommentsUntouched(ctx, store, loadedComments, all ? 'accept-all' : 'accept');
+  } catch (e) {
+    discardSidecar(staged);
+    throw e;
   }
   try {
     appendLog(paths.logPath, logEntry('accept', { changes: changesOf(decided) }));
@@ -2593,8 +2618,9 @@ function putBack(storePath, prior, then) {
 //      directory, the mode — everything that can refuse for a reason of its own — with nothing
 //      under the file's name changed; a failure here touches neither the sidecar nor the log);
 //   2. the sidecar, saved against the NEW text so its fingerprint describes the file about to
-//      exist — the order track-edit uses, the sidecar landing before the file — through
-//      landSidecar (a random-named stage and a rename), never saveStore on the sidecar's path;
+//      exist — the order track-edit uses, the sidecar landing before the file — as a random-named
+//      stage, the self-check on the staged bytes (requireCommentsUntouched: a reject touches no
+//      comment either, decision 42) and a rename, never saveStore on the sidecar's path;
 //   3. the log entry; a failure puts the prior sidecar bytes back and refuses with nothing changed;
 //   4. the rename that lands the file. The one step after the append: if it fails (a destination
 //      made immutable, a race on the directory) the sidecar goes back and the refusal says the log
@@ -2617,6 +2643,7 @@ function doReject(ctx, all) {
       throw new Error(`change ${h.id} does not match ${ctx.shown} at ${h.curFrom}..${h.curTo} after the rebase; nothing was changed`);
     }
   }
+  const loadedComments = commentsApartFromAnchorAt(store.comments);   // as loaded: the checks above read the records and the text alone
   const res = all ? engine.rejectAll(store.suggestions) : engine.rejectSuggestions(store.suggestions, ids);
   const newText = applyEdits(file.text, res.edits);
   checkTooLarge(ctx.shown, newText);
@@ -2630,9 +2657,24 @@ function doReject(ctx, all) {
   }
   store.suggestions = res.suggestions;
   store[WRITE_SHIFTS] = { applied: appliedShifts(res.edits) };   // the reversals moved what follows them; the refresh follows a tied passage through them
+  let staged;
   try {
-    landSidecar(root, paths.storePath, store, newText);
+    staged = stageSidecar(root, paths.storePath, store, newText);
   } catch (e) {
+    discardFileWrite(prepared);
+    throw cannotWriteSidecar(ctx, paths, e);
+  }
+  try {
+    requireCommentsUntouched(ctx, store, loadedComments, all ? 'reject-all' : 'reject');
+  } catch (e) {
+    discardSidecar(staged);
+    discardFileWrite(prepared);
+    throw e;
+  }
+  try {
+    commitSidecar(staged, paths.storePath);
+  } catch (e) {
+    discardSidecar(staged);
     discardFileWrite(prepared);
     throw cannotWriteSidecar(ctx, paths, e);
   }
@@ -3049,12 +3091,12 @@ function doSave(ctx) {
     if (rejected.length) entries.push(logEntry('reject', { changes: rejected }));
   }
   let prior = null;
+  let loadedComments = null;
   if (store) {
     try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
     const loaded = store.suggestions;   // the sidecar's records as loaded: where an accepted change sat, before the editor's records replace them
-    const loadedComments = commentsApartFromAnchorAt(store.comments);
+    loadedComments = commentsApartFromAnchorAt(store.comments);   // the comments as loaded: the staged sidecar is held to them below (requireCommentsUntouched)
     store.suggestions = fit.records;
-    requireCommentsUntouched(ctx, store, loadedComments, 'save');   // the decisions this save carries touch no comment (decision 42)
     // the person's edit moved what follows it, and the changes the editor accepted stand in the text
     // while their records leave the sidecar in this write: the refresh follows a tied passage through
     // both (shiftBounds' `applied` and `settled`, the latter as doAccept stamps it)
@@ -3064,11 +3106,12 @@ function doSave(ctx) {
   checkReplyFits(ctx, { root, paths, store, text: a.content, fileMtimeNs: file.fileMtimeNs }, { logged: logs }, entries,
     'the change records and the decisions taken in the editor');
   // The writes, in reject's order (doReject): the file's new bytes staged beside it, the sidecar
-  // landed against the new text, the log's entries, then the rename that lands the file. A failure
-  // before the append refuses with nothing changed (the staged file discarded, the prior sidecar put
-  // back); the rename is the one step after the append, and its failure says the log already holds
-  // the entries (`logged: true`). The edit entry's mtimeAfterNs is the staged file's own: a rename
-  // keeps the inode's mtime, so the value is the one the landed file shows.
+  // staged against the new text, checked (requireCommentsUntouched: the decisions this save carries
+  // touch no comment, decision 42) and landed, the log's entries, then the rename that lands the
+  // file. A failure before the append refuses with nothing changed (the staged file discarded, the
+  // prior sidecar put back); the rename is the one step after the append, and its failure says the
+  // log already holds the entries (`logged: true`). The edit entry's mtimeAfterNs is the staged
+  // file's own: a rename keeps the inode's mtime, so the value is the one the landed file shows.
   let prepared;
   try {
     prepared = prepareFileWrite(ctx.abs, a.content);
@@ -3076,9 +3119,24 @@ function doSave(ctx) {
     throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; nothing was changed: the comments file was not touched, so there was nothing to put back`);
   }
   if (store) {
+    let staged;
     try {
-      landSidecar(root, paths.storePath, store, a.content);
+      staged = stageSidecar(root, paths.storePath, store, a.content);
     } catch (e) {
+      discardFileWrite(prepared);
+      throw cannotWriteSidecar(ctx, paths, e);
+    }
+    try {
+      requireCommentsUntouched(ctx, store, loadedComments, 'save');   // the decisions this save carries touch no comment (decision 42)
+    } catch (e) {
+      discardSidecar(staged);
+      discardFileWrite(prepared);
+      throw e;
+    }
+    try {
+      commitSidecar(staged, paths.storePath);
+    } catch (e) {
+      discardSidecar(staged);
       discardFileWrite(prepared);
       throw cannotWriteSidecar(ctx, paths, e);
     }

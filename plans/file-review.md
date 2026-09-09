@@ -456,7 +456,8 @@ decisions never drop a comment bound by `suggestionId`, a stated divergence from
 accept-all, kept so the comment ids in a sent message stay addressable by `track-reply`; and since
 decision 42 (2026-09-09) they never resolve one either — before it, accept and a save's decisions set
 `resolved: true` on the bound comments. The comments a decision stages equal the loaded ones apart
-from `anchorAt`, and the host checks that before every decision's write (`requireCommentsUntouched`).
+from `anchorAt`, and the host checks that on the staged sidecar, before every decision's rename lands it
+(`requireCommentsUntouched`).
 
 **`fileCommentsSend`**, the send op:
 
@@ -1288,9 +1289,11 @@ heights nothing past the aside's edge, Send and the Log toggle in reach, the col
 a real Tab onto Send or the Log leaving the aside unscrolled and every card on its mark),
 `file-comments-margin-fixes.test.ts` (over the first review's stand-in with room for an open card: the opened card
 shown whole from its head and from its reference link, a card taller than the track clipped at its head by the excess
-alone, the un-push without a render, a whole-file comment saved while scrolled brought into the track's box by one
-write onto both scrollers with the composer closing after, a reply's save centering its card, the saved comment read
-off the reply's store, and at source the offset-free term and the save's scroll before the composer's close),
+alone, the un-push without a render, a whole-file comment saved while scrolled moving nothing, the line at the foot
+saying above and its click bringing the card into the track's box by one write onto both scrollers, the composer
+closing after (decision 43; before it, the save's own scroll), a reply's save scrolling nothing with the card the focus
+and its line's click centering the card, the saved comment read off the reply's store, and at source the offset-free
+term and the save's focus and line raised before the composer's close, with no scroll),
 `file-comments-margin-fixes-browser.test.ts` (the opening and the save in Chromium and Firefox over a rendered body),
 `styles-fc-margin-attribution.test.ts` (each sheet's margin comment held to the record
 `tools/file-review-plan-attribution.test.mjs` holds this note to) and
@@ -1695,7 +1698,10 @@ holds the staged comments to the loaded ones apart from `anchorAt`). With nothin
 and leave the third pending; all unseen make no accept call and a disabled box; the words follow a gesture in place and
 on the re-render; the message's count is the reply's), `file-comments-send-seen-browser.test.ts` (Chromium and Firefox,
 the two-seen-one-unseen scene), `tests/test_guide_files_seen.py` (the guide's sentence held to the panel) and
-`tools/file-review-plan-seen.test.mjs` (this note held to the code and the modules it names).
+`tools/file-review-plan-seen.test.mjs` (this note held to the code and the modules it names) and
+`tools/file-review-plan-seen-review.test.mjs` (the review's plan fixes: the arrivals paragraph's retired option words and
+save scroll stated as history, the acknowledgment line named as CONTEXT.md names it, the contract paragraph's check held
+to the host's call sites, the margin-fixes and model-seen accounts held to their modules).
 
 The arrivals follow-on (2026-09-09): two rules, both from the user's reports of the day. The first report: the user
 sent comments, the session answered with eleven changes and seven replies while they kept commenting, and nothing in
@@ -1719,18 +1725,22 @@ track's box seen (`entryShown`: the placed top inside the box; the list layout r
 aside's and the window's), and the ones it scrolled into view are seen by the gesture that follows; a card not
 rendered, behind a fold or the filter, is not on screen and stays an arrival. A gesture is a pointer press or a key
 anywhere in the body row, a wheel or a touch move (the two events that begin a scroll of the person's: the scroll
-event itself is not one, since the lock's writes, a centering and the save's scroll fire it with no gesture behind
-them, and a wheel fires before the scroll it starts), a save, a send; never a timer. The line's own press marks
-nothing, so the click that shows an arrival does not mark it seen; the dots and the line change in place rather than by a
-render, the line through the row's press hold (`pressHold`), since a line removed during a press moves the list under
-the pointer. The Send confirm's accept option reads "accept the N pending changes (M arrived since you last looked)"
-when arrivals include pending changes (`acceptOptionLabel`); the default stays decision 8's; the same confirm lost its message preview to a box for the person's own words the same
-day (decision 40), which travel first in the message as `note`. From the lost-update probe of the same day: the accept
-then resolved the comments bound to the changes it accepted (the host's rule at the time), and in the incident seven
-comments the session's edits had answered folded under a collapsed Resolved with nothing said; the option gained a
+event itself is not one, since the lock's writes and a centering fire it with no gesture behind them, as the save's
+scroll did while it stood (decision 43 retired it), and a wheel fires before the scroll it starts), a save, a send;
+never a timer. The line's own press marks nothing, so the click that shows an arrival does not mark it seen; the dots
+and the line change in place rather than by a render, the line through the row's press hold (`pressHold`), since a line
+removed during a press moves the list under the pointer. The Send confirm's accept option read "accept the N pending
+changes (M arrived since you last looked)" when arrivals included pending changes, until decision 41 (the seen follow-on
+above, the same day) moved it to the seen split: it names the pending changes the person has seen and the unseen ones
+that stay pending, and says nothing of arrivals, which the line under the header counts (`acceptOptionLabel`; the seen
+follow-on's paragraph carries the words); the default stays decision 8's; the same confirm lost its message preview
+to a box for the person's own words the same day (decision 40), which travel first in the message as `note`. From the
+lost-update probe of the same day: the accept then resolved the comments bound to the changes it accepted (the host's
+rule at the time), and in the incident seven comments the session's edits had answered folded under a collapsed Resolved
+with nothing said; the option gained a
 "resolves M comments" clause and the acknowledgment line a tail naming what moved to Resolved. Decision 42 (the same
 day) ended the host's resolve-on-accept, so nothing leaves the visible list on a send any more and both went with it (the
-seen follow-on below). The set lives with the
+seen follow-on above). The set lives with the
 panel: a Raw/Rendered switch, a reload and a close and reopen of the aside keep it, and a new file is a new panel. The
 second report: they saved a reply, scrolled on while the host answered, and the reply's landing pulled the text back to
 the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built first: `saveComposer` counted
@@ -1740,13 +1750,13 @@ Decision 43 (the seen follow-on, the same day) retired the scroll: a save never 
 scroll it judged, and `landSaved` makes the saved card the focus for the layout (`focusOn`), so it lands level with its
 mark wherever that is. When the card is not whole in view once the save's status has landed (`cardWhere`: the placed
 top and height against the track's scroll and box in the margin layout, the card's box against the aside's in the
-list), the sent note's position at the panel's foot reads "Saved · the card is above" or "below" (`savedLine`; the words
-are the model's, `savedWhereWords`), a button whose click scrolls the card into view as the focus (`fcsavedgo`:
-`scrollCard`). The side is latched at the landing (`savedOut`), since a render swaps in a card list the pass has not
-sized yet and the track's scroll reads 0 until it has, and re-read where the geometry is settled, at the end of a pass
-and at a scroll (`reflectLines`, through the row's press hold as the arrivals line is: a line leaving the Send section
-moves the Send button under a pointer); the line ends there when the card is in view, and at the person's next gesture
-(`gesture`; a press on the line itself excepted, its click being what it is for). No timer. The composer's
+list), the acknowledgment line's position at the panel's foot reads "Saved · the card is above" or "below"
+(`savedLine`; the words are the model's, `savedWhereWords`), a button whose click scrolls the card into view as the focus
+(`fcsavedgo`: `scrollCard`). The side is latched at the landing (`savedOut`), since a render swaps in a card list the
+pass has not sized yet and the track's scroll reads 0 until it has, and re-read where the geometry is settled, at the
+end of a pass and at a scroll (`reflectLines`, through the row's press hold as the arrivals line is: a line leaving the
+Send section moves the Send button under a pointer); the line ends there when the card is in view, and at the person's
+next gesture (`gesture`; a press on the line itself excepted, its click being what it is for). No timer. The composer's
 acknowledgment is unchanged. Tests: `file-comments-model-arrivals.test.ts` (the pure half),
 `file-comments-arrivals.test.ts` (the stand-in: both rules driven), `file-comments-arrivals-browser.test.ts` (Chromium
 and Firefox), `tests/test_guide_files_arrivals.py` (the guide's two sentences held to the panel),
@@ -2273,11 +2283,13 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   first review's stand-in with room for an open card and pins the opened card shown whole (the least
   scroll that shows its end, with no header term, so its head stays in the track's box, from the head
   click and from the reference link), a card taller than the track clipped at its head by the excess
-  alone, a pass without a render un-pushing a card, a whole-file comment saved while scrolled brought into
-  the track's box by one write onto both scrollers with the composer closing after, a reply's save
-  centering its card, the saved comment read off the reply's store (one new comment; among several, the
-  one whose body is the note; none identifiable, nothing scrolls), and at source the offset-free term and
-  the save's scroll before the composer's close; `file-comments-margin-fixes-browser.test.ts` runs the
+  alone, a pass without a render un-pushing a card, a whole-file comment saved while scrolled moving
+  nothing, the line at the foot saying above and its click bringing the card into the track's box by one
+  write onto both scrollers, the composer closing after (decision 43; before it, the save's own scroll), a
+  reply's save scrolling nothing with the card the focus and its line's click centering the card, the saved
+  comment read off the reply's store (one new comment; among several, the one whose body is the note; none
+  identifiable, no line), and at source the offset-free term and the save's focus and line raised before the
+  composer's close, with no scroll; `file-comments-margin-fixes-browser.test.ts` runs the
   opening and the save in Chromium and Firefox over a rendered body;
   `styles-fc-margin-attribution.test.ts` holds each sheet's margin comment to the record
   `tools/file-review-plan-attribution.test.mjs` holds the note to (the layout as the build's reading, the
@@ -2384,7 +2396,8 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   holds the review's three plan fixes (the request block's `note?` and the op prose to the kernel and
   the panel, the user ungendered, the Docs sentence's gestures to the guide).
 - The seen follow-on (2026-09-09): `file-comments-model-seen.test.ts` (the pending changes split against
-  the seen set; the accept option's words with seen, unseen and resolve counts, and with nothing seen);
+  the seen set; the accept option's words with seen and unseen counts and with nothing seen, and no resolve
+  clause, the option taking two counts since decision 42);
   `file-comments-send-seen.test.ts` drives the panel over the review stand-in (two seen and one unseen:
   the option's words, the accept by id for the two, the message's count from the reply, the third still
   pending; all unseen: no accept call, the box unchecked and disabled; the person's own uncheck kept; a
@@ -2392,7 +2405,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `file-comments-send-seen-browser.test.ts` measures the two-seen-one-unseen scene in Chromium and
   Firefox; `tests/test_guide_files_seen.py` holds the guide's sentence to the panel;
   `tools/file-review-plan-seen.test.mjs` holds the follow-on's paragraph and decisions 41 and 42 to the
-  code, the message builders and the modules they name.
+  code, the message builders and the modules they name; `tools/file-review-plan-seen-review.test.mjs`
+  holds the review's plan fixes (the arrivals paragraph's retired option words and save scroll as history,
+  the acknowledgment line named as CONTEXT.md names it, the contract paragraph's self-check to the host's
+  call sites, the margin-fixes and model-seen accounts to their modules) to the code.
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
@@ -2666,9 +2682,10 @@ document stands on its own, each with the reasoning it was given.
     scroll, which the arrivals follow-on had stand down once they had moved on: no scroll after a save at all, even
     when the new card lands out of view, because a scroll is disruptive; they accept that the person may then have to
     look for the card. Built: the save makes the card the focus for the layout and scrolls nothing. When the card is
-    not whole in view once the save's status has landed, the sent note's position at the panel's foot reads "Saved ·
-    the card is above" or "below", a button whose click scrolls the card into view; the line ends at the person's next
-    gesture or when the card comes into view, never on a timer. The arrivals follow-on under Slice 2 has the build.
+    not whole in view once the save's status has landed, the acknowledgment line's position at the panel's foot reads
+    "Saved · the card is above" or "below", a button whose click scrolls the card into view; the line ends at the
+    person's next gesture or when the card comes into view, never on a timer. The arrivals follow-on under Slice 2 has
+    the build.
 
 ## Open questions for the user
 

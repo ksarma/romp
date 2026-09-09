@@ -5,7 +5,10 @@
 // whole-file comment — leaves the layout where it was: the pass keeps the focus it laid the cards on last (laidOn), since a
 // loose card has no mark to be laid level with and the rule takes a focus with no mark as none, so writing it unmade the
 // layout: the clicked card jumped to the track's start out of the box with nothing scrolling after it, the card the person
-// was reviewing fell under the tall card again, off its mark. The keyboard's memory of a control a render could not land on
+// was reviewing fell under the tall card again, off its mark. The save leaves the scroll where it was too (decision 43,
+// 2026-09-09: a save never moves the view; this round had it bring the card into the track's box), and the line at the
+// panel's foot says which side of the box the card is on, its click bringing the card into the box where it stands
+// (fcsavedgo: scrollCard, showLoose). The keyboard's memory of a control a render could not land on
 // (Show less hidden by the fold to the list layout; a busy Accept or Reject) holds for as long as the control is in the list
 // and the keyboard stays where the panel put it, however many renders pass meanwhile — a repaint, a status — so the render
 // after the columns come back returns the keyboard to the toggle, and the refusal that keeps a card returns it to the
@@ -580,7 +583,7 @@ test("Show more on a loose card laid below the focused card shows its text whole
   w.close();
 });
 
-test("a whole-file comment saved while a card is the focus: the new card joins the loose group's end below the focused card, the focus and the tall card's lift are kept, and the card is brought into the track's box where it stands, on both scrollers at once (before: the save wrote the loose card as the focus, the layout fell back to the push-down rule and the scroll went to the group at the track's start)", async (t) => {
+test("a whole-file comment saved while a card is the focus: the new card joins the loose group's end below the focused card, the focus and the tall card's lift are kept, and nothing scrolls (decision 43): the line at the foot says the card is below, and its click brings the card into the track's box where it stands, on both scrollers at once, and ends the line (before decision 43 the save itself made that scroll; before this round: the save wrote the loose card as the focus, the layout fell back to the push-down rule and the scroll went to the group at the track's start)", async (t) => {
   const { w, ok, last } = await open(t, textWorld());
   const body = w.body, track = w.track();
   markOf(w, CHG).click(); await tick();
@@ -588,6 +591,7 @@ test("a whole-file comment saved while a card is the focus: the new card joins t
   assert.equal(w.top(passage.id), desired(5)); assert.equal(w.top(CHG), LIFTED); assert.equal(w.top(whole.id), BELOW_FOCUS_LOOSE);
   const before = body.scrollTop;
   assert.equal(before, desired(5) + OPEN + 8 - TRACK, "the fixture: the highlight's click scrolled to show the focused card's end");
+  assert.equal(actIn(w.aside(), "fcsavedgo"), null, "the fixture: no saved line before the save");
   const composer = await saveFileComment(w, last);
   const fresh = fileComment(T0 + 5000 + "-0");
   await ok(status({ verb: "comment", storeMtimeNs: NS9, store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, fresh] } }));
@@ -599,14 +603,29 @@ test("a whole-file comment saved while a card is the focus: the new card joins t
   assert.equal(w.top(CHG), LIFTED, "the tall card still up");
   assert.equal(w.top(whole.id), BELOW_FOCUS_LOOSE);
   assert.equal(w.top(findings.id), BELOW_FOCUS);
-  // the card was below the track's box: the least scroll that shows it whole, on the body as well as the track
-  const want = freshTop + CARD + 8 - TRACK;
+  // the card is below the track's box, and the save leaves it there: the scroll as it was, on both scrollers
+  const want = freshTop + CARD + 8 - TRACK;           // 352: the least scroll that shows the card's end — what the line's click scrolls to
   assert.ok(want > before, "the fixture: the new card's end is past the box");
-  assert.equal(body.scrollTop, want, "the body: the least scroll that shows the card's end (before: 0, the track's start)");
-  assert.equal(track.scrollTop, want, "the track with it, at once");
-  assert.ok(inBox(cardBox(w, fresh.id), TRACK_BOX), "the card is in the track's box: " + JSON.stringify(cardBox(w, fresh.id)));
+  assert.equal(body.scrollTop, before, "the body did not move: a save never scrolls (decision 43; before it: " + want + ", the least scroll that showed the card's end)");
+  assert.equal(track.scrollTop, before, "nor the track");
+  assert.ok(!inBox(cardBox(w, fresh.id), TRACK_BOX), "the fixture: the card stands out of the track's box, past its end: " + JSON.stringify(cardBox(w, fresh.id)));
   assert.deepEqual(scrolledInto, [], "no scrollIntoView in the margin layout");
   assert.equal(composer.hidden, true, "the composer closed");
+  // the line at the panel's foot says where the card is, in the sent note's position
+  const line = actIn(w.aside(), "fcsavedgo");
+  assert.ok(line, "the line is in the panel: a comment's save renders it itself (the composer's close re-renders the composer alone)");
+  assert.equal(line!.textContent, "Saved · the card is below", "the side the card stands on: past the box's end");
+  assert.ok(w.aside().querySelector(".fc-sec-send")!.contains(line!), "in the Send section, where the sent note stands");
+  // its click: the card into the track's box where it stands, on both scrollers at once, the layout untouched, and the line is over
+  line!.click(); await tick();
+  assert.equal(body.scrollTop, want, "the body: the least scroll that shows the card's end (showLoose)");
+  assert.equal(track.scrollTop, want, "the track with it, at once");
+  assert.ok(inBox(cardBox(w, fresh.id), TRACK_BOX), "the card is in the track's box: " + JSON.stringify(cardBox(w, fresh.id)));
+  assert.equal(w.top(fresh.id), freshTop, "where it stood: a loose card is shown, not moved");
+  assert.equal(w.top(passage.id), desired(5), "the focus is still the passage's card, level with its highlight: a loose card cannot take the pass's focus (laidOn)");
+  assert.equal(w.top(CHG), LIFTED, "the tall card still up");
+  assert.deepEqual(scrolledInto, [], "both scrollers written, no scrollIntoView");
+  assert.equal(actIn(w.aside(), "fcsavedgo"), null, "the line is over");
   w.close();
 });
 

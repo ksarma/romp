@@ -1123,12 +1123,22 @@ class Panel {
   arrivals = new Map<string, Entry>();
   newKeys = new Set<string>();
   // the card a save landed in while it stands out of view, and which side of the box it is on (landSaved; decision 43): the
-  // sent note's position at the panel's foot says so (savedLine) until the person's next gesture or the card coming into
-  // view. Latched, not read at each render: a render swaps in a fresh list whose height the pass has not written yet, so the
-  // track's scroll reads 0 until the pass, and a side read then would say the card is in view when it is not (CLAUDE.md:
-  // a transient state holds until the deciding event, never re-derived per build). The side is re-read where the geometry
-  // is settled — the end of a pass, a scroll (reflectLines) — and the line ends there or at a gesture (gesture).
+  // acknowledgment's position at the panel's foot says so in the margin layout, a line under the header in the list layout
+  // (savedLine, renderHead says why) until the person's next gesture or the card coming into view. Latched, not read at
+  // each render: a render swaps in a fresh list whose height the pass has not written yet, so the track's scroll reads 0
+  // until the pass, and a side read then would say the card is in view when it is not (CLAUDE.md: a transient state holds
+  // until the deciding event, never re-derived per build). The side is re-read where the geometry is settled — the end of a
+  // pass, a scroll, a render in the list layout, the composer's close there (reflectLines, landClosed) — and the line ends
+  // there or at a gesture (gesture).
   savedOut: { key: string; side: "above" | "below" } | null = null;
+  // the seen set the Send confirm's accept option and count row were last written from (renderSend, syncAcceptOption), null
+  // with no confirm up: the send accepts by it (pendingSplit), so what goes is what the confirm said when the person pressed
+  // Send. The press itself is a gesture, and its pointerdown or key marks the card the last wheel scrolled in seen — before
+  // this the send read the live set after that mark, and accepted a change while the box still read disabled and unchecked
+  // with "nothing is accepted until you look" (the review, 2026-09-09: the hold keeps the option's words through a press, so
+  // the person could not have read the change in). The card is seen all the same, for the next confirm.
+  confirmSeen: Set<string> | null = null;
+  sendPress = false;                          // the send's own press is under way (doSend; gesture reads it for the key that sends): its gesture leaves the confirm as the person read it (syncAcceptOption)
   hold: PressHold | null = null;              // the body row's press: the arrivals line's change in place waits for the release (the constructor installs it)
   // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
@@ -1611,7 +1621,15 @@ class Panel {
   openPanel(): void {
     if (this.open) return;
     this.open = true;
-    if (!this.root) this.root = el("div", "fc-panel");
+    if (!this.root) {
+      this.root = el("div", "fc-panel");
+      // the list layout's scroll (the viewer makes this root the aside, .fileview-aside, whose box scrolls the cards): the
+      // saved line follows the card's side against the box as the margin layout's does at mirrorScroll, and ends with the
+      // card coming into it — a touch drag begun on the line itself scrolls without a gesture the line ends at, and a
+      // scrollbar drag is a press outside the row (the review, 2026-09-09: the words stood stale until the next gesture). A
+      // scroll marks nothing seen (the constructor's comment). The margin layout's root does not scroll; its track does.
+      this.root.addEventListener("scroll", () => { if (this.savedOut && !this.margin) this.reflect(); }, { passive: true });
+    }
     this.ctx.aside(this.root);
     this.button.classList.add("on"); this.button.setAttribute("aria-pressed", "true");
     if (!this.colors) void this.loadColors();
@@ -1828,7 +1846,7 @@ class Panel {
   }
   /** Edit is refused while a decision this panel sent is out (DECISION_IN_FLIGHT): the viewer hears the reason when the
    *  first goes out and null when the last settles — one transition each way, however many are out at once (two cards
-   *  clicked in a row, the Send's accept-all beside a card's). A status reply never touches it (Slice 5: pending changes
+   *  clicked in a row, the Send's accept beside a card's). A status reply never touches it (Slice 5: pending changes
    *  ride into the editor; file-comments-changes.test.ts pins that applyStatus stays out of it). */
   private holdEdit(delta: 1 | -1): void {
     const was = this.decisionsOut;
@@ -2231,7 +2249,7 @@ class Panel {
   }
   /** The key of the card the reply being written stands in, latched into the keyed expand state. startReply latches the key
    *  at click time, but a comment's card can change key under an open reply: its change accepted or rejected (the person's
-   *  Accept on the same card, Send's accept-all, a decision elsewhere) moves it from the change card ("chg:…") to its own
+   *  Accept on the same card, the Send's accept, a decision elsewhere) moves it from the change card ("chg:…") to its own
    *  card (cardKey), which the list then showed open only by derivation from the composer — so the first render after the
    *  composer closed, or changed kind, folded it with no gesture and no new information (CLAUDE.md), taking the Reply the
    *  keyboard had just been handed to. Latched at every render, the card stays open by key once the box has left it. */
@@ -2400,6 +2418,7 @@ class Panel {
     const lined = r !== null && this.landSaved(c, had, r, note);   // the saved card the focus for the layout, and the line when it is out of view — before the composer closes (landSaved says why); no line for a card the filter hides (hid: its own line says where it is)
     if (r) this.closeComposer();                       // a refusal keeps the note where it was typed
     if (hid || (lined && c.kind !== "reply")) this.render();   // the cards were rendered with the reply before the saved comment was known (hid: once more, with its line); a comment's close re-renders the composer alone (renderFrom), so the saved line needs this render — a reply's close rendered the panel whole
+    if (r && !lined && !hid && !this.margin) this.landClosed(c, had, r, note);   // the list layout: the box's close lifted the cards, and a card whole in view a moment ago may stand above the box now (landClosed)
   }
   /** After a comment is saved (not a reply): while the filter shows the changes alone, the fresh card and its mark are
    *  hidden (renderCards, paintAll), and a save that shows nothing reads as a save that failed — the person may write the
@@ -2463,6 +2482,22 @@ class Panel {
     if (r.top < box.top) return "above";
     return r.bottom <= Math.min(box.bottom, window.innerHeight) ? null : "below";
   }
+  /** The list layout, after the composer closed (saveComposer): landSaved read the side with the box still in the aside's
+   *  flow above the cards (placeComposer's slot), and the close lifts every card by the box's height — a card whole in view
+   *  at the landing can stand above the aside's box now, with no line and nothing to re-read it (every re-read is gated on
+   *  the line standing). The side is read once more here, at the settled geometry, and the line raised the way landSaved
+   *  raises it (the review, 2026-09-09). An engine with scroll anchoring keeps the card where it was on screen and reads
+   *  null here; one without (WebKit before its 27, the phone) reads the card above. The margin layout needs none of this: its
+   *  close grows the track's box, and the pass at its end re-reads (placeCards). */
+  private landClosed(c: Composer, had: Set<string>, r: Status, note: string): void {
+    const saved = c.kind === "reply" ? c.commentId : savedCommentId(had, r, note);
+    if (saved === null) return;
+    const key = this.cardKey(saved);
+    const side = this.cardWhere(key);
+    if (side === null) return;
+    this.savedOut = { key, side }; this.sentNote = null;
+    this.render();                                     // the line into the panel (renderHead)
+  }
 
   // ── the arrivals (the arrivals follow-on, 2026-09-09; the fields' comment says the rule) ───────────
   /** A status landed: the entries in it that the person has not seen and did not write are arrivals (arrivalsAmong's
@@ -2507,9 +2542,18 @@ class Panel {
   gesture(ev?: Event): void {
     if (!this.open) return;
     const t = ev ? (ev.target as Element | null) : null;
-    const on = (act: string): boolean => !!t && typeof t.closest === "function" && !!t.closest('[data-act="' + act + '"]');
+    // a press, a key or a touch on a control — never a wheel, which scrolls and presses nothing: a wheel over the saved line is
+    // the scroll the line says it goes with (the review, 2026-09-09). A touch move is kept: a jittery tap on the line moves
+    // too, and its click reads the latch (fcsavedgo).
+    const on = (act: string): boolean => !!t && typeof t.closest === "function" && !!t.closest('[data-act="' + act + '"]') && (!ev || ev.type !== "wheel");
     const over = this.savedOut !== null && !on("fcsavedgo");   // the saved line is over at a gesture — not at a press on the line itself, whose click shows the card
     if (over) this.savedOut = null;
+    // the key that sends is the send's own press (the fields' comment, sendPress): Enter or Space on the confirm's Send, the
+    // chord in its note box (noteKey). It marks what is on screen seen like any gesture, and the confirm's option and count
+    // row stay as the person read them (syncAcceptOption): the send that follows accepts what they say, and redraws the panel.
+    // A pointer press needs none of this: the hold parks the change until the release, after the click (reflect).
+    const kb = ev && ev.type === "keydown" ? (ev as KeyboardEvent) : null;
+    const press = !!kb && ((on("fcsendgo") && (kb.key === "Enter" || kb.key === " ")) || (t === this.noteBox && composerKeyAction(kb) === "save"));
     const keys = new Set<string>();
     if (this.arrivals.size && !on("fcarrivals")) {
       for (const [k, e] of Array.from(this.arrivals)) {
@@ -2517,8 +2561,12 @@ class Panel {
         keys.add(this.arrivalCard(e)); this.seenKeys?.add(k); this.arrivals.delete(k);
       }
     }
-    if (keys.size) this.reflectSeen(keys);
-    else if (over) this.reflect();
+    const was = this.sendPress;
+    if (press) this.sendPress = true;
+    try {
+      if (keys.size) this.reflectSeen(keys);
+      else if (over) this.reflect();
+    } finally { this.sendPress = was; }
   }
   /** Whether an entry's card is on screen: in the margin layout, its placed top inside the track's box (the head, where
    *  the dot is, is what the person sees of a card cut by the box's bottom); in the list layout, the card's top inside the
@@ -2562,9 +2610,9 @@ class Panel {
   private reflect(): void {
     if (this.hold) void this.hold.defer(() => this.reflectLines()); else this.reflectLines();
   }
-  /** The arrivals line under the header (rewritten, or removed with the last arrival); the Send confirm's accept option,
-   *  when it is up (renderSend's words and state, syncAcceptOption: a change this gesture marked seen is one the send now
-   *  accepts, and a box that was disabled with nothing seen comes on); and the saved line at the foot (savedLine: the
+  /** The arrivals line under the header (rewritten, or removed with the last arrival); the Send confirm's accept option
+   *  and count row, when it is up (renderSend's words and state, syncAcceptOption: a change this gesture marked seen is one
+   *  the send now accepts, and a box that was disabled with nothing seen comes on); and the saved line (savedLine: the
    *  card's side now, or removed — the key with it — once the card is whole in view, gone from the list, or the person has
    *  moved on). */
   private reflectLines(): void {
@@ -3831,9 +3879,10 @@ class Panel {
 
   // ── Send to session ────────────────────────────────────────────────────────────────────────────
   /** Fixed sequence (the plan's UX, D5): the message is built from the CURRENT status FIRST (a bound
-   *  comment's desc needs the change's old and new text, which accept-all removes), then set-tracked when
-   *  asked, then accept-all when asked, then fileCommentsSend with `tracked` set to the post-toggle verdict
-   *  and `accepted` = what the log says is unsent plus the N the accept-all just decided, read off its reply;
+   *  comment's desc needs the change's old and new text, which an accept removes), then set-tracked when
+   *  asked, then the accept of the seen pending changes by id when the box is checked (decision 41: never an accept-all,
+   *  and the ids are the ones the confirm showed, pendingSplit), then fileCommentsSend with `tracked` set to the
+   *  post-toggle verdict and `accepted` = what the log says is unsent plus the N the accept's reply lists as decided;
    *  a refusal at any step aborts before the send. The comments are already on disk, so a refusal loses nothing. */
   async doSend(): Promise<void> {
     const s = this.status;
@@ -3854,10 +3903,15 @@ class Panel {
     // before, the next Cmd/Ctrl+Enter reached the body and sent nothing (the review, 2026-09-09). A send that went closes the
     // confirm, and there is no box to put it back in
     const noting = document.activeElement === this.noteBox;
+    // a send is a gesture, and the send's own (sendPress): a card on screen at the press is seen for the next confirm, and
+    // this confirm's option and count row stay as the person read them (syncAcceptOption), since the split below is theirs
+    this.sendPress = true;
     this.gesture();                                    // a send is a gesture of the person's (the arrivals follow-on)
+    this.sendPress = false;
     // the changes the send accepts on the way (decision 41): the pending changes the person has SEEN, by id through the
-    // same accept the card's button uses, never an accept-all — an unseen change stays pending for the next look. Read
-    // after the send's own gesture, so a card on screen at the Send press counts as seen the way any gesture counts it.
+    // same accept the card's button uses, never an accept-all — an unseen change stays pending for the next look. The seen
+    // ones as the confirm SHOWED them (pendingSplit over confirmSeen): what the option and the count row said at the press
+    // is what goes, and a card the press itself marked seen waits for the next send (the fields' comment has the case).
     // None while the editor is up, whose marks they are (DECIDES; renderSend shows no box for them then), and none with
     // the box unchecked; the counts then carry only the log's own decisions. Once the accept answers, the N it decided
     const acceptIds = this.sendOpts.accept ? this.pendingSplit(s).seen.map((h) => String(h.id)) : [];
@@ -3969,7 +4023,7 @@ class Panel {
     // off-screen when the list is long; the card came back and it returned; or it went from one card to another, and the
     // other card may be off-screen as well — its comment bound to a change under the reply (the session's track-edit
     // answering it) moves it onto the change's card, among the change cards at the top of the list; that change accepted
-    // (Accept on the card, Send's accept-all, a decision elsewhere) moves it to the comment's own card, among the comment
+    // (Accept on the card, the Send's accept, a decision elsewhere) moves it to the comment's own card, among the comment
     // cards below. Every one of those puts the box in a node other than `home`, and a rebuild that keeps its card keeps that
     // node (swapCards), so the one check covers them; the box is brought into view, the slot's row saying why with it, and a
     // keyboard elsewhere leaves the view where the person put it. After the margin pass (afterRender): in the margin layout
@@ -4291,6 +4345,12 @@ class Panel {
     // the arrivals line (the arrivals follow-on, 2026-09-09): one line under the header while a session's changes, comments
     // or replies stand unseen, a button that shows the first of them (goToArrival); the words are the model's (arrivalWords)
     if (this.arrivals.size) head.appendChild(this.arrivalLine());
+    // the saved line (savedLine; decision 43) in the list layout: under the header, where the person who just saved is looking
+    // (the composer stands in the slot under it, placeComposer). The Send section is the scroller's foot there, below the very
+    // card the line says is below, so a line in it was never on screen when it was needed (the review, 2026-09-09). The margin
+    // layout's Send section is pinned at the panel's foot, and the line keeps the acknowledgment's position there (renderSend).
+    const saved = this.savedLineHead();
+    if (saved) head.appendChild(saved);
     return head;
   }
   /** The arrivals line, built from the arrivals as they stand; reflectSeen rewrites it in place between renders. */
@@ -4929,6 +4989,9 @@ class Panel {
     // through it: sendConfirm stays true while the send is out and after the refusal). The review, 2026-09-09: an empty
     // box reopened at the eight rows the last note had grown it to.
     if (!this.sendConfirm && !this.sendNote && (this.noteBox.style.height || this.noteSizedTo !== null)) { this.noteBox.style.height = ""; this.noteSizedTo = null; }
+    // the seen set this render's confirm shows, the send's own (pendingSplit reads it; the fields' comment): fresh at every
+    // render of the confirm, rewritten in place with the option after a gesture (syncAcceptOption), none with no confirm up
+    this.confirmSeen = this.sendConfirm && s && !this.sending ? new Set(this.seenKeys || []) : null;
     if (this.sendConfirm && s && !this.sending) {
       const parts = sendParts(s);
       // the changes the checkbox may accept on the way: the SEEN pending changes (decision 41; pendingSplit), none while
@@ -4936,7 +4999,7 @@ class Panel {
       // strand its buffer (DECIDES); so no box, no count
       const split = this.pendingSplit(s);
       // the same A and R the send will carry (doSend): the log's unsent decisions plus the seen pending changes the
-      // checkbox accepts on the way — so the list shows the sent text
+      // checkbox accepts on the way — so the list shows the sent text (countsRow writes the row, here and in place)
       const counts = sendCounts(parts, this.sendOpts.accept, split.seen.length);
       const cf = el("div", "fc-confirm");
       const who = this.sessionName();
@@ -4948,7 +5011,7 @@ class Panel {
         li.appendChild(el("span", undefined, c.body.replace(/\s+/g, " ").trim()));
         ul.appendChild(li);
       }
-      if (counts.accepted || counts.rejected) ul.appendChild(el("li", undefined, counts.accepted + " accepted, " + counts.rejected + " rejected"));
+      this.countsRow(ul, counts);
       cf.appendChild(ul);
       const opts = el("div", "fc-opts");
       this.todoOpts(opts, s);                          // answer a todo: the checkbox, or the radio group when several name this file
@@ -4971,7 +5034,7 @@ class Panel {
       cf.appendChild(acts);
       box.appendChild(cf);
     }
-    const saved = this.savedLine();                    // the card a save landed in, out of view: which side it is on (decision 43), in the sent note's position
+    const saved = this.savedLine();                    // the card a save landed in, out of view: which side it is on (decision 43), in the acknowledgment's position — the margin layout's; the list layout's stands under the header (renderHead, savedLineHead)
     if (saved) box.appendChild(saved);
     if (this.sentNote) box.appendChild(el("div", "fc-note fc-sent", this.sentNote));
     for (const x of [this.loader("send"), this.errRow("send")]) if (x) box.appendChild(x);
@@ -4981,9 +5044,20 @@ class Panel {
    *  (savedWhereWords), a button whose click scrolls the card into view as the focus (fcsavedgo: scrollCard). Rendered
    *  from the latched side (the field's comment says why not from the geometry here) and followed in place between
    *  renders (reflectLines); over — and the key with it — once the card is whole in view or gone from the list, and at
-   *  the person's next gesture (gesture). In the sent note's dress and .fc-note as the sent note is, so the Send section
-   *  does not count it as growth (the sheets' tiers), as a text button (.fc-saved). */
+   *  the person's next gesture (gesture). In the acknowledgment's dress and .fc-note as the acknowledgment is, so the Send section
+   *  does not count it as growth (the sheets' tiers), as a text button (.fc-saved). This is the margin layout's, in the Send
+   *  section pinned at the panel's foot (renderSend); the list layout's stands under the header (savedLineHead, renderHead
+   *  says why) — one button either way (savedButton), one in the panel at a time. */
   private savedLine(): HTMLElement | null {
+    return this.margin ? this.savedButton() : null;
+  }
+  /** The list layout's saved line, under the header (renderHead): the Send section is the scroller's foot there, below the
+   *  very card the line says is below, so a line in it was never on screen when it was needed (the review, 2026-09-09). */
+  private savedLineHead(): HTMLElement | null {
+    return this.margin ? null : this.savedButton();
+  }
+  /** The line's button (savedLine, savedLineHead): the latched side's words, in the acknowledgment's dress. */
+  private savedButton(): HTMLElement | null {
     if (!this.savedOut) return null;
     const b = btn(savedWhereWords(this.savedOut.side), "fcsavedgo", "fc-note fc-sent fc-saved");
     b.title = "Show the card";
@@ -5025,10 +5099,13 @@ class Panel {
     return l;
   }
   /** The pending changes a send may accept, split into the ones the person has seen and the ones they have not (decision
-   *  41; partitionPending over the seen set): none of either while the editor is up, whose marks they are (DECIDES). */
+   *  41; partitionPending over the seen set): none of either while the editor is up, whose marks they are (DECIDES). Over
+   *  the seen set AS THE CONFIRM SHOWS IT while one is up (confirmSeen, written with the option and the count row), so the
+   *  accept the send carries is the one they named when the person pressed Send (the fields' comment has the case a live
+   *  read got wrong); over the live set otherwise. */
   private pendingSplit(s: Status): { seen: Hunk[]; unseen: Hunk[] } {
     if (this.ctx.editing()) return { seen: [], unseen: [] };
-    return partitionPending(s.hunks || [], this.seenKeys);
+    return partitionPending(s.hunks || [], this.confirmSeen || this.seenKeys);
   }
   /** The confirm's accept option: the box and its words (acceptOptionLabel), in the state syncAcceptOption gives them. */
   private acceptOption(s: Status): HTMLElement {
@@ -5040,13 +5117,31 @@ class Panel {
    *  the unseen count after it; with
    *  nothing seen the box is unchecked and disabled, since there is nothing it may accept — the person's own choice
    *  (sendOpts.accept, decision 8's default) is kept for when a look brings a change to the seen side. Called by the render
-   *  (acceptOption) and in place after a gesture marked arrivals seen (reflectSeen), so both write the same thing. */
+   *  (acceptOption) and in place after a gesture marked arrivals seen (reflectSeen), so both write the same thing — the
+   *  confirm's count row with it (countsRow), and the seen set they were written from (confirmSeen: what the send accepts).
+   *  Not for the send's own press (sendPress): the option stays as the person read it, and the send takes that. */
   private syncAcceptOption(cb: HTMLInputElement, s: Status): void {
+    if (this.sendPress) return;
+    this.confirmSeen = new Set(this.seenKeys || []);
     const split = this.pendingSplit(s);
     const label = cb.parentElement ? cb.parentElement.querySelector("span") : null;
     if (label) label.textContent = acceptOptionLabel(split.seen.length, split.unseen.length);
     cb.disabled = split.seen.length === 0;
     cb.checked = split.seen.length > 0 && this.sendOpts.accept;
+    const ul = cb.closest(".fc-confirm")?.querySelector(".fc-list") as HTMLElement | null;   // in place: the confirm's list (the render writes the row itself, before the option is in the confirm)
+    if (ul) this.countsRow(ul, sendCounts(sendParts(s), this.sendOpts.accept, split.seen.length));
+  }
+  /** The confirm's count row, "A accepted, R rejected" (D5): the log's unsent decisions plus the seen pending changes the
+   *  checked box accepts on the way (sendCounts, the caller's), the same A and R the send will carry (doSend), so the list
+   *  shows the sent text; no row with nothing to state. Written by the render and rewritten in place with the option after a gesture
+   *  (syncAcceptOption): before, a look that brought a change to the seen side changed the option's words and left the row
+   *  as rendered, so the confirm read "accept the 3 pending changes you have seen" over "2 accepted, 0 rejected" and
+   *  sent three (the review, 2026-09-09). */
+  private countsRow(ul: HTMLElement, counts: { accepted: number; rejected: number }): void {
+    let li = ul.querySelector("li.fc-counts") as HTMLElement | null;
+    if (!counts.accepted && !counts.rejected) { if (li) li.remove(); return; }
+    if (!li) { li = el("li", "fc-counts"); ul.appendChild(li); }
+    li.textContent = counts.accepted + " accepted, " + counts.rejected + " rejected";
   }
   /** The confirm's answer-a-todo control (the todo-file follow-on, 2026-09-07). The candidates are todoChoices': the todo
    *  the file was opened from and every open todo of the session that names this file (the status's `todos`), minus those
