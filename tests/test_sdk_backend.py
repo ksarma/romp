@@ -5615,9 +5615,20 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
 
     def test_e2_the_immediate_only_request_form_is_untouched(self):
         # request_reconnect(defer=False), the immediate-only form (its one production caller, the key cycle,
-        # retired with romp's own key paths on 2026-09-09, so this is the form's pin): over live work it
-        # drops the request with its own log line and arms nothing
+        # retired with romp's own key paths on 2026-09-09, so this is the form's pin). First the two cases
+        # the pre-merge keyswap e2 pinned and main's key retire deleted (restored in review round 3): a
+        # queued turn (_pending) on an otherwise quiet session drops the immediate form with its own line,
+        # and the deferred form under the same queue defers
         s = self._sess()
+        s._pending.append("a queued text")
+        s._do_request_reconnect(defer=False)
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+        self.assertTrue(any("became busy before the reconnect ran" in str(m) for m in self.logs), self.logs)
+        s._do_request_reconnect(defer=True)
+        self.assertTrue(s._reconnect_when_idle, "the deferred form waits for the queued turn's settle")
+        self.assertFalse(s._reconnect)
+        s._pending.clear(); s._reconnect_when_idle = False
+        # over live work the immediate form drops the request with its own log line and arms nothing
         self._start(s, "a1")
         s._do_request_reconnect(defer=False)
         self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
