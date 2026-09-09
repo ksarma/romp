@@ -1556,7 +1556,8 @@ def _atom_text(a: dict) -> str:
 
 def append_effort_applied(state_dir: Path, sid: str, effort: str, t: int | None = None) -> None:
     """Record that an /effort change TOOK EFFECT — written the instant the reconnect that carries --effort
-    lands (idle → at once; busy → at turn end), so it pins the moment the new effort is real, not when it was
+    lands (at once for a quiet session; at the settle that found it quiet, of turns and of live work, for
+    a busy one), so it pins the moment the new effort is real, not when it was
     asked for. A durable marker in states/<sid>.jsonl the kernel turns into a persistent "effort set to X"
     chat note (the user 2026-07-16: the reconnect leaves no transcript record, so the synthesized /effort chip
     self-destructs on the next message and history keeps no trace of when effort changed). Its own key
@@ -5028,13 +5029,13 @@ class SdkSession:
         #   the box's apiKeyHelper bills it, else the box's ROMP_EXPECTED_AUTH declaration, else the login).
         self._auth_pending = ""      # target while the applying reconnect is in flight (auth is
         #   connect-time env, no runtime control) — mirrors _effort_pending's dots + notice
-        self._launched_keyed = False  # what _options actually handed the CLI (key injected or not);
-        #   _note_auth_source compares the init's apiKeySource against THIS, so a CLI that lands on
-        #   the other auth (a stale login, a key found via apiKeyHelper) is flagged loudly instead
-        #   of silently billing the wrong account
-        self._launched_unkeyed_pick = False  # an explicit API-key pick that launched with NOTHING injected
-        #   because romp holds no key source (_options): Claude Code's own credential — its apiKeyHelper
-        #   or its login — is what pays, said once per process in the log
+        self._launched_keyed = False  # whether the launch MEANT the key side: the box's apiKeyHelper bills this
+        #   process (launch_keyed in _options; romp holds and injects no key). _note_auth_source compares the
+        #   init's apiKeySource against THIS, so a CLI that lands on the other side (a stale login, a helper a
+        #   login pick meant to suppress) is flagged loudly instead of silently billing the wrong account
+        self._launched_unkeyed_pick = False  # an explicit API-key pick that launched plain because the box has
+        #   no apiKeyHelper (_options): Claude Code's own credential resolution, its login, is what pays, said
+        #   once per process in the log
         self._pick_fell_said = ""    # the pick whose fall to the other side _options has said for THIS
         self._pick_unknown_said = ""     # the 'cannot tell, launching with the pick as is' row: once per session and pick
         #   session (once per session, not per reconnect; the user 2026-09-08)
@@ -5052,9 +5053,10 @@ class SdkSession:
         self._launched_mode = None    # the permission mode the running process RUNS: its launch mode, or the last
         #   live switch the CLI confirmed (_do_set_mode). snapshot reports it while a bypass pick is held (the
         #   process still runs it); _can_use_tool and set_mode's revert target read it the same way
-        self._launched_auth = None    # the side that LAUNCHED: "key" only when a key was injected, else "login" (an
-        #   explicit key pick that launched un-injected bills Claude Code's own credential, so it is not "key":
-        #   once a source exists, re-picking key must reconnect and inject; review round 1)
+        self._launched_auth = None    # the side that LAUNCHED: "key" only when the box's apiKeyHelper bills the
+        #   launch (launch_keyed), else "login" (an explicit key pick on a box with no helper launches plain and
+        #   bills Claude Code's own credential, so it is not "key": once a helper exists a key re-pick reconnects
+        #   and the CLI runs the helper; review round 1. romp injects no key: rounds 2b and 3)
         self._last_cost_total = 0.0   # the CLI's totalCostUSD is CUMULATIVE per process (verified in
         #   the bundle: the result event's total_cost_usd sits beside total_duration/lines counters),
         #   so spend folds the DELTA between results — folding the raw value re-added the whole
@@ -5514,7 +5516,8 @@ class SdkSession:
             self._reconnect = True
             self._wake_set()
         elif defer:
-            self._reconnect_when_idle = True   # the settle (or the last live work's end) arms it
+            self._reconnect_when_idle = True   # the settle that finds the session quiet arms it
+            #   (_arm_reconnect_if_quiet); a removal from the live sets only logs (_note_work_ended)
         else:
             self.backend._log("reconnect (%s): became busy before the reconnect ran; not reconnected, ask "
                               "again when it is quiet" % self.name)
@@ -5750,10 +5753,13 @@ class SdkSession:
         self.backend.state_dir, not self.state_dir: a session has no state_dir of its own, and the typo
         raised straight out of the connect path, killing the session thread on any /effort switch that
         applied at reconnect (found 2026-07-28 in the backend's own crash log). A pending AUTH switch is
-        applied the same way: the key rode (or was withheld from) _options' env on THIS connect, the
-        init's apiKeySource is the CLI's own confirmation and _note_auth_source flags a mismatch loudly;
-        here we clear the dots, unconditionally (a key pick whose source vanished before the launch must
-        not wear them forever)."""
+        applied the same way: the side THIS connect launched is what _options composed (a login pick
+        suppresses the box's apiKeyHelper through the per-session settings layer; a key pick, or none,
+        launches plain and the CLI runs the helper; romp injects no key), the init's apiKeySource is the
+        CLI's own confirmation and _note_auth_source flags a mismatch loudly; here the dots clear when this
+        connect launched the pending side, or launched plain on an explicit key pick with no helper (which
+        must not wear them forever), and a billing pick made during the spawn of the OTHER side stays
+        pending for the reconnect its own request armed (review round 2)."""
         launching = self._launching
         if launching is not None:
             self._launched_effort = launching.get("effort")
@@ -5772,8 +5778,8 @@ class SdkSession:
                 self.backend._update_reg(self.sid, effortPending=False)
                 self.backend._poke()
         if self._auth_pending:
-            # ...when this connect launched that side (or launched un-injected on an explicit key pick with
-            # no source, which must not wear the dots forever). A billing pick made during the spawn of the
+            # ...when this connect launched that side (or launched plain on an explicit key pick with no
+            # helper, which must not wear the dots forever). A billing pick made during the spawn of the
             # OTHER side stays pending for the reconnect its own request armed (review round 2, 2026-09-09;
             # effort's rule above, applied to billing)
             if (self._launched_auth is None or self._auth_pending == self._launched_auth
@@ -8430,8 +8436,8 @@ class SdkSession:
     _RECONNECT_CAUSE = "a deliberate restart"   # the death notice's cause on a reconnect that
     #   found work alive. A settings switch (effort/fast/auth/mode/env) waits for the live work to end
     #   before it reconnects (request_reconnect, 2026-09-09), so what still reaches the drop with work
-    #   running is a rewind, whose queue cannot wait, or the immediate-only request form (defer=False)
-    #   when a launch raced its loop-side re-check; the loop cannot tell them apart here. The session
+    #   running is a rewind, whose queue cannot wait (the immediate-only request form, defer=False, has
+    #   had no production caller since romp's own key paths were retired; test e2 pins the form). The session
     #   reads this text, and a romp operation name ("key cycle" was one, retired with romp's key paths)
     #   would explain nothing to it, so the notice says the one thing the session needs: the restart was
     #   meant (and never says "crash", which a session might grep for: LiveSubagentsRetire.test_f pins that;
@@ -12828,8 +12834,10 @@ class SdkBackend:
           the send's echo is the chat's acknowledgement, the flip here is optimistic for the badge,
           and fast_mode_state on the next init re-asserts the truth.
         - A connection made WITHOUT the flag can't take the send, but 'off' needs none (fast mode is
-          already off there) and 'on' reconnects — the flag applies at the (re)connect, immediately
-          if idle, at the end of the current turn if busy (request_reconnect, the /effort machinery)."""
+          already off there) and 'on' reconnects: the flag applies at the (re)connect, at once when the
+          session is quiet, else at the turn settle that finds it quiet (request_reconnect, the /effort
+          machinery; a pick held for live work waits for the settle that finds none, and the badge flips
+          at the arm). An 'off' while an 'on' pick is pending withdraws it (_withdraw_held_pick)."""
         if value not in ("on", "off"):
             return False
         if not read_reg(self.state_dir, sid):
@@ -13056,8 +13064,9 @@ class SdkBackend:
         the session's per-session env, so a re-assert naming fewer vars drops the missing ones (the
         one coherent reading of `romp new --env` re-run on a standing session, which declares the
         full env it wants). Env is connect-time exactly like --effort (the CLI reads settings at
-        launch, no runtime control), so a CHANGE persists and RECONNECTS to apply — idle → now, busy
-        → at turn end — set_effort's shape, via the same locked _update_reg (an unserialized RMW
+        launch, no runtime control), so a CHANGE persists and RECONNECTS to apply (set_effort's shape and
+        arm rule: at once when the session is quiet, else at the turn settle that finds it quiet; a
+        change held for live work waits for the settle that finds none), via the same locked _update_reg (an unserialized RMW
         could drop the field, the 2026-08-14 downgrade bug). An UNCHANGED re-assert (the fresh-spawn
         echo from /new's prefs pass, a nightly re-brief repeating the same --env) is already the
         world the reg describes — reg and live connection can only diverge while an applying
@@ -13089,8 +13098,10 @@ class SdkBackend:
         """Change which account this session bills — 'login' (the machine's Claude login) or 'key'
         (the key behind Claude Code's apiKeyHelper). Auth is connect-time (a login pick rides the
         per-session settings layer at launch; there is no runtime control), so this persists the pick and RECONNECTS to apply, exactly
-        like set_effort: immediately if idle, at the end of the current turn if busy. The CLI's
-        next init confirms via apiKeySource (_note_auth_source flags a landing on the wrong side)."""
+        like set_effort and under its arm rule: at once when the session is quiet, else at the turn settle
+        that finds it quiet; a pick held for live work waits for the settle that finds none, and auth_live
+        is cleared at the arm. The CLI's next init confirms via apiKeySource (_note_auth_source flags a
+        landing on the wrong side)."""
         if value not in ("login", "key"):
             return False
         why = self.auth_unavailable_why(value)
@@ -13127,7 +13138,8 @@ class SdkBackend:
             self._log("auth (%s): set to %s; already applying, no new request" % (s.name, value))
         elif s and s._launched_auth == value and (launching is None or launching == value):
             # UNCHANGED, set_effort's guard for billing: the CLI this session runs launched on this side
-            # (_launched_auth, the side _connect_landed stamped: "key" only when the key was injected), and
+            # (_launched_auth, the side _connect_landed stamped: "key" only when the box's apiKeyHelper billed
+            # the launch), and
             # no connect in progress is about to change it (_launching; review round 2: a revert in the
             # spawn window compared against the process being replaced). Nothing to apply, so no
             # reconnect. An unpicked session whose launch happened to land here (effective_auth's fallback)
