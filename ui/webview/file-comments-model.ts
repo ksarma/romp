@@ -1097,6 +1097,12 @@ export function partitionPending(hunks: Hunk[], seen: ReadonlySet<string> | null
   return out;
 }
 
+/** The saved line's words (file-comments.ts savedLine; decision 43, 2026-09-09): a save never moves the view, and when the
+ *  card it landed in is out of view the line at the panel's foot says which side of the box it is on — the side the
+ *  panel read from the card's place (cardWhere). */
+export function savedWhereWords(side: "above" | "below"): string {
+  return "Saved · the card is " + side;
+}
 /** The Send confirm's accept option (decision 41): "accept the N pending changes you have seen", and in one parenthesis
  *  after it "K unseen stay pending" when `unseen` pending changes have not been on screen at a gesture of the person's yet
  *  (the same K the arrivals line counts as changes since they last looked, so it is not said twice here). With NO seen

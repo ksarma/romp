@@ -3,10 +3,11 @@
 // feed.css's own rules, in Chromium and Firefox. Two scenes. THE NOTICE: a status landing with a reply and a change of the
 // session's shows one line under the header in the accent with a dot before it, and a dot on the arrival cards' heads and
 // on their marks in the text; a real wheel over the body marks the arrival whose card is in the track's box seen — its dot
-// off, the line's count down — and leaves the one below the box. THE SAVE'S SCROLL: a whole-file comment saved while the
-// text is scrolled down brings the text to its card (the 2026-09-07 rule, kept) unless a wheel came between Save and the
-// reply, when the text stays where the wheel left it. Skips LOUDLY without a playwright browser (CI installs none), as the
-// other browser legs do. Synthetic values only: invented prose, placeholder ids, the session name "api".
+// off, the line's count down — and leaves the one below the box. THE SAVE: a whole-file comment saved while the text is
+// scrolled down moves nothing (decision 43; before it, the text was brought to the card, and then not after a wheel), and
+// the line at the panel's foot says the card is above, a button in the sent note's green; a real wheel ends the line, and
+// its click brings the text to the card. Skips LOUDLY without a playwright browser (CI installs none), as the other browser
+// legs do. Synthetic values only: invented prose, placeholder ids, the session name "api".
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -121,10 +122,11 @@ const land = async (page: any, status: Record<string, unknown>): Promise<void> =
 };
 type Scene = {
   line: { text: string; color: string; dot: string; inHead: boolean } | null;
-  cards: Record<string, { top: number; isNew: boolean; dot: string } | null>;
+  cards: Record<string, { top: number; bottom: number; isNew: boolean; dot: string } | null>;
   marks: Record<string, { isNew: boolean; image: string } | null>;
   bodyScroll: number; trackScroll: number; trackBox: { top: number; bottom: number }; posted: number; lastVerb: string | null;
   composerHidden: boolean;
+  saved: { text: string; tag: string; inSend: boolean; color: string; display: string } | null;   // the line at the foot for a saved card out of view (decision 43)
 };
 const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.evaluate((keys: Record<string, string>) => {
   const w = window as any;
@@ -136,7 +138,7 @@ const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.
   for (const [name, key] of Object.entries(keys)) {
     const card = aside.querySelector('.fc-card[data-id="' + key + '"]') as HTMLElement | null;
     const head = card ? (card.querySelector(".fc-card-head") as HTMLElement) : null;
-    cards[name] = card ? { top: card.getBoundingClientRect().top, isNew: card.dataset.new === "1", dot: head ? getComputedStyle(head, "::before").width : "" } : null;
+    cards[name] = card ? { top: card.getBoundingClientRect().top, bottom: card.getBoundingClientRect().bottom, isNew: card.dataset.new === "1", dot: head ? getComputedStyle(head, "::before").width : "" } : null;
     const act = key.startsWith("chg:") ? "fcchange" : "fcopen", id = key.startsWith("chg:") ? key.slice(4) : key;
     const m = body.querySelector('[data-act="' + act + '"][data-id="' + id + '"]') as HTMLElement | null;
     marks[name] = m ? { isNew: m.dataset.new === "1", image: getComputedStyle(m).backgroundImage } : null;
@@ -144,10 +146,12 @@ const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.
   const tb = track.getBoundingClientRect();
   const composer = aside.querySelector(".fc-composer") as HTMLElement | null;
   const last = w.__posted[w.__posted.length - 1];
+  const savedEl = aside.querySelector('[data-act="fcsavedgo"]') as HTMLElement | null;
   return {
     line: line ? { text: line.textContent || "", color: getComputedStyle(line).color, dot: getComputedStyle(line, "::before").width, inHead: !!line.closest(".fc-head") } : null,
     cards, marks, bodyScroll: body.scrollTop, trackScroll: track.scrollTop, trackBox: { top: tb.top, bottom: tb.bottom },
     posted: w.__posted.length, lastVerb: last ? last.verb || null : null, composerHidden: composer ? composer.hidden : true,
+    saved: savedEl ? { text: savedEl.textContent || "", tag: savedEl.tagName, inSend: !!savedEl.closest(".fc-sec-send"), color: getComputedStyle(savedEl).color, display: getComputedStyle(savedEl).display } : null,
   };
 }, keys);
 const frames = (page: any, n = 2): Promise<void> => page.evaluate((n: number) => new Promise<void>((r) => { const step = (k: number) => (k ? requestAnimationFrame(() => step(k - 1)) : r()); step(n); }), n);
@@ -161,6 +165,7 @@ async function wheel(page: any, dy: number): Promise<void> {
 }
 const KEYS = { c: COMMENT.id, chg: "chg:h2" };
 const ACCENT = "rgb(156, 210, 255)";
+const GREEN = "rgb(119, 204, 119)";                              // the page's --green (#7c7), the sent note's colour
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
@@ -226,7 +231,7 @@ for (const name of ["chromium", "firefox"]) {
     });
   });
 
-  test(`in ${name}: a whole-file comment saved while the text is scrolled down brings the text to its card; saved again with a wheel between Save and the reply, the text stays where the wheel left it`, async (t) => {
+  test(`in ${name}: a whole-file comment saved while the text is scrolled down moves nothing, and the line at the panel's foot says the card is above — a button in the Send section, in the sent note's green; a real wheel ends the line; saved again, the line's click brings the text to the card and the line is over`, async (t) => {
     await inBrowser(t, name, async (page) => {
       await mount(page);
       // scrolled down: the loose card at the top of the track is out of view, the 2026-09-07 case
@@ -242,35 +247,49 @@ for (const name of ["chromium", "firefox"]) {
       await frames(page);
       s = await scene(page, KEYS);
       assert.equal(s.lastVerb, "comment", "the save's request went");
+      assert.equal(s.saved, null, "no line before the save's status lands");
       const id1 = (T0 + 50000) + "-1";
       await answer(page, withSaved(id1, "1757145600000000005"));
       s = await scene(page, { saved: id1 });
       assert.ok(s.cards.saved, "the saved card is in the list");
-      assert.ok(s.bodyScroll < down - 300, "nothing happened meanwhile: the save brought the text to the card (" + down + " → " + s.bodyScroll + ")");
+      assert.equal(s.bodyScroll, down, "nothing moved: the text stays where it was (before decision 43: brought to the card)");
+      assert.equal(s.trackScroll, down, "the track neither");
+      assert.ok(s.cards.saved!.bottom <= s.trackBox.top, "the fixture: the loose card is above the track's box: " + JSON.stringify(s.cards.saved) + " over " + JSON.stringify(s.trackBox));
       assert.equal(s.composerHidden, true, "the composer closed");
-      // again, with a wheel during the wait
-      await wheel(page, 1200);
-      s = await scene(page, KEYS);
-      const down2 = s.bodyScroll;
-      assert.ok(down2 > 400, "scrolled down again: " + down2);
+      assert.ok(s.saved, "the line is in the panel");
+      assert.equal(s.saved!.text, "Saved · the card is above");
+      assert.equal(s.saved!.tag, "BUTTON", "a button");
+      assert.equal(s.saved!.inSend, true, "in the Send section, at the sent note's place");
+      assert.equal(s.saved!.color, GREEN, "in the sent note's green");
+      assert.equal(s.saved!.display, "block", "a line of its own");
+      // the person's next gesture: a real wheel ends the line, in place
+      await wheel(page, -60);
+      s = await scene(page, { saved: id1 });
+      assert.equal(s.saved, null, "the wheel ended the line");
+      assert.ok(s.bodyScroll < down && s.bodyScroll > 300, "the wheel moved the text a little, and nothing else did: " + down + " → " + s.bodyScroll);
+      const moved = s.bodyScroll;
+      // again: the line's click brings the text to the card
       await click(page, '[data-act="fcfile"]');
       await frames(page);
       await page.focus(".fileview-aside .fc-composer .fc-input");
       await page.keyboard.type(NOTE + " Twice.");
       await click(page, '[data-act="fcsave"]');
       await frames(page);
-      await wheel(page, -60);                                       // the person moves on while the host answers
-      s = await scene(page, KEYS);
-      const moved = s.bodyScroll;
-      assert.ok(moved < down2 && moved > 300, "the wheel moved the text a little: " + down2 + " → " + moved);
       const id2 = (T0 + 60000) + "-2";
       const twice = withSaved(id2, "1757145600000000006") as any;
       twice.store.comments[twice.store.comments.length - 1].body = NOTE + " Twice.";
       await answer(page, twice);
       s = await scene(page, { saved: id2 });
       assert.ok(s.cards.saved, "the second saved card is in the list");
-      assert.equal(s.bodyScroll, moved, "the save scrolled nothing: the text stays where the wheel left it (before: back to the card)");
-      assert.equal(s.trackScroll, moved, "the track with it");
+      assert.equal(s.bodyScroll, moved, "the save scrolled nothing: the text stays where the wheel left it");
+      assert.equal(s.saved!.text, "Saved · the card is above");
+      await click(page, '[data-act="fcsavedgo"]');
+      await frames(page, 3);
+      s = await scene(page, { saved: id2 });
+      assert.equal(s.saved, null, "the click ended the line");
+      assert.ok(s.cards.saved!.top >= s.trackBox.top && s.cards.saved!.bottom <= s.trackBox.bottom, "and brought the card into the track's box: " + JSON.stringify(s.cards.saved) + " in " + JSON.stringify(s.trackBox));
+      assert.ok(s.bodyScroll < 400, "the text near its top, where the loose card is: " + s.bodyScroll);
+      assert.ok(Math.abs(s.trackScroll - s.bodyScroll) <= 1, "the lock: the body came along with the track");
       assert.equal(s.composerHidden, true, "the composer closed as before");
     });
   });

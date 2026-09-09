@@ -3,7 +3,7 @@
 // copy it), with what the review found the stand-in could not see: a press carries a BUTTON (pressHold arms on the primary
 // one alone; the original's events had none, so the row's hold never engaged there), a textarea takes focus (the note box's
 // focus restore), the panel's own box and the cards in flow are measured (the list layout's branches of entryShown and
-// cardWhole), and the note box has a content height (its cap). What the fixes pin: the arrivals line changes through the
+// cardWhere), and the note box has a content height (its cap). What the fixes pin: the arrivals line changes through the
 // row's press hold — the hold is installed BEFORE the gesture listeners, so a press on an arrival's card keeps the line and
 // the list under the pointer until the release; an arrival's entry follows the status (a change detached since it arrived is
 // no longer a pending one on the accept option, and one re-attached is); the line's click reaches an arrival the filter or the
@@ -580,7 +580,7 @@ test("at source: the hold is installed before the gesture listeners on the same 
   assert.match(SRC, /this\.hold = pressHold\(row\);[^\n]*\n\s*for \(const ev of \["pointerdown", "keydown"\]\) row\.addEventListener\(ev, \(e\) => this\.gesture\(e\), true\);/);
   const ctor = SRC.slice(SRC.indexOf("constructor(readonly ctx: FileViewActionCtx"), SRC.indexOf("// ── provenance"));
   assert.ok(ctor.indexOf("this.hold = pressHold(row)") < ctor.indexOf('for (const ev of ["pointerdown", "keydown"])'), "the hold first");
-  assert.match(SRC, /if \(this\.hold\) void this\.hold\.defer\(words\); else words\(\);/, "the line's change goes through the hold");
+  assert.match(SRC, /if \(this\.hold\) void this\.hold\.defer\(\(\) => this\.reflectLines\(\)\); else this\.reflectLines\(\);/, "the lines' changes go through the hold (reflect: the arrivals line, the accept option, the saved line, in one run)");
 });
 
 // ── an arrival's entry follows the status ─────────────────────────────────────────────────────────
@@ -706,17 +706,24 @@ async function saveReplyInList(t: Ctx, scrolled: number): Promise<World> {
 }
 const cardsScrolledInto = (): string[] => scrolledInto.filter((c) => c.classList.contains("fc-card")).map((c) => c.dataset.id);
 
-test("the list layout: the saved card below the aside's box is scrolled into view; whole in the box already, it is not", async (t) => {
+test("the list layout: the saved card below the aside's box is not scrolled to (decision 43; before: scrollIntoView), and the line at the panel's foot says it is below, by the card's rect against the aside's — its click scrolls the card into view as a list item and ends the line; whole in the box already, no line", async (t) => {
   try {
     let w = await saveReplyInList(t, 0);                // three closed cards fill the box [360, 480): the open passage card starts at 480
     const r = w.card(passage.id)!.getBoundingClientRect();
     assert.ok(r.top >= LIST_TOP + LIST_VIEW, "the fixture: the saved card is below the box: " + r.top);
-    assert.deepEqual(cardsScrolledInto(), [passage.id], "scrolled into view (the list layout's scrollCard)");
+    assert.deepEqual(cardsScrolledInto(), [], "nothing scrolled (before: the list layout's scrollCard brought the card into view)");
+    const line = actIn(w.aside(), "fcsavedgo");
+    assert.ok(line, "the line is in the panel");
+    assert.equal(line!.textContent, "Saved · the card is below", "by the card's rect against the aside's box");
+    line!.click(); await tick();
+    assert.deepEqual(cardsScrolledInto(), [passage.id], "the click: scrolled into view (the list layout's scrollCard)");
+    assert.equal(actIn(w.aside(), "fcsavedgo"), null, "and the line is over");
     w.close();
     w = await saveReplyInList(t, 120);                  // scrolled three cards: the passage's card fills the box [360, 480) exactly
     const r2 = w.card(passage.id)!.getBoundingClientRect();
     assert.ok(r2.top >= LIST_TOP && r2.bottom <= LIST_TOP + LIST_VIEW, "the fixture: whole in the box: " + r2.top + ".." + r2.bottom);
     assert.deepEqual(cardsScrolledInto(), [], "a card whole in view needs no scroll");
+    assert.equal(actIn(w.aside(), "fcsavedgo"), null, "and no line");
     w.close();
   } finally { narrow = false; }
 });

@@ -5,8 +5,10 @@
 // box when its head or its reference link is clicked (the scroll that shows the card's end is track content, with no
 // header term; one added on top put the card's head under the panel's header for every card taller than the track
 // less the header), that a card taller than the track is clipped at its head by the excess alone, and that a comment
-// saved with the text scrolled far down brings its card into view: a whole-file comment's card loose at the top of the
-// track (the track to it, the body with it through the lock), a reply's card to its mark — the reply's card the focus,
+// saved with the text scrolled far down moves nothing (decision 43; before it, the save brought the card into view) while
+// the line at the panel's foot says the card is above, and that the line's click brings the card into view: a whole-file
+// comment's card loose at the top of the track (the track to it, the body with it through the lock), a reply's card to its
+// mark — the reply's card the focus,
 // level with its mark though the loose group (the whole-file cards) reaches past it, so the group's end is laid below the
 // focused card and its head keeps its place (the focus follow-on's review, 2026-09-08; the one real-engine exercise of
 // card-layout.ts's spill, its fixture pinned so it cannot retire silently). Runs in Chromium and Firefox; skips LOUDLY
@@ -103,6 +105,7 @@ type Scene = {
   bodyRange: number; trackRange: number;                          // each scroller's farthest scrollTop (scrollHeight - clientHeight)
   bodyBox: Box; trackBox: Box;                                    // the two scrollers' boxes in the viewport (the track's ends above the footer)
   trackHeight: number; composerHidden: boolean;                   // the track's box height; whether the composer is closed
+  saved: string | null;                                           // the line at the foot for a saved card out of view (decision 43), its words
 };
 
 /** Mount the panel over the rendered document, answer its status asks, open it, and let the paint and the pass run. */
@@ -155,6 +158,7 @@ const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.
     cards, marks, bodyScroll: body.scrollTop, trackScroll: track.scrollTop, flex: getComputedStyle(document.getElementById("main")!).flexDirection,
     bodyRange: body.scrollHeight - body.clientHeight, trackRange: track.scrollHeight - track.clientHeight, bodyBox: box(body), trackBox: box(track),
     trackHeight: track.clientHeight, composerHidden: (aside.querySelector(".fc-composer") as HTMLElement).hidden,
+    saved: (aside.querySelector('[data-act="fcsavedgo"]') as HTMLElement | null)?.textContent ?? null,
   };
 }, keys);
 const frames = (page: any, n = 2): Promise<void> => page.evaluate((n: number) => new Promise<void>((r) => { const step = (k: number) => (k ? requestAnimationFrame(() => step(k - 1)) : r()); step(n); }), n);
@@ -262,7 +266,7 @@ for (const name of ["chromium", "firefox"]) {
     });
   });
 
-  test(`in ${name}: a whole-file comment saved with the text scrolled far down brings its card into view (the track to the loose card at its top, the body with it); a reply saved brings the card to its mark; the composer closes after`, async (t) => {
+  test(`in ${name}: a whole-file comment saved with the text scrolled far down moves nothing, and the line at the foot says the card is above; its click brings the card into view (the track to the loose card at its top, the body with it); a reply saved the same way, and its click brings the card to its mark; the composer closes after each`, async (t) => {
     await inBrowser(t, name, async (page) => {
       await mount(page);
       await page.evaluate(() => { document.getElementById("body")!.scrollTop = 1400; });
@@ -284,22 +288,34 @@ for (const name of ["chromium", "firefox"]) {
       s = await scene(page, keys);
       assert.ok(s.cards.fresh, "the new card is rendered");
       assert.equal(s.composerHidden, true, "the composer closed");
-      assert.ok(wholeIn(s.cards.fresh, s.trackBox), "the new card is in the track's box: " + JSON.stringify(s.cards.fresh) + " in " + JSON.stringify(s.trackBox));
+      assert.equal(s.bodyScroll, 1400, "nothing moved: a save never moves the view (decision 43; before it, the text came to the card)");
+      near(s.trackScroll, 1400, "the track neither", 1);
+      assert.ok(s.cards.fresh.bottom <= s.trackBox.top, "the new card is above the track's box: " + JSON.stringify(s.cards.fresh) + " over " + JSON.stringify(s.trackBox));
+      assert.equal(s.saved, "Saved · the card is above", "the line at the foot says so");
+      await click(page, '.fileview-aside [data-act="fcsavedgo"]');
+      await frames(page, 4);
+      s = await scene(page, keys);
+      assert.equal(s.saved, null, "the click ended the line");
+      assert.ok(wholeIn(s.cards.fresh, s.trackBox), "and brought the new card into the track's box: " + JSON.stringify(s.cards.fresh) + " in " + JSON.stringify(s.trackBox));
       near(s.trackScroll, s.bodyScroll, "the lock: the body came along with the track", 1);
       assert.ok(s.bodyScroll < 400, "the text is near its top, where the loose card is: " + s.bodyScroll);
       // a reply on paragraph 3's card: the card opened (its head; Reply stands in the open card), Reply, the text scrolled far
-      // down meanwhile, the reply saved — the card comes back to its mark, whole in the track's box
+      // down meanwhile, the reply saved — nothing moves, the line says the card is above, and its click brings the card back
+      // to its mark, whole in the track's box
       await click(page, cardSel(KEYS.c3, ".fc-card-head"));
       await frames(page, 3);
       await click(page, cardSel(KEYS.c3, '[data-act="fcreply"]'));
       await frames(page, 2);
+      // the words first, then the text scrolled far down, then the chord: a person types with the box in view and scrolls on
+      // while the words wait (a focus AFTER the scroll is the browser's own scroll of the track to the box, page.focus being a
+      // native focus with no preventScroll, and the lock carries it onto the body: the save's scroll masked that order here)
+      await page.focus(".fileview-aside .fc-composer .fc-input");
+      await page.keyboard.type("Which cache do you mean?");
       await page.evaluate(() => { document.getElementById("body")!.scrollTop = 1400; });
       await frames(page, 2);
       s = await scene(page, keys);
       assert.equal(s.bodyScroll, 1400);
       assert.equal(s.composerHidden, false, "the composer is up for the reply");
-      await page.focus(".fileview-aside .fc-composer .fc-input");
-      await page.keyboard.type("Which cache do you mean?");
       await page.keyboard.press("Control+Enter");   // the save chord
       await awaitVerb(page, "reply");
       assert.equal(await lastVerb(page), "reply");
@@ -308,13 +324,21 @@ for (const name of ["chromium", "firefox"]) {
       await frames(page, 4);
       s = await scene(page, keys);
       assert.equal(s.composerHidden, true, "the composer closed");
+      assert.equal(s.bodyScroll, 1400, "nothing moved (decision 43; before it, the card came back to its mark)");
+      near(s.trackScroll, 1400, "the track neither", 1);
+      assert.ok(s.cards.c3.bottom <= s.trackBox.top, "the fixture: the card is above the track's box, level with its mark far up the text: " + JSON.stringify(s.cards.c3));
+      assert.equal(s.saved, "Saved · the card is above");
+      await click(page, '.fileview-aside [data-act="fcsavedgo"]');
+      await frames(page, 4);
+      s = await scene(page, keys);
+      assert.equal(s.saved, null, "the click ended the line");
       assert.ok(s.cards.c3.height + 8 <= s.trackHeight, "the fixture: the card with its reply fits the track: " + s.cards.c3.height);
       assert.ok(s.marks.c3!.top >= s.bodyBox.top - 1 && s.marks.c3!.bottom <= s.bodyBox.bottom + 1, "the mark is in the body's box: " + JSON.stringify(s.marks.c3) + " in " + JSON.stringify(s.bodyBox));
       assert.ok(wholeIn(s.cards.c3, s.trackBox), "the card is whole in the track's box: " + JSON.stringify(s.cards.c3) + " in " + JSON.stringify(s.trackBox));
       // level with its mark: the card the save landed in is the focus (the focus follow-on, 2026-09-08), held at its mark
       // whatever stands above it. The head click that opened it two steps up set the focus (installLayout); the save's own
-      // setter runs here (scrollToSaved → scrollCard → focusOn) and finds it set, so it changes nothing in this scene —
-      // file-comments-focus-verify.test.ts drives the save whose setter does the work. The loose group (the whole-file cards, at the top
+      // setter (landSaved → focusOn) and the line's click (scrollCard → focusOn) find it set, so they change nothing in
+      // this scene — file-comments-focus-verify.test.ts drives the save whose setter does the work. The loose group (the whole-file cards, at the top
       // of the track) reaches past the mark here — the head is a row taller since Show changes inline joined its button row
       // (the file has a change, and three buttons wrap at 340px), so the track begins that much lower and the card's
       // desired top falls inside the group — and the group is never moved past the track's start: the cards at its end
