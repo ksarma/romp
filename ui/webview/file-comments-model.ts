@@ -440,8 +440,8 @@ export function buildSendMessage(o: MessageOpts): string {
   const nt = neutralizeRompMarkers(o.note || "");
   if (!o.comments.length) {
     // Decisions only (Slice 2: a manual Accept or Reject is unsent until a send carries it): the kernel's
-    // second shape. The comments shape would say "I left 0 comments", print two `--thread <id>` command lines
-    // with no id to put in them, and ask the session to address a list that is not there. No shell word: the
+    // second shape. The comments shape would say "I left 0 comments", print a reply command line with no id to
+    // put in it, and ask the session to address a list that is not there. No shell word: the
     // shape has no command line, so the path reads as written.
     const lines: string[] = ["[obsidian-diff] I went over " + ap + ".", ""];
     if (nt) lines.push(nt, "");
@@ -462,7 +462,7 @@ export function buildSendMessage(o: MessageOpts): string {
   if (o.accepted + o.rejected > 0) lines.push("I accepted " + o.accepted + " of your changes and rejected " + o.rejected + ".", "");
   let second: string;
   if (!isTextPath(o.absPath)) second = "  • to revise it:       regenerate the file with normal writes; never run track-edit on it";
-  else if (o.tracked) second = "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + word + ' --thread <id> --old "<exact text>" --new "<replacement>"';
+  else if (o.tracked) second = "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + word + ' --old "<exact text>" --new "<replacement>"';   // plain track-edit, no --thread (decision 42)
   else second = "  • to revise the text: edit the file normally, then say what you changed with the reply command above";
   lines.push(
     "To respond:",

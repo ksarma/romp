@@ -148,7 +148,7 @@ test("the glance and the counts: 'Comments · N · M changes'; the send's A and 
 // on the kernel's side.
 const TAIL = "To respond:\n" +
   "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file " + ABS + " --thread <id> --note \"<your reply>\"\n" +
-  "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + ABS + " --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
+  "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + ABS + " --old \"<exact text>\" --new \"<replacement>\"\n" +
   "\n" +
   "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
   "naming the file.\n";

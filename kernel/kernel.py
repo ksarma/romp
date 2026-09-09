@@ -45843,9 +45843,11 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text,
     at …); `body` is the comment's unsent turns
     verbatim. The path and every request-supplied string are marker-neutralized; on the two command
     lines the path is then one shell word (_sh_word), in the prose it stays plain. The second
-    "To respond" bullet depends on the file: track-edit for a TRACKED text file, edit-normally for
-    an untracked one, regenerate-with-normal-writes for an image or PDF (track-edit would destroy
-    it). The accepted/rejected line appears only when there was a decision. The closing sentence
+    "To respond" bullet depends on the file: plain track-edit for a TRACKED text file (never
+    `track-edit --thread <id>`: decision 42 took the edit-to-comment link out of the loop, so an
+    edit is a change in the text and a comment is answered in words with track-reply),
+    edit-normally for an untracked one, regenerate-with-normal-writes for an image or PDF
+    (track-edit would destroy it). The accepted/rejected line appears only when there was a decision. The closing sentence
     is the loop's return signal: the session asks for another look the way it asked for this one.
     The webview's builder (ui/webview/file-comments-model.ts, buildSendMessage) produces this text
     byte for byte, so change both or neither.
@@ -45861,7 +45863,7 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text,
     With NO comments the message is decisions only (Slice 2: a manual Accept or Reject, or Accept
     all, is unsent until a send carries it, and the send op admits an empty list when a decision
     is pending) and wears the shape below instead. The comments shape would have said "I left 0
-    comments", printed the two `--thread <id>` command lines with no id to put in them, and asked
+    comments", printed the reply command line with no id to put in it, and asked
     the session to address a list that was not there (the review, 2026-09-06): a template speaking,
     and a reply command aimed at a comment that does not exist. So the decisions-only shape names the
     file and the decisions, says outright that nothing needs a reply, and keeps the closing ask so
@@ -45900,7 +45902,9 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text,
     if not is_text:
         lines.append("  • to revise it:       regenerate the file with normal writes; never run track-edit on it")
     elif tracked:
-        lines.append("  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file %s --thread <id> "
+        # plain track-edit, no `--thread <id>` (decision 42, 2026-09-09): the link that bound an edit to the comment
+        # and showed it inside the comment's card confused the user; edits are changes in the text, words are replies
+        lines.append("  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file %s "
                      "--old \"<exact text>\" --new \"<replacement>\"" % word)
     else:
         lines.append("  • to revise the text: edit the file normally, then say what you changed with the "

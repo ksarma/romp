@@ -103,7 +103,8 @@ class TheDecisionsOnlyMessage(unittest.TestCase):
         self.assertTrue(body.startswith("[obsidian-diff] I left 1 comment on %s.\n\nComment 1781100000000-0 " % REPORT))
         self.assertIn("Which cache? Say which.\n\nI accepted 3 of your changes and rejected 0.\n\nTo respond:\n", body)
         self.assertIn("track-reply.mjs --file %s --thread <id>" % REPORT, body)
-        self.assertIn("track-edit.mjs --file %s --thread <id>" % REPORT, body)
+        self.assertIn("track-edit.mjs --file %s --old" % REPORT, body)
+        self.assertNotIn("track-edit.mjs --file %s --thread" % REPORT, body, "plain track-edit, no comment link (decision 42)")
         self.assertTrue(body.endswith("\nWhen you have addressed these, ask me for another look the same way you asked "
                                       "for this one,\nnaming the file.\n"))
         self.assertNotIn("I went over", body)

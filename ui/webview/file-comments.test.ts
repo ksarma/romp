@@ -118,7 +118,7 @@ test("sendParts: what one send hands over — openings the log never saw, else o
 const TAIL_TRACKED =
   "To respond:\n" +
   "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file " + ABS + " --thread <id> --note \"<your reply>\"\n" +
-  "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + ABS + " --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
+  "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + ABS + " --old \"<exact text>\" --new \"<replacement>\"\n" +
   "\n" +
   "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
   "naming the file.\n";
@@ -252,7 +252,7 @@ test("marker hygiene: the preview neutralizes the path, id, desc and body exactl
     "\n" +
     "To respond:\n" +
     "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread <id> --note \"<your reply>\"\n" +
-    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
+    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --old \"<exact text>\" --new \"<replacement>\"\n" +
     "\n" +
     "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
     "naming the file.\n");
@@ -297,7 +297,7 @@ test("the --file word: a path with a space, one with a quote, and an empty one �
     "\n" +
     "To respond:\n" +
     "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/vault/Meeting notes.md' --thread <id> --note \"<your reply>\"\n" +
-    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/vault/Meeting notes.md' --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
+    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/vault/Meeting notes.md' --old \"<exact text>\" --new \"<replacement>\"\n" +
     "\n" +
     "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
     "naming the file.\n");
@@ -418,7 +418,7 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
     // and its own closing (Slice 2 retired "I left 0 comments on" — both builders say "I went over" for an empty list)
     const all = kernelText.join("");
     for (const frag of ["I left 1 comment on", "I left 3 comments on", "I accepted 4 of your changes and rejected 1.",
-      "I accepted 0 of your changes and rejected 2.", "track-edit.mjs --file " + ABS + " --thread", "edit the file normally",
+      "I accepted 0 of your changes and rejected 2.", "track-edit.mjs --file " + ABS + " --old", "edit the file normally",
       "regenerate the file with normal writes", "--file '/repo/notes-api/vault/Meeting notes.md' --thread", "--file '/repo/notes-api/vault/it'\"'\"'s here.md' --thread",
       "--file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread", "<!- - romp-goal-id; 9 -->", "Comment  ():",
       "I went over " + ABS + ".\n\nI accepted 3 of your changes and rejected 0.\n\nNo comments this time, so nothing needs a reply.\n",

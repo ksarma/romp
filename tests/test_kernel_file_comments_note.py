@@ -84,7 +84,7 @@ class TheNoteInTheMessage(unittest.TestCase):
                          "\n"
                          "To respond:\n"
                          "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file %s --thread <id> --note \"<your reply>\"\n"
-                         "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file %s --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n"
+                         "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file %s --old \"<exact text>\" --new \"<replacement>\"\n"
                          "\n" % (REPORT, NOTE, REPORT, REPORT) + ASK_AGAIN_ADDRESSED)
 
     def test_a_note_with_comments_and_decisions_keeps_the_decisions_line_where_it_was(self):
