@@ -387,7 +387,7 @@ test("the poll's re-render keeps the card node hosting the box: nothing holding 
   assert.equal(doc.focused.length, focusMark, "no refocus was needed: the keyboard never left the box");
   assert.ok(doc.activeElement === box, "doc.activeElement is box");
   assert.equal(card.className, "fc-card open", "the kept node wears the fresh render's class");
-  assert.deepEqual(h.kids(card), ["fc-card-head", "fc-body", "fc-replies", "fc-composer fc-composer-in", "fc-actions"], "the fresh children around the box, the box before the buttons");
+  assert.deepEqual(h.kids(card), ["fc-card-head", "fc-body fc-clip", "fc-replies fc-clip", "fc-clip-row", "fc-composer fc-composer-in", "fc-actions"], "the fresh children around the box, the box before the buttons");
   assert.ok(card.querySelector(".fc-card-head") !== headBefore, "the card's head is the fresh render's");
   assert.ok(h.card(third.id), "the rest of the list is the fresh one");
   assert.equal(box.value, "Line one.\nLine two."); assert.deepEqual([box.selectionStart, box.selectionEnd], [5, 5]); assert.equal(box.style.height, "65px");
@@ -418,7 +418,7 @@ test("a hosted reply the same: the change card and the comment's box on it are k
   assert.equal(h.outOfDoc(mark).length, 0, "nothing holding the textarea was detached");
   assert.equal(doc.focused.length, focusMark);
   assert.ok(doc.activeElement === box, "doc.activeElement is box");
-  assert.deepEqual(h.kids(hosted), ["fc-reply fc-reply-you", "fc-replies", "fc-composer fc-composer-in", "fc-actions"]);
+  assert.deepEqual(h.kids(hosted), ["fc-reply fc-reply-you", "fc-replies fc-clip", "fc-composer fc-composer-in", "fc-actions"]);
   assert.ok(chg.classList.contains("open"));
   assert.ok(h.card(whole.id), "the fresh list's new card is there");
   // the change accepted: the change card is gone from the fresh list, so the box takes the one move a rebuilt list can
@@ -643,7 +643,7 @@ test("source: render latches the reply's key and swaps the cards around the box;
   assert.match(SRC, /this\.latchReplyCard\(\);[^\n]*\n\s*head\.replaceChildren\(this\.renderHead\(s\)\);\n\s*this\.swapCards\(this\.renderCards\(s\)\);[^\n]*\n\s*this\.renderComposer\(\);/, "the key first, then the cards around the box, then the composer");
   assert.match(SRC, /if \(!cards\.contains\(box\) \|\| !this\.graft\(cards, \[fresh\], box\)\) cards\.replaceChildren\(fresh\);/, "a wholesale swap only when the box is not in a card the fresh list keeps");
   assert.match(SRC, /if \(this\.input\.scrollTop !== scroll\) this\.input\.scrollTop = scroll;/, "a moved textarea keeps its scroll offset");
-  assert.match(SRC, /const moved = typing && this\.composerBox\.parentElement !== home;\n(?:[^\n]*\n)*?\s*this\.afterRender\(\);[^\n]*\n\s*if \(moved\) this\.showComposer\(\);/, "a box moved while the person was typing in it is brought into view: a parent other than the one it stood in");
+  assert.match(SRC, /const moved = typing && this\.composerBox\.parentElement !== home;\n(?:[^\n]*\n)*?\s*this\.afterRender\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(keep\) this\.refocus\(keep, want, true\);\n\s*if \(moved\) this\.showComposer\(\);/, "a box moved while the person was typing in it is brought into view: a parent other than the one it stood in");
   assert.match(SRC, /const id = r === null \? null : cssId\(r\);/, "placeComposer's selector takes the id escaped");
   assert.match(SRC, /'\[data-act="fcreply"\]\[data-id="' \+ cssId\(was\.commentId\) \+ '"\]'/, "closeComposer's too");
   assert.match(SRC, /function cssId\(s: string\): string \{\n\s*return typeof CSS !== "undefined" && typeof CSS\.escape === "function" \? CSS\.escape\(s\) : s\.replace\(\/\["\\\\\]\/g, "\\\\\$&"\);/);

@@ -592,7 +592,7 @@ test("on a coarse pointer the held head's words stand under it as a line, on the
     await h.open(WITH_CHANGE);
     h.startReply(passage.id, passage.id);
     const card = h.card(passage.id)!;
-    assert.deepEqual(h.kids(card), ["fc-card-head", "fc-note fc-held", "fc-body", "fc-replies", "fc-composer fc-composer-in", "fc-actions"], "the line under the head");
+    assert.deepEqual(h.kids(card), ["fc-card-head", "fc-note fc-held", "fc-body fc-clip", "fc-replies fc-clip", "fc-clip-row", "fc-composer fc-composer-in", "fc-actions"], "the line under the head");
     assert.equal(card.querySelector(".fc-held")!.textContent, HOLD + ".");
     assert.equal(h.head(passage.id).title, HOLD, "the same words as the title");
     h.click('.fc-card[data-id="' + passage.id + '"] .fc-card-head');   // a tap: the card stays, the words are there to read

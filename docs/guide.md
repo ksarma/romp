@@ -398,7 +398,10 @@ section link scrolls to it. An image map (`<map>`, `usemap`) is dropped, as on G
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file, where each card sits level with the passage it is about and scrolls with the text;
-when the column is narrow the panel drops below the file and lists the cards instead. Select a
+when the column is narrow the panel drops below the file and lists the cards instead. The card
+you click sits level with its passage whatever stands above it, and a long card folds to a few
+lines with **Show more** at its foot. Neither happens in the list under a narrow column, where a
+long card shows whole. Select a
 passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection (it
 hides when you scroll and appears again when you select); type the comment
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the

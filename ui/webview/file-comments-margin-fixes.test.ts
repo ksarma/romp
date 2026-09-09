@@ -718,6 +718,6 @@ test("at source: the scroll that shows a card's end is track content (no header 
   assert.doesNotMatch(SRC, /const showCard = [^;\n]*offset[^;\n]*;/, "no header term in it");
   assert.match(SRC, /if \(r\) this\.scrollToSaved\(c, had, r, note\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/, "scroll, then close");
   assert.match(SRC, /const saved = c\.kind === "reply" \? c\.commentId : savedCommentId\(had, r, note\);\n\s*if \(saved !== null\) this\.scrollCard\(this\.cardKey\(saved\)\);/, "a reply's card by its comment, a new comment's off the reply's store");
-  assert.match(SRC, /if \(this\.margin && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/, "a loose card is scrolled to by both scrollers at once, never by scrollIntoView alone");
+  assert.match(SRC, /if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/, "a loose card is scrolled to by both scrollers at once, never by scrollIntoView alone (the card the focus first: the focus follow-on, 2026-09-08)");
   assert.match(SRC, /const had = new Set\(\(this\.status && this\.status\.store \? this\.status\.store\.comments : \[\]\)\.map\(\(x\) => x\.id\)\);/, "the baseline is the status the write is fenced on");
 });

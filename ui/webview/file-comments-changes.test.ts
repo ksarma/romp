@@ -297,7 +297,12 @@ test("the paint pass: unpaintChanges before each repaint, the change painters af
   assert.match(pc, /this\.mark\(m\);/, "a change mark is the panel's own (mark: owns, and the registry the chat pane's link handler reads), like a comment highlight");
   assert.match(SRC, /const rv = btn\("Reveal", "fcreveal"\); rv\.dataset\.id = c\.key;/, "Reveal on a change card carries the card's key");
   assert.match(SRC, /if \(c\.kind === "del" \|\| !painted\) \{/, "Reveal on a deletion and on any change the view does not show");
-  assert.match(SRC, /this\.ctx\.setMode\("raw"\);\n\s*this\.ctx\.scrollToOffset\(c\.curFrom\);/, "Reveal: Raw, then the change's start");
+  // the switch goes through revealInRaw since the focus follow-on's merge audit (2026-09-09): in the margin layout it
+  // makes the card the focus BEFORE setMode, so the switch's own pass lays the card level with its Raw mark; the shape
+  // of that method is file-comments-focus-audit.test.ts's pin, this one holds Reveal's order: Raw, then the change's start
+  assert.match(SRC, /this\.revealInRaw\(key\);\n\s*this\.ctx\.scrollToOffset\(c\.curFrom\);/, "Reveal: Raw (revealInRaw), then the change's start");
+  const rir = SRC.split("private revealInRaw(key: string): void {")[1].split("\n  }\n")[0];
+  assert.match(rir, /this\.ctx\.setMode\("raw"\);/, "revealInRaw is the switch to Raw");
 });
 
 test("vocabulary: the person's words in the panel and the guide; CONTEXT.md's terms, never the format's", () => {

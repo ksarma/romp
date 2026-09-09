@@ -10548,14 +10548,18 @@ def _auto_pause_on_spend_limit(now, tmux):
 def _bills_login(tm):
     """Whether a live-map row's session bills the machine LOGIN (the account a usage limit is on): the CLI's
     own authLive report first, the registry's auth next; a row with neither (a tmux session, an SDK session
-    before its init landed) can only be billing the login when this box holds no key at all
-    (_auth_key_present), and is taken as billing a key otherwise. The spend pause reads it at both edges
-    (_auto_pause_on_spend_limit records the capped session's billing; _auto_resume_retry's spend rule
-    compares a candidate's against it)."""
+    whose row failed to build) is taken to bill what a session on this box bills absent a pick of its own
+    (_unpicked_default: the backend's one rule, the key romp holds to inject, else the side the box
+    declares through ROMP_EXPECTED_AUTH when no gear pick has made it inert, else the login). The key
+    comes before the declaration because the launch injects a configured source for every unpicked
+    session whatever the box declares; a box whose sessions authenticate through Claude Code's
+    apiKeyHelper holds no key of romp's, so the declaration decides there. The spend pause reads it at
+    both edges (_auto_pause_on_spend_limit records the capped session's billing; _auto_resume_retry's
+    spend rule compares a candidate's against it)."""
     a = str((tm or {}).get("authLive") or (tm or {}).get("auth") or "")
     if a:
         return a == "login"
-    return not _auth_key_present()
+    return _unpicked_default() == "login"
 
 
 def _auto_resume_retry(now, tmux):
@@ -15564,6 +15568,77 @@ def _create_codex_session(nm, cwd, client=None, parent="", tags=()):
         _release_name(nm)
 
 
+def _codex_gate_closed(cx):
+    """The gate's state BEFORE a door opens it, as the pair (closed, closings0): `closed` is True while
+    `cx` holds no live session (cx.has_live, one read under the backend's sessions lock; live_sessions()
+    walks a row list it took earlier, so it can read empty across a landing and a kill while a row is
+    live); `closings0` is the backend's count of gate closings, the live set going empty, counted where
+    the row leaves it (CodexBackend.gate_closings). Taken by the two doors (the spawn and the revive) on
+    the line before the backend lands the row; _codex_gate_opened compares both against the world after
+    the landing. The count is read FIRST: a kill that lands between the two reads then shows in the
+    snapshot (the set reads empty), and one that lands after both shows in the count, so no kill escapes
+    both reads. A backend that raises here reads as (True, None), closed with no count to compare, and
+    the frame fires: the worst case is one frame too many, which costs each picker one /models re-read;
+    the other answer would be a picker that never hears the list landed."""
+    try:
+        closings0 = cx.gate_closings()
+        return (not cx.has_live(), closings0)
+    except Exception:
+        return (True, None)
+
+
+def _codex_gate_opened(cx, door, was_closed, closings0):
+    """Send the models frame when the gate was closed at any point between the caller's snapshot and
+    this line, and a row is live now (the caller's; or, on the caller's raise path, another door's, see
+    the end). GET /models consults the Codex catalog only where this machine opted in (the Codex
+    default backend, the Codex judge engine, or a live Codex session), so the first live session flips
+    that gate from closed to open, and every open picker's cached `codex.models` just went from [] to
+    the real list: tell them with a models frame, the same event the pick memory and the catalog fetch
+    send. Without it a dashboard loaded before the flip kept its empty Codex menu until a reload (the
+    owner's empty picker, 2026-09-09). Event-keyed on the gate's flip itself, never on every spawn or
+    revive: a second live session changes nothing the payload carries. TWO doors open the gate and
+    both call this from a finally around the backend's landing call, so on its raise path too:
+    _create_codex_session_inner (cx.spawn) and _revive_session_inner's Codex arm (a successful
+    cx.resume makes a dead session live again; the first cut sent the frame from the spawn alone, so
+    reviving the only Codex session after a kernel restart left every tab's Codex list empty).
+
+    The flip is read from two facts the door recorded before it landed its row (_codex_gate_closed):
+    `was_closed`, the set was empty then; and `closings0`, the backend's closings counter then
+    (CodexBackend.gate_closings: incremented under the sessions lock at every write that leaves no
+    live row, a kill, the name-write retire, a spawn's failure pop, a revive's rollback). The gate was
+    closed at the snapshot, or it closed after it (the counter moved); either way it is open now with
+    this row in it, and the pickers must hear so. Neither fact alone is enough. POST /new runs on a
+    thread per request and the WS create op per client, so two first creates (or two first revives
+    after a restart) can both land their rows before either reaches this line: a rule on the count
+    after landing (`len(live_sessions()) == 1`, the first cut) saw 2 in both threads and fired for
+    neither, leaving every open dashboard's Codex list empty until the chat's own open-time re-read
+    (the timeline lane re-reads only on this frame). The snapshot alone misses a kill of the only
+    other session between the snapshot and the landing, and a count of exactly one beside it (the
+    second cut) still missed two creates racing while that kill landed between both snapshots and
+    both landings (both saw a row, both counted 2), and fired where nothing flipped (a kill of another
+    session after this row landed, a revive of an already-live sole row). The counter is the event
+    itself. Sequential second creates fire on neither fact (the snapshot saw a row, the counter is
+    still); two racing first creates send two frames per app when both snapshots ran before either
+    landing, each a cheap re-read (the rev increments and the picker drops the lower one); a kill of
+    the only other session between the snapshot and the landing sends one (the closing is counted only
+    while this row is not yet in the set); a kill after this row landed sends none. The raise path: a
+    door whose landing call put its row and then failed (a spawn's registry or names write, a revive's
+    registry save) takes the row back, by the failure pop or the rollback, and reaches this line through
+    the finally. Another door may have snapshotted that row as the open gate and landed beside it, so
+    the set never emptied, no closing was counted, and that door's own window held nothing: the
+    aborting door is the only one whose window saw the gate closed or a closing, and with a row live now it
+    sends the frame.
+    With nothing live now it sends none (the failing spawn alone; its pop counted the closing it is,
+    for a door that lands after it), and a failure beside a row that was live at the snapshot moves
+    neither fact. The live read is cx.has_live, one read under the backend's sessions lock. `door` names
+    the caller in the log line."""
+    try:
+        if cx.has_live() and (was_closed or closings0 is None or cx.gate_closings() != closings0):
+            _models_changed()
+    except Exception as e:
+        sys.stderr.write("codex %s: models frame not sent (%s)\n" % (door, e))
+
+
 def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
     """Create + open a new Codex-backed session — the same ACK-FAST shape as _create_sdk_session
     (focus first, dirty-mark wake, one direct push; never a synchronous fleet build here). spawn()
@@ -15580,7 +15655,14 @@ def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
     on a Codex-default machine would land outside its parent's group while the CLI blamed an older
     kernel. Returns (sid, echo)."""
     bg, fg = _pick_identity_color()
-    sid = _codex().spawn(nm, cwd, bg, fg)
+    cx = _codex()
+    was_closed, closings0 = _codex_gate_closed(cx)   # the gate before THIS spawn, and the closings so far
+    try:
+        sid = cx.spawn(nm, cwd, bg, fg)
+    finally:
+        # on the raise path too: a spawn that put its row and then failed held the gate open until its
+        # pop, and a door whose snapshot saw that row as the open gate has nothing of its own to fire on
+        _codex_gate_opened(cx, "spawn", was_closed, closings0)   # the gate opened under this spawn: every picker re-reads /models
     extra = {}
     if parent or tags:
         extra.update(_tag_ack(sid, parent, tags))
@@ -17344,6 +17426,14 @@ def _sdk_locked():
             jd._ENV_OK_FN = sbmod.credential_auth_ok        # a served call re-arms that invalidation
             jd._WORK_KEY_CONFIGURED_FN = lambda: sbmod.work_api_key_source().configured
             jd._LOGIN_AUTH_ENV_FN = sbmod.startup_auth_env
+            # The unpicked-billing rule (sdk_backend.unpicked_auth, the fallback behind effective_auth and
+            # default_auth) reaches _judge_auth through the same kind of wire, so a judge call on an
+            # unpicked session bills the side the session's own badge names: on a declared-key box with no
+            # key of romp's the judge classified every unpicked call as login-billed while every other
+            # reader said key (review round 1, 2026-09-09). The judge passes its own key verdict in
+            # (_work_key_configured, which consults the command source's set first); jd.STATE is the state
+            # dir the backend below is built on, so the defaults file read is the same file.
+            jd._UNPICKED_AUTH_FN = lambda key: sbmod.unpicked_auth(jd.STATE, key)
             # T222: the live model catalog — the last fetched list installs before any picker asks,
             # then the BOOT event refreshes it (async; the key is claimable from here on)
             try:
@@ -17511,13 +17601,34 @@ def _sdk_problem(text):
 
 
 def _auth_key_present():
-    """Whether the manager's environment carried an API key (now held by the SDK backend). A bool on
-    purpose: no fragment of the key — not even a last-4 tail — leaves the kernel process for a label
-    (the user 2026-08-08, who judged even a tail more key than any surface needs; 'API key' is the
+    """Whether romp itself holds an API key source for its launches (the SDK backend's selected source).
+    A bool on purpose: no fragment of the key, not even a last-4 tail, leaves the kernel process for a
+    label (the user 2026-08-08, who judged even a tail more key than any surface needs; 'API key' is the
     display everywhere, and host names already tell keys apart in the per-host hover). Cheap: an
-    attribute read off the backend singleton, safe per-push."""
+    attribute read off the backend singleton, safe per-push. False says romp injects nothing, NOT that
+    the sessions bill the login: on a box whose sessions authenticate through Claude Code's apiKeyHelper
+    they bill a key romp never sees; readers that need the billed side take the CLI's own report
+    (authLive) first and the backend's unpicked rule (_unpicked_default) for a row with none."""
     be = _sdk()
     return bool(getattr(be, "work_key_configured", False)) if be else False
+
+
+def _unpicked_default():
+    """The side a session on this box bills absent an explicit Billing pick of its own, by the backend's
+    one rule (SdkBackend.new_session_auth: the remembered gear pick a spawn would seed, else
+    sdk_backend.unpicked_auth: the key romp holds, else the box declaration when no pick has made it
+    inert, else the login). The kernel's two readers of a row that reports nothing take it (_bills_login's
+    fallback, _auth_avail's picker default), so the kernel cannot order the tests differently from the
+    backend again (review round 1, 2026-09-09: the two read the declaration before the key, the backend
+    after it, and a keyed box declaring login seeded the picker on Login for sessions that launched
+    keyed). A direct call, not a getattr guard: a backend without the method is a bug to surface (the
+    kernel-to-backend binding is pinned by an executed test), not a login box. No backend at all (the
+    module failed to load, a boot problem said aloud elsewhere) reads the login: nothing of romp's is
+    injected then."""
+    be = _sdk()
+    if be is None:
+        return "login"
+    return be.new_session_auth()
 
 
 def _work_key_fp():
@@ -17550,20 +17661,12 @@ def _auth_avail():
     rather than being second-guessed here). key = the manager's environment carried ANTHROPIC_API_KEY,
     now held by the SDK backend (work_api_key claimed it out of os.environ) — a bool only, never any
     fragment of the key (see _auth_key_present). acct = the login's display name (_claude_account_label),
-    so 'Login' can say WHICH account it means. default = what a fresh session would use absent an
-    explicit pick."""
-    key = _auth_key_present()
-    d = {}
-    try:
-        d = json.loads((jd.STATE / "sdk-defaults.json").read_text())
-        d = d if isinstance(d, dict) else {}
-    except Exception:
-        d = {}
-    default = d.get("auth") if d.get("auth") in ("login", "key") else ("key" if key else "login")
-    if default == "key" and not key:
-        default = "login"
-    return {"login": bool(_claude_account()), "key": key,
-            "acct": _claude_account_label(), "default": default}
+    so 'Login' can say WHICH account it means. default = what a session created now without an explicit
+    pick would bill (_unpicked_default, the backend's rule: the remembered pick a spawn would seed, a
+    set-aside key pick excepted; else the key romp holds; else the side ROMP_EXPECTED_AUTH declares,
+    which is how the apiKeyHelper box, holding no key of romp's, writes out `API key`; else the login)."""
+    return {"login": bool(_claude_account()), "key": _auth_key_present(),
+            "acct": _claude_account_label(), "default": _unpicked_default()}
 
 
 def _cap_switch_offer(sid, aerr):
@@ -19008,7 +19111,13 @@ def _revive_session_inner(sid, client=None):
             if not _codex_ready():
                 detail = (getattr(cx, "_client_err", "") or CODEX_SETUP_HINT)
             else:
-                ok = bool(cx.resume(name, sid, cwd=_cwd_of(sid)))
+                was_closed, closings0 = _codex_gate_closed(cx)   # the gate before THIS resume, and the closings so far
+                try:
+                    ok = bool(cx.resume(name, sid, cwd=_cwd_of(sid)))
+                finally:
+                    # on the raise path too: a failed registry save rolls the flip back, and another
+                    # door may have landed on the flipped row; the outer except still files reviveFailed
+                    _codex_gate_opened(cx, "revive", was_closed, closings0)   # the gate opened under this revive
                 detail = "" if ok else "the Codex backend could not resume it (see the kernel log)"
         else:
             cwd = _cwd_of(sid)
@@ -19795,6 +19904,13 @@ class Sessions:
                                 "fast": st.get("fast", ""),   # fast-mode state from the CLI's init ("on"/"off"/"cooldown"; "" = unknown → no badge)
                                 "fastReason": st.get("fastReason", ""),   # init's disabled_reason — non-empty hides the chat toggle
                                 "auth": st.get("auth", ""),   # which account this session bills ('login'|'key') → gear badge
+                                # the CLI's OWN report ("" until an init lands) and whether `auth` is an explicit
+                                # pick: build_session's Billing fields read them off this map, and until
+                                # 2026-09-09 the merge dropped authLive, so every reader of the map (the hover
+                                # row, _bills_login, the cap-switch offer, the judge-limit banner) saw "" and
+                                # fell to the seeded intent, "login" on a box whose CLI reported the key
+                                "authLive": st.get("authLive", ""),
+                                "authPicked": bool(st.get("authPicked")),
                                 "authPending": bool(st.get("authPending")),   # an /auth switch reconnecting → badge dots
                                 "color": (st.get("color") or None), "mode": st.get("mode", ""), "backend": "sdk",
                                 "subagents": st.get("subagents") or [],   # live Task subagents (SDK only) → lane pill
@@ -34386,8 +34502,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # COMPACTING must count too: a /compact runs no open assistant turn, so _session_working is False the whole
     # time — without the compacting arm a message typed mid-compaction showed solid blue (the user 2026-06-29).
     # (SDK queues in memory → pending_queued is instant, no gap; its echoes are skipped here via the unqueue
-    # discriminator.) Keys on the EVENT MODEL (_session_working / _compacting), never the tmux pane state — and
-    # an echo-only merge keeps the turn's real ended state.
+    # discriminator.) CodexBackend has no unqueue either, so its echoes take this fold too (since 2026-09-09,
+    # when they gained _echo_text): a QUEUED Codex send is already in `queued` (pending_queued) and `already`
+    # skips it; a mid-turn STEER, which the backend delivers without queueing, reads as pending until the
+    # app-server records it, which is what it is. Keys on the EVENT MODEL (_session_working / _compacting),
+    # never the tmux pane state, and an echo-only merge keeps the turn's real ended state.
     tm0 = tmux.get(sid)
     compacting_now = (False if path_override else
                       _compacting(sid, (tm0 or {}).get("state", ""), parsed, now, (tm0 or {}).get("since")))
@@ -35699,6 +35818,10 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                   # renders it when it disagrees with the intent above (a key found via apiKeyHelper
                   # bills the key while `auth` still reads login; the user 2026-08-15)
                   "authLive": tm.get("authLive", ""),
+                  # whether `auth` above is an EXPLICIT pick (picker, gear, a remembered pick) rather than
+                  # the box default: the Billing row words a disagreement as "picked, but the CLI
+                  # reports" only for a pick; an unpicked session shows the CLI's side plainly
+                  "authPicked": bool(tm.get("authPicked")),
                   # whether this machine offers BOTH choices — the gate for the CONTROLS (statusline
                   # badge menu / picker buttons); display no longer hangs on it (the user 2026-08-09)
                   "authBoth": _auth_both(),
@@ -55391,17 +55514,43 @@ class Handler(BaseHTTPRequestHandler):
                 # authoritative source; [] until the backend runs, so no picker ever shows another
                 # vendor's models); efforts are the four Codex accepts — max/ultracode are Claude-only.
                 cx = _codex()
-                cx_models = []
+                cx_models, cx_err = [], None
                 # Codex is consulted ONLY where this machine opted in — the Codex default backend, the
                 # Codex judge engine, or a live Codex session. model_catalog() builds the client, which
                 # SPAWNS `codex app-server`; unconditional, every dashboard load spawned (or repeatedly
                 # failed to spawn) it on every install, the opposite of off-by-default (PR #885 review).
+                # An EMPTY list travels with its reason (`error`): the picker used to open on a blank
+                # menu with the session's default badge showing and no word of why (2026-09-09): the
+                # client in retry backoff, a failed model_list, or this gate closed on a dashboard
+                # loaded before the first Codex session, none of them visible. Fail loudly: the reason
+                # rides to the menu, and the gate's flip sends a models frame (_codex_gate_opened, from
+                # the spawn and the revive, keyed on the door's own before-snapshot of the gate or on
+                # the backend's closings counter, gate_closings, having moved since it: the live set
+                # emptied under the door, so two racing first creates still send at least one, a kill
+                # interleaved with a create sends one, and a kill after the row landed sends none; a
+                # door whose landing call raises after putting its row runs the helper too, for a door
+                # that snapshotted that row as the open gate and landed beside it). The gate is read
+                # with cx.has_live, ONE read under the backend's sessions lock: live_sessions() walks a
+                # row list it took earlier, so across a landing and a kill it could answer this closed
+                # gate while a row was live, and no door fires for that (the set never emptied). The
+                # CLOSED gate carries a reason of its own: the backend was not asked, so the menu must
+                # never read the empty list as an answer from the app-server (the menu's fallback used
+                # to say it sent no list).
                 if cx and (_default_backend() == "codex" or _judge_engine_name() == "codex"
-                           or bool(cx.live_sessions())):
+                           or cx.has_live()):
                     try:
                         cx_models = cx.model_catalog()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        cx_err = "model catalog: %s" % (str(e) or e.__class__.__name__)
+                    if not cx_models and not cx_err:
+                        try:
+                            cx_err = cx.model_catalog_error() or "the Codex app-server sent no model list"
+                        except Exception as e:
+                            cx_err = "model catalog: %s" % (str(e) or e.__class__.__name__)
+                elif cx:
+                    cx_err = "no live Codex session; the list is read once one runs"
+                else:
+                    cx_err = "the Codex backend is unavailable (see the kernel log)"
                 return self._send(200, json.dumps(
                     # `rev` is the pick memory's revision — the models frame's counter (_models_changed),
                     # read here BEFORE the picks so a payload never carries a rev newer than its list: a
@@ -55416,7 +55565,7 @@ class Handler(BaseHTTPRequestHandler):
                                 for c in MODEL_CHOICES],
                      "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))
                                  for c in EFFORT_CHOICES],
-                     "codex": {"models": cx_models,
+                     "codex": {"models": cx_models, "error": cx_err,
                                "efforts": [{"value": v, "label": v}
                                            for v in ("low", "medium", "high", "xhigh")]},
                      # the create dialog's pre-read (the user 2026-08-29): what a new comment thread

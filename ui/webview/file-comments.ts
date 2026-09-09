@@ -992,7 +992,7 @@ class Panel {
   openTodoText = new Set<string>();         // confirm todo rows unfolded to the todo's whole text, keyed by todo id — the same rule (openLog)
   previewOpen = false;
   colors: Map<string, FileViewIdentity> | null = null;
-  wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED, and where the keyboard went meanwhile (refocus)
+  wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED or hidden, and where the keyboard went meanwhile (refocus): kept while it is in the list and the keyboard stays there
   located = new Map<string, Located & { painted: boolean }>();
   /** The comments whose highlight sits on a copy the panel cannot vouch for (copyUnsure): the anchor ties and the stored
    *  position names none of the tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
@@ -1063,6 +1063,27 @@ class Panel {
   sizer: ResizeObserver | null = null;        // the body, the row and the track (the aside's width and height reach it as the track's): a size change re-runs the pass
   cardSizer: ResizeObserver | null = null;    // the cards of the current render: one growing (a crop, a box inside it) pushes the cards below
   expandIntent: { key: string; wasOpen: boolean } | null = null;   // a card head clicked, as seen before the delegate toggles it (installLayout → afterRender)
+  // the focus (the focus follow-on, 2026-09-08): the card the person last acted on — a mark clicked, a card opened by its
+  // head, a reference followed, a Show more, a save, a Reveal — which the pass anchors the layout on (card-layout.ts): level with its
+  // mark whatever stands above it, the cards above moved up by the least that clears it. Before it, a tall change card above
+  // a comment pushed the comment's card a viewport below its highlight, and the click on the highlight scrolled the
+  // highlight to the body's top edge with the card still out of sight. Cleared when the list no longer holds the card
+  // (placeCards), by a pass in the list layout (the same: a mark or a head clicked there writes one, and the list has no
+  // pass to spend it on — the 2026-09-08 review), when the layout ends (layoutOff: the fold, edit mode, the panel's close)
+  // and with the panel (dispose). A LOOSE card written here — a whole-file comment's card opened by its head or by its Show
+  // more, the card a whole-file comment's save landed in — is spent by the pass as no change: it has no mark to be laid
+  // level with, and the rule takes a focus with no mark as none (card-layout.ts), so the pass would have laid the whole
+  // margin by the push-down rule again — the clicked card to the track's start, out of the box with nothing scrolling after
+  // it, and the card the person was reviewing pushed under the tall card again, off its mark (the verification review,
+  // 2026-09-09: the reach rule lays a loose card the chain cannot fit above the focus BELOW it, where a head click reaches
+  // it). The pass keeps the focus it laid the cards on last (laidOn) instead: a gesture on a card the rule cannot place
+  // moves nothing, as a head click on a loose card never did.
+  focusCard: string | null = null;
+  laidOn: string | null = null;               // the focus the last margin pass laid the cards on (placeCards): what a loose focus falls back to
+  // Show more (the same follow-on): the cards whose long parts — a change's old and new text, a long comment, a long run of
+  // turns — show whole in the margin layout, where the sheet otherwise folds each to about eight lines (clipCards); keyed
+  // like openCards, so the choice survives a re-render
+  openBodies = new Set<string>();
   // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
   // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
@@ -1212,6 +1233,15 @@ class Panel {
         fcrejectallcancel: () => { this.rejectAllConfirm = false; this.render(); },
         fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
         fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
+        // Show more / Show less on a card the margin layout folded (clipCards): more makes the card the focus and centers its
+        // mark, as opening a card by its head does (afterRender); less is a fold and moves nothing. On a loose card the pass
+        // keeps the focus it had and centerOn has no mark to scroll to: the card shows its text whole where it stands
+        fcclip: (x) => {
+          const key = x.dataset.id!;
+          if (this.openBodies.has(key)) this.openBodies.delete(key);
+          else { this.openBodies.add(key); this.focusCard = key; this.expandIntent = { key, wasOpen: false }; }
+          this.render();
+        },
         // an inline change mark opens its card, and only that: like fcopen below, it cancels the click. A mark inside the
         // author's link (a deletion point placed at the start of a link's label, a substitution's point and tint over it,
         // an insertion's tint) stands inside the <a>, which mdBlock gives target=_blank, so the click that opened the card
@@ -1546,6 +1576,7 @@ class Panel {
     this.clearLanding();
     this.stopPoll();
     if (this.margin) this.layoutOff();
+    this.focusCard = null;
     for (const l of this.regionLayers.values()) l.dispose();
     this.regionLayers.clear();
     this.pageWatch?.disconnect(); this.pageWatch = null; this.pageWatched.clear();   // the shells it held go with the viewer
@@ -2343,6 +2374,7 @@ class Panel {
       if (v.hidden.some((g) => g.changes.some((c) => c.key === key))) this.moreChangesOpen = true;
     }
     this.openCards.add(key);
+    this.focusCard = key;                               // the focus: the render's pass lays the card level with its mark (card-layout.ts); a loose card leaves the pass's focus as it was (laidOn), and scrollCard shows it where it stands
     this.render();
     this.scrollCard(key);
   }
@@ -2959,7 +2991,7 @@ class Panel {
    *  document, and a body-wide first match would scroll to that. A region comment's mark is its rectangle (.fc-region,
    *  painted by paintRegions). No mark of ours in the view: Reveal. */
   goTo(key: string): void {
-    if (this.margin && this.centerOn(key)) return;     // the margin layout: the mark to the body's center, the card beside it (the lock brings the track)
+    if (this.margin && this.focusOn(key) && this.centerOn(key)) return;   // the margin layout: the card the focus, level with its mark; the mark to the body's center, the card beside it (the lock brings the track)
     const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
     const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
@@ -2967,15 +2999,19 @@ class Panel {
   }
   /** Reveal: switch to Raw and scroll to the passage — a comment's located range, or a change's start — for
    *  a comment or change the view does not show (a Rendered deletion the map refused, any change with Show changes
-   *  inline off), so the compact card never dead-ends. Where Raw shows no mark of ours for the subject either, the row
-   *  the scroll centred is cued (landOn), so the landing is not a guess among identical rows. */
+   *  inline off), so the compact card never dead-ends. In the margin layout the card is made the focus first
+   *  (revealInRaw), so the switch's own pass lays it level with its Raw mark before the scroll centers the row, and the
+   *  card is then brought whole into the track's box where the row's centering left its end past it (settleRevealed).
+   *  Where Raw shows no mark of ours for the subject either, the row the scroll centred is cued (landOn), so the landing
+   *  is not a guess among identical rows. */
   reveal(key: string): void {
     if (key.startsWith("chg:")) {
       const c = this.changeView().cards.find((x) => x.key === key);
       if (!c || c.detached) return;                    // a detached change's offset points into a text that has moved on
-      this.ctx.setMode("raw");
+      this.revealInRaw(key);
       this.ctx.scrollToOffset(c.curFrom);
       this.landOn(c.curFrom, "fcchange", c.id);
+      this.settleRevealed(key);
       return;
     }
     const card = this.cards().find((c) => c.id === key);
@@ -2987,9 +3023,43 @@ class Panel {
     }
     const loc = this.located.get(key);
     if (!loc || !loc.range) return;
-    this.ctx.setMode("raw");
+    this.revealInRaw(key);
     this.ctx.scrollToOffset(loc.range.start);
     this.landOn(loc.range.start, "fcopen", key);
+    this.settleRevealed(key);
+  }
+  /** After a Reveal's switch and scroll: the revealed card whole in the track's box, where the pass laid it level with
+   *  its Raw mark (the review of the merge audit's fixes, 2026-09-09). scrollToOffset centers the ROW, and a card taller
+   *  than the room under the body's center — half the body's height less the footer's and the gap — landed level with its
+   *  head in the box but its end, its run of turns and its Reply and Resolve row, past the track's bottom, while the same
+   *  card reached by a click on its mark (showCard: focusOn, then centerOn) landed whole: centerOn's fallback scrolls the
+   *  least that shows the card's end, as far as keeps the mark's top in view, a card taller than the track having its head
+   *  cut by the excess (its docstring has the two regimes). So the row's centering is followed by that scroll, the landing
+   *  a mark click gives; the row's own centering stands where the pass did not lay the card on a mark (laidOn: Show
+   *  changes inline off, when Raw paints no mark and landOn cues the row), since centerOn has no mark to scroll to there. */
+  private settleRevealed(key: string): void {
+    if (this.margin && this.laidOn === key) this.centerOn(key);
+  }
+  /** A Reveal's switch to Raw, with the card made the focus FIRST when the margin layout is up (the merge audit,
+   *  2026-09-09). setMode re-renders the body synchronously and its onRendered pass lays the margin (paintAll, render,
+   *  placeCards), so a focus written before the call has that pass lay the revealed card level with its Raw mark, and
+   *  scrollToOffset then centers a row whose card is already beside it. Before, reveal() set no focus: the pass laid the
+   *  margin on the focus it had — the tall change card the person had unfolded — and the card whose Reveal was clicked
+   *  was pushed under it, wholly outside the track's box while its passage sat mid-body; goTo and scrollCard make their
+   *  card the focus before they scroll, and Reveal did not. focusOn before the switch would not do: a card Reveal is
+   *  offered for is loose in the view where it is offered (no mark to be laid level with), and the pass spends a loose
+   *  focus (placeCards: laidOn). A switch that paints nothing (a file with no Rendered view is Raw already; the seam's
+   *  setMode returns) ran no pass, so one runs here where the switch ran none, and only there: every pass ends by writing
+   *  a new placement (placeCards: `placed`), so the placement of before still standing after the switch says no pass ran.
+   *  With Show changes inline off Raw paints no mark either, and the switch's pass falls to the focus it had; a pass after
+   *  it would measure the same body and cards and lay them where it did. The pass ran here whenever the last pass had not
+   *  laid the cards on this card, which after the switch is every change card's Reveal with the marks off — the whole
+   *  margin measured and written twice for one click (the review of the audit's fixes, round 2, 2026-09-09). */
+  private revealInRaw(key: string): void {
+    if (this.margin) this.focusCard = key;            // the focus: the switch's pass lays the card level with its Raw mark (card-layout.ts)
+    const placed = this.placed;                       // the last pass's placement: the switch's pass, where it runs, writes a new one
+    this.ctx.setMode("raw");
+    if (this.margin && this.placed === placed) this.placeCards(false);   // the switch ran no pass: this is the one
   }
   /** The landing cue, after a Reveal's switch and scroll (the note above LANDING_BG): the Raw row holding `offset` —
    *  the SAME row the viewer's scrollToOffset centred, by the same count of line ends before the offset, clamped to the
@@ -3018,8 +3088,14 @@ class Panel {
     row.classList.remove("fc-landing");
     row.style.background = ""; row.style.boxShadow = "";
   }
+  /** The card into view: in the margin layout it is made the focus first, so the pass lays it level with its mark before
+   *  the scroll reads where it stands. The save is the caller that needs the focus set HERE (scrollToSaved): a reply saved
+   *  on an open card that is not the focus — the change mark above it clicked since the card was opened, the card pushed
+   *  under the tall change card — would otherwise be scrolled to where the push-down rule left it, its mark brought into
+   *  view with the card a viewport below, the defect the focus follow-on fixed (the verification review, 2026-09-09; a
+   *  reference link's card comes through goTo, which sets the focus the same way). */
   scrollCard(id: string): void {
-    if (this.margin && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: a marked card's mark to the center, the card level with it; a loose card into the track's box, the body along with it
+    if (this.margin && this.focusOn(id) && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: the card the focus, level with its mark, its mark to the center; a loose card into the track's box, the body along with it
     this.root?.querySelector('.fc-card[data-id="' + cssId(id) + '"]')?.scrollIntoView({ block: "nearest" });
   }
 
@@ -3028,9 +3104,9 @@ class Panel {
    *  body (`load` does not bubble, so a capture listener on the body hears every figure's); the window's resize; the
    *  sizes of the body, the row and the track (the aside joins at its first build, the body's content at each pass —
    *  watchContent — and the cards at each render); and a click on a card's head — heard here, under the delegate root
-   *  and so BEFORE the delegate toggles the card, so that afterRender knows the card that just opened was opened by a
-   *  click and centers its mark. Never on scroll: the lock is the scroll's whole effect, and the pass moves nothing a
-   *  scroll changes. */
+   *  and so BEFORE the delegate toggles the card, so that the render's pass anchors the layout on the card that just
+   *  opened (focusCard) and afterRender knows to center its mark. Never on scroll: the lock is the scroll's whole
+   *  effect, and the pass moves nothing a scroll changes. */
   private installLayout(row: HTMLElement): void {
     const body = this.ctx.body(), track = this.sections.cards;
     body.addEventListener("scroll", () => this.mirrorScroll("body"));
@@ -3039,7 +3115,11 @@ class Panel {
     track.addEventListener("click", (ev) => {
       const t = ev.target as HTMLElement | null;
       const x = t && typeof t.closest === "function" ? (t.closest("[data-act]") as HTMLElement | null) : null;   // what the delegate resolves
-      if (x && x.dataset.act === "fccard" && x.dataset.id) this.expandIntent = { key: x.dataset.id, wasOpen: this.openCards.has(x.dataset.id) };
+      if (x && x.dataset.act === "fccard" && x.dataset.id) {
+        const wasOpen = this.openCards.has(x.dataset.id);
+        this.expandIntent = { key: x.dataset.id, wasOpen };
+        if (!wasOpen) this.focusCard = x.dataset.id;    // a card opened by its head is the focus (focusCard); a fold is a dismissal and moves nothing; a loose card opened leaves the pass's focus as it was (laidOn)
+      }
     });
     window.addEventListener("resize", this.onWindowResize);
     if (typeof ResizeObserver !== "undefined") {
@@ -3093,7 +3173,15 @@ class Panel {
     const margin = this.marginMode();
     const flipped = margin !== this.margin;
     if (flipped) root.classList.toggle("fc-margin", margin);
-    if (!margin) { if (flipped) { this.layoutOff(); if (!fromRender) this.render(); } return; }
+    if (!margin) {
+      // the list layout has no focus: a mark or a head clicked in it writes one (showCard, installLayout), and a pass here
+      // spends nothing on it — but the flip to the margin layout would have, laying the whole margin on a card no gesture
+      // named THERE and centering nothing (a resize is not a click), the cards above it moved from their marks (the
+      // 2026-09-08 review). The focus is a click's, made in the margin layout.
+      this.focusCard = null;
+      if (flipped) { this.layoutOff(); if (!fromRender) this.render(); }
+      return;
+    }
     if (flipped) { this.margin = true; this.placed = new Map(); this.cardsEnd = 0; }
     const watch = fromRender || flipped;               // new cards (a render), or cards the list layout held (the layout just came on): the card observer takes them
     const body = this.ctx.body(), track = this.sections.cards;
@@ -3102,6 +3190,7 @@ class Panel {
     this.watchContent(body);
     const kids = (): HTMLElement[] => Array.from(list.childNodes).filter((n) => n.nodeType === 1) as HTMLElement[];
     this.moveRows(kids());
+    this.clipCards(kids());                            // which parts the fold cut, and the Show more rows: before the heights are read
     const bodyRect = body.getBoundingClientRect(), trackRect = track.getBoundingClientRect();
     const offset = trackRect.top - bodyRect.top;
     const scroll = body.scrollTop;
@@ -3119,12 +3208,23 @@ class Panel {
       nodes.set(key, child); laid.push(child);
       if (isCard && watch) this.cardSizer?.observe(child);
     }
-    const out = layoutCards(items, CARD_GAP);
+    if (this.focusCard !== null && !nodes.has(this.focusCard)) this.focusCard = null;   // the card is gone from the list (a status, the filter, a fold): no focus
+    // a loose card as the focus (a whole-file comment's card opened by its head or its Show more, a save landing in one): no
+    // mark to lay it level with, and given to the rule it would have unmade the layout — the rule takes a focus with no mark
+    // as none — so the pass keeps the focus it laid the cards on last, while the list holds that card (the focusCard field)
+    const fit = this.focusCard === null ? null : items.find((it) => it.key === this.focusCard) || null;
+    if (fit && fit.desired === null) this.focusCard = this.laidOn !== null && nodes.has(this.laidOn) ? this.laidOn : null;
+    this.laidOn = this.focusCard;
+    const out = layoutCards(items, CARD_GAP, this.focusCard);
     for (const p of out.placed) {
       const node = nodes.get(p.key)!;
       node.style.top = p.top + "px";
       if (p.pushed >= 1) { node.dataset.pushed = "1"; node.style.setProperty("--fc-push", Math.min(p.pushed, p.top) + "px"); }
       else { delete node.dataset.pushed; node.style.removeProperty("--fc-push"); }
+      // a card the focus moved up past its mark (card-layout.ts): a leader DOWN from its end to the mark's height
+      const pull = p.desired === null ? 0 : p.desired - (p.top + p.height);
+      if (pull >= 1) { node.dataset.pulled = "1"; node.style.setProperty("--fc-pull", pull + "px"); }
+      else { delete node.dataset.pulled; node.style.removeProperty("--fc-pull"); }
     }
     const order = out.placed.map((p) => nodes.get(p.key)!);
     if (order.some((node, i) => node !== laid[i])) this.moving(order, () => { for (const node of order) list.appendChild(node); });
@@ -3152,13 +3252,29 @@ class Panel {
     this.syncTrack();
   }
   /** The margin layout ends (the fold, edit mode, the panel closing): the sheet's class, the body's end padding, the
-   *  placement and the card observer go. The rows stand in the footer until the render that follows rebuilds the list. */
+   *  placement, the card observer, and what the pass wrote on the list and the cards go. The rows stand in the footer
+   *  until the render that follows rebuilds the list. The list's inline height and the cards' tops and leaders are
+   *  cleared HERE and not left to that render (the merge audit, 2026-09-09): the render rebuilds the list as a rule, but
+   *  while a reply's box stands in a card it grafts around the box and keeps the live list and that card (swapCards), so
+   *  the height the pass gave the list — the body's range, a screen and more past the cards — stayed on it in the list
+   *  layout, and the aside scrolled through empty space under the cards until the box left the card or the columns came
+   *  back; the kept card kept its top and its leader as well (no effect under the list's static positioning, but the
+   *  next margin pass is the one to write them). */
   private layoutOff(): void {
     this.margin = false;
     this.root?.classList.remove("fc-margin");
     this.padBody(this.ctx.body(), 0);
     this.placed = new Map(); this.cardsEnd = 0;
+    this.focusCard = null;                              // the focus is the margin layout's; the list has none
+    this.laidOn = null;                                 // and so is the pass's memory of it
     this.cardSizer?.disconnect();
+    const list = Array.from(this.sections.cards.childNodes).find((n) => n.nodeType === 1) as HTMLElement | undefined;
+    if (!list) return;
+    list.style.height = "";
+    for (const node of Array.from(list.childNodes).filter((n) => n.nodeType === 1) as HTMLElement[]) {
+      node.style.top = ""; delete node.dataset.pushed; delete node.dataset.pulled;
+      node.style.removeProperty("--fc-push"); node.style.removeProperty("--fc-pull");
+    }
   }
   /** The body's end padding, written only when it changes (an integer, so the rounding of scrollHeight cannot make the
    *  next pass read a different content height and write again). The track's box ends a footer's height above the
@@ -3189,6 +3305,65 @@ class Panel {
       if (foot) this.sections.send.insertBefore(foot, this.sections.send.firstChild);
       for (const r of rows) if (r !== foot) send.insertBefore(r, box);
     });
+  }
+  /** The fold of a tall card (the focus follow-on, 2026-09-08). In the margin layout each long part of a card — a change's
+   *  old and new text (`.fc-diff`), a comment's body, a run of turns — wears `fc-clip`, and the sheet caps it at about eight
+   *  of its lines with a fade (`.fc-margin .fc-card:not(.fc-more) .fc-clip`); this reads which parts the cap cut (a part whose
+   *  content is taller than its box), marks them for the fade (`data-clipped`) and shows the card's Show more row, rendered
+   *  hidden, so a card with nothing cut offers no toggle. A card in `openBodies` wears `fc-more`: no cap, no fade, and the
+   *  row reads Show less. Run before the cards' heights are measured, since the row is part of the height. The list layout
+   *  runs no pass and caps nothing: the rows stay hidden there. A run of turns is cut at its START, not its end (keepEnd).
+   *  The parts are every `.fc-clip` UNDER the card, not the card's own children alone: a change card's hosted comments
+   *  (renderHosted, `.fc-hosted`) carry a body and a run of turns of their own, capped by the same sheet rule, and the
+   *  card's one row lifts them with the change's text; a pass that skipped them would leave a hosted run capped with no
+   *  fade and, where the change's own text is short, no Show more at all — a compact view with no way in (the
+   *  verification review, 2026-09-09; file-comments-focus-verify.test.ts drives both). */
+  private clipCards(kids: HTMLElement[]): void {
+    for (const card of kids) {
+      if (!card.classList.contains("fc-card") || !card.dataset.id) continue;
+      const row = card.querySelector(".fc-clip-row") as HTMLElement | null;
+      if (!row) continue;                              // a closed card: no parts
+      const open = this.openBodies.has(card.dataset.id);
+      let cut = false;
+      for (const part of Array.from(card.querySelectorAll(".fc-clip")) as HTMLElement[]) {   // the card's own parts and its hosted comments'
+        const over = !open && part.scrollHeight > part.clientHeight + 1;
+        if (over) { part.dataset.clipped = "1"; cut = true; } else delete part.dataset.clipped;
+        if (part.classList.contains("fc-replies")) this.keepEnd(part, over);
+      }
+      row.hidden = !(open || cut);
+    }
+  }
+  /** A folded run of turns shows its END. The turns stand in `ts` order (renderTurns), so the newest — the session's latest
+   *  answer, the turn the person re-engages for, the one a reply box under the run answers — is the LAST row, and a cap that
+   *  kept the first eight lines showed the oldest turns and hid it behind Show more (the 2026-09-08 review). The cut part is
+   *  scrolled to its end (an `overflow: hidden` box scrolls by script, and a fresh render's box starts at 0, so every pass
+   *  writes it); the sheets put its fade at its FIRST lines, where the cut is (`.fc-replies.fc-clip[data-clipped]`, against
+   *  the last-lines fade of every other cut part). A part not cut stands at its start. */
+  private keepEnd(part: HTMLElement, cut: boolean): void {
+    if (cut) part.scrollTop = part.scrollHeight;
+    else if (part.scrollTop) part.scrollTop = 0;
+  }
+  /** The Show more / Show less row at an open card's foot (clipCards): a button through the delegate root (fcclip, with the
+   *  delegate's flash), hidden until the pass finds a part cut. */
+  private clipRow(key: string): HTMLElement {
+    const row = el("div", "fc-clip-row");
+    const open = this.openBodies.has(key);
+    const b = btn(open ? "Show less" : "Show more", "fcclip");
+    b.dataset.id = key;
+    b.title = open ? "Fold the long text back to a few lines" : "Show the whole text";
+    b.setAttribute("aria-expanded", open ? "true" : "false");
+    row.appendChild(b);
+    row.hidden = true;
+    return row;
+  }
+  /** Make `key` the focus (focusCard): the pass anchors the layout on it from now on, and runs at once when the focus
+   *  changed, so the scroll that follows (centerOn) reads the card where it now stands, level with its mark. False for a key
+   *  the list shows no card for (a fold hides it; a card not rendered), which changes nothing. True for a loose card, whose
+   *  pass keeps the focus it had (laidOn) and moves nothing: the caller's showLoose then scrolls to the card where it stands. */
+  private focusOn(key: string): boolean {
+    if (!this.sections.cards.querySelector('.fc-card[data-id="' + cssId(key) + '"]')) return false;
+    if (this.focusCard !== key) { this.focusCard = key; this.placeCards(false); }
+    return true;
   }
   /** Move nodes with `move`, and give the keyboard back to the control it was on when the move detached it: a node
    *  taken out of the document — an insertBefore or appendChild of a node already in it takes it out first — loses its
@@ -3275,12 +3450,21 @@ class Panel {
     if (track.scrollTop > at && atEnd(body)) want = Math.min(track.scrollTop, Math.max(at, this.cardsEnd - track.clientHeight));
     this.writeScroll(track, want, "body");
   }
-  /** Scroll the body so the card's mark sits at the vertical center and the card, level with it, lands beside it;
-   *  a card whose bottom would fall past the track's box (an open one, a pushed one) is brought in as far as keeps
-   *  the mark's top in view. Where the body cannot scroll that far (its end, in a body the padding could not
-   *  lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there). False for a
-   *  card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head click on a
-   *  loose card moves nothing, afterRender).
+  /** Scroll the body so the card's mark sits at the vertical center and the card, level with it, lands beside it. The
+   *  card IS level because every caller makes it the focus first (focusOn, showCard: the pass anchors the layout on it,
+   *  card-layout.ts). Before the focus follow-on (2026-09-08) a card pushed down by a tall card above it was brought in
+   *  only as far as kept the mark's top in view, which put the mark at the body's top edge with the card still a
+   *  viewport below (the defect the user hit). That fallback stays where the centered scroll would leave the focused
+   *  card's end past the track's box: the body scrolls the least that shows the card's end, as far as keeps the mark's
+   *  top in view. A card that fits the track lands whole, its head under the track's top; a card taller than the track
+   *  has its head cut by the excess; and one taller than the track by more than the header less the gap meets the cap —
+   *  the mark's top a gap under the body's top, the head cut by the header less the gap and the end still past the box,
+   *  since no scroll shows both ends of such a card (the verification review, 2026-09-09: Show more on a long text is the
+   *  usual way there, and the keyboard stays on its Show less at the foot, as the plan records; the plan's focus paragraph
+   *  and file-comments-margin-fixes.test.ts pin this cap). Where the body cannot scroll that far (its end, in a body the
+   *  padding could not lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there).
+   *  False for a card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head
+   *  click on a loose card moves nothing, afterRender).
    *  Coordinates: `p.top` and `p.height` are the TRACK's content (placeCards wrote the card's top as its mark's top in
    *  the body's content less the header's height), and the lock keeps the track's scrollTop the body's; so the scroll
    *  that shows the card's bottom is the card's bottom plus the gap less the track's box, with no header term. One
@@ -3476,8 +3660,13 @@ class Panel {
     // a card the fresh list built has no top until the pass places it, so a scroll before the pass went to a place the
     // card would not stand, and the track's scroll is the body's (showComposer)
     const moved = typing && this.composerBox.parentElement !== home;
-    if (keep) this.refocus(keep, want);
+    if (keep) this.refocus(keep, want, false);
     this.afterRender();                                // the margin layout: place the fresh cards beside their marks, then any centering the click asked for
+    // a control the pass SHOWS — the Show more row, rendered hidden and unhidden by clipCards — took no focus before it
+    // (focus() on an element not rendered is a no-op), so the keyboard is put back once more; a no-op when the first
+    // refocus landed it (the 2026-09-08 review: Enter on Show more left the keyboard on the body, and so did any re-render
+    // while the keyboard was on the toggle)
+    if (keep) this.refocus(keep, want, true);
     if (moved) this.showComposer();
   }
   /** The cards section takes the fresh list. While the reply's box stands in a card of the LIVE list and the fresh list has
@@ -3578,18 +3767,42 @@ class Panel {
     }
     return null;
   }
-  private refocus(k: FocusKey, want: FocusKey | null): void {
-    if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input): nothing to mend
+  /** `settled`: whether the margin pass has run on the fresh list. render calls this before the pass (so a place kept by
+   *  index, k.at, names the card it named before the rebuild: cardsInOrder) and again after it, for a control the pass
+   *  shows — the Show more row (clipRow renders it hidden; clipCards unhides it) — which focus() cannot land on until then.
+   *  A control found and enabled that takes no focus is therefore left for the second call before the pass, and treated
+   *  as gone after it (the list layout, where the row stays hidden: the keyboard goes to the nearest place, not the body).
+   *  A wanted control of the LIST — a card's Show less hidden by the fold to the list layout, a busy Accept or Reject — is
+   *  remembered again for as long as it is in the list and the keyboard stays where this put it, whether the keyboard went
+   *  to the nearest place or to k's own control: render drops the memory at its start, so a memory this re-armed only on
+   *  the way to focusNear lasted one render — the toggle was forgotten on the first status or repaint while the columns
+   *  stayed narrow, and the render after they came back left the keyboard on the card's head, where Enter folds the card,
+   *  not the text; a busy Reject was forgotten the same way when a repaint landed during its round trip, and the refusal
+   *  left the keyboard on the head (the verification review, 2026-09-09). The composer's controls keep the one render: its
+   *  Save comes back enabled either with a refusal, in the render after the busy one, or in the render before a save closes
+   *  the box (mutate's last render, then closeComposer), and a memory that reached that render took the keyboard into the
+   *  closing box, and out of it to Reply, where the head had it (file-comments-reply-review2.test.ts pins the head). */
+  private refocus(k: FocusKey, want: FocusKey | null, settled: boolean): void {
+    if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input; the call before the pass landed it): nothing to mend
     const enabled = (n: HTMLElement | null): HTMLElement | null => (n && !(n as HTMLButtonElement).disabled ? n : null);
-    const w = want ? enabled(this.findControl(want)) : null;
-    if (w) { w.focus({ preventScroll: true }); return; }   // the button that was busy is back: the keyboard returns to it
+    // focus a control and say whether it took: an element not rendered (a hidden row's button) ignores focus()
+    const take = (n: HTMLElement): boolean => { n.focus({ preventScroll: true }); return document.activeElement === n; };
+    const wf = want ? this.findControl(want) : null;   // the wanted control as the list has it: disabled or hidden still, or back
+    const w = enabled(wf);
+    if (w && (take(w) || !settled)) return;             // the button that was busy is back: the keyboard returns to it — after the pass, if it is not shown yet
     const n = this.findControl(k);
-    if (enabled(n)) { n!.focus({ preventScroll: true }); return; }
-    // disabled, or gone. A control of the cards list (the change cards, the foot): the nearest place, remembering the
-    // control still to come back to — this one, or the wanted one. Elsewhere (the head row's confirms), a control the
-    // rebuild removed lets the focus fall to the body, quietly: there is no place of its own to stand in for it.
+    if (enabled(n) && (take(n!) || !settled)) {
+      // k's control took the keyboard while the wanted one, of the list, is still to come back: remembered at the place the
+      // keyboard now holds
+      if (wf && document.activeElement === n && !this.composerBox.contains(wf)) this.wanted = { key: want!, at: n! };
+      return;
+    }
+    // disabled, gone, or not shown once the pass has run. A control of the cards list (the change cards, the foot): the
+    // nearest place, remembering the control still to come back to — this one, or the wanted one. Elsewhere (the head row's
+    // confirms), a control the rebuild removed lets the focus fall to the body, quietly: there is no place of its own to
+    // stand in for it.
     if (typeof k.at !== "number") return;
-    const pending = n ? k : want && this.findControl(want) ? want : null;
+    const pending = n ? k : wf ? want : null;
     const at = this.focusNear(k);
     if (at && pending) this.wanted = { key: pending, at };
   }
@@ -4027,7 +4240,7 @@ class Panel {
     const isOpen = this.openCards.has(c.id) || this.replyTo() === c.id;   // open while its reply is written: the box stands in it (placeComposer)
     const loc = this.located.get(c.id);
     const picture = c.target ? this.regionImageFor(c) : null;   // the picture the region is on, in this view; null when it shows none
-    const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : ""));
+    const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : "") + (this.openBodies.has(c.id) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)
     card.dataset.id = c.id;
     card.dataset.cue = "comment";                      // the left edge's colour: --accent for a comment (a region is one) — the sheets' [data-cue] rules
     // the expand/collapse target: the whole card while collapsed, the HEAD alone once open — the open body
@@ -4131,7 +4344,7 @@ class Panel {
     const crop = c.target ? this.cropFor(picture, c) : null;   // the region cut from the picture (E5), or a page's kept crop
     if (crop) card.appendChild(crop);
     else if (c.target && this.pageUndrawn(c)) card.appendChild(this.cropWaitNote(c));   // no bitmap to cut: the slot says so and reaches the page
-    card.appendChild(el("div", "fc-body", c.body));
+    card.appendChild(el("div", "fc-body fc-clip", c.body));   // a long body folds in the margin layout (clipCards)
     // the open card says in words what the region tags say — why the staleness is unknown (unknownReason), that the image
     // changed, that the region could not be read — each with its way out: the tags' titles never reach touch, where the
     // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
@@ -4158,6 +4371,7 @@ class Panel {
         acts.appendChild(rv);
       }
     }
+    card.appendChild(this.clipRow(c.id));               // Show more, when the pass finds a part cut (clipCards)
     card.appendChild(acts);
     for (const n of [this.loader("card:" + c.id), this.errRow("card:" + c.id)]) if (n) card.appendChild(n);
     return card;
@@ -4165,7 +4379,7 @@ class Panel {
   /** The turns under a comment, in `ts` order: words as before; a revision (the session's answering
    *  track-edit, recorded as a reply with old and new text) as the same row with the texts instead of a body. */
   private renderTurns(turns: CardTurn[]): HTMLElement {
-    const rs = el("div", "fc-replies");
+    const rs = el("div", "fc-replies fc-clip");         // a long run of turns folds in the margin layout (clipCards)
     for (const r of turns) {
       const row = el("div", "fc-reply" + (r.author === "you" ? " fc-reply-you" : ""));
       const meta = el("div", "fc-meta");
@@ -4213,7 +4427,7 @@ class Panel {
     const s = this.status;
     const inFlux = !!s && !this.textCurrent(s);
     const slot = "change:" + c.id;
-    const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : ""));
+    const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : "") + (this.openBodies.has(c.key) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)
     card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;
     card.dataset.cue = "change";                       // the left edge's colour: --text-muted for a change — the sheets' [data-cue] rules
     if (!isOpen) card.dataset.act = "fccard";
@@ -4249,8 +4463,11 @@ class Panel {
     if (isOpen) {
       const held = c.comments.some((cm) => cm.id === this.replyTo()) ? this.heldNote() : null;   // the held head's words, for a hosted comment's reply
       if (held) card.appendChild(held);
-      card.appendChild(this.diffBody(c.oldText, c.newText));
+      const diff = this.diffBody(c.oldText, c.newText);
+      diff.classList.add("fc-clip");                   // a replaced paragraph's old and new text: the tall part the margin layout folds (clipCards)
+      card.appendChild(diff);
       for (const cm of c.comments) card.appendChild(this.renderHosted(cm));
+      card.appendChild(this.clipRow(c.key));           // Show more, when the pass finds a part cut
     }
     if (!c.detached) {
       const acts = el("div", "fc-actions");
@@ -4294,7 +4511,7 @@ class Panel {
     if (c.resolved) meta.appendChild(el("span", "fc-tag", "resolved"));
     meta.appendChild(el("span", "fc-time", clock(c.ts)));
     row.appendChild(meta);
-    row.appendChild(el("div", "fc-body", c.body));
+    row.appendChild(el("div", "fc-body fc-clip", c.body));   // folds with the change card's other parts (clipCards)
     box.appendChild(row);
     if (c.replies.length) box.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");

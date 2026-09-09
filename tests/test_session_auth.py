@@ -633,7 +633,10 @@ class Availability(unittest.TestCase):
         km._sdk, km._claude_account, km._claude_account_label = self.real_sdk, self.real_acct, self.real_label
 
     def _world(self, key, acct, label="user@example.com"):
-        km._sdk = lambda: type("B", (), {"work_key_configured": bool(key)})()
+        # the stub answers the unpicked rule for an undeclared, unpicked box (_auth_avail's default calls
+        # new_session_auth directly; the declared cells run on a real backend in test_expected_auth)
+        km._sdk = lambda: type("B", (), {"work_key_configured": bool(key),
+                                         "new_session_auth": lambda self: "key" if key else "login"})()
         km._claude_account = lambda: acct
         km._claude_account_label = lambda: (label if acct else "")
 
