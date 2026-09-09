@@ -26444,10 +26444,41 @@ def _end_on_idle_sweep(now, tmux):
                 # even mid-turn. The settle signal itself is the one sessions get: the transcript's open turn
                 path = _thread_transcript_path(reg, sid) if thread else (_path_of(sid) or "")
                 ps = _parse(path, sid, now)
-                if _session_working(ps.get("turns") or []):
-                    continue                         # the turn it asked from is still open; its end is the event
+                working = _session_working(ps.get("turns") or [])
             except Exception:
                 continue
+            if working:
+                if not thread:
+                    continue                         # the turn it asked from is still open; its end is the event
+                # a thread's open turn with no CLI running it is a turn a kernel restart CUT: threads are not
+                # resumed at boot (_boot_reconcile skips a threadOf reg without a persisted queue), drain leaves
+                # the trailing working row, and the settle this wish waits for comes only with the next human
+                # reply, so the wish would kill the thread at that reply, weeks later, mid-conversation, and
+                # silently until then. Nothing launching the sid (running_sids, read as the forkOf arm reads it:
+                # a backend without the set runs nothing) and an EMPTY persisted queue (pending_queued, which
+                # reads the reg mirror for a session not running) say no settle is coming, and the kill below
+                # serves the wish now. A queued text is the exact event that a launch IS coming (the boot
+                # resume's staggered to_start loop feeds it, and running_sids lists the sid only once its
+                # _ensure runs), so the arm stands down aloud until that resume and the queued reply is not
+                # dropped; a CLI running the turn is the ordinary open turn, waited on in silence like any
+                # session's (review round 5, 2026-09-09)
+                be = Sessions.backend_for(sid)
+                try:
+                    launching = sid in be.running_sids()
+                except Exception:
+                    launching = False                # a backend without the set (tmux hosts no threads) runs nothing
+                if launching:
+                    continue                         # a CLI runs the turn: its settle is the event
+                try:
+                    queued = be.pending_queued(sid)
+                except Exception:
+                    queued = []
+                if queued:
+                    sys.stderr.write("end-on-idle: %s is a comment thread whose turn was cut with a reply queued; "
+                                     "request kept until the resume settles\n" % sid)
+                    continue
+                sys.stderr.write("end-on-idle: %s is a comment thread whose turn was cut and nothing resumes it; "
+                                 "serving the request now\n" % sid)
         # the one end routine (_end_and_record: the /end route's and the endSession op's), with a FRESH,
         # own-scan corroboration, never the cycle snapshot, never _pass_scan's memo: the post-kill probe's
         # evidence must POSTDATE the kill, and both of those predate it, the snapshot by construction

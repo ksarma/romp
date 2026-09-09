@@ -824,6 +824,181 @@ class UnknownSessionRefused(_RouteServer):
             _rm_thread(THREAD_PARENT, THREAD_TSID)
             _unregister(THREAD_PARENT)
 
+    def test_a_threads_turn_cut_by_a_restart_with_nothing_to_resume_it_is_ended_now(self):
+        # a comment thread's deferred end whose turn a kernel restart cut was held forever and silently: threads
+        # are not resumed at boot (_boot_reconcile skips a threadOf reg without a persisted queue), drain leaves
+        # the trailing working row, and the sweep's open-turn branch waited for a settle only the next human
+        # reply would produce, so the wish killed the thread at that reply, weeks later. With nothing running
+        # the sid (running_sids) and no persisted queue (pending_queued reads the reg mirror for a session not
+        # running) no settle is coming: the sweep ends it now through the one end routine, saying why (review
+        # round 5, 2026-09-09).
+        fake = mock.Mock()
+        fake.busy.return_value = None
+        fake.kill.side_effect = _reg_flipping_kill(THREAD_TSID)
+        fake.running_sids.return_value = []
+        fake.pending_queued.return_value = []
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        deaths, sent, parsed = [], [], []
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_parse", lambda path, sid, now: parsed.append(path) or {"turns": []}), \
+                 mock.patch.object(km, "_session_working", lambda turns: True), \
+                 mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)), \
+                 mock.patch.object(km, "_comment_kill_all", lambda sid, be: None), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append(m)), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                code, resp = self._post("/end", {"id": THREAD_TSID, "when": "idle"})
+                self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    km._end_on_idle_sweep(1000, {})
+                fake.kill.assert_called_once_with(THREAD_TSID)
+                self.assertEqual(deaths, [THREAD_TSID], "the death is recorded")
+                self.assertIn({"type": "closed", "id": THREAD_TSID}, sent, "the closed frame is sent")
+                self.assertNotIn(THREAD_TSID, km._end_on_idle_load(), "the wish is spent by the kill")
+                self.assertEqual(parsed, [km._thread_transcript_path(km._thread_reg(THREAD_TSID), THREAD_TSID)],
+                                 "the thread's own transcript was read: the turn IS open, nothing will settle it")
+                self.assertIn("turn was cut and nothing resumes it", err.getvalue())
+                self.assertIn("kill: %s via end-on-idle (self-close, a comment thread)" % THREAD_TSID, err.getvalue())
+                # a second tick finds nothing armed
+                fake.kill.reset_mock()
+                km._end_on_idle_sweep(1001, {})
+                fake.kill.assert_not_called()
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+
+    def test_a_cut_thread_turn_waits_on_a_running_cli_or_a_queued_reply(self):
+        # the cut-turn arm's guards: a CLI running the turn is the ordinary open turn, waited on in silence like
+        # any session's; a persisted queue with nothing running is the exact event that a boot resume is coming
+        # (the staggered to_start loop feeds it, and running_sids lists the sid only once its _ensure runs), so
+        # the arm stands down aloud and the queued reply is not dropped; once the resume runs the turn and it
+        # settles, the ordinary settle path kills (review round 5, 2026-09-09).
+        fake = mock.Mock()
+        fake.busy.return_value = None
+        fake.kill.side_effect = _reg_flipping_kill(THREAD_TSID)
+        fake.running_sids.return_value = [THREAD_TSID]
+        fake.pending_queued.return_value = []
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        working, deaths, sent = [True], [], []
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_parse", lambda path, sid, now: {"turns": []}), \
+                 mock.patch.object(km, "_session_working", lambda turns: working[0]), \
+                 mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)), \
+                 mock.patch.object(km, "_comment_kill_all", lambda sid, be: None), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append(m)), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                code, resp = self._post("/end", {"id": THREAD_TSID, "when": "idle"})
+                self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
+                # a CLI runs the open turn: wait, silently, as for any session
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    km._end_on_idle_sweep(1000, {})
+                fake.kill.assert_not_called()
+                self.assertIn(THREAD_TSID, km._end_on_idle_load())
+                self.assertEqual(err.getvalue(), "", "an ordinary open turn is waited on in silence")
+                # nothing runs it, but a reply is queued: the resume is coming; stand down and say so
+                fake.running_sids.return_value = []
+                fake.pending_queued.return_value = ["the reply the CLI never started"]
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    km._end_on_idle_sweep(1001, {})
+                fake.kill.assert_not_called()
+                self.assertIn(THREAD_TSID, km._end_on_idle_load(), "the wish stays armed for the resume")
+                self.assertIn("turn was cut with a reply queued", err.getvalue())
+                fake.pending_queued.assert_called_with(THREAD_TSID)
+                # the resume lands: the CLI runs the turn and the queue is fed; the turn is open, so wait
+                fake.running_sids.return_value = [THREAD_TSID]
+                fake.pending_queued.return_value = []
+                km._end_on_idle_sweep(1002, {})
+                fake.kill.assert_not_called()
+                # its settle: the ordinary path
+                working[0] = False
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    km._end_on_idle_sweep(1003, {})
+                fake.kill.assert_called_once_with(THREAD_TSID)
+                self.assertEqual(deaths, [THREAD_TSID])
+                self.assertIn({"type": "closed", "id": THREAD_TSID}, sent)
+                self.assertNotIn(THREAD_TSID, km._end_on_idle_load())
+                self.assertNotIn("turn was cut", err.getvalue(), "a settled turn takes the settle path, not the cut arm")
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+
+    def test_a_cut_thread_turn_reads_as_open_from_its_real_transcript_and_is_ended(self):
+        # the shape a restart leaves on disk, parsed for real: a user prompt answered by an assistant tool_use
+        # with no stop record (live resumes carry none), and no idle row. The real parse reads an open turn
+        # that nothing will settle, and the cut-turn arm ends the thread once nothing runs it (review round 5,
+        # 2026-09-09). The transcript lives under the test run's projects root, never the real one.
+        import time as _time
+        from datetime import datetime, timezone
+        from pathlib import Path
+        self.assertNotEqual(os.path.realpath(str(km.jd.PROJECTS)),
+                            os.path.realpath(os.path.expanduser("~/.claude/projects")),
+                            "the projects root must be the test run's, never the real one")
+
+        def iso(t):
+            return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        now = int(_time.time())
+        fake = mock.Mock()
+        fake.busy.return_value = None
+        fake.kill.side_effect = _reg_flipping_kill(THREAD_TSID)
+        fake.running_sids.return_value = [THREAD_TSID]
+        fake.pending_queued.return_value = []
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        reg_path = km.jd.STATE / "sdk" / (THREAD_TSID + ".json")
+        tpath = Path(km._thread_transcript_path(json.loads(reg_path.read_text()), THREAD_TSID))
+        tpath.parent.mkdir(parents=True, exist_ok=True)
+        recs = [{"type": "user", "timestamp": iso(now - 90), "uuid": "u1", "parentUuid": None, "promptSource": "typed",
+                 "message": {"role": "user", "content": "please look into the flaky test"}},
+                {"type": "assistant", "timestamp": iso(now - 80), "uuid": "a1", "parentUuid": "u1",
+                 "message": {"role": "assistant", "stop_reason": "tool_use",
+                             "content": [{"type": "text", "text": "Looking."},
+                                         {"type": "tool_use", "id": "tu_1", "name": "Bash",
+                                          "input": {"command": "pytest -q"}}]}}]
+        tpath.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+        deaths, sent = [], []
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)), \
+                 mock.patch.object(km, "_comment_kill_all", lambda sid, be: None), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append(m)), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                ps = km._parse(str(tpath), THREAD_TSID, now)
+                self.assertTrue(km._session_working(ps.get("turns") or []), "the fixture reads as an open turn")
+                code, resp = self._post("/end", {"id": THREAD_TSID, "when": "idle"})
+                self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
+                km._end_on_idle_sweep(now, {})
+                fake.kill.assert_not_called()
+                self.assertIn(THREAD_TSID, km._end_on_idle_load(), "a CLI runs the turn: the wish waits")
+                fake.running_sids.return_value = []
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    km._end_on_idle_sweep(now + 1, {})
+                fake.kill.assert_called_once_with(THREAD_TSID)
+                self.assertEqual(deaths, [THREAD_TSID])
+                self.assertIn({"type": "closed", "id": THREAD_TSID}, sent)
+                self.assertNotIn(THREAD_TSID, km._end_on_idle_load())
+                self.assertIn("turn was cut and nothing resumes it", err.getvalue())
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+            try:
+                tpath.unlink()
+            except OSError:
+                pass
+
     def test_a_send_the_backend_refuses_is_a_409_not_an_ok(self):
         # a KNOWN sid the backend no longer holds (SdkBackend.send answers False when its reg is missing or
         # reads alive=False: a dead SDK session by id, an ended comment thread by name or by id): the route
