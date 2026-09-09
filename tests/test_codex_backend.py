@@ -1091,6 +1091,67 @@ for i in range(20):
         self.assertEqual(cat, [{"value": "gpt-5-test", "label": "GPT-5 Test"}])
         be.model_catalog()
         self.assertEqual(len(fake.called("model_list")), 1, "catalog is fetched once, then cached")
+        self.assertIsNone(be.model_catalog_error(), "a held catalog carries no error")
+
+    def test_model_catalog_failure_is_named_and_not_cached(self):
+        # The owner's picker (2026-09-09): the session's default badge showed while the menu under it was
+        # empty. One way there: model_list raised, the backend answered [] and the kernel swallowed it.
+        # The failure must be readable (model_catalog_error) and must not stick: the next read retries.
+        be, fake, _ = build()
+        logged = []
+        be.log = logged.append
+        boom = [RuntimeError("app-server not ready")]
+        real = fake.model_list
+
+        def flaky(*a, **k):
+            if boom:
+                raise boom.pop()
+            return real(*a, **k)
+        fake.model_list = flaky
+        self.assertEqual(be.model_catalog(), [])
+        self.assertIn("app-server not ready", be.model_catalog_error())
+        self.assertTrue(any("app-server not ready" in m for m in logged), "the failure is logged")
+        self.assertEqual(be.model_catalog(), [{"value": "gpt-5-test", "label": "GPT-5 Test"}],
+                         "the next read retries instead of serving the failed answer")
+        self.assertIsNone(be.model_catalog_error())
+
+    def test_model_catalog_without_a_client_names_the_client_failure(self):
+        # _get_client() None (the factory failed; the client sits in its retry backoff) used to answer []
+        # with nothing logged and nothing for the picker to show.
+        be, _, _ = build(factory=lambda: (_ for _ in ()).throw(RuntimeError("codex login missing")))
+        logged = []
+        be.log = logged.append
+        self.assertEqual(be.model_catalog(), [])
+        self.assertIn("codex login missing", be.model_catalog_error())
+        self.assertTrue(any("client is unavailable" in m for m in logged))
+        be.model_catalog()
+        self.assertEqual(sum("client is unavailable" in m for m in logged), 1,
+                         "the same reason is logged once, not once per picker open")
+
+    def test_model_catalog_empty_answer_is_loud_and_not_cached(self):
+        # An empty page `is not None`, so it used to be cached for the life of the process: every later
+        # picker open showed the blank menu even after the app-server had models to list.
+        be, fake, _ = build()
+        real = fake.model_list
+        pages = [SimpleNamespace(data=[])]
+        fake.model_list = lambda *a, **k: pages.pop() if pages else real(*a, **k)
+        self.assertEqual(be.model_catalog(), [])
+        self.assertIn("listed no models", be.model_catalog_error())
+        self.assertEqual(be.model_catalog(), [{"value": "gpt-5-test", "label": "GPT-5 Test"}])
+        self.assertIsNone(be.model_catalog_error())
+
+    def test_a_picked_model_and_effort_ride_the_next_turn_start(self):
+        # The picker's choice path end to end on the backend: set_model/set_effort land as the next
+        # turn_start's params (Codex persists them per thread), so the next reply comes from the pick.
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be.set_model(sid, "gpt-5-test"))
+        self.assertTrue(be.set_effort(sid, "high"))
+        be.send(sid, "hello after the pick")
+        self.assertTrue(until(lambda: not be.busy(sid) and not be.pending_queued(sid)))
+        params = fake.called("turn_start")[-1][3]
+        self.assertEqual(params.get("model"), "gpt-5-test")
+        self.assertEqual(params.get("effort"), "high")
 
     def test_deliver_and_wake_reach_the_agent(self):
         be, fake, _ = build()
@@ -1117,6 +1178,60 @@ for i in range(20):
         recs = [json.loads(l) for l in Path(be.transcript_path(sid)).read_text().splitlines()]
         self.assertTrue(any(r["type"] == "assistant" for r in recs))
         self.assertTrue(be.kill(sid))   # kill's held-final drain notifies too — same reentry
+
+
+class PruneLive(unittest.TestCase):
+    """The kernel's _merge_live_atoms calls be.prune_live(sid, tx_uuids, tx_text_t, human_floor) -- four
+    positional arguments -- and CodexBackend.prune_live took three from its birth (2026-09-02) to
+    2026-09-09: every live merge of a Codex session holding an echo raised TypeError (the chat build and
+    the feed's merge failed outright; the timeline bars logged "live-merge failed"). The call shape is
+    pinned across every backend in tests/test_backend_call_parity.py; this class covers the behaviour."""
+
+    def _with_echo(self, text="ship it", t=1000.0):
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.echoes.append({"text": text, "t": t, "uuid": "echo-11111111"})
+        return be, sid
+
+    def test_accepts_the_kernels_four_positional_arguments(self):
+        be, sid = self._with_echo()
+        be.prune_live(sid, frozenset(), {}, 2000)          # the exact caller shape: sets, a mapping, a floor
+        self.assertEqual(len(be.live_atoms(sid)), 1, "no floor retires a plain echo (the 2026-09-06 rule)")
+
+    def test_text_lands_only_through_a_record_at_or_after_the_send(self):
+        # T237b: "ok" sent twice -- the first record predates the second echo, so it must not retire it;
+        # a record stamped at or after the send does.
+        be, sid = self._with_echo("ok", t=1000.0)
+        be.prune_live(sid, frozenset(), {"ok": 900.0}, 0)
+        self.assertEqual(len(be.live_atoms(sid)), 1, "an older record with the same text is not this send")
+        be.prune_live(sid, frozenset(), {"ok": 1000.0}, 0)
+        self.assertEqual(be.live_atoms(sid), [], "a record at the send time lands it")
+
+    def test_text_compares_under_the_shared_key_rule(self):
+        be, sid = self._with_echo("ship it", t=1000.0)
+        be.prune_live(sid, frozenset(), {"ship it": 1000.5}, 0)   # the kernel's keys are already stripped
+        self.assertEqual(be.live_atoms(sid), [])
+        be2, sid2 = self._with_echo("ship it", t=1000.0)
+        be2.prune_live(sid2, frozenset(), {"  ship it\n"}, 0)     # an older caller's plain set, unstripped
+        self.assertEqual(be2.live_atoms(sid2), [], "a plain set keeps the unfloored match, keyed the same way")
+
+    def test_uuid_retires_and_the_floor_retires_only_command_atoms(self):
+        be, sid = self._with_echo("ship it", t=1000.0)
+        s = be._session(sid)
+        with s.lock:
+            s.echoes.append({"text": "/model gpt-5-test", "t": 1000.0, "uuid": "echo-22222222", "command": True})
+        be.prune_live(sid, frozenset({"echo-11111111"}), {}, 0)
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-22222222"], "by uuid")
+        be.prune_live(sid, frozenset(), {}, 999.0)
+        self.assertEqual(len(be.live_atoms(sid)), 1, "a floor the command atom postdates leaves it")
+        be.prune_live(sid, frozenset(), {}, 1000.0)
+        self.assertEqual(be.live_atoms(sid), [], "a genuine-human turn at or after it retires the command atom")
+
+    def test_unknown_sid_is_a_no_op(self):
+        be, _, _ = build()
+        be.prune_live("11111111-2222-4333-8444-555555555555", frozenset(), {}, 0)
 
 
 class LaunchErrorNames(unittest.TestCase):

@@ -6,7 +6,9 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 
+const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const TIMELINE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js"), "utf8");
 
@@ -22,7 +24,8 @@ test("the /models payload's codex section populates its own choice arrays (both 
 test("menu construction picks the choice list by the session's backend", () => {
   assert.match(RENDER, /function metaChoices\(kind: MetaKind, st: Status\)/);
   assert.match(RENDER, /st\.backend === "codex"/);
-  assert.match(RENDER, /for \(const c of metaChoices\(kind, s\.status\)\.filter\(/);
+  assert.match(RENDER, /const rows = metaChoices\(kind, s\.status\)\.filter\(/);
+  assert.match(RENDER, /for \(const c of rows\) \{/);
   assert.match(TIMELINE, /s\.backend === 'codex'/);
   assert.match(TIMELINE, /\? \(kind === 'model' \? CODEX_MODEL_CHOICES : CODEX_EFFORT_CHOICES\)/);
 });
@@ -33,4 +36,66 @@ test("Codex offers only its supported modes and opens the mode picker", () => {
   assert.match(RENDER, /if \(kind === "mode"\) return CODEX_MODE_CHOICES;/);
   assert.doesNotMatch(RENDER, /if \(kind === "mode" && s\.status\.backend === "codex"\) return;/);
   assert.match(RENDER, /case "sandboxed": return "Sandboxed";/);
+});
+
+// The owner's Codex picker (2026-09-09) opened on a BLANK menu while the session's default badge showed:
+// the kernel's codex section had `models: []` and no reason (a client in retry backoff, a failed
+// model_list, or the /models gate closed when the tab loaded). The section now carries `error`, and a
+// Codex menu with nothing to offer shows one non-clickable row naming it, re-reads /models on the open
+// itself, and rebuilds when the list lands. Source-pinned, and the loader's slice is EXECUTED below.
+test("a Codex menu with no list says why and re-reads /models instead of opening blank", () => {
+  assert.match(RENDER, /let CODEX_MODELS_ERROR = "";/);
+  assert.match(RENDER, /if \(d\.codex\) CODEX_MODELS_ERROR = typeof d\.codex\.error === "string" \? d\.codex\.error : "";/);
+  assert.match(RENDER, /if \(onModelChoicesLoaded\) onModelChoicesLoaded\(\);/);
+  assert.match(RENDER, /if \(!rows\.length && s\.status\.backend === "codex" && \(kind === "model" \|\| kind === "effort"\)\) \{/);
+  assert.match(RENDER, /el\("div", "meta-item meta-empty"\)/);
+  assert.match(RENDER, /"No model list from Codex"/);
+  assert.match(RENDER, /sub\.textContent = CODEX_MODELS_ERROR \|\| "asking the Codex app-server for it now";/);
+  // the open is the event: one fetch, and the hook rebuilds the SAME open menu when a list arrives
+  const block = RENDER.slice(RENDER.indexOf("const empty = el(\"div\", \"meta-item meta-empty\")"), RENDER.indexOf("for (const c of rows) {"));
+  assert.match(block, /onModelChoicesLoaded = \(\) => \{/);
+  assert.match(block, /if \(metaMenuEl !== menu\) return;/);
+  assert.match(block, /if \(now\.length\) \{ closeMetaMenu\(\); toggleMetaMenu\(kind, btn, forSid\); \}/);
+  assert.match(block, /loadModelChoices\(\);/);
+  // the hook dies with its menu, so a late response never rebuilds a menu the user closed
+  assert.match(RENDER, /metaMenuEl = null;\n  onModelChoicesLoaded = null;/);
+  // the row is a statement, not a choice: no pointer, no hover wash
+  const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
+  assert.match(CSS, /\.meta-item\.meta-empty \{ cursor: default; \}/);
+  assert.match(CSS, /\.meta-item\.meta-empty:hover \{ background: none; \}/);
+});
+
+// The loader, lifted from render.ts and transpiled (the models-rev.test.ts idiom): the codex section's
+// `error` lands in CODEX_MODELS_ERROR, an absent or non-string one clears it, and the completion hook
+// fires once per applied read.
+function liftLoader() {
+  const start = RENDER.indexOf("const MODEL_CHOICES: {");
+  const fnAt = RENDER.indexOf("function loadModelChoices(): void {", start);
+  const stop = RENDER.indexOf("\n}\n", fnAt) + 3;
+  assert.ok(start > 0 && fnAt > start && stop > fnAt, "anchors not found; render.ts's models loader moved; re-anchor");
+  const js = requireCjs("esbuild").transformSync(RENDER.slice(start, stop), { loader: "ts" }).code;
+  const pending: Array<(d: any) => void> = [];
+  const fetch = () => new Promise<any>((res) => pending.push((d: any) => res({ json: async () => d })));
+  const fn = new Function("kernelUrl", "fetch", "adoptCommentDefaults",
+    js + "\nreturn { loadModelChoices, CODEX_MODEL_CHOICES, get error() { return CODEX_MODELS_ERROR; }, set hook(f) { onModelChoicesLoaded = f; } };");
+  return { api: fn((p: string) => p, fetch, () => {}), pending };
+}
+const tick = () => new Promise((r) => setImmediate(r));
+
+test("executed: the codex section's error reaches the picker and the completion hook fires", async () => {
+  const { api, pending } = liftLoader();
+  let fired = 0;
+  api.hook = () => { fired++; };
+  api.loadModelChoices();
+  pending[0]({ rev: 5, models: [], efforts: [], codex: { models: [], efforts: [], error: "model_list failed: app-server not ready" } });
+  await tick(); await tick();
+  assert.equal(api.error, "model_list failed: app-server not ready");
+  assert.deepEqual(api.CODEX_MODEL_CHOICES, []);
+  assert.equal(fired, 1, "the open menu is told the read completed");
+  api.loadModelChoices();
+  pending[1]({ rev: 6, models: [], efforts: [], codex: { models: [{ value: "gpt-5-test", label: "GPT-5 Test" }], efforts: [], error: null } });
+  await tick(); await tick();
+  assert.equal(api.error, "", "a held list clears the reason");
+  assert.deepEqual(api.CODEX_MODEL_CHOICES, [{ value: "gpt-5-test", label: "GPT-5 Test" }]);
+  assert.equal(fired, 2);
 });

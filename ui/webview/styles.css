@@ -1524,6 +1524,10 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
   color: var(--fg); position: relative; white-space: nowrap;
 }
 .meta-item:hover { background: var(--menu-hover); }   /* the themed row wash (T226) */
+/* the one row a Codex menu shows when it has no list to offer (2026-09-09): a statement, not a choice,
+   so no pointer, no hover wash; its sub-line carries the kernel's reason */
+.meta-item.meta-empty { cursor: default; }
+.meta-item.meta-empty:hover { background: none; }
 /* second line for a choice whose consequence its label doesn't carry (Bypass permissions). Same
    0.82em / 0.6 opacity as .ctx-item-sub — one sub-line size across every romp menu. */
 .meta-item-sub { font-size: 0.82em; opacity: 0.6; }

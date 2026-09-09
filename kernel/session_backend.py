@@ -292,8 +292,20 @@ class SessionBackend(ABC):
         stream), [] if none. Merged before the on-disk parse so a just-sent message shows instantly."""
 
     @abstractmethod
-    def prune_live(self, sid: str, tx_uuids, tx_user_texts=()) -> None:
-        """Drop live atoms the transcript now carries (by uuid or echo text), so they don't double-show."""
+    def prune_live(self, sid: str, tx_uuids, tx_user_texts=(), human_floor: int = 0) -> None:
+        """Drop live atoms the transcript now carries (by uuid or echo text), so they don't double-show.
+        THE KERNEL'S CALL SHAPE, which every backend must accept (kernel._merge_live_atoms passes all four
+        positionally; tests/test_backend_call_parity.py pins the shape against each backend): `tx_uuids` is
+        the set of record uuids on disk; `tx_user_texts` maps each landed user text (keyed by echo_text_key)
+        to the NEWEST record time carrying it, so an echo lands by text only through a record written at or
+        after its own send (T237b: "ok" twice must not retire the second before its record) -- a plain set
+        from an older caller keeps the unfloored match; `human_floor` is the newest genuine-human record's
+        time, the event that says the transcript has moved past anything typed before it. No floor retires a
+        plain input echo on any backend (2026-09-06): the SDK uses it to retire stale COMMAND feedback atoms,
+        the tmux backend to SETTLE an overtaken echo as dropped. A backend that accepts a narrower signature
+        than this raises TypeError on every live merge of its sessions -- the Codex backend shipped that way
+        (2026-09-02 to 2026-09-09), and the chat build of a session with a queued send failed until the echo
+        landed."""
 
     # ── ask picker ───────────────────────────────────────────────────────────────────────────────
     @abstractmethod

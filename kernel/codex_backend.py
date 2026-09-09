@@ -44,6 +44,12 @@ _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
 _events = load_source("romp_codex_events", HERE / "codex_events.py")
 _runtime = load_source("romp_codex_runtime", HERE / "codex_runtime.py")
+# The by-text KEY RULE (session_backend.echo_text_key), shared with the kernel's _atom_user_texts and
+# SdkBackend.prune_live: one normalization on both sides of the echo-vs-record comparison, so an echo whose
+# text carries a trailing newline still lands. Reused from the copy the kernel loaded when there is one
+# (the ABC's module), else loaded here under its own name (a bare test build has no kernel).
+echo_text_key = (sys.modules.get("romp_session_backend")
+                 or load_source("romp_session_backend_keys", HERE / "session_backend.py")).echo_text_key
 
 SDK_PIN = "openai-codex==0.144.4"     # bin/romp-codex-setup installs exactly this into codexvenv
 SETUP_HINT = ("Session not created: the Codex backend isn't installed. "
@@ -312,7 +318,8 @@ class CodexBackend:
         self._client_retry_at = 0.0
         self._client_failures = 0
         self._client_generation = 0   # successful app-server client installations
-        self._catalog = None          # model_catalog() cache — fetched once per process
+        self._catalog = None          # model_catalog() cache: a non-empty list, fetched once per process
+        self._catalog_err = None      # why the last model_catalog() answered [] (str), or None
         self._client_lock = threading.Lock()
         self._sessions = {}           # sid → _Session
         self._sessions_lock = threading.RLock()
@@ -874,24 +881,49 @@ class CodexBackend:
 
     def model_catalog(self):
         """[{value,label}] for the UI's model picker — the app-server's own model list (the ONE
-        authoritative source), fetched once per process and cached. [] when the client is
-        unavailable (the picker then shows nothing rather than another vendor's list). A plan
-        account may still refuse some listed models per turn — that failure surfaces loudly as
-        the turn's error card, and switching back is one click."""
-        if self._catalog is not None:
+        authoritative source), fetched once per process and cached. [] when the list cannot be had, and
+        then model_catalog_error() says WHY (the picker shows nothing rather than another vendor's list,
+        and since 2026-09-09 it shows the reason: the owner's Codex picker opened on an empty menu with
+        no word of what was wrong). Three ways to [] were silent before: a client in its retry backoff
+        (_get_client() None, nothing logged), a model_list that raised (logged, but the kernel's /models
+        swallowed it), and an EMPTY answer, which `is not None` and so was cached for the life of the
+        process. Now only a non-empty list is cached; each failure is recorded and logged once per
+        distinct reason (the kernel re-reads /models on every picker open, so a per-call line would
+        repeat). A plan account may still refuse some listed models per turn; that failure surfaces
+        loudly as the turn's error card, and switching back is one click."""
+        if self._catalog:
             return self._catalog
         c = self._get_client()
         if c is None:
+            self._note_catalog_error("the Codex app-server client is unavailable: %s"
+                                     % (self._client_err or "not started yet"))
             return []
         try:
             ms = c.model_list()
-            self._catalog = [{"value": m.id, "label": getattr(m, "display_name", None) or m.id}
-                             for m in (getattr(ms, "data", None) or [])
-                             if not getattr(m, "hidden", False)]
+            rows = [{"value": m.id, "label": getattr(m, "display_name", None) or m.id}
+                    for m in (getattr(ms, "data", None) or [])
+                    if not getattr(m, "hidden", False)]
         except Exception as e:
-            self.log("model_list failed: %s" % e)
+            self._note_catalog_error("model_list failed: %s" % (str(e) or e.__class__.__name__))
             return []
-        return self._catalog
+        if not rows:
+            self._note_catalog_error("the Codex app-server listed no models")
+            return []
+        self._catalog = rows
+        self._catalog_err = None
+        return rows
+
+    def _note_catalog_error(self, why):
+        """Record why model_catalog() answered [] and log it once per distinct reason."""
+        if why != self._catalog_err:
+            self.log(why)
+        self._catalog_err = why
+
+    def model_catalog_error(self):
+        """Why the last model_catalog() answered [] (a string for the picker to show), or None when the
+        catalog is held or has not been asked for yet. Read by the kernel's /models after an empty
+        answer; the failure is the app-server's or the client's, so the message names it."""
+        return self._catalog_err
 
     def set_mode(self, sid, mode):
         s = self._session(sid)
@@ -1489,14 +1521,52 @@ class CodexBackend:
                                  "content": [{"type": "text", "text": e["text"]}]}}
                     for e in s.echoes]
 
-    def prune_live(self, sid, tx_uuids, tx_user_texts=()):
+    def prune_live(self, sid, tx_uuids, tx_user_texts=(), human_floor=0):
+        """Drop the optimistic input echoes the transcript has caught up on, with the SessionBackend
+        contract's FULL call shape: the kernel's _merge_live_atoms passes (sid, tx_uuids, tx_text_t,
+        human_floor) positionally, and this method took three until 2026-09-09 -- every live merge of a
+        Codex session holding an echo (a queued send on a busy session, for as long as it queued) raised
+        TypeError, which failed the chat build and the feed's merge outright and left the timeline bars
+        complaining "live-merge failed" in the kernel log. The signature drifted upstream at the
+        backend's birth (the caller already passed four); tests/test_backend_call_parity.py now pins the
+        shape against every backend.
+
+        An echo retires on the events SdkBackend.prune_live names: its uuid is on disk; its text LANDED,
+        where `tx_user_texts` as a MAPPING (text -> the newest record time carrying it) lands the echo
+        only through a record written at or after its own send -- the backend's own _append prune is
+        implicitly floored (it sees only the records it just wrote), but this kernel-side prune sees the
+        whole transcript, and without the floor a repeated text ("ok" twice) retired the second echo the
+        moment it was sent (T237b) -- while a plain set (an older caller) keeps the unfloored match; or it
+        is a COMMAND atom that a genuine-human turn (`human_floor`) postdates, the rule the SDK applies to
+        its streamed slash-command feedback. Codex echoes carry no `command` flag today, so the floor
+        retires nothing here; it is honoured, not swallowed, so an echo kind that gains the flag behaves
+        as on the SDK. No floor retires a plain echo (the 2026-09-06 rule): a send the app-server never
+        records must stay visible. Texts are compared under echo_text_key on both sides."""
         s = self._session(sid)
         if not s:
             return
-        texts = {t.strip() for t in tx_user_texts or ()}
+        uuids = tx_uuids or ()
+        text_t = tx_user_texts if isinstance(tx_user_texts, dict) else None
+        keys = None if text_t is not None else {echo_text_key(t) for t in (tx_user_texts or ())} - {""}
+        floor = float(human_floor or 0)
+
+        def _landed(e):
+            if e.get("uuid") in uuids:
+                return True
+            key = echo_text_key(e.get("text"))
+            if not key:
+                return False
+            if text_t is None:
+                return key in keys
+            return key in text_t and float(text_t[key] or 0) >= float(e.get("t") or 0)
+
+        def _stale_command(e):
+            return bool(e.get("command")) and floor > 0 and float(e.get("t") or 0) <= floor
+
         with s.lock:
-            s.echoes = [e for e in s.echoes
-                        if e["uuid"] not in (tx_uuids or ()) and e["text"] not in texts]
+            kept = [e for e in s.echoes if not (_landed(e) or _stale_command(e))]
+            if len(kept) != len(s.echoes):
+                s.echoes = kept
 
     # ── ask picker (no Codex equivalent in phase 1) ─────────────────────────────────────────────
     def on_ask(self, sid, kind, payload=None):

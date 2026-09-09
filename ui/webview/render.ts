@@ -13436,6 +13436,13 @@ const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[
 // run: an empty model menu beats offering another vendor's models (docs/codex.md).
 const CODEX_MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 const CODEX_EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
+// WHY the Codex list is empty, when it is (the payload's `codex.error`, 2026-09-09): the app-server
+// client not up yet, a failed model list, or the kernel's gate closed. The picker shows it in place of
+// the blank menu the owner met (fail loudly, never a silent blank). "" when the list is held.
+let CODEX_MODELS_ERROR = "";
+// Set by an open menu that found its list empty: called once per completed /models read so the menu
+// can rebuild with the list that just landed (or show the fresh reason). Cleared with the menu.
+let onModelChoicesLoaded: (() => void) | null = null;
 // Loaded at page load and RE-LOADED on the kernel's {type:"models"} frame — the pick memory moved (a
 // version pinned, a family un-pinned by Latest, a refused pin dropped; from this tab, another dashboard,
 // or the kernel itself) or the catalog grew. A family's `default` is what its row SENDS, so a list
@@ -13454,7 +13461,9 @@ function loadModelChoices(): void {
     if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
     if (d.codex && Array.isArray(d.codex.models)) { CODEX_MODEL_CHOICES.length = 0; CODEX_MODEL_CHOICES.push(...d.codex.models); }
     if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; CODEX_EFFORT_CHOICES.push(...d.codex.efforts); }
+    if (d.codex) CODEX_MODELS_ERROR = typeof d.codex.error === "string" ? d.codex.error : "";
     if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
+    if (onModelChoicesLoaded) onModelChoicesLoaded();
   }).catch(() => { /* picker stays as it was until it lands */ });
 }
 loadModelChoices();
@@ -13739,6 +13748,7 @@ function closeMetaMenu() {
   document.querySelectorAll(".meta-sub").forEach((n) => n.remove());   // an open version submenu goes with its menu
   metaMenuEl?.remove();
   metaMenuEl = null;
+  onModelChoicesLoaded = null;   // a rebuild hook belongs to the menu it was set for
 }
 function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null) {
   const wasOpen = metaMenuEl?.dataset.kind === kind;
@@ -13776,7 +13786,30 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   // An sdkOnly entry is dropped on tmux rather than shown-and-refused: the backend cannot apply it,
   // and a menu that lists a mode you can't have is worse than one that doesn't. Codex sessions read
   // their own vocabulary via metaChoices (docs/codex.md) before the same filter.
-  for (const c of metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk")) {
+  const rows = metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk");
+  if (!rows.length && s.status.backend === "codex" && (kind === "model" || kind === "effort")) {
+    // A Codex menu with NOTHING to offer says why instead of opening blank (the owner 2026-09-09: the
+    // badge showed the session's default while the list under it was empty). The reason is the
+    // kernel's `codex.error`; absent one, the list was never read for this tab (a dashboard loaded
+    // before the first Codex session) and the open itself is the event to read it again: one fetch,
+    // and the menu rebuilds when the list lands, or the row shows the fresh reason. Not a choice, so
+    // it takes no click and no focus.
+    const empty = el("div", "meta-item meta-empty");
+    const head = el("div");
+    head.textContent = kind === "model" ? "No model list from Codex" : "No effort list from Codex";
+    const sub = el("div", "meta-item-sub");
+    sub.textContent = CODEX_MODELS_ERROR || "asking the Codex app-server for it now";
+    empty.append(head, sub);
+    menu.appendChild(empty);
+    onModelChoicesLoaded = () => {
+      if (metaMenuEl !== menu) return;
+      const now = metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk");
+      if (now.length) { closeMetaMenu(); toggleMetaMenu(kind, btn, forSid); }
+      else sub.textContent = CODEX_MODELS_ERROR || "the Codex app-server sent no list";
+    };
+    loadModelChoices();
+  }
+  for (const c of rows) {
     const item = el("div", "meta-item" + (isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
     item.tabIndex = 0;
     const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;

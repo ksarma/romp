@@ -15370,8 +15370,20 @@ def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
     on a Codex-default machine would land outside its parent's group while the CLI blamed an older
     kernel. Returns (sid, echo)."""
     bg, fg = _pick_identity_color()
-    sid = _codex().spawn(nm, cwd, bg, fg)
+    cx = _codex()
+    sid = cx.spawn(nm, cwd, bg, fg)
     extra = {}
+    # The FIRST live Codex session opens /models' Codex gate (the handler consults the backend's catalog
+    # only where this machine opted in, a live session being one way), so every open picker's cached
+    # `codex.models` just went from [] to the real list: tell them with a models frame, the same event
+    # the pick memory and the catalog fetch send. Without it a dashboard loaded before this spawn kept
+    # its empty Codex menu until a reload (the owner's empty picker, 2026-09-09). Event-keyed on the
+    # gate's flip itself, not on every spawn: a second session changes nothing the payload carries.
+    try:
+        if len(cx.live_sessions()) == 1:
+            _models_changed()
+    except Exception as e:
+        sys.stderr.write("codex spawn: models frame not sent (%s)\n" % e)
     if parent or tags:
         extra.update(_tag_ack(sid, parent, tags))
     if client is not None:
@@ -54651,17 +54663,27 @@ class Handler(BaseHTTPRequestHandler):
                 # authoritative source; [] until the backend runs, so no picker ever shows another
                 # vendor's models); efforts are the four Codex accepts — max/ultracode are Claude-only.
                 cx = _codex()
-                cx_models = []
+                cx_models, cx_err = [], None
                 # Codex is consulted ONLY where this machine opted in — the Codex default backend, the
                 # Codex judge engine, or a live Codex session. model_catalog() builds the client, which
                 # SPAWNS `codex app-server`; unconditional, every dashboard load spawned (or repeatedly
                 # failed to spawn) it on every install, the opposite of off-by-default (PR #885 review).
+                # An EMPTY list travels with its reason (`error`): the picker used to open on a blank
+                # menu with the session's default badge showing and no word of why (2026-09-09): the
+                # client in retry backoff, a failed model_list, or this gate closed on a dashboard
+                # loaded before the first Codex session, none of them visible. Fail loudly: the reason
+                # rides to the menu, and the gate's own flip sends a models frame (_create_codex_session).
                 if cx and (_default_backend() == "codex" or _judge_engine_name() == "codex"
                            or bool(cx.live_sessions())):
                     try:
                         cx_models = cx.model_catalog()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        cx_err = "model catalog: %s" % (str(e) or e.__class__.__name__)
+                    if not cx_models and not cx_err:
+                        try:
+                            cx_err = cx.model_catalog_error() or "the Codex app-server sent no model list"
+                        except Exception as e:
+                            cx_err = "model catalog: %s" % (str(e) or e.__class__.__name__)
                 return self._send(200, json.dumps(
                     # `rev` is the pick memory's revision — the models frame's counter (_models_changed),
                     # read here BEFORE the picks so a payload never carries a rev newer than its list: a
@@ -54676,7 +54698,7 @@ class Handler(BaseHTTPRequestHandler):
                                 for c in MODEL_CHOICES],
                      "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))
                                  for c in EFFORT_CHOICES],
-                     "codex": {"models": cx_models,
+                     "codex": {"models": cx_models, "error": cx_err,
                                "efforts": [{"value": v, "label": v}
                                            for v in ("low", "medium", "high", "xhigh")]},
                      # the create dialog's pre-read (the user 2026-08-29): what a new comment thread
