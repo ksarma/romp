@@ -647,16 +647,20 @@ test("in Chromium, over the real sheet with the faces loaded: the Hide tab row's
   if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
   assert.ok(fs.existsSync(INTER_PATH) && fs.existsSync(SG_PATH), "the faces the page loads are in the extension's media (a missing file 404s, and the pass would read the fallback face while asserting a loaded one)");
   const inter = fs.readFileSync(INTER_PATH), sg = fs.readFileSync(SG_PATH);
-  let browser: any;
-  try { browser = await pw.chromium.launch(); }
-  catch (e) { t.skip("no playwright chromium on this box (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
-  const rename = RENDER.match(/sb\.textContent = "(the name is a label[^"]+)"; bodyEl\.appendChild\(sb\);/)![1];
-  const bell = RENDER.match(/"(system notification when its work blocks on you or completes)"/)![1];
-  const emoji = RENDER.match(/sb\.textContent = "(one glyph before the name on the tab[^"]+)";/)![1];
+  // the source pins sit BEFORE the launch (round 4): a pin that threw between chromium.launch() and the try whose finally
+  // closes the browser left Chromium open, and node --test then never exited, so a sweep hung instead of going red. Each
+  // read asserts with a message naming the literal, so a miss prints one line and not render.ts.
+  const pick = (re: RegExp, what: string) => { const m = RENDER.match(re); assert.ok(m, `render.ts carries ${what}`); return m![1]; };
+  const rename = pick(/sb\.textContent = "(the name is a label[^"]+)"; bodyEl\.appendChild\(sb\);/, "Rename's sub-line");
+  const bell = pick(/"(system notification when its work blocks on you or completes)"/, "Notify me's sub-line");
+  const emoji = pick(/sb\.textContent = "(one glyph before the name on the tab[^"]+)";/, "Emoji's sub-line");
   const name40 = "notes-api-customer-billing-migration-two";   // 40 characters, the New tag input's maxLength
   assert.equal(name40.length, 40);
   const hide = `hidden in ${name40}; to show it, open the group's view`;
-  assert.match(RENDER, /el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\)/, "the row wears the modifier the sheet caps (the class this leg puts on its Hide tab row)");
+  assert.ok(RENDER.includes('el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped")'), "the row wears the modifier the sheet caps (the class this leg puts on its Hide tab row)");
+  let browser: any;
+  try { browser = await pw.chromium.launch(); }
+  catch (e) { t.skip("no playwright chromium on this box (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
   try {
     const pass = async (fonts: boolean, light: boolean): Promise<MenuRead> => {
       const page = await browser.newPage({ viewport: { width: 450, height: 700 } });

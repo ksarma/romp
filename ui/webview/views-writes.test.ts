@@ -339,7 +339,8 @@ test("pins: render.ts builds every lens and order write from the store's blob (p
   assert.match(fly, /if \(g\.pending\) \{[\s\S]{0,500}busy\.textContent = "creating…"; row\.appendChild\(busy\);\s*\n\s*sub\.appendChild\(row\);\s*\n\s*continue;/,
     "a held tag whose create is in flight renders with no ✕");
   assert.match(fly, /const others = unionFor\(\)\.filter\(\(g\) => !g\.members\.includes\(id\) && !g\.pending\);/, "…and is not offered to join or move to");
-  // T264b's review (upstream, folded 2026-09-08): the menu speaks for the right-clicked copy's group when it has one, else the first holder; the pending guard is unchanged
+  // T264b's review (upstream, folded 2026-09-08): the menu speaks for the right-clicked copy's group when it has one; since round 3 of the
+  // tab menu review, else the one remaining holder, else nothing; the pending guard is unchanged
   // (since the menu's Hide tab row, the user 2026-09-09, the computation is showTabMenu's `homeNow`, above the Tags block and outside this
   // slice; the flyout reads it on every build of its own, and the pending guard is where it was)
   assert.match(fly, /const home = homeNow\(\);   \/\/ read per build: a move or a remove above changes the copy's group \(the Hide tab row reads the same\)/,

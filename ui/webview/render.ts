@@ -6865,9 +6865,11 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         // ONE-CLICK MOVE (tab groups on tags, the user 2026-09-04): while the strip is sectioned, each
         // other tag's row reads "Move to <name>": one click adds that tag and drops THE GROUP THIS COPY
         // SITS IN (T264b: a session under several tags has a copy in each group, and the menu opened
-        // from a copy speaks for that copy's group — the copy the user right-clicked is the one that
-        // moves; its other tags are left alone). No copy named (an older caller): the first holder in
-        // tagOrder. The row's "+" adds without moving. With no tag, "+ <name>" IS the move. A tag
+        // from a copy speaks for that copy's group: the copy the user right-clicked is the one that
+        // moves; its other tags are left alone). No copy named, or the named copy's tag no longer
+        // holding the session: the session's one remaining holder, else no group and the rows read
+        // "+ <name>" (homeNow's comment, above the Hide tab row, states the whole resolution). The
+        // row's "+" adds without moving. With no tag, "+ <name>" IS the move. A tag
         // whose create is still in flight cannot be moved out of (no id to address); the rows read
         // "+ <name>" until the ack. Whether "move" between equivalent tags is the right verb at all is
         // the user's call (flagged with T264b); the mechanics are unchanged here.
