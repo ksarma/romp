@@ -622,26 +622,29 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (pointer: fine,
     "the desktop: no coarse pointer anywhere, so the act rests unseen until the row's hover or focus (round 1's disclosure)");
 });
 
-// THE SUB-LINE'S CAP (tab menu review rounds 2 and 3, 2026-09-09): the menu's rows are nowrap and the menu is sized by its
-// widest row, so the Hide tab row's sub-line grew the menu with the tag name (a 458px sub-line and a 512px menu at the
-// 40-character maximum in Inter, clipped at a narrow pane's edge under render.ts's clamp, which never shrinks the menu). The cap
-// is the ROW's (styles.css: .ctx-sub-capped .ctx-item-sub, 36em of the sub-line's own font with an ellipsis), worn by the Hide tab
-// row alone. Round 2 capped .ctx-item-sub itself, which cut the Emoji row's sub-line, the widest fixed one, in the light theme's
-// Space Grotesk and in a fallback face; and its leg measured the fallback face while calling it Inter: it awaited fonts.ready over
-// an empty page, where nothing had asked for the face, then inserted the rows and read in the same turn, before the fetch the
-// text started had landed. Measured here over the real sheet with the faces served from the extension's media (the files the
-// page loads), in three passes: the dark theme's Inter, the light theme's Space Grotesk (body.theme-light, as theme.ts sets it)
-// and the no-webfont fallback (the fonts 404'd). Each pass inserts the rows FIRST, so the text starts the face's fetch, awaits
-// document.fonts.ready and asserts the FontFace's own status (loaded, or error in the fallback pass) and fonts.check, never the
-// font-family string, then reads: the fixed sub-lines (Rename, Notify me, Emoji) are whole with their loaded-face widths, the
-// 40-character Hide tab sub-line stops at the cap and elides, and a menu holding all four fits a 450px pane under the clamp. The
-// sub-lines are the page's own words, read from render.ts.
+// THE TAG-BEARING LINES NEVER WIDEN THE MENU (tab menu review rounds 2 to 4, 2026-09-09): the menu's rows are nowrap and the
+// menu is sized by its widest row, so a row whose text carries a tag name grew the menu with the name (a 512px menu at the
+// 40-character maximum in Inter, clipped at a narrow pane's edge under render.ts's clamp, which never shrinks the menu). Rounds 2
+// and 3 capped the sub-line at 36em of its own font: round 2 on .ctx-item-sub itself, which cut the Emoji row's sub-line, the widest
+// fixed one, in the light theme's Space Grotesk and in a fallback face; round 3 on a modifier the Hide tab row wore, which still left
+// the dark theme's menu 28px wider than its fixed rows (Emoji's sub-line is 33.1em in Inter), so a 400px pane overflowed where the
+// base's menu fit. Round 4 makes the rule structural (styles.css .ctx-sub-capped: the body takes the row's spare width, the label and
+// sub-line contribute nothing to the menu's intrinsic width and elide), worn by every row whose text carries a tag name: the Hide tab
+// row, the Tags row (its sub-line joins the names), each Move to row (its label) and the Show when folded row. Measured here over the
+// real sheet with the faces served from the extension's media (the files the page loads): the dark theme's Inter and the light
+// theme's Space Grotesk (body.theme-light, as theme.ts sets it), each at 450px, 400px and 383px panes, and the no-webfont fallback
+// (the fonts 404'd) at 450px. Each pass inserts the rows FIRST, so the text starts the face's fetch (round 2 awaited fonts.ready over
+// an empty page and read the fallback face while calling it Inter), awaits document.fonts.ready and asserts the FontFace's own status
+// and fonts.check, never the font-family string, then reads: the fixed sub-lines (Rename, Notify me, Emoji) are whole with their
+// loaded-face widths, every tag-bearing line elides, and the menu holding the four tag-bearing rows with 40-character names is as wide
+// (within 1px) as the same menu without them and stays inside the pane under the clamp at every width. The sub-lines are the page's
+// own words, read from render.ts.
 const INTER_PATH = path.join(EXT, "media", "InterVariable.woff2");
 const SG_PATH = path.join(EXT, "media", "SpaceGroteskVariable.woff2");
 const MENU_PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/styles.css><style>body{margin:0}</style></head><body></body></html>`;
-type SubRead = { em: number; elided: boolean; overflow: string };
-type MenuRead = { faces: string[]; checkInter: boolean; checkSG: boolean; rows: SubRead[]; menuWidth: number; right: number; inner: number };
-test("in Chromium, over the real sheet with the faces loaded: the Hide tab row's cap (menu review rounds 2 and 3) elides a 40-character tag name's sub-line at 36em in Inter, in the light theme's Space Grotesk and in the fallback face, leaves every fixed sub-line whole, Emoji's 36.1em in Space Grotesk included, and keeps the menu inside a 450px pane", async (t) => {
+type LineRead = { em: number; natural: number; elided: boolean; overflow: string };
+type MenuRead = { faces: string[]; checkInter: boolean; checkSG: boolean; fixed: LineRead[]; tagged: LineRead[]; menuWidth: number; right: number; inner: number };
+test("in Chromium, over the real sheet with the faces loaded: the tag-bearing rows (menu review rounds 2 to 4: Hide tab, Tags, Move to, Show when folded) with 40-character names add nothing to the menu's width in Inter and in the light theme's Space Grotesk at 450px, 400px and 383px panes, and in the fallback face; their text elides; every fixed sub-line is whole, Emoji's 36.1em in Space Grotesk included; the menu stays inside the pane", async (t) => {
   let pw: any = null;
   try { pw = requireCjs("playwright"); } catch { pw = null; }
   if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
@@ -655,15 +658,18 @@ test("in Chromium, over the real sheet with the faces loaded: the Hide tab row's
   const bell = pick(/"(system notification when its work blocks on you or completes)"/, "Notify me's sub-line");
   const emoji = pick(/sb\.textContent = "(one glyph before the name on the tab[^"]+)";/, "Emoji's sub-line");
   const name40 = "notes-api-customer-billing-migration-two";   // 40 characters, the New tag input's maxLength
-  assert.equal(name40.length, 40);
+  const other40 = "notes-api-customer-invoicing-rollout-one";
+  assert.equal(name40.length, 40); assert.equal(other40.length, 40);
   const hide = `hidden in ${name40}; to show it, open the group's view`;
-  assert.ok(RENDER.includes('el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped")'), "the row wears the modifier the sheet caps (the class this leg puts on its Hide tab row)");
+  const pin = `keep this tab on the strip while ${name40} is folded`;
+  for (const cls of ['"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"', '"ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"', '"ctx-item ctx-item-toggle ctx-sub-capped"', '"ctx-item ctx-item-toggle ctx-item-pin ctx-sub-capped"'])
+    assert.ok(RENDER.includes(`el("div", ${cls}`), "a tag-bearing row wears the modifier this leg puts on its copy: " + cls);
   let browser: any;
   try { browser = await pw.chromium.launch(); }
   catch (e) { t.skip("no playwright chromium on this box (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
   try {
-    const pass = async (fonts: boolean, light: boolean): Promise<MenuRead> => {
-      const page = await browser.newPage({ viewport: { width: 450, height: 700 } });
+    const pass = async (fonts: boolean, light: boolean, width: number, tagged: boolean): Promise<MenuRead> => {
+      const page = await browser.newPage({ viewport: { width, height: 700 } });
       await page.route("http://romp.test/**", (route: any) => {
         const u = new URL(route.request().url());
         if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: MENU_PAGE });
@@ -673,21 +679,34 @@ test("in Chromium, over the real sheet with the faces loaded: the Hide tab row's
         return route.fulfill({ status: 404, body: "" });
       });
       await page.goto("http://romp.test/page");
-      // the rows first, in the theme's face: the text is what starts the face's fetch
-      await page.evaluate(([light, rename, bell, emoji, hide]: [boolean, string, string, string, string]) => {
+      // the rows first, in the theme's face: the text is what starts the face's fetch. The fixed rows as render.ts builds them
+      // (a 14px ctxIcon, the body with a label and a sub-line); the tag-bearing rows as their builders do: Hide tab (icon, label,
+      // sub-line), Tags (icon, label, the joined names, the caret), Move to (chip, label, the +), Show when folded (chip, label, sub-line)
+      await page.evaluate(([light, tagged, rename, bell, emoji, hide, pin, name40, other40]: [boolean, boolean, string, string, string, string, string, string, string]) => {
         if (light) document.body.className = "theme-light";
         const el = (tag: string, cls: string) => { const e = document.createElement(tag); e.className = cls; return e; };
+        const icon = () => { const ic = el("span", "ctx-icon"); ic.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; return ic; };
+        const chip = () => { const c = el("span", "ctx-tag-dot"); c.style.background = "var(--dim)"; return c; };
+        const body = (lab: string, sub: string | null, tag: boolean) => {
+          const b = el("span", "ctx-item-body");
+          const l = el("span", "ctx-item-label" + (tag ? " tagged" : "")); l.textContent = lab; b.appendChild(l);
+          if (sub !== null) { const sb = el("span", "ctx-item-sub" + (tag ? " tagged" : "")); sb.textContent = sub; b.appendChild(sb); }
+          return b;
+        };
         const menu = el("div", "ctx-menu"); menu.id = "menu";
-        for (const [lab, sub, cls] of [["Rename", rename, ""], ["Notify me", bell, ""], ["Emoji…", emoji, ""], ["Hide tab", hide, " ctx-item-hide ctx-sub-capped"]]) {
-          const item = el("div", "ctx-item ctx-item-toggle" + cls);
-          const ic = el("span", "ctx-icon"); ic.innerHTML = '<svg width="16" height="14" viewBox="0 0 16 14"></svg>'; item.appendChild(ic);
-          const body = el("span", "ctx-item-body");
-          const l = el("span", "ctx-item-label"); l.textContent = lab; body.appendChild(l);
-          const sb = el("span", "ctx-item-sub"); sb.textContent = sub; body.appendChild(sb);
-          item.appendChild(body); menu.appendChild(item);
+        for (const [lab, sub] of [["Rename", rename], ["Notify me", bell], ["Emoji…", emoji]]) {
+          const item = el("div", "ctx-item ctx-item-toggle"); item.appendChild(icon()); item.appendChild(body(lab, sub, false)); menu.appendChild(item);
+        }
+        if (tagged) {
+          const h = el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"); h.appendChild(icon()); h.appendChild(body("Hide tab", hide, true)); menu.appendChild(h);
+          const tg = el("div", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"); tg.appendChild(icon()); tg.appendChild(body("Tags", name40 + " · " + other40, true));
+          const caret = el("span", "ctx-caret"); caret.textContent = "▸"; tg.appendChild(caret); menu.appendChild(tg);
+          const mv = el("div", "ctx-item ctx-item-toggle ctx-sub-capped"); mv.appendChild(chip()); mv.appendChild(body("Move to " + name40, null, true));
+          const plus = el("button", "ctx-tag-x ctx-tag-plus"); plus.textContent = "+"; mv.appendChild(plus); menu.appendChild(mv);
+          const pn = el("div", "ctx-item ctx-item-toggle ctx-item-pin ctx-sub-capped"); pn.appendChild(chip()); pn.appendChild(body("Show when folded", pin, true)); menu.appendChild(pn);
         }
         document.body.appendChild(menu);
-      }, [light, rename, bell, emoji, hide]);
+      }, [light, tagged, rename, bell, emoji, hide, pin, name40, other40]);
       await page.evaluate(() => (document as any).fonts.ready);   // the fetch the rows started has landed (or failed) before the read
       const r = await page.evaluate(() => {
         const fontSet = (document as any).fonts;
@@ -698,36 +717,52 @@ test("in Chromium, over the real sheet with the faces loaded: the Hide tab row's
         const rect = menu.getBoundingClientRect();
         const mx = Math.max(0, Math.min(400, window.innerWidth - rect.width - 4));
         menu.style.left = mx + "px"; menu.style.top = "10px";
-        const read = (sb: Element) => { const fs = parseFloat(getComputedStyle(sb).fontSize); const b = sb.getBoundingClientRect(); return { em: +(b.width / fs).toFixed(2), elided: sb.scrollWidth > sb.clientWidth, overflow: getComputedStyle(sb).textOverflow }; };
-        return { faces, checkInter: fontSet.check("12px Inter"), checkSG: fontSet.check('12px "Space Grotesk"'), rows: Array.from(menu.querySelectorAll(".ctx-item-sub")).map(read), menuWidth: rect.width, right: menu.getBoundingClientRect().right, inner: window.innerWidth };
+        const read = (sb: Element) => { const fs = parseFloat(getComputedStyle(sb).fontSize); const b = sb.getBoundingClientRect(); return { em: +(b.width / fs).toFixed(2), natural: +(sb.scrollWidth / fs).toFixed(2), elided: sb.scrollWidth > sb.clientWidth, overflow: getComputedStyle(sb).textOverflow }; };
+        return { faces, checkInter: fontSet.check("12px Inter"), checkSG: fontSet.check('12px "Space Grotesk"'),
+          fixed: Array.from(menu.querySelectorAll(".ctx-item-sub:not(.tagged)")).map(read),
+          tagged: Array.from(menu.querySelectorAll(".ctx-sub-capped .ctx-item-sub, .ctx-sub-capped .ctx-item-label")).filter((e) => (e.textContent || "").includes("notes-api-")).map(read),
+          menuWidth: rect.width, right: menu.getBoundingClientRect().right, inner: window.innerWidth };
       });
       await page.close();
       return r as MenuRead;
     };
-    const holds = (r: MenuRead, face: string) => {
-      for (const [i, lab] of [[0, "Rename"], [1, "Notify me"], [2, "Emoji"]] as const) assert.equal(r.rows[i].elided, false, `${lab}'s sub-line, a fixed one, is whole in ${face}: ${JSON.stringify(r.rows[i])}`);
-      assert.ok(r.rows[3].em >= 35.99 && r.rows[3].em <= 36.01 && r.rows[3].elided && r.rows[3].overflow === "ellipsis", `the 40-character name's sub-line stops at the cap and elides in ${face}: ${JSON.stringify(r.rows[3])}`);
-      assert.ok(r.right + 4 <= r.inner, `the menu stays inside the 450px pane under the clamp in ${face} (right ${r.right}, menu ${r.menuWidth}px)`);
-      assert.ok(r.menuWidth < 415, `a menu holding a capped row is about 407px at the 13px root in ${face}: ${r.menuWidth}px`);
+    const whole = (r: MenuRead, face: string) => {
+      for (const [i, lab] of [[0, "Rename"], [1, "Notify me"], [2, "Emoji"]] as const) assert.equal(r.fixed[i].elided, false, `${lab}'s sub-line, a fixed one, is whole in ${face}: ${JSON.stringify(r.fixed[i])}`);
     };
-    // the dark theme: Inter, loaded before the read (the face's own status, not the font-family string, which names Inter whether or
-    // not it loaded); Rename 29.8em (round 2 read 31.8, the fallback face's), Emoji the widest fixed sub-line at 33.1em
-    const dark = await pass(true, false);
-    assert.ok(dark.faces.includes("Inter:loaded") && dark.checkInter, "Inter loaded before the read: " + JSON.stringify(dark.faces));
-    holds(dark, "Inter");
-    assert.ok(dark.rows[0].em > 29 && dark.rows[0].em < 30.5, "Rename's width is Inter's, 29.8em (31.8 is the fallback face's): " + JSON.stringify(dark.rows[0]));
-    assert.ok(dark.rows[2].em > 32.5 && dark.rows[2].em < 34 && dark.rows[2].em > dark.rows[0].em && dark.rows[2].em > dark.rows[1].em, "Emoji's is the widest fixed sub-line, 33.1em in Inter: " + JSON.stringify(dark.rows[2]));
-    // the light theme: Space Grotesk, loaded; Emoji's sub-line is 36.1em there, past the cap, and whole only because the cap is the
-    // Hide tab row's (round 2's cap on the class cut it here)
-    const light = await pass(true, true);
-    assert.ok(light.faces.includes("Space Grotesk:loaded") && light.checkSG, "Space Grotesk loaded before the read: " + JSON.stringify(light.faces));
-    holds(light, "Space Grotesk");
-    assert.ok(light.rows[2].em > 36 && light.rows[2].em < 36.5, "Emoji's sub-line is 36.1em in Space Grotesk, wider than the cap, and whole: " + JSON.stringify(light.rows[2]));
+    const holds = (bare: MenuRead, full: MenuRead, face: string) => {
+      whole(bare, face); whole(full, face);
+      // the pane: the menu with the tag-bearing rows sits where the fixed rows alone put it, so it is inside the pane wherever they are
+      // (Inter's fixed rows make a 377px menu, inside all three panes; Space Grotesk's Emoji sub-line, 36.1em, makes 406px, past a
+      // 400px pane with or without this PR's rows, the base's own width there) and never further right
+      assert.ok(full.right <= bare.right + 1, `the tag-bearing rows never push the menu's right edge past the fixed rows' in ${face} at ${full.inner}px (right ${full.right} with them, ${bare.right} without)`);
+      if (bare.right + 4 <= bare.inner) assert.ok(full.right + 4 <= full.inner, `the menu stays inside the ${full.inner}px pane under the clamp in ${face} (right ${full.right}, menu ${full.menuWidth}px; the fixed rows alone fit at ${bare.right})`);
+      else assert.ok(face === "Space Grotesk" && full.inner <= 400, `only the light face's fixed rows overflow, and only under 400px: ${face} at ${full.inner}px, right ${bare.right}`);
+      assert.equal(full.tagged.length, 4, "the four tag-bearing lines were read: " + JSON.stringify(full.tagged));
+      // each tag-bearing line is boxed by the fixed rows' width and elides when its words are wider (the three sub-lines, at 0.82em, are;
+      // the Move to label at the label's size, "Move to " and 40 characters, is about 26em and fits in Inter, so it is whole there)
+      for (const l of full.tagged) assert.ok(l.overflow === "ellipsis" && (l.elided || l.natural <= l.em + 0.05), `a tag-bearing line elides when its words are wider than its box in ${face} at ${full.inner}px: ${JSON.stringify(l)}`);
+      assert.ok(full.tagged.filter((l) => l.elided).length >= 3, `the three 40-character sub-lines elide in ${face} at ${full.inner}px: ${JSON.stringify(full.tagged)}`);
+      assert.ok(Math.abs(full.menuWidth - bare.menuWidth) <= 1, `the tag-bearing rows add nothing to the menu's width in ${face} at ${full.inner}px: ${full.menuWidth}px with them, ${bare.menuWidth}px without (round 3's 36em cap added 28px in Inter)`);
+    };
+    for (const width of [450, 400, 383]) {
+      // the dark theme: Inter, loaded before the read (the face's own status, not the font-family string, which names Inter whether or
+      // not it loaded); Rename 29.8em (round 2 read 31.8, the fallback face's), Emoji the widest fixed sub-line at 33.1em
+      const dark = await pass(true, false, width, false), darkFull = await pass(true, false, width, true);
+      for (const r of [dark, darkFull]) assert.ok(r.faces.includes("Inter:loaded") && r.checkInter, "Inter loaded before the read: " + JSON.stringify(r.faces));
+      holds(dark, darkFull, "Inter");
+      assert.ok(dark.fixed[0].em > 29 && dark.fixed[0].em < 30.5, "Rename's width is Inter's, 29.8em (31.8 is the fallback face's): " + JSON.stringify(dark.fixed[0]));
+      assert.ok(dark.fixed[2].em > 32.5 && dark.fixed[2].em < 34 && dark.fixed[2].em > dark.fixed[0].em && dark.fixed[2].em > dark.fixed[1].em, "Emoji's is the widest fixed sub-line, 33.1em in Inter: " + JSON.stringify(dark.fixed[2]));
+      // the light theme: Space Grotesk, loaded; Emoji's sub-line is 36.1em there, past round 3's cap, and whole because no fixed row is capped
+      const light = await pass(true, true, width, false), lightFull = await pass(true, true, width, true);
+      for (const r of [light, lightFull]) assert.ok(r.faces.includes("Space Grotesk:loaded") && r.checkSG, "Space Grotesk loaded before the read: " + JSON.stringify(r.faces));
+      holds(light, lightFull, "Space Grotesk");
+      assert.ok(light.fixed[2].em > 36 && light.fixed[2].em < 36.5, "Emoji's sub-line is 36.1em in Space Grotesk and whole: " + JSON.stringify(light.fixed[2]));
+    }
     // no webfont: the fonts 404 and the host's fallback face renders (DejaVu Sans on a bare Linux box, another face elsewhere): the
     // same properties hold, with a sanity bound on the width instead of an exact one
-    const fallback = await pass(false, false);
-    assert.ok(fallback.faces.includes("Inter:error") && !fallback.faces.includes("Inter:loaded") && !fallback.checkInter, "the fonts 404'd, so the fallback face read: " + JSON.stringify(fallback.faces));
-    holds(fallback, "the fallback face");
-    assert.ok(fallback.rows[2].em > 30 && fallback.rows[2].em < 40, "Emoji's sub-line in the fallback face (36.1em in DejaVu Sans): " + JSON.stringify(fallback.rows[2]));
+    const fallback = await pass(false, false, 450, false), fallbackFull = await pass(false, false, 450, true);
+    for (const r of [fallback, fallbackFull]) assert.ok(r.faces.includes("Inter:error") && !r.faces.includes("Inter:loaded") && !r.checkInter, "the fonts 404'd, so the fallback face read: " + JSON.stringify(r.faces));
+    holds(fallback, fallbackFull, "the fallback face");
+    assert.ok(fallback.fixed[2].em > 30 && fallback.fixed[2].em < 40, "Emoji's sub-line in the fallback face (36.1em in DejaVu Sans): " + JSON.stringify(fallback.fixed[2]));
   } finally { await browser.close(); }
 });

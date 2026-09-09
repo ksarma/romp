@@ -764,7 +764,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.equal(MENU.split("sub.style.top = ").length - 1, 2, "the flyouts' tops: Billing's at open, the Tags flyout's in place()");
   const hideAt = MENU.indexOf('"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"');
   assert.ok(MENU.indexOf("const homeNow = ") < hideAt && hideAt < MENU.indexOf("const home = homeNow();   // read per build"), "declared before the row; the flyout's read after it");
-  assert.match(MENU, /\/\/ unionFor and holding are showTabMenu's \(above the Hide tab row\), shared with that row\s*\n\s*const tagsItem = el\("div", "ctx-item ctx-item-toggle ctx-item-tags"\);/, "the Tags block declares neither");
+  assert.match(MENU, /\/\/ unionFor and holding are showTabMenu's \(above the Hide tab row\), shared with that row\s*\n\s*const tagsItem = el\("div", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"\);/, "the Tags block declares neither");
   // the toggles' dress: one helper (round 2), the toggle helper building its node with it and returning the node (the bell row is
   // the Hide tab row's anchor)
   assert.match(MENU, /const dressToggle = \(item: HTMLElement, kind: "feed" \| "mail" \| "bell" \| "tab", off: boolean, lab: string, sub: string\) => \{\s*\n\s*const bodyEl = el\("span", "ctx-item-body"\);\s*\n\s*const l = el\("span", "ctx-item-label"\); l\.textContent = lab; bodyEl\.appendChild\(l\);\s*\n\s*const sb = el\("span", "ctx-item-sub"\); sb\.textContent = sub; bodyEl\.appendChild\(sb\);\s*\n\s*item\.replaceChildren\(ctxIcon\(kind, off\), bodyEl\);\s*\n\s*\};/);
@@ -804,26 +804,38 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.doesNotMatch(MENU, /const home = home0 && !home0\.pending \? home0 : undefined;/, "the flyout's own copy of the computation is gone");
 });
 
-test("pinned: the cap is the Hide tab row's (menu review rounds 2 and 3). .ctx-item-sub keeps the menus' one sub-line size, byte-equal in feed.css; a modifier class the Hide tab row alone wears caps its sub-line at 36em of its own font and elides the rest, so a long tag name never widens the menu past a narrow pane and no fixed row is cut", () => {
+test("pinned: the tag-bearing lines never widen the menu (menu review rounds 2 to 4). .ctx-item-sub keeps the menus' one sub-line size, byte-equal in feed.css; a modifier every row whose label or sub-line carries a tag name wears, and no fixed row does, makes the body take the row's spare width and the text contribute nothing to the menu's intrinsic width, so the menu is as wide as its fixed rows alone in every face and the name elides", () => {
   // the rows are nowrap and the menu is sized by its widest row, so the Hide tab row's sub-line grew the menu with the tag name (a
   // 512px menu at the 40-character maximum in Inter, clipped at a 450px pane's edge). Round 2 capped .ctx-item-sub itself, which cut
   // the Emoji row's sub-line (36.1em in the light theme's Space Grotesk and in a fallback face) and diverged from feed.css's copy of
-  // the rule; the cap is the row's now, and tab-hide-browser.test measures it in Chromium with the faces loaded
+  // the rule; round 3 moved the 36em cap to the row's modifier, which still widened the dark theme's menu by 28px (Inter's widest
+  // fixed sub-line is 33.1em) and overflowed a 400px pane; round 4 drops the constant for a structural rule, and puts the modifier
+  // on every row whose text carries a tag name (the Tags row's sub-line joins them all). tab-hide-browser.test measures it in Chromium.
   assert.match(CSS, /\n\.ctx-item-sub \{ font-size: 0\.82em; opacity: 0\.6; \}\n/, "the one rule for the class: the size and the opacity, nothing else (the menus' one sub-line size)");
   assert.equal(CSS.split("\n.ctx-item-sub {").length - 1, 1, "one rule for the class");
   const FEED = ui("webview", "feed.css");
   const subRule = (css: string) => { const at = css.indexOf("\n.ctx-item-sub {"); return css.slice(at, css.indexOf("\n", at + 1)); };
   assert.equal(subRule(FEED), subRule(CSS), "feed.css mirrors the chat menu's chrome (its comment says so) and the sub-line rule is byte-equal there (round 3: the class cap had diverged them)");
-  assert.match(CSS, /\n\.ctx-sub-capped \.ctx-item-sub \{ max-width: 36em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}\n/, "the cap, on the row's modifier, after the class rule");
-  assert.equal(CSS.split(".ctx-sub-capped").length - 1, 2, "the modifier's rule and its note, nothing else");
-  assert.doesNotMatch(CSS, /\.ctx-item-hide/, "the sheet names the modifier, not the row: any row whose sub-line carries a name can wear it");
-  assert.match(RENDER, /el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\)/, "the Hide tab row wears it");
-  assert.equal(RENDER.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "").split("ctx-sub-capped").length - 1, 1, "and no other row does: the fixed sub-lines are whole in every face");
-  assert.match(CSS, /\n\.ctx-item \{ padding: 4px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; \}/, "the rows stay nowrap: the cap elides, it does not wrap (a wrapped row would grow every menu's rows)");
-  const note = CSS.slice(CSS.indexOf("/* A row whose sub-line carries a tag name wears a cap"), CSS.indexOf("\n.ctx-sub-capped .ctx-item-sub {"));
+  assert.match(CSS, /\n\.ctx-sub-capped \.ctx-item-body \{ flex: 1 1 0; min-width: 0; \}\n\.ctx-sub-capped \.ctx-item-label, \.ctx-sub-capped \.ctx-item-sub \{ width: 0; min-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}\n/,
+    "the structural rule on the row's modifier, after the class rule: the body takes the spare width (flex-basis 0, min-width 0), the label and sub-line contribute nothing to the intrinsic width (width 0) and fill the body once laid out (min-width 100%), eliding");
+  assert.doesNotMatch(CSS, /\.ctx-sub-capped[^\n]*max-width/, "round 4: no em constant (36em left the dark theme's menu 28px wider than its fixed rows)");
+  assert.equal(CSS.split("\n.ctx-sub-capped").length - 1, 2, "the modifier's two rules, nothing else");
+  assert.doesNotMatch(CSS, /\.ctx-item-hide|\.ctx-item-tags|\.ctx-item-pin/, "the sheet names the modifier, not the rows: any row whose text carries a name wears it");
+  // the wearers: every row whose label or sub-line carries a tag name, and none of the fixed rows
+  const MENU = RENDER.slice(RENDER.indexOf("function showTabMenu("), RENDER.indexOf("document.body.appendChild(menu);", RENDER.indexOf("function showTabMenu(")));
+  const code = RENDER.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const wearers = Array.from(code.matchAll(/el\("div", "([^"]*ctx-sub-capped[^"]*)"/g)).map((m) => m[1]).sort();
+  assert.deepEqual(wearers, ["ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped", "ctx-item ctx-item-toggle ctx-item-pin ctx-sub-capped", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped", "ctx-item ctx-item-toggle ctx-sub-capped"],
+    "the Hide tab row (the sub-line names the group), the Tags row (the sub-line joins the names), each Move to row (the label carries the name) and the Show when folded row (the sub-line names the group) wear it, and nothing else");
+  assert.equal(code.split("ctx-sub-capped").length - 1, 4, "four wearers, each on its el() call");
+  assert.match(MENU, /for \(const g of others\) \{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-sub-capped"\);/, "the bare wearer is the Move to row");
+  for (const fixed of [/const item = el\("div", "ctx-item ctx-item-toggle"\);/, /const item = el\("div", "ctx-item ctx-item-toggle ctx-item-billing"\);/]) assert.match(MENU, fixed, "a fixed row wears no modifier: " + fixed.source);
+  assert.match(CSS, /\n\.ctx-item \{ padding: 4px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; \}/, "the rows stay nowrap: the rule elides, it does not wrap (a wrapped row would grow every menu's rows)");
+  const note = CSS.slice(CSS.indexOf("/* A row whose sub-line or label carries a tag name wears a modifier"), CSS.indexOf("\n.ctx-sub-capped .ctx-item-body {"));
   assert.ok(note.length > 100 && !note.includes("\u2014"), "the rule's note, no em dash");
-  assert.match(note.replace(/\s+/g, " "), /the fixed sub-lines reach 33\.1em in Inter and 36\.1em in Space Grotesk; the Hide tab sub-line at a 40-character name is 40\.8em in Inter and 41\.7em in Space Grotesk/, "the note carries the loaded-face numbers the browser leg reads (round 3: round 2's were the fallback face's, called Inter)");
-  assert.match(RENDER, /inp\.placeholder = "New tag…"; inp\.maxLength = 40;/, "the tag name's own bound, the widest case the cap was measured at");
+  assert.match(note.replace(/\s+/g, " "), /with no per-face constant: in a capped row the body takes the row's spare width and no more/, "the note states the mechanism");
+  assert.match(note.replace(/\s+/g, " "), /at 450px, 400px and 383px panes/, "the note names the widths the browser leg measures");
+  assert.match(RENDER, /inp\.placeholder = "New tag…"; inp\.maxLength = 40;/, "the tag name's own bound, the widest case the leg measures");
 });
 
 test("executed: THE CLICK IS LIVE (menu review round 1; round 2 puts the mechanism first). Move to in the Tags flyout with the menu still open, then Hide tab: the write names the group the copy now sits in; a copy another pane hid where it sits stays hidden, never flipped back; no home at the click, nothing written", () => {

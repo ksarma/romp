@@ -6644,7 +6644,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // backgrounding, and the kernel migrated its hidden entries into the "archived" tag. revealIn survives
   // for the picker's tagged-session jump.)
   {
-    const row = el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped");   // ctx-sub-capped: its sub-line carries the tag name, so it is capped (styles.css)
+    const row = el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped");   // ctx-sub-capped: its sub-line carries the tag name, which never widens the menu (styles.css)
     let hidden = false;   // the stored bit the row last showed; the click sets its opposite
     refreshHideRow = () => {
       const home = phoneLayout() ? undefined : homeNow();
@@ -6727,7 +6727,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // dialog, 628's surface).
   {
     // unionFor and holding are showTabMenu's (above the Hide tab row), shared with that row
-    const tagsItem = el("div", "ctx-item ctx-item-toggle ctx-item-tags");
+    const tagsItem = el("div", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped");   // ctx-sub-capped: the sub-line joins the tag names (round 4)
     tagsItem.appendChild(ctxIcon("tag", false));
     const bodyEl = el("span", "ctx-item-body");
     const l = el("span", "ctx-item-label"); l.textContent = "Tags"; bodyEl.appendChild(l);
@@ -6875,7 +6875,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         // the user's call (flagged with T264b); the mechanics are unchanged here.
         const home = homeNow();   // read per build: a move or a remove above changes the copy's group (the Hide tab row reads the same)
         for (const g of others) {
-          const row = el("div", "ctx-item ctx-item-toggle");
+          const row = el("div", "ctx-item ctx-item-toggle ctx-sub-capped");   // ctx-sub-capped: the label carries the tag name (round 4)
           const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label");
@@ -6913,7 +6913,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const sec = sectionRef(home);
           const on = isPinned(tabGroups(), sec, id);
           sub.appendChild(el("div", "ctx-sep"));
-          const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));
+          const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin ctx-sub-capped" + (on ? " current" : ""));   // ctx-sub-capped: the sub-line carries the tag name (round 4)
           const chip = el("span", "ctx-tag-dot"); chip.style.background = home.color || "var(--dim)"; row.appendChild(chip);
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label"); lb.textContent = "Show when folded"; bodyE.appendChild(lb);

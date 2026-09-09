@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
-const at = RENDER.indexOf('const tagsItem = el("div", "ctx-item ctx-item-toggle ctx-item-tags");');
+const at = RENDER.indexOf('const tagsItem = el("div", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped");');
 const block = RENDER.slice(at, RENDER.indexOf('menu.appendChild(tagsItem);', at));
 
 test("hover-intent opens the flyout: the feed's 120ms, click still instant, hover never steals focus", () => {
