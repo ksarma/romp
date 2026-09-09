@@ -448,11 +448,49 @@ class TheFallIsCarriedInStatus(_OptionsHarness):
         self.assertEqual(self.be.pick_fall("login"), "key")
 
     def test_the_webview_reads_the_carried_fall_on_both_surfaces(self):
-        src = (Path(HERE).parent / "ui" / "webview" / "render.ts").read_text()
+        # render.ts carries the field and hands BOTH surfaces to the one module that words the row and the
+        # sub-line (ui/webview/billing-label.ts, executed in billing-label.test.ts and billing-one-auth.test.ts);
+        # upstream's authFellTo lives there as billingFellTo, read once per surface (ruling C, slice 3)
+        web = Path(HERE).parent / "ui" / "webview"
+        src = (web / "render.ts").read_text()
         self.assertIn("authPickFell?: string;", src)
-        self.assertIn("function authFellTo(st: Status): string", src)
-        self.assertIn("authFellTo(s.status)", src, "the tab hover")
-        self.assertIn("authFellTo(st)", src, "the Billing sub-line")
+        self.assertIn('rows.push(["Billing", billingRowText(s.status)])', src, "the tab hover")
+        self.assertIn("sb.textContent = billingSubText(st);", src, "the Billing sub-line")
+        lbl = (web / "billing-label.ts").read_text()
+        self.assertIn("export function billingFellTo(f: BillingFacts): string", lbl)
+        self.assertEqual(lbl.count("const fell = billingFellTo(f);"), 2, "the row and the sub-line both read the fall")
+
+
+def _picker_backend(key):
+    """A backend stand-in for the kernel's picker tests (_auth_avail over stubbed probes): key_available from the
+    stubbed world, and the REAL unpicked rule over it. _auth_avail's default calls new_session_auth directly
+    (slice-2 ruling 10: one rule, the backend's; a stand-in without the method is loud, never a login box), and
+    upstream #1147's both-ways fall lives inside that rule (seeded_auth's pick_unavailable check; ruling C, the
+    2026-09-09 fold), so the stand-in borrows SdkBackend's own pick_unavailable and auth_unavailable_why and stubs
+    only their three probes: login_ok as the kernel wires it, over the stubbed account state (None when the file
+    cannot be read: cannot tell keeps a pick); key_state from the world's key; the helper source read as the
+    backend reads it (an unreadable settings file is cannot tell, never managed)."""
+    class _B:
+        key_available = bool(key)
+
+        def login_ok(self):
+            return None if km._claude_account_state() == "unreadable" else bool(km._claude_account())
+
+        def key_state(self):
+            return "ok" if key else "missing"
+
+        def _helper_source_read(self):
+            try:
+                return km.jd._cred.helper_source(), True
+            except km.jd._cred.CredentialError:
+                return None, False
+
+        auth_unavailable_why = sb.SdkBackend.auth_unavailable_why
+        pick_unavailable = sb.SdkBackend.pick_unavailable
+
+        def new_session_auth(self):
+            return sb.new_session_auth(km.jd.STATE, self.key_available, self.pick_unavailable)
+    return _B()
 
 
 class AccountReadStates(unittest.TestCase):
@@ -502,7 +540,7 @@ class AccountReadStates(unittest.TestCase):
         p = km.jd.STATE / "sdk-defaults.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         try:
-            km._sdk = lambda: type("B", (), {"key_available": True})()
+            km._sdk = lambda: _picker_backend(True)
             km._claude_account = lambda: ""
             km._claude_account_label = lambda: ""
             km._claude_account_state = lambda: "unreadable"
@@ -522,7 +560,7 @@ class AccountReadStates(unittest.TestCase):
     def test_an_unreadable_settings_file_does_not_read_as_managed_in_the_picker(self):
         saved = (km._sdk, km._claude_account, km._claude_account_label, km._claude_account_state, km.jd._cred.helper_source)
         try:
-            km._sdk = lambda: type("B", (), {"key_available": False})()
+            km._sdk = lambda: _picker_backend(False)
             km._claude_account = lambda: "aaaaaaaaaaaa"
             km._claude_account_label = lambda: "user@example.com"
             km._claude_account_state = lambda: "ok"
@@ -946,10 +984,10 @@ class Availability(unittest.TestCase):
         km._claude_account_state, km.jd._cred.helper_source = self.real_state, self.real_source
 
     def _world(self, key, acct, label="user@example.com", managed=False):
-        # the stub answers the unpicked rule for an undeclared, unpicked box (_auth_avail's default calls
-        # new_session_auth directly; the declared cells run on a real backend in test_expected_auth)
-        km._sdk = lambda: type("B", (), {"key_available": bool(key),
-                                         "new_session_auth": lambda self: "key" if key else "login"})()
+        # the stand-in answers the real unpicked rule over this world (_auth_avail's default calls
+        # new_session_auth directly, and the remembered pick's both-ways fall is decided inside it; the declared
+        # cells run on a real backend in test_expected_auth)
+        km._sdk = lambda: _picker_backend(key)
         km._claude_account = lambda: acct
         km._claude_account_label = lambda: (label if acct else "")
         km._claude_account_state = lambda: ("ok" if acct else "none")   # the box's account file, never the runner's

@@ -2360,11 +2360,13 @@ class IndexReaders(_Gate):
         self.assertEqual(jd._live_natoms(SID), {"seg2": 9})
         self.assertEqual(jd.session_turn_captions(SID), ["Did A"])
         self.assertFalse(jd._judge_ctx.stage_incomplete)
-        rows = jd._caption_rows(SID)
-        self.assertEqual((jd.captioned_ids(SID, rows), jd._live_natoms(SID, rows)), ({"seg1", "t1"}, {"seg2": 9}),
-                         "the captioner's one read per session derives both answers from the same rows")
+        rows = jd._captions_rows(SID)
+        self.assertEqual((jd.captioned_ids(SID), jd._live_natoms(SID)), ({"seg1", "t1"}, {"seg2": 9}),
+                         "the captioner's one parse per file state (_captions_rows) derives both answers from the same rows")
+        self.assertEqual(len(rows), 3, "the parsed rows, the bad line skipped")
         cp = jd.CAPDIR / (SID + ".jsonl")
         os.chmod(cp, 0)
+        jd._CAPTIONS_MEMO.clear()          # a served hit attempts no read: the strict path is the miss (upstream, 2026-09-09)
         try:
             for fn, empty in ((jd.captioned_ids, set()), (jd._live_natoms, {}), (jd.session_turn_captions, [])):
                 jd._judge_ctx.stage_incomplete = False
@@ -2373,14 +2375,15 @@ class IndexReaders(_Gate):
                                 "%s: a read that fails on a file that exists marks the stage" % fn.__name__)
             self.assertEqual(len(self._rows("captions-unreadable")), 1, "one row per failure episode, not per read")
             self.assertEqual(self._rows("captions-unreadable")[0]["fsid"], SID)
-            self.assertIsNone(jd._caption_rows(SID), "the row reader answers None for a failed read (the bodies stand down on it)")
+            self.assertIsNone(jd._captions_rows(SID), "the row reader answers None for a failed read (the bodies stand down on it)")
         finally:
             os.chmod(cp, 0o644)
-        self.assertEqual(jd._caption_rows(SID2), [], "and [] for an absent file")
+        self.assertEqual(jd._captions_rows(SID2), [], "and [] for an absent file")
         jd._judge_ctx.stage_incomplete = False
         self.assertEqual(jd.captioned_ids(SID), {"seg1", "t1"}, "readable again")
         self.assertFalse(jd._judge_ctx.stage_incomplete)
         os.chmod(cp, 0)
+        jd._CAPTIONS_MEMO.clear()          # force the miss again: the good read above refilled the memo
         try:
             jd.session_turn_captions(SID)
             self.assertEqual(len(self._rows("captions-unreadable")), 2, "a good read ended the episode: the next failure logs again")

@@ -675,17 +675,19 @@ class ThreadRegMemo(_State):
 
 class PerfWiring(_State):
     def test_the_snapshot_carries_the_three_memo_blocks(self):
+        # the captioner-store object memo rides as "caps" since the 2026-09-09 fold (A2): "captions" is
+        # upstream's captions FILE-READ memo in judge.py (served / parsed), a different memo under the old name
         memos = km._PERF_STATS.snapshot()["memos"]
-        self.assertEqual(set(memos["captions"]), {"hit", "miss", "fail", "evict", "entries"})
+        self.assertEqual(set(memos["caps"]), {"hit", "miss", "fail", "evict", "entries"})
         self.assertEqual(set(memos["states_overlay"]), {"hit", "append", "refold", "fail", "evict", "entries"})
         self.assertEqual(set(memos["thread_reg"]), {"hit", "miss", "fail", "evict", "entries"})
-        for blk in ("captions", "states_overlay", "thread_reg"):
+        for blk in ("caps", "states_overlay", "thread_reg"):
             for k, v in memos[blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
 
     def test_the_reference_names_the_three_memos(self):
         doc = Path(os.path.join(ROOT, "docs", "reference.md")).read_text()
-        for name in ("`captions`", "`states_overlay`", "`thread_reg`"):
+        for name in ("`caps`", "`states_overlay`", "`thread_reg`"):   # the fork's memo row is `caps` (A2)
             self.assertIn(name, doc)
 
     def test_the_bench_empties_the_new_memos_for_its_cold_rows(self):
