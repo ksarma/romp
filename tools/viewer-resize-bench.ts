@@ -46,6 +46,7 @@ type Opts = {
   steps: number; w0: number; w1: number; settle: number; scrollFrames: number; scrollPx: number;
   viewport: { width: number; height: number }; cpuThrottle: number; cpuProfile: boolean; samplingUs: number;
   timeoutS: number; label: string; outDir: string; interactions: Set<string>; tree: string;
+  paneJs: string; paneCss: string;   // files whose text is inlined into the pane page after the harness (a stub, a sheet variant): analyst's knobs
 };
 const SIZES: Record<string, number> = { small: 300, medium: 3000, large: 15000 };
 const VARIANTS: Record<string, Partial<Opts>> = {
@@ -63,6 +64,7 @@ export function parseOpts(argv: string[]): Opts {
     viewport: { width: 1600, height: 900 }, cpuThrottle: 1, cpuProfile: false, samplingUs: 1000,
     timeoutS: 240, label: "", outDir: path.join(process.env.HOME || "", ".local", "state", "romp-perf", "viewer-resize"),
     interactions: new Set(["mount", "scroll", "drag", "big", "nudge", "add"]), tree: path.resolve(EXT, ".."),
+    paneJs: "", paneCss: "",
   };
   const num = (v: string, name: string): number => { const n = Number(v); if (!Number.isFinite(n)) throw new Error(`--${name} needs a number, got ${v}`); return n; };
   let variantSet = false;
@@ -110,6 +112,8 @@ export function parseOpts(argv: string[]): Opts {
       case "label": o.label = v; break;
       case "out-dir": o.outDir = v; break;
       case "interactions": o.interactions = new Set(v.split(",").map((s) => s.trim()).filter(Boolean)); break;
+      case "pane-js": o.paneJs = v; break;
+      case "pane-css": o.paneCss = v; break;
       case "tree": break;   // consumed by the launcher; the tree under test is the cwd's (real-viewer-leg.ts)
       case "help": break;
       default: throw new Error(`unknown option --${k}`);
@@ -266,7 +270,7 @@ window.__sweep = function (w0, w1, steps, settle) {
  *  status-answering poster) plus what the bench needs: HEAD answers for the poll's three targets from a table (so the
  *  poll sees nothing move until the bench moves the sidecar), a capturing listener stamping every status reply, a
  *  long-animation-frame observer, and a marks table in epoch milliseconds. */
-export function paneHtml(text: string, status: Record<string, unknown>, storePath: string, configPath: string): string {
+export function paneHtml(text: string, status: Record<string, unknown>, storePath: string, configPath: string, inject = ""): string {
   const base = pageHtml("pane", { [REPORT]: text }, MT);
   const extra = `<script>
 window.__status = ${JSON.stringify(status).replace(/</g, "\\u003c")};
@@ -288,7 +292,7 @@ window.__epoch = function () { return performance.timeOrigin + performance.now()
   // at the LAST closing pair: the viewer bundle inlined above holds that string too (DOMPurify's wrapper), and a replace of
   // the first occurrence put this script inside a JavaScript string literal, where its </script> ended the bundle early
   const at = base.lastIndexOf("</body></html>");
-  return base.slice(0, at) + extra + base.slice(at);
+  return base.slice(0, at) + extra + inject + base.slice(at);
 }
 
 // ── measurement helpers ─────────────────────────────────────────────────────────────────────────────
@@ -408,7 +412,9 @@ export async function main(argv: string[]): Promise<number> {
     page.on("pageerror", (e: Error) => errors.push(e.message));
     page.on("console", (m: any) => { if (m.type() === "error") consoleErrors.push(String(m.text()).slice(0, 300)); });
     const shell = shellHtml(o.w0, o.viewport.width);
-    const pane = paneHtml(doc.text, status, storePath, configPath); paneText = pane;
+    // --pane-css / --pane-js: a sheet variant or a stub, inlined AFTER the viewer bundle and the harness, before any open
+    const inject = (o.paneCss ? "<style>" + fs.readFileSync(o.paneCss, "utf8") + "</style>" : "") + (o.paneJs ? "<script>" + fs.readFileSync(o.paneJs, "utf8").replace(/<\/script/gi, "<\\/script") + "</script>" : "");
+    const pane = paneHtml(doc.text, status, storePath, configPath, inject); paneText = pane;
     await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
       const u = new URL(route.request().url());
       route.fulfill({ status: 200, contentType: "text/html", body: u.pathname === "/pane" ? pane : shell });

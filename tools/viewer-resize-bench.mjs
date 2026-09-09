@@ -51,6 +51,7 @@ environment:
   --cpu-profile  --sampling-us N      V8 profile of the whole run, written under <out>/profiles (1000 us)
   --timeout-s N                       kill the browser and record a timeout after N s (default 240)
   --label TEXT  --out-dir DIR  --tree DIR
+  --pane-css FILE  --pane-js FILE     inline a sheet variant / a script (a stub) into the pane page after the harness
 `;
 
 function main() {
