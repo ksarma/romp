@@ -1,9 +1,9 @@
 ---
 title: Served labs build vscode-extension/dist once, under a file lock, and copy it under the same lock (setup ERRORs under pytest -n 8)
 status: candidate
-where: `tests/lab_dist.py` new (DistBuild: flock on dist/.lab-build.lock, an input-keyed marker dist/.lab-built written atomically after the build, copytree ignore for esbuild staging names); `tests/__init__.py` registers the bare name beside romp_load; the thirteen served-lab modules (`tests/test_awaiting_box_sync.py`, `tests/test_dashboard_reload_served.py`, `tests/test_feed_hover_border_static.py`, `tests/test_feed_thread_fold_columns.py`, `tests/test_gear_select_matrix.py`, `tests/test_paste_to_focus_browser.py`, `tests/test_pending_at_tail.py`, `tests/test_pending_bubble_stable.py`, `tests/test_queued_copy_held.py`, `tests/test_scroll_marks_click.py`, `tests/test_scroll_marks_growth.py`, `tests/test_ship_reship.py`, `tests/test_tab_groups_rows.py`) call `lab_dist.copy_dist(dist)` in place of their own esbuild run and copytree; `tests/test_lab_dist.py` new
+where: fork PR #440 (`lab-dist-copy-race`): `tests/lab_dist.py` new (DistBuild: flock on dist/.lab-build.lock, a marker dist/.lab-built naming the build key, computed before the build, and the output state, written atomically after it; inputs derived from esbuild.js entry points and followed imports; the command line and the lock files content in the key; BUILD_TIMEOUT, the kernel bound; copytree ignore for esbuild staging names); `tests/__init__.py` registers the bare name beside romp_load; the thirteen served-lab modules (`tests/test_awaiting_box_sync.py`, `tests/test_dashboard_reload_served.py`, `tests/test_feed_hover_border_static.py`, `tests/test_feed_thread_fold_columns.py`, `tests/test_gear_select_matrix.py`, `tests/test_paste_to_focus_browser.py`, `tests/test_pending_at_tail.py`, `tests/test_pending_bubble_stable.py`, `tests/test_queued_copy_held.py`, `tests/test_scroll_marks_click.py`, `tests/test_scroll_marks_growth.py`, `tests/test_ship_reship.py`, `tests/test_tab_groups_rows.py`) call `lab_dist.copy_dist(dist)` in place of their own esbuild run and copytree; `tests/test_lab_dist.py` new; `tests/test_kernel_bundle_staleness.py` one parity class; `vscode-extension/.vscodeignore` two rules; `tests/README.md` one sentence
 added: 2026-09-09
-pr:
+pr: 440
 tier: docs
 offered:
 closed:

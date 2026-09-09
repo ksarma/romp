@@ -19,6 +19,8 @@ import re
 import unittest
 from romp_load import load_source
 
+import lab_dist   # the served labs' build key (tests/lab_dist.py); the parity pin at the end reads it
+
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
@@ -79,6 +81,21 @@ class BundleInputs(unittest.TestCase):
             self.assertIn(resolved, watched,
                           "esbuild builds %s but the staleness check never looks at it, so editing "
                           "it would not trigger a rebuild" % e)
+
+
+class ServedLabsKeyTheSameInputs(unittest.TestCase):
+    """tests/lab_dist.py keys the served labs' one build of dist on the sources it derives from esbuild.js
+    (entry points, then the trees their relative imports reach), not on this list. The two must agree at
+    the file level: an input the kernel would rebuild for that the labs' key does not cover leaves them
+    asserting against stale bundles with nothing saying so. Here, where the kernel is already loaded under
+    isolation, every path _bundle_inputs reads is checked against the harness's keyed set."""
+
+    def test_every_kernel_bundle_input_is_keyed_by_the_served_labs_build(self):
+        cv = km.ROOT / "vscode-extension"
+        keyed = {os.path.realpath(p) for p in lab_dist.default()._input_files()}
+        self.assertGreater(len(keyed), 100, "the harness keyed a real tree")
+        missing = sorted(str(p) for p in km._bundle_inputs(cv) if os.path.realpath(str(p)) not in keyed)
+        self.assertEqual(missing, [], "bundle inputs the kernel rebuilds for that tests/lab_dist.py does not key")
 
 
 if __name__ == "__main__":
