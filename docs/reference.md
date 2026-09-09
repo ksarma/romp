@@ -536,11 +536,17 @@ The backends apply the change differently. A Claude Code session switches
 model live but reloads to apply a new effort: the chat shows "Reloading
 session…" and the effort badge shows switching-dots until the reload completes,
 and a session that is mid-turn reloads when the turn ends. A session with live
-subagents or background tasks reloads when the last of them finishes: the pick
-waits for them rather than cutting them off, and the chat shows "Applying X
-effort when the background work finishes" (hover it for the counts) in place of
-the reloading line until then. A pick equal to what the session already runs
-with (the same effort, the same billing) reloads nothing.
+subagents or background tasks holds the pick rather than cutting them off, and
+reloads at the end of the first turn that finds none left: the CLI starts a turn
+of its own to deliver each finished task's result, so in the usual case that is
+the turn right after the last one ends; if no turn follows, the session's next
+turn. While the pick is held the chat says so in place of the reloading line
+("The effort pick is waiting on 2 subagents and 1 background task", then "The
+effort pick applies when this turn finishes" once the work is done), and the
+badge keeps showing the value the session runs with a small mark beside it.
+The same hold and the same line apply to a permission-mode pick into bypass,
+the first fast-mode opt-in and a billing switch. A pick equal to what the
+session already runs with (the same effort, the same billing) reloads nothing.
 A Claude Code (tmux) session
 gets the CLI's own command typed into its pane. `/model` there asks for a
 confirmation, which the kernel accepts on your behalf so the pane is never

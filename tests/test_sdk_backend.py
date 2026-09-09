@@ -15,12 +15,16 @@ import inspect
 import io
 import os
 import json
+import shutil
+import sys
 import threading
 import time
 import tracemalloc
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stderr
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from unittest import mock
 from romp_load import load_source
@@ -5271,17 +5275,21 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
     inside that process (_drop_live_work). Until 2026-09-09 the arm read only the open turn: a session
     idle between its own turns while a background agent ran read quiet, the teardown fired at once, and
     the work died (26 subagents and 10 background tasks across four sessions in one day, to picks that
-    changed nothing). Now a settings-driven reconnect waits for the live sets to empty, and the arm
-    follows the CLI's delivery classes (review round 1): a shell or monitor task's end never starts a
-    turn, so its terminal notification arms at once when no turn is open; a background agent's end is
-    followed 27 to 92 ms later by a turn the CLI starts itself to deliver the result (probed on CLI
-    2.1.266), so an arm at the SubagentStop or the task's end cut that very turn, and those ends, a
-    Workflow run's, and an end of unknown type leave the arm to the delivery turn's ResultMessage
-    settle. A pick equal to the launched value requests no reconnect at all. A rewind keeps its old
-    behaviour: it replaces the conversation from a point, and the work inside the old process is what
-    it discards. Private synthetic sid; every id and name here is invented."""
+    changed nothing). Now a settings-driven reconnect waits for the live sets to empty, and ONE event
+    arms a held pick: a turn's ResultMessage settle that finds the sets empty (the settle-only rule,
+    review round 2). No removal from the sets arms at its own frame: the CLI starts a turn of its own to
+    deliver a background task's result whatever its type (probed on CLI 2.1.266: an agent's, a Workflow
+    run's, a shell command's and a Monitor's end are each followed 30 to 90 ms later by system/init and
+    a model reply), and an arm at the end frame cut that very turn; the removal sites log one line
+    naming what ended and that the pick waits for the next settle. So a pick held after a shell task's
+    end waits for the next turn to finish, the same as after an agent's. A pick equal to the launched
+    value requests no reconnect at all; during a spawn the compare is against the shape being launched.
+    A rewind keeps its old behaviour: it replaces the conversation from a point, and the work inside the
+    old process is what it discards, and its arm over a hold has its own log line. Private synthetic sid
+    (this class's own, never the shared placeholder: a journaled override against a shared sid replays
+    into every test that minted the same node id); every id and name here is invented."""
 
-    SID = "11111111-2222-3333-4444-777777777777"
+    SID = "5e771e5d-9a1c-4b0f-8d2e-000000000437"   # private synthetic sid, never the shared placeholder
 
     class _Now:
         """A loop double: request_reconnect's call_soon_threadsafe runs the callback at once, here."""
@@ -5292,9 +5300,23 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         uuid = "r1"
         num_turns = 1
 
+    def setUp(self):
+        self._dirs = []
+
+    def tearDown(self):
+        # the repo rule for goal-store fixtures: this sid's override journal never outlives the test (the
+        # class mints no goals today; the cleanup keeps that true for whoever adds one). And the state
+        # dirs go with the test: a leaked tempdir per _sess filled /tmp (2026-09-06)
+        j = Path(os.environ["XDG_STATE_HOME"]) / "romp" / "overrides" / (self.SID + ".jsonl")
+        if j.exists():
+            j.unlink()
+        for d in self._dirs:
+            shutil.rmtree(d, ignore_errors=True)
+
     def _sess(self, **reg):
         self.logs, self.pokes = [], []
-        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None, log=self.logs.append,
+        self._dirs.append(tempfile.mkdtemp())
+        be = sb.SdkBackend(self._dirs[-1], "/bin/true", lambda *a, **k: None, log=self.logs.append,
                            poke=lambda: self.pokes.append(1))
         sb.write_reg(be.state_dir, self.SID, {"sid": self.SID, "name": "web", "cwd": "/tmp", "alive": True, **reg})
         s = sb.SdkSession(be, sb.read_reg(be.state_dir, self.SID))
@@ -5337,6 +5359,10 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
     def _armed(self):
         return [str(m) for m in self.logs if "live work finished" in str(m)]
 
+    def _ended(self):
+        """The removal sites' lines: what ended, and that the pick waits for the next turn's settle."""
+        return [str(m) for m in self.logs if "waits for the next turn's settle" in str(m)]
+
     def _seed(self, s):
         return sb.read_sdk_defaults(s.backend.state_dir)
 
@@ -5375,30 +5401,47 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(len(armed), 1, self.logs)
         self.assertIn("reconnect (web): live work finished; the held effort pick reconnects now", armed[0])
 
-    def test_b2_a_shell_tasks_terminal_notification_arms_at_once(self):
-        # a shell or monitor task's notification never starts a turn (the kernel's queue-record
-        # measurements: enqueued, never dequeued), so its end is the quiet moment itself
+    def test_b2_a_shell_tasks_end_leaves_the_arm_to_the_settle_and_names_itself_in_the_log(self):
+        # round 1 armed at a shell or monitor task's end on a 2026-08-18 queue census (enqueued, never
+        # dequeued) that had counted a stuck regime; probed on 2.1.266 the CLI starts a delivery turn 30 to
+        # 90 ms after a local_bash end too (a plain background Bash, a Monitor exiting or timing out), and
+        # the immediate arm cut it (rc 143, no reply). The settle-only rule (review round 2): the end never
+        # arms, one line says what ended and that the pick waits, and the next settle arms
         s = self._sess()
         s._on_task_event("task_started", {"task_id": "b1", "task_type": "local_bash", "description": "watch the build"})
         s.backend.set_effort(self.SID, "max")
         self.assertFalse(s._reconnect); self.assertTrue(s._reconnect_when_idle)
         self.assertIn("reconnect held for 0 subagents and 1 background task", self._held()[0])
         s._on_task_event("task_notification", {"task_id": "b1", "status": "completed"})
-        self.assertTrue(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+        self.assertFalse(s._reconnect, "a shell task's end is delivered by a turn like any other: no arm here")
+        self.assertTrue(s._reconnect_when_idle)
+        self.assertEqual(self._armed(), [])
+        ended = self._ended()
+        self.assertEqual(len(ended), 1, self.logs)
+        self.assertIn("reconnect (web): a local_bash task ended; the live sets are empty; the pending effort pick "
+                      "waits for the next turn's settle", ended[0])
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 0, "tasks": 0},
+                         "held through the delivery turn: the one marker stands until the settle")
+        out = self._settle(s)
+        self.assertTrue(out["reconnect"] and not out["deferred"])
         self.assertIn("the held effort pick reconnects now", self._armed()[0])
         s = self._sess()
         s._on_task_event("task_started", {"task_id": "b2", "task_type": "local_bash"})
         s.backend.set_effort(self.SID, "max")
         s._on_task_event("task_updated", {"task_id": "b2", "patch": {"status": "killed"}})   # a terminal patch, too
-        self.assertTrue(s._reconnect, "a terminal task_updated status is the same end")
-        # the MCP and websocket monitors are the same class
+        self.assertFalse(s._reconnect, "a terminal task_updated status is the same end: deferred")
+        self.assertEqual(len(self._ended()), 1)
+        self.assertTrue(self._settle(s)["reconnect"])
+        # the MCP and websocket monitors, the same
         for kind in ("monitor_mcp", "monitor_ws"):
             s = self._sess()
             s._on_task_event("task_started", {"task_id": "m1", "task_type": kind})
             s.backend.set_effort(self.SID, "max")
             s._on_task_event("task_notification", {"task_id": "m1", "status": "completed"})
-            self.assertTrue(s._reconnect, kind)
-        # but never under an open turn: that turn's settle arms
+            self.assertFalse(s._reconnect, kind)
+            self.assertIn("a %s task ended" % kind, self._ended()[0])
+            self.assertTrue(self._settle(s)["reconnect"], kind)
+        # under an open turn the same: that turn's settle arms
         s = self._sess()
         s._on_task_event("task_started", {"task_id": "b3", "task_type": "local_bash"})
         s.backend.set_effort(self.SID, "max")
@@ -5406,6 +5449,11 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._on_task_event("task_notification", {"task_id": "b3", "status": "completed"})
         self.assertFalse(s._reconnect, "a turn is open: its settle is the event")
         self.assertTrue(self._settle(s)["reconnect"])
+        # and a task ending with no pick pending writes no line at all
+        s = self._sess()
+        s._on_task_event("task_started", {"task_id": "b4", "task_type": "local_bash"})
+        s._on_task_event("task_notification", {"task_id": "b4", "status": "completed"})
+        self.assertEqual(self._ended(), [])
 
     def test_b3_not_while_the_other_set_is_still_populated(self):
         s = self._sess()
@@ -5419,15 +5467,18 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self._stop(s, "a1")
         self.assertFalse(s._reconnect, "the agent's end is delivered by a turn")
         self.assertTrue(self._settle(s)["reconnect"])
-        # and the mirror image: the agent ends first, the shell task's end is quiet and arms at once
+        # and the mirror image: the agent ends first, then the shell task; neither end arms, each is logged
         s = self._sess()
         self._start(s, "a1")
         s._on_task_event("task_started", {"task_id": "b1", "task_type": "local_bash"})
         s.backend.set_effort(self.SID, "max")
         self._stop(s, "a1")
         self.assertFalse(s._reconnect, "the subagent ended; the task still runs")
+        self.assertIn("a subagent ended; 0 subagents and 1 background task still run", self._ended()[0])
         s._on_task_event("task_notification", {"task_id": "b1", "status": "completed"})
-        self.assertTrue(s._reconnect)
+        self.assertFalse(s._reconnect, "the last end is not the arm either (review round 2)")
+        self.assertIn("a local_bash task ended; the live sets are empty", self._ended()[1])
+        self.assertTrue(self._settle(s)["reconnect"])
 
     def test_b4_a_workflow_runs_end_defers_to_the_settle_like_an_agents(self):
         s = self._sess()
@@ -5481,16 +5532,21 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self._start(s, "a1"); s._on_task_event("task_started", {"task_id": "b1", "task_type": "local_bash"})
         self.assertEqual(s._live_work_counts(), (1, 1))
 
-    def test_b6_an_end_of_unknown_type_defers_to_the_settle(self):
+    def test_b6_an_end_of_unknown_type_defers_to_the_settle_and_the_line_names_the_type(self):
         # a self-healed entry never saw its task_started, so its type is unknown; the CLI's other types
-        # (mcp_task, remote_agent, in_process_teammate) may deliver a turn too: none of them arms here
-        for kind in ("", "mcp_task", "remote_agent", "in_process_teammate"):
+        # (mcp_task, remote_agent, in_process_teammate) defer like every end. The line names the type (or
+        # says it was never learned), so an end the CLI never delivers as a turn can be placed in the log
+        for kind in ("", "mcp_task", "remote_agent", "in_process_teammate", "some_new_type"):
             s = self._sess()
             s._on_task_event("task_started", {"task_id": "t1", **({"task_type": kind} if kind else {})})
             s.backend.set_effort(self.SID, "max")
             s._on_task_event("task_notification", {"task_id": "t1", "status": "completed"})
             self.assertFalse(s._reconnect, "type %r must defer" % kind)
             self.assertTrue(s._reconnect_when_idle)
+            ended = self._ended()
+            self.assertEqual(len(ended), 1, (kind, self.logs))
+            self.assertIn("a %s task ended" % kind if kind else "a task of a type never learned ended", ended[0])
+            self.assertNotIn("held for", ended[0]); self.assertNotIn("live work finished", ended[0])
             self.assertTrue(self._settle(s)["reconnect"], kind)
 
     def test_c_the_turn_end_settle_leaves_a_pick_held_while_work_runs(self):
@@ -5889,13 +5945,15 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         out = self._settle(s)
         self.assertTrue(out["ok"]); self.assertFalse(out["reconnect"]); self.assertTrue(out["deferred"])
         self.assertTrue(s._reconnect_held_for_work, "the hold was recorded even though the line could not be logged")
-        # and a task end's call, from the message stream
+        # and a task end's line, from the message stream: the end frame completes and the pick still waits
         s = self._sess()
         s._on_task_event("task_started", {"task_id": "b1", "task_type": "local_bash"})
         s.backend.set_effort(self.SID, "max")
         s.backend._log_cb = boom
         s._on_task_event("task_notification", {"task_id": "b1", "status": "completed"})
-        self.assertTrue(s._reconnect)
+        self.assertEqual(s._bg_tasks, {}, "the frame was processed")
+        self.assertFalse(s._reconnect); self.assertTrue(s._reconnect_when_idle)
+        self.assertTrue(self._settle(s)["reconnect"])
 
     def test_h_the_drop_notice_names_what_still_reconnects_over_live_work(self):
         # a settings switch no longer reaches _drop_live_work with work alive; the cause says the restart
@@ -5970,6 +6028,508 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         finally:
             if before is None:
                 _sys.modules.pop("claude_agent_sdk", None)
+
+    def test_b7_a_rewind_at_the_settle_over_a_hold_has_its_own_line(self):
+        # a pending rewind reaching the settle over a hold arms over the live work (the rewind's exemption,
+        # request_reconnect), so "live work finished" would be false with the subagent still registered;
+        # the line names the rewind and says the held pick rides it (review round 2)
+        s = self._sess()
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "max")
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+        s._rewind_to = "22222222-3333-4444-5555-666666666666"
+        s._rewind_armed = False
+        out = self._settle(s)
+        self.assertTrue(out["reconnect"], "the rewind's queue cannot wait: it arms over the work")
+        self.assertFalse(out["deferred"])
+        self.assertEqual(len(s._subagents), 1, "the subagent is still registered at the arm (the loop top drops it)")
+        self.assertEqual(self._armed(), [], "no false 'live work finished' line")
+        rew = [str(m) for m in self.logs if "the rewind reconnects over" in str(m)]
+        self.assertEqual(len(rew), 1, self.logs)
+        self.assertIn("reconnect (web): the rewind reconnects over 1 subagent and 0 background tasks; "
+                      "the held effort pick rides it", rew[0])
+        self.assertFalse(s._reconnect_held_for_work); self.assertIsNone(s.snapshot()["pickHeld"])
+        # a rewind at a settle whose turn emptied the sets: the ordinary line, since it is true
+        s = self._sess()
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "max")
+        self._stop(s, "a1")
+        s._rewind_to = "22222222-3333-4444-5555-666666666666"; s._rewind_armed = False
+        self.assertTrue(self._settle(s)["reconnect"])
+        self.assertEqual(len(self._armed()), 1)
+        self.assertEqual([m for m in self.logs if "the rewind reconnects over" in str(m)], [])
+
+    def test_b8_the_hold_is_visible_before_the_loop_runs_the_request(self):
+        # the setter marks the hold on the kernel thread; the loop thread sets _reconnect_when_idle only
+        # when it runs the queued request. A snapshot between the two read pickHeld None with effortPending
+        # True, and the chat drew the reloading animation for one push (review round 2)
+        s = self._sess()
+        queued = []
+        s.loop = type("_Queue", (), {"call_soon_threadsafe": lambda self_, cb, *a: queued.append((cb, a))})()
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "max")
+        self.assertFalse(s._reconnect_when_idle, "the request is queued, not run")
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        for cb, a in queued:
+            cb(*a)
+        self.assertTrue(s._reconnect_when_idle)
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        self.assertEqual(len(self._held()), 1, "the loop's own held line is not repeated: the setter said it")
+        s.ended = True
+        self.assertIsNone(s.snapshot()["pickHeld"], "a session shutting down holds nothing")
+
+    def test_f10_a_pick_in_the_spawn_window_compares_against_the_shape_being_launched(self):
+        # the connect in progress runs the PENDING shape (_launching), not the stamp of the process it
+        # replaces. A revert made in that window read as unchanged against the old stamp ("reverted the
+        # pending max; no reconnect") while the new process came up on max: the CLI ran max, the reg and
+        # the badge said high, nothing was pending (review round 2). Both orders, effort then billing.
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertTrue(s._reconnect, "quiet: reconnects at once")
+        s._reset_reconnect_state()                                          # the loop top
+        s._launching = {"effort": sb.effort_launch_shape("max"), "mode": "default", "auth": "login"}   # _options
+        self.assertTrue(s.backend.set_effort(self.SID, "high"))             # the revert, during the spawn of max
+        self.assertEqual(s._effort_pending, "high", "recorded as pending: the process coming up runs max")
+        self.assertTrue(s._reconnect, "and a reconnect is requested for after the launch lands")
+        self.assertTrue(sb.read_reg(s.backend.state_dir, self.SID).get("effortPending"))
+        self.assertFalse(any("reverted the pending" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(any("effort (web): set to high; reconnecting to apply" in str(m) for m in self.logs), self.logs)
+        s._connect_landed()                                                 # max lands
+        self.assertEqual(s._launched_effort, sb.effort_launch_shape("max"))
+        self.assertEqual(s._effort_pending, "high", "high survives the landing of max")
+
+        def recs():
+            p = Path(s.backend.state_dir) / "states" / (self.SID + ".jsonl")
+            return [json.loads(l)["effortApplied"] for l in p.read_text().splitlines() if "effortApplied" in l] if p.exists() else []
+        s._reset_reconnect_state()
+        s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "default", "auth": "login"}
+        s._connect_landed()                                                 # high lands
+        self.assertEqual(s._effort_pending, "")
+        self.assertFalse(sb.read_reg(s.backend.state_dir, self.SID).get("effortPending"))
+        self.assertEqual(recs(), ["high"], "the applied record: exactly one, for the pick that landed")
+        self.assertEqual(s.effort, "high")
+        # the other order: the value being launched, picked during its own spawn, is a no-op
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        s.backend.set_effort(self.SID, "max")
+        s._reset_reconnect_state()
+        s._launching = {"effort": sb.effort_launch_shape("max"), "mode": "default", "auth": "login"}
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertEqual(asked, [], "already applying: no request")
+        self.assertTrue(any("set to max; already applying, no new request" in str(m) for m in self.logs))
+        # ...even when nothing was flagged pending (a connect launched from the reg): the flag is set so
+        # the landing writes the applied record
+        s._effort_pending = ""
+        s.backend._update_reg(self.SID, effortPending=False)
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertEqual(asked, [])
+        self.assertEqual(s._effort_pending, "max")
+        self.assertTrue(sb.read_reg(s.backend.state_dir, self.SID).get("effortPending"))
+        s._connect_landed()
+        self.assertEqual(s._effort_pending, "")
+        # billing, both orders
+        s = self._sess(auth="key")
+        s._launched_auth = "key"
+        with mock.patch.object(sb.SdkBackend, "work_key_configured", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.backend.set_auth(self.SID, "login"))
+            self.assertTrue(s._reconnect)
+            s._reset_reconnect_state()
+            s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "default", "auth": "login"}
+            self.assertTrue(s.backend.set_auth(self.SID, "key"))            # the revert, during the spawn of login
+            self.assertEqual(s._auth_pending, "key"); self.assertTrue(s._reconnect)
+            self.assertFalse(any("reverted the pending" in str(m) for m in self.logs), self.logs)
+            s._connect_landed()
+            self.assertEqual(s._launched_auth, "login")
+            self.assertEqual(s._auth_pending, "key", "key survives the landing of login")
+            s._reset_reconnect_state()
+            s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "default", "auth": "key"}
+            s._connect_landed()
+            self.assertEqual(s._auth_pending, ""); self.assertEqual(s._launched_auth, "key")
+            s = self._sess(auth="key")
+            s._launched_auth = "key"
+            s.backend.set_auth(self.SID, "login")
+            s._reset_reconnect_state()
+            s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "default", "auth": "login"}
+            asked = []
+            s.request_reconnect = lambda: asked.append(1)
+            self.assertTrue(s.backend.set_auth(self.SID, "login"))
+            self.assertEqual(asked, [])
+            self.assertTrue(any("auth (web): set to login; already applying, no new request" in str(m) for m in self.logs), self.logs)
+
+    def test_j_a_live_mode_switch_stamps_the_running_mode_and_a_held_bypass_reports_it(self):
+        # _launched_mode followed only the connect; a live switch the CLI confirmed left it stale, so a
+        # bypass pick held after a live plan pick reported the launch mode for the whole hold (review round 2)
+        class _OK:
+            async def set_permission_mode(self_, m): pass
+        class _No:
+            async def set_permission_mode(self_, m): raise RuntimeError("Cannot set permission mode")
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        s.client = _OK()
+        asyncio.run(s._do_set_mode("plan", prev="default"))
+        self.assertEqual(s._launched_mode, "plan", "the CLI confirmed it: the process runs plan")
+        s.perm_mode = "plan"
+        self._start(s, "a1")
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        snap = s.snapshot()
+        self.assertEqual(snap["pickHeld"]["surfaces"], ["mode"])
+        self.assertEqual(snap["mode"], "plan", "the held bypass pick reports the mode the process runs")
+        # a refused live switch leaves the stamp (and every layer) where it was
+        s2 = self._sess(mode="default")
+        s2.perm_mode = "default"; s2._launched_mode = "default"; s2.client = _No()
+        asyncio.run(s2._do_set_mode("plan", prev="default"))
+        self.assertEqual(s2._launched_mode, "default"); self.assertEqual(s2.perm_mode, "default")
+
+    def test_j2_a_repeat_bypass_pick_during_the_hold_is_a_no_op_never_the_refused_live_call(self):
+        # prev read the declared (unconfirmed) bypass, so the re-click went LIVE and the CLI refused it
+        # with the red "did NOT apply" problem while the hold stood (review round 2)
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        live = []
+        s.set_mode_live = lambda mode, prev="default": live.append((mode, prev))
+        self._start(s, "a1")
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        self.assertEqual(len(self._held()), 1)
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        self.assertEqual(live, [], "no live call: the CLI refuses a live switch into bypass")
+        self.assertEqual(len(self._held()), 1, "no second held line: nothing new was asked")
+        self.assertTrue(any("mode (web): set to bypassPermissions; already applying, no new request" in str(m)
+                            for m in self.logs), self.logs)
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["mode"])
+        # the spawn window too: the flags are reset, _launching carries the mode
+        s._reset_reconnect_state()
+        s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "bypassPermissions", "auth": "login"}
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        self.assertEqual(live, [])
+        self.assertFalse(s._reconnect_when_idle, "no new request during the spawn either")
+        # a FIRST bypass pick during an effort hold still asks (the guard keys on the mode surface, not the hold)
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        s.set_mode_live = lambda mode, prev="default": live.append((mode, prev))
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "max")
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["effort", "mode"])
+        self.assertEqual(len(self._held()), 2)
+        self.assertEqual(live, [])
+
+    def test_j3_a_live_pick_during_a_held_bypass_withdraws_the_bypass_pick(self):
+        # the newer intent wins: a live plan pick retires the held bypass pick, with prev = the mode the
+        # process runs (never the unconfirmed bypass), and the reconnect the bypass asked for is cancelled
+        # when nothing else asked, so the settle relaunches nothing (review round 2)
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        live = []
+        s.set_mode_live = lambda mode, prev="default": live.append((mode, prev))
+        self._start(s, "a1")
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        self.assertTrue(s._reconnect_when_idle)
+        s.backend.set_mode(self.SID, "plan")
+        self.assertEqual(live, [("plan", "default")], "prev is the confirmed mode, never the pending bypass")
+        self.assertTrue(any("mode (web): set to plan; applied live; the held bypass pick is withdrawn" in str(m)
+                            for m in self.logs), self.logs)
+        self.assertFalse(s._reconnect_when_idle, "the bypass pick was the only one pending: no reconnect")
+        self.assertFalse(s._reconnect_held_for_work)
+        self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertEqual(s.snapshot()["mode"], "plan")
+        self.assertTrue(any("the withdrawn mode pick was the only one pending; no reconnect" in str(m) for m in self.logs))
+        self._stop(s, "a1")
+        out = self._settle(s)
+        self.assertFalse(out["reconnect"], "nothing relaunches a mode the process already runs")
+        self.assertEqual(self._armed(), [])
+        # with an effort pick also held, the hold stands for that pick alone
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        s.set_mode_live = lambda mode, prev="default": None
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "max")
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        s.backend.set_mode(self.SID, "acceptEdits")
+        self.assertTrue(s._reconnect_when_idle)
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        self.assertEqual(s.snapshot()["mode"], "acceptEdits")
+        # the deferred case (a turn open, no live work) withdraws the same way
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        s.set_mode_live = lambda mode, prev="default": None
+        s.inflight = 1
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        self.assertTrue(s._reconnect_when_idle)
+        s.backend.set_mode(self.SID, "plan")
+        self.assertFalse(s._reconnect_when_idle)
+        # a pending rewind keeps its arm: the rewind's request records no surface
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        s.set_mode_live = lambda mode, prev="default": None
+        self._start(s, "a1")
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        s._rewind_to = "22222222-3333-4444-5555-666666666666"; s._rewind_armed = False
+        s.backend.set_mode(self.SID, "plan")
+        self.assertTrue(s._reconnect_when_idle, "the rewind depends on the deferred arm")
+        # bypass, plan, bypass again: the second bypass pick asks anew and reports plan while held
+        class _OK:
+            async def set_permission_mode(self_, m): pass
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"; s.client = _OK()
+        s.set_mode_live = lambda mode, prev="default": asyncio.run(s._do_set_mode(mode, prev))
+        self._start(s, "a1")
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        s.backend.set_mode(self.SID, "plan")
+        self.assertEqual(s._launched_mode, "plan")
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        self.assertTrue(s._reconnect_when_idle)
+        self.assertEqual(s.snapshot()["mode"], "plan")
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["mode"])
+
+    def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
+        # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
+        # RUNS: the effort it launched with, the mode it runs, the fast state the init reported, the CLI's
+        # own billing report, so no badge shows a pick as if it applied (review round 2)
+        s = self._sess(effort="high", mode="default", auth="key")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        s._launched_effort = sb.effort_launch_shape("high"); s._launched_auth = "key"
+        s.auth_live = "key"; s.fast = "off"
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.set_mode_live = lambda mode, prev="default": None
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        snap = s.snapshot()
+        self.assertEqual(snap["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        self.assertEqual(snap["effort"], "high", "the badge shows the running effort, not the pick")
+        self.assertEqual(s.effort, "max", "the pick itself is what the reconnect will launch")
+        self.assertTrue(snap["effortPending"])
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        s.backend.set_fast(self.SID, "on")
+        s.backend.set_auth(self.SID, "login")
+        snap = s.snapshot()
+        self.assertEqual(snap["pickHeld"]["surfaces"], ["effort", "mode", "fast", "auth"])
+        self.assertEqual(snap["mode"], "default")
+        self.assertEqual(snap["fast"], "off", "no optimistic flip while held: the running state stays")
+        self.assertTrue(s.fast_opt, "the ask is armed for the connect")
+        self.assertEqual(snap["auth"], "login", "the pick is the intent"); self.assertTrue(snap["authPending"])
+        self.assertEqual(snap["authLive"], "key", "the CLI's report still describes the running process")
+        # an init during the hold (the delivery turn's) re-asserts off; the marker stands and the ask stays
+        s._adopt_fast_state({"fast_mode_state": "off", "fast_mode_disabled_reason": "sdk_opt_in_required"})
+        snap = s.snapshot()
+        self.assertEqual(snap["fast"], "off"); self.assertTrue(s.fast_opt)
+        self.assertIn("fast", snap["pickHeld"]["surfaces"])
+        self._stop(s, "a1")
+        self.assertTrue(self._settle(s)["reconnect"])
+        snap = s.snapshot()
+        self.assertIsNone(snap["pickHeld"])
+        self.assertEqual(snap["effort"], "max", "armed: the pick is what reloads")
+        self.assertEqual(snap["fast"], "on", "the badge's optimism at the arm: the flag rides this connect")
+        self.assertEqual(snap["authLive"], "", "the report described the process this reconnect replaces")
+        self.assertEqual(snap["mode"], "bypassPermissions")
+        # ultracode is reported as itself while held; an unlaunched session has no running value to show
+        s = self._sess(effort="ultracode")
+        s._launched_effort = sb.effort_launch_shape("ultracode")
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "low")
+        self.assertEqual(s.snapshot()["effort"], "ultracode")
+        s = self._sess(effort="high")
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "low")
+        self.assertEqual(s.snapshot()["effort"], "low")
+        # a fast pick that is NOT held keeps the optimistic flip the badge relied on (2026-08-11)
+        s = self._sess()
+        s.fast = "off"; s.thread = mock.Mock(is_alive=lambda: True)
+        s.backend.set_fast(self.SID, "on")
+        self.assertEqual(s.fast, "on"); self.assertTrue(s._reconnect)
+
+
+class SettingsPickThroughTheLoop(unittest.TestCase):
+    """The reconnect a settings pick asks for, driven through the REAL loop (_amain) against a stand-in SDK
+    module, so the loop top's _reset_reconnect_state and the landing's _connect_landed run where they live:
+    until review round 2 (2026-09-09) every test called both helpers by hand, and the loop top reverted to
+    the round-0 line, or the landing call replaced with `pass`, left every module green. The client records
+    the options it was built with; the test pushes the frames (init, assistant, result) the CLI would
+    stream. Private synthetic sid and CLI session id; the name and every text are invented."""
+
+    SID = "5e771e5d-9a1c-4b0f-8d2e-000000000438"    # private synthetic sid, never the shared placeholder
+    FSID = "5e771e5d-9a1c-4b0f-8d2e-ffffffff0438"   # the CLI's own session id, announced by the init
+
+    class _Client:
+        instances = []
+
+        def __init__(self, options=None, transport=None):
+            self.options = options
+            type(self).instances.append(self)
+            self.loop = asyncio.get_running_loop()
+            self.frames = asyncio.Queue()
+            self.writes = []
+            self.torn_down = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            self.torn_down = True
+            return False
+
+        async def query(self, prompt, session_id="default"):
+            async for turn in prompt:
+                self.writes.append(turn["message"]["content"][0]["text"])
+
+        async def interrupt(self):
+            pass
+
+        async def get_context_usage(self):
+            return {"percentage": 2, "model": "claude-x"}
+
+        async def get_server_info(self):
+            return {}
+
+        async def receive_messages(self):
+            while True:
+                yield await self.frames.get()
+
+    class _Options:
+        def __init__(self, **kw):
+            self.session_id = self.resume = None
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    class _Sys:
+        def __init__(self, subtype, data, uuid):
+            self.subtype, self.data, self.uuid = subtype, data, uuid
+
+    class _Asst:
+        def __init__(self, text, uuid):
+            self.content, self.model, self.uuid = [_TextBlock(text)], "claude-x", uuid
+            self.parent_tool_use_id, self.stop_reason, self.error = None, "end_turn", None
+
+    _Sys.__name__ = "SystemMessage"; _Asst.__name__ = "AssistantMessage"
+
+    def setUp(self):
+        self._Client.instances = []
+        fake = types.ModuleType("claude_agent_sdk")
+        fake.__spec__ = ModuleSpec("claude_agent_sdk", loader=None)
+        fake.ClaudeSDKClient, fake.ClaudeAgentOptions, fake.HookMatcher = self._Client, self._Options, (lambda **kw: kw)
+        fake.AssistantMessage, fake.ResultMessage, fake.SystemMessage = self._Asst, _ResultMessage, self._Sys
+        fake.TextBlock = _TextBlock
+        self._saved_sdk = sys.modules.get("claude_agent_sdk")
+        sys.modules["claude_agent_sdk"] = fake
+        async def _noop_refresh(self_): pass
+        self._saved_refresh = sb.SdkSession._do_refresh_usage
+        sb.SdkSession._do_refresh_usage = _noop_refresh
+        self.state = tempfile.mkdtemp()
+        self.cwd = os.path.join(self.state, "proj")
+        os.makedirs(self.cwd)
+        self.lines = []
+        self.be = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None,
+                                log=lambda m, **k: self.lines.append(str(m)))
+        reg = {"sid": self.SID, "name": "web", "mode": "default", "effort": "high", "alive": True, "cwd": self.cwd}
+        sb.write_reg(self.be.state_dir, self.SID, reg)
+        self.s = sb.SdkSession(self.be, dict(reg))
+        self.be.sessions[self.SID] = self.s
+        self.n = 0
+
+    def tearDown(self):
+        if self.s.thread.is_alive():
+            self.s.shutdown()
+        if self.s.thread.ident is not None:
+            self.s.thread.join(timeout=10)
+        sb.SdkSession._do_refresh_usage = self._saved_refresh
+        if self._saved_sdk is None:
+            sys.modules.pop("claude_agent_sdk", None)
+        else:
+            sys.modules["claude_agent_sdk"] = self._saved_sdk
+        j = Path(os.environ["XDG_STATE_HOME"]) / "romp" / "overrides" / (self.SID + ".jsonl")
+        if j.exists():
+            j.unlink()
+        shutil.rmtree(self.state, ignore_errors=True)
+
+    def _wait(self, pred, what, timeout=10.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if pred():
+                return
+            time.sleep(0.01)
+        self.fail("timed out waiting for %s; clients %d; log tail %r"
+                  % (what, len(self._Client.instances), self.lines[-8:]))
+
+    def _uid(self):
+        self.n += 1
+        return "5e771e5d-9a1c-4b0f-8d2e-%012d" % self.n
+
+    def _push(self, client, frame):
+        client.loop.call_soon_threadsafe(client.frames.put_nowait, frame)
+
+    def _turn(self, client):
+        """One turn the CLI starts on its own (the delivery turn after a background task's end, or any turn
+        romp did not feed): init, a reply, the result. Its settle is the arm's one event."""
+        self._push(client, self._Sys("init", {"model": "claude-x", "permissionMode": "default",
+                                              "session_id": self.FSID}, self._uid()))
+        self._push(client, self._Asst("here is the result", self._uid()))
+        self._push(client, type("ResultMessage", (_ResultMessage,), dict(
+            uuid=self._uid(), subtype="success", is_error=False, num_turns=1, session_id=self.FSID,
+            duration_ms=1, duration_api_ms=1, total_cost_usd=0.01, usage={"input_tokens": 1, "output_tokens": 1},
+            result="ok", parent_tool_use_id=None))())
+
+    def _connect(self):
+        s = self.s
+        s.start()
+        self._wait(lambda: s.client is not None and s._launched_effort is not None, "the first connect landed")
+        return self._Client.instances[0]
+
+    def _applied(self):
+        p = Path(self.be.state_dir) / "states" / (self.SID + ".jsonl")
+        return [json.loads(l)["effortApplied"] for l in p.read_text().splitlines() if "effortApplied" in l] if p.exists() else []
+
+    def test_an_idle_effort_pick_reconnects_through_the_loop_and_the_landing_stamps_the_new_shape(self):
+        s, c1 = self.s, self._connect()
+        self.assertEqual(s._launched_effort, ("high", False), "the first landing stamped the launch shape")
+        self.assertEqual(c1.options.effort, "high")
+        self.assertTrue(self.be.set_effort(self.SID, "low"))
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client
+                   and s._effort_pending == "", "the reconnect landed and cleared the pending pick")
+        c2 = self._Client.instances[1]
+        self.assertTrue(c1.torn_down, "the old client was abandoned")
+        self.assertEqual(c2.options.effort, "low", "the new client launched the pick")
+        self.assertEqual(s._launched_effort, ("low", False), "stamped where the connect lands")
+        self.assertEqual(s._launching["effort"], ("low", False))
+        self.assertFalse(sb.read_reg(self.be.state_dir, self.SID).get("effortPending"))
+        self.assertEqual(self._applied(), ["low"], "the applied record, once, at the landing")
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+        self.assertFalse(s._reconnect_held_for_work); self.assertEqual(s._reconnect_surfaces, set())
+        self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertTrue(self.be.set_effort(self.SID, "low"))
+        time.sleep(0.2)
+        self.assertEqual(len(self._Client.instances), 2, "the launched value picked again reconnects nothing")
+
+    def test_a_held_pick_survives_a_settle_over_live_work_and_reconnects_at_the_settle_that_finds_none(self):
+        s, c1 = self.s, self._connect()
+        asyncio.run(s._subagent_start_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        self.assertTrue(self.be.set_effort(self.SID, "low"))
+        self._wait(lambda: s._reconnect_when_idle, "the request ran on the loop")
+        self.assertTrue(s._reconnect_held_for_work)
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        self.assertEqual(s.snapshot()["effort"], "high", "the running value while held")
+        self._turn(c1)                                   # a turn ends while the subagent still runs
+        self._wait(lambda: s.inflight == 0 and s._settled_msg is not None, "the turn settled")
+        time.sleep(0.2)
+        self.assertEqual(len(self._Client.instances), 1, "no reconnect: the settle found live work")
+        self.assertTrue(s._reconnect_when_idle)
+        asyncio.run(s._subagent_stop_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        time.sleep(0.2)
+        self.assertEqual(len(self._Client.instances), 1, "the stop is not the arm")
+        self.assertTrue(any("a subagent ended; the live sets are empty" in l for l in self.lines), self.lines)
+        s._settled_msg = None
+        self._turn(c1)                                   # the delivery turn: its settle finds the sets empty
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client
+                   and s._effort_pending == "", "the reconnect at the settle that found no live work")
+        self.assertTrue(any("live work finished; the held effort pick reconnects now" in l for l in self.lines), self.lines)
+        self.assertEqual([l for l in self.lines if "rides this reconnect" in l], [],
+                         "the loop top found the arm it was woken for, nothing else pending")
+        self.assertEqual(s._launched_effort, ("low", False))
+        self.assertEqual(self._Client.instances[1].options.effort, "low")
+        self.assertEqual(self._applied(), ["low"])
+        self.assertFalse(s._reconnect_held_for_work); self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertEqual(s.snapshot()["effort"], "low")
 
 
 class WorkflowProgressShapeIsLoud(unittest.TestCase):
