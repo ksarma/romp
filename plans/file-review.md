@@ -1294,7 +1294,7 @@ whole replaced paragraph — its old text struck and its new text marked, severa
 comment's card in the track; the placement pass only ever pushed cards down, so the comment's card sat a full viewport
 below its highlight, and the click's scroll went as far as kept the highlight's top in view and no further. Built: the
 pass anchors the layout on a FOCUS (`focusCard`; `focusKey` was already the name of the keyboard-focus reader), the card the person last acted on — a highlight or a change mark
-clicked, a card opened by its head, a reference link followed, a Show more, the card a save landed in — and
+clicked, a card opened by its head, a reference link followed, a Show more, the card a save landed in, a Reveal — and
 `layoutCards` takes it as its third argument. The focused card sits exactly at its mark (clamped to the top inset when
 the mark is under the header, as any first card is); the cards above it, by desired top, are laid by the push-down rule
 first and then moved UP from the focus, each by the least that puts its end a gap above the card under it, so a card the
@@ -1327,6 +1327,13 @@ with nothing scrolling after it and the card the person was reviewing under the 
 verification review's second round, 2026-09-09: the reach rule lays a loose card the chain cannot fit above the focus
 below it, where a head click reaches it); a gesture on such a card moves nothing, as a head click on a loose card
 never did, and `layoutOff` clears the memory with the focus.
+A focus written on a card that is loose in the CURRENT view alone is spent by that pass the same way: a comment on a
+passage the Rendered view cannot paint (an HTML comment block) has its Raw highlight one view switch away, but the pass
+replaces the focus with the card it laid on (`focusCard` takes `laidOn`; the pass keeps no second memory), so the focus
+does not survive to the view that paints the card, and the bar's Raw button, a gesture on the view and not on a card,
+lays the card by the push-down rule, under a tall card above it, where Reveal on the card arms the focus and lays it
+level (the merge audit, 2026-09-09; a focus kept latent through a loose pass, with the card-gone clear falling back to
+`laidOn`, was the alternative).
 A card the focus moved up past its own mark draws its leader down the gutter
 (`data-pulled`, `--fc-pull`), as a pushed card draws one up. The focus is set before the render whose pass lays the
 card (`showCard`; the head-click
@@ -1342,6 +1349,13 @@ room is half the body's height less the footer's and the gap (in the focus fixtu
 track), so the fallback fires for an open card that fits the track with room to spare, not only for a card taller than
 the track (the verification review, 2026-09-09: this record had narrowed it to the latter, while
 `file-comments-focus.test.ts` and `file-comments-margin-fixes.test.ts` both drive a fitting card through it).
+Reveal arms the focus as well (`revealInRaw`; the merge audit, 2026-09-09): the card is made the focus before the
+switch to Raw, so the pass the viewer's `setMode` runs synchronously lays it level with its Raw mark before
+`scrollToOffset` centers the row, and a pass runs after the switch where the switch painted nothing (a file with no
+Rendered view is Raw already). Before, Reveal set no focus, and the switch's pass laid the margin on the tall change card
+the person had unfolded: the revealed card was pushed under it, wholly outside the track's box, while its passage sat
+mid-body; `focusOn` before the switch would not serve, since the card is loose in the view where Reveal is offered and
+the pass spends a loose focus.
 A focused card taller than the track has its head cut by the excess (its end and the gap over the track's box) with
 its end in the box and the mark's top in the body's; one taller than the track by more than the header less the gap
 meets the cap — the scroll stops where the mark's top would leave the body's box, a gap under its top, so the head is
@@ -1353,7 +1367,11 @@ The focus clears when the list no longer holds the card (a status, the filter, a
 ends (`layoutOff`: the fold to the list, edit mode, the panel's close) and with the panel (`dispose`); and a pass in the
 list layout clears one too (the review, 2026-09-08: a mark or a head clicked in the list wrote a focus the list had no
 pass to spend, and the flip to the margin layout — a resize, not a click — anchored on it with nothing centered, the
-cards above it moved from their marks). Tall cards fold:
+cards above it moved from their marks). `layoutOff` clears the pass's writes on the list and the cards too — the list's
+inline height, each card's top and leader — since the render that follows keeps the live list and a card while a reply's
+box stands in it (the graft around the box), and the list kept the margin's height in the list layout, the aside
+scrolling through a screen and more of empty space under the cards until the box left the card or the columns came back
+(the merge audit, 2026-09-09). Tall cards fold:
 in the margin layout a change card's old and new text, a comment's body and a run of turns wear `fc-clip`, and the
 sheets cap each at eight of its lines (`8lh`), the last lines fading (a mask) where the pass found the cap cut the
 content (`clipCards`: `data-clipped`, read before the cards' heights, since the fold changes them) — a run of turns cut
@@ -1430,7 +1448,18 @@ and from its second round, `file-comments-focus-verify-2.test.ts` (the panel ove
 Show more and a whole-file comment's save on a loose card the reach rule laid below the focused card leave the layout
 and the scroll as they were, the focus kept on the card the person was reviewing; the keyboard's memory of a control a
 render could not land on — Show less hidden by the fold to the list layout, a busy Reject — held across a repaint and
-a status until the control is back; and the focus cleared by the panel's close, driven through a close and a reopen).
+a status until the control is back; and the focus cleared by the panel's close, driven through a close and a reopen);
+and from the merge audit (2026-09-09), `file-comments-focus-audit.test.ts` (the panel over the review stand-in: Reveal on
+a card pushed under the unfolded change card writing the focus before the switch to Raw, the pass the switch runs laying
+the card level with its point; the fold to the list layout with a reply's box standing in a card leaving no inline height
+on the list and no top or leader on the kept card, the columns sizing and placing the cards again),
+`file-view-focus-seat-browser.test.ts` (the real viewer in Chromium, the Files pane at 1000x600: a card made the focus by
+its highlight level with its mark and the track locked to the body across Raw and Rendered, one A+, a session's write
+landing through the poll and a reload run under a held press, whole in the track's box after the click and the view
+round trip; then the Reveal step, a deletion's card and a loose comment's under the unfolded change card laid level with
+their Raw marks, whole in the track's box, not pushed) and, in `file-comments-focus-browser.test.ts`, the fold with a
+reply's box standing in a card (the list's box its children's span, the aside's scroll range its content, the box and
+the words kept in the card, in Chromium and Firefox).
 
 The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that
 recurs. Before it, a comment on a passage whose 24 characters of context matched another copy's was
@@ -2174,7 +2203,14 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   in the round's review, 2026-09-09).
   From its second round: `file-comments-focus-verify-2.test.ts` (the stand-in: a gesture on a loose card below the
   focus moving nothing, the keyboard's memory held across the renders that cannot land it, the focus cleared with the
-  panel's close, driven).
+  panel's close, driven). From the merge audit (2026-09-09): `file-comments-focus-audit.test.ts` (the stand-in: Reveal
+  writing the focus before the switch to Raw, the pass the switch runs laying the revealed card level; the fold to the
+  list layout with a reply's box standing in a card leaving no inline height on the list and no top or leader on the
+  kept card); `file-view-focus-seat-browser.test.ts` (the real viewer in Chromium, the Files pane at 1000x600: a focused
+  card level with its mark and the track locked to the body across Raw and Rendered, one A+, the poll's reload and a
+  reload under a held press, then the Reveal step, a deletion's card and a loose comment's laid level with their Raw
+  marks in the track's box); `file-comments-focus-browser.test.ts` gains the fold with a reply's box standing in a card
+  (the list's box its children's span, the aside's scroll range its content, in Chromium and Firefox).
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
