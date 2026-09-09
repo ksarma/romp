@@ -556,8 +556,9 @@ test("at source: layoutOff clears the list's inline height and each child's top 
   assert.ok(/private layoutOff\(\): void \{[\s\S]*?this\.focusCard = null;[^\n]*\n\s*this\.laidOn = null;[\s\S]*?list\.style\.height = "";[\s\S]*?node\.style\.top = ""; delete node\.dataset\.pushed; delete node\.dataset\.pulled;\n\s*node\.style\.removeProperty\("--fc-push"\); node\.style\.removeProperty\("--fc-pull"\);/.test(SRC), "layoutOff: the list's height, then each child's top, leaders and their lengths");
 });
 
-test("at source: reveal() switches through one place that writes the focus in the margin layout before setMode, on the change branch and the comment's, and runs the pass itself where the switch painted nothing", () => {
-  assert.ok(/private revealInRaw\(key: string\): void \{\n\s*if \(this\.margin\) this\.focusCard = key;[^\n]*\n\s*this\.ctx\.setMode\("raw"\);\n\s*if \(this\.margin && this\.laidOn !== key\) this\.placeCards\(false\);/.test(SRC), "the focus, the switch, then the pass where the last pass did not lay the cards on the card");
+test("at source: reveal() switches through one place that writes the focus in the margin layout before setMode, on the change branch and the comment's, and runs the pass itself where the switch ran none, read from the placement (the review of the audit's fixes, round 2: the guard on laidOn ran the margin twice for a change card's Reveal with the marks off)", () => {
+  assert.ok(/private revealInRaw\(key: string\): void \{\n\s*if \(this\.margin\) this\.focusCard = key;[^\n]*\n\s*const placed = this\.placed;[^\n]*\n\s*this\.ctx\.setMode\("raw"\);\n\s*if \(this\.margin && this\.placed === placed\) this\.placeCards\(false\);/.test(SRC), "the focus, the placement read, the switch, then the pass where the switch wrote no new placement");
+  assert.doesNotMatch(SRC.split("private revealInRaw(key: string): void {")[1].split("\n  }\n")[0], /laidOn !== key/, "the guard on the pass's memory is gone: it ran a pass wherever the last one had not laid the cards on the card");
   assert.equal((SRC.match(/this\.revealInRaw\(key\);/g) || []).length, 2, "both branches of reveal() switch through it");
 });
 
