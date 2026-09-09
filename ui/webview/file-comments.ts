@@ -3000,9 +3000,10 @@ class Panel {
   /** Reveal: switch to Raw and scroll to the passage — a comment's located range, or a change's start — for
    *  a comment or change the view does not show (a Rendered deletion the map refused, any change with Show changes
    *  inline off), so the compact card never dead-ends. In the margin layout the card is made the focus first
-   *  (revealInRaw), so the switch's own pass lays it level with its Raw mark before the scroll centers the row. Where Raw
-   *  shows no mark of ours for the subject either, the row the scroll centred is cued (landOn), so the landing is not a
-   *  guess among identical rows. */
+   *  (revealInRaw), so the switch's own pass lays it level with its Raw mark before the scroll centers the row, and the
+   *  card is then brought whole into the track's box where the row's centering left its end past it (settleRevealed).
+   *  Where Raw shows no mark of ours for the subject either, the row the scroll centred is cued (landOn), so the landing
+   *  is not a guess among identical rows. */
   reveal(key: string): void {
     if (key.startsWith("chg:")) {
       const c = this.changeView().cards.find((x) => x.key === key);
@@ -3010,6 +3011,7 @@ class Panel {
       this.revealInRaw(key);
       this.ctx.scrollToOffset(c.curFrom);
       this.landOn(c.curFrom, "fcchange", c.id);
+      this.settleRevealed(key);
       return;
     }
     const card = this.cards().find((c) => c.id === key);
@@ -3024,6 +3026,19 @@ class Panel {
     this.revealInRaw(key);
     this.ctx.scrollToOffset(loc.range.start);
     this.landOn(loc.range.start, "fcopen", key);
+    this.settleRevealed(key);
+  }
+  /** After a Reveal's switch and scroll: the revealed card whole in the track's box, where the pass laid it level with
+   *  its Raw mark (the review of the merge audit's fixes, 2026-09-09). scrollToOffset centers the ROW, and a card taller
+   *  than the room under the body's center — half the body's height less the footer's and the gap — landed level with its
+   *  head in the box but its end, its run of turns and its Reply and Resolve row, past the track's bottom, while the same
+   *  card reached by a click on its mark (showCard: focusOn, then centerOn) landed whole: centerOn's fallback scrolls the
+   *  least that shows the card's end, as far as keeps the mark's top in view, a card taller than the track having its head
+   *  cut by the excess (its docstring has the two regimes). So the row's centering is followed by that scroll, the landing
+   *  a mark click gives; the row's own centering stands where the pass did not lay the card on a mark (laidOn: Show
+   *  changes inline off, when Raw paints no mark and landOn cues the row), since centerOn has no mark to scroll to there. */
+  private settleRevealed(key: string): void {
+    if (this.margin && this.laidOn === key) this.centerOn(key);
   }
   /** A Reveal's switch to Raw, with the card made the focus FIRST when the margin layout is up (the merge audit,
    *  2026-09-09). setMode re-renders the body synchronously and its onRendered pass lays the margin (paintAll, render,

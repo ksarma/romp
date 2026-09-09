@@ -1,20 +1,24 @@
-// The real viewer in a real page, for the Slice 2 browser legs (plans/markdown-viewer.md, "layout follows the pane,
-// reader keeps their place"): file-view.ts bundled from this tree as the webview build bundles it (and through it the
-// REAL Comments panel, which the module registers itself), served into headless Chromium under each surface's own sheet
-// (the chat modal: styles.css; the feed modal: feed.css; the Files pane: styles.css and files-pane.css under
-// body.fileview-pane), with a fetch that answers the kernel's file route from a table the test edits (so a reload can
-// bring different bytes under a new mtime) and a poster that answers the panel's status ask the way the kernel would,
-// so the real aside opens on a click. A probe action stashes the seam (window.__seam) and counts its paints, the way
-// file-view-text-size.test.ts's page does. Every value the page inlines into its script (the file table, the mtime, the
-// status) is written with `<` as `\u003c` (scriptLiteral): an HTML tokenizer ends script data at the first `</script`
-// whatever the JavaScript around it, so a fixture holding one used to cut the harness script off before the fetch stub,
-// leaving the viewer to fetch the harness page itself as the note (file-view-leg-page-browser.test.ts pins the escape).
-// Fourteen legs measure over it (file-view-place-browser, file-view-notebar-browser, file-comments-float-scroll-browser,
-// file-view-fold-browser, the Slice 2 review's file-view-place-blocks-browser, file-view-place-reveal-browser,
-// file-view-place-edits-browser, file-view-float-anchoring-browser, file-view-leg-page-browser,
-// file-view-place-float-browser, file-view-place-html-browser, file-view-place-svg-source-browser and
-// file-view-place-wrapper-end-browser, and the focus follow-on's merge audit's file-view-focus-seat-browser); this module
-// exists so they do not carry fourteen copies of the same page. Test-only:
+// The real viewer in a real page, first for the Slice 2 browser legs (plans/markdown-viewer.md, "layout follows the
+// pane, reader keeps their place") and then for every browser leg after them: file-view.ts bundled from this tree as the
+// webview build bundles it (and through it the REAL Comments panel, which the module registers itself), served into
+// headless Chromium under each surface's own sheet (the chat modal: styles.css; the feed modal: feed.css; the Files
+// pane: styles.css and files-pane.css under body.fileview-pane), with a fetch that answers the kernel's file route from
+// a table the test edits (so a reload can bring different bytes under a new mtime) and a poster that answers the
+// panel's status ask the way the kernel would, so the real aside opens on a click. A probe action stashes the seam
+// (window.__seam) and counts its paints, the way file-view-text-size.test.ts's page does. Every value the page inlines
+// into its script (the file table, the mtime, the status) is written with `<` as `\u003c` (scriptLiteral): an HTML
+// tokenizer ends script data at the first `</script` whatever the JavaScript around it, so a fixture holding one used to
+// cut the harness script off before the fetch stub, leaving the viewer to fetch the harness page itself as the note
+// (file-view-leg-page-browser.test.ts pins the escape).
+// The legs that measure over it include file-view-place-browser, file-view-notebar-browser,
+// file-comments-float-scroll-browser and file-view-fold-browser, the Slice 2 review's file-view-place-*-browser legs,
+// file-view-float-anchoring-browser and file-view-leg-page-browser, the focus follow-on's merge audit's
+// file-view-focus-seat-browser, and Slice 3's file-view-copy-*, file-view-print-*, file-view-fence-*,
+// file-view-landing-*, file-view-typescale, file-view-scrollbar, file-view-prose-leading and file-view-url-place-bottom
+// legs. Those are examples, not the census: the census is the test modules that import ./real-viewer-leg
+// (`grep -l real-viewer-leg ui/webview/*.test.ts` lists them), and a change to the page (its fetch stub, its paint
+// counter, its sheets) is checked against every one of them, not against this list (a count kept here went stale by
+// more than half the callers). This module exists so they do not each carry a copy of the same page. Test-only:
 // no webview bundle imports it. playwright and esbuild are resolved from the extension's own package.json, so a
 // single-file run (infra: the bundle written under TMPDIR) finds them too. The tree under test is the
 // cwd's, ../ui/webview from the vscode-extension npm test runs in, as for every browser leg; to run a leg over another
