@@ -55,6 +55,7 @@ CENSUS = {
     "_ask_fill_chosen": ("pure", "over a tool event's output string"),
     "_atom_md": ("pure", "over an atom"),
     "_atom_user_texts": ("pure", "over an atom"),
+    "_auth_avail_status": ("sig", "acct", "the availability half of _auth_avail (upstream #1147), memoized once per pusher cycle: the account's tri-state read, the key presence and the managed-helper flag, of which the component folds the login label and the both-bit"),
     "_auth_both": ("sig", "acct", "the credential store's login and the manager's key presence"),
     "_awaiting_task_descs": ("sig", "bg", "the live task rows; the split reads the stamped tops (stamp), the store and the transcript"),
     "_awaiting_task_ids": ("sig", "bg", "as _awaiting_task_descs"),

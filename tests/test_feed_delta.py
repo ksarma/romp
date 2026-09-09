@@ -509,9 +509,11 @@ class ReadyHandshake(unittest.TestCase):
 
     def test_an_outline_client_on_the_view_delta_protocol_is_served_once_as_the_slots_base(self):
         # The Outline page's shim announces ?delta=1 (upstream's view-delta slots) but not feedDelta. Served
-        # through _send_client, its `ready` frame was unkeyed and left dstate["feed"] empty, so the connect
-        # push's _send_slot sent the WHOLE frame again, keyed: two full frames per `ready`. Served through
-        # _send_slot the frame is keyed, it is the slot's base, and the push that follows can delta.
+        # through _send_client, its `ready` frame left dstate["feed"] empty, so the connect push's _send_slot
+        # sent the WHOLE frame again: two full frames per `ready`. Served through _send_slot the frame is the
+        # slot's held base (dstate["feed"] at rev 0), and the push that follows can delta. Since T278c a full
+        # carries no key list (the shim derives every key from the frame itself), so "served as the base" is
+        # read off the slot state, never off the frame.
         f = _feed()
         saved, ms, parts = _warm(f)
         try:
@@ -523,9 +525,10 @@ class ReadyHandshake(unittest.TestCase):
             self.assertEqual(len(sent), 1)
             got = json.loads(sent[0])
             self.assertEqual(got["type"], "feed")
-            self.assertIn("_keys", got, "served keyed: the frame is the slot's base")
+            self.assertNotIn("_keys", got, "no full carries a key list (T278c): the shim derives the keys")
             self.assertGreaterEqual(got["now"], int(t0), "…stamped with the clock of the serve")
-            self.assertIn("feed", c.get("dstate") or {}, "…and the slot holds it")
+            self.assertIn("feed", c.get("dstate") or {}, "…and the slot holds it: served as the slot's base")
+            self.assertEqual(c["dstate"]["feed"]["rev"], 0, "…at rev 0, the start of this client's stream")
             self.assertNotIn("efeed", c, "the feed-delta protocol's base is not this client's")
             self.assertEqual(h.pushed, [c], "the Outline still gets its connect push (for the ledgers)")
             km._push([c])                                       # the real push: it attaches ledgers (none here)
@@ -534,10 +537,11 @@ class ReadyHandshake(unittest.TestCase):
             d = json.loads(sent[1])
             self.assertEqual(d["slot"], "feed")
             self.assertIn("ledgers", d.get("rest") or {}, "the ledgers attach is the change that rode it")
-            # a second `ready` is a re-base on this protocol too: the base is forgotten, the keyed full re-served
+            # a second `ready` is a re-base on this protocol too: the base is forgotten, the full re-served
             h._dispatch_ws({"type": "ready"}, c)
             self.assertEqual([json.loads(x)["type"] for x in sent], ["feed", "delta", "feed"])
-            self.assertIn("_keys", json.loads(sent[2]))
+            self.assertNotIn("_keys", json.loads(sent[2]), "no full carries a key list (T278c)")
+            self.assertEqual(c["dstate"]["feed"]["rev"], 0, "the re-base starts the stream afresh")
         finally:
             _restore(saved)
 
@@ -568,7 +572,8 @@ class ReadyHandshake(unittest.TestCase):
             frames = [fr for fr in frames if fr.get("type") != "caps"]   # the ready handler's caps frame: not a feed frame (test_tag_edit_ack.py pins it)
             types = [fr.get("type") for fr in frames]
             self.assertEqual(types.count("feed"), 1, "exactly one full frame per `ready`: %s" % types)
-            self.assertIn("_keys", frames[types.index("feed")], "…the keyed one, the slot's base")
+            self.assertNotIn("_keys", frames[types.index("feed")], "…no full carries a key list (T278c)")
+            self.assertIn("feed", client.get("dstate") or {}, "…and the slot holds it as the base the deltas rode on")
             self.assertTrue(set(types) <= {"feed", "delta"}, types)
             for fr in frames:
                 if fr.get("type") == "delta":
