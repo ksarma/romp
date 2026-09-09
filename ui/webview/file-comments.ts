@@ -984,7 +984,7 @@ class Panel {
   openTodoText = new Set<string>();         // confirm todo rows unfolded to the todo's whole text, keyed by todo id — the same rule (openLog)
   previewOpen = false;
   colors: Map<string, FileViewIdentity> | null = null;
-  wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED, and where the keyboard went meanwhile (refocus)
+  wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED or hidden, and where the keyboard went meanwhile (refocus): kept while it is in the list and the keyboard stays there
   located = new Map<string, Located & { painted: boolean }>();
   /** The comments whose highlight sits on a copy the panel cannot vouch for (copyUnsure): the anchor ties and the stored
    *  position names none of the tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
@@ -1062,8 +1062,16 @@ class Panel {
   // highlight to the body's top edge with the card still out of sight. Cleared when the list no longer holds the card
   // (placeCards), by a pass in the list layout (the same: a mark or a head clicked there writes one, and the list has no
   // pass to spend it on — the 2026-09-08 review), when the layout ends (layoutOff: the fold, edit mode, the panel's close)
-  // and with the panel (dispose).
+  // and with the panel (dispose). A LOOSE card written here — a whole-file comment's card opened by its head or by its Show
+  // more, the card a whole-file comment's save landed in — is spent by the pass as no change: it has no mark to be laid
+  // level with, and the rule takes a focus with no mark as none (card-layout.ts), so the pass would have laid the whole
+  // margin by the push-down rule again — the clicked card to the track's start, out of the box with nothing scrolling after
+  // it, and the card the person was reviewing pushed under the tall card again, off its mark (the verification review,
+  // 2026-09-09: the reach rule lays a loose card the chain cannot fit above the focus BELOW it, where a head click reaches
+  // it). The pass keeps the focus it laid the cards on last (laidOn) instead: a gesture on a card the rule cannot place
+  // moves nothing, as a head click on a loose card never did.
   focusCard: string | null = null;
+  laidOn: string | null = null;               // the focus the last margin pass laid the cards on (placeCards): what a loose focus falls back to
   // Show more (the same follow-on): the cards whose long parts — a change's old and new text, a long comment, a long run of
   // turns — show whole in the margin layout, where the sheet otherwise folds each to about eight lines (clipCards); keyed
   // like openCards, so the choice survives a re-render
@@ -1187,7 +1195,8 @@ class Panel {
         fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
         fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
         // Show more / Show less on a card the margin layout folded (clipCards): more makes the card the focus and centers its
-        // mark, as opening a card by its head does (afterRender); less is a fold and moves nothing
+        // mark, as opening a card by its head does (afterRender); less is a fold and moves nothing. On a loose card the pass
+        // keeps the focus it had and centerOn has no mark to scroll to: the card shows its text whole where it stands
         fcclip: (x) => {
           const key = x.dataset.id!;
           if (this.openBodies.has(key)) this.openBodies.delete(key);
@@ -2312,7 +2321,7 @@ class Panel {
       if (v.hidden.some((g) => g.changes.some((c) => c.key === key))) this.moreChangesOpen = true;
     }
     this.openCards.add(key);
-    this.focusCard = key;                               // the focus: the render's pass lays the card level with its mark (card-layout.ts)
+    this.focusCard = key;                               // the focus: the render's pass lays the card level with its mark (card-layout.ts); a loose card leaves the pass's focus as it was (laidOn), and scrollCard shows it where it stands
     this.render();
     this.scrollCard(key);
   }
@@ -3018,7 +3027,7 @@ class Panel {
       if (x && x.dataset.act === "fccard" && x.dataset.id) {
         const wasOpen = this.openCards.has(x.dataset.id);
         this.expandIntent = { key: x.dataset.id, wasOpen };
-        if (!wasOpen) this.focusCard = x.dataset.id;    // a card opened by its head is the focus (focusCard); a fold is a dismissal and moves nothing
+        if (!wasOpen) this.focusCard = x.dataset.id;    // a card opened by its head is the focus (focusCard); a fold is a dismissal and moves nothing; a loose card opened leaves the pass's focus as it was (laidOn)
       }
     });
     window.addEventListener("resize", this.onWindowResize);
@@ -3109,6 +3118,12 @@ class Panel {
       if (isCard && watch) this.cardSizer?.observe(child);
     }
     if (this.focusCard !== null && !nodes.has(this.focusCard)) this.focusCard = null;   // the card is gone from the list (a status, the filter, a fold): no focus
+    // a loose card as the focus (a whole-file comment's card opened by its head or its Show more, a save landing in one): no
+    // mark to lay it level with, and given to the rule it would have unmade the layout — the rule takes a focus with no mark
+    // as none — so the pass keeps the focus it laid the cards on last, while the list holds that card (the focusCard field)
+    const fit = this.focusCard === null ? null : items.find((it) => it.key === this.focusCard) || null;
+    if (fit && fit.desired === null) this.focusCard = this.laidOn !== null && nodes.has(this.laidOn) ? this.laidOn : null;
+    this.laidOn = this.focusCard;
     const out = layoutCards(items, CARD_GAP, this.focusCard);
     for (const p of out.placed) {
       const node = nodes.get(p.key)!;
@@ -3153,6 +3168,7 @@ class Panel {
     this.padBody(this.ctx.body(), 0);
     this.placed = new Map(); this.cardsEnd = 0;
     this.focusCard = null;                              // the focus is the margin layout's; the list has none
+    this.laidOn = null;                                 // and so is the pass's memory of it
     this.cardSizer?.disconnect();
   }
   /** The body's end padding, written only when it changes (an integer, so the rounding of scrollHeight cannot make the
@@ -3237,7 +3253,8 @@ class Panel {
   }
   /** Make `key` the focus (focusCard): the pass anchors the layout on it from now on, and runs at once when the focus
    *  changed, so the scroll that follows (centerOn) reads the card where it now stands, level with its mark. False for a key
-   *  the list shows no card for (a fold hides it; a card not rendered), which changes nothing. */
+   *  the list shows no card for (a fold hides it; a card not rendered), which changes nothing. True for a loose card, whose
+   *  pass keeps the focus it had (laidOn) and moves nothing: the caller's showLoose then scrolls to the card where it stands. */
   private focusOn(key: string): boolean {
     if (!this.sections.cards.querySelector('.fc-card[data-id="' + cssId(key) + '"]')) return false;
     if (this.focusCard !== key) { this.focusCard = key; this.placeCards(false); }
@@ -3649,22 +3666,38 @@ class Panel {
    *  index, k.at, names the card it named before the rebuild: cardsInOrder) and again after it, for a control the pass
    *  shows — the Show more row (clipRow renders it hidden; clipCards unhides it) — which focus() cannot land on until then.
    *  A control found and enabled that takes no focus is therefore left for the second call before the pass, and treated
-   *  as gone after it (the list layout, where the row stays hidden: the keyboard goes to the nearest place, not the body). */
+   *  as gone after it (the list layout, where the row stays hidden: the keyboard goes to the nearest place, not the body).
+   *  A wanted control of the LIST — a card's Show less hidden by the fold to the list layout, a busy Accept or Reject — is
+   *  remembered again for as long as it is in the list and the keyboard stays where this put it, whether the keyboard went
+   *  to the nearest place or to k's own control: render drops the memory at its start, so a memory this re-armed only on
+   *  the way to focusNear lasted one render — the toggle was forgotten on the first status or repaint while the columns
+   *  stayed narrow, and the render after they came back left the keyboard on the card's head, where Enter folds the card,
+   *  not the text; a busy Reject was forgotten the same way when a repaint landed during its round trip, and the refusal
+   *  left the keyboard on the head (the verification review, 2026-09-09). The composer's controls keep the one render: its
+   *  Save comes back enabled either with a refusal, in the render after the busy one, or in the render before a save closes
+   *  the box (mutate's last render, then closeComposer), and a memory that reached that render took the keyboard into the
+   *  closing box, and out of it to Reply, where the head had it (file-comments-reply-review2.test.ts pins the head). */
   private refocus(k: FocusKey, want: FocusKey | null, settled: boolean): void {
     if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input; the call before the pass landed it): nothing to mend
     const enabled = (n: HTMLElement | null): HTMLElement | null => (n && !(n as HTMLButtonElement).disabled ? n : null);
     // focus a control and say whether it took: an element not rendered (a hidden row's button) ignores focus()
     const take = (n: HTMLElement): boolean => { n.focus({ preventScroll: true }); return document.activeElement === n; };
-    const w = want ? enabled(this.findControl(want)) : null;
+    const wf = want ? this.findControl(want) : null;   // the wanted control as the list has it: disabled or hidden still, or back
+    const w = enabled(wf);
     if (w && (take(w) || !settled)) return;             // the button that was busy is back: the keyboard returns to it — after the pass, if it is not shown yet
     const n = this.findControl(k);
-    if (enabled(n) && (take(n!) || !settled)) return;
+    if (enabled(n) && (take(n!) || !settled)) {
+      // k's control took the keyboard while the wanted one, of the list, is still to come back: remembered at the place the
+      // keyboard now holds
+      if (wf && document.activeElement === n && !this.composerBox.contains(wf)) this.wanted = { key: want!, at: n! };
+      return;
+    }
     // disabled, gone, or not shown once the pass has run. A control of the cards list (the change cards, the foot): the
     // nearest place, remembering the control still to come back to — this one, or the wanted one. Elsewhere (the head row's
     // confirms), a control the rebuild removed lets the focus fall to the body, quietly: there is no place of its own to
     // stand in for it.
     if (typeof k.at !== "number") return;
-    const pending = n ? k : want && this.findControl(want) ? want : null;
+    const pending = n ? k : wf ? want : null;
     const at = this.focusNear(k);
     if (at && pending) this.wanted = { key: pending, at };
   }

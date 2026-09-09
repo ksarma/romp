@@ -8,7 +8,8 @@
 // cannot fit above the focus laid below it, never past the track's start (the follow-on's review, 2026-09-08;
 // card-layout-reach.test.ts has the rule); and the fold of a
 // tall card (a long part clipped in the margin layout with Show more at the card's foot — a change's old and new text, a
-// comment's body, a run of turns — the choice keyed so it survives a re-render, nothing clipped in the list). The numbers
+// comment's body, a run of turns — the choice keyed so it survives a re-render, the viewer's repaint and a status's
+// rebuild of the cards alike, nothing clipped in the list). The numbers
 // a real engine measures are file-comments-focus-browser.test.ts. Synthetic fixtures only: the notes-api world,
 // placeholder ids.
 import { test } from "node:test";
@@ -336,8 +337,10 @@ function status(over: Partial<Status> = {}): Status {
 }
 /** The status with the later comment on row 5 in the store too (the leader test). */
 const withRec = (storeMtimeNs: string): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, rec] }, storeMtimeNs });
-/** The status with the essay and the talked comment in the store too (the comment-fold test). */
-const withLong = (storeMtimeNs: string): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, essay, talked] }, storeMtimeNs });
+/** The status with the essay and the talked comment in the store too (the comment-fold test); `comments` and `verb` for
+ *  the reply that answers a Resolve or Reopen there, the render a status drives. */
+const withLong = (storeMtimeNs: string, comments: StoreComment[] = [whole, findings, passage, closing, essay, talked], verb = "status"): Status =>
+  status({ verb, store: { v: 3, path: "docs/report.md", suggestions: [], comments }, storeMtimeNs });
 
 // ── the viewer stand-in: the body row, the seam as closures, a measurement table ───────────────────
 // Geometry: the body's box is at viewport y=100, BODY_VIEW tall; the header stands OFFSET tall above the track and the
@@ -707,12 +710,17 @@ test("the list layout clips nothing: after the fold the rows are hidden and no p
   w.close();
 });
 
-test("the comment card's fold (renderCard's fc-more, apart from the change card's): a body and a run of turns longer than the cap are cut and offer Show more; Show more lifts the cap — the card wears fc-more, the part's box is its content, the card is WHOLE and the card under it yields — and makes the card the focus, its mark centered; a status keeps it; Show less folds it again", async (t) => {
-  const { w } = await open(t, textWorld(), withLong("1757145600000000002"));
+test("the comment card's fold (renderCard's fc-more, apart from the change card's): a body and a run of turns longer than the cap are cut and offer Show more; Show more lifts the cap — the card wears fc-more, the part's box is its content, the card is WHOLE and the card under it yields — and makes the card the focus, its mark centered; a re-render keeps it, the viewer's repaint and a status's rebuild of the cards alike; Show less folds it again, and the next status leaves it folded", async (t) => {
+  const { w, ok } = await open(t, textWorld(), withLong("1757145600000000002"));
   const body = w.body, track = w.track();
   assert.ok(LONG_BODY.length > LONG_PART && talked.replies!.map((r) => r.body!).join("").length > LONG_PART && talked.body.length <= LONG_PART, "the fixture: the essay's body and the talked comment's run of turns are long parts; the talked comment's body is not");
   assert.equal(w.top(essay.id), desired(7)); assert.equal(w.top(talked.id), desired(9));
   const partOf = (key: string, cls: string): El => w.card(key)!.querySelectorAll(".fc-clip").find((p) => p.className === cls)!;
+  // the closing line's card, opened for the Resolve the status steps below go through (a closed card has no buttons): on
+  // the last row, far under the essay and the talked comment, so their numbers stand — and opened FIRST, so that the
+  // essay's head click below makes the essay the focus and the status steps find it so
+  headOf(w, closing.id).click(); await tick();
+  assert.equal(w.top(closing.id), desired(33), "the fixture: the closing line's card is level with its mark, far below");
   // the essay's body: opened by its head, the card is TALL and folded, its body cut at the cap
   headOf(w, essay.id).click(); await tick();
   let f = foldOf(w, essay.id);
@@ -740,11 +748,31 @@ test("the comment card's fold (renderCard's fc-more, apart from the change card'
   assert.ok(desired(7) + WHOLE + 8 - TRACK > markGap, "the fixture: the whole card's end needs more scroll than keeps the mark's top in view");
   assert.equal(body.scrollTop, markGap, "Show more centered the mark: the least-scroll fallback for a card taller than the track (before: 0)");
   assert.equal(track.scrollTop, markGap, "the track came along");
-  // a re-render keeps the choice: the viewer repainted (a reload, a mode switch), which runs the same render a status does
+  // a re-render keeps the choice: the viewer repainted (a reload, a mode switch), which runs the render through the
+  // panel's onRendered hook
   w.repaint(); await tick();
   f = foldOf(w, essay.id);
-  assert.equal(f.more, true, "kept across the re-render"); assert.equal(f.label, "Show less");
+  assert.equal(f.more, true, "kept across the repaint"); assert.equal(f.label, "Show less");
   assert.equal(w.card(essay.id)!.getBoundingClientRect().height, WHOLE);
+  // …and a STATUS keeps it: an ask answered with the store — Resolve on the closing line's card, the store holding it
+  // resolved — lands through applyStatus and rebuilds the cards, renderCard reading openBodies on its own path (the
+  // change card's status render is file-comments-focus-verify.test.ts's; a repaint reaches renderCard without applyStatus,
+  // so a status-side regression would pass the step above). The card measured AFTER the click: the click's own busy
+  // render rebuilt the cards once already, and the rebuild asserted is the reply's
+  actIn(w.card(closing.id)!, "fcresolve")!.click(); await tick();
+  const asked = w.card(essay.id)!;
+  await ok(withLong("1757145600000000005", [whole, findings, passage, { ...closing, resolved: true }, essay, talked], "resolve"));
+  assert.notEqual(w.card(essay.id), asked, "the fixture: the status rebuilt the cards");
+  assert.equal(w.card(closing.id), null, "the fixture: the resolved card left the list for the Resolved fold");
+  f = foldOf(w, essay.id);
+  assert.equal(f.more, true, "kept across the status's render: keyed by the card (openBodies)"); assert.equal(f.label, "Show less");
+  assert.deepEqual(f.clipped, [], "no fade"); assert.equal(f.row!.querySelector("button")!.getAttribute("aria-expanded"), "true");
+  const bodyAgain = partOf(essay.id, "fc-body fc-clip");
+  assert.equal(bodyAgain.clientHeight, bodyAgain.scrollHeight, "the fresh body's box is its content");
+  assert.equal(w.card(essay.id)!.getBoundingClientRect().height, WHOLE);
+  assert.equal(w.top(essay.id), desired(7), "still the focus, still level");
+  assert.equal(w.top(talked.id), desired(7) + WHOLE + 8, "the talked comment's card still under the whole card");
+  assert.equal(body.scrollTop, markGap, "a status scrolls nothing");
   // Show less: folded again, and the text does not move
   f.row!.querySelector("button")!.click(); await tick();
   f = foldOf(w, essay.id);
@@ -753,6 +781,21 @@ test("the comment card's fold (renderCard's fc-more, apart from the change card'
   assert.equal(w.card(essay.id)!.getBoundingClientRect().height, TALL);
   assert.equal(w.top(talked.id), desired(7) + TALL + 8);
   assert.equal(body.scrollTop, markGap, "a fold scrolls nothing");
+  // the next status leaves it folded: Reopen on the closing line's card from under the Resolved fold, the store holding
+  // it open again — the fresh render's body is capped and marked cut, and the card is TALL
+  actIn(w.aside(), "fcresolved")!.click(); await tick();   // from the aside: the pass moves the rows out of the list (moveRows)
+  assert.ok(w.card(closing.id), "the fixture: the Resolved fold open shows the card");
+  actIn(w.card(closing.id)!, "fcresolve")!.click(); await tick();
+  const folded = w.card(essay.id)!;
+  await ok(withLong("1757145600000000006", [whole, findings, passage, closing, essay, talked], "resolve"));
+  assert.notEqual(w.card(essay.id), folded, "the fixture: rebuilt again");
+  assert.equal(w.top(closing.id), desired(33), "the fixture: the reopened card is back in the list");
+  f = foldOf(w, essay.id);
+  assert.equal(f.more, false, "folded stays folded across the status"); assert.equal(f.label, "Show more");
+  assert.deepEqual(f.clipped, ["fc-body fc-clip"], "the pass marked the fresh body cut");
+  assert.equal(partOf(essay.id, "fc-body fc-clip").clientHeight, PART_CAP);
+  assert.equal(w.card(essay.id)!.getBoundingClientRect().height, TALL);
+  assert.equal(w.top(talked.id), desired(7) + TALL + 8);
   // the talked comment's run of turns: its short body fits; the run is the part the cap cuts
   headOf(w, essay.id).click(); await tick();           // the essay folded by its head, out of the talked comment's way
   headOf(w, talked.id).click(); await tick();

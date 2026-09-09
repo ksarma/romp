@@ -8,8 +8,13 @@
 // new text), opens the change card, clicks the comment's highlight, and measures: the comment's card level with its
 // highlight and both in view; the tall change card above it moved UP out of the way and folded to its collapsed height
 // with Show more at its foot; Show more opening it whole and making it the focus; Show less folding it again; and the
-// narrow fold (the list layout) clipping nothing. Runs in Chromium and Firefox; skips LOUDLY without a playwright
-// browser (CI installs none), as the other browser legs do. Synthetic values only: invented prose, placeholder ids.
+// narrow fold (the list layout) clipping nothing. The Show more row is measured as RENDERED — its box and its computed
+// display — never read from the `hidden` property the panel writes itself (the verification review, 2026-09-09): the
+// sheet's `.fc-clip-row { display: flex; }` beats the UA's rule for [hidden], and only its own `[hidden] { display: none; }`
+// keeps a hidden row from rendering a Show more on every card with nothing cut, so the leg reads no box where the pass
+// hides the row (the comment's short card in the margin layout, every card in the list layout) and a box where it shows
+// it. Runs in Chromium and Firefox; skips LOUDLY without a playwright browser (CI installs none), as the other browser
+// legs do. Synthetic values only: invented prose, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -88,7 +93,7 @@ type Scene = {
 };
 type Fold = {
   clipped: string | null; scrollH: number; clientH: number; maxH: string; lineH: string;
-  rowHidden: boolean | null; label: string | null; buttonH: number; cardH: number; more: boolean;
+  rowHidden: boolean | null; rowDisplay: string | null; rowH: number; label: string | null; buttonH: number; cardH: number; more: boolean;
 };
 
 /** Mount the panel over the rendered document, answer its status asks, open it, and let the paint and the pass run. */
@@ -140,7 +145,8 @@ const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.
     cards, marks, bodyScroll: body.scrollTop, trackScroll: track.scrollTop, bodyBox: box(body), trackBox: box(track), trackHeight: track.clientHeight,
   };
 }, keys);
-/** The fold of one card: its clipped part (the diff), the toggle's row and label, and the card's own height. */
+/** The fold of one card: its clipped part (a change's old and new text, a comment's body), the toggle's row — the
+ *  property, the computed display and the rendered box — its label and box, and the card's own height. */
 const fold = (page: any, key: string): Promise<Fold> => page.evaluate((key: string) => {
   const card = document.querySelector('.fileview-aside .fc-card[data-id="' + key + '"]') as HTMLElement;
   const part = card.querySelector(".fc-clip") as HTMLElement;
@@ -149,12 +155,29 @@ const fold = (page: any, key: string): Promise<Fold> => page.evaluate((key: stri
   const cs = getComputedStyle(part);
   return {
     clipped: part.dataset.clipped ?? null, scrollH: part.scrollHeight, clientH: part.clientHeight, maxH: cs.maxHeight, lineH: cs.lineHeight,
-    rowHidden: row ? row.hidden : null, label: button ? button.textContent : null, buttonH: button ? button.getBoundingClientRect().height : 0,
+    rowHidden: row ? row.hidden : null, rowDisplay: row ? getComputedStyle(row).display : null, rowH: row ? row.getBoundingClientRect().height : 0,
+    label: button ? button.textContent : null, buttonH: button ? button.getBoundingClientRect().height : 0,
     cardH: card.getBoundingClientRect().height, more: card.classList.contains("fc-more"),
   };
 }, key);
 const frames = (page: any, n = 2): Promise<void> => page.evaluate((n: number) => new Promise<void>((r) => { const step = (k: number) => (k ? requestAnimationFrame(() => step(k - 1)) : r()); step(n); }), n);
 const near = (a: number, b: number, msg: string, tol = 1) => assert.ok(Math.abs(a - b) <= tol, msg + ": " + a + " vs " + b);
+/** The Show more row as rendered. A hidden row must take NO room: the `hidden` property alone is what the panel wrote
+ *  (clipCards, clipRow), and a later or more specific `display` rule on `.fc-clip-row` would render a Show more on every
+ *  card with nothing cut while the property still read true — so the row's box and computed display are what the leg
+ *  holds, where the row is hidden and where it shows. */
+const noRow = (f: Fold, msg: string): void => {
+  assert.equal(f.rowHidden, true, msg + ": the row is hidden");
+  assert.equal(f.rowDisplay, "none", msg + ": the hidden row's computed display");
+  assert.equal(f.rowH, 0, msg + ": the hidden row takes no room");
+  assert.equal(f.buttonH, 0, msg + ": the toggle has no box");
+};
+const rowShows = (f: Fold, msg: string): void => {
+  assert.equal(f.rowHidden, false, msg + ": the row is shown");
+  assert.equal(f.rowDisplay, "flex", msg + ": the row's computed display is the sheet's");
+  assert.ok(f.rowH > 10, msg + ": the row has a box: " + f.rowH);
+  assert.ok(f.buttonH > 10, msg + ": the toggle has a box: " + f.buttonH);
+};
 const wholeIn = (c: Box, of: Box): boolean => c.top >= of.top - 1 && c.bottom <= of.bottom + 1;
 const click = (page: any, sel: string): Promise<void> => page.evaluate((sel: string) => { (document.querySelector(sel) as HTMLElement).click(); }, sel);
 const markSel = (key: string): string => key.startsWith("chg:") ? '#body [data-act="fcchange"][data-id="' + key.slice(4) + '"]' : '#body [data-act="fcopen"][data-id="' + key + '"]';
@@ -214,35 +237,39 @@ for (const name of ["chromium", "firefox"]) {
       assert.ok(wholeIn(s.marks.c!, s.bodyBox), "the highlight is in the body's box: " + JSON.stringify(s.marks.c) + " in " + JSON.stringify(s.bodyBox));
       assert.ok(wholeIn(s.cards.c!, s.trackBox), "the comment's card is in the track's box: " + JSON.stringify(s.cards.c) + " in " + JSON.stringify(s.trackBox));
       assert.equal(s.cards.c!.pushed, null, "the focused card is not pushed");
+      // the comment's card: a short body, nothing cut, so the pass leaves its Show more row hidden — and the row takes no
+      // room as rendered (the property is the panel's own word; the box is the engine's)
+      const fc = await fold(page, KEYS.c);
+      assert.equal(fc.clipped, null, "the comment's short body is not cut");
+      noRow(fc, "no Show more on a card with nothing cut, in the margin layout");
       // the change card above moved UP out of the way — its end a gap above the comment's card — instead of pushing the
       // comment's card down; its mark is inside its box, so it draws no leader
       near(s.cards.chg!.bottom + 8, s.cards.c!.top, "the change card's end sits a gap above the focused card");
       assert.ok(s.cards.chg!.top < s.marks.chg!.top - 1, "the change card moved up from its mark: " + s.cards.chg!.top + " vs " + s.marks.chg!.top);
       assert.equal(s.cards.chg!.pulled, null, "no leader: its mark's top is inside the card's box");
-      // ...and folded: the diff clipped to eight lines with a fade, Show more at the foot, the card far shorter than the
-      // whole diff would make it
+      // ...and folded: the change's old and new text clipped to eight lines with a fade, Show more at the foot, the card
+      // far shorter than the whole text would make it
       let f = await fold(page, KEYS.chg);
-      assert.equal(f.clipped, "1", "the diff is clipped");
-      assert.ok(f.scrollH > f.clientH + 20, "the diff's content overflows its clipped box: " + f.scrollH + " vs " + f.clientH);
+      assert.equal(f.clipped, "1", "the change's old and new text is clipped");
+      assert.ok(f.scrollH > f.clientH + 20, "the old and new text overflows its clipped box: " + f.scrollH + " vs " + f.clientH);
       const lh = parseFloat(f.lineH);
       assert.ok(lh > 0, "the part's computed line-height is a length: " + f.lineH);
       near(parseFloat(f.maxH), 8 * lh, "the cap is eight lines (8lh)", 1);
-      assert.equal(f.rowHidden, false, "the Show more row shows");
+      rowShows(f, "the Show more row shows");
       assert.equal(f.label, "Show more");
-      assert.ok(f.buttonH > 10, "the toggle has a box");
-      assert.ok(f.cardH < f.scrollH, "the card is shorter than its diff's whole content: " + f.cardH + " vs " + f.scrollH);
+      assert.ok(f.cardH < f.scrollH, "the card is shorter than its old and new text whole: " + f.cardH + " vs " + f.scrollH);
       assert.equal(s.cards.chg!.height, f.cardH);
-      // Show more: the diff shows whole, the card is the focus — level with its mark — and the comment's card is pushed
-      // below it as the push-down rule always had it
+      // Show more: the old and new text shows whole, the card is the focus — level with its mark — and the comment's card
+      // is pushed below it as the push-down rule always had it
       await click(page, '.fileview-aside .fc-card[data-id="' + KEYS.chg + '"] [data-act="fcclip"]');
       await frames(page);
       f = await fold(page, KEYS.chg);
       assert.equal(f.more, true, "the card wears the open-bodies class");
       assert.equal(f.clipped, null, "no fade on an open body");
-      near(f.scrollH, f.clientH, "the diff is shown whole", 1);
+      near(f.scrollH, f.clientH, "the old and new text is shown whole", 1);
       assert.equal(f.maxH, "none", "no cap on an open body");
       assert.equal(f.label, "Show less");
-      assert.equal(f.rowHidden, false);
+      rowShows(f, "the row shows with Show less");
       s = await scene(page, KEYS);
       near(s.cards.chg!.top, s.marks.chg!.top, "the change card is the focus now: level with its mark");
       near(s.cards.c!.top, s.cards.chg!.bottom + 8, "the comment's card is pushed under it");
@@ -263,8 +290,9 @@ for (const name of ["chromium", "firefox"]) {
       assert.equal(s.margin, false, "the list layout");
       f = await fold(page, KEYS.chg);
       assert.equal(f.maxH, "none", "no cap in the list");
-      near(f.scrollH, f.clientH, "the diff is whole in the list", 1);
-      assert.equal(f.rowHidden, true, "no Show more in the list");
+      near(f.scrollH, f.clientH, "the old and new text is whole in the list", 1);
+      noRow(f, "no Show more in the list");
+      noRow(await fold(page, KEYS.c), "no Show more on the comment's card in the list");
       // ...and the columns bring the fold back
       await page.evaluate(() => { document.getElementById("wrap")!.style.width = "1000px"; });
       await frames(page, 3);
@@ -272,7 +300,19 @@ for (const name of ["chromium", "firefox"]) {
       assert.equal(s.margin, true, "the margin layout is back");
       f = await fold(page, KEYS.chg);
       assert.equal(f.clipped, "1", "clipped again in the margin");
-      assert.equal(f.rowHidden, false);
+      rowShows(f, "the row is back with the fold");
     });
   });
 }
+
+test("vocabulary: this module's own prose says a change's old and new text, file comment and run of turns; the words CONTEXT.md sets aside — the short word for a change's text (Change: Avoid) and the one for a forked side session (File comment: Avoid) — appear nowhere in it, nor the banned sessions-pane word, nor a home path", () => {
+  // the sibling focus modules scan themselves the same way: a test module is new prose too, and its assertion messages
+  // print to the person on failure (the verification review, 2026-09-09: this leg was the slice's one module that named
+  // the folded part of a change card by the short word the plan, the sheets and the panel avoid). The scan sets its own
+  // guard lines aside; the module has no identifier in the short word, so a bare-word scan holds.
+  const SELF = fs.readFileSync(path.join(UI, "file-comments-focus-browser.test.ts"), "utf8").split("\n").filter((l) => !l.includes("assert.doesNotMatch(SELF")).join("\n");
+  assert.doesNotMatch(SELF, /\bdiffs?\b/i, "the folded part of a change card is the change's old and new text (CONTEXT.md, Change: Avoid)");
+  assert.doesNotMatch(SELF, /\bthreads?\b/i, "a comment with replies is a file comment with a run of turns (CONTEXT.md, File comment: Avoid)");
+  assert.doesNotMatch(SELF, /fleet/i, "no new identifiers or prose in the old word for the sessions pane");
+  assert.doesNotMatch(SELF, /\/home\/[a-z]/, "no absolute home paths");
+});
