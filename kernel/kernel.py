@@ -16085,6 +16085,23 @@ _thread_reg_failed = set()      # paths whose last read after a good stat failed
 _THREAD_REG_LOCK = threading.Lock()
 
 
+class _UnreadableReg(dict):
+    """_thread_reg's answer for a reg that EXISTS but will not read: an OSError after a successful stat, a
+    body that is not JSON, or JSON that is not an object. An empty mapping, so every `.get` caller reads it
+    exactly as it read the {} it replaces (absent and unreadable were one answer, and a broken record read as
+    no record), and a type, so a caller that must tell a failed read from no record can: `_reg_unreadable`,
+    asked by the control gate (a 503 naming the read, never the 404 for a session that does not exist) and
+    by _confirmed_ended (the None verdict). Never memoized, and a fresh instance per call like every other
+    answer, so a caller's edit reaches no one else (review round 4, 2026-09-09; the fail-loudly rule)."""
+
+
+def _reg_unreadable(sid):
+    """Does an SDK registry entry for `sid` exist that will not read? False for a readable reg AND for no
+    reg at all: only the failed read answers True. The partition _confirmed_ended draws inline (a stat
+    that succeeds, then a read that answers nothing), named once for the gate."""
+    return isinstance(_thread_reg(str(sid)), _UnreadableReg)
+
+
 def _thread_reg_report():
     """The memo's counters plus its occupancy, for /perf (memos.thread_reg)."""
     with _THREAD_REG_LOCK:
@@ -16094,9 +16111,11 @@ def _thread_reg_report():
 
 
 def _thread_reg(tsid):
-    """The thread's SDK registry entry (authoritative for cwd/lastSid/threadOf), {} when absent or
-    unreadable. Memoized on the file's identity (see _thread_reg_memo); read-only for every caller, and
-    a shallow copy each call so a caller's edit never leaks into the memo."""
+    """The thread's SDK registry entry (authoritative for cwd/lastSid/threadOf), {} when absent, and an
+    _UnreadableReg (an empty mapping of its own type, see there) when the file exists but will not read or
+    is not a JSON object, so a caller that needs the difference has it and the rest read {} as before.
+    Memoized on the file's identity (see _thread_reg_memo); read-only for every caller, and a shallow copy
+    each call so a caller's edit never leaks into the memo."""
     p = str(jd.STATE / "sdk" / (tsid + ".json"))
     key = jd._file_key(p)
     if key is None:                                       # absent: a state, not an entry
@@ -16123,13 +16142,23 @@ def _thread_reg(tsid):
             first = p not in _thread_reg_failed
             _thread_reg_failed.add(p)
         if first:
-            sys.stderr.write("thread-reg: %s unreadable after a successful stat (%r); answered {} and not memoized\n"
-                             % (os.path.basename(p), e))
-        return {}
+            sys.stderr.write("thread-reg: %s unreadable after a successful stat (%r); answered as a failed read and "
+                             "not memoized\n" % (os.path.basename(p), e))
+        return _UnreadableReg()
+    if not isinstance(d, dict):
+        # JSON, but not an object: no writer produces this, so it is a broken record like the failed read
+        # above, said once per episode and never memoized (it used to memoize as {} and read as absent)
+        with _THREAD_REG_LOCK:
+            _thread_reg_stats["fail"] += 1
+            first = p not in _thread_reg_failed
+            _thread_reg_failed.add(p)
+        if first:
+            sys.stderr.write("thread-reg: %s is not a JSON object; answered as a failed read and not memoized\n"
+                             % os.path.basename(p))
+        return _UnreadableReg()
     if _thread_reg_failed:
         with _THREAD_REG_LOCK:
             _thread_reg_failed.discard(p)                 # a good read ends the episode; the next failure logs again
-    d = d if isinstance(d, dict) else {}
     if isinstance(key, tuple):                            # never under the sentinel of a failed stat
         with _THREAD_REG_LOCK:
             _thread_reg_memo.pop(tsid, None)
@@ -26584,22 +26613,28 @@ def _parse_send_body(raw):
 
 
 def _resolve_sid(who):
-    """_sid_of with the live map it read handed back: (sid, live), where live is the Sessions.live() the
-    resolution scanned, or None when the names registry answered first and nothing was scanned. The
-    routes that ask _unknown_session_refusal right after pass the map on, so a request for a name no
-    session answers to costs one live scan (a tmux fork plus a walk of the SDK regs), not two (review
-    find, 2026-09-09). Every other caller reads _sid_of, which drops the map."""
+    """_sid_of with the live map it read handed back: (sid, live, store_unreadable), where live is the
+    Sessions.live() the resolution scanned, or None when the names registry answered first and nothing
+    was scanned, and store_unreadable says the comment threads' store could not be read when the
+    resolution got as far as asking it (_thread_names answered None), so the caller can say "could not
+    read" instead of "no such session" (review round 4, 2026-09-09; the fail-loudly rule). The control
+    routes (_control_target) pass the map to _unknown_session_refusal, so a request for a name no session
+    answers to costs one live scan (a tmux fork plus a walk of the SDK regs), not two (review find,
+    2026-09-09). Every other caller reads _sid_of, which keeps only the sid."""
     who = str(who)
     if _name_of(who):
-        return who, None
+        return who, None, False
     live = Sessions.live()
     if who in live:
-        return who, live
+        return who, live, False
     hit = _live_names(live).get(who)
     if hit:
-        return hit, live
-    th = (_thread_names() or {}).get(who)     # a comment thread's name: the explicit send reaches
-    return (th[0] if th else who), live       # the THREAD (T223), not a phantom sid spelled like a name
+        return hit, live, False
+    names = _thread_names()                   # a comment thread's name: the explicit send reaches
+    if names is None:                         # the THREAD (T223), not a phantom sid spelled like a name
+        return who, live, True
+    th = names.get(who)
+    return (th[0] if th else who), live, False
 
 
 def _sid_of(who):
@@ -26628,9 +26663,42 @@ def _unknown_session_refusal(sid, who, live=None):
     since a session on an attached host is in neither local map. `who` is the caller's spelling, so the
     reason names what they typed."""
     sid = str(sid)
+    if _reg_unreadable(sid):
+        # a registry entry exists and will not read: the kernel cannot say whether it knows the session,
+        # so it says THAT (a 503 naming the read; nothing is done) rather than the 404 for a session that
+        # does not exist. Every step past this gate reads the record (the send's _ensure, the end's
+        # corroboration, the sweep) and each would answer a different wrong thing; a live SDK session's
+        # row is rewritten from the backend's cache at its next flip, so "try again" is exact (review
+        # round 4, 2026-09-09: a thread with a corrupt reg was told "no live session named")
+        return {"ok": False, "error": "could not read the record for '%s' (its registry entry exists but will "
+                                      "not read); nothing was done, try again" % who, "_status": 503}
     if _kernel_knows(sid, live=live):
         return None
     return {"ok": False, "error": "no live session named '%s'" % who, "_status": 404}
+
+
+def _control_target(who):
+    """Where a session-control request (/send, /interrupt, /end) goes, from the caller's spelling `who`:
+    (sid, remote, refusal). `remote` is the attached host's row when the roster lists the sid
+    (_host_for_sid; the request forwards there with the far sid). `refusal` is the JSON body to answer,
+    with its "_status", when the request can go nowhere: the 404 for a session nothing answers to, or a
+    503 when the answer cannot be given because a record would not read: the comment threads' store
+    (_thread_names answered None while resolving a name) or the sid's own registry entry
+    (_unknown_session_refusal's first check). A failed read is never reported as a session that does not
+    exist (review round 4, 2026-09-09; the fail-loudly rule). Order: the local doors (a local session
+    wins), the roster by sid, then the gate with the live map the resolution read, so a refused request
+    scans once."""
+    sid, live, store_unreadable = _resolve_sid(who)
+    r = _host_for_sid(sid)
+    if r is not None:
+        return sid, r, None
+    refusal = _unknown_session_refusal(sid, who, live)
+    if refusal is None:
+        return sid, None, None
+    if refusal["_status"] == 404 and store_unreadable:
+        return sid, None, {"ok": False, "error": "could not read the comment threads' store while resolving "
+                                                 "'%s'; nothing was done, try again" % who, "_status": 503}
+    return sid, None, refusal
 
 
 def _optimistic_echo(sid, text, author="human"):
@@ -57742,7 +57810,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not body:
                     return self._send(400, json.dumps({"ok": False, "error":
                         "id and text required (optional tag: one word, letters/digits/dashes, <=24 chars)"}), "application/json")
-                sid, live = _resolve_sid(body["who"])
+                sid, r, refusal = _control_target(body["who"])
                 # POSTAL ISOLATION holds on every sanctioned route (the user 2026-07-10): postal-SHAPED
                 # content to a mailbox-off session is agent mail arriving by the wrong door — refuse it
                 # here exactly like the bus does. Plain text still passes: /send is the HUMAN channel,
@@ -57753,7 +57821,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "error":
                         "isolation: the target session's mailbox is OFF — agent mail is refused on every "
                         "route; the refusal is final (the user can toggle its mailbox back on)"}), "application/json")
-                r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
                     st, res, text = _remote_forward_answer(r, "/send", {"id": sid, "text": body["text"]})
                     if st and st != 200:
@@ -57775,9 +57842,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": True, "queued": bool(isinstance(res, dict)
                                                                                   and res.get("queued"))}),
                                       "application/json")
-                unknown = _unknown_session_refusal(sid, body["who"], live)   # a phantom sid delivers nowhere: say so
-                if unknown:
-                    return self._send(unknown.pop("_status"), json.dumps(unknown), "application/json")
+                if refusal:                                         # a phantom sid delivers nowhere: say so
+                    return self._send(refusal.pop("_status"), json.dumps(refusal), "application/json")
                 # PARKS like a composer send (the user 2026-07-24), through the same FIFO: a message handed
                 # in by a local tool while the account is rate-limited — or while the session compacts —
                 # waits its turn instead of buying a red API-error card. ok:true still means ACCEPTED,
@@ -57844,8 +57910,7 @@ class Handler(BaseHTTPRequestHandler):
                     who = ""
                 if not who:
                     return self._send(400, json.dumps({"ok": False, "error": "id or name required"}), "application/json")
-                sid, live = _resolve_sid(who)
-                r = _host_for_sid(sid)
+                sid, r, refusal = _control_target(who)
                 if r is not None:                               # remote session → forward over its -L tunnel
                     # …and RELAY the remote's answer, like the /send twin (2026-08-18): the remote
                     # kernel's /end now refuses honestly (ok:false, "the kill didn't take"), and
@@ -57873,10 +57938,10 @@ class Handler(BaseHTTPRequestHandler):
                             % r.get("host", "?")}), "application/json")
                     return self._send(200, json.dumps(res), "application/json")
                 # a name nothing answers to is a 404, never a kill of a phantom sid that _confirmed_ended
-                # then certifies as a death: `romp end <typo>` read ok:true and nothing had happened
-                unknown = _unknown_session_refusal(sid, who, live)
-                if unknown:
-                    return self._send(unknown.pop("_status"), json.dumps(unknown), "application/json")
+                # then certifies as a death: `romp end <typo>` read ok:true and nothing had happened; a
+                # record that would not read is a 503 naming the read (_control_target)
+                if refusal:
+                    return self._send(refusal.pop("_status"), json.dumps(refusal), "application/json")
                 be = Sessions.backend_for(sid)
                 if u.path == "/interrupt":
                     be.interrupt(sid)                           # Esc/stop AND settle idle (in the backend)

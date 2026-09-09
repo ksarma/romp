@@ -1011,6 +1011,65 @@ class UnknownSessionRefused(_RouteServer):
             _unregister(named)
             km._thread_reg_memo.clear()
 
+    def test_a_record_that_will_not_read_is_a_503_naming_the_read_not_a_404(self):
+        # a thread whose reg exists but does not parse was answered 404 "no live session named '<tsid>'"
+        # on /end when:idle, /send and /interrupt: the gate's third door read _thread_reg, whose {} meant
+        # absent OR unreadable, while _confirmed_ended on the same reg answered None, "exists but would not
+        # read". A failed read is never reported as a session that does not exist (the fail-loudly rule):
+        # the gate answers 503 naming the read and does nothing, by id and by name. The comment threads'
+        # store: _thread_names answers None by its contract when the stores cannot be read, and the
+        # resolution says so instead of falling through to the 404 (review round 4, 2026-09-09).
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        reg_path = km.jd.STATE / "sdk" / (THREAD_TSID + ".json")
+        fake = mock.Mock()
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                for bad in (b"{not json", json.dumps([1, 2]).encode()):
+                    reg_path.write_bytes(bad)
+                    self.assertTrue(km._reg_unreadable(THREAD_TSID), bad)
+                    for path, body in (("/end", {"id": THREAD_TSID, "when": "idle"}), ("/end", {"name": THREAD_NAME}),
+                                       ("/send", {"id": THREAD_TSID, "text": "hello"}),
+                                       ("/send", {"name": THREAD_NAME, "text": "hello"}),
+                                       ("/interrupt", {"id": THREAD_TSID})):
+                        code, resp = self._post(path, body)
+                        self.assertEqual(code, 503, (bad, path, body, resp))
+                        self.assertIs(resp.get("ok"), False)
+                        self.assertIn("could not read the record", resp.get("error", ""), (bad, path))
+                        self.assertNotIn("no live session", resp.get("error", ""), (bad, path))
+                    self.assertNotIn(THREAD_TSID, km._end_on_idle_load(), "a refused deferred end records no wish")
+                fake.kill.assert_not_called()
+                fake.send.assert_not_called()
+                fake.interrupt.assert_not_called()
+                self.assertFalse(km._reg_unreadable(self.GHOST), "no record at all is not a failed read")
+                # the store: no reg to admit the sid, the name resolves through the store, and it will not read
+                reg_path.unlink()
+                km._thread_reg_memo.clear()
+                with mock.patch.object(km, "_thread_names", lambda: None):
+                    for path, body in (("/end", {"name": THREAD_NAME, "when": "idle"}),
+                                       ("/send", {"name": THREAD_NAME, "text": "hello"}),
+                                       ("/interrupt", {"name": THREAD_NAME})):
+                        code, resp = self._post(path, body)
+                        self.assertEqual(code, 503, (path, resp))
+                        self.assertIn("comment threads' store", resp.get("error", ""), path)
+                        self.assertNotIn("no live session", resp.get("error", ""), path)
+                    # a sid the registry holds never reaches the store: a local session wins
+                    code, resp = self._post("/interrupt", {"id": "sid-x"})
+                    self.assertEqual((code, resp), (200, {"ok": True}))
+                self.assertNotIn(THREAD_TSID, km._end_on_idle_load())
+                fake.kill.assert_not_called()
+                fake.send.assert_not_called()
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
 
 class CodexRuntimeSelection(unittest.TestCase):
     # The kernel loads codex_backend.py through load_source (kernel/loadsource.py), the fork's loader kept
