@@ -39,9 +39,53 @@ type ParserThis = { parser: { parse(tokens: Token[]): string; parseInline(tokens
 function blockRules(lexer: object): { blockquote: RegExp; paragraph: RegExp } {
   return (lexer as { tokenizer: { rules: { block: { blockquote: RegExp; paragraph: RegExp } } } }).tokenizer.rules.block;
 }
-/** marked's own inline rules, the same way: the link rule the wikilink tokenizer yields to. */
-function inlineRules(lexer: object): { link: RegExp } {
-  return (lexer as { tokenizer: { rules: { inline: { link: RegExp } } } }).tokenizer.rules.inline;
+/** marked's own inline rules, the same way: the link rule the wikilink tokenizer yields to, the code rule the mark
+ *  tokenizer masks by. */
+function inlineRules(lexer: object): { link: RegExp; code: RegExp } {
+  return (lexer as { tokenizer: { rules: { inline: { link: RegExp; code: RegExp } } } }).tokenizer.rules.inline;
+}
+/** The mark rule's view of `src` (which starts at the opener): a copy cut after the first `==` past the opener that
+ *  lies outside a code span, plus the character after it (the closer's lookahead), with every code span before that
+ *  point masked to a filler of the same length, `[`, `a`s and `]`, the filler marked's own inlineTokens masks links and
+ *  code spans to before it runs em and strong (its blockSkip), a masked copy an extension's tokenizer is not handed.
+ *  A match over the copy neither opens nor closes inside a code span and reads the source's offsets unchanged, the
+ *  filler being neither `=`, a space, nor a word character at either end. Under the rule's no-`==` content a match ends
+ *  at that first `==` or not at all, so nothing past it is read, and null when no `==` follows at all: the work per
+ *  candidate stays the distance to its closer, as the bare regex's was (masking the whole remaining paragraph per
+ *  candidate instead made a 490,000-character paragraph of 8,000 highlights with code spans take 64 s against 11 s;
+ *  and the tokenizer checks the opener before building the view, since marked tries every inline extension at every
+ *  token's start, where the view built for each start took a 410,000-character paragraph of comparisons from 5.5 s to
+ *  21 s). marked's code rule is tried at each backtick run before that point in turn, left to right as the lexer meets
+ *  them, as a sticky match so no substring is cut per run: a run the rule refuses (unclosed, or a run its length never
+ *  closes, `` ``a` ``) is text and masks nothing, and a backtick an odd count of backslashes precedes is marked's escape,
+ *  not a run. Exported for md-config.test.ts, which pins the cut. */
+const stickyCodeRules = new WeakMap<RegExp, RegExp>();
+export function markView(lexer: object, src: string): string | null {
+  let i = 2, out = "", done = 0;
+  let re: RegExp | undefined;
+  for (;;) {
+    const eq = src.indexOf("==", i);
+    if (eq < 0) return null;
+    const bt = src.indexOf("`", i);
+    if (bt < 0 || eq < bt) return out + src.slice(done, eq + 3);
+    let slashes = 0;
+    for (let j = bt - 1; j >= 0 && src.charCodeAt(j) === 92; j--) slashes++;
+    if (slashes % 2 === 1) { i = bt + 1; continue; }   // an escaped backtick: marked's escape token, no run
+    if (!re) {
+      const code = inlineRules(lexer).code;
+      re = stickyCodeRules.get(code);
+      if (!re) { re = new RegExp(code.source.replace(/^\^/, ""), code.flags.replace(/[gy]/g, "") + "y"); stickyCodeRules.set(code, re); }
+    }
+    re.lastIndex = bt;
+    const m = re.exec(src);
+    if (m) {
+      out += src.slice(done, bt) + "[" + "a".repeat(m[0].length - 2) + "]";
+      done = i = bt + m[0].length;
+    } else {
+      i = bt;
+      while (src.charCodeAt(i) === 96) i++;   // the run is text: skip it whole, as marked's text rule reads it
+    }
+  }
 }
 /** `src` cut where marked cuts it before reading a paragraph: at the first line a block extension's start hint names
  *  (marked runs every registered hint on `src.slice(1)` and clips at the index plus one, so an extension's block
@@ -333,10 +377,18 @@ export const callout: TokenizerAndRendererExtension = {
 // the lazy match ran on to the next `==` that touched no word, so `==high==lighted and ==more== end` rendered one
 // highlight from `high` to `more`, eating the second opener, and `if x ==0 or y ==1 then ==done==` one from `0` to
 // `done`, the operators inside it. A spaced equality inside a highlight, `==a == b==`, is literal for the same reason,
-// the operator reading winning as everywhere in this rule. The element carries a class, `md-mark`, so the sheets'
-// rule names the highlight alone and the comment and change marks the panel paints as <mark> elements (mark.fc-hl,
-// .fc-presel, .fc-ins, .fc-del; anchor-map.ts makeMark) keep their own dress (round 3: `.fileview-md mark` outranked
-// their single-class rules, so every comment highlight in the Rendered view wore the amber wash).
+// the operator reading winning as everywhere in this rule. A code span inside the highlight is skipped whole (round 4
+// of the review): the match runs over a copy of the source with marked's code spans masked (markView above, the
+// masking marked's own inlineTokens does before em and strong), so a `==` inside one is neither the closer nor a
+// forbidden run, and `==see `a==b` here==` highlights `see a==b here` with the comparison in code, as Obsidian renders
+// it, CommonMark reading a code span before any delimiter run; before, a `==` inside a code span made the highlight
+// literal when a word followed it (round 3) and closed it inside the span when a space did (`==x `y== z` w==`
+// highlighted `y` and broke the span, rounds 2 and 3). Only a code span is skipped: `==**a==b**==` stays literal, a
+// `==` inside strong being a `==` in prose; and the double-tilde rule above keeps the blind spot its two copies had
+// (`~~see `a~~b` here~~` closes at the first `~~`), no change of this slice's. The element carries a class, `md-mark`,
+// so the sheets' rule names the highlight alone and the comment and change marks the panel paints as <mark> elements
+// (mark.fc-hl, .fc-presel, .fc-ins, .fc-del; anchor-map.ts makeMark) keep their own dress (round 3: `.fileview-md mark`
+// outranked their single-class rules, so every comment highlight in the Rendered view wore the amber wash).
 export const MARK_CLASS = "md-mark";
 export type MarkToken = Tokens.Generic & { text: string; tokens: Token[] };
 const MARK_RE = /^==(?=[^\s=])((?:(?!==)[\s\S])*?[^\s=])==(?![A-Za-z0-9_=])/;
@@ -346,10 +398,14 @@ export const mark: TokenizerAndRendererExtension = {
   level: "inline",
   start(src: string) { const m = /(?<![A-Za-z0-9_=)\]'"])==(?=[^\s=])/.exec(src); return m ? m.index : undefined; },
   tokenizer(this: LexerThis, src: string, tokens: Token[]) {
+    if (src.charCodeAt(0) !== 61 || src.charCodeAt(1) !== 61) return undefined;   // no opener here (marked tries every inline extension at every token's start, so this is the common call)
     if (tokens.length && OPERAND_END_RE.test(tokens[tokens.length - 1].raw)) return undefined;   // after an operand: inside a word, after a closing bracket or quote, or after another =
-    const m = MARK_RE.exec(src);
+    const view = markView(this.lexer, src);   // cut at the first `==` outside a code span, the spans before it masked: same offsets, so the match's extent reads the source
+    const m = view === null ? null : MARK_RE.exec(view);
     if (!m) return undefined;
-    return { type: "mark", raw: m[0], text: m[1], tokens: this.lexer.inlineTokens(m[1]) } as MarkToken;
+    const raw = src.slice(0, m[0].length);
+    const text = raw.slice(2, -2);
+    return { type: "mark", raw, text, tokens: this.lexer.inlineTokens(text) } as MarkToken;
   },
   renderer(this: ParserThis, token) {
     return `<mark class="${MARK_CLASS}">${this.parser.parseInline((token as MarkToken).tokens)}</mark>`;

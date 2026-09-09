@@ -2531,12 +2531,17 @@ function scrollToFragment(box: HTMLElement, fragment: string): boolean {
 // and title was removed or inserted ahead of it: with class and title alone as the key, two `> [!note]- Same title`
 // callouts, or two untitled folded callouts of one type (whose generated title is the type, the common Obsidian shape),
 // shared one queue, so removing the first handed its state to the second, and a new one inserted ahead took the state of
-// the fold behind it (the Slice 4 review, round 3). A fold whose title changed, or a new one, shows as authored. Two
-// folds identical in class, title and body are told apart by order alone, and so are the leftovers of an edit that both
-// removes one same-titled fold and rewrites another's body. A Raw paint has no folds and neither reads nor writes, so the
-// state read when the rendered view left stands until it is painted again. The state moves on the person's own clicks
-// and the `#` reveal alone: no per-paint derivation, no timer (CLAUDE.md, cards move on new information).
-// md-config-fold-state-browser.test.ts drives the gestures, the same-title reloads included.
+// the fold behind it (the Slice 4 review, round 3). A fold whose title changed, or a new one, shows as authored. The
+// first pass pairs only an exact key that names ONE noted fold and ONE new fold: two folds identical in class, title and
+// body share a key the pass has nothing to tell them apart by, so both fall whole to the second pass and its order. Paired
+// in the first pass anyway, the one fold still carrying the shared body took the queue's first state whichever fold that
+// was, and the fold a session had just filled in took the leftover, so two `> [!note]- Todo` placeholders swapped states
+// when the person read the second while a session wrote into the first (the Slice 4 review, round 4). The leftovers of an
+// edit that both removes one same-titled fold and rewrites another's body are told apart by order too. A Raw paint has no
+// folds and neither reads nor writes, so the state read when the rendered view left stands until it is painted again. The
+// state moves on the person's own clicks and the `#` reveal alone: no per-paint derivation, no timer (CLAUDE.md, cards
+// move on new information). md-config-fold-state-browser.test.ts drives the gestures, the same-title reloads and the
+// identical twins included.
 type Fold = { key: string; body: string; open: boolean };
 function foldKey(d: Element): string {
   let summary = "";
@@ -2564,14 +2569,19 @@ function foldKeeper(body: HTMLElement): { note: () => void; restore: () => void 
       const now = Array.from(md.querySelectorAll("details"));
       const taken = new Set<Fold>();                     // noted folds the first pass matched
       const state = new Map<Element, boolean>();
-      // pass 1: the same fold, by class, title and body text, in order
+      // pass 1: the same fold, by class, title and body text, when that exact key names ONE noted fold and ONE new fold;
+      // a key two folds share (identical folds, or a fold a session duplicated) is left whole to pass 2 and its order
       const byExact = new Map<string, Fold[]>();
       for (const f of folds) { const k = exactKey(f.key, f.body); const q = byExact.get(k); if (q) q.push(f); else byExact.set(k, [f]); }
-      for (const d of now) {
-        const q = byExact.get(exactKey(foldKey(d), foldBody(d)));
-        const f = q && q.shift();
-        if (f) { taken.add(f); state.set(d, f.open); }
-      }
+      const nowKeys = now.map((d) => exactKey(foldKey(d), foldBody(d)));
+      const nowExact = new Map<string, number>();
+      for (const k of nowKeys) nowExact.set(k, (nowExact.get(k) || 0) + 1);
+      now.forEach((d, i) => {
+        const k = nowKeys[i];
+        const q = byExact.get(k);
+        if (!q || q.length !== 1 || nowExact.get(k) !== 1) return;
+        taken.add(q[0]); state.set(d, q[0].open);
+      });
       // pass 2: the leftovers by class and title, in order: a fold whose body an edit changed keeps its state
       const byKey = new Map<string, Fold[]>();
       for (const f of folds) { if (taken.has(f)) continue; const q = byKey.get(f.key); if (q) q.push(f); else byKey.set(f.key, [f]); }

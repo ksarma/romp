@@ -2025,13 +2025,23 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 .user-bubble.md { --math-err: currentColor; }
 /* the Obsidian constructs in YOUR bubble (Slice 4 of plans/markdown-viewer.md; their shared rules sit with the viewer's
    rules, after .fileview-md hr): the ==mark== wash and a callout's tint are the page's amber and accent, muddy on the
-   saturated fill, so both join the white family here: the mark as the code span's wash, the callout's rail and wash as
-   the quoted passage's tint (the callout's tint rides its --callout variable; its title inherits the quote ink the
-   blockquote rule above sets). The .md form alone, as the fallback above: the constructs exist only in sanitized
-   markdown. The mark rule keys on the renderer's class as the shared one does, so the comment highlight mark.cmt-hl is
-   not its subject. md-config-chat-styles-browser.test.ts reads both. */
+   saturated fill, so both join the white family here: the mark as the code span's wash, the callout's rail, wash and ink
+   as the quoted passage's tint. The wash rides the callout's --callout variable; the rail and the ink are set here
+   outright, for both forms of a callout: the blockquote rule above, a type selector deep, outranks the shared callout
+   rule's `border-left` and `color: inherit` for the blockquote form and not for the folded one (a details), so with the
+   variable alone `> [!note]` wore the plain quote's 0.40 rail under the 0.88 ink while `> [!note]-` one line below took
+   the 0.88 rail and the bubble's plain white (the slice's review, round 4). The .md form alone, as the fallback above:
+   the constructs exist only in sanitized markdown. The mark rule keys on the renderer's class as the shared one does, so
+   the comment highlight mark.cmt-hl is not its subject. md-config-chat-styles-browser.test.ts reads both forms. */
 .user-bubble.md mark.md-mark { background: rgba(255, 255, 255, 0.2); color: inherit; }
-.user-bubble.md .md-callout { --callout: rgba(255, 255, 255, 0.88); }
+.user-bubble.md .md-callout { --callout: rgba(255, 255, 255, 0.88); border-left-color: var(--callout); color: rgba(255, 255, 255, 0.88); }
+/* a footnote definition and the front-matter fold in YOUR bubble: their shared rules ink them var(--dim), the page's grey, tuned
+   to --bg and on the saturated fill at 1.66:1 (dark) and 1.39:1 (light) where the bubble's text reads at 4.67:1 and 5.13:1, the
+   grey the blockquote comment above names at ~2:1 (the slice's review, round 4). Both take the bubble's own ink (inherit: #ffffff,
+   and not the quote's 0.88 tint, which at their 0.86em sits under 4.5:1 on both fills), with the quote's 0.40 white for the
+   footnote's rail and the fold's box, where var(--box-border) is near invisible on the fill. Doubled class on purpose: the shared
+   rules are (0,2,0) and (0,2,1) and these outrank them. The .md form alone, as above. */
+.user-bubble.md .md-footnote, .user-bubble.md details.md-frontmatter { color: inherit; border-color: rgba(255, 255, 255, 0.40); }
 /* fenced code in YOUR bubble sits in a PAGE-colored well: the hljs palette is tuned for the page
    ground in each theme, and on the saturated fill its inks read as stray reds (the user 2026-09-04,
    whose light bubbles showed red text). Bold joins the white family — .md's near-page text tones
@@ -4738,8 +4748,14 @@ body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
    `max-width: 100%` on the print table would cap a direct child at the column and squeeze a table the paper has room for (A4
    landscape: 761 of 1123px, every cell broken mid-word); the body is made a size container here (the screen's body is none,
    its rule says why), so 100cqi is the body's width, and no script runs at print layout, so a unit the sheet resolves is the
-   one that holds there (review round 2; file-view-print-inks-browser.test.ts measures these). Byte-equal in styles.css and feed.css (file-view-print-browser.test.ts pins the block and lays it out); the
-   Files pane's own overrides are in files-pane.css. */
+   one that holds there (review round 2; file-view-print-inks-browser.test.ts measures these). The Slice 4 constructs are named
+   here too: their rules are two classes deep and outranked the one-class ink rule and the border list, so a footnote definition,
+   the front matter's label and YAML and a gated figure's placeholder printed in the dim grey (2.8:1 on white in the default theme)
+   and their rails and boxes, and every callout's rail, kept the screen tokens (a note's accent at 1.6:1, the hairline white on
+   white on the feed page); ink and border black, the placeholder's wash off, and a callout's --callout black, the variable its rail
+   and wash ride, so it prints a black rail over a faint neutral wash (the Slice 4 review, round 4;
+   md-config-print-constructs-browser.test.ts measures these on three surfaces). Byte-equal in styles.css and feed.css
+   (file-view-print-browser.test.ts pins the block and lays it out); the Files pane's own overrides are in files-pane.css. */
 @media print {
   :root, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
   body.fileview-open { display: block; }
@@ -4753,6 +4769,9 @@ body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
   .fileview-md blockquote, .fileview-md a, .fileview-md a.file-uri-link, .fileview-md kbd, .fileview-md :not(pre) > code, .fileview-md pre code, .fileview-md pre code span,
   .fileview-md pre code .cl::before, .fileview-md code.md-math-src { color: black; }
   .fileview-md { --math-err: black; }
+  .fileview-md .md-footnote, .fileview-md details.md-frontmatter, .fileview-md .fv-gate { color: black; border-color: black; }
+  .fileview-md .fv-gate { background: none; }
+  .fileview-md .md-callout { --callout: black; }
   .fileview-md a, .fileview-md a.file-uri-link { text-decoration: underline; }
   .fileview-md li.task-list-item input[type="checkbox"] { color-scheme: light; }
   .fileview-md :not(pre) > code, .fileview-md kbd, .fileview-md pre, .fileview-md th, .fileview-md tbody tr:nth-child(even) { background: none; }

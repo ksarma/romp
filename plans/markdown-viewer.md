@@ -1173,9 +1173,19 @@ as built departs from the text above, why, and which test holds each rule:
    neither the chat's comment highlight `mark.cmt-hl` nor the panel's marks are its subject, the review round 3; the
    bubble takes the white family it wears elsewhere), so a callout in a reply is a titled block and a `==mark==` the
    amber wash, not the browser's yellow-on-black (the review round 1; md-config-chat-styles-browser.test.ts reads both
-   themes). md-config.test.ts executes the grammar and the idempotence and pins who calls it; render-math.test.ts pins
-   the list's literal and the three callers; chat-md.test.ts pins the user instance; md-strikethrough.test.ts imports
-   the rule from here.
+   themes). Round 4 of the review re-inked two constructs in the bubble and named every construct in the print block:
+   in the bubble a footnote definition and the front-matter fold took the page's dim grey from their shared rules,
+   1.66:1 (dark) and 1.39:1 (light) on the saturated fill, and read now in the bubble's own ink, with the quote's 0.40
+   white for the footnote's rail and the fold's box; and a callout's rail and ink are set outright there for both of
+   its forms, since the bubble's blockquote rule outranked the shared callout rule for the blockquote form alone and
+   `> [!note]` and `> [!note]-` one line apart wore different rails and inks (the same leg types both). In print the
+   footnote definition, the front matter and a gated figure's placeholder print black ink and black borders with the
+   placeholder's wash off, and a callout's `--callout` is black, the variable its rail and wash ride, so every callout
+   prints a black rail over a faint neutral wash beside the plain quote's (the construct rules, two classes deep,
+   outranked the print block's one-class ink rule and its border list; md-config-print-constructs-browser.test.ts
+   measures the pane, the chat modal and the feed page under print media and back). md-config.test.ts executes the
+   grammar and the idempotence and pins who calls it; render-math.test.ts pins the list's literal and the three
+   callers; chat-md.test.ts pins the user instance; md-strikethrough.test.ts imports the rule from here.
 2. *Decision 1, math everywhere.* file-view.ts's import of md-config.ts brings the grammar, the fill and KaTeX into
    files.js and feed.js (math-bundles.test.ts: a metafile of each bundle built with the shipped config holds math.ts,
    md-config.ts and katex; the viewer imports nothing from render.ts, code-block.test.ts). Production sizes, raw and
@@ -1259,13 +1269,15 @@ as built departs from the text above, why, and which test holds each rule:
    (file-view.ts foldKeeper; before it the Rendered/Raw switch, a reload's landing, the editor's take and handback and
    a `#` reveal reset every fold to what the source says; the review round 2, md-config-fold-state-browser.test.ts
    drives the gestures over the real Files bundle). The match runs in two passes, each in document order: first by
-   class, summary text and body text, then the leftovers by class and summary text alone, so a fold a session's edit
-   rewrote keeps its state and a fold that stands as it was keeps its own when a fold of the same class and title was
-   removed or inserted ahead of it (the review round 3: with class and summary text as the whole key, two `> [!note]-
-   Same title` callouts shared one queue, and a reload the Comments panel's poll asked for after such an edit opened
-   the fold the person had left shut; the same leg drives that reload through the panel's poll). A body of `#` lines
-   alone is a comment-only mapping and folds, as pandoc, Jekyll and Obsidian read it; in a reply that shape is inside
-   item 1's open ruling.
+   class, summary text and body text, when that exact key names one noted fold and one new fold (the review round 4:
+   two identical `> [!note]- Todo` placeholders shared one exact-key queue, so a session filling the first while the
+   person read the second swapped their states; a key two folds share falls whole to the second pass and its order),
+   then the leftovers by class and summary text alone, so a fold a session's edit rewrote keeps its state and a fold
+   that stands as it was keeps its own when a fold of the same class and title was removed or inserted ahead of it
+   (the review round 3: with class and summary text as the whole key, two `> [!note]- Same title` callouts shared one
+   queue, and a reload the Comments panel's poll asked for after such an edit opened the fold the person had left
+   shut; the same leg drives that reload through the panel's poll). A body of `#` lines alone is a comment-only
+   mapping and folds, as pandoc, Jekyll and Obsidian read it; in a reply that shape is inside item 1's open ruling.
 4. *Footnotes*, our own extension (marked-footnote is not installed and renders at the end, which breaks the 1:1 block
    pairing). `[^id]` renders `sup.md-fnref > a[href="#fn-id"][id="fnref-id"]` showing its number, and ONLY when the
    document defines the id (GitHub's rule; the lexer lexes every block before any inline text, so the definitions are
@@ -1350,8 +1362,14 @@ as built departs from the text above, why, and which test holds each rule:
    makes the text literal up to it, so `==high==lighted and ==more== end` highlights `more` alone and `if x ==0 or y
    ==1 then ==done==` highlights `done` (round 2's lazy match ran on to the next `==` and rendered one highlight from
    `high` to `more`, the second opener eaten); `==a == b==` is literal, the operator reading winning as everywhere in
-   the rule; the recorded consequence stands, `==high==lighted` alone is literal. The element's class is what both
-   sheets' rule keys on, `mark.md-mark` (a bare `.fileview-md mark` outranked the comments panel's single-class marks,
+   the rule; the recorded consequence stands, `==high==lighted` alone is literal. A code span inside a highlight is
+   skipped whole (the review round 4): the tokenizer matches over a copy of the source cut at the first `==` outside a
+   code span, with the spans before it masked to marked's own filler (md-config.ts markView), so `==see `a==b` here==`
+   highlights `see a==b here` with the comparison in code, as Obsidian renders it, and a `==` inside a span never
+   closes the highlight (`==x `y== z` w==` is one highlight, where rounds 2 and 3 closed it at `y` and broke the
+   span); only a code span is skipped, so `==**a==b**==` stays literal, and the double-tilde rule keeps the blind spot
+   its two copies always had. md-config.test.ts pins the shapes and the cut. The element's class is what both sheets'
+   rule keys on, `mark.md-mark` (a bare `.fileview-md mark` outranked the comments panel's single-class marks,
    `.fc-hl`, `.fc-presel` and `.fc-ins`, so every highlight in the Rendered view wore the amber wash: round 3,
    md-config-mark-classes-browser.test.ts compares the panel's marks inside the view with the same marks outside it,
    and md-config-math-map-browser.test.ts reads their dress on the real fill). md-config.test.ts renders it and keeps
@@ -1485,15 +1503,16 @@ as built departs from the text above, why, and which test holds each rule:
    minimum box gets a box of the minimum's width, so a 50px icon's placeholder is wider than the icon and the text
    below moves up by the difference after the click (the minimum is what lets the box name its host legibly; a box the
    figure's width wraps the label to a dozen lines and overflows, measured in round 3).
+
 ### Slice 5: comments anchor on real notes
 
 Pair blocks inside an unclosed HTML container (a flattened walk); match code quotes raw; math tokens
 as holes, no token names in refusals; report the first obstacle in document order (opening
 `<details>` ancestors in goTo landed with Slice 4); overlapping `.fc-hl` keep one wash and a click
 opens every card under it; paintAll hints with the last located start; strip cell delimiters from a
-table quote; offer Comment on `selectionchange`. Acceptance: selections after the wrapper and details containers map; the `total =
-a * b * 2` comment paints in Rendered; the math paragraph maps around the formula; a Raw comment
-across two cells paints; a keyboard selection offers Comment. Tests: anchor-map and file-comments
+table quote; offer Comment on `selectionchange`. Acceptance: selections after the wrapper and details containers map;
+the `total = a * b * 2` comment paints in Rendered; the math paragraph maps around the formula; a Raw comment across
+two cells paints; a keyboard selection offers Comment. Tests: anchor-map and file-comments
 fixtures. One more for the flattened walk, found in Slice 1's merge review (2026-09-08) and identical on main:
 the resync across an html block (`runFits`, anchor-map.ts) accepts the first end from which the next block lines
 up by whitespace-stripped text alone, so when a node the block rendered carries exactly the next paragraph's text

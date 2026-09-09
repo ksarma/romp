@@ -11,7 +11,12 @@
 // comment highlight `mark.cmt-hl` keeps its own tint (its rule ties a `.md mark` rule on specificity and stands earlier
 // in the sheet, so the construct rule keys on the renderer's own class, mark.md-mark, and never names it), a callout's
 // title reads in the body's ink (round 3: the tint tokens are rails and fills, unreadable as text for the hairline and
-// the caution red), and the bubble's mark and callout wear the white family the bubble's other rules use. Both themes.
+// the caution red), and the bubble's mark and callout wear the white family the bubble's other rules use. Round 4: in
+// the bubble a footnote definition and the front-matter fold kept the page's dim token on the saturated fill (1.66:1
+// dark, 1.39:1 light, where the bubble's text reads at 4.67:1 and 5.13:1), and a folded callout (`> [!note]-`, a
+// details) and an unfolded one (a blockquote) wore different rails and inks, since the bubble's blockquote rule outranked
+// the callout rule's rail and ink for the blockquote form alone; the bubble leg types both shapes and both forms and reads
+// the footnote and the fold in the bubble's own ink, the two forms equal. Both themes.
 // Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic text only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -51,7 +56,10 @@ const REPLY = [
   "The ==important== bit and a footnote[^1].", "",
   "[^1]: The footnote definition text.", "",
 ].join("\n");
-const TYPED = ["==this== is what I typed", "", "> [!NOTE]", "> pasted from an issue"].join("\n");
+// what the person types: a note pasted whole (its YAML opener folds as front matter), a footnote, a callout and the same
+// callout folded, the two forms of one construct one line apart
+const TYPED = ["---", "title: Pasted note", "---", "", "==this== is what I typed[^1]", "", "> [!NOTE]", "> pasted from an issue", "",
+  "> [!NOTE]- the same, folded", "> its body", "", "[^1]: the source I pasted"].join("\n");
 
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLES}</style></head><body>
 <div id=content>
@@ -95,7 +103,11 @@ const READ_DRESS = `(function (rootId) {
     ".md-callout-note > .md-callout-title": ["fontWeight", "color", "marginTop"],
     ".md-callout-note > p:not(.md-callout-title)": ["fontWeight", "color"],
     "blockquote:not(.md-callout)": ["borderLeftColor", "borderLeftWidth", "color"],
+    "details.md-callout.md-callout-note": ["borderLeftColor", "borderLeftWidth", "backgroundColor", "color"],
+    "details.md-callout > summary.md-callout-title": ["fontWeight", "color"],
+    "details.md-callout > p": ["color"],
     "details.md-frontmatter": ["borderTopWidth", "borderTopStyle", "borderTopColor", "borderTopLeftRadius", "color"],
+    "details.md-frontmatter > summary": ["color"],
     "div.md-footnote": ["borderLeftWidth", "borderLeftColor", "color"],
     "sup.md-fnref": ["lineHeight"],
     "mark.cmt-hl": ["backgroundColor"],
@@ -177,7 +189,26 @@ test("a reply's constructs wear the viewer's dress in the chat's markdown bodies
   });
 });
 
-test("the person's own bubble: a ==mark== and a callout they typed wear the bubble's white family, not the browser's yellow or the page's tints", { timeout: 180000 }, async (t) => {
+// ── colour arithmetic: Chromium's computed colours as rgb() or rgba(), composited over the fill, then WCAG 2 contrast ──
+type RGBA = [number, number, number, number];
+function parse(s: string): RGBA {
+  const m = /^rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\s*\)$/.exec(s);
+  if (!m) throw new Error("a colour this test cannot read: " + s);
+  return [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]];
+}
+const over = (top: RGBA, under: RGBA): RGBA => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat([1]) as RGBA;
+function luminance(c: RGBA): number {
+  const lin = (v: number) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
+  return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+}
+function contrast(a: RGBA, b: RGBA): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+const BAR = 4.5;   // WCAG's minimum for reading text; the slice's own bar for KaTeX's flagged text and the callout titles
+const QUOTE_INK = "rgba(255, 255, 255, 0.88)";   // the bubble's quote tint: a quoted passage, the math source fallback, a callout's rail and ink
+
+test("the person's own bubble: a ==mark==, a callout in both forms, a footnote and the front matter they typed wear the bubble's white family, not the browser's yellow or the page's tints", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     await page.setContent(PAGE, { waitUntil: "load" });
@@ -199,6 +230,39 @@ test("the person's own bubble: a ==mark== and a callout they typed wear the bubb
       const rail = u["blockquote.md-callout.md-callout-note"]!;
       assert.match(rail.borderLeftColor, /^rgba\(255, 255, 255, /, theme + ": the bubble's callout rail is in the white family");
       assert.equal(quote, null, theme + ": (the fixture types no plain quote)");
+      // round 4: the two forms of one callout. The bubble's blockquote rule (.user-bubble.md blockquote, a type selector deep)
+      // outranked the shared callout rule's rail and ink for the blockquote form, so `> [!note]` wore the plain quote's 0.40
+      // rail under a 0.88 ink while `> [!note]-` (a details) took the 0.88 rail --callout names and the bubble's plain white:
+      // two rails and two inks one line apart. The bubble's callout rule sets the rail and the ink itself now, both forms alike.
+      const fold = u["details.md-callout.md-callout-note"]!, foldTitle = u["details.md-callout > summary.md-callout-title"]!;
+      assert.ok(fold && foldTitle, theme + ": the typed folded callout rendered in the bubble as a details");
+      assert.equal(fold.borderLeftWidth, "3px", theme + ": the folded callout's rail is the callout's 3px");
+      assert.equal(fold.borderLeftColor, rail.borderLeftColor, theme + ": the folded and the unfolded callout wear one rail (before: 0.88 against the plain quote's 0.40)");
+      assert.equal(rail.borderLeftColor, QUOTE_INK, theme + ": ...the quote tint the rule's --callout names");
+      assert.equal(fold.backgroundColor, rail.backgroundColor, theme + ": ...and one wash");
+      assert.equal(fold.color, rail.color, theme + ": the two forms read in one ink (before: the bubble's white against the quote's 0.88)");
+      assert.equal(rail.color, QUOTE_INK, theme + ": ...the quote ink, as the sheet's comment says the callout inherits");
+      assert.equal(foldTitle.color, title.color, theme + ": the two titles read in one ink");
+      assert.equal(foldTitle.fontWeight, "600", theme + ": the folded callout's title is bold too");
+      assert.equal(u["details.md-callout > p"]!.color, u[".md-callout-note > p:not(.md-callout-title)"]!.color, theme + ": the two bodies read in one ink");
+      // round 4: the footnote definition and the front-matter fold. Their shared rules colour them var(--dim), the page's grey,
+      // which on the fill read at 1.66:1 (dark) and 1.39:1 (light) where the bubble's text reads at 4.67:1 and 5.13:1; the
+      // sheet's own blockquote comment names that grey at ~2:1 on this fill as the reason the quote was re-inked. Both take the
+      // bubble's own ink now (color: inherit), the 0.86em text clearing 4.5:1 on both fills, and the quote's 0.40 rail and box.
+      const fill = parse(u["__root"]!.backgroundColor);
+      const fn = u["div.md-footnote"]!, fm = u["details.md-frontmatter"]!, fmLabel = u["details.md-frontmatter > summary"]!;
+      assert.ok(fn && fm && fmLabel, theme + ": the typed footnote and the pasted YAML rendered in the bubble");
+      assert.equal(fn.color, u["__root"]!.color, theme + ": the footnote definition reads in the bubble's own ink (before: the page's " + a["div.md-footnote"]!.color + ")");
+      assert.notEqual(fn.color, a["div.md-footnote"]!.color, theme + ": ...not the page's dim grey on the saturated fill");
+      assert.equal(fm.color, u["__root"]!.color, theme + ": the front matter reads in the bubble's own ink (before: the page's " + a["details.md-frontmatter"]!.color + ")");
+      assert.equal(fmLabel.color, u["__root"]!.color, theme + ": ...its fold label too");
+      for (const [what, ink] of [["the footnote definition", fn.color], ["the front matter's label", fmLabel.color]] as [string, string][]) {
+        const ratio = contrast(over(parse(ink), fill), fill);
+        assert.ok(ratio >= BAR, theme + ": " + what + " reads at " + ratio.toFixed(2) + ":1 on the fill " + u["__root"]!.backgroundColor + "; the bar is " + BAR + ":1");
+      }
+      assert.match(fn.borderLeftColor, /^rgba\(255, 255, 255, /, theme + ": the footnote's rail is in the white family (the quote's tint), not the page's hairline");
+      assert.match(fm.borderTopColor, /^rgba\(255, 255, 255, /, theme + ": the front matter's box is in the white family, not the page's hairline");
+      assert.equal(fm.borderTopStyle, "solid", theme + ": ...and drawn");
     }
   });
 });

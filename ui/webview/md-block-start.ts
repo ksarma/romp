@@ -5,9 +5,10 @@
 // returns (marked.esm.js, "top-level paragraph"). A hint that scans the rest of the note for its construct therefore
 // runs once per paragraph over the whole remainder, and the lex is quadratic in the paragraph count. Measured in the
 // Slice 4 review (round 2, node, marked 12.0.2, medians): a 272 KB note of 8,000 one-line paragraphs lexed in 34 ms
-// with no block hint, 493 ms with the chat's one hint on the base, 1,299 ms with the two hints this slice carries; a
-// 200 KB transcript-sized reply 30, 83 and 161 ms. The hints were exact and cheap per call; the count of calls was the
-// cost.
+// with no block hint, 493 ms with the chat's one hint on the base, 1,299 ms with the two hints the branch carried at
+// round 2 (the math one and the callout's; the callout's is gone since round 3, md-config.ts, so the math hint is the
+// one memoised here); a 200 KB transcript-sized reply 30, 83 and 161 ms. The hints were exact and cheap per call; the
+// count of calls was the cost.
 //
 // The remedy is exact, not a heuristic. Within one blockTokens call every hint call's source is a SUFFIX of the
 // previous one: marked only ever shortens `src` by substring as it consumes tokens. So a hint that returns the FIRST

@@ -2479,8 +2479,14 @@ body.filebrowse-open { overflow: hidden; }
    `max-width: 100%` on the print table would cap a direct child at the column and squeeze a table the paper has room for (A4
    landscape: 761 of 1123px, every cell broken mid-word); the body is made a size container here (the screen's body is none,
    its rule says why), so 100cqi is the body's width, and no script runs at print layout, so a unit the sheet resolves is the
-   one that holds there (review round 2; file-view-print-inks-browser.test.ts measures these). Byte-equal in styles.css and feed.css (file-view-print-browser.test.ts pins the block and lays it out); the
-   Files pane's own overrides are in files-pane.css. */
+   one that holds there (review round 2; file-view-print-inks-browser.test.ts measures these). The Slice 4 constructs are named
+   here too: their rules are two classes deep and outranked the one-class ink rule and the border list, so a footnote definition,
+   the front matter's label and YAML and a gated figure's placeholder printed in the dim grey (2.8:1 on white in the default theme)
+   and their rails and boxes, and every callout's rail, kept the screen tokens (a note's accent at 1.6:1, the hairline white on
+   white on the feed page); ink and border black, the placeholder's wash off, and a callout's --callout black, the variable its rail
+   and wash ride, so it prints a black rail over a faint neutral wash (the Slice 4 review, round 4;
+   md-config-print-constructs-browser.test.ts measures these on three surfaces). Byte-equal in styles.css and feed.css
+   (file-view-print-browser.test.ts pins the block and lays it out); the Files pane's own overrides are in files-pane.css. */
 @media print {
   :root, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
   body.fileview-open { display: block; }
@@ -2494,6 +2500,9 @@ body.filebrowse-open { overflow: hidden; }
   .fileview-md blockquote, .fileview-md a, .fileview-md a.file-uri-link, .fileview-md kbd, .fileview-md :not(pre) > code, .fileview-md pre code, .fileview-md pre code span,
   .fileview-md pre code .cl::before, .fileview-md code.md-math-src { color: black; }
   .fileview-md { --math-err: black; }
+  .fileview-md .md-footnote, .fileview-md details.md-frontmatter, .fileview-md .fv-gate { color: black; border-color: black; }
+  .fileview-md .fv-gate { background: none; }
+  .fileview-md .md-callout { --callout: black; }
   .fileview-md a, .fileview-md a.file-uri-link { text-decoration: underline; }
   .fileview-md li.task-list-item input[type="checkbox"] { color-scheme: light; }
   .fileview-md :not(pre) > code, .fileview-md kbd, .fileview-md pre, .fileview-md th, .fileview-md tbody tr:nth-child(even) { background: none; }

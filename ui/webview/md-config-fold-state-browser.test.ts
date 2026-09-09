@@ -289,3 +289,43 @@ test("Files pane: across a reload the Comments panel's poll asked for, a fold ke
     await page.context().close();
   });
 });
+
+// Two folds identical in class, title AND body: two `> [!note]- Todo` placeholders a template left, with no body at all
+// or with the same `(answer here)` line, one of which a session fills in while the person reads the other. The two share
+// one exact key (class, summary text and body text), so the first pass has nothing to tell them apart by and must leave
+// both to the second pass's order: when it paired them anyway, the one fold still carrying the shared body took the
+// queue's FIRST state whichever fold that was, and the fold the session had just filled took the leftover, so the fold
+// the person was reading shut and the one the session edited opened (the Slice 4 review, round 4; round 3's two-pass
+// match regressed this shape, which 7ab8524e's order match got right). Each shape runs on its own page: the person
+// opens one fold, the session fills the OTHER, and the opened fold is the one that stays open.
+const TWIN = (body: string) => (body ? ["> [!note]- Todo", "> " + body, ""] : ["> [!note]- Todo", ""]);
+const TWINS_OF = (first: string, second: string) => NOTE_OF([...TWIN(first), "Middle para.", "", ...TWIN(second)], false);
+const FILLED = "Filled in by a session.";
+// [the shared body, the fold the person opens]: the filled fold is the other one
+const TWIN_SHAPES: Array<[string, number]> = [["", 1], ["(answer here)", 1], ["", 0]];
+
+test("Files pane: two folds identical in class, title and body keep their states across the reload a session's edit to ONE of them asks for: the fold the person opened stays open and the fold the session filled stays shut, whichever comes first", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const js = filesBundle();
+    for (const [shared, opened] of TWIN_SHAPES) {
+      const filled = 1 - opened;
+      const label = `shared body ${JSON.stringify(shared)}, the person opened fold ${opened}, the session filled fold ${filled}`;
+      const disk: Disk = { text: TWINS_OF(shared, shared), mtime: "1" };
+      const { page, errors } = await openNote(browser, js, "file", disk);
+      await openPanel(page);
+      assert.deepEqual(await foldBodies(page), [[NOTE_CLS, shared, false], [NOTE_CLS, shared, false]], `authored: both twins shut (${label})`);
+      await noteSummary(page, opened).click();
+      await settle(page);
+      const chosen: Array<[string, string, boolean]> = [[NOTE_CLS, shared, opened === 0], [NOTE_CLS, shared, opened === 1]];
+      assert.deepEqual(await foldBodies(page), chosen, `the person opened fold ${opened} (${label})`);
+
+      // the session fills the other twin; the panel's poll sees the mtime move and asks the reload
+      await editOnDisk(page, disk, TWINS_OF(filled === 0 ? FILLED : shared, filled === 1 ? FILLED : shared), "2", FILLED, "");
+      const expected: Array<[string, string, boolean]> = [[NOTE_CLS, filled === 0 ? FILLED : shared, opened === 0], [NOTE_CLS, filled === 1 ? FILLED : shared, opened === 1]];
+      assert.deepEqual(await foldBodies(page), expected, `after the reload the fold the person opened is still the open one; the filled fold stands shut as authored (${label})`);
+
+      assert.deepEqual(errors, [], `no page errors (${label})`);
+      await page.context().close();
+    }
+  });
+});

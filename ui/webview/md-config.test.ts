@@ -10,7 +10,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked, Lexer } from "marked";
-import { applyMdConfig, mdExtensions, resolveWikilink, calloutTitle, isYamlMapping, callout, WIKILINK_DEAD_TITLE, FRONT_MATTER_LABEL, FOOTNOTE_ORPHAN_TITLE, MARK_CLASS } from "./md-config";
+import { applyMdConfig, mdExtensions, resolveWikilink, calloutTitle, isYamlMapping, callout, markView, WIKILINK_DEAD_TITLE, FRONT_MATTER_LABEL, FOOTNOTE_ORPHAN_TITLE, MARK_CLASS } from "./md-config";
 import { userMdHtml } from "./chat-md";
 
 const UI = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
@@ -322,6 +322,47 @@ test("==mark== holds no `==`: the first `==` after the opener is the closer, and
   }
   const toks = (Lexer.lex("==high==lighted and ==more== end")[0] as { tokens: Array<{ type: string; raw: string }> }).tokens;
   assert.deepEqual(toks.map((t) => [t.type, t.raw]), [["text", "==high==lighted and "], ["mark", "==more=="], ["text", " end"]], "the anchor map's lexer sees one mark, its raw the delimiters and the text between, and the raws tile the paragraph");
+});
+
+test("==mark== skips a code span whole: a `==` inside one is neither the closer nor a forbidden run, so a highlight holding a comparison in code renders as Obsidian renders it; an unmatched or escaped backtick masks nothing, and only a code span is skipped", () => {
+  const cases: Array<[string, string, string]> = [
+    ["==see `a==b` here==", `<p>${MARK}see <code>a==b</code> here</mark></p>\n`, "the comparison in code, the highlight around it (round 3 rendered the whole line literal, the delimiters showing)"],
+    ["==note: `x==y` compares==", `<p>${MARK}note: <code>x==y</code> compares</mark></p>\n`, "the shape an agent writes"],
+    ["==see ``a==b`` here==", `<p>${MARK}see <code>a==b</code> here</mark></p>\n`, "a double-backtick span too"],
+    ["==x `y== z` w==", `<p>${MARK}x <code>y== z</code> w</mark></p>\n`, "a `==` a space follows inside the span is no closer (rounds 2 and 3 closed the highlight at `y` and broke the span)"],
+    ["==a `b== c`", "<p>==a <code>b== c</code></p>\n", "no closer outside the span: literal, the span intact"],
+    ["==`a==b`==", `<p>${MARK}<code>a==b</code></mark></p>\n`, "the span is the whole content"],
+    ["==`x==y`== and ==`z`==", `<p>${MARK}<code>x==y</code></mark> and ${MARK}<code>z</code></mark></p>\n`, "two of them"],
+    ["==a==`b`", `<p>${MARK}a</mark><code>b</code></p>\n`, "a span right after the closer is not a word: the closer stands"],
+    ["==see `a==b here==", "<p>==see `a==b here==</p>\n", "an unmatched backtick is text and masks nothing: the `==` touches a word, literal"],
+    ["``a`==b==", `<p>\`\`a\`${MARK}b</mark></p>\n`, "a run its length never closes is text too, as marked reads it"],
+    ["==see \\`a==b\\` here==", "<p>==see `a==b` here==</p>\n", "an escaped backtick opens no span (marked's escape reads it first): the `==` touches a word, literal"],
+    ["==a \\`b\\` c==", `<p>${MARK}a \`b\` c</mark></p>\n`, "escaped backticks inside a highlight are its text"],
+    ["==**a==b**==", "<p>==<strong>a==b</strong>==</p>\n", "only a code span is skipped: a `==` inside strong is a `==` in prose, literal (recorded in the header and the plan)"],
+    ["see `a ==b` and ==x==", `<p>see <code>a ==b</code> and ${MARK}x</mark></p>\n`, "an opener-shaped `==` inside a span before the highlight is the span's"],
+  ];
+  for (const [src, want, why] of cases) {
+    assert.equal(html(src), want, why + ": " + src);
+    assert.equal(userMdHtml(src), want, "the user's bubble agrees: " + src);
+  }
+  assert.equal(html("==a\n`b==c`\nd=="), `<p>${MARK}a\n<code>b==c</code>\nd</mark></p>\n`, "across the lines of one paragraph");
+  const toks = (Lexer.lex("==see `a==b` here==")[0] as { tokens: Array<{ type: string; raw: string; tokens?: Array<{ type: string; raw: string }> }> }).tokens;
+  assert.deepEqual(toks.map((t) => [t.type, t.raw]), [["mark", "==see `a==b` here=="]], "the anchor map's lexer sees one mark whose raw is the source text: the delimiters place it as before");
+  assert.deepEqual(toks[0].tokens!.map((t) => [t.type, t.raw]), [["text", "see "], ["codespan", "`a==b`"], ["text", " here"]], "the span is a code span inside it, its raw tiling the content");
+});
+
+test("the mark rule's view of the source stops at the first `==` outside a code span and masks the spans before it in place, so a candidate's work is the distance to its closer whatever follows; no `==` at all is no view", () => {
+  const lexer = new Lexer();
+  const tail = " and ==more== `x==y` " + "z".repeat(100000) + " ==end==";
+  assert.equal(markView(lexer, "==a `x==y` b==c" + tail), "==a [aaaa] b==c", "cut after the first `==` outside a span and the character after it; the span before it masked to marked's filler, same length");
+  assert.equal(markView(lexer, "==a ``x==y`` b==" + tail), "==a [aaaaaa] b== ", "a double-backtick span too; the character after the closer is the lookahead's");
+  assert.equal(markView(lexer, "==a `x==y b==c and ==more== " + "z".repeat(100000)), "==a `x==y", "an unmatched backtick is text: the `==` after it is the first outside a span (the tail has no backtick: with one, the lone run would pair with it, as CommonMark reads it)");
+  assert.equal(markView(lexer, "==a `x==y b==c" + tail), "==a [" + "a".repeat(tail.indexOf("`") + 9) + "]" + tail.slice(tail.indexOf("`") + 1, tail.indexOf("`") + 5), "the same lone backtick with a single-backtick span in the tail: the run closes at that span's opener, the whole stretch one code span, and the first `==` outside it is the tail's next");
+  assert.equal(markView(lexer, "==a \\`x==y\\` b==" + tail), "==a \\`x==y", "an escaped backtick opens no span");
+  assert.equal(markView(lexer, "==a `b` c ==d" + tail), "==a [a] c ==d", "a span with no `==` inside is masked all the same");
+  assert.equal(markView(lexer, "==no closer here `x` " + "z".repeat(100000)), null, "no `==` follows: nothing to match, no view");
+  assert.equal(markView(lexer, "==plain=="), "==plain==", "no backtick: the source itself, to the closer");
+  assert.equal(markView(lexer, "==a==`b`"), "==a==`", "the cut keeps the character after the closer, a backtick here, which the closer's guard reads as not a word");
 });
 
 test("a lazy underline right under a callout's marker line is the body's first line: a paragraph's text, never indented code or a heading; the setext guard holds from the body's second line on", () => {
