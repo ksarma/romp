@@ -179,7 +179,9 @@ that view depends on the fold: an open group's count opens the view and leaves t
 folded group's header opens the group and the view together. While the menu is open, the row
 follows the copy you right-clicked, through your edits in the **Tags** flyout and through changes
 that arrive from elsewhere (another pane, another dashboard); a tag renamed meanwhile keeps the
-row, under its new name. Moving it to another group changes the group the
+row, under its new name, except a group that only another machine's tags make, which the menu
+knows by name alone: renamed there while the session is under two or more groups, the row leaves,
+and a click writes nothing. Moving it to another group changes the group the
 line names. Removing that group's tag takes the row away, unless the session is left under
 exactly one other tag, whose group the line then names: under two or more, the menu cannot tell
 which copy you mean. If the removed tag comes back (a removal the kernel refused, or the tag added
