@@ -7819,6 +7819,20 @@ class ServeSecurity(unittest.TestCase):
         html = km._landing()
         self.assertIn("<script src=/dist/palette-main.js?v=", html)
 
+    def test_shell_perf_bundle_wired(self):
+        # the shell's performance collector (ui/webview/shell-perf.ts, 2026-09-09): Chromium reports an
+        # iframe's long animation frames to the top-level window only, so the shell page observes them and
+        # posts a minute row (app "shell") on its own socket (shellWS, window.__rompShellSend). A dist bundle
+        # like age-color-global, loaded right after it and before the errs script, so the boot's own long
+        # frames are seen; behavior is pinned in ui/webview/shell-perf.test.ts.
+        html = km._landing()
+        self.assertIn("<script src=/dist/shell-perf.js?v=", html)
+        self.assertLess(html.index("/dist/age-color-global.js"), html.index("/dist/shell-perf.js"))
+        self.assertLess(html.index("/dist/shell-perf.js"), html.index("/dist/palette-main.js"))
+        # the socket it posts through is the shell's own, defined by the settings script, which runs later:
+        # the bundle reads window.__rompShellSend at call time, so the order is fine
+        self.assertIn("window.__rompShellSend=function(o)", html)
+
     def test_fleet_page_served(self):
         # Fleet (the user 2026-06-23): /fleet serves the by-session open-work view, rendered by dist/fleet.js.
         import urllib.request

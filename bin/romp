@@ -1020,7 +1020,10 @@ if [[ "${1:-}" == "perf" ]]; then
     # pane that receives frames (feed, Outline, Waiting on you, chat, timeline) posts one clientDiag row a
     # minute (surface "perf", what "minute"; ui/webview/perf-telemetry.ts) with its frame counts and handler
     # times by type (a log2 histogram per type, additive across minutes), the main-thread-free gap after a
-    # frame, the browser's long-animation-frame reports with the callbacks they name, heap and DOM size — plus
+    # frame, the browser's long-animation-frame reports with the callbacks they name, heap and DOM size — the
+    # Files pane's row times the viewer's own paint pass (fileview:paint, fileview:reflow) since nothing is
+    # pushed to it, and the shell (the top-level window, app "shell") posts a row with no frame types, the
+    # long frames the browser reports to it alone (an iframe's land there), 2026-09-09 — plus
     # a "slowframe" row the moment a frame's whole handling runs 100 ms or more, five a minute at most, the
     # rest counted in the minute row. The kernel appends them to $STATE/client-diag.jsonl with the dashboard
     # id (wid) and its clock, and rotates that file to .1 past 8 MB; this reads both, folds the last <n>
