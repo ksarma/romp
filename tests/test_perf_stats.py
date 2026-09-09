@@ -46,7 +46,7 @@ SID = "11111111-2222-3333-4444-555555555555"
 # and node ids collide across test modules under the shared placeholder (CLAUDE.md, goal-store fixtures).
 GOAL_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "stages_ms", "builds", "sends",
-            "goals", "judge", "http", "memos", "caches"}
+            "goals", "memos", "judge", "http", "caches"}
 PROCESS_KEYS = {"rss_kb", "threads", "cpu_s", "pid", "rss_anon_kb", "hwm_kb", "source", "allocated_blocks", "gc_gen2", "malloc"}
 # The caches the `caches` block gauges (perf round 4, M1-lite): exact occupancy, a len() or a sum of len()s,
 # nothing estimated. A cache added to the kernel, the judge or the event model is added here deliberately.
@@ -140,19 +140,26 @@ class Collector(unittest.TestCase):
                       "counts sessions with work this pass or a voided read, and ran == stamped + bypassed + incomplete "
                       "holds for it as for the others")
         self.assertIsInstance(tiers["stamps"], int)
-        self.assertEqual(set(snap["judge"]["chain_memo"]), {"hit", "miss", "populate", "bypass"},
-                         "read through jd.chain_memo_stats: the write-moment chain memo's counters")
+        self.assertNotIn("chain_memo", snap["judge"], "the chain memo's counters ride memos.chain now (review find, 2026-09-08)")
         self.assertEqual(set(snap["goals"]), {"loads", "loads_shared", "saves", "writes", "scans", "scan_hits", "scan_parses",
                                               "disk_hits", "disk_misses", "disk_seeds",
                                               "absent_hits", "absent_misses", "noop_hash_ms", "unreadable_stores",
                                               "lineage_reads"},
                          "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
         self.assertEqual(set(snap["memos"]),
-                         {"goals_snap", "lift_gate", "nudge_walk", "goals_shared", "wire", "intr_marks", "sessions_scope",
+                         {"pass", "shared", "chain",
+                          "lift_gate", "nudge_walk", "wire", "intr_marks", "sessions_scope",
                           "captions", "states_overlay", "thread_reg", "bg_tops",
                           "feed_segs", "lanes",
                           "chat_merge_sets", "chat_postal", "chat_ledger", "chat_fold_tasks"},
-                         "one block per memo the kernel keeps (plan D4)")
+                         "one block per memo the kernel keeps (plan D4): the three identity memos on the goal-store "
+                         "path under upstream's names (pass, shared, chain; review find, 2026-09-08), then the rest")
+        # the three identity memos' readers land here (review find, 2026-09-08: they had no consumer)
+        self.assertEqual(snap["memos"]["pass"], km._goals_memo_report())
+        self.assertEqual(snap["memos"]["shared"], km.jd.shared_store_stats())
+        self.assertEqual(snap["memos"]["chain"], km.jd.chain_memo_stats())
+        self.assertEqual(set(snap["memos"]["chain"]), {"hit", "miss", "populate", "bypass"},
+                         "read through jd.chain_memo_stats: the write-moment chain memo's counters")
         self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty"},
                          "the feed build also counts the rebuilds a kernel-side mutation forced past the view signature")
         self.assertEqual(snap["builds"]["feed"]["dirty"], 0)
@@ -173,10 +180,10 @@ class Collector(unittest.TestCase):
                          "the fold's sealed postal cards (round-4 P17/P3 c): gate re-hydrations, verified checks, new raw hydrated")
         for k, v in snap["memos"]["chat_postal"].items():
             self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["goals_snap"]),
+        self.assertEqual(set(snap["memos"]["pass"]),
                          {"hit", "miss", "fail", "evict", "punch", "live", "snap", "entries", "bytes"},
                          "the judge pass's goal-store memo: counters plus its occupancy, and the feed's serve branches")
-        for k, v in snap["memos"]["goals_snap"].items():
+        for k, v in snap["memos"]["pass"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "shared", "writer", "noop", "entries"},
                          "the awaiting-lift gate: session-cycles skipped vs read, the probes the shared cache "
@@ -197,11 +204,11 @@ class Collector(unittest.TestCase):
                          "the placed-launch memo (_bg_placed_tops): counters plus its occupancy")
         for k, v in snap["memos"]["bg_tops"].items():
             self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["goals_shared"]),
+        self.assertEqual(set(snap["memos"]["shared"]),
                          {"hit", "miss", "compare_miss", "refuse", "dup", "absent", "corrupt", "unreadable_journal",
                           "evict", "fallback", "poisoned", "entries", "bytes", "off"},
                          "the shared read-only goal-store cache: counters plus its occupancy (jd.shared_store_stats)")
-        for k, v in snap["memos"]["goals_shared"].items():
+        for k, v in snap["memos"]["shared"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["wire"]),
                          {"feed_cards_hit", "feed_cards_miss", "split_hit", "split_miss", "feed_body", "bars_body",
@@ -644,6 +651,28 @@ class GoalIoCounters(unittest.TestCase):
         d = self.jd.goal_io_stats()
         d["loads"] = -1
         self.assertNotEqual(self.jd.goal_io_stats()["loads"], -1)
+
+    def test_the_reference_doc_describes_memos_and_routes_the_pushers_loads_there(self):
+        # docs/reference.md read `goals.loads` as every store read; the pusher's loads moved to the shared cache
+        # with this PR, so the doc names the memos section and sends the reader there (review find, 2026-09-08)
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        self.assertIn("- `memos`:", doc)
+        for k in ("`pass`", "`shared`", "`chain`"):
+            self.assertIn(k, doc)
+        self.assertIn("`memos.shared`", doc)
+
+    def test_the_pushers_shared_loads_count_under_memos_shared_not_under_goals_loads(self):
+        # `goals.loads` is the writer's loader alone; the pusher's read-only loads ride load_goals_shared and
+        # show under memos.shared (review find, 2026-09-08: nine pusher sites left `loads` with the move to the
+        # shared cache, and the doc still read it as every store read). A fill is a miss, a re-read a hit.
+        self.jd.save_goals(GOAL_SID, self.jd.load_goals(GOAL_SID))
+        before, snap0 = self.jd.goal_io_stats(), km._PERF_STATS.snapshot()["memos"]["shared"]
+        self.jd.load_goals_shared(GOAL_SID)
+        self.jd.load_goals_shared(GOAL_SID)
+        after, snap = self.jd.goal_io_stats(), km._PERF_STATS.snapshot()["memos"]["shared"]
+        self.assertEqual(after["loads"], before["loads"], "two shared loads: no writer-side load counted")
+        self.assertEqual((snap["miss"] - snap0["miss"], snap["hit"] - snap0["hit"]), (1, 1),
+                         "...the fill and the hit are the shared cache's, on the snapshot")
 
 
 class JudgeCpu(unittest.TestCase):

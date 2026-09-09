@@ -235,8 +235,8 @@ test("executed: the words — the heading's count and label, the row's spoken la
 test("pinned: render.ts shows the snapshot on a header click — snapView set BEFORE the fold write, then the pane swaps; a session pick clears it", () => {
   assert.match(RENDER, /"toggle-group": \(el\) => \{\s*\n\s*const name = el\.dataset\.group;\s*\n\s*if \(!name\) return;\s*\n\s*snapView = name;\s*\n\s*writeTabGroups\(setSectionCollapsed\(tabGroups\(\), name, el\.dataset\.folded !== "1"\)\);\s*\n\s*showActive\(\);/,
     "one rule for open and folded headers: fold or open, and look at the section");
-  assert.match(RENDER, /const leavingSnap = snapView !== null;\s*\n\s*snapView = null;\s*\n\s*if \(collapsedTabIds\.has\(id\) && !hiddenTabIds\.has\(id\)\) unfoldSectionOf\(id\);[^\n]*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{[^\n]*\n\s*if \(leavingSnap\) \{ renderTabs\(\); showActive\(\); \}/,
-    "setActive: the pick ends the snapshot, opens a folded-away tab's section (not a hidden one's: tab-hide.test), and puts the transcript back even when the pick is the tab already active");
+  assert.match(RENDER, /const leavingSnap = snapView !== null;\s*\n\s*snapView = null;\s*\n\s*if \(collapsedTabIds\.has\(id\)\) unfoldSectionOf\(id\);[^\n]*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{[^\n]*\n\s*if \(leavingSnap\) \{ renderTabs\(\); showActive\(\); \}/,
+    "setActive: the pick ends the snapshot, opens a folded-away tab's section (a folded holder that does not hide it: tab-hide.test, tab-groups.test), and puts the transcript back even when the pick is the tab already active");
   assert.match(RENDER, /const shown = snapView === name;\s*\n\s*if \(shown\) head\.classList\.add\("snap-shown"\);/, "the header whose section the pane shows is marked");
   // T251 (upstream, folded 2026-09-08; catch-up 2 ui DECISION 1): the header's name is the shared tag chip, coloured
   // inline, so the fork's prose-tone rule for .snap-shown (the name's lift to --fg) could not win and went. The cue

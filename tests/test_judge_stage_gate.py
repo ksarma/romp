@@ -2437,7 +2437,7 @@ class IndexReaders(_Gate):
         jd._judge_ctx.stage_incomplete = False
         self.assertEqual(self._tasks(path), tasks)                       # the hit
         self.assertFalse(jd._judge_ctx.stage_incomplete, "a good read marks nothing")
-        cf.write_text(json.dumps({"key": [[["stale", 1]], ""], "v": 5, "tasks": []}))
+        cf.write_text(json.dumps({"key": [[["stale", 1]], ""], "v": 6, "tasks": []}))   # the current version (v6, T252d): only the key is stale
         self.assertEqual(self._tasks(path), tasks, "a stale key is a plain miss")
         self.assertFalse(jd._judge_ctx.stage_incomplete)
         cf.unlink()
@@ -2844,7 +2844,7 @@ class IndexGate(_Gate):
         self.assertEqual(self._ran(), (1, 0, 0, 1))
         self.assertEqual(len(self._rows("units-cache-unreadable")), 1)
         self.assertEqual(len(self.caption_calls), n0, "the regenerated tasks were all captioned already: no call")
-        self.assertEqual(json.loads(cf.read_text())["v"], 5, "repaired by the publish")
+        self.assertEqual(json.loads(cf.read_text())["v"], 6, "repaired by the publish")   # v6 since T252d (upstream 5d295734 moved the seg ids)
         self._reset()
         self._pass(tiers=("index",))
         self.assertEqual(self._ran(), (1, 0, 1, 0), "the repaired cache's identity re-armed once; the hit path stamps")

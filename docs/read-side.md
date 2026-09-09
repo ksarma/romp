@@ -294,15 +294,16 @@ atom or queued copy is attributed per send, as a landing is: the k-th copy of th
 text after the anchor (an echo no earlier bubble claimed, or a queued copy beyond
 the count the press saw) hides the k-th bubble with that text for that push and
 proves the kernel received that one send. A claimed echo is background for every
-later bubble with the text, so one echo confirms one send. Identical texts carry no
-identity of their own, so which copy is whose goes by send order, as it does for
-landings. A connection drop relabels the bubble "not confirmed" until a copy
-attributed to it appears or the message lands. The label is per bubble, so a group
-holding one dropped send and one in flight reads "not confirmed · sending…". ✕
-removes the bubble it sits on: the entry's press time rides the button as
-`data-qts`, and `dropPending` removes that entry rather than the first entry with
-the same text. The chat repaints only when a bubble's state changed (a redial loop
-while the kernel is down repaints nothing). A send pressed while its tab is still a
+later bubble with the text, so one echo confirms one send. The id the press mints
+(`sendId`, carried on the echo and on the landed event) tells identical texts apart;
+a copy that carries no id goes by send order, as a landing does. A connection drop
+relabels the bubble "not confirmed" until a copy attributed to it appears or the
+message lands. The label is per bubble, so a group holding one dropped send and one
+in flight reads "not confirmed · sending…". ✕ removes the bubble it sits on: the
+entry's send id rides the button as `data-qsid` and its press time as `data-qts`,
+and `dropPending` removes that entry rather than the first entry with the same text.
+The chat repaints only when a bubble's state changed (a redial loop while the kernel
+is down repaints nothing). A send pressed while its tab is still a
 placeholder, with no resident frame, is stamped at the first frame instead. That
 stamp reads the events' own kernel stamps: only an event stamped before the press's
 second is the anchor or background, so the frame's copy of this send (its echo, or
@@ -317,26 +318,32 @@ whole wait, and its ✕ would have cancelled the real queued send. The presumpti
 misreads one case, stated in `stampBase`: an older identical message already in the
 queue, with this send not yet received when the frame was built, is read as this
 send's copy. A press-time stamp reads no stamp, since its frame predates the press.
-An absorbed atom sits at its send time, above the steps that were already running,
-so its event carries `absorbed` and `landedAt`, the time the CLI took it: the
-repaired timestamp of the attachment's file-order predecessor (the boundary record
-the splice waited for), clamped to the send time when it would be earlier. `landedT`
-is never before `t`, with no tolerance window: real transcripts invert only by clock
-granularity, and anything larger is a shape the CLI does not write. Each clamp is
-counted as `landedT-clamp` in the event model's assembly stats, served beside
-`ts-repair` in the version route's `parse` dict. The chat's pending bubble is drawn
-at the send's slot from the press: right after the last kernel event at the press,
-below an earlier send's echo or landing, and below any texts the kernel already held
-queued, so the absorbed atom's landing replaces it in place; there is no header and
-no cue (T252). The CLI extracts no image paths on the stream-json route (its only
-image-path test belongs to the interactive composer's paste handler), so an
-image path in an SDK send lands as typed and the echo's text matches. `_path_bearing`
-and the extension set it tests (png, jpe?g, gif, webp, case-insensitive: the CLI
-bundle's single image-path test, pinned equal between kernel and backend) remain for
-the tmux settle path only, where the paste hook does run and rewrites the path to
-`[Image #N]`. The chat's own image previews (`_user_images`) use a separate set,
-built from the served MIME table (`_IMG_MIME`, svg and bmp included), so a preview is
-never proposed for a file the image route cannot serve.
+An absorbed atom is placed where the model READ it: its event carries `absorbed`,
+its `t` is the landing time, the moment the CLI took the message off its queue (the
+repaired timestamp of the attachment's file-order predecessor, the boundary record
+the splice waited for, clamped to the send time when it would be earlier), and the
+send time rides along as `sentAt` (T252d, the user 2026-09-08). Their reasoning: the
+pane used to draw the message at its send position, above the steps that ran while
+it waited, while the model read it only after them, so the order on screen
+contradicted the order the model saw; the read position is the one that matches.
+The landing time is never before the send, with no tolerance window: real
+transcripts invert only by clock granularity, and anything larger is a shape the CLI
+does not write. Each clamp is counted as `landedT-clamp` in the event model's
+assembly stats, served beside `ts-repair` in the version route's `parse` dict. So
+the chat's pending bubble sits at the TAIL while pending, below every streaming
+step, and the landed atom appears in that same tail position, so nothing moves on
+landing; `sentAt` feeds the bubble's hover ("sent at HH:MM", shown once landed when
+it differs from the landing by more than a minute). No header, no cue. This
+supersedes the in-place-at-send-position rule of T252/T252b; the press-minted
+`sendId` still decides landing, cover and hiding. The CLI extracts no image paths on
+the stream-json route (its only image-path test belongs to the interactive composer's
+paste handler), so an image path in an SDK send lands as typed and the echo's text
+matches. `_path_bearing` and the extension set it tests (png, jpe?g, gif, webp,
+case-insensitive: the CLI bundle's single image-path test, pinned equal between kernel
+and backend) remain for the tmux settle path only, where the paste hook does run and
+rewrites the path to `[Image #N]`. The chat's own image previews (`_user_images`) use
+a separate set, built from the served MIME table (`_IMG_MIME`, svg and bmp included),
+so a preview is never proposed for a file the image route cannot serve.
 
 **A kernel restart does not re-run a mid-turn send.** The boot duplicate guard
 (`_text_landed`) reads the `queued_command` attachment too, and it scans from the
@@ -450,12 +457,12 @@ jobs:
 - **Filtering.** Each surface (chat tabs, timeline lanes, outline) keeps its own
   lens: every session, the untagged ones, or any set of tags.
 - **Grouping.** The chat tab strip sections by tag whenever a session carries
-  one: a header per tag in `tagOrder`, each tab under the first of its tags in
-  that order (its home tag), the untagged after a divider. Sections fold per
-  browser; dragging a header reorders `tagOrder` for every surface; **Move to
-  <tag>** in a tab's menu adds the target tag and drops the home tag in one
-  click. Groups are tags: there is no second store and no per-session group
-  field.
+  one: a header per tag in `tagOrder`, each tab under every tag it carries (a
+  session under two tags appears under both), the untagged on a line of their
+  own. Sections fold per browser; dragging a header reorders `tagOrder` for every
+  surface; **Move to <tag>** in a tab's menu adds the target tag and drops the
+  tag of the group that copy sits in, in one click. Groups are tags: there is no
+  second store and no per-session group field.
 - **Inheritance.** A session spawned from another joins the parent's tags at the
   creation event: a fork, a promoted comment thread, and `romp new` run inside a
   session (it sends its `ROMP_SID` as `parent`; `--no-inherit` withholds it and

@@ -27,7 +27,7 @@ import type { GridPos } from "./emoji-picker";
 import { EMOJI_CATEGORIES } from "./emoji-data";
 import { markerLabel, dayContext } from "./time-marker";
 import { compactDisplay, toolCounts, type DisplayItem } from "./compact";
-import { senderKind } from "./sender-identity";
+import { senderKind, SenderKind } from "./sender-identity";
 import { loadSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { delegate } from "./actions";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
@@ -46,7 +46,7 @@ import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindi
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
 import { StagedStack } from "./staged-messages";
-import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, injectionGroups, queuedCopyToHide, dropPending, bareGroupLabel } from "./send-pending";
+import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, queuedCopyToHide, dropPending, bareGroupLabel, sentAtLabel } from "./send-pending";
 import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional, focusResolvesProvisional } from "./provisional";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
@@ -68,8 +68,12 @@ import { insertAtCaret } from "./composer-insert";
 import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
 import { MENTION_MAX_ROWS, mentionQuery, rankMentions, mentionMoreNote, mentionToken, insertMention, mentionKeyAction, mentionSegments } from "./composer-mention";
 import type { MentionCandidate, MentionQuery } from "./composer-mention";
-import { followReader, keepPlaceAcrossShow } from "./scroll-keep";
+import { followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink } from "./scroll-keep";
 import { retainLiveOmitted } from "./tab-order";
+import { userTurnShows } from "./user-turn-content";
+import { ScrollDiagBudget, classifyScroll, scrollWriteRow } from "./scroll-write";
+import { reloadScrollRecord, takeReloadScroll, type ReloadScroll } from "./reload-restore";
+import { publishReloadHold, liveNotices, takePendingNotices } from "./reload-hold";   // the chat page's hold on the reload core while ships await their ack, and the notices its reload would wipe (T215 meets T265)
 import { keepResidentEvents } from "./frame-merge";
 import { activeTabToReannounce } from "./relay-active";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
@@ -113,8 +117,8 @@ type TaskOutputs = Record<string, { command: string; output: string }>;
 type ChatEvent = (
   // mid/mids: postal message ids the kernel could NOT resolve into cards, carried on the raw turn so a
   // timeline arc into it still lands (see _hydrate_postal's unresolved path)
-  // sendIds: the client send id(s) a user event stands for (an echo's own; a landed record's every send) — send-pending.ts matches a pending bubble on them
-  | { kind: "user"; md: string; uuid?: string; ts?: string; reminders?: string[]; taskOutputs?: TaskOutputs; human?: boolean; romp?: boolean; rompAuto?: boolean; rompSystem?: boolean; followUp?: boolean; goal?: string; fuCtx?: string; canned?: string; tag?: string; mid?: string; mids?: string[]; images?: { src: string; path?: string }[]; undelivered?: boolean; echoT?: number; sendIds?: string[]; spacePaths?: string[]; pathLinks?: Record<string, string>; pathPins?: Record<string, string> }
+  // sendIds: the client send id(s) a user event stands for (an echo's own; a landed record's every send) — send-pending.ts matches a pending bubble on them; absorbed/sentAt: a mid-turn send placed at its landing, with its send time for the bubble's hover (T252d)
+  | { kind: "user"; md: string; uuid?: string; ts?: string; reminders?: string[]; taskOutputs?: TaskOutputs; human?: boolean; romp?: boolean; rompAuto?: boolean; rompSystem?: boolean; followUp?: boolean; goal?: string; fuCtx?: string; canned?: string; tag?: string; mid?: string; mids?: string[]; images?: { src: string; path?: string }[]; undelivered?: boolean; echoT?: number; absorbed?: boolean; sentAt?: number; sendIds?: string[]; spacePaths?: string[]; pathLinks?: Record<string, string>; pathPins?: Record<string, string> }
   | { kind: "assistant"; md: string; uuid?: string; ts?: string; spacePaths?: string[]; pathLinks?: Record<string, string>; pathPins?: Record<string, string> }   // spacePaths: backticked filenames WITH spaces the kernel verified exist (build_session _space_paths) → whole-span links. pathLinks: path-shaped tokens the kernel verified against the filesystem, token → real open target (build_session _path_links) — the linkifier's gate
   | { kind: "thinking"; text: string; encrypted: boolean; uuid?: string; ts?: string }
   | {
@@ -195,7 +199,7 @@ type ChatEvent = (
   // `held` DOES come from the kernel (_limit_hold): the queue is stuck on the ACCOUNT rather than on this
   // session — a usage limit or a monthly spend cap holds every send — so the head names what it is waiting
   // for, and how long is left when the API reported a reset (the user 2026-07-24).
-  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; romp?: boolean; rompSystem?: boolean; rompAuto?: boolean; imgPaths?: string[]; lost?: string; qts?: number; sendId?: string; hiddenByPending?: boolean }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send; qts: on OUR optimistic copy the pending entry's identity (its press time) so the ✕ removes ITS entry (send-pending.ts); a kernel copy's own qts, when it ships one, is its enqueue stamp, not an entry; sendId: the send's identity on both sides, minted at the press and carried by the kernel's queued copy, so the ✕ and the reconcile name exactly this send; hiddenByPending: client-only, the kernel's copy of a send whose bubble is drawn at its own slot (T252, hideQueuedCopy)
+  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; romp?: boolean; rompSystem?: boolean; rompAuto?: boolean; imgPaths?: string[]; lost?: string; qts?: number; sendId?: string; hiddenByPending?: boolean }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send; qts: on OUR optimistic copy the pending entry's identity (its press time) so the ✕ removes ITS entry (send-pending.ts); a kernel copy's own qts, when it ships one, is its enqueue stamp, not an entry; sendId: the send's identity on both sides, minted at the press and carried by the kernel's queued copy, so the ✕ and the reconcile name exactly this send; hiddenByPending: client-only, the kernel's copy of a send whose bubble is drawn as our own bare group at the tail (T252/T252d, hideQueuedCopy)
   // The turn stopped on an API error (event-based: transcript isApiErrorMessage). The session is BLOCKED
   // until retried — a red-dot card at the bottom with a Retry button (the user 2026-06-16).
   | { kind: "apiError"; text: string; status?: number; ts?: string; uuid?: string }
@@ -323,12 +327,13 @@ const order: string[] = [];           // positional tab order (for cycling)
 // ── client-side optimistic echo (the user 2026-07-15) ── a composer send clears the box instantly, but the
 // message only reappears in the chat once the kernel round-trips it back (its own provisional). Sending to a
 // busy/slow thread, the kernel's provisional could briefly VANISH in the echo→landed gap — so a just-sent
-// message looked lost for a beat. We drop a local optimistic bubble the moment you hit Enter — AT ITS SEND
-// POSITION, right after the last kernel event at the press (T252, the user 2026-09-07), so the steps that
-// stream in while the CLI holds the send land below it and the absorbed atom the kernel places at the send
-// time replaces it in the same spot — and keep RE-injecting it on every push until the kernel's payload
-// demonstrably carries the message, then let it go — the immediacy is client-owned, independent of every
-// server-side timing subtlety.
+// message looked lost for a beat. We drop a local optimistic bubble the moment you hit Enter — at the TAIL,
+// below every event the kernel has shown, where the model will READ it (T252d, the user 2026-09-08: the
+// steps that stream in while the CLI holds the send land above it, and the absorbed atom the kernel places
+// at the LANDING time replaces it in that same tail position, so nothing moves on landing and the order on
+// screen is the order the model saw; T252 had drawn it at the send slot, above those steps) — and keep
+// RE-injecting it on every push until the kernel's payload demonstrably carries the message, then let it
+// go — the immediacy is client-owned, independent of every server-side timing subtlety.
 // It rides the QUEUED idiom (the user 2026-07-16): to the reader an unconfirmed send and a queued one are the
 // same state — sent, nothing's happened yet — so they wear the same dashed bubble. That also means the look
 // only ever moves provisional→settled: dashed→solid when it lands, dashed→dashed (invisible) when it really
@@ -351,11 +356,10 @@ const pendingSent = new Map<string, PendingSend[]>();
 const isOptimistic = (e: ChatEvent): boolean => isOptimisticUuid(e.uuid);
 
 // The kernel's own queued group, if one is at the tail. Since T252 ours is never merged into it: a copy of
-// OUR text in it is hidden (hideQueuedCopy — one bubble per message, ours at its send slot), and
-// a group holding OTHER texts is a floor — a send pressed while they were queued runs after them, so its
-// bubble is drawn below the group (send-pending.ts placementIndex, T252b; the user's 2026-07-16 rule that
-// a send queues behind what the session already holds, kept in placement rather than by merging).
-// Tail-scanned; a queued group only ever sits at the bottom.
+// OUR text in it is hidden (hideQueuedCopy — one bubble per message, ours in its own bare group right below
+// the kernel's), and a group holding OTHER texts simply sits above ours — a send pressed while they were
+// queued runs after them (the user's 2026-07-16 rule that a send queues behind what the session already
+// holds). Tail-scanned; a queued group only ever sits at the bottom.
 function tailQueuedIdx(evs: ChatEvent[]): number {
   for (let i = evs.length - 1, n = 0; i >= 0 && n < 10; i--, n++) if (evs[i].kind === "queued") return i;
   return -1;
@@ -393,8 +397,8 @@ function reconcileOptimistic(s: Session): void {
   // the text and the resend); its PROVISIONAL — echo atom or queued bubble — suppresses ours for this
   // push and nothing more, so if it blinks, ours steps straight back in, and proves the kernel has the
   // send (a "not confirmed" label is cleared). The kernel's QUEUED copy of a send is different (T252): it
-  // sits in the kernel's group at the tail while the bubble the user watches is ours, at its send slot —
-  // so that copy is hidden and ours stays, one bubble per message; the group keeps its other texts.
+  // sits in the kernel's group at the tail while the bubble the user watches is ours, right below it — so
+  // that copy is hidden and ours stays, one bubble per message; the group keeps its other texts.
   const r = reconcilePending(s.events as TailEvent[], list);
   if (r.keep.length) pendingSent.set(s.id, r.keep); else pendingSent.delete(s.id);
   const heldBy = new Map<PendingSend, NonNullable<Extract<ChatEvent, { kind: "queued" }>["held"]>>();
@@ -412,24 +416,22 @@ function reconcileOptimistic(s: Session): void {
   // `qts` is the entry's identity: the ✕ removes THAT entry, never the first with the same text (two
   // identical sends can sit in different states — one lost, one received).
   const mk = (p: PendingSend) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths, lost: p.lost, qts: p.ts, sendId: p.sendId });
-  // A BARE dashed bubble at each send's slot — right after its anchor (send-pending.ts injectionGroups):
-  // no "N queued messages" header to claim what we can't back. Groups come highest slot first, so each
-  // splice leaves the lower slots valid. A copy hidden out of a HELD kernel group (a usage limit holds
-  // every send) hands its reason to our bubble, so the wait still says what it is waiting for.
-  const groups = injectionGroups(s.events as TailEvent[], inject);
-  for (const g of groups)
-    s.events.splice(g.idx, 0, { kind: "queued", bare: true, texts: g.sends.map(mk), uuid: OPT_PREFIX + g.sends[0].ts,
-                                held: g.sends.map((p) => heldBy.get(p)).find((h) => !!h) });
-  // the signature carries each group's SLOT beside its texts: chatTail repaints from the kernel index it was
-  // handed, trusting the DOM prefix — which also needs the bubble's slot unchanged. A slot that moves (a floor
-  // event arriving) marks the view stale, so the window is rebuilt (second review).
-  settle(groups.flatMap((g) => g.sends.map((p) => g.idx + ":" + p.text)));
+  // ONE BARE dashed group at the TAIL, the sends in send order (T252d): below every event the kernel has
+  // shown, where the model will read them; the landed atom, placed at its landing time, takes that same
+  // position. No "N queued messages" header to claim what we can't back. A copy hidden out of a HELD kernel
+  // group (a usage limit holds every send) hands its reason to our bubble, so the wait still says what it is
+  // waiting for.
+  s.events.push({ kind: "queued", bare: true, texts: inject.map(mk), uuid: OPT_PREFIX + inject[0].ts,
+                  held: inject.map((p) => heldBy.get(p)).find((h) => !!h) });
+  // the signature is the texts alone: the tail slot moves with every kernel push by design, and chatTail's
+  // incremental repaint strips our group before applying a kernel index, so the slot is never trusted
+  settle(inject.map((p) => p.text));
 }
 
-// Undo our own injections wherever they sit — the bare groups we spliced in (T252: at their send slots, no
-// longer only at the tail), the optimistic texts we once merged into a kernel group, and the hide marks on
-// the kernel's queued copies — so every reader below sees KERNEL truth only. Every ingest path that applies
-// a kernel INDEX (chatTail's `from`) strips first: a bubble sitting mid-array would shift that index.
+// Undo our own injections wherever they sit — the bare group at the tail (T252d; T252 had spliced groups at
+// their send slots mid-array, and the strip stays position-agnostic), the optimistic texts we once merged
+// into a kernel group, and the hide marks on the kernel's queued copies — so every reader below sees KERNEL
+// truth only. Every ingest path that applies a kernel INDEX (chatTail's `from`) strips first.
 function stripOptimistic(s: Session): void {
   for (let i = s.events.length - 1; i >= 0; i--) {
     const e = s.events[i];
@@ -440,8 +442,8 @@ function stripOptimistic(s: Session): void {
 }
 
 // Hide ONE copy of this send's text in the kernel's queued group (send-pending.ts queuedCopyToHide picks
-// it: the newest not-yet-hidden copy, never one the kernel marked non-cancelable): ours is drawn at its
-// slot, so the tail copy would be the same message twice. Returns the group's `held` so the bubble can
+// it: ours by id, else the newest not-yet-hidden copy, never one the kernel marked non-cancelable): ours is
+// drawn in its own bare group right below, so the kernel's copy would be the same message twice. Returns the group's `held` so the bubble can
 // carry the reason — or null when no copy is hidden, in which case the kernel's copy keeps covering ours.
 function hideQueuedCopy(s: Session, p: PendingSend): { held?: Extract<ChatEvent, { kind: "queued" }>["held"] } | null {
   const qi = tailQueuedIdx(s.events);
@@ -479,15 +481,16 @@ function registerOptimistic(id: string, text: string, imgPaths?: string[]): Pend
   if (v) v.stale = true;
   if (id === activeId) {
     // Your own send reveals itself only from the TAIL, measured BEFORE the bubble lands (the append
-    // grows scrollHeight, which would misread a tail-sitter as scrolled-up). At — or within the
-    // stick rule's 80px of — the bottom, hitting Enter scrolls to the new bubble, exactly once, at
-    // send time (the user 2026-08-09, whose send painted below the fold and looked lost). Scrolled
-    // UP reading history, the viewport stays exactly where it is and the bubble waits below (the
+    // grows scrollHeight, which would misread a tail-sitter as scrolled-up). At — or within
+    // nearBottomForSend's 80 px of — the bottom, hitting Enter scrolls to the new bubble, exactly once,
+    // at send time (the user 2026-08-09, whose send painted below the fold and looked lost). That band is
+    // deliberately wider than follow mode's true-bottom read (T262c): the send is the reader's own act.
+    // Scrolled UP reading history, the viewport stays exactly where it is and the bubble waits below (the
     // user 2026-08-30, yanked mid-read by the unconditional snap that used to live here).
     const content = document.getElementById("content");
-    const wasAtBottom = !!content && nearBottom(content);
+    const wasAtBottom = !!content && nearBottomForSend(content);   // the send band: the user's own send reveals itself
     appendActive();
-    if (content && wasAtBottom) content.scrollTop = content.scrollHeight;
+    if (content && wasAtBottom) writeScroll(content, content.scrollHeight, "optimistic-send", true);
   }
   return p;
 }
@@ -887,11 +890,8 @@ function tabInView(id: string): boolean { return id === peekId || chatVisible(id
 // stand-in — focusActiveTab lands there, ←/→ step from its position (neighborOfFolded over the last
 // plan's items, kept here for both), and the pane shows the section's snapshot (renderSnapshot).
 let collapsedTabIds = new Set<string>();
-// the ids hidden INSIDE their section by their own flag (the snapshot's Hide, the user 2026-09-08): a subset of
-// collapsedTabIds in either fold state. A pick of one shows its transcript with the header as stand-in and
-// leaves its section's fold alone (setActive): the gesture named the session, and a hidden tab comes on screen
-// through Show, not through a pick
-let hiddenTabIds = new Set<string>();
+// (a member hidden INSIDE its section by its own flag, the snapshot's Hide, is among them in either fold state;
+// which section a pick of one opens, if any, is unfoldSectionOf's per-holder rule)
 let lastStripItems: StripItem[] = [];
 /** Every tab the strip knows — the kernel's order plus any pushed tab not yet in it (a placeholder):
  *  the "does this session still exist" of the pin prune (tab-groups.ts prunePinned). */
@@ -918,8 +918,8 @@ function writeTabGroupsPruned(st: TabGroupsState): void {
   writeTabGroups(prunePinned(st, viewTagUnion(effViews()), knownTabIds(), reachableHosts()));
 }
 let draggedGroup: string | null = null;   // a section header mid-drag (reorders tagOrder) — never a tab
-// the tags a create in flight named (openProvisional): the provisional tab sections under its future
-// home from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
+// the tags a create in flight named (openProvisional): the provisional tab sections under every tag it
+// named from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
 let provisionalTags: string[] = [];
 function visibleOrder(): string[] { return order.filter((id) => tabInView(id) && !collapsedTabIds.has(id)); }
 // THE PHONE LAYOUT: the kernel's chat page swaps the tab strip for its own session list (#mhdr/#mlist,
@@ -2615,9 +2615,15 @@ function ensureRailDay(): HTMLElement {
 // USER message — the conversation's shape at a glance, VS Code overview-ruler style. Positions are
 // proportional (turn offset over scroll height), so they are scroll-INVARIANT: the paint rides the
 // rail-sticky scheduler for free, but a signature check skips the DOM work on pure scrolls and only
-// rebuilds when the geometry or the set of user turns actually changed. Passive fixed chrome, like
-// the sticky: it never intercepts the native scrollbar underneath. The blue is the outgoing-bubble
-// blue — the color that already means "yours" — never the romp accent.
+// rebuilds when the geometry or the set of user turns actually changed. The BOX is passive fixed
+// chrome, like the sticky: it never intercepts the native scrollbar underneath. Each NOTCH, though,
+// is a link to its message (T260, the user 2026-09-08, who wanted to click a notch and land there):
+// it alone takes the pointer, carries the message's uuid, and a click rides the deep-link route
+// (scrollToAnchor → landOn: pointer-exact on the uuid, the one-per-navigation flash) exactly as a
+// comment tick does — never scrollTop arithmetic, which lands on a pixel and not on a message. The
+// notches are rebuilt on every paint, so the click is DELEGATED on the box (installed once, in
+// ensureScrollMarks) and keyed off data-act, per the click-safety rule. The blue is the
+// outgoing-bubble blue — the color that already means "yours" — never the romp accent.
 let scrollMarks: HTMLElement | null = null;
 let scrollMarksSig = "";
 // Measured unit heights, remembered once rendered (the user 2026-08-17, whose video showed notches
@@ -2712,7 +2718,37 @@ function ensureScrollMarks(): HTMLElement {
   scrollMarks = el("div", "scroll-marks");
   scrollMarks.style.display = "none";
   document.body.appendChild(scrollMarks);
+  // a notch: jump the chat to its message (fresh navigation → one flash), the comment tick's route
+  delegate(scrollMarks, {
+    markjump: (elx) => {
+      const uuid = elx.dataset.uuid;
+      if (!uuid || !activeId) return;
+      flashedAnchor = null;
+      scrollToAnchor(uuid);
+    },
+  });
+  // The wheel over a notch scrolls the TRANSCRIPT (review of the first cut, 2026-09-08): the box hangs
+  // off body, not #content, so a notch that takes the pointer also took the wheel and its scroll chain
+  // ended at the page — the scrollbar under it stopped scrolling exactly where a notch sat. One passive
+  // listener on the stable box hands the delta to the scroller (lines and pages scaled to pixels).
+  scrollMarks.addEventListener("wheel", (e) => {
+    const c = document.getElementById("content");
+    if (!c) return;
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? c.clientHeight : 1;
+    c.scrollBy({ top: e.deltaY * k, left: e.deltaX * k });
+  }, { passive: true });
   return scrollMarks;
+}
+
+// The notch's hover tip: the message's time in the rail's own HH:MM (a past day names the day too,
+// the way the rail's first stamp of that day does), and for a machine notch who sent it — romp, or
+// the ⚙ label the sender declared — so a gray notch never poses as your words even on hover.
+function scrollMarkTitle(ev: ChatEvent & { tag?: string }, kind: SenderKind): string {
+  const epoch = eventEpoch(ev);
+  const when = epoch != null ? markerLabel(epoch, null, Date.now()).text : "";
+  const who = kind === "user" ? "" : kind === "romp" ? "from romp" : "from " + (ev.tag || "a machine sender");
+  const head = [when, who].filter(Boolean).join(" · ");
+  return (head ? head + " · " : "") + (kind === "user" ? "click to jump to your message" : "click to jump to it");
 }
 
 function paintScrollMarks(): void {
@@ -2731,7 +2767,7 @@ function paintScrollMarks(): void {
   const frame = contentOffsetFrame(content, v, s);
   if (!frame) { box.style.display = "none"; scrollMarksSig = ""; return; }
   const sh = frame.sh;
-  const offs: Array<{ top: number; m: string }> = [];
+  const offs: Array<{ top: number; m: string; uuid: string; i: number; kind: SenderKind }> = [];
   const evUnit = eventUnitIndex(s);                       // marks anchor to EVENTS; the frame speaks UNITS
   for (let i = 0; i < s.events.length; i++) {
     const ev = s.events[i] as ChatEvent & { human?: boolean; romp?: boolean; rompAuto?: boolean; canned?: string; md?: string; tag?: string };
@@ -2750,11 +2786,13 @@ function paintScrollMarks(): void {
     if (u < 0) continue;                                  // not in the display stream (never for user events)
     const off = frame.offsetOf(u);
     if (off == null) continue;
-    offs.push({ top: off, m: kind === "user" ? "" : "machine" });
+    offs.push({ top: off, m: kind === "user" ? "" : "machine", uuid: ev.uuid || "", i, kind });
   }
-  const ys = offs.map((o) => ({ y: Math.round((o.top / sh) * (cRect.height - 4)), m: o.m }));
+  const ys = offs.map((o) => ({ y: Math.round((o.top / sh) * (cRect.height - 4)), m: o.m, uuid: o.uuid, i: o.i, kind: o.kind }));
+  // the uuid rides the signature too: a notch whose message changed identity under the same pixel
+  // (a provisional turn resolving to its real uuid) must re-point, not keep jumping to a ghost
   const sig = activeId + "|" + Math.round(cRect.top) + "," + Math.round(cRect.right) + ","
-    + Math.round(cRect.height) + "|" + ys.map((o) => o.y + (o.m ? "m" : "")).join(",");
+    + Math.round(cRect.height) + "|" + ys.map((o) => o.y + (o.m ? "m" : "") + o.uuid).join(",");
   if (sig !== scrollMarksSig) {
     scrollMarksSig = sig;
     // UPDATE IN PLACE when the notch count is unchanged (the user 2026-08-17: scrolling back streams
@@ -2763,13 +2801,35 @@ function paintScrollMarks(): void {
     // existing nodes lets the CSS transition carry them, so a history load reads as the map
     // rescaling rather than notches jumping to wrong places. Count changes (new messages, a fresh
     // tab) still rebuild outright — those are new marks, not moved ones.
+    // Every notch that knows its message is a link: data-act routes the delegated click, data-uuid
+    // says where, the title says when (and, for a machine notch, from whom). A notch without a uuid
+    // (nothing to land on) stays a plain mark — no act, no pointer cursor, no false affordance.
+    // The HIT PAD above and below the 2px paint is clamped to half the gap to each neighbour (review
+    // of the first cut, 2026-09-08: a fixed pad reached over a neighbour's paint, and the later
+    // sibling won the hit test — hover, tip and click all answered for the message AFTER the one the
+    // user aimed at, wherever notches sat within about 5px). ys is in event order, hence ascending.
+    const PAD = 2;
+    const pad = (k: number): [number, number] => {
+      const up = k > 0 ? Math.floor((ys[k].y - ys[k - 1].y - 2) / 2) : PAD;
+      const down = k + 1 < ys.length ? Math.floor((ys[k + 1].y - ys[k].y - 2) / 2) : PAD;
+      return [Math.max(0, Math.min(PAD, up)), Math.max(0, Math.min(PAD, down))];
+    };
+    const dress = (m: HTMLElement, o: typeof ys[number], k: number) => {
+      m.className = "scroll-mark" + (o.m ? " " + o.m : "");
+      const [up, down] = pad(k);
+      m.style.setProperty("--hit-t", up + "px");
+      m.style.setProperty("--hit-b", down + "px");
+      if (o.uuid) { m.dataset.act = "markjump"; m.dataset.uuid = o.uuid; m.title = scrollMarkTitle(s.events[o.i] as ChatEvent & { tag?: string }, o.kind); }
+      else { delete m.dataset.act; delete m.dataset.uuid; m.removeAttribute("title"); }
+    };
     const kids = Array.from(box.children) as HTMLElement[];
     if (kids.length === ys.length) {
-      ys.forEach((o, i) => { kids[i].style.top = o.y + "px"; kids[i].className = "scroll-mark" + (o.m ? " " + o.m : ""); });
+      ys.forEach((o, i) => { kids[i].style.top = o.y + "px"; dress(kids[i], o, i); });
     } else {
-      box.replaceChildren(...ys.map((o) => {
-        const m = el("div", "scroll-mark" + (o.m ? " " + o.m : ""));
+      box.replaceChildren(...ys.map((o, k) => {
+        const m = el("div", "");
         m.style.top = o.y + "px";
+        dress(m, o, k);
         return m;
       }));
     }
@@ -2950,6 +3010,15 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
     const romp = kind === "romp";
     const injected = kind === "injected";
     const tagged = kind === "tagged";
+    // A rail dot never stands alone (T261, the user 2026-09-08): a user record the kernel stripped to nothing
+    // (romp's own markers, an injected reminder) used to get its blue dot here and then no bubble below — a dot
+    // claiming a message nobody could see. Nothing to show renders nothing: a zero-height unit, like a queued
+    // group with nothing visible, so the scroll↔unit map still counts it. Decision in user-turn-content.ts.
+    if (!userTurnShows(ev)) {
+      const hid = el("div", "turn turn-user turn-user-empty");
+      hid.style.display = "none";
+      return hid;
+    }
     const turn = el("div", "turn turn-user" + (romp ? " romp" : injected ? " injected" : ""));
     // Unresolved postal ids ride the raw turn so a timeline message arc can still land on it. Without
     // this the arc pointed at a turn with nothing to match and the click died silently (the user
@@ -2985,6 +3054,10 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         turn.appendChild(tchip);
       }
       const bubble = el("div", (romp ? "romp-bubble" : tagged ? "romp-bubble tag-bubble" : injected ? "user-note" : "user-bubble") + " md");
+      // a mid-turn send sits where the model READ it (T252d): the hover says when it was SENT, once the two differ
+      // by more than a minute (both kernel stamps: the atom's landing `ts` and its `sentAt`)
+      const sentTip = sentAtLabel(ev.ts, ev.sentAt);
+      if (sentTip) bubble.title = sentTip;
       // A slash COMMAND you sent reads as a special keyword, not prose (the user 2026-06-29): render the leading
       // "/cmd" token as a monospace chip. Genuine human bubbles only (a romp/injected note is never a command).
       // paths this turn already renders as full in-bubble images (both the caption path and a
@@ -5143,6 +5216,7 @@ function auditTabOrder(ids: string[]) {
   lastTabIds = ids.slice();
 }
 let draggedId: string | null = null;
+let draggedEl: HTMLElement | null = null;   // the very tab being dragged: a session under several tags has a copy per group (T264b), so the id alone no longer names it
 let tabDragCommitted = false;   // set by the strip's drop handler; dragend without it = a cancel (Escape / dropped outside)
 // The drag hit-test's stable inputs (the drag-flap fix, 2026-08-28): every tab's outer width and
 // the strip's geometry, measured ONCE at dragstart. The pointer is then hit-tested against a
@@ -5179,12 +5253,15 @@ function dragImageBlank(): HTMLElement {
 function flipTabs(mutate: () => void): void {
   const bar = document.getElementById("tabs");
   if (!bar) { mutate(); return; }
+  // keyed per COPY — id plus the group it sits in (data-copy, T264b) — since a session under several
+  // tags has a tab in each group and one rect per id would animate every copy from the last one's place
+  const key = (t: HTMLElement) => t.dataset.id + "\0" + (t.dataset.copy ?? "");
   const before = new Map<string, DOMRect>();
-  bar.querySelectorAll<HTMLElement>(".tab[data-id]").forEach((t) => { if (t.dataset.id) before.set(t.dataset.id, t.getBoundingClientRect()); });
+  bar.querySelectorAll<HTMLElement>(".tab[data-id]").forEach((t) => { if (t.dataset.id) before.set(key(t), t.getBoundingClientRect()); });
   mutate();
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   bar.querySelectorAll<HTMLElement>(".tab[data-id]").forEach((t) => {
-    const a = t.dataset.id ? before.get(t.dataset.id) : undefined;
+    const a = t.dataset.id ? before.get(key(t)) : undefined;
     if (!a) return;
     const b = t.getBoundingClientRect();
     const dx = a.left - b.left, dy = a.top - b.top;
@@ -5408,11 +5485,7 @@ function releaseTabStrip(): void {
 // tab is a labeled group, not a button — it takes no action and no focus, and "button, expanded"
 // promised both.
 function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
-  if (sec.name === null) {
-    const sep = el("div", "tab-group-sep");
-    sep.title = "sessions in no tag";
-    return sep;
-  }
+  if (sec.name === null) return makeRowBreak(true);
   const name = sec.name;
   const head = el("div", "tab-group-head" + (collapsed ? " collapsed" : "") + (holdsActive ? " holds-active" : ""));
   head.dataset.group = name;
@@ -5609,8 +5682,20 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   });
   return head;
 }
+/** A ROW BREAK (T264, the user 2026-09-08): a zero-height item spanning the strip, so whatever follows
+ *  opens a new line — every tag group starts on its own row (chip at the left edge, its tabs after
+ *  it, wrapping as they need) instead of the groups running on as one long concatenation. The
+ *  untagged trail's break also wears .tab-group-sep, the boundary sectionHeadOf reads (the trail
+ *  stays unlabeled by the user's ruling — its own line, with no chip, says "in no tag"). Breaks are
+ *  layout only: no drop, no hover, not a row for paintTabRowLines, and in the tab drag's virtual
+ *  layout the box AFTER a break starts a row (`br`) so the simulation wraps where the strip does. */
+function makeRowBreak(untagged: boolean): HTMLElement {
+  const brk = el("div", "tab-group-break" + (untagged ? " tab-group-sep" : ""));
+  brk.setAttribute("aria-hidden", "true");
+  return brk;
+}
 /** The section header a strip node belongs to: itself for a header, else the nearest header before
- *  it; null past the untagged separator or on a flat strip. */
+ *  it; null past the untagged boundary (the trail's row break) or on a flat strip. */
 function sectionHeadOf(node: HTMLElement): HTMLElement | null {
   let n: Element | null = node;
   while (n) {
@@ -5723,10 +5808,11 @@ function paintTabRowLines(bar: HTMLElement): void {
   for (const old of Array.from(bar.querySelectorAll(":scope > .tab-row-line"))) old.remove();
   const rows = new Map<number, number>();   // rowTop → rowBottom (max tab bottom in that row)
   for (const t of Array.from(bar.children) as HTMLElement[]) {
-    // tabs, and the section headers + untagged separator (tab groups): a wrapped row made only of
-    // folded headers is a row too — without a line under it the headers sat directly on the tabs
-    // below, reading as captions for tabs that are not theirs (the T134 floating look, back)
-    if (!(t.classList.contains("tab") || t.classList.contains("tab-group-head") || t.classList.contains("tab-group-sep"))) continue;
+    // tabs, and the section headers (tab groups): a wrapped row made only of folded headers is a
+    // row too — without a line under it the headers sat directly on the tabs below, reading as
+    // captions for tabs that are not theirs (the T134 floating look, back). The zero-height row
+    // BREAKS (T264) are not rows: one would draw a line at the strip's very top edge.
+    if (!(t.classList.contains("tab") || t.classList.contains("tab-group-head"))) continue;
     const top = t.offsetTop, bot = t.offsetTop + t.offsetHeight;
     rows.set(top, Math.max(rows.get(top) ?? 0, bot));
   }
@@ -5829,8 +5915,9 @@ function renderTabs() {
   }
   // TAB SECTIONS (the user 2026-09-04): groups are tags. With sectioning on (per browser — the
   // tag-lens menu's "Group tabs by tag") and some tag holding a visible tab, the strip renders one
-  // header per HOME tag in tagOrder — the rule revealIn already states, so a tab's section and its
-  // reveal agree — then that section's tabs, and the untagged trail behind a plain separator
+  // header per tag in tagOrder holding a visible tab, each tab under EVERY tag it carries (T264b, the
+  // user 2026-09-08: tags are equivalent — a session under N tags has a copy in N groups), then that
+  // section's tabs, and the untagged trail — the sessions in no tag — on its own line
   // (tab-groups.ts owns the rule). A folded section renders its header alone, with the count and
   // a pip when a member is working or blocked, so the gist survives the fold (progressive
   // disclosure). The ACTIVE tab's section folds like any other (the user 2026-09-06): its header
@@ -5843,7 +5930,6 @@ function renderTabs() {
   const plan = planStrip(visibleIds, unions, readTabGroups(unions), activeId, phoneLayout(),
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
-  hiddenTabIds = new Set(plan.items.flatMap((it) => ("head" in it ? it.hides : [])));
   lastStripItems = plan.items;   // before the skip below: the snapshot (stripAftermath → renderSnapshot) and the folded stand-in read the plan from here on either path
   // AN UNCHANGED STRIP IS NOT REBUILT (2026-09-06). The signature is every input the loop below and the
   // controls after it paint — the plan (ids in order, section headers with their folds and hidden members),
@@ -5893,14 +5979,34 @@ function renderTabs() {
   const focusedDoor = !!focusedEl?.classList.contains("tab-group-door");   // the open header's count as the door to the pane (makeGroupHead): the flag's rule
   const refocusTab = bar.contains(document.activeElement);
   bar.replaceChildren();
+  // A session under several tags has a COPY in each group (T264b, the user 2026-09-08: tags are
+  // equivalent, none takes precedence). Every copy below is the full tab of the ONE session — same
+  // identity colour, same state class and dot, the active highlight on all of them (the loop reads
+  // activeId per item), the ✕ on all of them (ending the one session); a click on any copy selects
+  // the session (the #tabs delegate reads data-id). data-copy names the copy's group so a per-copy
+  // reader (flipTabs) can tell them apart; every by-id reader (focus, the menu, the tip) lands on the
+  // first copy, which is the same session.
+  let copyGroup: string | null | undefined;
   for (const item of plan.items) {
-    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active, item.hidden)); continue; }
+    if ("head" in item) {
+      // every group on its own line (T264): a row break ahead of each header — except the strip's
+      // first item, which already opens the first row; the untagged trail's header IS a break
+      if (item.head.name !== null && bar.childElementCount) bar.appendChild(makeRowBreak(false));
+      bar.appendChild(makeGroupHead(item.head, item.folded, item.active, item.hidden));
+      copyGroup = item.head.name;
+      continue;
+    }
     const id = item.id;
     const s = sessions.get(id);
-    if (!s) { bar.appendChild(makePlaceholderTab(id)); continue; }
+    if (!s) {
+      const ph = makePlaceholderTab(id);
+      if (copyGroup !== undefined) ph.dataset.copy = copyGroup ?? "";   // a placeholder copy per group too — flipTabs keys per copy (T264b)
+      bar.appendChild(ph); continue;
+    }
     const tab = el("div", "tab" + (id === activeId ? " active" : ""));
     tab.tabIndex = 0;            // focusable for keyboard nav
     tab.dataset.id = id;
+    if (copyGroup !== undefined) tab.dataset.copy = copyGroup ?? "";   // sectioned strip: which group this copy sits in
     tab.dataset.act = "select";  // click → setActive, via the stable #tabs delegate (./actions), not a per-node handler
     tab.addEventListener("keydown", onTabKey);
     // drag-to-reorder (synced with the timeline via the shared session-order file). A subagent viewer
@@ -5913,7 +6019,7 @@ function renderTabs() {
     // visual, browser-style. dragImageBlank must be a rendered DOM node at dragstart (Chromium
     // snapshots it), hence the fixed off-viewport 1px div installed once below.
     tab.addEventListener("dragstart", (e) => {
-      draggedId = id; tabDragCommitted = false;
+      draggedId = id; draggedEl = tab; tabDragCommitted = false;
       tabStripSig = "";   // the drag live-reorders the strip's DOM: whatever the order ends up, the next render rebuilds
       if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(dragImageBlank(), 0, 0); }
       tab.classList.add("dragging");
@@ -5928,7 +6034,7 @@ function renderTabs() {
     // already asked for its render; it ran deferred, so flush it.
     tab.addEventListener("dragend", () => {
       const cancelled = !tabDragCommitted;
-      draggedId = null; tabDragCommitted = false;
+      draggedId = null; draggedEl = null; tabDragCommitted = false;
       tab.classList.remove("dragging");
       tabPointerHeld = false;
       const pending = renderPendingWhilePressed;
@@ -6040,7 +6146,10 @@ function renderTabs() {
     // Close-tab / End-session confirm (closeSession → confirmClose). A subagent viewer likewise
     // just closes (the tabs delegate's close handler routes it by isSubId).
     const dead = st === "closed";
-    close.title = dead || s.sub ? "Close tab" : "End session";
+    // a session shown in several groups (T264b) has a ✕ on every copy, and any of them ends THE session —
+    // the tip says so, since a user may expect the ✕ to take the tab out of just this group
+    const copies = plan.items.reduce((n, it) => n + ("id" in it && it.id === id ? 1 : 0), 0);
+    close.title = dead || s.sub ? "Close tab" : copies > 1 ? "End session (it is the one session, shown in every group it is tagged with)" : "End session";
     // Click-safe (see ./actions): renderTabs() does `#tabs`.replaceChildren() on every kernel push, so a
     // handler hung on this ✕ is destroyed mid-click and the click is dropped (the "had to click End session
     // several times" bug). The action lives on the stable #tabs delegate instead; this node just declares it.
@@ -6051,7 +6160,7 @@ function renderTabs() {
     // double-click a tab to show/hide the ledger overview — same as the strip's caret
     tab.addEventListener("dblclick", (e) => { e.preventDefault(); toggleLedgerCollapsed(); });
     // right-click → context menu; "Rename" edits the title in place (not for a viewer: nothing to rename/hide/end)
-    if (!s.sub) tab.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); showTabMenu(e, id); });
+    if (!s.sub) tab.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); showTabMenu(e, id, tab.dataset.copy); });   // the copy's group rides along (T264b)
     bar.appendChild(tab);
   }
   const add = el("div", "tab tab-add");
@@ -6295,7 +6404,7 @@ function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "p
   return span;
 }
 
-function showTabMenu(e: MouseEvent, id: string) {
+function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: the group the right-clicked copy sits in (T264b), a plain string so the menu stays id-keyed
   dismissTabMenu();
   closeEmojiPrompt();   // a menu opening closes the emoji picker the last one spawned (the swatches' dismissal rule)
   const menu = el("div", "ctx-menu");
@@ -6313,7 +6422,7 @@ function showTabMenu(e: MouseEvent, id: string) {
     const l = el("span", "ctx-item-label"); l.textContent = "Rename"; bodyEl.appendChild(l);
     const sb = el("span", "ctx-item-sub"); sb.textContent = "the name is a label — mail, goals and history follow the session"; bodyEl.appendChild(sb);
     rename.appendChild(bodyEl);
-    rename.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); startTabRename(id); });
+    rename.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); startTabRename(id, copy); });
     menu.appendChild(rename);
   }
   // Move to folder… sits with Rename (the user 2026-09-01: a subproject became its own repo and the
@@ -6603,14 +6712,16 @@ function showTabMenu(e: MouseEvent, id: string) {
         }
         const others = unionFor().filter((g) => !g.members.includes(id) && !g.pending);   // a tag being created is not joinable yet
         if (holding().length && others.length) sub.appendChild(el("div", "ctx-sep"));
-        // ONE-CLICK MOVE (tab groups on tags, the user 2026-09-04): a session's section is its HOME
-        // tag — the first holder in tagOrder — so while the strip is sectioned and the session has
-        // one, each other tag's row reads "Move to <name>": one click adds that tag and drops the
-        // home tag, leaving any other tag alone (they filter, they do not section). The row's "+"
-        // adds without moving. With no home tag, "+ <name>" IS the move. A home tag whose create is
-        // still in flight cannot be moved out of (no id to address); the rows read "+ <name>" until
-        // the ack.
-        const home0 = readTabGroups().on ? holding()[0] : undefined;
+        // ONE-CLICK MOVE (tab groups on tags, the user 2026-09-04): while the strip is sectioned, each
+        // other tag's row reads "Move to <name>": one click adds that tag and drops THE GROUP THIS COPY
+        // SITS IN (T264b: a session under several tags has a copy in each group, and the menu opened
+        // from a copy speaks for that copy's group — the copy the user right-clicked is the one that
+        // moves; its other tags are left alone). No copy named (an older caller): the first holder in
+        // tagOrder. The row's "+" adds without moving. With no tag, "+ <name>" IS the move. A tag
+        // whose create is still in flight cannot be moved out of (no id to address); the rows read
+        // "+ <name>" until the ack. Whether "move" between equivalent tags is the right verb at all is
+        // the user's call (flagged with T264b); the mechanics are unchanged here.
+        const home0 = readTabGroups().on ? ((copy !== undefined ? holding().find((g) => g.name === copy) : undefined) ?? holding()[0]) : undefined;
         const home = home0 && !home0.pending ? home0 : undefined;
         for (const g of others) {
           const row = el("div", "ctx-item ctx-item-toggle");
@@ -6621,7 +6732,7 @@ function showTabMenu(e: MouseEvent, id: string) {
             lb.textContent = "Move to " + g.name; bodyE.appendChild(lb);
             row.appendChild(bodyE);
             const plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;
-            plus.type = "button"; plus.textContent = "+"; plus.title = "add this tag too — the session stays in its current group";
+            plus.type = "button"; plus.textContent = "+"; plus.title = "add this tag too — the session keeps its other tags";
             plus.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
             row.appendChild(plus);
             row.addEventListener("click", (e2) => { e2.stopPropagation(); moveUnion(home, g); build(); sb.textContent = subText(); });
@@ -6794,7 +6905,7 @@ window.addEventListener("blur", () => dismissTabMenu());
 // "Rename" (tab context menu): swap the tab's label for an inline input. Enter
 // or clicking away commits (the host renames the tmux session and confirms with
 // a "renamed" message — the label only changes once that lands), Esc cancels.
-function startTabRename(id: string) {
+function startTabRename(id: string, copy?: string) {   // `copy`: which copy of a multi-tag session to edit in place (T264b); the first one when it is gone
   const s = sessions.get(id);
   if (!s) return;
   // Resolve the tab NOW, by id. The old signature took the nodes captured at menu-open time, and a
@@ -6804,8 +6915,9 @@ function startTabRename(id: string) {
   // attempt always worked, and why committing it healed everything (the user 2026-08-08: "rename only
   // takes on the second try"). A vanished tab (session closed mid-menu) bails out BEFORE the flag.
   const bar = document.getElementById("tabs");
-  const tab = bar && Array.from(bar.children).find(
-    (t): t is HTMLElement => t instanceof HTMLElement && t.dataset.id === id);
+  const tab = bar && (Array.from(bar.children).find(
+    (t): t is HTMLElement => t instanceof HTMLElement && t.dataset.id === id && (copy === undefined || t.dataset.copy === copy))
+    ?? Array.from(bar.children).find((t): t is HTMLElement => t instanceof HTMLElement && t.dataset.id === id));   // the right-clicked copy (T264b), else the first
   const label = tab && tab.querySelector<HTMLElement>(".tab-label");
   if (!tab || !label || tab.querySelector(".tab-rename")) return;
   // A remote session displays as "host:name", where "host:" is METADATA this viewer added (see
@@ -6893,11 +7005,16 @@ function focusActiveTab() {
   if (!home || home.name === null || !bar) return;
   Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((h) => h.dataset.group === home.name)?.focus();
 }
-/** Open the section a folded-away tab is homed in (a session pick names the tab, so its tab must be on
- *  screen). The store write notifies (TABGROUPS_EVENT) and the listener re-renders the strip. */
+/** Open a section that puts a folded-away tab on screen (a session pick names the tab, so its tab must be on
+ *  screen). Per holder, since a session under several tags has a copy under each and every copy's fold and hide
+ *  stand on their own (T264b; the fork's 2026-09-08 fold): the first folded holder in the strip's order whose
+ *  `hides` (the snapshot's Hide) does not list the tab opens. A holder hiding the tab is passed over, because
+ *  opening it brings no tab (a hidden tab comes on screen through Show, not through a pick), so a tab hidden in
+ *  every holder leaves every fold alone: the gesture named the session, whose transcript shows with a header as
+ *  its stand-in. The store write notifies (TABGROUPS_EVENT) and the listener re-renders the strip. */
 function unfoldSectionOf(id: string): void {
-  const home = homeSectionOf(lastStripItems, id);
-  if (home && home.name !== null) writeTabGroups(setSectionCollapsed(tabGroups(), home.name, false));
+  const holder = lastStripItems.find((it) => "head" in it && it.head.name !== null && it.folded && it.head.ids.includes(id) && !it.hides.includes(id));
+  if (holder && "head" in holder && holder.head.name !== null) writeTabGroups(setSectionCollapsed(tabGroups(), holder.head.name, false));
 }
 // "Enter to start typing" lands on whatever's actually showing below the transcript: when a live
 // AskUserQuestion picker is up the PICKER CARD owns the keyboard (↑/↓ step the options, Enter confirms), so
@@ -7083,12 +7200,17 @@ window.addEventListener("keydown", (e) => {
 // Nearest tab in the row above (dir<0) or below (dir>0) the given tab, by column.
 function tabInAdjacentRow(id: string, dir: number): string | null {
   const bar = document.getElementById("tabs");
-  const cur = bar?.querySelector(`.tab[data-id="${id}"]`) as HTMLElement | null;
+  // a session under several tags has a tab in each group (T264b): the origin is the FOCUSED copy when
+  // it wears the id — the row the user is looking at — else the first copy
+  const focused = document.activeElement as HTMLElement | null;
+  const cur = focused && focused.classList.contains("tab") && focused.dataset.id === id && bar?.contains(focused)
+    ? focused : bar?.querySelector(`.tab[data-id="${id}"]`) as HTMLElement | null;
   if (!bar || !cur) return null;
   const cr = cur.getBoundingClientRect();
   const cx = cr.left + cr.width / 2;
   let best: { id: string; score: number } | null = null;
   for (const t of Array.from(bar.querySelectorAll(".tab[data-id]")) as HTMLElement[]) {
+    if (t.dataset.id === id) continue;   // never the session's own other copy: setActive would no-op and the key would read dead (T264b)
     const r = t.getBoundingClientRect();
     const vGap = dir < 0 ? cr.top - r.bottom : r.top - cr.bottom; // >0 only if on a row in that direction
     if (vGap < -1) continue;
@@ -7149,7 +7271,7 @@ function openProvisional(req: CreateReq): void {
   pendingNewSession = display;
   const id = mintProvisionalId(Date.now().toString(36) + Math.random().toString(36).slice(2));
   provisionalId = id;
-  provisionalTags = req.tags?.slice() ?? [];   // its future home: the strip sections it there from the first paint
+  provisionalTags = req.tags?.slice() ?? [];   // the strip sections it under each of these from the first paint
   // state "opening", NOT "working": updateStatusline renders the working chip with an elapsed timer off
   // sinceEpoch, and a provisional tab has no honest work clock — the seed showed "Working" + a giant
   // number for however long the first kernel payload took (the user 2026-08-10, who read it as "a random
@@ -10214,8 +10336,50 @@ function filterPicker(q: string) {
   setActiveRow(creating && q.trim() ? null : pickerRows()[0] ?? null);
 }
 
-function nearBottom(c: HTMLElement): boolean {
+// Two readings of "at the bottom", never one (T262c, the user 2026-09-08, who wheeled up from the tail of a
+// working session, saw no go-to-bottom chevron for a stretch, and within that stretch had the view snap back;
+// they expected the chevron the moment they left the bottom). One 80 px band used to drive BOTH follow mode
+// (appendActive's stick, followReader's record, the leaving-tab save, the rebuild's _wasNear, the resize
+// compensations) AND the jump chip, so for the first 80 px of a deliberate scroll-up the pane still counted the
+// reader as at the bottom: no chip, and every content-height change of a working session — streaming text, a
+// landed card — re-pinned them to the bottom through followTail's height-changed branch. That is the snapback
+// with no predictable interval: it fired whenever the session appended while they were inside the band.
+// Follow mode and the chip now read the TRUE bottom (atBottom: within the 2 px sub-pixel tolerance followTail
+// already used), so leaving the bottom by more than 2 px leaves follow mode and shows the chip at once, and the
+// only ways back are a scroll to the true bottom or the chip. The 80 px band survives ONLY as nearBottomForSend,
+// for the user's own send revealing itself (registerOptimistic; the user 2026-08-09, whose send painted below
+// the fold and looked lost): the question there is whether they meant to be at the tail, and a reader a few
+// lines up who hits Enter still gets to see their bubble. Two names so the two intents cannot be confused again.
+function atBottom(c: HTMLElement): boolean {
+  return atBottomDist(c.scrollHeight - c.scrollTop - c.clientHeight);
+}
+function nearBottomForSend(c: HTMLElement): boolean {
   return c.scrollHeight - c.scrollTop - c.clientHeight < 80;
+}
+
+// EVERY programmatic write to #content.scrollTop goes through here (T262, the user 2026-09-08, whose view "jumps
+// up slightly on my scroll" on a page whose bundle state nobody could see): a write that moved the view files one
+// client-diag row naming its writer (before, after, delta, whether it was a follow-to-bottom), and the scroll
+// listener below files a "scrollgesture" row for every scroll these writes do not explain, so a recording's
+// timestamps match the laptop's client-diag.jsonl and the next occurrence is convictable. Capped per session per
+// minute per kind (scroll-write.ts), one "capped" row at the cap; no stack traces; a write that did not move the
+// view files nothing. The value written is applied exactly as before: this changes nothing about WHERE the view
+// lands, only that the landing is on the record.
+let lastScrollWriteAfter: number | null = null;
+const scrollDiag = new ScrollDiagBudget();
+function scrollDiagRow(kind: "scrollwrite" | "scrollgesture", data: any): void {
+  const v = scrollDiag.take(activeId || "", kind, Date.now());
+  if (v === "drop") return;
+  vscodeApi?.postMessage(v === "cap"
+    ? { type: "clientDiag", surface: "chat", what: kind + "-capped", data: { sid: activeId || "", perMinute: 40 } }
+    : { type: "clientDiag", surface: "chat", what: kind, data });
+}
+function writeScroll(content: HTMLElement, top: number, writer: string, stick = false): void {
+  const before = content.scrollTop;
+  content.scrollTop = top;
+  const after = content.scrollTop;
+  lastScrollWriteAfter = after;
+  if (after !== before) scrollDiagRow("scrollwrite", scrollWriteRow(activeId || "", writer, before, after, stick, content.scrollHeight, content.clientHeight));
 }
 
 function cssEscape(s: string): string {
@@ -10322,7 +10486,7 @@ function scrollToAnchor(uuid: string): boolean {
     const content = document.getElementById("content");
     if (content) {
       const yNow = target.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
-      content.scrollTop = yNow - keepY;
+      writeScroll(content, yNow - keepY, "keep-offset");
     }
     return true;
   }
@@ -10524,8 +10688,26 @@ function ensureView(id: string): View {
     // turn and the native thumb moved to the new truth while the notches kept the stale frame, and a notch
     // for a message on screen read as "below". The view element's box grows with any child, so one observer
     // per view re-runs the shared rAF paint exactly when the geometry changes. No timer, no per-image hook.
+    // …and the same observer carries the tail-shrink rule (T262f, the user 2026-09-08: the pane unreadable near
+    // the bottom): the ACTIVE view's element losing height — a queued group emptying, the offline foot going, a
+    // tail unit re-rendering shorter outside the append path — moves the transcript's bottom UP, and the browser
+    // clamps scrollTop to the new maximum on its own: an unwritten move the follow-mode latch never saw. When the
+    // view's RECORDED follow mode held (`stick`, the pre-change truth), the reader is written to the new bottom
+    // through writeScroll — where the clamp left them, so nothing moves twice, but the move is the pane's own,
+    // attributed in the journal, and the latch re-reads from a real scroll event. A scrolled-up reader is untouched.
     if (typeof ResizeObserver === "function") {
-      v.ro = new ResizeObserver(() => scheduleRailSticky());
+      let lastH = -1;                                        // -1 = not yet measured (observe fires once on attach)
+      const view = v;                                        // the closure's own binding (the outer `v` is a let)
+      v.ro = new ResizeObserver((entries) => {
+        scheduleRailSticky();
+        const h = entries[0]?.contentRect?.height ?? 0;
+        const content = document.getElementById("content");
+        if (content && lastH >= 0 && activeId === id && view.shown && content.clientHeight > 0 && followTailShrink(view.stick, h - lastH)) {
+          writeScroll(content, content.scrollHeight, "tail-shrink", true);
+          view.scrollTop = content.scrollTop;
+        }
+        lastH = h;
+      });
       v.ro.observe(elv);
     }
     views.set(id, v);
@@ -10943,7 +11125,7 @@ function toggleToolGroup(key: string): void {
   // the expand/collapse changes the DOM without changing the event set, so mark the view stale to force
   // the compact rebuild past the cache guard (a plain tab switch leaves stale false → reuses the cache).
   if (activeId) { const v = views.get(activeId); if (v) v.stale = true; syncView(activeId); }
-  if (content) content.scrollTop = top;
+  if (content) writeScroll(content, top, "toolgroup-toggle");
   refillOpenCommentPop();   // the popover renders the same units — its copy of this run must flip too
   scheduleRailSticky();
 }
@@ -10954,11 +11136,11 @@ function rerenderAll(): void {
   cancelPrebuild(); // the queued plan is now stale (every view reset below) — re-warm after showActive
   // The reader's place, captured BEFORE the clear below empties the active view (T249 review find, 2026-09-08):
   // a settings change re-renders the transcript under a reader who may be scrolled up, and once the DOM is
-  // gone there is no anchor to capture and the box no longer overflows. Near the bottom → nothing to keep
+  // gone there is no anchor to capture and the box no longer overflows. At the bottom → nothing to keep
   // (follow mode lands there); a hidden pane has nothing to keep either. showActive restores it after the land.
   const content = document.getElementById("content");
   const av = activeId ? views.get(activeId) : null;
-  const keep = av && av.shown && content && content.clientHeight > 0 && !nearBottom(content) ? captureScrollAnchor(content, av) : null;
+  const keep = av && av.shown && content && content.clientHeight > 0 && !atBottom(content) ? captureScrollAnchor(content, av) : null;   // follow mode: only a true tail-sitter lands at the bottom
   for (const v of views.values()) { while (v.el.firstChild) v.el.removeChild(v.el.firstChild); v.rendered = 0; v.stale = false; v.winStart = 0; v.winEnd = 0; v.avgTurnH = undefined; v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
   showActive(keep);
   schedulePrebuild(); // rebuild every off-screen view in idle under the new setting, so switches stay instant
@@ -11533,7 +11715,7 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // decision, and a restore over its landing would undo the jump the reader asked for (review find, 2026-09-08)
   const navigating = !!pendingAnchor || pendingAnchorT != null || (!!seek && seek.sid === activeId);
   const reshow = keepPlaceAcrossShow(v, v.el.style.display !== "none", content.clientHeight > 0, navigating);
-  const keepAnchor = reshow ? (keep !== undefined ? keep : (!nearBottom(content) ? captureScrollAnchor(content, v) : null)) : null;
+  const keepAnchor = reshow ? (keep !== undefined ? keep : (!atBottom(content) ? captureScrollAnchor(content, v) : null)) : null;   // follow mode: off the true bottom keeps its place
   // Bound the switch. A view the user scrolled to the top of has had its window expanded to the WHOLE
   // transcript (winStart crept to 0 via lazy-expand), and compact mode renders the whole folded stream —
   // either way, revealing thousands of nodes is the big-session switch lag (the user 2026-06-25: 4144 turns
@@ -11680,8 +11862,17 @@ function landActive(content: HTMLElement | null, v: View): void {
     }
   }
   if (!scrolled) {
-    if (!v.shown || v.stick) content.scrollTop = content.scrollHeight;
-    else content.scrollTop = v.scrollTop;
+    // a page reload's one-shot restore (T265): the tab that was active when the page went down lands where its
+    // reader was — the bottom for a follow-mode reader, else their anchor turn, else the raw saved scrollTop
+    const rs = takeReloadScroll(pendingReloadScroll, activeId);
+    if (rs) {
+      pendingReloadScroll = null;
+      v.stick = rs.stick;
+      if (rs.stick) writeScroll(content, content.scrollHeight, "reload-restore", true);
+      else if (!(rs.anchor && restoreScrollAnchor(content, v, rs.anchor))) writeScroll(content, rs.top, "reload-restore");
+    }
+    else if (!v.shown || v.stick) writeScroll(content, content.scrollHeight, "land-bottom", true);
+    else writeScroll(content, v.scrollTop, "land-saved");
   }
   v.shown = true;
   scheduleRailSticky();
@@ -11696,6 +11887,44 @@ function landActive(content: HTMLElement | null, v: View): void {
 // turn still visible at the viewport top, keyed by its STABLE data-uuid, and after the rebuild put THAT
 // element back at its exact offset — then content changing anywhere else, above or below, cannot move what
 // the user is reading. The raw scrollTop stays as the fallback for an anchor the render window evicted.
+// ── a page reload keeps the reader's place (T265, the user 2026-09-08) ───────────────────────────────────
+// The dashboard now reloads itself on a kernel restart and on a newer served bundle (the shell's reload core,
+// kernel.py _RELOAD_CORE_JS). The core calls window.__rompPersistForReload on every pane SYNCHRONOUSLY before
+// location.reload (a posted message could miss the unload); `pagehide` is the belt for any other navigation.
+// The record rides the persisted webview state beside the drafts and the active tab, is taken out of the state
+// the moment the page loads (one reload, one restore) and is consumed by landActive's first show of that tab.
+let pendingReloadScroll: ReloadScroll | null = (() => {
+  try {
+    const st = (vscodeApi?.getState?.() || {}) as any;
+    const r = st.reloadScroll || null;
+    if (r && vscodeApi?.setState) vscodeApi.setState({ ...st, reloadScroll: undefined });
+    return r;
+  } catch { return null; }
+})();
+function persistScrollForReload(): void {
+  const content = document.getElementById("content");
+  const v = activeId ? views.get(activeId) : null;
+  if (!content || !v || !v.shown || content.clientHeight <= 0) return;
+  const stick = content.scrollHeight - content.scrollTop - content.clientHeight <= 2;   // the true bottom
+  const rec = reloadScrollRecord(activeId, content.scrollTop, stick, stick ? null : captureScrollAnchor(content, v));
+  try { if (vscodeApi?.setState) vscodeApi.setState({ ...(vscodeApi.getState() || {}), reloadScroll: rec }); } catch { /* ignore */ }
+}
+// The warning toasts on screen when the CORE reloads the page (the fork's 2026-09-08 fold, T215 meets T265). A toast
+// is DOM only and lives 12 s, and the core's restart reload follows the last pending ship's retirement within half a
+// second (it held for the ship; see publishReloadHold), so the nack saying an attachment was not saved and the message
+// not sent, or the ack saying a held message on another tab was not sent, was gone before it could be read, and the
+// fresh page's loss toast had nothing to say (shipsInFlight was already empty). Their texts ride the persisted state
+// beside the drafts as pendingNotices and the fresh page shows them again once (the load-time block after the loss
+// toast; reload-hold.ts liveNotices reads them, takePendingNotices consumes them). The core's synchronous hook alone
+// writes them: a reload of the user's own (pagehide) says nothing twice, the way the loss toast fires once and not on
+// every load (tests/test_ship_reship.py ReloadLossToast), while the scroll record rides both, as upstream wrote it.
+function persistNoticesForReload(): void {
+  try { if (vscodeApi?.setState) vscodeApi.setState({ ...(vscodeApi.getState() || {}), pendingNotices: liveNotices(document.getElementById("warn-toasts")) }); } catch { /* ignore */ }
+}
+function persistForReload(): void { persistScrollForReload(); persistNoticesForReload(); }   // the core's hook: both records
+(window as any).__rompPersistForReload = persistForReload;
+window.addEventListener("pagehide", persistScrollForReload);
+
 function captureScrollAnchor(content: HTMLElement, v: View): { uuid: string; y: number } | null {
   const cTop = content.getBoundingClientRect().top;
   const turns = v.el.querySelectorAll("[data-uuid]");
@@ -11715,7 +11944,7 @@ function restoreScrollAnchor(content: HTMLElement, v: View, a: { uuid: string; y
   const el = v.el.querySelector(`[data-uuid="${cssEscape(a.uuid)}"]`) as HTMLElement | null;
   if (!el) return false;
   const yNow = el.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
-  content.scrollTop = yNow - a.y;              // the anchor turn keeps its exact on-screen offset
+  writeScroll(content, yNow - a.y, "anchor-restore");   // the anchor turn keeps its exact on-screen offset
   return true;
 }
 
@@ -11753,17 +11982,24 @@ function appendActive() {
   const v = views.get(activeId);
   // Follow-the-tail engages ONLY once content actually overflows (the user 2026-08-25: with slack
   // below, a streaming reply should write IN PLACE and grow a scrollbar, not jump the view to the
-  // bottom). nearBottom is trivially true while nothing overflows, so without this gate the very
+  // bottom). atBottom is trivially true while nothing overflows, so without this gate the very
   // append that crosses the overflow boundary yanked the view. Overflowing + genuinely at the
   // bottom keeps the existing stick; scrolled-up keeps its never-yank rule.
-  const stick = content.scrollHeight > content.clientHeight + 2 && nearBottom(content);
+  // follow mode: the TRUE bottom (T262c), never the send band
+  const stick = content.scrollHeight > content.clientHeight + 2 && atBottom(content);
   const before = content.scrollTop;
+  const heightBefore = content.scrollHeight;
+  const distBefore = heightBefore - before - content.clientHeight;
   const anchor = !stick && v ? captureScrollAnchor(content, v) : null;
   syncView(activeId, stick);
   syncHostOfflineFoot();                 // before the scroll maths: it changes scrollHeight
   updateStatusline();
-  if (stick) content.scrollTop = content.scrollHeight;
-  else if (!(v && restoreScrollAnchor(content, v, anchor))) content.scrollTop = before;
+  // Follow-mode pins the bottom only when there is something new to follow (T262, the user 2026-09-08): a
+  // status-only tail changes no content, and pinning on it snapped a reader wheeling up from the tail of a
+  // busy session back down within the first 80 px, frame after frame. Decision in scroll-keep.ts followTail.
+  if (stick && followTail(distBefore, heightBefore, content.scrollHeight)) writeScroll(content, content.scrollHeight, "append-stick", true);
+  else if (stick) { /* near the bottom, nothing new: the reader stays where they are */ }
+  else if (!(v && restoreScrollAnchor(content, v, anchor))) writeScroll(content, before, "append-raw");
   scheduleRailSticky();
   updateJumpBtn();   // appends can cross the overflow boundary either way — re-read the chip's truth
 }
@@ -11789,8 +12025,9 @@ if (typeof ResizeObserver === "function") {
 // ── jump to newest (the user 2026-08-31) ─────────────────────────────────────────────────────────
 // Scrolled-up reading leaves follow mode, and the send gate keeps it that way — this chip is the
 // deliberate way BACK. Visible only while the transcript overflows AND the view is off the bottom,
-// read through the SAME nearBottom threshold appendActive's stick and the send gate use (one
-// definition, never a second). Click = snap to the bottom + set the view's stick: follow mode
+// read through the SAME atBottom read appendActive's stick uses (one definition, never a second; the
+// send gate keeps its own wider band, nearBottomForSend, on purpose — T262c). So the chevron appears
+// the moment the reader is more than 2 px off the bottom. Click = snap to the bottom + set the view's stick: follow mode
 // re-engaged exactly as today's at-bottom behavior — every subsequent append recomputes stick from
 // the at-bottom position and keeps descending until the user scrolls up, which re-shows the chip
 // from the same listener. It lives on BODY, never inside #content, so window re-renders cannot
@@ -11808,14 +12045,14 @@ jumpBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none"
 function updateJumpBtn(): void {
   const c = document.getElementById("content");
   if (!c || c.clientHeight <= 0) { jumpBtn.hidden = true; return; }   // hidden pane measures 0 — no chip
-  const off = c.scrollHeight > c.clientHeight + 2 && !nearBottom(c);
+  const off = c.scrollHeight > c.clientHeight + 2 && !atBottom(c);   // the chip: shown the moment the reader leaves the true bottom
   jumpBtn.hidden = !off;
   if (off) jumpBtn.style.bottom = (Math.max(0, window.innerHeight - c.getBoundingClientRect().bottom) + 8) + "px";
 }
 jumpBtn.onclick = () => {
   const c = document.getElementById("content");
   if (!c) return;
-  c.scrollTop = c.scrollHeight;                       // the snap IS the acknowledgment
+  writeScroll(c, c.scrollHeight, "jump-button", true);   // the snap IS the acknowledgment
   const v = activeId ? views.get(activeId) : undefined;
   if (v) { v.stick = true; v.scrollTop = c.scrollTop; }   // the explicit re-entry into follow mode
   updateJumpBtn();                                    // at the bottom now — the chip hides itself
@@ -11835,7 +12072,7 @@ window.addEventListener("resize", updateJumpBtn);
 // the reader's own scrolling. So the spot named where the tab was when last left, and a full show of a
 // shown tab (a fork/first-build frame, a settings rerender, a revive failure, a dismissal's fallback)
 // snapped the reader back there. Every scroll of the active view now records its position and its
-// follow-mode (the same nearBottom threshold appendActive and the jump chip read), passive, no timer.
+// follow-mode (the same atBottom read appendActive and the jump chip use), passive, no timer.
 // Programmatic scrolls (a land, an anchor restore) fire the same event, so the record is always the truth —
 // with ONE exception, the transient a DEFERRED build leaves (review find, 2026-09-08): showActive reveals
 // the entering view before its heavy build runs in the next frame, the browser clamps scrollTop to that
@@ -11848,8 +12085,31 @@ window.addEventListener("resize", updateJumpBtn);
   const c = document.getElementById("content");
   if (c) c.addEventListener("scroll", () => {
     if (c.clientHeight <= 0) return;
-    followReader(activeId ? views.get(activeId) : null, c.scrollTop, nearBottom(c), pendingBuildRaf != null);
+    followReader(activeId ? views.get(activeId) : null, c.scrollTop, atBottom(c), pendingBuildRaf != null);
+    // the scroll nobody's code asked for is the user's (T262): filed so a recording lines up with the journal;
+    // a write's own echo (within a pixel of the value written) is consumed here and never read as a gesture
+    if (classifyScroll(c.scrollTop, lastScrollWriteAfter) === "write-echo") lastScrollWriteAfter = null;
+    else scrollDiagRow("scrollgesture", { sid: activeId || "", top: c.scrollTop, gesture: true, sh: c.scrollHeight, ch: c.clientHeight });   // sh/ch: a clamp reads top == sh - ch after sh dropped (T262e)
   }, { passive: true });
+}
+// The live-ask host (#live-ask) sits INSIDE #content after the threads: the picker card is the transcript's tail
+// while it is up, and its clearing is a tail shrink under the reader (T262f) — the same rule as the view's own
+// observer above, with the active view's recorded follow mode deciding.
+if (typeof ResizeObserver === "function") {
+  const tailHost = document.getElementById("live-ask");
+  if (tailHost) {
+    let tailLastH = -1;
+    new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect?.height ?? 0;
+      const content = document.getElementById("content");
+      const v = activeId ? views.get(activeId) : null;
+      if (content && tailLastH >= 0 && v && v.shown && content.clientHeight > 0 && followTailShrink(v.stick, h - tailLastH)) {
+        writeScroll(content, content.scrollHeight, "tail-shrink", true);
+        v.scrollTop = content.scrollTop;
+      }
+      tailLastH = h;
+    }).observe(tailHost);
+  }
 }
 // Boxes ABOVE the transcript grow/shrink → keep the chat text visually anchored (the user 2026-06-30 for
 // #tabbar; extended to #ledger 2026-07-05). Both are `flex: 0 0 auto` directly above the `flex: 1 1 auto`
@@ -11867,14 +12127,42 @@ if (typeof ResizeObserver === "function") {
     const tro = new ResizeObserver((entries) => {
       const h = entries[0]?.contentRect?.height ?? 0;
       const content = document.getElementById("content");
-      if (content && lastH >= 0 && h !== lastH && content.clientHeight > 0 && !nearBottom(content)) {
-        content.scrollTop += h - lastH;
+      // follow mode: an off-bottom reader's line stays still
+      if (content && lastH >= 0 && h !== lastH && content.clientHeight > 0 && !atBottom(content)) {
+        writeScroll(content, content.scrollTop + (h - lastH), "box-resize");
         const v = activeId ? views.get(activeId) : null;
         if (v) v.scrollTop = content.scrollTop;               // keep the per-view saved position in sync
       }
       lastH = h;
     });
     tro.observe(box);
+  }
+}
+// Boxes BELOW the transcript — #bg-tasks (the awaiting/background-task box) and #footer (statusline + the
+// composer, which auto-grows as a message is typed) — grow/shrink → an at-bottom reader STAYS at the bottom
+// (T262e, the user 2026-09-08: the box appeared over the last lines and the pane fell into scrolled-up mode by
+// itself). A box below changes only #content's clientHeight: the browser keeps scrollTop and fires no scroll
+// event, so the reader who was at the bottom is now the box's height above it with the text covered, and the
+// next append reads atBottom false and leaves them there. The rule is the OPPOSITE of the boxes-above one: the
+// view's RECORDED follow mode (`stick` — still the pre-growth truth, nothing scrolled) decides (followBoxBelow),
+// and a follow-mode reader is written to the new bottom; a scrolled-up reader is untouched (their top line never
+// moved). Event-based (the observer), no timer.
+if (typeof ResizeObserver === "function") {
+  for (const boxId of ["bg-tasks", "footer"]) {
+    const box = document.getElementById(boxId);
+    if (!box) continue;
+    let lastH = -1;                                           // -1 = not yet measured (observe fires once on attach)
+    const bro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect?.height ?? 0;
+      const content = document.getElementById("content");
+      const v = activeId ? views.get(activeId) : null;
+      if (content && lastH >= 0 && content.clientHeight > 0 && v && v.shown && followBoxBelow(v.stick, h - lastH)) {
+        writeScroll(content, content.scrollHeight, "box-below", true);
+        v.scrollTop = content.scrollTop;                      // keep the per-view saved position in sync
+      }
+      lastH = h;
+    });
+    bro.observe(box);
   }
 }
 
@@ -11912,7 +12200,7 @@ if (typeof ResizeObserver === "function") {
       // growing the bar shrinks #content, which would push a tail-following view off the tail one
       // sub-threshold step at a time — if it was at the tail when the drag began, keep it there
       const content = document.getElementById("content");
-      if (stick && content) content.scrollTop = content.scrollHeight;
+      if (stick && content) writeScroll(content, content.scrollHeight, "tabbar-drag", true);
     };
     const onUp = () => {
       if (!dragging) return;
@@ -11936,7 +12224,7 @@ if (typeof ResizeObserver === "function") {
       // weeks later with no visible cause.
       startH = cap != null ? clampTabbarH(cap, window.innerHeight) : TABBAR_H_DEFAULT;
       const content = document.getElementById("content");
-      stick = !!content && nearBottom(content);
+      stick = !!content && atBottom(content);   // follow mode at drag start: the true bottom
       pid = e.pointerId;
       // capture so the drag survives leaving the pane; a pointer already gone throws — the window
       // listeners below carry the drag either way, so a failed capture must not abort the setup
@@ -12005,7 +12293,7 @@ function virtualizeToViewport(): void {
       const anchor = v.el.querySelector(`[data-unit="${c}"]`) as HTMLElement | null;
       if (anchor) {
         const yNow = anchor.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
-        content.scrollTop = yNow - beforeY;
+        writeScroll(content, yNow - beforeY, "rewindow");
       }
       if (activeId) applyCommentMarks(activeId);   // the re-window rebuilt turns — re-anchor highlights
       scheduleRailSticky();
@@ -12745,7 +13033,7 @@ function renderLiveAsk() {
   // Reveal the picker if the user is parked at the bottom — it's part of the scroll flow now, so new/taller
   // pickers would otherwise land below the fold. Never yank a user who has scrolled UP to read context.
   const v = activeId ? views.get(activeId) : undefined;
-  if (content && (!v || v.stick)) content.scrollTop = content.scrollHeight;
+  if (content && (!v || v.stick)) writeScroll(content, content.scrollHeight, "liveask-reveal", true);
 }
 
 // The focused option's side-by-side preview box, reproduced VERBATIM in a monospace block (the user
@@ -13938,6 +14226,7 @@ function addPendingShip(id: string | null, name: string, shipId: string): void {
   const list = pendingShips.get(id) || [];
   list.push({ name, shipId });
   pendingShips.set(id, list);
+  publishReloadHold(pendingShips.size);   // the reload core waits for this ship's ack (reload-hold.ts)
   persistDrafts();   // the NAMES ride the draft store so a reload can say what it lost (T215)
   if (id === activeId) renderComposerFiles(id);
 }
@@ -13970,6 +14259,7 @@ function retirePendingShip(key: string, shipId?: string): string | null {
     if (i < 0) i = list.findIndex((p) => k.endsWith("-" + shipSafeName(p.name)));
     list.splice(i >= 0 ? i : 0, 1);
     if (!list.length) pendingShips.delete(id);
+    publishReloadHold(pendingShips.size);   // the last retirement releases a reload the core is holding (reload-hold.ts)
     persistDrafts();
     if (id === activeId) renderComposerFiles(id);
     return id;
@@ -14099,6 +14389,20 @@ try {
       // (review finding 2026-09-01, verified on the emitted bundle). No eval-order dependency now.
       vscodeApi?.setState?.({ ...(vscodeApi.getState?.() || {}), shipsInFlight: [] });
     }
+  }
+} catch { /* ignore */ }
+// The reload core's hold, published from load (reload-hold.ts; the fork's 2026-09-08 fold, T215 meets T265): false
+// here, since the ships this page may have lost were named just above and no payload survived to re-ship them, so
+// a reload the core owes at startup is never held on their account. Every change to pendingShips republishes it.
+publishReloadHold(pendingShips.size);
+// The notices the last page was showing when a reload took it (persistNoticesForReload, the fork's 2026-09-08 fold):
+// shown again once, after the loss toast above, and the record cleared in the same breath so a later load says
+// nothing (one reload, one replay: the reloadScroll idiom).
+try {
+  const taken = takePendingNotices(vscodeApi?.getState?.());
+  if (taken.notices.length) {
+    vscodeApi?.setState?.(taken.rest);
+    for (const text of taken.notices) warnToast(text);
   }
 } catch { /* ignore */ }
 
@@ -14415,6 +14719,7 @@ function renderComposerFiles(id: string | null): void {
       if (!list) return;
       list.splice(i, 1);
       if (!list.length && id) pendingShips.delete(id);
+      publishReloadHold(pendingShips.size);   // a dismissed chip no longer holds the reload core (reload-hold.ts)
       persistDrafts();   // the dismissed chip's name must not resurface as a reload-loss toast
       // dismissing the LAST chip settles an armed hold the same way a nack does — cancelled
       // LOUDLY, never auto-sent: the ✕ removed the very entry whose ack the hold was waiting
@@ -14746,7 +15051,7 @@ const navHist = new NavHistory({
     if (v) { v.scrollTop = spot.top; v.stick = false; }   // land on the remembered spot, never the live bottom
     setActive(spot.sid);
     const c = document.getElementById("content");
-    if (c) whenChatVisible(() => { if (activeId === spot.sid) c.scrollTop = spot.top; });
+    if (c) whenChatVisible(() => { if (activeId === spot.sid) writeScroll(c, spot.top, "nav-history"); });
   },
 });
 
@@ -14768,7 +15073,7 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   // the header) opens its section — the gesture named that session, so the strip follows it.
   const leavingSnap = snapView !== null;
   snapView = null;
-  if (collapsedTabIds.has(id) && !hiddenTabIds.has(id)) unfoldSectionOf(id);   // not a hidden tab's: see hiddenTabIds
+  if (collapsedTabIds.has(id)) unfoldSectionOf(id);   // per holder: see unfoldSectionOf
   if (activeId === id && anchor == null && anchorT == null) {   // already active, nothing to do…
     if (leavingSnap) { renderTabs(); showActive(); }             // …except put its transcript back
     return;
@@ -14789,7 +15094,7 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   const content = document.getElementById("content");
   if (content && activeId && activeId !== id) {
     const cur = views.get(activeId);
-    if (cur) { cur.scrollTop = content.scrollTop; cur.stick = nearBottom(content); }
+    if (cur) { cur.scrollTop = content.scrollTop; cur.stick = atBottom(content); }   // the leaving tab's follow mode: the true bottom
   }
   // Stash the leaving tab's draft; show the entering tab's own (usually empty).
   const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
@@ -14940,7 +15245,7 @@ function upsert(msg: any) {
   if (msg.id === activeId && !(existed && !forked && !firstBuild)) {   // only the rebuild branch (appendActive preserves on its own)
     _scrollContent = document.getElementById("content");
     const _v0 = views.get(msg.id);
-    _wasNear = !_scrollContent || !_v0 || !_v0.shown || nearBottom(_scrollContent);
+    _wasNear = !_scrollContent || !_v0 || !_v0.shown || atBottom(_scrollContent);   // only a true tail-sitter follows a rebuild
     _scrollAnchor = (!_wasNear && _scrollContent && _v0) ? captureScrollAnchor(_scrollContent, _v0) : null;
   }
   if (forked) {
@@ -15092,10 +15397,10 @@ function chatTail(msg: any) {
   // Comparing `from` against the inflated length masked a genuine 1-event gap (the repair below never
   // fired, PR #107's desync class), and a delta starting exactly one past kernel truth landed BEYOND
   // the injected bubble, freezing it into the resident events as fake history the reconcile's strip
-  // loop could never pop (the user 2026-08-09). Since T252 a bubble sits at its send slot, mid-array,
-  // where it would also SHIFT every kernel index after it — so the gap check COUNTS kernel events here,
-  // and the strip itself waits until the delta is going to be applied: stripping ahead of the two early
-  // returns left s.events without the bubble while the DOM still showed it (review of the first cut).
+  // loop could never pop (the user 2026-08-09). The gap check COUNTS kernel events (our group at the tail
+  // is not one of them), and the strip itself waits until the delta is going to be applied: stripping
+  // ahead of the two early returns left s.events without the bubble while the DOM still showed it (review
+  // of the first cut).
   const kernelLen = s.events.reduce((n, e) => n + (isOptimistic(e) ? 0 : 1), 0);
   if (from > kernelLen) {
     // GAP: the delta starts PAST what we hold, so the events in between never reached us. Applying it would
@@ -15570,7 +15875,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
       // pane was already visible the deferral is invisible. Anchored jumps need nothing: landOn's
       // ResizeObserver realign already re-lands them when the pane sizes in.
       window.requestAnimationFrame(() => {
-        const c = document.getElementById("content"); if (c) c.scrollTop = c.scrollHeight;
+        const c = document.getElementById("content"); if (c) writeScroll(c, c.scrollHeight, "focus-live", true);
       });
     } else {
       pendingAnchorQuote = typeof (m as { anchorQuote?: string }).anchorQuote === "string" ? (m as { anchorQuote?: string }).anchorQuote! : null;   // the supporting span (T218) — consumed by the landing
@@ -17635,7 +17940,7 @@ setupSettings();
     if (!draggedId || !dragGeom) return;
     e.preventDefault();   // the whole strip is a valid drop target
     if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    const dragged = tabs.querySelector<HTMLElement>(`.tab[data-id="${CSS.escape(draggedId)}"]`);
+    const dragged = draggedEl && draggedEl.isConnected ? draggedEl : null;   // THIS copy, not the first tab wearing the id (T264b)
     if (!dragged) return;
     // native feel: a pointer still inside the dragged tab's own box moves nothing (without this,
     // the virtual mapping — which removes the dragged tab — can read the untouched start position
@@ -17644,17 +17949,27 @@ setupSettings();
     if (e.clientX >= dr.left && e.clientX <= dr.right && e.clientY >= dr.top && e.clientY <= dr.bottom) return;
     // the virtual layout: the OTHER tabs in current DOM order, widths from the dragstart snapshot —
     // boundaries that cannot move in response to the insert they cause (dragslot.ts owns the math)
-    // …plus the section headers and separator (tab groups): they take width in the real layout, so
-    // they join the virtual one as boxes — the simulated wrap then matches the strip's, and a slot
-    // just before a header is the end of the previous section. A drop changes no membership (the
-    // tab re-sections on the next render); "Move to" in the tab menu is the membership path.
+    // …plus the section headers (tab groups): they take width in the real layout, so they join the
+    // virtual one as boxes — the simulated wrap then matches the strip's. One group per line (T264):
+    // a header preceded by a row break OPENS a row in the simulation (`br`), as does the untagged
+    // trail's break itself — a zero-width row opener, so the slot past a group's last tab (the end
+    // of its row) and the slot before the trail's first tab (the head of the next row) stay two
+    // distinct slots, as they were when the trail stood behind a visible separator. A drop changes
+    // no membership (the tab re-sections on the next render); "Move to" in the tab menu is the
+    // membership path.
     const others = Array.from(tabs.querySelectorAll<HTMLElement>(".tab[data-id], .tab-group-head, .tab-group-sep")).filter((t) => t !== dragged);
+    const isBreak = (n: Element | null) => !!n && n.classList.contains("tab-group-break");
+    const before = (t: HTMLElement) => { let p = t.previousElementSibling; while (p && p === dragged) p = p.previousElementSibling; return p; };
     const boxes = others.map((t) => ({ id: t.dataset.id || " head:" + (t.dataset.group || ""),
-                                       w: (t.dataset.id ? dragGeom!.widths.get(t.dataset.id) : undefined) ?? t.getBoundingClientRect().width }));
+                                       w: isBreak(t) ? 0 : (t.dataset.id ? dragGeom!.widths.get(t.dataset.id) : undefined) ?? t.getBoundingClientRect().width,
+                                       br: isBreak(t) || isBreak(before(t)) }));
     const br = tabs.getBoundingClientRect();
     const idx = dragSlotIndex(boxes, dragGeom.containerW, dragGeom.gapX, dragGeom.rowH,
                               e.clientX - br.left, e.clientY - br.top);
-    const ref = idx < others.length ? others[idx] : dragged.parentElement === tabs ? tabs.querySelector(".tab-add") : null;
+    let ref = idx < others.length ? others[idx] : dragged.parentElement === tabs ? tabs.querySelector(".tab-add") : null;
+    // the slot before a header is the END OF THE PREVIOUS ROW: insert ahead of the header's break, never
+    // between the break and the chip (a tab there would sit left of the chip on the group's own line)
+    if (ref && ref.classList.contains("tab-group-head") && isBreak(before(ref as HTMLElement))) ref = before(ref as HTMLElement);
     if (ref !== dragged && dragged.nextElementSibling !== ref)
       flipTabs(() => tabs.insertBefore(dragged, ref));
   });
@@ -17677,17 +17992,30 @@ setupSettings();
     }
     if (!draggedId) return;
     e.preventDefault();
-    const dragged = tabs.querySelector<HTMLElement>(`.tab[data-id="${CSS.escape(draggedId)}"]`);
+    const dragged = draggedEl && draggedEl.isConnected ? draggedEl : null;   // THIS copy, not the first tab wearing the id (T264b)
     if (!dragged) return;
-    // the neighbours are TABS: a section header or separator beside the dropped tab is skipped, so
-    // a drop at a section's edge still names the nearest tab and its side
-    const tabBefore = (n: Element | null) => { while (n && !(n as HTMLElement).dataset?.id) n = n.previousElementSibling; return n as HTMLElement | null; };
-    const tabAfter = (n: Element | null) => { while (n && !(n as HTMLElement).dataset?.id) n = n.nextElementSibling; return n as HTMLElement | null; };
-    const prev = tabBefore(dragged.previousElementSibling);
-    const next = tabAfter(dragged.nextElementSibling);
-    if (prev?.dataset?.id) reorderTo(draggedId, prev.dataset.id, true);
-    else if (next?.dataset?.id) reorderTo(draggedId, next.dataset.id, false);
-    tabDragCommitted = true;   // dragend must not treat this as a cancel (it fires next)
+    // the neighbours are TABS IN THE DRAGGED COPY'S OWN GROUP first (T264b): a drop at a group's head
+    // used to anchor on the group above's last tab — a tab whose place in the global order says
+    // nothing about the group dragged in — so the drop landed elsewhere and the session's other copy
+    // jumped. The walk stops at a header or a row break; only a group holding no other tab falls back
+    // to the nearest tab across groups (the flat strip has no edges, so it walks as it always did).
+    // Never the dragged SESSION's own copy: reorderTo against itself would move nothing.
+    const own = (n: Element | null) => !!n && (n as HTMLElement).dataset?.id === draggedId;
+    const edge = (n: Element) => n.classList.contains("tab-group-head") || n.classList.contains("tab-group-break");
+    const walk = (n: Element | null, step: (x: Element) => Element | null, inGroup: boolean): HTMLElement | null => {
+      while (n && (!(n as HTMLElement).dataset?.id || own(n))) { if (inGroup && edge(n)) return null; n = step(n); }
+      return n as HTMLElement | null;
+    };
+    const back = (x: Element) => x.previousElementSibling, fwd = (x: Element) => x.nextElementSibling;
+    const tabBefore = (n: Element | null) => walk(n, back, true);
+    const tabAfter = (n: Element | null) => walk(n, fwd, true);
+    const prevIn = tabBefore(dragged.previousElementSibling), nextIn = tabAfter(dragged.nextElementSibling);
+    const prev = prevIn ?? (nextIn ? null : walk(dragged.previousElementSibling, back, false));
+    const next = nextIn ?? (prevIn ? null : walk(dragged.nextElementSibling, fwd, false));
+    // committed only when a reorder actually ran: with no neighbour to name the slot (a group holding
+    // only this session's copies) dragend takes the cancel path and FLIPs the copy home
+    if (prev?.dataset?.id) { reorderTo(draggedId, prev.dataset.id, true); tabDragCommitted = true; }
+    else if (next?.dataset?.id) { reorderTo(draggedId, next.dataset.id, false); tabDragCommitted = true; }
   });
 })();
 (() => {

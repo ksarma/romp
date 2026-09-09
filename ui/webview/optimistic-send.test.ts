@@ -35,19 +35,19 @@ test("the plain send registers an optimistic bubble; follow-up/quote sends keep 
   assert.match(RENDER, /function registerOptimistic\(id: string, text: string, imgPaths\?: string\[\]\): PendingSend/);   // + the dragged-image paths → echo thumbnails (2026-08-25)
   // the active-tab arm still paints via appendActive (the snap gate moved ahead of it, 2026-08-30)
   assert.match(RENDER, /if \(v\) v\.stale = true;\s*\n\s*if \(id === activeId\) \{/);
-  assert.match(RENDER, /const wasAtBottom = !!content && nearBottom\(content\);\s*\n\s*appendActive\(\);/);
+  assert.match(RENDER, /const wasAtBottom = !!content && nearBottomForSend\(content\);[^\n]*\s*\n\s*appendActive\(\);/);
 });
 
 test("your OWN send reveals itself from the TAIL only — scrolled up, the viewport stays put", () => {
   // The 2026-08-09 always-reveal snap (Enter = intent to see the message) survives where it belongs:
-  // at — or within the stick rule's 80px of — the bottom. Scrolled UP reading history, the user's
+  // at — or within nearBottomForSend's 80px of — the bottom (the send band; follow mode itself reads the true bottom since T262c). Scrolled UP reading history, the user's
   // 2026-08-30 ruling overrules it: the send must not move the scroll position at all, so the snap
-  // is gated on a nearBottom read taken BEFORE appendActive lands the bubble (the append grows
+  // is gated on a nearBottomForSend read taken BEFORE appendActive lands the bubble (the append grows
   // scrollHeight, which would misread a tail-sitter as scrolled-up). Behavioral scenarios live in
   // send-scroll-preserve.test.ts.
-  assert.match(RENDER, /const wasAtBottom = !!content && nearBottom\(content\);\s*\n\s*appendActive\(\);\s*\n\s*if \(content && wasAtBottom\) content\.scrollTop = content\.scrollHeight;/);
+  assert.match(RENDER, /const wasAtBottom = !!content && nearBottomForSend\(content\);[^\n]*\s*\n\s*appendActive\(\);\s*\n\s*if \(content && wasAtBottom\) writeScroll\(content, content\.scrollHeight, "optimistic-send", true\);/);
   // the unconditional form is retired everywhere — nothing snaps a scrolled-up reader on send
-  assert.doesNotMatch(RENDER, /if \(content\) content\.scrollTop = content\.scrollHeight;/);
+  assert.doesNotMatch(RENDER, /if \(content\) (?:content\.scrollTop = content\.scrollHeight|writeScroll\(content, content\.scrollHeight)/);
 });
 
 // The reconcile's two IN-PLACE tail mutations — merging into an existing queued group (a busy session
@@ -95,13 +95,13 @@ test("retire needs a NEW landed atom (after the send's anchor); kernel provision
 // queued one are the same state, so they wear the same dashed bubble — and the look then only ever moves
 // provisional→settled. It first shipped as a 0.6-opacity SOLID bubble, which invented a third look and made a
 // queued send flip solid→dashed (backwards, as if it had un-landed).
-test("an optimistic echo is a kernel-invisible QUEUED event at its send slot — never a solid user bubble", () => {
+test("an optimistic echo is a kernel-invisible QUEUED event at the tail — never a solid user bubble", () => {
   const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
   const SP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "send-pending.ts"), "utf8");
   assert.match(SP, /export const OPT_PREFIX = "optimistic:";/);
   assert.match(RENDER, /const isOptimistic = \(e: ChatEvent\): boolean => isOptimisticUuid\(e\.uuid\);/);
   assert.match(RENDER, /const mk = \(p: PendingSend\) => \(\{ md: p\.text, optimistic: true, cancelable: true, imgPaths: p\.imgPaths, lost: p\.lost, qts: p\.ts, sendId: p\.sendId \}\);/);   // the echo carries its dragged-image paths (2026-08-25); cancelable from the press (2026-08-30); `lost` after a connection drop, `qts` its identity for the ✕ (2026-09-06); `sendId` the send's identity on both sides (2026-09-08)
-  // stale ones are stripped wherever they sit — since T252 a bubble is spliced at its send slot, not the tail
+  // stale ones are stripped wherever they sit (the strip is position-agnostic; T252d puts the group at the tail)
   assert.match(RENDER, /if \(isOptimistic\(e\)\) \{ s\.events\.splice\(i, 1\); continue; \}/);
   // the abandoned dim/pending idiom is FULLY gone: render, guard fields, and stylesheet — the last
   // leftovers (a `!e.pending` guard on a field no event carries, and a stylesheet paragraph describing
@@ -115,8 +115,8 @@ test("an optimistic echo is a kernel-invisible QUEUED event at its send slot —
 });
 
 test("nothing known-queued → a bare group wearing the honest 'sending…' header", () => {
-  assert.match(RENDER, /s\.events\.splice\(g\.idx, 0, \{ kind: "queued", bare: true, texts: g\.sends\.map\(mk\), uuid: OPT_PREFIX \+ g\.sends\[0\]\.ts,/,
-    "one bare group per send slot (T252: right after the send's anchor, never the tail)");
+  assert.match(RENDER, /s\.events\.push\(\{ kind: "queued", bare: true, texts: inject\.map\(mk\), uuid: OPT_PREFIX \+ inject\[0\]\.ts,/,
+    "ONE bare group at the tail, the sends in send order (T252d: where the model reads them)");
   // "N queued messages" stays unclaimable pre-confirmation — but NO label was the user's 2026-08-30
   // bug (a mid-compaction send sat unlabeled and uncuttable): the bare group now states exactly what
   // is known, and the reflow recounts it in the same vocabulary after a ✕
@@ -130,7 +130,7 @@ test("nothing known-queued → a bare group wearing the honest 'sending…' head
   assert.match(RENDER, /if \(!ev\.bare\) \{/, "the standard 'N queued' header still needs confirmation");
 });
 
-test("something IS queued → the kernel's copy of OUR text is hidden and ours stays at its slot (T252)", () => {
+test("something IS queued → the kernel's copy of OUR text is hidden and ours stays drawn below the group (T252)", () => {
   // one bubble per message: the kernel's queued group at the tail keeps its OTHER texts, our copy in it is
   // hidden (a client-only mark), and the hide is undone with every other injection before the counts run
   assert.match(RENDER, /function hideQueuedCopy\(s: Session, p: PendingSend\)/);
@@ -139,7 +139,7 @@ test("something IS queued → the kernel's copy of OUR text is hidden and ours s
   assert.match(RENDER, /const texts = ev\.texts\.filter\(\(t\) => !t\.hiddenByPending\);/, "the renderer draws the visible copies only");
   assert.match(RENDER, /map\(\(t\) => t\.hiddenByPending \? \{ \.\.\.t, hiddenByPending: undefined \} : t\)/, "the strip clears the marks");
   // a copy hidden out of a HELD group hands the hold's reason to our bubble
-  assert.match(RENDER, /held: g\.sends\.map\(\(p\) => heldBy\.get\(p\)\)\.find\(\(h\) => !!h\)/);
+  assert.match(RENDER, /held: inject\.map\(\(p\) => heldBy\.get\(p\)\)\.find\(\(h\) => !!h\)/);
 });
 
 test("an unconfirmed echo keeps its tooltip AND carries a ✕ from the press (the 2026-08-30 rule)", () => {

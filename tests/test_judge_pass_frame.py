@@ -57,7 +57,8 @@ class PassFrame(unittest.TestCase):
                 aline(T0 + 10, "Working on it now, first step underway.", "a1", "u1", stop="tool_use")]
         self.path.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
         jd.end_pass_frame(True)          # belt: never inherit a frame a crashed test left open
-        jd._PARSE_CACHE.clear()          # a test's cache-hit premise must not ride an earlier test's entry
+        jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()   # a test's cache-hit premise must not ride an earlier test's
+                                                          # entry; the chain memo keys on the same (mtime, size) identity
         self._saved = (jd._PENDING_CUT_FN, jd.em.parse_session, jd._fileset_key)
 
     def tearDown(self):

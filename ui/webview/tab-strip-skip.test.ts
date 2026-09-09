@@ -45,7 +45,8 @@ test("every input the strip renders is in the signature", () => {
 });
 
 test("a drag resets the signature (its live reorder changes the strip's DOM outside renderTabs), and the tooltip reads the session fresh", () => {
-  assert.match(fn, /tab\.addEventListener\("dragstart", \(e\) => \{\s*\n\s*draggedId = id; tabDragCommitted = false;\s*\n\s*tabStripSig = "";/);
+  // T264b (upstream, folded 2026-09-08) records the dragged node too (draggedEl); the fork's signature reset follows it on the next line
+  assert.match(fn, /tab\.addEventListener\("dragstart", \(e\) => \{\s*\n\s*draggedId = id; draggedEl = tab; tabDragCommitted = false;\s*\n\s*tabStripSig = "";/);
   assert.match(fn, /showTabTip\(tab, sessions\.get\(id\) \?\? s\)/, "a tab node now outlives a frame that replaced the session object");
   assert.match(RENDER, /^let tabStripSig = "";/m);
 });

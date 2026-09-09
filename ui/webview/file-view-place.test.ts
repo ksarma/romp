@@ -378,10 +378,12 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   const install = PANEL.split("private installLayout(row: HTMLElement): void {")[1].split("\n  }\n")[0];
   assert.doesNotMatch(install, /hideFloatOnScroll/, "not among installLayout's scroll listeners, which feed the margin lock's mirrorScroll and act in the margin layout alone");
   // the sheets: no overflow-anchor rule (the swap never relied on anchoring, and anchoring helps after the seat when a
-  // figure above loads late), and the row declares no container of its own
+  // figure above loads late), and the row declares no container of its own. The anchoring pin reads declarations only,
+  // comments stripped: upstream's 2026-09-08 note above #content (keep the browser's scroll anchoring on, measured
+  // under T262e; its own pin is box-below.test.ts) names the property in prose to say the same thing this pin says.
   for (const f of ["styles.css", "feed.css"]) {
     const css = read(f);
-    assert.doesNotMatch(css, /overflow-anchor/, f + ": no overflow-anchor");
+    assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ""), /overflow-anchor/, f + ": no overflow-anchor");
     assert.match(css, /\n\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; \}\n/, f + ": the row without container-type");
     assert.match(css, /\n\.fileview > \.fileview-err \{ flex: 0 0 auto; \}\n/, f + ": the note bar's rule");
   }
