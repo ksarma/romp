@@ -542,8 +542,9 @@ of its own to deliver each finished task's result, so in the usual case that is
 the turn right after the last one ends; if no turn follows, the session's next
 turn. While the pick is held the chat says so in place of the reloading line
 ("The effort pick is waiting on 2 subagents and 1 background task", then "The
-effort pick applies when this turn finishes" once the work is done), and the
-badge keeps showing the value the session runs with a small mark beside it.
+effort pick applies when this turn finishes" once the work is done, or "applies
+when the next turn finishes" when no turn is open at that point), and the badge
+keeps showing the value the session runs with a small mark beside it.
 The same hold and the same line apply to a permission-mode pick into bypass,
 the first fast-mode opt-in and a billing switch. A pick equal to what the
 session already runs with (the same effort, the same billing) reloads nothing.

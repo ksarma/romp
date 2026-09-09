@@ -54,3 +54,30 @@ test("the badge tip names the pick and the wait, and says the label is what runs
   assert.equal(workPhrase(1, 1), "1 subagent and 1 background task");
   assert.equal(workPhrase(0, 2), "0 subagents and 2 background tasks");
 });
+
+test("no turn open once the work is done: the copy names the session's NEXT turn, per kind and per surface", () => {
+  // at zero counts the copy always said "this turn" while the kernel log said the pick waits for the next
+  // turn's settle (the stuck-queue regime, where the CLI starts no delivery turn). The kernel sends whether a
+  // turn is open (`inflight`); false names the next turn, true keeps this turn, and a payload without the bit
+  // (an older kernel) keeps this turn too (review round 3, 2026-09-09)
+  for (const [kind, name] of [["effort", "effort"], ["mode", "permission mode"], ["fast", "fast mode"], ["auth", "billing"]]) {
+    const idle = { surfaces: [kind], subagents: 0, tasks: 0, inflight: false };
+    const open = { surfaces: [kind], subagents: 0, tasks: 0, inflight: true };
+    assert.equal(pickHeldLine(idle), `The ${name} pick applies when the next turn finishes`, kind);
+    assert.equal(pickHeldLine(open), `The ${name} pick applies when this turn finishes`, kind);
+    assert.equal(pickHeldTitle(idle),
+      "the background work has finished and no turn is open; the session reloads to apply the change when the session's next turn ends", kind);
+    assert.match(pickHeldTitle(open), /when the turn that delivers the last result ends$/, kind);
+    assert.equal(badgeHeldTip(kind, idle), `${/^[aeiou]/i.test(name) ? "an" : "a"} ${name} pick applies when the next turn finishes; the badge shows what the session runs now`, kind);
+    assert.equal(badgeHeldTip(kind, open), `${/^[aeiou]/i.test(name) ? "an" : "a"} ${name} pick applies when this turn finishes; the badge shows what the session runs now`, kind);
+  }
+  assert.equal(pickHeldLine({ surfaces: ["effort", "auth"], subagents: 0, tasks: 0, inflight: false }),
+    "The effort and billing picks apply when the next turn finishes");
+  // work still running: the counts, whichever the phase (the turn bit matters only once the work is done)
+  assert.equal(pickHeldLine({ surfaces: ["effort"], subagents: 1, tasks: 0, inflight: false }),
+    "The effort pick is waiting on 1 subagent and 0 background tasks");
+  assert.equal(badgeHeldTip("effort", { surfaces: ["effort"], subagents: 0, tasks: 2, inflight: false }),
+    "an effort pick is waiting on 0 subagents and 2 background tasks; the badge shows what the session runs now");
+  // a payload without the bit keeps today's copy
+  assert.equal(pickHeldLine({ surfaces: ["effort"], subagents: 0, tasks: 0 }), "The effort pick applies when this turn finishes");
+});

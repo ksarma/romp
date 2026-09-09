@@ -5421,7 +5421,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(len(ended), 1, self.logs)
         self.assertIn("reconnect (web): a local_bash task ended; the live sets are empty; the pending effort pick "
                       "waits for the next turn's settle", ended[0])
-        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 0, "tasks": 0},
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 0, "tasks": 0, "inflight": False},
                          "held through the delivery turn: the one marker stands until the settle")
         out = self._settle(s)
         self.assertTrue(out["reconnect"] and not out["deferred"])
@@ -5976,7 +5976,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self._start(s, "a1")
         s.backend.set_effort(self.SID, "max")
         snap = s.snapshot()
-        self.assertEqual(snap["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        self.assertEqual(snap["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "inflight": False})
         self.assertTrue(snap["effortPending"], "the badge dots stay: the pick IS pending")
         s.backend.set_mode(self.SID, "bypassPermissions")
         snap = s.snapshot()
@@ -5988,7 +5988,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._on_task_event("task_notification", {"task_id": "b1", "status": "completed"})
         self._stop(s, "a1")
         snap = s.snapshot()
-        self.assertEqual(snap["pickHeld"], {"surfaces": ["effort", "mode"], "subagents": 0, "tasks": 0},
+        self.assertEqual(snap["pickHeld"], {"surfaces": ["effort", "mode"], "subagents": 0, "tasks": 0, "inflight": False},
                          "still held through the agent's delivery turn: no flap to 'reloading' before the settle")
         self.assertTrue(self._settle(s)["reconnect"])
         snap = s.snapshot()
@@ -6071,11 +6071,11 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self._start(s, "a1")
         s.backend.set_effort(self.SID, "max")
         self.assertFalse(s._reconnect_when_idle, "the request is queued, not run")
-        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "inflight": False})
         for cb, a in queued:
             cb(*a)
         self.assertTrue(s._reconnect_when_idle)
-        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "inflight": False})
         self.assertEqual(len(self._held()), 1, "the loop's own held line is not repeated: the setter said it")
         s.ended = True
         self.assertIsNone(s.snapshot()["pickHeld"], "a session shutting down holds nothing")
@@ -6251,7 +6251,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s.backend.set_mode(self.SID, "bypassPermissions")
         s.backend.set_mode(self.SID, "acceptEdits")
         self.assertTrue(s._reconnect_when_idle)
-        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "inflight": False})
         self.assertEqual(s.snapshot()["mode"], "acceptEdits")
         # the deferred case (a turn open, no live work) withdraws the same way
         s = self._sess(mode="default")
@@ -6502,6 +6502,24 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
         self.assertTrue(s._reconnect); self.assertEqual(s.auth_live, "")
 
+    def test_n_the_hold_reports_whether_a_turn_is_open(self):
+        # at zero counts the copy said "applies when this turn finishes" whatever the session was doing; in the
+        # stuck-queue regime (the CLI started no delivery turn) an idle session showed it while the kernel log
+        # said the pick waits for the next turn's settle. The payload carries whether a turn is open, so the
+        # words can say which turn (review round 3); event-based, no timer
+        s = self._sess()
+        s._on_task_event("task_started", {"task_id": "b1", "task_type": "local_bash"})
+        s.backend.set_effort(self.SID, "max")
+        self.assertFalse(s._pick_held()["inflight"], "idle between its own turns")
+        s._on_task_event("task_notification", {"task_id": "b1", "status": "completed"})
+        h = s._pick_held()
+        self.assertEqual((h["subagents"], h["tasks"], h["inflight"]), (0, 0, False),
+                         "the work is done and no turn is open: the pick waits for the session's next turn")
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 0, "tasks": 0, "inflight": False})
+        s.inflight = 1                                   # the delivery turn opened
+        self.assertTrue(s._pick_held()["inflight"], "a turn is open: the pick waits for it to finish")
+        self.assertTrue(s.snapshot()["pickHeld"]["inflight"])
+
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
         # RUNS: the effort it launched with, the mode it runs, the fast state the init reported, the CLI's
@@ -6515,7 +6533,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self._start(s, "a1")
         self.assertTrue(s.backend.set_effort(self.SID, "max"))
         snap = s.snapshot()
-        self.assertEqual(snap["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        self.assertEqual(snap["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "inflight": False})
         self.assertEqual(snap["effort"], "high", "the badge shows the running effort, not the pick")
         self.assertEqual(s.effort, "max", "the pick itself is what the reconnect will launch")
         self.assertTrue(snap["effortPending"])
@@ -6732,7 +6750,7 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertTrue(self.be.set_effort(self.SID, "low"))
         self._wait(lambda: s._reconnect_when_idle, "the request ran on the loop")
         self.assertTrue(s._reconnect_held_for_work)
-        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0})
+        self.assertEqual(s.snapshot()["pickHeld"], {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "inflight": False})
         self.assertEqual(s.snapshot()["effort"], "high", "the running value while held")
         self._turn(c1)                                   # a turn ends while the subagent still runs
         self._wait(lambda: s.inflight == 0 and s._settled_msg is not None, "the turn settled")

@@ -5719,11 +5719,15 @@ class SdkSession:
         the loop runs the request, so a read between the two sees the hold) until the arm, so it does not
         flap to "reloading" while the last agent's delivery turn runs (the sets read empty then; the
         settle arms). The counts are live, so a reader can watch them fall; both zero means the work is
-        done and the pick waits for the turn in flight, or the next one, to settle."""
+        done and the pick waits for the turn in flight, or the next one, to settle. `inflight` says which
+        (review round 3, 2026-09-09): whether a turn is open right now, so the copy at zero counts can say
+        "this turn" only when one is, and "the next turn" otherwise (the stuck-queue regime docs/reference.md
+        names: the CLI started no delivery turn, and the pick waits for the session's next). The open turn
+        alone, not the fed-untaken hold: a fed text drains into the NEXT turn, whose settle arms."""
         if not self._reconnect_held_for_work or self._reconnect or self.ended:
             return None
         n_sub, n_task = self._live_work_counts()
-        return {"surfaces": self._pick_names(), "subagents": n_sub, "tasks": n_task}
+        return {"surfaces": self._pick_names(), "subagents": n_sub, "tasks": n_task, "inflight": self.inflight != 0}
 
     def _connect_landed(self) -> None:
         """The (re)connect is up (the reconnect loop, right after the handshake): the shape _options
