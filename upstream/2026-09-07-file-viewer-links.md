@@ -1,11 +1,11 @@
 ---
 title: Links inside a file shown in the viewer: an http(s) URL in the text opens in a new tab; a file path opens that file in the viewer, resolved against the shown file's directory (absolute and `~/` paths as written, on the file's session), with a `:12` or `#L12` after it scrolling to the line; a Markdown link's target follows the same two rules; the grammar is the chat's path matcher under one extra gate (a slash and a letter-led extension, so import specifiers, routes and fractions stay text); the pass runs over the DOM the highlight built and changes no character, so comment highlights, change marks and selections keep working over a line with a link in it
-status: candidate
+status: offered
 where: fork PR #347 (`filelinks`): `ui/webview/file-view-links.ts` (new), `ui/webview/file-view.ts` (codeBlock, mdBlock and its per-parse marked hook, the body's link delegate and its gesture, the `line` open option, the composite close guard), `ui/webview/path-links.ts` (`PathLinkOptions`, `textUnits`, `isFileUri`, `markPathLink`, `LINE_SUFFIX_RE`), `ui/webview/preview.ts` (`wantsOwnTab`, `openFileTab`), `ui/webview/file-comments.ts` (the draft ask, the change mark's cancel), `ui/webview/files.ts` (the pane's opener for a linked file), `ui/webview/styles.css` + `feed.css`, `docs/guide.md`; tests `ui/webview/file-view-links.test.ts`, `file-view-links-browser.test.ts`, `fileview-parity.test.ts`
 added: 2026-09-07
 pr: 347
 tier: feature
-offered:
+offered: their PR #1204
 closed:
 ---
 Follows plans/file-review.md Slice 0 (the shared path matcher) and the viewer upstream already ships: the walk gains options rather than a second matcher, so the chat, the Waiting-on-you pane and the viewer link paths from one grammar. Self-contained (no kernel change: the kernel's `/file` route already resolves `~` and a relative path against the session's cwd). Not yet offered.
