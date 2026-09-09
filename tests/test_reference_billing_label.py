@@ -103,8 +103,8 @@ class ThePickerRowClaimMatchesTheGate(unittest.TestCase):
     def test_the_declared_helper_box_shows_the_row_with_no_login(self):
         self.assertIn('const show = !!(a && (a.login || a.key || a.default === "key"));', BILLING,
                       "pickerBillingRow shows the row for a declared key with neither credential of romp's")
-        self.assertIn("the picker's Billing row writes that out even when the box has no Claude login to show "
-                      "beside it", REFERENCE)
+        self.assertIn("when that side is the key, the picker's Billing row writes `API key` out even when the box "
+                      "has no Claude login to show beside it", REFERENCE)
 
     def test_the_set_aside_pick_exception_is_documented_where_inertness_is(self):
         self.assertIn("The one exception is an API-key pick remembered from a box that no longer holds a key: it "

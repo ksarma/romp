@@ -9210,17 +9210,14 @@ class SdkBackend:
                 what = ("ROMP_EXPECTED_AUTH=%s" % exp) if exp_src == "env" \
                     else ("the remembered Billing pick is %s" % exp)
                 self._log("auth (%s): %s but the CLI reports apiKeySource=%r — this "
-                          "session is billing the %s. Check the helper and the manager's environment "
-                          "(or service.env, where your installation allows a key in a file)."
+                          "session is billing the %s. Check the helper and the manager's environment."
                           % (sess.name, what, source, "API key" if keyed else "login"), problem=True)
             else:
                 # an explicit key pick that launched with nothing injected landed on the login: the key it
                 # meant was Claude Code's own (apiKeyHelper), so that is what to check — not romp's login
-                remedy = ("Check Claude Code's apiKeyHelper (romp injected nothing) and the manager's environment "
-                          "(or service.env, where your installation allows a key in a file)."
+                remedy = ("Check Claude Code's apiKeyHelper (romp injected nothing) and the manager's environment."
                           if getattr(sess, "_launched_unkeyed_pick", False) and not keyed
-                          else "Check the login (claude /login) and the manager's environment (or service.env, "
-                               "where your installation allows a key in a file).")
+                          else "Check the login (claude /login) and the manager's environment.")
                 self._log("auth (%s): launched for %s but the CLI reports apiKeySource=%r — this session "
                           "is billing the %s. %s"
                           % (sess.name, "the API key" if meant_key else "the login", source,

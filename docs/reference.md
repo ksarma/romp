@@ -555,8 +555,9 @@ the key option is labelled plainly `API key`. No fragment of the key, not even
 a last-4 tail, ever reaches a browser or a screen, and romp never sees the key
 at all. A new session defaults to the last pick made anywhere, and before any
 pick to the key when a helper is configured; with neither, to the side
-`ROMP_EXPECTED_AUTH` declares (see below), and the picker's Billing row writes
-that out even when the box has no Claude login to show beside it. A remembered
+`ROMP_EXPECTED_AUTH` declares (see below); when that side is the key, the
+picker's Billing row writes `API key` out even when the box has no Claude login
+to show beside it. A remembered
 key pick on a box whose settings carry no helper leaves new sessions unpicked,
 and the kernel log says so once, naming the settings file to configure. tmux
 sessions are not
