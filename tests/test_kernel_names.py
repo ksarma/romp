@@ -835,6 +835,11 @@ class LockDiscipline(_Base):
         class _Codex:
             def spawn(self, nm, cwd, bg="", fg="", sid=None, auth=""):
                 return SID3
+            # the door reads the gate through these two (nothing is live on this fake, so no frame either way)
+            def has_live(self):
+                return False
+            def gate_closings(self):
+                return 0
         self.patch("_codex_ready", lambda: True)
         self.patch("_codex", lambda: _Codex())
         self.assertEqual(km._create_codex_session("cx1", self.dir)[0], SID3)

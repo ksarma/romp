@@ -119,10 +119,12 @@ class FakeClient:
         ms = 1781100000000 + self._n * 100000
         text = " ".join(i.get("text", "") for i in input_items)
         if script is None:
+            # the app-server's shape: ONE userMessage item carrying the turn's input list, an entry per
+            # input (the worker sends one input per queued send), never a joined text
             script = [
                 ("item/completed", {"threadId": tid, "turnId": turn_id, "completedAtMs": ms,
                                     "item": {"type": "userMessage", "id": "u-%d" % self._n,
-                                             "content": [{"type": "text", "text": text}]}}),
+                                             "content": list(input_items)}}),
                 ("item/completed", {"threadId": tid, "turnId": turn_id, "completedAtMs": ms + 1000,
                                     "item": {"type": "agentMessage", "id": "a-%d" % self._n,
                                              "text": "ack: " + text}}),
@@ -353,6 +355,37 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(params["permissions"], "romp_workspace")
         self.assertEqual(params["runtimeWorkspaceRoots"], ["/TESTDIR"])
         self.assertNotIn("sandboxPolicy", params)
+
+    def test_two_sends_queued_before_the_turn_land_as_two_blocks_and_retire_both_echoes(self):
+        # Two sends queued before the worker starts a turn (an idle session sent twice quickly, sends
+        # while the client is down or backing off, a resume after a kernel restart) go out as ONE
+        # turn_start with an input per send; the app-server answers one userMessage item carrying both,
+        # and the normalizer lands it as one record with a text block per input. Until 2026-09-09 that
+        # record was one newline-joined block that matched neither echo, so both echoes stayed live for
+        # good and painted beside the record in every later build (the round-3 verification).
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        ensure = be._ensure_worker
+        be._ensure_worker = lambda s: None             # hold the worker so both sends queue
+        self.assertTrue(be.send(sid, "first send"))
+        self.assertTrue(be.send(sid, "second send"))
+        be._ensure_worker = ensure
+        self.assertEqual([a["_echo_text"] for a in be.live_atoms(sid)], ["first send", "second send"])
+        self.assertTrue(be.wake(sid))
+        self.assertTrue(until(lambda: not be.busy(sid) and not be.pending_queued(sid)))
+        starts = fake.called("turn_start")
+        self.assertEqual(len(starts), 1, "one turn for the whole queue")
+        self.assertEqual([i["text"] for i in starts[0][2]], ["first send", "second send"])
+        recs = [json.loads(l) for l in Path(be.transcript_path(sid)).read_text().splitlines()]
+        users = [r for r in recs if r["type"] == "user"]
+        self.assertEqual(len(users), 1, "one user record for the batch")
+        self.assertEqual(users[0]["message"]["content"],
+                         [{"type": "text", "text": "first send"}, {"type": "text", "text": "second send"}],
+                         "a text block per send, never the sends joined")
+        self.assertTrue(until(lambda: be.live_atoms(sid) == []), "both echoes retired, one per block")
+        s = be._session(sid)
+        with s.lock:
+            self.assertEqual(s.echoes, [])
 
     def test_send_during_open_turn_steers(self):
         be, fake, _ = build()
@@ -1091,6 +1124,67 @@ for i in range(20):
         self.assertEqual(cat, [{"value": "gpt-5-test", "label": "GPT-5 Test"}])
         be.model_catalog()
         self.assertEqual(len(fake.called("model_list")), 1, "catalog is fetched once, then cached")
+        self.assertIsNone(be.model_catalog_error(), "a held catalog carries no error")
+
+    def test_model_catalog_failure_is_named_and_not_cached(self):
+        # The owner's picker (2026-09-09): the session's default badge showed while the menu under it was
+        # empty. One way there: model_list raised, the backend answered [] and the kernel swallowed it.
+        # The failure must be readable (model_catalog_error) and must not stick: the next read retries.
+        be, fake, _ = build()
+        logged = []
+        be.log = logged.append
+        boom = [RuntimeError("app-server not ready")]
+        real = fake.model_list
+
+        def flaky(*a, **k):
+            if boom:
+                raise boom.pop()
+            return real(*a, **k)
+        fake.model_list = flaky
+        self.assertEqual(be.model_catalog(), [])
+        self.assertIn("app-server not ready", be.model_catalog_error())
+        self.assertTrue(any("app-server not ready" in m for m in logged), "the failure is logged")
+        self.assertEqual(be.model_catalog(), [{"value": "gpt-5-test", "label": "GPT-5 Test"}],
+                         "the next read retries instead of serving the failed answer")
+        self.assertIsNone(be.model_catalog_error())
+
+    def test_model_catalog_without_a_client_names_the_client_failure(self):
+        # _get_client() None (the factory failed; the client sits in its retry backoff) used to answer []
+        # with nothing logged and nothing for the picker to show.
+        be, _, _ = build(factory=lambda: (_ for _ in ()).throw(RuntimeError("codex login missing")))
+        logged = []
+        be.log = logged.append
+        self.assertEqual(be.model_catalog(), [])
+        self.assertIn("codex login missing", be.model_catalog_error())
+        self.assertTrue(any("client is unavailable" in m for m in logged))
+        be.model_catalog()
+        self.assertEqual(sum("client is unavailable" in m for m in logged), 1,
+                         "the same reason is logged once, not once per picker open")
+
+    def test_model_catalog_empty_answer_is_loud_and_not_cached(self):
+        # An empty page `is not None`, so it used to be cached for the life of the process: every later
+        # picker open showed the blank menu even after the app-server had models to list.
+        be, fake, _ = build()
+        real = fake.model_list
+        pages = [SimpleNamespace(data=[])]
+        fake.model_list = lambda *a, **k: pages.pop() if pages else real(*a, **k)
+        self.assertEqual(be.model_catalog(), [])
+        self.assertIn("listed no models", be.model_catalog_error())
+        self.assertEqual(be.model_catalog(), [{"value": "gpt-5-test", "label": "GPT-5 Test"}])
+        self.assertIsNone(be.model_catalog_error())
+
+    def test_a_picked_model_and_effort_ride_the_next_turn_start(self):
+        # The picker's choice path end to end on the backend: set_model/set_effort land as the next
+        # turn_start's params (Codex persists them per thread), so the next reply comes from the pick.
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be.set_model(sid, "gpt-5-test"))
+        self.assertTrue(be.set_effort(sid, "high"))
+        be.send(sid, "hello after the pick")
+        self.assertTrue(until(lambda: not be.busy(sid) and not be.pending_queued(sid)))
+        params = fake.called("turn_start")[-1][3]
+        self.assertEqual(params.get("model"), "gpt-5-test")
+        self.assertEqual(params.get("effort"), "high")
 
     def test_deliver_and_wake_reach_the_agent(self):
         be, fake, _ = build()
@@ -1117,6 +1211,339 @@ for i in range(20):
         recs = [json.loads(l) for l in Path(be.transcript_path(sid)).read_text().splitlines()]
         self.assertTrue(any(r["type"] == "assistant" for r in recs))
         self.assertTrue(be.kill(sid))   # kill's held-final drain notifies too — same reentry
+
+
+class _Clock:
+    """A clock the backend module reads through its `time` global: time() answers `now`, everything
+    else (monotonic, sleep) is the real module's. Patched onto the backend MODULE, never onto the time
+    module, so no other thread's clock moves."""
+
+    def __init__(self, now):
+        self.now = now
+
+    def time(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+class PruneLive(unittest.TestCase):
+    """The kernel's _merge_live_atoms calls be.prune_live(sid, tx_uuids, tx_text_t, human_floor) -- four
+    positional arguments -- and CodexBackend.prune_live took three from its birth (2026-09-02) to
+    2026-09-09: every live merge of a Codex session holding an echo raised TypeError (the chat build and
+    the feed's merge failed outright; the timeline bars logged "live-merge failed"). The call shape is
+    pinned across every backend in tests/test_backend_call_parity.py; this class covers the behaviour in
+    the kernel's REAL shapes: record times are parse_z's whole seconds (the mapping's values are floats
+    of them), and the echo's own stamp is int(time.time()), as the SDK and tmux echoes stamp theirs."""
+
+    def _with_echo(self, text="ship it", t=1000):
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.echoes.append({"text": text, "t": t, "uuid": "echo-11111111"})
+        return be, sid
+
+    def _sent(self, be, sid, text, now):
+        """An echo through send() itself, on the steer path (an open turn: nothing queues, no worker
+        thread runs), with the backend's clock reading `now`."""
+        s = be._session(sid)
+        with s.lock:
+            s.turn_id = "t-live"
+        with mock.patch.object(cb, "time", _Clock(now)):
+            self.assertTrue(be.send(sid, text))
+
+    def test_accepts_the_kernels_four_positional_arguments(self):
+        be, sid = self._with_echo()
+        be.prune_live(sid, frozenset(), {}, 2000)          # the exact caller shape: sets, a mapping, a floor
+        self.assertEqual(len(be.live_atoms(sid)), 1, "no floor retires a plain echo (the 2026-09-06 rule)")
+
+    def test_text_lands_only_through_a_record_at_or_after_the_send(self):
+        # T237b: "ok" sent twice -- the first record predates the second echo, so it must not retire it;
+        # a record stamped at or after the send does. Whole-second record times, as the kernel derives them.
+        be, sid = self._with_echo("ok", t=1000)
+        be.prune_live(sid, frozenset(), {"ok": 999.0}, 0)
+        self.assertEqual(len(be.live_atoms(sid)), 1, "an older record with the same text is not this send")
+        be.prune_live(sid, frozenset(), {"ok": 1000.0}, 0)
+        self.assertEqual(be.live_atoms(sid), [], "a record at the send's second lands it")
+
+    def test_a_record_later_in_the_sends_own_second_lands_the_echo(self):
+        # The echo is stamped in WHOLE seconds like the SDK's and the tmux echo's. A float stamp (1000.3)
+        # kept an echo whose record was written at 1000.7 -- parse_z reads that record as 1000, and
+        # 1000 >= 1000.3 is false -- the same-second case the SDK retires and this backend did not
+        # (the round-1 verification, 2026-09-09).
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        self._sent(be, sid, "ok", 1000.3)
+        atom, = be.live_atoms(sid)
+        self.assertIsInstance(atom["t"], int)
+        self.assertEqual(atom["t"], 1000)
+        be.prune_live(sid, frozenset(), {"ok": 999.0}, 0)
+        self.assertEqual(len(be.live_atoms(sid)), 1, "the second before the send is not this send")
+        be.prune_live(sid, frozenset(), {"ok": 1000.0}, 0)
+        self.assertEqual(be.live_atoms(sid), [], "a record later in the send's own second lands it")
+
+    def test_text_compares_under_the_shared_key_rule(self):
+        be, sid = self._with_echo("ship it", t=1000)
+        be.prune_live(sid, frozenset(), {"ship it": 1001.0}, 0)   # the kernel's keys are already stripped
+        self.assertEqual(be.live_atoms(sid), [])
+        be2, sid2 = self._with_echo("ship it", t=1000)
+        be2.prune_live(sid2, frozenset(), {"  ship it\n"}, 0)     # an older caller's plain set, unstripped
+        self.assertEqual(be2.live_atoms(sid2), [], "a plain set keeps the unfloored match, keyed the same way")
+
+    def test_uuid_retires_and_the_floor_retires_only_command_atoms(self):
+        be, sid = self._with_echo("ship it", t=1000)
+        s = be._session(sid)
+        with s.lock:
+            s.echoes.append({"text": "/model gpt-5-test", "t": 1000, "uuid": "echo-22222222", "command": True})
+        be.prune_live(sid, frozenset({"echo-11111111"}), {}, 0)
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-22222222"], "by uuid")
+        be.prune_live(sid, frozenset(), {}, 999.0)
+        self.assertEqual(len(be.live_atoms(sid)), 1, "a floor the command atom postdates leaves it")
+        be.prune_live(sid, frozenset(), {}, 1000.0)
+        self.assertEqual(be.live_atoms(sid), [], "a genuine-human turn at or after it retires the command atom")
+
+    def test_unknown_sid_is_a_no_op(self):
+        be, _, _ = build()
+        be.prune_live("11111111-2222-4333-8444-555555555555", frozenset(), {}, 0)
+
+
+class EchoAtoms(unittest.TestCase):
+    """What the kernel reads off a Codex echo. `_echo_text` is the marker every kernel reader of an input
+    echo keys on (SdkBackend's echo atoms carry it): _merge_live_atoms hides the echo behind its queued
+    bubble and never counts it as live work; build_session's queued fold and /diag/sendvis
+    (_sendvis_diag) read it; build_session's _live_cmd_keys reads it only off an atom carrying
+    `command`, which a Codex echo never does today, and _merge_live_atoms's by-id landing map
+    (_note_send_landings, run over the same live list) only off one carrying `_send_id`, which a
+    Codex echo never carries (send() mints none; the comment-thread frame's held fold reads SDK
+    echoes only: _comments_frame binds _sdk()). Until 2026-09-09 CodexBackend.live_atoms left it off,
+    so a Codex echo painted as a solid user atom beside its own queued bubble and forced the last turn
+    open (the merge itself is pinned in tests/test_codex_echo_merge.py). The backend's own retire,
+    _append, takes one echo per landed text BLOCK: a turn started from several queued sends lands as
+    one record with a block per send, and send()'s dead path takes back only the echo it minted."""
+
+    def test_the_echo_atom_is_marked_as_an_input_echo(self):
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.turn_id = "t-live"                           # an open turn: send() steers, nothing queues
+        self.assertTrue(be.send(sid, "  ship it\n"))
+        atom, = be.live_atoms(sid)
+        self.assertEqual(atom["_echo_text"], "ship it", "the sent text, under the shared key rule")
+        self.assertEqual(atom["message"]["content"][0]["text"], "ship it")
+        self.assertEqual(atom["author"], "human")
+        self.assertNotIn("command", atom, "a plain echo carries no command flag")
+        with s.lock:
+            s.echoes.append({"text": "/model gpt-5-test", "t": 1000, "uuid": "echo-22222222", "command": True})
+        self.assertEqual([(a["_echo_text"], a.get("command")) for a in be.live_atoms(sid)],
+                         [("ship it", None), ("/model gpt-5-test", True)], "a command entry's flag rides its atom")
+
+    def test_a_landed_record_retires_one_echo_the_oldest_carrying_its_text(self):
+        # _append used to drop EVERY echo carrying the landed text, so a text queued twice lost its second
+        # echo when the first record landed, and a second send dropped after that left nothing visible
+        # (the round-1 fresh finding). The kernel's prune_live, floored by record time, is the other retire.
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.echoes.extend([{"text": "ok", "t": 1000, "uuid": "echo-11111111"},
+                             {"text": "ok", "t": 1001, "uuid": "echo-22222222"},
+                             {"text": "ship it", "t": 1002, "uuid": "echo-33333333"}])
+
+        def rec(kind, uid, text):
+            return {"type": kind, "uuid": uid, "message": {"role": kind, "content": [{"type": "text", "text": text}]}}
+
+        with s.norm_lock:                                  # _append's contract: the caller holds it
+            be._append(s, [rec("user", "u-1", "  ok \n")])   # the record side is keyed the same way
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-22222222", "echo-33333333"],
+                         "one record, one echo: the oldest carrying its text")
+        with s.norm_lock:
+            be._append(s, [rec("user", "u-2", "ok"), rec("assistant", "a-1", "ship it")])
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-33333333"],
+                         "the second record takes the second echo; an assistant record takes none")
+        with s.norm_lock:
+            be._append(s, [rec("user", "u-3", "ok")])
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-33333333"],
+                         "a record with no echo left to take retires nothing else")
+
+    @staticmethod
+    def _two_block_record(uid="u-1"):
+        """The record the normalizer writes for a turn started from two queued sends: the app-server's one
+        userMessage item, a text block per input (codex_events._user_input_texts)."""
+        return {"type": "user", "uuid": uid,
+                "message": {"role": "user", "content": [{"type": "text", "text": "first send"},
+                                                         {"type": "text", "text": "  second send\n"}]}}
+
+    def test_a_two_block_record_retires_one_echo_per_block(self):
+        # Until 2026-09-09 the batch's record was ONE newline-joined block, "first send\nsecond send", which
+        # matched neither echo: both stayed live for good and painted beside the record in every later
+        # build (the round-3 verification). One echo per block, the oldest carrying the text.
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.echoes.extend([{"text": "first send", "t": 1000, "uuid": "echo-11111111"},
+                             {"text": "second send", "t": 1000, "uuid": "echo-22222222"},
+                             {"text": "third send", "t": 1001, "uuid": "echo-33333333"}])
+        with s.norm_lock:
+            be._append(s, [self._two_block_record()])
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-33333333"],
+                         "one record with two blocks retires two echoes, one per block")
+
+    def test_a_joined_text_echo_does_not_match_a_two_block_record(self):
+        # Per block, never the blocks joined: an echo spelling both texts in ONE message is a third send the
+        # app-server has not recorded, and a joined key would retire it against the two-send record.
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.echoes.extend([{"text": "first send second send", "t": 1000, "uuid": "echo-11111111"},
+                             {"text": "first send\nsecond send", "t": 1000, "uuid": "echo-22222222"}])
+        rec = self._two_block_record()
+        with s.norm_lock:
+            be._append(s, [rec])
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-11111111", "echo-22222222"],
+                         "neither joined spelling is a block of the record")
+        self.assertEqual(be._rec_texts(rec), ["first send", "second send"], "one key per block, stripped")
+        self.assertEqual(be._rec_texts({"type": "user", "message": {"role": "user", "content": "  plain \n"}}),
+                         ["plain"], "a string content is one entry")
+        self.assertEqual(be._rec_texts({"type": "user", "message": {"role": "user", "content": [
+            {"type": "text", "text": "   "}, {"type": "image", "source": {}}]}}), [],
+            "blank and non-text blocks key nothing")
+
+    def test_a_send_that_finds_the_session_dead_takes_back_only_its_own_echo(self):
+        # send() minted an echo, steered, and found the session dead under its second lock (it died
+        # during the steer RPC). It takes back the echo it minted, by uuid. Until 2026-09-09 it dropped
+        # every echo carrying the text, so an earlier same-text send the app-server never recorded, which
+        # must stay visible (the 2026-09-06 rule), vanished with the failed one (the round-3 finder).
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.turn_id = "t-live"                           # an open turn: send() steers
+            s.echoes.append({"text": "ok", "t": 1000, "uuid": "echo-11111111"})   # an earlier, unrecorded send
+
+        def dies_mid_steer(tid, expected_turn_id, input_items):
+            with s.lock:
+                s.dead = True
+            raise RuntimeError("synthetic: the app-server went away during the steer")
+
+        fake.turn_steer = dies_mid_steer
+        self.assertFalse(be.send(sid, "ok"))
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-11111111"],
+                         "the earlier echo survives; only the failed send's own echo is taken back")
+
+
+class GateClosings(unittest.TestCase):
+    """gate_closings counts the live set going EMPTY, once per transition, at the write that empties it.
+    The kernel's /models gate opens with the first live Codex session, and the two doors that open it
+    (the spawn, the revive) read this count before and after landing their row to learn whether the
+    gate closed under them: a count of live rows read after the fact could not tell "still open" from
+    "closed and reopened" (two creates racing a kill of the only other session both read 2), and fired
+    where nothing had flipped (a kill of another row after the landing). Every live-to-dead write is a
+    site: kill, the name-write retire, spawn's failure pops, and a failed revive's rollback. Synthetic
+    fixtures only; the backend runs clientless (a launch-error row lands live, as it does in the kernel)."""
+
+    def _corrupt(self, td):
+        os.makedirs(os.path.join(td, "codex"), exist_ok=True)
+        with open(os.path.join(td, "codex", "registry.json"), "w") as f:
+            f.write("{ not json")
+
+    def test_a_kill_counts_only_when_it_empties_the_live_set(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            a = be.spawn("web", "/TESTDIR")
+            b = be.spawn("api", "/TESTDIR")
+            self.assertEqual(be.gate_closings(), 0, "two spawns: the set filled, never emptied")
+            self.assertTrue(be.kill(a))
+            self.assertEqual(be.gate_closings(), 0, "one row still live: the gate stayed open")
+            self.assertTrue(be.kill(b))
+            self.assertEqual(be.gate_closings(), 1, "the last live row died: one closing")
+            self.assertTrue(be.kill(b))
+            self.assertEqual(be.gate_closings(), 1, "a second kill of a dead row is no transition")
+            self.assertTrue(be.resume("api", b))
+            self.assertEqual(be.gate_closings(), 1, "dead to live never counts")
+            self.assertTrue(be.resume("api", b))
+            self.assertEqual(be.gate_closings(), 1, "nor does a revive of a row already live")
+            self.assertTrue(be.kill(b))
+            self.assertEqual(be.gate_closings(), 2, "empty again: the second closing")
+
+    def test_the_name_write_retire_counts_one_closing_for_flip_and_pop_together(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "names"), "w") as f:
+                f.write("not a dir")               # names/ is uncreatable: the names write raises
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            with self.assertRaises(Exception):
+                be.spawn("web", "/TESTDIR")
+            self.assertEqual((len(be._sessions), be.gate_closings()), (0, 1),
+                             "the row was live between its put and its retire; the flip counts, the pop of the "
+                             "dead row does not count again")
+
+    def test_a_spawn_whose_registry_write_fails_counts_the_pop_of_its_live_row(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            self._corrupt(td)
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            with self.assertRaises(RuntimeError):
+                be.spawn("web", "/TESTDIR")
+            self.assertEqual((len(be._sessions), be.gate_closings()), (0, 1),
+                             "the put published a live row; a door that snapshotted it must hear it went away")
+
+    def test_a_spawn_failure_pop_beside_a_live_row_counts_nothing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            be.spawn("web", "/TESTDIR")
+            self._corrupt(td)
+            with self.assertRaises(RuntimeError):
+                be.spawn("api", "/TESTDIR")
+            self.assertEqual((len(be._sessions), be.gate_closings()), (1, 0), "the first row kept the gate open")
+
+    def test_a_failed_revives_rollback_counts_the_closing_it_makes(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            sid = be.spawn("web", "/TESTDIR")
+            be.kill(sid)
+            self.assertEqual(be.gate_closings(), 1)
+            self._corrupt(td)
+            with self.assertRaises(RuntimeError):
+                be.resume("web", sid)
+            self.assertTrue(be._session(sid).dead)
+            self.assertEqual(be.gate_closings(), 2,
+                             "the flip held a live row for the save's duration; taking it back emptied the set")
+
+    def test_has_live_is_one_read_under_the_lock_where_the_row_walk_tears(self):
+        # live_sessions() takes the row list under the sessions lock and reads each row's dead flag later
+        # under the row's own lock. Between the two, a row lands and the list's only row dies: the walk
+        # reads {} while a row is live, and the counter (rightly) never moved, so no door fires for a gate
+        # read that answered closed there. has_live reads the set under the lock at one instant and agrees
+        # with the counter; the kernel's /models gate and the doors' emptiness reads consult it.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            y = be.spawn("web", "/TESTDIR")
+            self.assertEqual((be.has_live(), be.gate_closings()), (True, 0))
+            real_items, torn = be._session_items, []
+            def items():
+                rows = real_items()
+                if not torn:
+                    torn.append(True)
+                    be.spawn("api", "/TESTDIR")   # a row lands after the list was taken
+                    be.kill(y)                    # and the list's only row dies before its flag is read
+                return rows
+            be._session_items = items
+            self.assertEqual((be.live_sessions(), torn), ({}, [True]), "the torn walk: empty while a row is live")
+            self.assertEqual((be.has_live(), be.gate_closings()), (True, 0),
+                             "one read under the lock: a row is live, and the set never emptied")
+            for sid in list(be._sessions):
+                be.kill(sid)
+            self.assertEqual((be.has_live(), be.gate_closings()), (False, 1),
+                             "every row dead: the read says closed and the counter says one closing")
 
 
 class LaunchErrorNames(unittest.TestCase):

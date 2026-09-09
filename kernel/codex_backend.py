@@ -44,6 +44,12 @@ _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
 _events = load_source("romp_codex_events", HERE / "codex_events.py")
 _runtime = load_source("romp_codex_runtime", HERE / "codex_runtime.py")
+# The by-text KEY RULE (session_backend.echo_text_key), shared with the kernel's _atom_user_texts and
+# SdkBackend.prune_live: one normalization on both sides of the echo-vs-record comparison, so an echo whose
+# text carries a trailing newline still lands. Reused from the copy the kernel loaded when there is one
+# (the ABC's module), else loaded here under its own name (a bare test build has no kernel).
+echo_text_key = (sys.modules.get("romp_session_backend")
+                 or load_source("romp_session_backend_keys", HERE / "session_backend.py")).echo_text_key
 
 SDK_PIN = "openai-codex==0.144.4"     # bin/romp-codex-setup installs exactly this into codexvenv
 SETUP_HINT = ("Session not created: the Codex backend isn't installed. "
@@ -312,10 +318,20 @@ class CodexBackend:
         self._client_retry_at = 0.0
         self._client_failures = 0
         self._client_generation = 0   # successful app-server client installations
-        self._catalog = None          # model_catalog() cache — fetched once per process
+        self._catalog = None          # model_catalog() cache: a non-empty list, fetched once per process
+        self._catalog_err = None      # why the last model_catalog() answered [] (str), or None
         self._client_lock = threading.Lock()
         self._sessions = {}           # sid → _Session
         self._sessions_lock = threading.RLock()
+        # Gate closings: how many times the LIVE set went empty, counted under _sessions_lock at the
+        # write that emptied it. The kernel's /models gate opens with the first live Codex session, and
+        # the two doors that open it (the spawn, the revive) compare this count across their own window
+        # to learn whether the gate closed under them (kernel._codex_gate_opened): a count read after
+        # the fact cannot tell "still open" from "closed and reopened", and two doors racing a kill
+        # both read the same count. Every live-to-dead writer goes through _retire_row or _drop_row
+        # (kill, the name-write retire, spawn's failure pops) or counts inline (resume's rollback);
+        # a new one must too, or the doors miss the closing it makes.
+        self._gate_closings = 0
         self._reg_lock = threading.Lock()
         self._load_registry()
         # A kernel restart must not strand a durable backend queue until the user happens to send
@@ -382,6 +398,52 @@ class CodexBackend:
     def _put_session(self, s):
         with self._sessions_lock:
             self._sessions[s.sid] = s
+
+    def gate_closings(self):
+        """How many times the live set has gone empty (see __init__): a door reads it before it lands its
+        row and again after, and a difference is the gate closing under it, whatever the count of live
+        rows says afterwards."""
+        with self._sessions_lock:
+            return self._gate_closings
+
+    def has_live(self):
+        """Is any row live: ONE read under _sessions_lock, the hold every put and every live-to-dead write
+        takes, so the answer is the set at one instant. It takes no row lock (the order is s.lock then
+        _sessions_lock everywhere, so nothing inverts). live_sessions() is not such a read: it snapshots
+        the row list, then reads each row's `dead` flag later under the row's own lock, so a read whose
+        list predates a landing and whose flag read follows a kill of the list's only row answers empty
+        while a row is live, and no door fires for it (the set never emptied, so gate_closings is still).
+        The kernel's /models gate and the two doors' emptiness reads consult this; live_sessions() stays
+        where the rows themselves are wanted."""
+        with self._sessions_lock:
+            return self._live_row_remains_locked()
+
+    def _live_row_remains_locked(self):
+        # under _sessions_lock; `dead` is a plain attribute, and every live-to-dead write holds this lock
+        return any(not t.dead for t in self._sessions.values())
+
+    def _retire_row(self, s):
+        """Flip `s` dead and count a gate closing when it was the last live row. Called under s.lock
+        (kill, the name-write retire), which spawn's `with s.lock: self._put_session(s)` already orders
+        before _sessions_lock; the flip and the emptiness check share one hold of _sessions_lock, so two
+        rows dying at once count one closing, not none (each check seeing the other row still live) or
+        two (both checks seeing none), and a second kill of a dead row counts none."""
+        with self._sessions_lock:
+            was_live = not s.dead
+            s.dead = True
+            if was_live and not self._live_row_remains_locked():
+                self._gate_closings += 1
+
+    def _drop_row(self, s):
+        """Remove `s` from the registry, counting a gate closing when a LIVE row left the set empty:
+        spawn's failure paths pop the row they just put live (a door that snapshotted the gate open on
+        that row and lands after the pop reads the moved count; one that landed beside it is told by the
+        aborting door's own helper, run from its finally, since this set never empties); the name-write retire pops a row _retire_row already
+        flipped, which is no second closing."""
+        with self._sessions_lock:
+            gone = self._sessions.pop(s.sid, None)
+            if gone is not None and not gone.dead and not self._live_row_remains_locked():
+                self._gate_closings += 1
 
     _names_lock = threading.Lock()   # serializes this backend's names/<sid> read-modify-writes
 
@@ -732,19 +794,42 @@ class CodexBackend:
         with open(path, "a", encoding="utf-8") as f:
             for r in recs:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        # a landed user record replaces its optimistic echo (uuid-independent: match by text)
-        landed = {self._rec_text(r) for r in recs if r.get("type") == "user"}
+        # A landed user record replaces its optimistic echoes (uuid-independent: match by text, under
+        # echo_text_key on both sides). ONE echo per landed text BLOCK, the OLDEST carrying the text.
+        # A block is one send: the worker starts a turn from its whole queue, one input per queued
+        # send, and the normalizer writes the app-server's one userMessage item as one record with a
+        # block per input (codex_events._user_input_texts), so a turn started from two queued sends
+        # lands both echoes here; a one-send record is one block. Until 2026-09-09 the record was one
+        # joined block that matched neither echo, and both stayed live for good. One per KEY, not
+        # every echo carrying it: a second identical STEER (delivered mid-turn, never queued) keeps its
+        # echo when the first one's record lands, and a second send dropped after that (the client
+        # dying mid-queue) stays visible. The kernel's prune_live is the other retire, floored by
+        # record time; this one sees only the records it just wrote.
+        landed = [t for r in recs if r.get("type") == "user" for t in self._rec_texts(r)]
         if landed:
             with s.lock:
-                s.echoes = [e for e in s.echoes if e["text"] not in landed]
+                kept = list(s.echoes)
+                for text in landed:
+                    for i, e in enumerate(kept):
+                        if echo_text_key(e.get("text")) == text:
+                            del kept[i]
+                            break
+                if len(kept) != len(s.echoes):
+                    s.echoes = kept
 
     @staticmethod
-    def _rec_text(rec):
+    def _rec_texts(rec):
+        """A user record's texts under the shared key rule (echo_text_key: outer whitespace stripped,
+        nothing else), the key send() stores on the echo and _append and prune_live compare: one entry
+        per text BLOCK (a string content is one entry), empty ones dropped. Per block and never the
+        blocks joined: each block of a Codex user record is one send (see _append), and a joined key
+        would match an echo of some third send that happened to spell both texts in one message."""
         c = (rec.get("message") or {}).get("content")
         if isinstance(c, list):
-            return " ".join(b.get("text", "") for b in c
-                            if isinstance(b, dict) and b.get("type") == "text").strip()
-        return (c or "").strip() if isinstance(c, str) else ""
+            keys = [echo_text_key(b.get("text")) for b in c if isinstance(b, dict) and b.get("type") == "text"]
+        else:
+            keys = [echo_text_key(c)]
+        return [k for k in keys if k]
 
     # ── liveness / identity ──────────────────────────────────────────────────────────────────────
     def end_marker(self, sid):
@@ -804,8 +889,13 @@ class CodexBackend:
         with s.lock:
             if s.dead:
                 return False
-            s.echoes.append({"text": text.strip(), "t": time.time(),
-                             "uuid": "echo-%s" % uuidlib.uuid4().hex[:8]})
+            # WHOLE seconds, as the SDK and tmux echoes stamp theirs: the kernel's record times are
+            # parse_z's int seconds and prune_live lands an echo by text only through a record at or
+            # after its send, so a float stamp kept an echo whose record was written later in the
+            # same second (the round-1 verification, 2026-09-09). The text is stored under the shared
+            # key rule (echo_text_key), the key _append and prune_live compare against.
+            echo_uuid = "echo-%s" % uuidlib.uuid4().hex[:8]
+            s.echoes.append({"text": echo_text_key(text), "t": int(time.time()), "uuid": echo_uuid})
             turn_id = s.turn_id
             tid = s.tid
         if c is not None and turn_id:
@@ -818,7 +908,11 @@ class CodexBackend:
                 pass
         with s.lock:
             if s.dead:
-                s.echoes = [e for e in s.echoes if e["text"] != text.strip()]
+                # The session died during the steer RPC: take back THIS send's echo, by the uuid minted
+                # above, and no other. Until 2026-09-09 every echo carrying the text went, so an earlier
+                # same-text send the app-server never recorded (which must stay visible, the 2026-09-06
+                # rule prune_live states) vanished with the one that failed.
+                s.echoes = [e for e in s.echoes if e["uuid"] != echo_uuid]
                 return False
             entry_id = "q-%s" % uuidlib.uuid4().hex
             s.queue.append(text)
@@ -874,24 +968,49 @@ class CodexBackend:
 
     def model_catalog(self):
         """[{value,label}] for the UI's model picker — the app-server's own model list (the ONE
-        authoritative source), fetched once per process and cached. [] when the client is
-        unavailable (the picker then shows nothing rather than another vendor's list). A plan
-        account may still refuse some listed models per turn — that failure surfaces loudly as
-        the turn's error card, and switching back is one click."""
-        if self._catalog is not None:
+        authoritative source), fetched once per process and cached. [] when the list cannot be had, and
+        then model_catalog_error() says WHY (the picker shows nothing rather than another vendor's list,
+        and since 2026-09-09 it shows the reason: the owner's Codex picker opened on an empty menu with
+        no word of what was wrong). Three ways to [] were silent before: a client in its retry backoff
+        (_get_client() None, nothing logged), a model_list that raised (logged, but the kernel's /models
+        swallowed it), and an EMPTY answer, which `is not None` and so was cached for the life of the
+        process. Now only a non-empty list is cached; each failure is recorded and logged once per
+        distinct reason (the kernel re-reads /models on every picker open, so a per-call line would
+        repeat). A plan account may still refuse some listed models per turn; that failure surfaces
+        loudly as the turn's error card, and switching back is one click."""
+        if self._catalog:
             return self._catalog
         c = self._get_client()
         if c is None:
+            self._note_catalog_error("the Codex app-server client is unavailable: %s"
+                                     % (self._client_err or "not started yet"))
             return []
         try:
             ms = c.model_list()
-            self._catalog = [{"value": m.id, "label": getattr(m, "display_name", None) or m.id}
-                             for m in (getattr(ms, "data", None) or [])
-                             if not getattr(m, "hidden", False)]
+            rows = [{"value": m.id, "label": getattr(m, "display_name", None) or m.id}
+                    for m in (getattr(ms, "data", None) or [])
+                    if not getattr(m, "hidden", False)]
         except Exception as e:
-            self.log("model_list failed: %s" % e)
+            self._note_catalog_error("model_list failed: %s" % (str(e) or e.__class__.__name__))
             return []
-        return self._catalog
+        if not rows:
+            self._note_catalog_error("the Codex app-server listed no models")
+            return []
+        self._catalog = rows
+        self._catalog_err = None
+        return rows
+
+    def _note_catalog_error(self, why):
+        """Record why model_catalog() answered [] and log it once per distinct reason."""
+        if why != self._catalog_err:
+            self.log(why)
+        self._catalog_err = why
+
+    def model_catalog_error(self):
+        """Why the last model_catalog() answered [] (a string for the picker to show), or None when the
+        catalog is held or has not been asked for yet. Read by the kernel's /models after an empty
+        answer; the failure is the app-server's or the client's, so the message names it."""
+        return self._catalog_err
 
     def set_mode(self, sid, mode):
         s = self._session(sid)
@@ -945,14 +1064,13 @@ class CodexBackend:
             self._write_name(s, bg, fg)
         except BaseException:
             with s.lock:
-                s.dead = True
+                self._retire_row(s)
                 try:
                     self._save_registry(s, fields=("dead",))
                 except Exception as e2:
                     self.log("codex spawn: could not retire %s after its name write failed (%s)"
                              % (s.sid, e2))
-            with self._sessions_lock:
-                self._sessions.pop(s.sid, None)
+            self._drop_row(s)
             raise
 
     def _write_name(self, s, bg="", fg=""):
@@ -1005,8 +1123,7 @@ class CodexBackend:
                     # no durable row → no in-memory row: the phantom rendered as a live lane
                     # with NO names file, so a retry of the same name minted a duplicate — the
                     # r27 hole re-opened on exactly the raising path (the r28 verification)
-                    with self._sessions_lock:
-                        self._sessions.pop(sid, None)
+                    self._drop_row(s)
                     raise
             self._publish_spawn_name(s)    # a LIVE launch-error row without a shared name let a
             #                                retry mint a duplicate live "web" (the v1.3.12 audit)
@@ -1025,8 +1142,7 @@ class CodexBackend:
                 try:
                     self._save_registry(s, create=True)
                 except BaseException:
-                    with self._sessions_lock:
-                        self._sessions.pop(sid, None)
+                    self._drop_row(s)
                     raise
             self._publish_spawn_name(s)    # same rule as the client-missing branch above
             return sid
@@ -1037,8 +1153,7 @@ class CodexBackend:
             try:
                 self._save_registry(s, create=True)
             except BaseException:
-                with self._sessions_lock:
-                    self._sessions.pop(sid, None)
+                self._drop_row(s)
                 raise
         self._ensure_norm(s)
         # touch the materialized transcript NOW: discovery lists real files, and an empty jsonl
@@ -1074,8 +1189,13 @@ class CodexBackend:
                 # roll the flip back: with dead=False already published in memory, a FAILED
                 # revive rendered a live lane beside its own reviveFailed message, and the next
                 # kernel restart silently killed it again (the r28 verification, executed)
-                (s.dead, s.loaded, s.name, s.cwd, s.state, s.since,
-                 s.change_generation) = prior
+                with self._sessions_lock:
+                    (s.dead, s.loaded, s.name, s.cwd, s.state, s.since,
+                     s.change_generation) = prior
+                    # the flip held a live row for the save's duration, and a door's gate snapshot
+                    # may have seen it: taking it back is a closing when no other row is live
+                    if s.dead and not self._live_row_remains_locked():
+                        self._gate_closings += 1
                 raise
         if queued:
             self._ensure_worker(s)
@@ -1088,7 +1208,7 @@ class CodexBackend:
             return False
         save_error = None
         with s.lock:
-            s.dead = True
+            self._retire_row(s)              # the flip, and the gate closing if it was the last live row
             turn_id, tid, worker = s.turn_id, s.tid, s.worker
             # Persist the lifecycle mutation before releasing the session lock. A concurrent resume
             # must order after this write instead of being overwritten by a delayed kill snapshot.
@@ -1483,20 +1603,81 @@ class CodexBackend:
         if not s:
             return []
         with s.lock:
-            return [{"type": "user", "uuid": e["uuid"], "session_id": sid, "fsid": s.tid,
-                     "t": e["t"], "parentUuid": None, "author": "human",
-                     "message": {"role": "user",
-                                 "content": [{"type": "text", "text": e["text"]}]}}
-                    for e in s.echoes]
+            out = []
+            for e in s.echoes:
+                # `_echo_text` marks the atom as an INPUT ECHO to the kernel, as SdkBackend's echo atoms
+                # do: _merge_live_atoms hides it behind its queued bubble (shown_texts) and never counts
+                # it as live work (an echo-only merge keeps the turn's real ended state); build_session's
+                # queued fold reads it, as does /diag/sendvis (_sendvis_diag lists every live echo's
+                # text); build_session's _live_cmd_keys reads it only off an atom carrying `command`,
+                # which a Codex echo never does today (see prune_live), and _merge_live_atoms's by-id
+                # landing map (_note_send_landings, run over the same live list) only off one carrying
+                # `_send_id`, which a Codex echo never carries (send() mints none). (The comment-thread
+                # frame's held fold reads SDK echoes only: _comments_frame binds _sdk(), so no Codex echo
+                # reaches it.) Without the marker (until 2026-09-09) a Codex echo painted as a solid
+                # user atom beside its own queued bubble, painted once more beside its landed record,
+                # and forced the last turn open: a false "working" chip for a session whose only live
+                # item was a pending send.
+                atom = {"type": "user", "uuid": e["uuid"], "session_id": sid, "fsid": s.tid,
+                        "t": e["t"], "parentUuid": None, "author": "human", "_echo_text": e["text"],
+                        "message": {"role": "user",
+                                    "content": [{"type": "text", "text": e["text"]}]}}
+                if e.get("command"):
+                    atom["command"] = True
+                out.append(atom)
+            return out
 
-    def prune_live(self, sid, tx_uuids, tx_user_texts=()):
+    def prune_live(self, sid, tx_uuids, tx_user_texts=(), human_floor=0):
+        """Drop the optimistic input echoes the transcript has caught up on, with the SessionBackend
+        contract's FULL call shape: the kernel's _merge_live_atoms passes (sid, tx_uuids, tx_text_t,
+        human_floor) positionally, and this method took three until 2026-09-09 -- every live merge of a
+        Codex session holding an echo (a queued send on a busy session, for as long as it queued) raised
+        TypeError, which failed the chat build and the feed's merge outright and left the timeline bars
+        complaining "live-merge failed" in the kernel log. The signature drifted upstream at the
+        backend's birth (the caller already passed four); tests/test_backend_call_parity.py now pins the
+        shape against every backend.
+
+        An echo retires on the events SdkBackend.prune_live names: its uuid is on disk; its text LANDED,
+        where `tx_user_texts` as a MAPPING (text -> the newest record time carrying it) lands the echo
+        only through a record written at or after its own send -- the backend's own _append retire is
+        unfloored but sees only the records it just wrote, and takes ONE echo per landed text BLOCK (the
+        oldest carrying the text; a turn started from several queued sends lands as one record with a
+        block per send, and the kernel's _atom_user_texts yields each block, so both retires land every
+        echo of the batch); this kernel-side prune sees the whole transcript, and without the floor a
+        repeated text ("ok" twice) retired the second echo the moment it was sent (T237b) -- while a
+        plain set (an older caller) keeps the unfloored match; or it
+        is a COMMAND atom that a genuine-human turn (`human_floor`) postdates, the rule the SDK applies to
+        its streamed slash-command feedback. Codex echoes carry no `command` flag today, so the floor
+        retires nothing here; it is honoured, not swallowed, so an echo kind that gains the flag behaves
+        as on the SDK. No floor retires a plain echo (the 2026-09-06 rule): a send the app-server never
+        records must stay visible. Texts are compared under echo_text_key on both sides. Record times
+        are parse_z's whole seconds, so send() stamps the echo with int(time.time()) as the SDK and tmux
+        echoes do: a float stamp kept an echo whose record was written later in the same second."""
         s = self._session(sid)
         if not s:
             return
-        texts = {t.strip() for t in tx_user_texts or ()}
+        uuids = tx_uuids or ()
+        text_t = tx_user_texts if isinstance(tx_user_texts, dict) else None
+        keys = None if text_t is not None else {echo_text_key(t) for t in (tx_user_texts or ())} - {""}
+        floor = float(human_floor or 0)
+
+        def _landed(e):
+            if e.get("uuid") in uuids:
+                return True
+            key = echo_text_key(e.get("text"))
+            if not key:
+                return False
+            if text_t is None:
+                return key in keys
+            return key in text_t and float(text_t[key] or 0) >= float(e.get("t") or 0)
+
+        def _stale_command(e):
+            return bool(e.get("command")) and floor > 0 and float(e.get("t") or 0) <= floor
+
         with s.lock:
-            s.echoes = [e for e in s.echoes
-                        if e["uuid"] not in (tx_uuids or ()) and e["text"] not in texts]
+            kept = [e for e in s.echoes if not (_landed(e) or _stale_command(e))]
+            if len(kept) != len(s.echoes):
+                s.echoes = kept
 
     # ── ask picker (no Codex equivalent in phase 1) ─────────────────────────────────────────────
     def on_ask(self, sid, kind, payload=None):
