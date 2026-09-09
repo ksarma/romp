@@ -92,6 +92,7 @@ let tabPointerHeld = false;
 let renderPendingWhilePressed = false;
 let draggedGroup: string | null = null;
 let sessionViews: any = null;
+const settings: any = { stripGroupRows: false };   // render.ts's settings object (settings.ts) at the fork's default: makeGroupHead's trail branch reads it (the user 2026-09-08: the strip flows inline unless the per-row setting is on)
 const ctxMenuEl: any = null, metaMenuEl: any = null, citePreviewEl: any = null, openCommentKey: any = null;
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function effViews() { return sessionViews; }
