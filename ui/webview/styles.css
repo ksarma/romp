@@ -336,6 +336,17 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
      #tabbar-resize drag can move it while the mobile page's max-height:none still wins over it
      (an inline max-height would override that media rule and clip the mobile header) */
   max-height: var(--tabbar-cap, 150px); overflow-y: auto; overflow-x: hidden;
+  /* the scrollbar's space is reserved at every height (review round 2 of the keep-with-next change): the sheet's
+     ::-webkit-scrollbar rule makes the cap's scrollbar a classic 10px one, so a row the painter's keep pass added or
+     dropped that crossed the cap toggled it and changed #tabs' width from inside the strip's ResizeObserver callback
+     (render.ts ensureTabRowObserver), one loop notice per crossing. Stable, the strip's width holds, at the cost of a
+     10px gutter on the bar's right in every host where scrollbars take space; no gutter under the phone layout, whose
+     media rule (kernel.py _CHAT_MOBILE_CSS) sets overflow: visible, where the property has no effect. The per-row
+     hairlines' right bleed covers the gutter (.tab-row-line below, review round 3), so the gutter narrows #tabs, not
+     the lines, and in Chromium and WebKit hosts each line still meets the bar's edge like the border-bottom where no
+     scrollbar is painted; Firefox with classic scrollbars clips the strip's content at the gutter's inner edge, so its
+     lines end there (the T134 comment below has the measurements) */
+  scrollbar-gutter: stable;
   border-bottom: 1px solid var(--box-border);
   /* the EDITOR background token, not sideBar (T151): every kernel-served page inlines THEME_CSS,
      which defines --vscode-sideBar-background:#252526 — so the var(--bg) fallback never fired in
@@ -349,13 +360,39 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
    the active/hover fills and per-tab padding still separate neighbours visually. (The Yatharth
    theme reopens a 3px seam — its flat tints need one; see its block below.) */
 #tabs { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; position: relative; }   /* relative: the per-row hairlines (T134) anchor to it */
-/* T134 (the user 2026-08-27, overturning the T125 survey's one-outer-line call — theirs to make):
+/* The strip's WIDTH SENTINEL (review round 1, 2026-09-09): the ResizeObserver that repaints the rows on a
+   width change (render.ts ensureTabRowObserver) observes this zero-height child, not #tabs, whose height
+   the painter's own keep breaks change from inside the callback (Chromium's loop notice, a window error
+   event). Absolute, so it takes no place in the flow; left 0 and right 0, so its width is the strip's;
+   height 0 always, in every theme. The sentinel covers the strip's own height changes; #tabbar's stable
+   scrollbar gutter above covers the other way the callback could change the strip's width, a row change
+   crossing the scroll cap (review round 2). */
+#tabs .tab-row-sentinel { position: absolute; top: 0; left: 0; right: 0; height: 0; pointer-events: none; }
+/* T134 (the user 2026-08-27, overturning the T125 survey's one-outer-line call, theirs to make):
    a full-bleed hairline under EVERY row of tabs, so a row above a short row never floats. Painted
-   by paintTabRowLines (render.ts — CSS cannot select wrap rows); the last row is closed by
-   #tabbar's own border-bottom. The negative bleed spans the bar's 8px side padding so each line
-   runs the strip's full width, like the outer close. Classic only; Yatharth keeps his merged look. */
+   by paintTabRowLines (render.ts, since CSS cannot select wrap rows); the last row is closed by
+   #tabbar's own border-bottom. The negative bleed spans the bar's 8px side padding, and on the right
+   its 10px scrollbar gutter too (scrollbar-gutter: stable above; the sheet's ::-webkit-scrollbar
+   width), so each line runs the bar's full width, like the outer close, in Chromium and WebKit hosts,
+   where that rule sets the gutter. Measured in Chromium on a 600px bar: the line paints to x=599, the
+   border-bottom's last pixel, when no scrollbar is painted, where the -8px bleed alone stopped 10px
+   short (review round 3). While a scrollbar is painted (the bar scrolls and the launch shows
+   scrollbars) Chromium clips the line at the scrollbar's inner edge, and the sheet leaves the track
+   transparent, so the bar's background shows in the last 10px wherever the thumb is not while the
+   border-bottom runs the full width; the line's box still ends at the bar's edge, the rect the
+   browser leg reads at every width (it reads the paint only where nothing scrolls). The -8px line
+   looked the same while scrolling, so nothing regressed there (review round 4). Firefox with overlay
+   scrollbars (gutter 0) clips the overshoot at the bar's edge and the line reaches it. Firefox with
+   classic scrollbars clips the scroll container's content at the padding edge, so the line ends at the
+   gutter's inner edge there whatever the bleed (measured under GTK: 12px short at the default width,
+   6px under scrollbar-width: thin; -40px and -100px paint the same): a clip, not a width, and no
+   bleed value crosses it. A line that meets the edge in that host must be drawn outside the scroll
+   container (a background on #tabbar), a design call beyond this change, so that host keeps the gap.
+   The bleed stays the exact sum rather than a generous overshoot: more paints nothing further in any
+   measured host, and it would push the line's box past the bar's edge, which the browser leg reads as
+   the edge. Classic only; Yatharth keeps his merged look. */
 body:not(.chat-theme-yatharth) #tabs .tab-row-line {
-  position: absolute; left: -8px; right: -8px; height: 1px; background: var(--box-border); pointer-events: none; }
+  position: absolute; left: -8px; right: -18px; height: 1px; background: var(--box-border); pointer-events: none; }
 body.chat-theme-yatharth #tabs .tab-row-line { display: none; }
 /* T141 (the user 2026-08-28, explicit ruling): the T125/T128 band is OUT — one dark background
    everywhere; the strip's plane is the page dark again (#tabbar's own background above), the same
@@ -549,7 +586,9 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    strip as it was before T264. Its 6px gutters are PADDING, not margin, and the 1px line is the content
    box: its box is then the full 13px it occupies in the row, so the tab drag's virtual layout (which
    measures getBoundingClientRect widths) wraps where the real strip wraps. Scoped off the row break
-   below, which wears .tab-group-sep too (the boundary sectionHeadOf reads) and must keep no box. */
+   below, which wears .tab-group-sep too (the boundary sectionHeadOf reads) and must keep no box. A
+   row member for the per-row hairlines (render.ts paintTabRowLines), like a tab: a visible item of
+   its row, where the break is none; and it keeps with the trail's first tab (the break rule below). */
 .tab-group-sep:not(.tab-group-break) { flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px; background: var(--box-border); background-clip: content-box; }
 /* ONE GROUP PER LINE (T264, the user 2026-09-08: the grouped strip read as one long concatenation).
    ON THE FORK the breaks are emitted only under the gear's "One tag group per row in the tab strip"
@@ -562,7 +601,15 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    Under the setting the untagged trail stands behind no visible divider: a line of its own, with
    no chip, already says "in no tag" (the trail stays unlabeled by the user's ruling); the element
    keeps the .tab-group-sep class as the boundary sectionHeadOf reads. The tab drag's virtual layout
-   (dragslot.ts) opens a row at the same places (`br`), so a drag wraps where the strip wraps. */
+   (dragslot.ts) opens a row at the same places (`br`), so a drag wraps where the strip wraps.
+   THE INLINE LAYOUT PLACES BREAKS TOO (2026-09-09; render.ts keepGroupsWithTabs): one, marked
+   .tab-keep-break, ahead of a group header or the trail's divider whose first tab wrapped to the next
+   row, so a group never opens at a row's end with its tabs below. The painter clears and re-places
+   them on every strip rebuild, on the strip's width observer and when the document's fonts finish a
+   load, the three events that run the pass (the painter's fourth, the tab drag's own insert, lays the
+   lines only, since the pass stands down while the dragged tab is in the strip: the drag's virtual
+   layout reads the breaks as row openers); they are this same item, styled by this rule, and no rule
+   names .tab-keep-break on its own. */
 .tab-group-break { flex: 0 0 100%; height: 0; margin: 0; padding: 0; pointer-events: none; }
 .tab-usertodo { flex: 0 0 auto; color: rgba(255, 255, 255, 0.75); font-size: 10px; line-height: 1; }
 /* Vertical context gauge right of the name (the user 2026-08-08): the statusline battery rotated
@@ -2934,7 +2981,10 @@ pre.has-copy:hover .code-copy, .code-copy:focus-visible { opacity: 0.9; }
 .hljs-addition { color: var(--hl-str); }
 .hljs-deletion { color: var(--err); }
 
-/* scrollbars */
+/* scrollbars. This width has readers that move with it: the tab strip's hairline bleed (.tab-row-line's right
+   offset is this width plus the bar's padding, to cross #tabbar's reserved gutter; tab-row-lines.test.ts pins the
+   offset) and the overview ruler (render.ts RULER_W and .glow-ruler's width; glow-ruler.test.ts pins both against
+   this rule); change them together */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, rgba(255, 255, 255, 0.12)); border-radius: 5px; }
 
@@ -4673,8 +4723,10 @@ body.filebrowse-open { overflow: hidden; }
 /* ── COMPACT TABS AND AGENTS (the gear's denseChrome setting; the user 2026-09-08, whose phone showed about
    three lines of transcript between the tab strip and the box of background work). Density only, under ONE
    body class the settings applier toggles (dense-chrome.ts applyDenseChrome, run from applyChatScheme at
-   startup and on every settings change), so a gear flip repaints the strip and the box at once through the
-   cascade and neither is rebuilt. Every rule here is scoped to body.dense-chrome and shadows a default written
+   startup and on every settings change), so a gear flip re-sizes the strip and the box at once through the
+   cascade. The box is not rebuilt; the strip is (the setting is in renderTabs's rebuild signature), so its
+   per-row hairlines and keep breaks are laid under the shorter rows (review round 2 of the keep-with-next
+   change). Every rule here is scoped to body.dense-chrome and shadows a default written
    above; the defaults themselves are untouched, and the trailing comment on each line records the value it
    shadows (dense-chrome.test.ts pins both). Sizes reuse the sheet's own rungs: the tab's 0.86em is on the em
    ladder (css-vocab.test.ts); the row's 11px and 10px are the box's own sizes (.bg-since, .bg-status). The

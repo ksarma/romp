@@ -57,7 +57,9 @@ test("the chat applies the class beside the scheme and the theme, at startup and
   assert.match(body, /applyDenseChrome\(document, s\);/, "one applier call inside applyChatScheme");
   // the two moments applyChatScheme runs (chat-scheme.test.ts pins the same lines): the persisted pick at
   // startup, and the same-document / cross-tab / cross-webview settings signal, which is how a gear flip
-  // repaints the strip and the box at once (a body class, the cascade does the rest; no rebuild)
+  // re-sizes the strip and the box at once (a body class, the cascade does the rest); the renderTabs() on the
+  // same line then rebuilds the strip, whose signature carries the setting (tab-strip-skip.test.ts), so the
+  // row hairlines follow the shorter rows
   assert.match(RENDER, /applyChatScheme\(settings\);   \/\/ the persisted pick applies at startup/);
   assert.match(RENDER, /onExternalSettingsChange\(\(s\) => \{ settings = s; applyChatScheme\(s\);/);
 });
