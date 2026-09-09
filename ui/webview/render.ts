@@ -10623,7 +10623,7 @@ function landToast(msg: string) {
 // acknowledgement). The Escape listener never stops propagation: clearing a toast is
 // additive noise-removal, not a key the rest of the UI loses — and overlay consumers
 // that capture Escape (the lightbox, the viewer) still peel first by construction.
-function warnToast(msg: string) {
+function warnToast(msg: string): HTMLElement {
   let box = document.getElementById("warn-toasts");
   if (!box) {
     box = el("div", "");
@@ -10648,7 +10648,15 @@ function warnToast(msg: string) {
   box.appendChild(t);
   setTimeout(() => t.classList.add("fade"), 11000);
   setTimeout(() => t.remove(), 12000);
+  return t;   // the toast, for a caller that marks it (ephemeralWarnToast)
 }
+// A toast about the connection itself (the fork, 2026-09-09): the session isn't reachable, the host is disconnected
+// and romp is re-dialing. It is true on the page that raised it and false on the page that follows a reconnect: the
+// reload core's restart reload fires from the reopened socket, so a notice like that, replayed by
+// persistNoticesForReload, would tell a connected page it is disconnected. The mark keeps it out of the replay
+// (reload-hold.ts liveNotices reads only the toasts without it). The nack and the other-tab ack stay unmarked: what
+// they say (the attachment was not saved, the held message was not sent) is as true after the reload as before.
+function ephemeralWarnToast(msg: string): void { warnToast(msg).dataset.ephemeral = "1"; }
 
 // (TAIL_RECHECK, the 25 trailing events every sync re-rendered "in case they mutated in place", is gone
 // (2026-09-06): the kernel's chatTail names the first changed event exactly, and the client passes that
@@ -14397,13 +14405,14 @@ try {
 publishReloadHold(pendingShips.size);
 // The notices the last page was showing when a reload took it (persistNoticesForReload, the fork's 2026-09-08 fold):
 // shown again once, after the loss toast above, and the record cleared in the same breath so a later load says
-// nothing (one reload, one replay: the reloadScroll idiom).
+// nothing (one reload, one replay: the reloadScroll idiom). Cleared whenever the key is there, an empty record too:
+// a core reload with no toast on screen writes an empty list under `pendingNotices`, which would otherwise sit in the
+// state until the next core reload (harmless, since takePendingNotices reads it as none; tidied 2026-09-09).
 try {
-  const taken = takePendingNotices(vscodeApi?.getState?.());
-  if (taken.notices.length) {
-    vscodeApi?.setState?.(taken.rest);
-    for (const text of taken.notices) warnToast(text);
-  }
+  const st = vscodeApi?.getState?.();
+  const taken = takePendingNotices(st);
+  if (st && typeof st === "object" && "pendingNotices" in st) vscodeApi?.setState?.(taken.rest);
+  for (const text of taken.notices) warnToast(text);
 } catch { /* ignore */ }
 
 // Composer EDIT mode (per session): set when the user clicks a bubble's edit affordance — the composer
@@ -14477,7 +14486,7 @@ function renderStagedStrip(id: string | null): void {
   go.addEventListener("click", () => {
     if (!id) return;
     if (hostIsDown(id) || isProvisionalId(id)) {
-      warnToast("Can't send yet — the session isn't reachable. They stay staged.");
+      ephemeralWarnToast("Can't send yet — the session isn't reachable. They stay staged.");
       return;
     }
     flushStaged(id);
@@ -16494,7 +16503,7 @@ function setupComposer() {
     // an empty plain send with a staged stack = "go": release what's held, nothing new to add
     if (!typed && !(composerFiles.get(activeId) || []).length && stagedMsgs.count(activeId)) {
       if (hostIsDown(activeId) || isProvisionalId(activeId)) {
-        warnToast("Can't send yet — the session isn't reachable. They stay staged.");
+        ephemeralWarnToast("Can't send yet — the session isn't reachable. They stay staged.");
         return;
       }
       flushStaged(activeId);
@@ -16574,7 +16583,7 @@ function setupComposer() {
         // the refusal itself is DEMAND: ask the kernel to re-dial that host's tunnel right now,
         // so "romp is re-dialing" below is literally true at the moment it is read (2026-08-16)
         vscodeApi?.postMessage({ type: "redial", host });
-        warnToast(host + " is disconnected, so this wasn't sent. It's still in the box — romp is "
+        ephemeralWarnToast(host + " is disconnected, so this wasn't sent. It's still in the box — romp is "
           + "re-dialing the link now; send again when it's back.");
         return;
       }

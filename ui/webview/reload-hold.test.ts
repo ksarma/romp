@@ -41,12 +41,31 @@ test("render.ts publishes it at every change to pendingShips and once at load", 
 // the persisted state on the pre-reload hook and shows them again once at load. The served scenario (a nack on the last
 // ship across a restart; the fresh page shows the notice, once) is tests/test_ship_reship.py NackNoticeSurvivesReload.
 test("the toasts on screen read as their texts, in order, blanks dropped; none without the container", () => {
-  const box = (texts: (string | null)[]) => ({ querySelectorAll: (sel: string) => { assert.equal(sel, ".warn-toast-msg"); return texts.map((t) => ({ textContent: t })); } });
+  const box = (texts: (string | null)[]) => ({ querySelectorAll: (sel: string) => { assert.equal(sel, ".warn-toast:not([data-ephemeral]) .warn-toast-msg"); return texts.map((t) => ({ textContent: t })); } });
   assert.deepEqual(liveNotices(null), [], "the container is created by the first toast; none yet");
   assert.deepEqual(liveNotices(undefined), []);
   assert.deepEqual(liveNotices(box([])), []);
   assert.deepEqual(liveNotices(box(["shot.png was not saved on the kernel. Your message was NOT sent.", "  ", null, "the held message was not sent"])),
     ["shot.png was not saved on the kernel. Your message was NOT sent.", "the held message was not sent"]);
+});
+
+test("a toast about the connection itself is not replayed: marked data-ephemeral where it is raised, left out by the reading", () => {
+  // the restart reload fires from the reopened socket, so "the session isn't reachable" or "<host> is disconnected, romp is
+  // re-dialing" shown again on the fresh page would tell a connected page it is disconnected; the nack and the other-tab
+  // ack (F2's two notices) say things that stay true and ride the reload unmarked
+  assert.match(RENDER, /^function warnToast\(msg: string\): HTMLElement \{/m, "the signature upstream's warn-toast.test.ts pins, with the toast handed back");
+  assert.match(RENDER, /setTimeout\(\(\) => t\.remove\(\), 12000\);\n\s*return t;/);
+  assert.match(RENDER, /^function ephemeralWarnToast\(msg: string\): void \{ warnToast\(msg\)\.dataset\.ephemeral = "1"; \}/m);
+  assert.equal((RENDER.match(/dataset\.ephemeral/g) || []).length, 1, "marked in one place");
+  assert.equal((RENDER.match(/ephemeralWarnToast\("Can't send yet \u2014 the session isn't reachable\. They stay staged\."\);/g) || []).length, 2, "the staged sends' two refusals");
+  assert.match(RENDER, /ephemeralWarnToast\(host \+ " is disconnected, so this wasn't sent\./, "the down-host refusal");
+  assert.equal((RENDER.match(/ephemeralWarnToast\(/g) || []).length, 4, "the definition and the three connectivity sites");
+  assert.match(RENDER, /warnToast\(m\.name \+ " couldn't be saved on the kernel, so it was not attached/, "the nack rides the reload");
+  assert.match(RENDER, /else warnToast\("attachments finished uploading on another tab/, "the other-tab ack rides the reload");
+  // the reading asks the DOM for the toasts without the mark: the skip is the selector's
+  const asked: string[] = [];
+  assert.deepEqual(liveNotices({ querySelectorAll: (sel: string) => { asked.push(sel); return [{ textContent: "kept" }]; } }), ["kept"]);
+  assert.deepEqual(asked, [".warn-toast:not([data-ephemeral]) .warn-toast-msg"]);
 });
 
 test("the persisted notices come out once: strings only, and the state handed back has no key left", () => {
@@ -71,7 +90,9 @@ test("render.ts snapshots the toasts on the CORE's pre-reload hook only (not on 
   assert.equal((RENDER.match(/pendingNotices:/g) || []).length, 1, "written in one place; the reading goes through takePendingNotices");
   // the replay follows the load-time publish, which follows the loss toast's block: the loss first, then what the last
   // page was saying; the record is cleared in the same block, before the toasts are raised (one reload, one replay)
-  assert.match(RENDER, /publishReloadHold\(pendingShips\.size\);\n(\/\/.*\n)*try \{\n\s*const taken = takePendingNotices\(vscodeApi\?\.getState\?\.\(\)\);\n\s*if \(taken\.notices\.length\) \{\n\s*vscodeApi\?\.setState\?\.\(taken\.rest\);\n\s*for \(const text of taken\.notices\) warnToast\(text\);\n\s*\}\n\} catch \{ \/\* ignore \*\/ \}/);
+  // the record is cleared whenever the key is there (an empty record too, so `pendingNotices: []` from a no-toast reload
+  // does not sit in the state), and the toasts are raised after the write
+  assert.match(RENDER, /publishReloadHold\(pendingShips\.size\);\n(\/\/.*\n)*try \{\n\s*const st = vscodeApi\?\.getState\?\.\(\);\n\s*const taken = takePendingNotices\(st\);\n\s*if \(st && typeof st === "object" && "pendingNotices" in st\) vscodeApi\?\.setState\?\.\(taken\.rest\);\n\s*for \(const text of taken\.notices\) warnToast\(text\);\n\} catch \{ \/\* ignore \*\/ \}/);
   assert.equal((RENDER.match(/takePendingNotices\(/g) || []).length, 1, "consumed once, at load");
 });
 

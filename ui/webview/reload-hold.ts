@@ -25,15 +25,18 @@ export function publishReloadHold(shipsPending: number, w: ReloadHoldHost = glob
 // which that retirement already emptied. So render.ts snapshots the texts of the toasts on screen into the persisted
 // state as `pendingNotices` on the CORE's pre-reload hook alone (persistNoticesForReload, called from persistForReload,
 // the function window.__rompPersistForReload names; pagehide keeps upstream's scroll record alone, so a load of the
-// user's own says nothing twice) and shows them again once at load. Pure here so the two readings run in node; the
-// wiring is pinned in reload-hold.test.ts and executed on the served page in tests/test_ship_reship.py.
+// user's own says nothing twice) and shows them again once at load. A toast about the connection itself (the session
+// isn't reachable, the host is disconnected) is left out: render.ts ephemeralWarnToast marks it data-ephemeral, since it
+// was true of the page that raised it and the restart reload follows the reconnect. Pure here so the two readings run
+// in node; the wiring is pinned in reload-hold.test.ts and executed on the served page in tests/test_ship_reship.py.
 /** The toast container as the reading needs it: anything with querySelectorAll (a DOM element in the page). */
 export interface NoticeBox { querySelectorAll(selectors: string): ArrayLike<{ textContent: string | null }>; }
-/** The texts of the warning toasts on screen (#warn-toasts .warn-toast-msg, in DOM order), blanks dropped; none
- *  when the container was never created. */
+/** The texts of the warning toasts on screen (#warn-toasts .warn-toast-msg, in DOM order), blanks dropped and the
+ *  toasts marked data-ephemeral skipped (a notice about the connection itself; see the note above); none when the
+ *  container was never created. */
 export function liveNotices(box: NoticeBox | null | undefined): string[] {
   if (!box) return [];
-  return Array.from(box.querySelectorAll(".warn-toast-msg"), (n) => (n.textContent || "").trim()).filter((t) => !!t);
+  return Array.from(box.querySelectorAll(".warn-toast:not([data-ephemeral]) .warn-toast-msg"), (n) => (n.textContent || "").trim()).filter((t) => !!t);
 }
 /** Take the persisted notices out of a state object: the non-empty strings among `pendingNotices` (anything else
  *  reads as none), and the state without the key, for the one-shot write-back. */
