@@ -7,9 +7,11 @@ timeline bars logged "live-merge failed". Nothing pinned the shape: the backends
 SessionBackend ABC (only TmuxBackend subclasses it), so the ABC's own signature -- which also lagged -- was
 never enforced, and the conformance test checked that each method EXISTS, not what it accepts.
 Two ratchets, both static (AST over the sources, no kernel import, so a bare run touches no state):
-  1. every call kernel.py makes on a backend it took from Sessions.backend_for(...) binds against each
+  1. every call kernel.py makes on a backend bound as `be = Sessions.backend_for(...)` binds against each
      backend class that defines the method (positional count and keyword names), so a caller that grows an
-     argument fails here until every backend takes it;
+     argument fails here until every backend takes it (outside the scan: chained
+     `Sessions.backend_for(x).method(...)` calls and functions that take `be` as a parameter, each of
+     which a backend may lack only behind a hasattr/getattr guard today);
   2. every method the SessionBackend ABC declares is accepted with at least the ABC's positional shape by
      each backend that defines it, so the ABC stays the contract it claims to be.
 Synthetic fixtures only; the scan reads this repo's own sources.

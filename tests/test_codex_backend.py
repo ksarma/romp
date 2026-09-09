@@ -1180,20 +1180,46 @@ for i in range(20):
         self.assertTrue(be.kill(sid))   # kill's held-final drain notifies too — same reentry
 
 
+class _Clock:
+    """A clock the backend module reads through its `time` global: time() answers `now`, everything
+    else (monotonic, sleep) is the real module's. Patched onto the backend MODULE, never onto the time
+    module, so no other thread's clock moves."""
+
+    def __init__(self, now):
+        self.now = now
+
+    def time(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
 class PruneLive(unittest.TestCase):
     """The kernel's _merge_live_atoms calls be.prune_live(sid, tx_uuids, tx_text_t, human_floor) -- four
     positional arguments -- and CodexBackend.prune_live took three from its birth (2026-09-02) to
     2026-09-09: every live merge of a Codex session holding an echo raised TypeError (the chat build and
     the feed's merge failed outright; the timeline bars logged "live-merge failed"). The call shape is
-    pinned across every backend in tests/test_backend_call_parity.py; this class covers the behaviour."""
+    pinned across every backend in tests/test_backend_call_parity.py; this class covers the behaviour in
+    the kernel's REAL shapes: record times are parse_z's whole seconds (the mapping's values are floats
+    of them), and the echo's own stamp is int(time.time()), as the SDK and tmux echoes stamp theirs."""
 
-    def _with_echo(self, text="ship it", t=1000.0):
+    def _with_echo(self, text="ship it", t=1000):
         be, fake, _ = build()
         sid = be.spawn("web", "/TESTDIR")
         s = be._session(sid)
         with s.lock:
             s.echoes.append({"text": text, "t": t, "uuid": "echo-11111111"})
         return be, sid
+
+    def _sent(self, be, sid, text, now):
+        """An echo through send() itself, on the steer path (an open turn: nothing queues, no worker
+        thread runs), with the backend's clock reading `now`."""
+        s = be._session(sid)
+        with s.lock:
+            s.turn_id = "t-live"
+        with mock.patch.object(cb, "time", _Clock(now)):
+            self.assertTrue(be.send(sid, text))
 
     def test_accepts_the_kernels_four_positional_arguments(self):
         be, sid = self._with_echo()
@@ -1202,26 +1228,42 @@ class PruneLive(unittest.TestCase):
 
     def test_text_lands_only_through_a_record_at_or_after_the_send(self):
         # T237b: "ok" sent twice -- the first record predates the second echo, so it must not retire it;
-        # a record stamped at or after the send does.
-        be, sid = self._with_echo("ok", t=1000.0)
-        be.prune_live(sid, frozenset(), {"ok": 900.0}, 0)
+        # a record stamped at or after the send does. Whole-second record times, as the kernel derives them.
+        be, sid = self._with_echo("ok", t=1000)
+        be.prune_live(sid, frozenset(), {"ok": 999.0}, 0)
         self.assertEqual(len(be.live_atoms(sid)), 1, "an older record with the same text is not this send")
         be.prune_live(sid, frozenset(), {"ok": 1000.0}, 0)
-        self.assertEqual(be.live_atoms(sid), [], "a record at the send time lands it")
+        self.assertEqual(be.live_atoms(sid), [], "a record at the send's second lands it")
+
+    def test_a_record_later_in_the_sends_own_second_lands_the_echo(self):
+        # The echo is stamped in WHOLE seconds like the SDK's and the tmux echo's. A float stamp (1000.3)
+        # kept an echo whose record was written at 1000.7 -- parse_z reads that record as 1000, and
+        # 1000 >= 1000.3 is false -- the same-second case the SDK retires and this backend did not
+        # (the round-1 verification, 2026-09-09).
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        self._sent(be, sid, "ok", 1000.3)
+        atom, = be.live_atoms(sid)
+        self.assertIsInstance(atom["t"], int)
+        self.assertEqual(atom["t"], 1000)
+        be.prune_live(sid, frozenset(), {"ok": 999.0}, 0)
+        self.assertEqual(len(be.live_atoms(sid)), 1, "the second before the send is not this send")
+        be.prune_live(sid, frozenset(), {"ok": 1000.0}, 0)
+        self.assertEqual(be.live_atoms(sid), [], "a record later in the send's own second lands it")
 
     def test_text_compares_under_the_shared_key_rule(self):
-        be, sid = self._with_echo("ship it", t=1000.0)
-        be.prune_live(sid, frozenset(), {"ship it": 1000.5}, 0)   # the kernel's keys are already stripped
+        be, sid = self._with_echo("ship it", t=1000)
+        be.prune_live(sid, frozenset(), {"ship it": 1001.0}, 0)   # the kernel's keys are already stripped
         self.assertEqual(be.live_atoms(sid), [])
-        be2, sid2 = self._with_echo("ship it", t=1000.0)
+        be2, sid2 = self._with_echo("ship it", t=1000)
         be2.prune_live(sid2, frozenset(), {"  ship it\n"}, 0)     # an older caller's plain set, unstripped
         self.assertEqual(be2.live_atoms(sid2), [], "a plain set keeps the unfloored match, keyed the same way")
 
     def test_uuid_retires_and_the_floor_retires_only_command_atoms(self):
-        be, sid = self._with_echo("ship it", t=1000.0)
+        be, sid = self._with_echo("ship it", t=1000)
         s = be._session(sid)
         with s.lock:
-            s.echoes.append({"text": "/model gpt-5-test", "t": 1000.0, "uuid": "echo-22222222", "command": True})
+            s.echoes.append({"text": "/model gpt-5-test", "t": 1000, "uuid": "echo-22222222", "command": True})
         be.prune_live(sid, frozenset({"echo-11111111"}), {}, 0)
         self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-22222222"], "by uuid")
         be.prune_live(sid, frozenset(), {}, 999.0)
@@ -1232,6 +1274,61 @@ class PruneLive(unittest.TestCase):
     def test_unknown_sid_is_a_no_op(self):
         be, _, _ = build()
         be.prune_live("11111111-2222-4333-8444-555555555555", frozenset(), {}, 0)
+
+
+class EchoAtoms(unittest.TestCase):
+    """What the kernel reads off a Codex echo. `_echo_text` is the marker every kernel reader of an input
+    echo keys on (SdkBackend's echo atoms carry it): _merge_live_atoms hides the echo behind its queued
+    bubble and never counts it as live work, build_session's _live_cmd_keys and the feed's held-send fold
+    read it. Until 2026-09-09 CodexBackend.live_atoms left it off, so a Codex echo painted as a solid user
+    atom beside its own queued bubble and forced the last turn open (the round-1 verification; the merge
+    itself is pinned in tests/test_codex_echo_merge.py). The backend's own retire, _append, takes one echo
+    per landed user record."""
+
+    def test_the_echo_atom_is_marked_as_an_input_echo(self):
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.turn_id = "t-live"                           # an open turn: send() steers, nothing queues
+        self.assertTrue(be.send(sid, "  ship it\n"))
+        atom, = be.live_atoms(sid)
+        self.assertEqual(atom["_echo_text"], "ship it", "the sent text, under the shared key rule")
+        self.assertEqual(atom["message"]["content"][0]["text"], "ship it")
+        self.assertEqual(atom["author"], "human")
+        self.assertNotIn("command", atom, "a plain echo carries no command flag")
+        with s.lock:
+            s.echoes.append({"text": "/model gpt-5-test", "t": 1000, "uuid": "echo-22222222", "command": True})
+        self.assertEqual([(a["_echo_text"], a.get("command")) for a in be.live_atoms(sid)],
+                         [("ship it", None), ("/model gpt-5-test", True)], "a command entry's flag rides its atom")
+
+    def test_a_landed_record_retires_one_echo_the_oldest_carrying_its_text(self):
+        # _append used to drop EVERY echo carrying the landed text, so a text queued twice lost its second
+        # echo when the first record landed, and a second send dropped after that left nothing visible
+        # (the round-1 fresh finding). The kernel's prune_live, floored by record time, is the other retire.
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.echoes.extend([{"text": "ok", "t": 1000, "uuid": "echo-11111111"},
+                             {"text": "ok", "t": 1001, "uuid": "echo-22222222"},
+                             {"text": "ship it", "t": 1002, "uuid": "echo-33333333"}])
+
+        def rec(kind, uid, text):
+            return {"type": kind, "uuid": uid, "message": {"role": kind, "content": [{"type": "text", "text": text}]}}
+
+        with s.norm_lock:                                  # _append's contract: the caller holds it
+            be._append(s, [rec("user", "u-1", "  ok \n")])   # the record side is keyed the same way
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-22222222", "echo-33333333"],
+                         "one record, one echo: the oldest carrying its text")
+        with s.norm_lock:
+            be._append(s, [rec("user", "u-2", "ok"), rec("assistant", "a-1", "ship it")])
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-33333333"],
+                         "the second record takes the second echo; an assistant record takes none")
+        with s.norm_lock:
+            be._append(s, [rec("user", "u-3", "ok")])
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-33333333"],
+                         "a record with no echo left to take retires nothing else")
 
 
 class LaunchErrorNames(unittest.TestCase):

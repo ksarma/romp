@@ -13464,7 +13464,14 @@ function loadModelChoices(): void {
     if (d.codex) CODEX_MODELS_ERROR = typeof d.codex.error === "string" ? d.codex.error : "";
     if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
     if (onModelChoicesLoaded) onModelChoicesLoaded();
-  }).catch(() => { /* picker stays as it was until it lands */ });
+  }).catch((e) => {
+    // A menu waiting on this read hears that it failed (fail loudly, never a silent blank): its row
+    // otherwise kept promising an answer that was never coming. With no menu waiting, the picker
+    // stays as it was until a read lands.
+    if (!onModelChoicesLoaded) return;
+    CODEX_MODELS_ERROR = "could not read /models: " + (e instanceof Error ? e.message : String(e));
+    onModelChoicesLoaded();
+  });
 }
 loadModelChoices();
 // The kernel's default-comment settings, RAW ("session" = same as the session — the user 2026-08-29):
@@ -13799,13 +13806,14 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     head.textContent = kind === "model" ? "No model list from Codex" : "No effort list from Codex";
     const sub = el("div", "meta-item-sub");
     sub.textContent = CODEX_MODELS_ERROR || "asking the Codex app-server for it now";
+    if (!CODEX_MODELS_ERROR) sub.appendChild(metaDots());   // a wait wears the romp loader's dots (ui/CLAUDE.md)
     empty.append(head, sub);
     menu.appendChild(empty);
     onModelChoicesLoaded = () => {
       if (metaMenuEl !== menu) return;
       const now = metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk");
       if (now.length) { closeMetaMenu(); toggleMetaMenu(kind, btn, forSid); }
-      else sub.textContent = CODEX_MODELS_ERROR || "the Codex app-server sent no list";
+      else sub.textContent = CODEX_MODELS_ERROR || "no model list yet";   // textContent drops the dots
     };
     loadModelChoices();
   }

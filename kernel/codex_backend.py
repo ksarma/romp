@@ -739,19 +739,33 @@ class CodexBackend:
         with open(path, "a", encoding="utf-8") as f:
             for r in recs:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        # a landed user record replaces its optimistic echo (uuid-independent: match by text)
-        landed = {self._rec_text(r) for r in recs if r.get("type") == "user"}
+        # A landed user record replaces its optimistic echo (uuid-independent: match by text, under
+        # echo_text_key on both sides). ONE echo per record, the OLDEST carrying the text: until
+        # 2026-09-09 every echo carrying the text went with the first record, so a text queued twice
+        # lost its second echo the moment the first landed, and a second send dropped after that (the
+        # client dying mid-queue) left nothing visible. The kernel's prune_live is the other retire,
+        # floored by record time; this one sees only the records it just wrote.
+        landed = [t for t in (self._rec_text(r) for r in recs if r.get("type") == "user") if t]
         if landed:
             with s.lock:
-                s.echoes = [e for e in s.echoes if e["text"] not in landed]
+                kept = list(s.echoes)
+                for text in landed:
+                    for i, e in enumerate(kept):
+                        if echo_text_key(e.get("text")) == text:
+                            del kept[i]
+                            break
+                if len(kept) != len(s.echoes):
+                    s.echoes = kept
 
     @staticmethod
     def _rec_text(rec):
+        """A user record's text under the shared key rule (echo_text_key: outer whitespace stripped,
+        nothing else), the key send() stores on the echo and _append and prune_live compare."""
         c = (rec.get("message") or {}).get("content")
         if isinstance(c, list):
-            return " ".join(b.get("text", "") for b in c
-                            if isinstance(b, dict) and b.get("type") == "text").strip()
-        return (c or "").strip() if isinstance(c, str) else ""
+            return echo_text_key(" ".join(b.get("text", "") for b in c
+                                          if isinstance(b, dict) and b.get("type") == "text"))
+        return echo_text_key(c)
 
     # ── liveness / identity ──────────────────────────────────────────────────────────────────────
     def end_marker(self, sid):
@@ -811,7 +825,12 @@ class CodexBackend:
         with s.lock:
             if s.dead:
                 return False
-            s.echoes.append({"text": text.strip(), "t": time.time(),
+            # WHOLE seconds, as the SDK and tmux echoes stamp theirs: the kernel's record times are
+            # parse_z's int seconds and prune_live lands an echo by text only through a record at or
+            # after its send, so a float stamp kept an echo whose record was written later in the
+            # same second (the round-1 verification, 2026-09-09). The text is stored under the shared
+            # key rule (echo_text_key), the key _append and prune_live compare against.
+            s.echoes.append({"text": echo_text_key(text), "t": int(time.time()),
                              "uuid": "echo-%s" % uuidlib.uuid4().hex[:8]})
             turn_id = s.turn_id
             tid = s.tid
@@ -825,7 +844,7 @@ class CodexBackend:
                 pass
         with s.lock:
             if s.dead:
-                s.echoes = [e for e in s.echoes if e["text"] != text.strip()]
+                s.echoes = [e for e in s.echoes if e["text"] != echo_text_key(text)]
                 return False
             entry_id = "q-%s" % uuidlib.uuid4().hex
             s.queue.append(text)
@@ -1515,11 +1534,23 @@ class CodexBackend:
         if not s:
             return []
         with s.lock:
-            return [{"type": "user", "uuid": e["uuid"], "session_id": sid, "fsid": s.tid,
-                     "t": e["t"], "parentUuid": None, "author": "human",
-                     "message": {"role": "user",
-                                 "content": [{"type": "text", "text": e["text"]}]}}
-                    for e in s.echoes]
+            out = []
+            for e in s.echoes:
+                # `_echo_text` marks the atom as an INPUT ECHO to the kernel, as SdkBackend's echo atoms
+                # do: _merge_live_atoms hides it behind its queued bubble (shown_texts) and never counts
+                # it as live work (an echo-only merge keeps the turn's real ended state), and
+                # build_session's _live_cmd_keys and the feed's held-send fold read it. Without it
+                # (until 2026-09-09) a Codex echo painted as a solid user atom beside its own queued
+                # bubble, painted once more beside its landed record, and forced the last turn open: a
+                # false "working" chip for a session whose only live item was a pending send.
+                atom = {"type": "user", "uuid": e["uuid"], "session_id": sid, "fsid": s.tid,
+                        "t": e["t"], "parentUuid": None, "author": "human", "_echo_text": e["text"],
+                        "message": {"role": "user",
+                                    "content": [{"type": "text", "text": e["text"]}]}}
+                if e.get("command"):
+                    atom["command"] = True
+                out.append(atom)
+            return out
 
     def prune_live(self, sid, tx_uuids, tx_user_texts=(), human_floor=0):
         """Drop the optimistic input echoes the transcript has caught up on, with the SessionBackend
@@ -1533,15 +1564,18 @@ class CodexBackend:
 
         An echo retires on the events SdkBackend.prune_live names: its uuid is on disk; its text LANDED,
         where `tx_user_texts` as a MAPPING (text -> the newest record time carrying it) lands the echo
-        only through a record written at or after its own send -- the backend's own _append prune is
-        implicitly floored (it sees only the records it just wrote), but this kernel-side prune sees the
-        whole transcript, and without the floor a repeated text ("ok" twice) retired the second echo the
-        moment it was sent (T237b) -- while a plain set (an older caller) keeps the unfloored match; or it
+        only through a record written at or after its own send -- the backend's own _append retire is
+        unfloored but sees only the records it just wrote, and takes ONE echo per record (the oldest
+        carrying the text); this kernel-side prune sees the whole transcript, and without the floor a
+        repeated text ("ok" twice) retired the second echo the moment it was sent (T237b) -- while a
+        plain set (an older caller) keeps the unfloored match; or it
         is a COMMAND atom that a genuine-human turn (`human_floor`) postdates, the rule the SDK applies to
         its streamed slash-command feedback. Codex echoes carry no `command` flag today, so the floor
         retires nothing here; it is honoured, not swallowed, so an echo kind that gains the flag behaves
         as on the SDK. No floor retires a plain echo (the 2026-09-06 rule): a send the app-server never
-        records must stay visible. Texts are compared under echo_text_key on both sides."""
+        records must stay visible. Texts are compared under echo_text_key on both sides. Record times
+        are parse_z's whole seconds, so send() stamps the echo with int(time.time()) as the SDK and tmux
+        echoes do: a float stamp kept an echo whose record was written later in the same second."""
         s = self._session(sid)
         if not s:
             return

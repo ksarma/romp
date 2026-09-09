@@ -34,8 +34,10 @@ def echo_text_key(text) -> str:
     outer whitespace stripped, nothing else. Every reader shares it and must agree: the kernel's
     _atom_user_text(s) (the keys of the `tx_user_texts` mapping prune_live receives, and the sets the
     queued fold, _merge_live_atoms, _comments_frame and _tmux_echo_prune compare against),
-    SdkBackend.prune_live's by-text retire (the echo side of that comparison), and SdkBackend._text_landed
-    / _landed_texts (the transcript scan behind the boot and dead-spawn duplicate guard). Until 2026-09-06
+    SdkBackend.prune_live's and CodexBackend.prune_live's by-text retire (the echo side of that
+    comparison), CodexBackend._append's own retire of an echo by its landed record (its _rec_text keys
+    the record side and send() stores the echo under the same key), and SdkBackend._text_landed /
+    _landed_texts (the transcript scan behind the boot and dead-spawn duplicate guard). Until 2026-09-06
     the scan collapsed internal whitespace while the prune compared the raw echo text against stripped
     keys, so a send whose text carried a trailing newline (`romp send` passes its argument verbatim) was
     FOUND by the scan, neither re-fed nor flagged, and never pruned or dismissable. Strip is as wide as

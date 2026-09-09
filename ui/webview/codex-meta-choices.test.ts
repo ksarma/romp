@@ -57,12 +57,19 @@ test("a Codex menu with no list says why and re-reads /models instead of opening
   assert.match(block, /if \(metaMenuEl !== menu\) return;/);
   assert.match(block, /if \(now\.length\) \{ closeMetaMenu\(\); toggleMetaMenu\(kind, btn, forSid\); \}/);
   assert.match(block, /loadModelChoices\(\);/);
+  // the wait wears the romp loader's dots beside its text (ui/CLAUDE.md), which the reason replaces
+  assert.match(block, /if \(!CODEX_MODELS_ERROR\) sub\.appendChild\(metaDots\(\)\);/);
+  assert.match(block, /else sub\.textContent = CODEX_MODELS_ERROR \|\| "no model list yet";/);
+  assert.doesNotMatch(block, /sent no list/, "the post-read fallback never attributes an answer to the app-server");
+  // a FAILED re-read tells the waiting menu (fail loudly): the row would otherwise promise an answer forever
+  assert.match(RENDER, /\}\)\.catch\(\(e\) => \{\n(?:[^\n]*\n){1,4}?\s+if \(!onModelChoicesLoaded\) return;\n\s+CODEX_MODELS_ERROR = "could not read \/models: " \+ /);
   // the hook dies with its menu, so a late response never rebuilds a menu the user closed
   assert.match(RENDER, /metaMenuEl = null;\n  onModelChoicesLoaded = null;/);
   // the row is a statement, not a choice: no pointer, no hover wash
   const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
   assert.match(CSS, /\.meta-item\.meta-empty \{ cursor: default; \}/);
   assert.match(CSS, /\.meta-item\.meta-empty:hover \{ background: none; \}/);
+  assert.match(CSS, /\.meta-item-sub \.meta-dots \{ margin-left: 5px;/);
 });
 
 // The loader, lifted from render.ts and transpiled (the models-rev.test.ts idiom): the codex section's
@@ -75,10 +82,11 @@ function liftLoader() {
   assert.ok(start > 0 && fnAt > start && stop > fnAt, "anchors not found; render.ts's models loader moved; re-anchor");
   const js = requireCjs("esbuild").transformSync(RENDER.slice(start, stop), { loader: "ts" }).code;
   const pending: Array<(d: any) => void> = [];
-  const fetch = () => new Promise<any>((res) => pending.push((d: any) => res({ json: async () => d })));
+  const failing: Array<(e: any) => void> = [];   // the same reads, rejected by hand (the kernel unreachable)
+  const fetch = () => new Promise<any>((res, rej) => { pending.push((d: any) => res({ json: async () => d })); failing.push(rej); });
   const fn = new Function("kernelUrl", "fetch", "adoptCommentDefaults",
     js + "\nreturn { loadModelChoices, CODEX_MODEL_CHOICES, get error() { return CODEX_MODELS_ERROR; }, set hook(f) { onModelChoicesLoaded = f; } };");
-  return { api: fn((p: string) => p, fetch, () => {}), pending };
+  return { api: fn((p: string) => p, fetch, () => {}), pending, failing };
 }
 const tick = () => new Promise((r) => setImmediate(r));
 
@@ -96,6 +104,32 @@ test("executed: the codex section's error reaches the picker and the completion 
   pending[1]({ rev: 6, models: [], efforts: [], codex: { models: [{ value: "gpt-5-test", label: "GPT-5 Test" }], efforts: [], error: null } });
   await tick(); await tick();
   assert.equal(api.error, "", "a held list clears the reason");
+  assert.deepEqual(api.CODEX_MODEL_CHOICES, [{ value: "gpt-5-test", label: "GPT-5 Test" }]);
+  assert.equal(fired, 2);
+});
+
+// A read that FAILS (the kernel restarting or unreachable when the empty menu re-reads /models) used to
+// be swallowed by the loader's catch, so the row kept saying it was asking, forever. Now a waiting menu
+// hears the failure through the same hook and its row names it; with no menu waiting the catch stays
+// quiet, as before.
+test("executed: a failed re-read tells the waiting menu, and stays quiet with no menu waiting", async () => {
+  const { api, pending, failing } = liftLoader();
+  let fired = 0;
+  api.loadModelChoices();                                  // the page-load read, no menu open
+  failing[0](new Error("kernel unreachable"));
+  await tick(); await tick();
+  assert.equal(api.error, "", "no menu waiting: nothing recorded, nothing thrown");
+  assert.equal(fired, 0);
+  api.hook = () => { fired++; };
+  api.loadModelChoices();                                  // the empty menu's own re-read
+  failing[1](new Error("kernel unreachable"));
+  await tick(); await tick();
+  assert.equal(api.error, "could not read /models: kernel unreachable");
+  assert.equal(fired, 1, "the waiting menu hears that the read failed");
+  api.loadModelChoices();
+  pending[2]({ rev: 7, models: [], efforts: [], codex: { models: [{ value: "gpt-5-test", label: "GPT-5 Test" }], efforts: [], error: null } });
+  await tick(); await tick();
+  assert.equal(api.error, "", "the next read that lands clears the failure");
   assert.deepEqual(api.CODEX_MODEL_CHOICES, [{ value: "gpt-5-test", label: "GPT-5 Test" }]);
   assert.equal(fired, 2);
 });

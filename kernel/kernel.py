@@ -15354,6 +15354,26 @@ def _create_codex_session(nm, cwd, client=None, parent="", tags=()):
         _release_name(nm)
 
 
+def _codex_gate_opened(cx, door):
+    """Send the models frame when `cx` has just gained its FIRST live session. GET /models consults the
+    Codex catalog only where this machine opted in (the Codex default backend, the Codex judge engine,
+    or a live Codex session), so the first live session flips that gate from closed to open, and every
+    open picker's cached `codex.models` just went from [] to the real list: tell them with a models
+    frame, the same event the pick memory and the catalog fetch send. Without it a dashboard loaded
+    before the flip kept its empty Codex menu until a reload (the owner's empty picker, 2026-09-09).
+    Event-keyed on the gate's flip itself, never on every spawn or revive: a second live session
+    changes nothing the payload carries. TWO doors open the gate and both call this once the backend
+    holds the session live: _create_codex_session_inner (cx.spawn) and _revive_session_inner's Codex
+    arm (a successful cx.resume makes a dead session live again; the first cut sent the frame from the
+    spawn alone, so reviving the only Codex session after a kernel restart left every tab's Codex list
+    empty, the round-1 verification). `door` names the caller in the log line."""
+    try:
+        if len(cx.live_sessions()) == 1:
+            _models_changed()
+    except Exception as e:
+        sys.stderr.write("codex %s: models frame not sent (%s)\n" % (door, e))
+
+
 def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
     """Create + open a new Codex-backed session — the same ACK-FAST shape as _create_sdk_session
     (focus first, dirty-mark wake, one direct push; never a synchronous fleet build here). spawn()
@@ -15373,17 +15393,7 @@ def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
     cx = _codex()
     sid = cx.spawn(nm, cwd, bg, fg)
     extra = {}
-    # The FIRST live Codex session opens /models' Codex gate (the handler consults the backend's catalog
-    # only where this machine opted in, a live session being one way), so every open picker's cached
-    # `codex.models` just went from [] to the real list: tell them with a models frame, the same event
-    # the pick memory and the catalog fetch send. Without it a dashboard loaded before this spawn kept
-    # its empty Codex menu until a reload (the owner's empty picker, 2026-09-09). Event-keyed on the
-    # gate's flip itself, not on every spawn: a second session changes nothing the payload carries.
-    try:
-        if len(cx.live_sessions()) == 1:
-            _models_changed()
-    except Exception as e:
-        sys.stderr.write("codex spawn: models frame not sent (%s)\n" % e)
+    _codex_gate_opened(cx, "spawn")   # the first live Codex session: every picker re-reads /models
     if parent or tags:
         extra.update(_tag_ack(sid, parent, tags))
     if client is not None:
@@ -18713,6 +18723,8 @@ def _revive_session_inner(sid, client=None):
             else:
                 ok = bool(cx.resume(name, sid, cwd=_cwd_of(sid)))
                 detail = "" if ok else "the Codex backend could not resume it (see the kernel log)"
+                if ok:
+                    _codex_gate_opened(cx, "revive")   # the only Codex session, live again: the gate opened
         else:
             cwd = _cwd_of(sid)
             workdir = cwd if cwd and os.path.isdir(cwd) else os.path.expanduser("~")
@@ -34050,8 +34062,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # COMPACTING must count too: a /compact runs no open assistant turn, so _session_working is False the whole
     # time — without the compacting arm a message typed mid-compaction showed solid blue (the user 2026-06-29).
     # (SDK queues in memory → pending_queued is instant, no gap; its echoes are skipped here via the unqueue
-    # discriminator.) Keys on the EVENT MODEL (_session_working / _compacting), never the tmux pane state — and
-    # an echo-only merge keeps the turn's real ended state.
+    # discriminator.) CodexBackend has no unqueue either, so its echoes take this fold too (since 2026-09-09,
+    # when they gained _echo_text): a QUEUED Codex send is already in `queued` (pending_queued) and `already`
+    # skips it; a mid-turn STEER, which the backend delivers without queueing, reads as pending until the
+    # app-server records it, which is what it is. Keys on the EVENT MODEL (_session_working / _compacting),
+    # never the tmux pane state, and an echo-only merge keeps the turn's real ended state.
     tm0 = tmux.get(sid)
     compacting_now = (False if path_override else
                       _compacting(sid, (tm0 or {}).get("state", ""), parsed, now, (tm0 or {}).get("since")))
@@ -54672,7 +54687,10 @@ class Handler(BaseHTTPRequestHandler):
                 # menu with the session's default badge showing and no word of why (2026-09-09): the
                 # client in retry backoff, a failed model_list, or this gate closed on a dashboard
                 # loaded before the first Codex session, none of them visible. Fail loudly: the reason
-                # rides to the menu, and the gate's own flip sends a models frame (_create_codex_session).
+                # rides to the menu, and the gate's own flip sends a models frame (_codex_gate_opened,
+                # from the spawn and the revive). The CLOSED gate carries a reason of its own: the
+                # backend was not asked, so the menu must never read the empty list as an answer from
+                # the app-server (the round-1 verification: the menu's fallback said it sent no list).
                 if cx and (_default_backend() == "codex" or _judge_engine_name() == "codex"
                            or bool(cx.live_sessions())):
                     try:
@@ -54684,6 +54702,10 @@ class Handler(BaseHTTPRequestHandler):
                             cx_err = cx.model_catalog_error() or "the Codex app-server sent no model list"
                         except Exception as e:
                             cx_err = "model catalog: %s" % (str(e) or e.__class__.__name__)
+                elif cx:
+                    cx_err = "no live Codex session; the list is read once one runs"
+                else:
+                    cx_err = "the Codex backend is unavailable (see the kernel log)"
                 return self._send(200, json.dumps(
                     # `rev` is the pick memory's revision — the models frame's counter (_models_changed),
                     # read here BEFORE the picks so a payload never carries a rev newer than its list: a

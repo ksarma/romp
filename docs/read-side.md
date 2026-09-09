@@ -357,11 +357,14 @@ landed one: an attachment further back read as never landed, and the resumed CLI
 the send again. The found verdict is recorded on the echo (`_landed`), and
 `prune_live` and the chat merge retire the echo on it without a text match, so a found
 echo always has an exit and a later boot never re-scans it. Every by-text comparison
-of an echo against a record, the guard's scan, `prune_live`'s retire, the kernel's
-`_atom_user_texts` and its folds, the tmux echo's prune (`_tmux_echo_prune`) and the
-user-todo answer's landed check (`_paste_landed_texts`, the match set
-`_user_todo_answer_lost` reads), uses one key, `echo_text_key` in
-`session_backend.py` (outer whitespace stripped, nothing else). The scan used to
+of an echo against a record, the guard's scan, `prune_live`'s retire on every backend
+(`SdkBackend`, `CodexBackend`, the tmux backend's), the Codex backend's own retire of
+an echo by the user record it just wrote (`CodexBackend._append`, one echo per record,
+whose `_rec_text` keys the record side), the kernel's `_atom_user_texts` and its folds,
+the tmux echo's prune (`_tmux_echo_prune`) and the user-todo answer's landed check
+(`_paste_landed_texts`, the match set `_user_todo_answer_lost` reads), uses one key,
+`echo_text_key` in `session_backend.py` (outer whitespace stripped, nothing else). The
+scan used to
 collapse inner whitespace while the prune compared raw text against stripped keys, so
 a send with a trailing newline was found, hence neither re-fed nor flagged, and yet
 never pruned or dismissable.
