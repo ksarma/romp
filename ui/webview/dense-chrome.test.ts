@@ -68,6 +68,12 @@ test("the gear row mirrors the other booleans: Chat section, save path, open-tim
   assert.ok(GEAR.indexOf(">Chat<") < at, "in the Chat section");
   assert.ok(at < GEAR.indexOf("id=rs-branch"), "before Show git branch (after Compact transcript)");
   assert.ok(GEAR.includes("<b>Compact tabs and agents</b>"), "the label");
+  // the sub-line leads with the box, which every layout has, and qualifies the strip: under the phone layout's
+  // media rule (kernel.py _CHAT_MOBILE_CSS) the session picker stands in for the strip, so a phone gets the box
+  // half alone (the review of 2026-09-09; the guide paragraph says the same, pinned below)
+  const sub = GEAR.slice(at, GEAR.indexOf("id=rs-branch")).match(/<span class=rs-sub>([^<]*)<\/span>/)![1];
+  assert.ok(sub.indexOf("box of background work") < sub.indexOf("tab strip"), "the box first, then the strip");
+  assert.match(sub, /about four rows/); assert.match(sub, /session picker stands in for the strip/); assert.match(sub, /Off by default\.$/);
   assert.ok(GEAR.includes("dn = document.getElementById('rs-dense')"), "the handle");
   assert.ok(GEAR.includes("if (dn) dn.addEventListener('change', function () { var s = load(); s.denseChrome = dn.checked; save(s); });"),
     "the save path: save() raises romp:settings and posts settingsSync, like every boolean here");
@@ -79,19 +85,64 @@ test("the gear row mirrors the other booleans: Chat section, save path, open-tim
 test("the dense rules exist under the class, with these exact values", () => {
   const tab = denseRule(".tab");
   assert.match(tab, /gap: 3px;/); assert.match(tab, /padding: 3px 5px;/); assert.match(tab, /font-size: 0\.86em;/);
-  assert.match(denseRule(".tab-add"), /padding: 3px 8px;/);
+  assert.match(denseRule(".tab .host-prefix"), /font-size: 0\.92em;/,
+    "a federated tab's host prefix compensates for the smaller tab: 0.86 x 0.92 x 13 = 10.3px, the default's rendered size (the floor test below)");
+  const add = denseRule(".tab-add");
+  assert.match(add, /padding: 3px 8px;/);
+  assert.match(add, /font-size: 1\.1em;/, "the + keeps its glyph size: the dense .tab rule outranks .tab-add's own 1.1em, so it is restated");
+  assert.match(denseRule(".tab-tagbox"), /min-height: 25px;/, "the tag control's floor follows the dense + tab's box (the arithmetic test below)");
   const head = denseRule(".tab-group-head");
   assert.match(head, /gap: 4px;/); assert.match(head, /padding: 3px 5px 3px 4px;/);
   assert.doesNotMatch(head, /font-size/, "the group header keeps the surface's one sub-line size (0.82em); its count inherits it and stays legible");
+  const sep = denseRule(".tab-group-sep:not(.tab-group-break)");
+  assert.match(sep, /padding: 6px 6px;/, "the trail divider's gutters scale with the row, so its line keeps the default's half-row proportion");
+  assert.doesNotMatch(sep, /width|height|background/, "the width stays the default's 13px (dragslot's virtual layout measures it); only the gutters change");
+  assert.doesNotMatch(CSS, /\nbody\.dense-chrome \.tab-group-break/, "the row break keeps no box, so no dense rule names it");
   assert.match(denseRule("#bg-tasks"), /margin: 4px 10px 4px;/);
   assert.match(denseRule(".bg-fold-head"), /padding: 5px 11px;/);
   const list = denseRule(".bg-list");
-  assert.match(list, /padding: 2px 2px;/); assert.match(list, /max-height: 100px;/, "about four rows; the inner scroll is the default rule's");
+  assert.match(list, /padding: 2px 2px;/); assert.doesNotMatch(list, /max-height/, "the padding holds in both states; the cap is the guarded rule (the cap test below)");
+  assert.match(denseRule(".bg-list:not(:has(.bg-task.open))"), /max-height: 100px;/, "about four rows while no row's details are open; the inner scroll is the default rule's");
   assert.match(denseRule(".bg-group-head"), /padding: 3px 9px 1px;/);
   const row = denseRule(".bg-head");
   assert.match(row, /gap: 6px;/); assert.match(row, /padding: 3px 9px;/); assert.match(row, /line-height: 1\.3;/);
   assert.match(denseRule(".bg-sum"), /font-size: 11px;/);
   assert.match(denseRule(".bg-since"), /font-size: 10px;/);
+});
+
+test("the dense list cap carries the default cap's exact open-row guard, so it outranks the 180px rule and lifts with it", () => {
+  // the review of 2026-09-09: a bare `body.dense-chrome .bg-list` (0,2,1) loses to the default's
+  // `.bg-list:not(:has(.bg-task.open))` (0,3,0) whatever the source order, so the dense list read 180px while
+  // closed and 100px only once a row's details were open, the one state the default cap lifts for (a command's
+  // 220px output tail through two nested scrolls). The same guard on the dense selector makes it (0,4,1): 100px
+  // closed, and open it lifts to the box's own min(50vh, 340px), as the default does.
+  const dflt = CSS.match(/\n\.bg-list(:not\(:has\([^)]*\)\)) \{ max-height: (\d+)px; \}/);
+  assert.ok(dflt, "the default list's cap is guarded");
+  assert.equal(dflt![2], "180", "six default rows (bg-tasks-layout.test.ts pins the rule)");
+  const dense = CSS.match(new RegExp("\\nbody\\." + DENSE_CHROME_CLASS + " \\.bg-list(:not\\(:has\\([^)]*\\)\\)) \\{ max-height: (\\d+)px; \\}"));
+  assert.ok(dense, "the dense list's cap is guarded");
+  assert.equal(dense![1], ":not(:has(.bg-task.open))", "the guard names the class bgRow sets on an open foldable row");
+  assert.equal(dense![1], dflt![1], "the SAME guard as the default cap: an open row lifts both");
+  assert.equal(dense![2], "100", "four dense rows (24px with the arrow) plus the list's 4px of padding");
+  assert.match(RENDER, /\(tOpen && foldable \? " open" : ""\)/, "the open class is the renderer's");
+  assert.match(CSS, /\n#bg-tasks \{[^}]*max-height: min\(50vh, 340px\);/, "the box's own cap bounds an open row's details");
+});
+
+test("the dense tag control reserves the dense + tab's exact box: the arithmetic, from the stylesheet", () => {
+  // tag-mounts.test.ts recomputes the DEFAULT pair (the .tab-tagbox floor equals the + tab's line + padding +
+  // border) from the first .tab-add and .tab-tagbox rules; the dense pair is recomputed here from the dense
+  // padding, so neither floor can drift from its + tab alone. #tabs stretches every item on a row to the
+  // tallest, so a floor left at 31px held the row with the + and the tag control 6px above the 25px rows.
+  const addDefault = CSS.match(/\n\.tab-add \{[^}]*\}/)![0];
+  const lineH = Number(addDefault.match(/line-height: (\d+)px/)![1]);
+  assert.doesNotMatch(denseRule(".tab-add"), /line-height/, "the dense + keeps the default's line-height");
+  const padV = Number(denseRule(".tab-add").match(/padding: (\d+)px/)![1]);
+  const tabRule = CSS.match(/^\.tab \{[\s\S]*?\n\}/m)![0];
+  const borderV = tabRule.includes("border: 1px solid") && tabRule.includes("border-bottom: none") ? 1 : 2;
+  assert.doesNotMatch(denseRule(".tab"), /border/, "the dense tab keeps the default's border");
+  const minH = Number(denseRule(".tab-tagbox").match(/min-height: (\d+)px/)![1]);
+  assert.equal(minH, lineH + padV * 2 + borderV, "the dense .tab-tagbox floor equals the dense + tab's rendered box");
+  assert.equal(minH, 25);
 });
 
 test("the trailing status word hides only where the dot already says it; the label and the arrow stay", () => {
@@ -115,34 +166,61 @@ test("every dense rule is scoped to the body class, and the sheet's defaults are
   // the defaults, byte for byte the values the dense rules shadow
   const tab = defaultRule(".tab");
   assert.match(tab, /gap: 4px;/); assert.match(tab, /padding: 6px 7px; font-size: 0\.92em;/);
-  assert.match(defaultRule(".tab-add"), /padding: 6px 10px;/);
+  assert.match(defaultRule(".tab-add"), /font-size: 1\.1em; padding: 6px 10px;/);
+  assert.match(defaultRule(".host-prefix"), /font-size: 0\.86em;/);
+  assert.match(defaultRule(".tab-tagbox"), /min-height: 31px;/);
+  assert.match(defaultRule(".tab-group-sep:not(.tab-group-break)"), /width: 13px; padding: 8px 6px;/);
   const head = defaultRule(".tab-group-head");
   assert.match(head, /gap: 5px; padding: 6px 7px 6px 6px;/); assert.match(head, /font-size: 0\.82em;/);
   assert.match(defaultRule("#bg-tasks"), /margin: 8px 10px 6px;/);
   assert.match(defaultRule(".bg-fold-head"), /padding: 7px 11px;/);
   const list = defaultRule(".bg-list");
-  assert.match(list, /padding: 4px 2px;/); assert.doesNotMatch(list, /max-height/, "the default list has no cap of its own (the box's min(50vh, 340px))");
+  assert.match(list, /padding: 4px 2px;/); assert.doesNotMatch(list, /max-height/, "the bare list rule carries no cap; the default cap is the guarded 180px rule (the cap test above)");
   assert.match(defaultRule(".bg-group-head"), /padding: 6px 9px 2px; font-size: 10px;/);
   assert.match(defaultRule(".bg-head"), /gap: 8px; padding: 5px 9px;/);
   assert.match(defaultRule(".bg-sum"), /font-size: 12px;/);
   assert.match(defaultRule(".bg-since"), /font-size: 11px;/);
   // the defaults come first, so the tests that read a selector's first rule keep reading the default
-  for (const sel of [".tab", ".tab-add", ".tab-group-head", "#bg-tasks", ".bg-fold-head", ".bg-list", ".bg-group-head", ".bg-head", ".bg-sum", ".bg-since"]) {
+  for (const sel of [".tab", ".tab-add", ".tab-tagbox", ".tab-group-head", ".tab-group-sep:not(.tab-group-break)", "#bg-tasks", ".bg-fold-head", ".bg-list", ".bg-list:not(:has(.bg-task.open))", ".bg-group-head", ".bg-head", ".bg-sum", ".bg-since"]) {
     assert.ok(CSS.indexOf("\n" + sel + " {") < CSS.indexOf("\nbody." + DENSE_CHROME_CLASS + " " + sel + " {"), sel + ": default before dense");
   }
+  assert.ok(CSS.indexOf("\n.host-prefix {") < CSS.indexOf("\nbody." + DENSE_CHROME_CLASS + " .tab .host-prefix {"), ".host-prefix: default before dense");
 });
 
 test("the dense sizes are the sheet's own rungs and none is under the 10px floor", () => {
   const block = stripComments(CSS.slice(CSS.indexOf("body." + DENSE_CHROME_CLASS + " .tab {")));
   const sizes = Array.from(block.matchAll(/font-size: ([^;]+);/g)).map((m) => m[1]);
-  assert.deepEqual([...new Set(sizes)].sort(), ["0.86em", "10px", "11px"], "0.86em is on the em ladder (css-vocab.test.ts); 11px and 10px are the box's own (.bg-since, .bg-status)");
+  assert.deepEqual([...new Set(sizes)].sort(), ["0.86em", "0.92em", "1.1em", "10px", "11px"],
+    "0.86em and 0.92em are on the em ladder (css-vocab.test.ts); 1.1em is the +'s own, restated; 11px and 10px are the box's own (.bg-since, .bg-status)");
   for (const s of sizes) {
     const px = s.endsWith("em") ? parseFloat(s) * 13 : parseFloat(s);
     assert.ok(px >= 10, s + " is at or above the 10px floor");
   }
+  // nested em compounds (ui/CLAUDE.md): a child of the tab with its own em size renders at the dense tab's em
+  // times its own, which the declared sizes above never show. The review of 2026-09-09 measured a federated tab's
+  // host prefix at 9.6px under the bare 0.86em tab. Every em-sized child render.ts puts inside a .tab: the label's
+  // host prefix (host-prefix.ts hostNameNodes) and the close glyph; the user-todo flag is px-sized.
+  assert.match(RENDER, /label\.replaceChildren\(\.\.\.hostNameNodes\(s\.name, id\)\);/);
+  assert.match(RENDER, /const close = el\("span", "tab-close"\);/);
+  assert.match(read("ui", "webview", "host-prefix.ts"), /h\.className = off \? "host-prefix off" : "host-prefix";/);
+  const em = (rule: string, what: string) => { const m = rule.match(/font-size: ([\d.]+)em;/); assert.ok(m, what + " has an em size"); return parseFloat(m![1]); };
+  const tabEm = em(denseRule(".tab"), "the dense tab");
+  for (const child of [".host-prefix", ".tab-close"]) {
+    const dense = CSS.match(new RegExp("\\nbody\\." + DENSE_CHROME_CLASS + " \\.tab " + esc(child) + " \\{([^}]*)\\}"));
+    const childEm = em(dense ? dense[1] : defaultRule(child), child);
+    const px = tabEm * childEm * 13;
+    assert.ok(px >= 10, child + " renders at " + px.toFixed(2) + "px inside a dense tab, at or above the 10px floor");
+  }
+  assert.doesNotMatch(stripComments(CSS), /\n\.tab(?:[.:][^ {\n]*)? [^{\n]+\{[^}]*font-size: [\d.]+em/, "no other em-sized .tab descendant rule exists in the sheet (add it to the list above if one appears)");
 });
 
-test("the guide names the setting by its gear label", () => {
+test("the guide names the setting by its gear label, and its paragraph leads with the box and qualifies the strip", () => {
   assert.match(GUIDE, /\*\*Compact tabs and agents\*\*/);
   assert.match(GUIDE, /about four rows/);
+  const at = GUIDE.indexOf("**Compact tabs and agents**");
+  const para = GUIDE.slice(GUIDE.lastIndexOf("\n\n", at), GUIDE.indexOf("\n\n", at));
+  assert.ok(para.indexOf("box of background work") < para.indexOf("tab strip"),
+    "the box first (every layout has it), then the strip, which the guide's own phone paragraph says the flat list replaces");
+  assert.match(para, /session picker stands in for the strip/);
+  assert.match(para, /lifts while a row's details are open/, "the cap's open-row lift is stated where the four rows are");
 });
