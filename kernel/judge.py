@@ -2151,9 +2151,8 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
                     # nothing is injected back), but the kernel's environment can carry more under the
                     # same prefix — ANTHROPIC_BASE_URL and ANTHROPIC_CUSTOM_HEADERS for a proxy (the
                     # header usually carries its credential), ANTHROPIC_MODEL, debug knobs — and a list
-                    # would need maintaining as the CLI grows names; the command source's set can carry a
-                    # direct-call key under the prefix too (2026-09-05). Strip the prefix; the harmless names go
-                    # too, on purpose (PR #885 review, widened from the one key)
+                    # would need maintaining as the CLI grows names. Strip the prefix; the harmless
+                    # names go too, on purpose (PR #885 review, widened from the one key)
                     cenv = {k: v for k, v in env.items() if not k.startswith("ANTHROPIC_")}
                     p = subprocess.run(_judge_cmd_codex(model, _codex_effort(effort, tier), outp),
                                        input=(sys_prompt or "") + "\n\n" + (user or ""),

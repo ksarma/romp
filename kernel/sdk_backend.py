@@ -3981,17 +3981,18 @@ def unpicked_auth(state_dir, key: bool) -> str:
     """The side a session whose reg holds NO Billing pick bills: the one fallback behind
     SdkSession.effective_auth, SdkBackend.default_auth (the dormant twin) and the judges' billing
     (judge.py _judge_auth reads it through the kernel's _UNPICKED_AUTH_FN wire, and mirrors it for the
-    standalone judge), so the badge, the judge billing and the spend readers agree. The key when romp
-    holds a source to inject (`key`, the pre-selector world: an ambient key billed every session, and
-    the launch injects a configured source for every unpicked session whatever the box declares, so
+    standalone judge), so the badge, the judge billing and the spend readers agree. The key when Claude
+    Code's settings carry an apiKeyHelper (`key`, the caller's SdkBackend.key_available: romp holds no
+    key of its own, and a configured helper bills every unpicked session whatever the box declares, so
     the key comes before the declaration); else the side the box expects (_declared_auth): a remembered
     gear pick's side (a login pick is re-seeded into every new reg, and an unpicked reg under one
-    predates the pick and launches the same way), except a remembered KEY pick on a box with no key
-    source, which spawn sets aside (it seeds nothing, so the inertness it would grant protects nothing)
-    and under which ROMP_EXPECTED_AUTH speaks again; else the declaration; else the login. Before the
-    declaration was read here, every session on an apiKeyHelper box reported 'login' as its intent: romp
-    holds no key of its own there, and the fallback took that for a login (the user 2026-09-09) while the
-    CLI's own report said the key. A session a spawn would create is new_session_auth's question: the
+    predates the pick and launches the same way), except a remembered KEY pick on a box whose settings
+    carry no helper, which spawn sets aside (it seeds nothing, so the inertness it would grant protects
+    nothing) and under which ROMP_EXPECTED_AUTH speaks again; else the declaration; else the login. Before
+    the declaration was read here, every session on an apiKeyHelper box reported 'login' as its intent:
+    the fallback then knew only a key romp itself held, none on such a box, and took that for a login (the
+    user 2026-09-09) while the CLI's own report said the key. A session a spawn would create is
+    new_session_auth's question: the
     seed a spawn writes comes first there."""
     if key:
         return "key"
@@ -4003,8 +4004,9 @@ def unpicked_auth(state_dir, key: bool) -> str:
 
 def seeded_auth(defaults: dict, key: bool) -> str:
     """The `auth` spawn seeds into a new reg absent an explicit pick: the remembered gear pick (set_auth's
-    durable trace in the defaults), except a KEY pick on a box with no key source, which is set aside
-    (the picker offers no key choice there, so a re-seed would apply a pick the user cannot make); "" when
+    durable trace in the defaults), except a KEY pick on a box whose Claude Code settings carry no
+    apiKeyHelper (`key` false), which is set aside (the picker offers no key choice there, so a re-seed
+    would apply a pick the user cannot make); "" when
     nothing is seeded. One rule for spawn and for new_session_auth, so the picker's default and the reg a
     spawn writes cannot disagree."""
     a = defaults.get("auth")

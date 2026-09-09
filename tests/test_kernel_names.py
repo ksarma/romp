@@ -998,8 +998,8 @@ class RenameFaultsThroughTheDoors(_Routes):
         # A REAL CodexBackend over its own state dir: a dead Codex tab is not owned (owns() is alive-only),
         # so the doors route it to the tmux backend, whose dead path renames the Codex registry's
         # durable name first; the fault is beneath its real names writer (the atomic publish)
-        cb = SourceFileLoader("romp_codex_backend_names",
-                              os.path.join(os.path.dirname(HERE), "kernel", "codex_backend.py")).load_module()
+        cb = load_source("romp_codex_backend_names",
+                         os.path.join(os.path.dirname(HERE), "kernel", "codex_backend.py"))
         st = Path(tempfile.mkdtemp())
         cx = cb.CodexBackend(st, client_factory=lambda: None)
         self.assertEqual(cx.spawn("web", "/work/web", sid=SID), SID)

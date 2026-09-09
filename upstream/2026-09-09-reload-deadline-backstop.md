@@ -1,7 +1,7 @@
 ---
 title: Reload core: a pane hold (upload, held-send) older than 60 s releases the reload as a backstop, with a console line naming the hold and a note in the replayed toasts; the shim's sends and the five gesture words have no deadline
 status: candidate
-where: kernel/kernel.py _RELOAD_CORE_JS (clock, unclock, what, released, the GESTURE and NOCLOCK sets, paneWord, paneHere, busy()'s take() walk); ui/webview/reload-hold.ts releasedNotices; ui/webview/render.ts persistNoticesForReload; tests/test_dashboard_auto_reload.py UploadHoldExecuted; ui/webview/reload-hold.test.ts
+where: kernel/kernel.py _RELOAD_CORE_JS (clock, unclock, what, released, the GESTURE and NOCLOCK sets, paneWord, paneHere, busy()'s take() walk); ui/webview/reload-notices.ts releasedNotices; ui/webview/render.ts persistNoticesForReload; tests/test_dashboard_auto_reload.py UploadHoldExecuted; ui/webview/reload-notices.test.ts
 added: 2026-09-09
 pr:
 tier: feature

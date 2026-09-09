@@ -10550,11 +10550,11 @@ def _bills_login(tm):
     """Whether a live-map row's session bills the machine LOGIN (the account a usage limit is on): the CLI's
     own authLive report first, the registry's auth next; a row with neither (a tmux session, an SDK session
     whose row failed to build) is taken to bill what a session on this box bills absent a pick of its own
-    (_unpicked_default: the backend's one rule, the key romp holds to inject, else the side the box
+    (_unpicked_default: the backend's one rule, the API key when Claude Code's settings carry an
+    apiKeyHelper (SdkBackend.key_available; romp holds no key of its own), else the side the box
     declares through ROMP_EXPECTED_AUTH when no gear pick has made it inert, else the login). The key
-    comes before the declaration because the launch injects a configured source for every unpicked
-    session whatever the box declares; a box whose sessions authenticate through Claude Code's
-    apiKeyHelper holds no key of romp's, so the declaration decides there. The spend pause reads it at
+    comes before the declaration because a configured helper bills every unpicked session whatever the
+    box declares; the declaration decides only on a box with no helper. The spend pause reads it at
     both edges (_auto_pause_on_spend_limit records the capped session's billing; _auto_resume_retry's
     spend rule compares a candidate's against it)."""
     a = str((tm or {}).get("authLive") or (tm or {}).get("auth") or "")

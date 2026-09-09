@@ -22,7 +22,7 @@ The fix, both faces:
     file was not saved, the held message not sent; the ack of a held send on another tab) would die
     with that reload, which follows in the next task, so the page snapshots the toasts on screen into
     the persisted state on the core's pre-reload hook and the fresh page shows them again once
-    (render.ts persistNoticesForReload, reload-hold.ts liveNotices / takePendingNotices).
+    (render.ts persistNoticesForReload, reload-notices.ts liveNotices / takePendingNotices).
   * reload (the VS Code pipe reloads its webview on kernel reconnect): the payload dies with
     the page, so the ship NAMES persist beside the drafts and the next load says LOUDLY what
     was lost — never a silent vanish.

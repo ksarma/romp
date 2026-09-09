@@ -1926,7 +1926,7 @@ class RecallAfterTheCarry(_TwoBusHarness):
         env = os.environ.get("XDG_STATE_HOME")
         os.environ["XDG_STATE_HOME"] = str(pm.OUTBOX.parents[2])   # outbox → postal → romp → the XDG root
         try:
-            fresh = SourceFileLoader("romp_postal_peers_fresh", os.path.join(BIN, "romp-postal-service")).load_module()
+            fresh = load_source("romp_postal_peers_fresh", os.path.join(BIN, "romp-postal-service"))
         finally:
             os.environ["XDG_STATE_HOME"] = env
         self.assertEqual(fresh.OUTBOX, pm.OUTBOX, "the fresh bus reads the same store")

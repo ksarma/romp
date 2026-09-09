@@ -33,8 +33,9 @@
 //      Serving design: the REAL kernel HTTP Handler runs in a python3 subprocess under an isolated
 //      environment, the pattern of tests/test_color_route.py with the floors tests/conftest.py applies:
 //      private XDG_STATE_HOME and TMUX_TMPDIR; the manager variables and the API-key variables removed;
-//      the manager's key FILE and the boot model-catalog fetch pointed away (the kernel would otherwise
-//      read ~/.config/romp/service.env and carry its key to the Models API); the Claude binary floored
+//      the service env file pointed away (kernel/credentials.py reads it at boot for retired names) and
+//      the boot model-catalog fetch off (it would otherwise run the operator's apiKeyHelper); the Claude
+//      binary floored
 //      to /bin/false; the postal peer bus off; ROMP_KERNEL_NO_OPEN=1; a serve token minted for the run.
 //      So the page HTML and the WebSocket shim are the kernel's own bytes. The subprocess holds a pipe
 //      from the parent and exits when it closes, so it cannot outlive the bench however the bench ends.
