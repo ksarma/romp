@@ -29,7 +29,7 @@ import { markerLabel, dayContext } from "./time-marker";
 import { compactDisplay, toolCounts, type DisplayItem } from "./compact";
 import { senderKind, SenderKind } from "./sender-identity";
 import { loadSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
-import { delegate } from "./actions";
+import { delegate, pressHold } from "./actions";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
 import { buildPinnedNotes, pinnedNotesKey, pinnedMeasureCut, pinnedWatchWidth, armUnpin, latchUnpinAt, latchedNotes, PINNED_ACT, type PinnedNote, type PinnedFoldState, type UnpinLatch } from "./pinned-notes";
 import { awaitWord, awaitBreakdown, groupRows, GROUP_TITLE, workingFor, type AwaitRow } from "./spin-caption";
@@ -6660,6 +6660,18 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   };
   let reseatFly = () => {};   // the open Tags flyout's placement, assigned when the flyout opens; a no-op while it is closed
   const reseat = () => { if (!corner) return; seatMenu(corner.x, corner.y); reseatFly(); };
+  // NO REBUILD UNDER A PRESSED POINTER (round 5; the click-safety rule in ui/CLAUDE.md): a push can re-dress the Hide tab row or
+  // rebuild the Tags flyout's rows between a pointerdown and its pointerup, and a node replaced mid-press yields no click (probed
+  // with real input in Chromium and Firefox). One hold for the whole menu (the flyout is a child of the menu node, so a press on
+  // either surface is seen), and ONE deferred run per change, the views hook's (set once the menu is on the page, below): a change
+  // that arrives while the pointer is down is parked whole, the newest replacing an older one, and runs on the press's own release,
+  // a tick after the click lands on the still-present node; the row's refresh and the flyout's rebuild inside it read the views as
+  // they are then, so the newest words are what shows. pressHold's zero timer at the release is the pattern the rule names, not a
+  // new heuristic. The refresh the flyout's own writes and the click's guard run comes after the pointerup, so it is not deferred.
+  // A parked run checks the menu is still on the page (the click may have dismissed it) before it paints: `gone` reads
+  // seated-once-and-off-the-page, since the first refresh runs before the menu is mounted at all.
+  const hold = pressHold(menu);
+  const gone = () => corner !== null && !menu.isConnected;
   // HIDE TAB (the user 2026-09-09): put this session's tab away inside its group from the menu, with
   // neither the section's at-a-glance pane nor the Sessions and tags dialog open. The same per-browser,
   // per-(tab, section) entry the pane's Hide and Show write (tab-groups.ts `hidden`), through the one
@@ -6697,16 +6709,22 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // for the picker's tagged-session jump.)
   {
     const row = el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped");   // ctx-sub-capped: its sub-line carries the tag name, which never widens the menu (styles.css)
-    let hidden = false;   // the stored bit the row last showed; the click sets its opposite
-    let shown: ReturnType<typeof sectionRef> | null = null;   // the section the row last named (round 4): the click writes for that copy or not at all
+    let hidden = false;   // the stored bit the row shows; the click sets its opposite
+    let shown: ReturnType<typeof sectionRef> | null = null;   // the section the row names (round 4): the click writes for that copy or not at all
+    let dressed: string | null = null;   // the words the row shows; null while it is off the menu (round 5)
     refreshHideRow = () => {
       const home = phoneLayout() ? undefined : homeNow();
-      if (!home) { row.remove(); reseat(); shown = null; return; }
+      if (!home) { shown = null; if (dressed === null) return; dressed = null; row.remove(); reseat(); return; }
       shown = sectionRef(home);
       hidden = isHidden(tabGroups(), shown, id);
-      dressToggle(row, "tab", hidden,
-        hidden ? "Show tab" : "Hide tab",
-        hidden ? `back on the strip in ${home.name}` : `hidden in ${home.name}; to show it, open the group's view`);
+      const lab = hidden ? "Show tab" : "Hide tab";
+      const sub = hidden ? `back on the strip in ${home.name}` : `hidden in ${home.name}; to show it, open the group's view`;
+      const words = lab + "\n" + sub;
+      // UNCHANGED WORDS: the node stands (round 5; a rebuild on every arrival dropped a click under way), while the section the row
+      // names and its bit follow all the same (an ack swaps a placeholder id under the same words; the guard compares by the id)
+      if (row.parentNode && words === dressed) return;
+      dressed = words;
+      dressToggle(row, "tab", hidden, lab, sub);
       if (!row.parentNode) bellItem.after(row);
       reseat();
     };
@@ -7065,7 +7083,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       place();
       reseatFly = () => { if (sub.isConnected) place(); };
       // the views arrival's rebuild (refreshTags runs it after the Tags row's sub-line): only while this flyout is on the menu and
-      // the blob changed what the rows show; the New tag… input is a new node each build, so its text and focus carry across
+      // the blob changed what the rows show; the New tag… input is a new node each build, so its text and focus carry across.
+      // The hook that runs this is one deferred run through the menu's hold (round 5): a rebuild that arrives under a pressed pointer
+      // waits for the release, and the two checks here run INSIDE that parked run, since the hover close can take the flyout off
+      // while a run is parked and a later frame can change the signature again
       rebuildFly = () => {
         if (!sub.isConnected || flySig() === builtSig) return;
         const was = tagsFlyNewInput, typed = was ? was.value : "", focused = !!was && document.activeElement === was;
@@ -7124,7 +7145,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   }
   document.body.appendChild(menu);
   ctxMenuEl = menu;
-  tabMenuViewsHook = () => { refreshHideRow(); refreshTags(); };   // a change to what the strip reads while this menu is open re-dresses it (round 4; viewsChanged runs it, round 5); dismissTabMenu clears the hook
+  tabMenuViewsHook = () => { void hold.defer(() => { if (gone()) return; refreshHideRow(); refreshTags(); }); };   // a change to what the strip reads while this menu is open re-dresses it (round 4; viewsChanged runs it, round 5), as one run through the menu's hold: parked under a pressed pointer, dropped once the menu is dismissed; dismissTabMenu clears the hook
   seatMenu(e.clientX, e.clientY);   // at the cursor, clamped so it never overflows the pane
 }
 // A remote host coming or going flips the disconnected marks on its tabs. The federation manager fires

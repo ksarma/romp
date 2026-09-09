@@ -932,3 +932,176 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
     } finally { await browser.close(); }
   }
 });
+
+// THE MENU UNDER A PRESSED POINTER (round 5 of the tab menu review): render.ts's own showTabMenu, sliced verbatim and bundled
+// with the real tab-groups, session-views and actions modules over a stand-in for the rest of the page (the maps and helpers
+// named as render.ts names them; the same shape tab-hide.test's harness uses), run in headless Chromium and Firefox with the
+// real sheet and REAL pointer input. Round 4 re-dressed the Hide tab row with replaceChildren on every hook run and rebuilt the
+// flyout's rows on a signature change, so a push between a mousedown and its mouseup replaced the pressed node and the click
+// was lost (no click at the row, the menu or the document, in both engines). Round 5 parks the hook's whole run through one
+// pressHold(menu) while the pointer is down and runs it on the release, a tick after the click. Read here with the mouse:
+//   - a press on the Hide tab row's label, a rename pushed mid-press, the release: the click lands (the hide is written for
+//     the same copy by its id, the menu dismissed), and the re-dress never painted a dismissed menu;
+//   - a press on a Move to row's label in the flyout, a recolour pushed mid-press (a signature change, so the rows would have
+//     been rebuilt), the release: the move is posted;
+//   - the same on the Show when folded row: the pin is written;
+//   - a push that changes nothing the row shows leaves its label node in place (round 4 replaced it every time).
+function menuProbeSource(): string {
+  const a = RENDER.indexOf("function showTabMenu(e: MouseEvent, id: string, copy?: string) {");
+  const end = RENDER.indexOf("seatMenu(e.clientX, e.clientY);", a);
+  const b = RENDER.indexOf("\n}\n", end) + 3;
+  assert.ok(a > 0 && end > a && b > end, "showTabMenu's anchors moved; re-anchor this probe");
+  const MENU = RENDER.slice(a, b);
+  return `
+import { readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden, TABGROUPS_KEY } from "./tab-groups";
+import { viewTagUnion } from "./session-views";
+import { pressHold } from "./actions";
+// THE STAND-IN PAGE: what showTabMenu reads, declared as render.ts declares it
+const sessions = new Map<string, any>([["api", { name: "api", status: { state: "working" } }], ["web", { name: "web", status: { state: "ready" } }]]);
+const tabMeta = new Map<string, any>();
+const paletteColors: string[] = [];
+const H: any = { views: null, hides: [] as any[], edits: [] as any[], dismissed: 0, renders: 0, flags: [] as any[] };
+let ctxMenuEl: HTMLElement | null = null, ctxMenuAt: any = null, tagsFlyNewInput: HTMLInputElement | null = null, pendingSessionViews: any = null;
+let tabMenuViewsHook: () => void = () => {};
+function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
+function ctxIcon(kind: string, off: boolean): HTMLElement { const sp = el("span", "ctx-icon" + (off ? " off" : "")); sp.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; sp.dataset.kind = kind; return sp; }
+function dismissTabMenu() { H.dismissed++; ctxMenuEl?.remove(); ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; }
+function closeEmojiPrompt() {}
+function setSessionFlag(id: string, k: string, v: boolean) { H.flags.push([id, k, v]); }
+function setSessionColor() {} function startTabRename() {} function showMovePrompt() {} function showEmojiPrompt() {}
+function billingSubText() { return ""; }
+const vscodeApi: any = null;
+function renderTabs() { H.renders++; }
+function postTagEdit(nv: any, op: any) { H.edits.push(op); H.views = nv; }
+function syncNewTagInput() {}
+function createInFlight() { return false; }
+const viewsWrites: any[] = [];
+function viewTags(v: any) { return (v && v.tags) || []; }
+function effViews() { return H.views; }
+function phoneLayout() { return false; }
+function knownTabIds() { return new Set<string>(["api", "web", "tests", "old1", "old2"]); }
+function reachableHosts() { return new Set<string>(); }
+function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
+function writeTabGroupsPruned(st: any) { const out = prunePinned(st, viewTagUnion(effViews()), knownTabIds(), reachableHosts()); H.hides.push(out.hidden); writeTabGroups(out); }
+function browseRouteNow() { return "pane"; } function openBrowse() {}
+${MENU}
+let marked: Element | null = null;
+const rowOf = () => ctxMenuEl?.querySelector(".ctx-item-hide") ?? null;
+const flyRow = (label: string) => Array.from(ctxMenuEl?.querySelectorAll(".ctx-sub-tags .ctx-item") ?? []).find((r) => r.querySelector(".ctx-item-label")?.textContent === label) ?? null;
+const rect = (e: Element | null) => { if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+(window as any).__menu = {
+  setup(v: any) { localStorage.removeItem(TABGROUPS_KEY); H.views = v; H.hides = []; H.edits = []; H.dismissed = 0; },
+  open(id: string, copy: string, x: number, y: number) { showTabMenu({ clientX: x, clientY: y } as MouseEvent, id, copy); return !!ctxMenuEl; },
+  openFly() { (ctxMenuEl!.querySelector(".ctx-item-tags") as HTMLElement).click(); return !!ctxMenuEl!.querySelector(".ctx-sub-tags"); },
+  push(v: any) { H.views = v; tabMenuViewsHook(); },   // as viewsChanged runs the hook after the blob is held
+  rowLabelAt() { return rect(rowOf()?.querySelector(".ctx-item-label") ?? null); },
+  flyLabelAt(label: string) { return rect(flyRow(label)?.querySelector(".ctx-item-label") ?? null); },
+  mark() { marked = rowOf()?.querySelector(".ctx-item-label") ?? null; return !!marked; },
+  sameLabel() { return !!marked && rowOf()?.querySelector(".ctx-item-label") === marked; },
+  state() {
+    const row = rowOf();
+    return { menu: !!ctxMenuEl && ctxMenuEl.isConnected, label: row?.querySelector(".ctx-item-label")?.textContent ?? null, sub: row?.querySelector(".ctx-item-sub")?.textContent ?? null,
+      hides: H.hides, edits: H.edits, dismissed: H.dismissed, flyRows: Array.from(ctxMenuEl?.querySelectorAll(".ctx-sub-tags .ctx-item-label") ?? []).map((l) => l.textContent),
+      stored: JSON.parse(localStorage.getItem(TABGROUPS_KEY) || "null") };
+  },
+};
+`;
+}
+function bundleMenu(): string {
+  const esbuild = requireCjs("esbuild");
+  const r = esbuild.buildSync({
+    stdin: { contents: menuProbeSource(), resolveDir: UI, loader: "ts", sourcefile: "tab-menu-probe.ts" },
+    bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
+    nodePaths: [path.join(EXT, "node_modules")], logLevel: "silent",
+  });
+  return r.outputFiles[0].text;
+}
+const MENU_PROBE_PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/styles.css><style>body{margin:0}</style></head><body><script src=/menu-probe.js></script></body></html>`;
+type MenuState = { menu: boolean; label: string | null; sub: string | null; hides: any[][]; edits: any[]; dismissed: number; flyRows: (string | null)[]; stored: any };
+test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer input (menu review round 5): a push between mousedown and mouseup on the Hide tab row, a Move to row or the Show when folded row waits for the release, so the click lands (the hide written by the copy's id, the move posted, the pin written) and the rebuild follows; a push that changes nothing the row shows leaves its label node", async (t) => {
+  let pw: any = null;
+  try { pw = requireCjs("playwright"); } catch { pw = null; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
+  const js = bundleMenu();
+  const V_QA = { ...V, tags: [{ ...V.tags[0], members: ["web", "api", "tests"] }, { ...V.tags[1], members: ["old1", "api"] }, { id: "g5", name: "qa", color: "#7aa2f7", members: [] as string[] }], seq: 6 };   // api under infra and archived, qa empty
+  const renamed = (v: typeof V_QA, name: string, seq: number) => ({ ...v, tags: v.tags.map((tg, i) => (i === 0 ? { ...tg, name } : tg)), seq });
+  const recoloured = (v: typeof V_QA, seq: number) => ({ ...v, tags: v.tags.map((tg, i) => (i === 1 ? { ...tg, color: "#abcdef" } : tg)), seq });
+  for (const engine of ["chromium", "firefox"] as const) {
+    let browser: any;
+    try { browser = await pw[engine].launch(); }
+    catch (e) { t.skip(`no playwright ${engine} on this box (CI installs none): ` + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+      const errors: string[] = [];
+      page.on("pageerror", (e: Error) => { errors.push(e.message); });
+      await page.route("http://romp.test/**", (route: any) => {
+        const u = new URL(route.request().url());
+        if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: MENU_PROBE_PAGE });
+        if (u.pathname === "/menu-probe.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
+        if (u.pathname === "/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: CSS });
+        return route.fulfill({ status: 404, body: "" });
+      });
+      await page.goto("http://romp.test/page");
+      const menu = (fn: string, ...args: unknown[]) => page.evaluate(([fn, args]: [string, unknown[]]) => (window as any).__menu[fn](...args), [fn, args] as [string, unknown[]]);
+      const state = (): Promise<MenuState> => menu("state") as Promise<MenuState>;
+      const settle = () => page.evaluate(() => new Promise((r) => setTimeout(r, 20)));   // pressHold's zero timer at the release, and the browser's own click dispatch
+      const where = (what: string) => `${engine}: ${what}`;
+      const open = async (copy: string) => { await menu("setup", V_QA); assert.ok(await menu("open", "api", copy, 40, 40), where("the menu opened")); assert.deepEqual(errors, [], where("the slice ran against the stand-in (a ReferenceError means render.ts grew a dependency the probe lacks)")); };
+      // M1: THE HIDE TAB ROW. Press on its label; the rename pushed mid-press; release. The click lands on the node the user pressed and
+      // writes the hide for the same copy under its new name (by the id), the menu is dismissed, and the parked run paints nothing
+      await open("infra");
+      let s = await state();
+      assert.deepEqual([s.label, s.sub, s.menu], ["Hide tab", "hidden in infra; to show it, open the group's view", true], where("the row as built"));
+      const d0 = s.dismissed;   // showTabMenu dismisses any earlier menu as it opens; the click's own dismissal is the one counted
+      let at = await menu("rowLabelAt") as { x: number; y: number };
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await menu("push", renamed(V_QA, "platform", 7));
+      const midPress = (await state()).sub;
+      await page.mouse.up();
+      await settle();
+      s = await state();
+      assert.deepEqual(s.hides, [[{ sid: "api", name: "platform", id: "g1" }]], where("the click landed: the hide written for the same copy by its id (round 4 lost the click to the mid-press replaceChildren)"));
+      assert.deepEqual([s.dismissed, s.menu], [d0 + 1, false], where("dismissed by the click; the parked re-dress found the menu gone"));
+      assert.equal(midPress, "hidden in infra; to show it, open the group's view", where("under the press the row still read infra (the re-dress was parked)"));
+      // M2: A MOVE TO ROW in the flyout. Press on its label; a recolour of another tag pushed mid-press (a signature change: the flyout
+      // would have been rebuilt); release: the move is posted, one op, from infra to qa
+      await open("infra");
+      assert.ok(await menu("openFly"), where("the flyout opened"));
+      s = await state();
+      assert.ok(s.flyRows.includes("Move to qa"), where("the Move to qa row: " + JSON.stringify(s.flyRows)));
+      at = await menu("flyLabelAt", "Move to qa") as { x: number; y: number };
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await menu("push", recoloured(V_QA, 8));
+      await page.mouse.up();
+      await settle();
+      s = await state();
+      assert.deepEqual(s.edits, [{ op: "move", tid_from: "g1", tid_to: "g5", sid: "api" }], where("the click landed: the move posted (round 4 rebuilt the pressed row and lost the click)"));
+      assert.equal(s.sub, "hidden in qa; to show it, open the group's view", where("the Hide tab row follows the move"));
+      // M3: THE SHOW WHEN FOLDED ROW: the same press, a recolour mid-press, the release: the pin is written for infra
+      await open("infra");
+      assert.ok(await menu("openFly"));
+      at = await menu("flyLabelAt", "Show when folded") as { x: number; y: number };
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await menu("push", recoloured(V_QA, 9));
+      await page.mouse.up();
+      await settle();
+      s = await state();
+      assert.deepEqual(s.stored?.pinned, [{ sid: "api", name: "infra", id: "g1" }], where("the click landed: the pin written"));
+      // M4: an unchanged push leaves the row's label node in place (round 4 re-dressed on every run); a changing push replaces it
+      await open("infra");
+      assert.ok(await menu("mark"));
+      await menu("push", { ...V_QA, tags: [V_QA.tags[0], { ...V_QA.tags[1], members: ["api"] }, V_QA.tags[2]], seq: 10 });   // old1 left archived: nothing the row shows
+      await settle();
+      assert.equal(await menu("sameLabel"), true, where("unchanged words: the same label node"));
+      await menu("push", renamed(V_QA, "platform", 11));
+      await settle();
+      assert.equal(await menu("sameLabel"), false, where("changed words: re-dressed"));
+      assert.equal((await state()).sub, "hidden in platform; to show it, open the group's view");
+      assert.deepEqual(errors, [], where("no page errors"));
+      await page.close();
+    } finally { await browser.close(); }
+  }
+});

@@ -34,7 +34,7 @@ test("actions.ts is the shared primitive: delegate() matches data-act on a stabl
 });
 
 test("chat tab bar: select + ✕ (Close / End session) are DELEGATED to the stable #tabs, not per-node", () => {
-  assert.match(RENDER, /import \{ delegate \} from "\.\/actions";/);
+  assert.match(RENDER, /import \{ delegate, pressHold \} from "\.\/actions";/);
   // each tab/✕ only DECLARES its action via data-act (+ data-id / data-dead); no action handler on the node
   assert.match(RENDER, /tab\.dataset\.act = "select";/);
   assert.match(RENDER, /close\.dataset\.act = "close";/);

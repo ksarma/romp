@@ -18,6 +18,7 @@ import { parseTabGroups, readTabGroups, writeTabGroups, setSectionCollapsed, tog
 import { snapshotModel, snapshotRow, snapshotHeading, hiddenNeeds, hiddenFoldWords, actWords, rowWords, onYou, standInPip, type SnapModel } from "./tab-snapshot";
 import { sectionPip, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, compactCount, stripAndHidden, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
 import { repeatedClick } from "./tab-snapshot-view";
+import { pressHold } from "./actions";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
@@ -555,6 +556,7 @@ class FakeEl {
   get parentNode(): FakeEl | null { return this.parent; }
   after(...cs: FakeEl[]) { const p = this.parent!; const at = p.children.indexOf(this); p.children.splice(at + 1, 0, ...cs); for (const c of cs) c.parent = p; }
   addEventListener(k: string, fn: (ev: unknown) => void) { (this.listeners[k] ||= []).push(fn); }
+  fire(k: string, ev: unknown = {}) { for (const fn of this.listeners[k] || []) fn(ev); }
   setAttribute(k: string, v: string) { this.attrs[k] = v; }
   /** THE RECT MODEL (round 3): a menu or a flyout (.ctx-menu) stands where its style put it and is as tall as its rows, one ROW each
    *  (a flyout is a child of the menu but position: fixed, so it is not one of the menu's rows); a row's rect is its slot under the
@@ -575,7 +577,10 @@ class FakeEl {
   }
   get isConnected(): boolean { let n: FakeEl | null = this; while (n) { if (n.tag === "body") return true; n = n.parent; } return false; }
   querySelector(): FakeEl | null { return null; }
-  focus() {}
+  /** the page's focus, as the prelude's document.activeElement reads it (round 5: the focus carry is executed, not source-pinned) */
+  static focused: FakeEl | null = null;
+  static focusCalls = 0;
+  focus() { FakeEl.focused = this; FakeEl.focusCalls++; }
   has(cls: string) { return this.className.split(/\s+/).includes(cls); }
   get classList() { return { contains: (c: string) => this.has(c), add: (c: string) => { this.className += " " + c; }, remove: () => {}, toggle: () => {} }; }
   click() { const ev = { stopPropagation() {} }; for (const fn of this.listeners.click || []) fn(ev); }
@@ -585,9 +590,33 @@ class FakeEl {
   sub() { return this.all().find((n) => n.has("ctx-item-sub"))?.textContent; }
   icon() { return this.all().find((n) => n.has("ctx-icon")); }
 }
-type MenuHooks = { views: unknown; known: string[]; sessions: Map<string, unknown>; writes: TabGroupsState[]; dismissed: number; renders: number; flags: Array<[string, string, boolean]>; mods: Record<string, unknown>; phone?: boolean; win?: { w: number; h: number } };
+type MenuHooks = { views: unknown; known: string[]; sessions: Map<string, unknown>; writes: TabGroupsState[]; dismissed: number; renders: number; flags: Array<[string, string, boolean]>; mods: Record<string, unknown>; phone?: boolean; win?: { w: number; h: number }; window?: FakeWin };
+/** the page's window as pressHold and the seat read it (round 5): the pane's size, the release listeners a press installs, and `fire` for the release events */
+class FakeWin {
+  constructor(private size: () => { w: number; h: number }) {}
+  get innerWidth() { return this.size().w; }
+  get innerHeight() { return this.size().h; }
+  setTimeout() { return 0; }
+  clearTimeout() {}
+  listeners: Record<string, Array<(ev: unknown) => void>> = {};
+  addEventListener(k: string, fn: (ev: unknown) => void) { (this.listeners[k] ||= []).push(fn); }
+  removeEventListener(k: string, fn: (ev: unknown) => void) { this.listeners[k] = (this.listeners[k] || []).filter((f) => f !== fn); }
+  fire(k: string, ev: unknown = {}) { for (const fn of (this.listeners[k] || []).slice()) fn(ev); }
+  count(k: string) { return (this.listeners[k] || []).length; }
+}
+/** a tick, for pressHold's zero timer at the release */
+const tick = () => new Promise<void>((r) => setTimeout(r, 2));
 type MenuApi = { open: (id: string, copy?: string, at?: { x: number; y: number }) => FakeEl; at: () => { x: number; y: number } | null; push: (views: unknown) => void; changed: () => void };
 function liftShowTabMenu(): (hooks: MenuHooks) => MenuApi {
+  const lifted = liftShowTabMenuRaw();
+  // the page's window and the real pressHold bound to it (render.ts calls pressHold(menu) with the default release, the window)
+  return (hooks) => {
+    hooks.window ??= new FakeWin(() => hooks.win ?? { w: 1200, h: 800 });
+    hooks.mods = { ...hooks.mods, pressHold: (surface: EventTarget) => pressHold(surface, hooks.window as unknown as EventTarget) };
+    return lifted(hooks);
+  };
+}
+function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
   const a = RENDER.indexOf("function showTabMenu(e: MouseEvent, id: string, copy?: string) {");
   const end = RENDER.indexOf("seatMenu(e.clientX, e.clientY);", a);
   const b = RENDER.indexOf("\n}\n", end) + 3;
@@ -596,7 +625,7 @@ function liftShowTabMenu(): (hooks: MenuHooks) => MenuApi {
   // the page as showTabMenu reads it: the maps and helpers named as render.ts names them
   const prelude = `
     const H = HOOKS;
-    const { FakeEl, viewTagUnion, readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden } = H.mods;
+    const { FakeEl, viewTagUnion, readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden, pressHold } = H.mods;
     const el = (tag, cls) => new FakeEl(tag, cls);
     const ctxIcon = (kind, off) => { const sp = new FakeEl("span", "ctx-icon" + (off ? " off" : "")); sp.dataset.kind = kind; return sp; };
     const sessions = H.sessions, tabMeta = new Map();
@@ -620,8 +649,8 @@ function liftShowTabMenu(): (hooks: MenuHooks) => MenuApi {
     function writeTabGroupsPruned(st) { const out = prunePinned(st, viewTagUnion(effViews()), knownTabIds(), reachableHosts()); H.writes.push(out); writeTabGroups(out); }
     const browseRouteNow = () => "pane", openBrowse = () => {};
     const location = { protocol: "vscode-webview:" };
-    const window = { innerWidth: H.win ? H.win.w : 1200, innerHeight: H.win ? H.win.h : 800, setTimeout: () => 0, clearTimeout: () => {} };
-    const document = { body: new FakeEl("body"), getElementById: () => null };
+    const window = H.window;   // the pane's size, and the release target pressHold installs its listeners on
+    const document = { body: new FakeEl("body"), getElementById: () => null, get activeElement() { return FakeEl.focused; } };
     let ctxMenuEl = null, ctxMenuAt = null;
   `;
   const epilogue = `
@@ -784,11 +813,11 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.match(RENDER, /syncNewTagInput\(\);[^\n]*\n\s*viewsChanged\(\);[^\n]*\n\s*renderTabs\(\);\s*\n\}/, "onViewsAck calls it after the input's re-arm (a create's ack gives a claimed copy its row)");
   assert.match(RENDER, /\} else if \(!adopted\) return;[^\n]*\n\s*viewsChanged\(\);[^\n]*\n\s*if \(activeId\) assertPeekFor\(activeId\);[^\n]*\n\s*renderTabs\(\);\n\}/, "onKernelCaps calls it once the writes in flight are dropped or the kept blob adopted, before the peek and the repaint; a frame that changed nothing shown returns before it");
   assert.match(RENDER, /window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === TABGROUPS_KEY\) \{ renderTabs\(\); viewsChanged\(\); \} \}\);\s*\nwindow\.addEventListener\(TABGROUPS_EVENT, \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\);/, "the two store listeners: the strip's render, then the open menu");
-  assert.match(RENDER, /document\.body\.appendChild\(menu\);\s*\n\s*ctxMenuEl = menu;\s*\n\s*tabMenuViewsHook = \(\) => \{ refreshHideRow\(\); refreshTags\(\); \};[^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "set once the menu is on the page, before the seat: the row's refresh and the Tags block's");
+  assert.match(RENDER, /document\.body\.appendChild\(menu\);\s*\n\s*ctxMenuEl = menu;\s*\n\s*tabMenuViewsHook = \(\) => \{ void hold\.defer\(\(\) => \{ if \(gone\(\)\) return; refreshHideRow\(\); refreshTags\(\); \}\); \};[^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "set once the menu is on the page, before the seat: one run through the menu's hold (round 5), the row's refresh and the Tags block's, dropped once the menu is dismissed");
   assert.equal(RENDER.split("tabMenuViewsHook = ").length - 1, 2, "assigned by showTabMenu and cleared by dismissTabMenu; nowhere else (the declaration reads `let tabMenuViewsHook:`)");
   assert.match(MENU, /sb\.textContent = subText\(\);\s*\n(?:\s*\/\/[^\n]*\n)+\s*let rebuildFly = \(\) => \{\};\s*\n\s*refreshTags = \(\) => \{ sb\.textContent = subText\(\); rebuildFly\(\); \};/, "the Tags block's refresh: the sub-line re-read, then the flyout's rebuild (a no-op while it is closed)");
   assert.match(MENU, /const flySig = \(\) => JSON\.stringify\(unionFor\(\)\.map\(\(g\) => \[g\.name, g\.localId, g\.color, !!g\.pending, g\.members\.includes\(id\)\]\)\);\s*\n\s*let builtSig = "";\s*\n\s*const build = \(\) => \{\s*\n\s*sub\.replaceChildren\(\);\s*\n\s*builtSig = flySig\(\);/, "what the rows show, stamped at every build");
-  assert.match(MENU, /reseatFly = \(\) => \{ if \(sub\.isConnected\) place\(\); \};\s*\n(?:\s*\/\/[^\n]*\n)+\s*rebuildFly = \(\) => \{\s*\n\s*if \(!sub\.isConnected \|\| flySig\(\) === builtSig\) return;\s*\n\s*const was = tagsFlyNewInput, typed = was \? was\.value : "", focused = !!was && document\.activeElement === was;\s*\n\s*build\(\);\s*\n\s*if \(tagsFlyNewInput\) \{ tagsFlyNewInput\.value = typed; if \(focused\) tagsFlyNewInput\.focus\(\); \}\s*\n\s*\};/, "the rebuild: only while the flyout is on the menu and the blob changed what the rows show; the typed text and the focus carry across (the input is a new node each build)");
+  assert.match(MENU, /reseatFly = \(\) => \{ if \(sub\.isConnected\) place\(\); \};\s*\n(?:\s*\/\/[^\n]*\n)+\s*rebuildFly = \(\) => \{\s*\n\s*if \(!sub\.isConnected \|\| flySig\(\) === builtSig\) return;\s*\n\s*const was = tagsFlyNewInput, typed = was \? was\.value : "", focused = !!was && document\.activeElement === was;\s*\n\s*build\(\);\s*\n\s*if \(tagsFlyNewInput\) \{ tagsFlyNewInput\.value = typed; if \(focused\) tagsFlyNewInput\.focus\(\); \}\s*\n\s*\};/, "the rebuild, run inside the hook's one deferred run (round 5), its two checks inside that parked run: only while the flyout is on the menu and the blob changed what the rows show; the typed text and the focus carry across (the input is a new node each build)");
   assert.match(RENDER, /type TabGroupsState, type SectionRef \} from "\.\/tab-groups";/, "SectionRef reaches render.ts");
   assert.match(MENU, /plus\.addEventListener\("click", \(e2\) => \{ e2\.stopPropagation\(\); aimAdd\(g\.name\); editUnion\(g, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); \}\);/, "the + beside a Move to row aims too (round 5): from the one-holder fallback it confirms that holder as the copy, so the add is an add and the row stays");
   // round 3: THE MENU'S SEAT. One seat for the menu (the cursor's corner clamped inside the pane; the emoji picker's anchor follows),
@@ -813,7 +842,15 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // while there is no section, and ends by seating the menu and the open flyout again (round 3); the click live: the section
   // resolved again, the state SET to the one the row last showed (never a toggle of the click-time bit), nothing written when the
   // copy is already there or has no group any more; the refresh runs once at build. Round 5: the dismissal comes AFTER the guard
-  assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*refreshHideRow = \(\) => \{\s*\n\s*const home = phoneLayout\(\) \? undefined : homeNow\(\);\s*\n\s*if \(!home\) \{ row\.remove\(\); reseat\(\); shown = null; return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*dressToggle\(row, "tab", hidden,\s*\n\s*hidden \? "Show tab" : "Hide tab",\s*\n\s*hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`\);\s*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*reseat\(\);\s*\n\s*\};\s*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\);\s*\n\s*const now = homeNow\(\);\s*\n\s*if \(!now\) \{ dismissTabMenu\(\); return; \}\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| !sameSection\(sec, shown\)\) \{ refreshHideRow\(\); return; \}\s*\n\s*dismissTabMenu\(\);\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/,
+  // round 5: the refresh computes the words and returns before any rebuild when they are unchanged and the row is on the menu (the
+  // section and the bit still follow: an ack swaps a placeholder id under the same words); the rebuild, the seating and the removal
+  // run through the menu's one hold (pressHold(menu)), so a push under a pressed pointer waits for the release, and a parked run
+  // checks the menu is still on the page; the section the row names is set as the row comes to show it
+  assert.match(MENU, /const reseat = \(\) => \{ if \(!corner\) return; seatMenu\(corner\.x, corner\.y\); reseatFly\(\); \};\s*\n(?:\s*\/\/[^\n]*\n)+\s*const hold = pressHold\(menu\);\s*\n\s*const gone = \(\) => corner !== null && !menu\.isConnected;/, "one hold for the whole menu, declared before the row and the flyout that share it; a parked run's bail reads seated-once-and-off-the-page (the first refresh runs before the mount)");
+  assert.equal(MENU.split("pressHold(").length - 1, 1, "one hold");
+  assert.equal(RENDER.split("hold.defer(").length - 1, 1, "one run goes through it, the views hook's whole run (the row's refresh and the Tags block's, the flyout's rebuild inside); two separate parked runs would replace each other under one press");
+  assert.match(RENDER, /^import \{ delegate, pressHold \} from "\.\/actions";$/m, "the shared helper, not a copy");
+  assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*let dressed: string \| null = null;[^\n]*\n\s*refreshHideRow = \(\) => \{\s*\n\s*const home = phoneLayout\(\) \? undefined : homeNow\(\);\s*\n\s*if \(!home\) \{ shown = null; if \(dressed === null\) return; dressed = null; row\.remove\(\); reseat\(\); return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*const lab = hidden \? "Show tab" : "Hide tab";\s*\n\s*const sub = hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`;\s*\n\s*const words = lab \+ "\\n" \+ sub;\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(row\.parentNode && words === dressed\) return;\s*\n\s*dressed = words;\s*\n\s*dressToggle\(row, "tab", hidden, lab, sub\);\s*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*reseat\(\);\s*\n\s*\};\s*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\);\s*\n\s*const now = homeNow\(\);\s*\n\s*if \(!now\) \{ dismissTabMenu\(\); return; \}\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| !sameSection\(sec, shown\)\) \{ refreshHideRow\(\); return; \}\s*\n\s*dismissTabMenu\(\);\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/,
     "round 5: the guard runs before the dismissal, so a refused click re-dresses the row on a menu still on the page; the no-home branch dismisses explicitly; a click that writes dismisses first, as every other row does");
   assert.equal(MENU.split("phoneLayout()").length - 1, 1, "the gate is read once, in the refresh (the flyout's home read is untouched)");
   assert.match(MENU, /sub\.appendChild\(nrow\);\s*\n\s*refreshHideRow\(\);/, "the flyout's build ends with the refresh: every edit path there (a move, a remove, a +, a new or an existing tag) rebuilds the flyout");
@@ -1682,6 +1719,128 @@ test("executed: THE FLYOUT FOLLOWS THE ROW (menu review round 3). With the Tags 
     assert.equal(top(fly), flyTop, "the closed flyout's style is not written");
     assert.equal(top(fly2), menu.children.find((it) => it.has("ctx-item-tags"))!.getBoundingClientRect().top, "the open one follows");
     assert.equal(hooks.writes.length, 0, "no hide written by any of it");
+  });
+});
+
+test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review round 5). A push that lands between a pointerdown on the menu and its release re-dresses the Hide tab row and rebuilds the flyout only on the release, a tick after the click, so the click lands on the node the user pressed; a push that changes nothing the row shows leaves its child nodes alone; a run parked when the click dismissed the menu paints nothing; the release listeners leave with the release", async () => {
+  // round 4 re-dressed the row with replaceChildren on every hook run, changed or not, and rebuilt the flyout's rows on a sig change,
+  // so a frame between mousedown and mouseup swapped the pressed node and the click was lost (probed in Chromium and Firefox: no
+  // click at the row, the menu or the document). One pressHold(menu) parks the re-dress, the removal and the rebuild while the
+  // pointer is down and runs the newest on the release's own events (a zero timer after the pointerup, so the click, which the
+  // browser dispatches right after the pointerup, fires first); the words are compared before any rebuild
+  const hooks = menuHooks();
+  const rowOf = (menu: FakeEl) => menu.children.find((it) => it.has("ctx-item-hide"));
+  const tagsSub = (menu: FakeEl) => menu.children.find((it) => it.has("ctx-item-tags"))!.sub();
+  const joinRows = (fly: FakeEl) => fly.children.filter((it) => it.label()?.startsWith("+ ") || it.label()?.startsWith("Move to ")).map((it) => it.label());
+  const sameNodes = (a: FakeEl[], b: FakeEl[]) => a.length === b.length && a.every((n, i) => n === b[i]);
+  const renamed = (views: typeof V, i: number, name: string, seq: number) => ({ ...views, tags: views.tags.map((t, k) => (k === i ? { ...t, name } : t)), seq });
+  const V_API_BOTH_QA = { ...V_API_BOTH, tags: [...V_API_BOTH.tags, { id: "g5", name: "qa", color: "#7aa2f7", members: [] as string[] }], seq: 6 };
+  await withStore(async () => {
+    const api = liftShowTabMenu()(hooks);
+    const win = hooks.window!;
+    const press = (menu: FakeEl) => menu.fire("pointerdown", { button: 0 });
+    // K1: the menu on api's infra copy, the flyout open; the pointer down on the menu; the rename pushed: nothing is rebuilt (the row's
+    // children and the flyout's rows are the same nodes, the words still infra) while the section the row names is still infra; the
+    // release, then the click the browser dispatches after it: the click lands, on the same copy by its id (platform, g1), and
+    // dismisses; the parked re-dress lands on the tick and paints nothing (the menu is off the page)
+    hooks.views = V_API_BOTH_QA;
+    let menu = api.open("api", "infra");
+    let fly = flyOf(menu);
+    let row = rowOf(menu)!;
+    let kids = row.children.slice(), flyRows = fly.children.slice();
+    press(menu);
+    api.push(renamed(V_API_BOTH_QA, 0, "platform", 7));
+    assert.ok(sameNodes(row.children, kids), "under the press the row is not re-dressed: the same child nodes (round 4 replaced them on every run)");
+    assert.ok(win.count("pointerup") > 0 && win.count("blur") > 0, "a press installs the release listeners on the window");
+    assert.equal(row.sub(), HIDE_SUB("infra"), "and still reads infra");
+    assert.ok(sameNodes(fly.children, flyRows), "the flyout's rows are not rebuilt under the press either");
+    assert.equal(tagsSub(menu), "infra · archived", "the Tags row's sub-line waits too: the hook's run is parked whole");
+    win.fire("pointerup");
+    assert.equal(win.count("pointerup"), 0, "the release listeners leave with the release");
+    assert.ok(sameNodes(row.children, kids), "the re-dress waits for the tick after the release (the click comes first)");
+    const d0 = hooks.dismissed;
+    row.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "platform", id: "g1" }]], "the click landed: the same copy under its new name, by the id");
+    assert.equal(hooks.dismissed, d0 + 1);
+    await tick();
+    assert.ok(sameNodes(row.children, kids) && row.sub() === HIDE_SUB("infra"), "the parked re-dress found the menu dismissed and painted nothing");
+    writeTabGroups(d);
+    // K2: the same press and push, released with no click: the tick re-dresses the row (platform) and rebuilds the flyout
+    hooks.views = V_API_BOTH_QA; hooks.writes = [];
+    menu = api.open("api", "infra");
+    fly = flyOf(menu);
+    row = rowOf(menu)!;
+    kids = row.children.slice(); flyRows = fly.children.slice();
+    press(menu);
+    api.push(renamed(V_API_BOTH_QA, 0, "platform", 8));
+    assert.ok(sameNodes(row.children, kids) && sameNodes(fly.children, flyRows));
+    win.fire("pointerup");
+    await tick();
+    assert.equal(row.sub(), HIDE_SUB("platform"), "released: the re-dress landed");
+    assert.ok(!sameNodes(row.children, kids), "new child nodes");
+    assert.ok(!sameNodes(fly.children, flyRows), "the flyout rebuilt");
+    assert.equal(tagsSub(menu), "platform · archived", "the Tags row's sub-line followed in the same run");
+    // K3: two pushes under one press: the newest is what lands (the first parked run is replaced)
+    hooks.views = V_API_BOTH_QA;
+    menu = api.open("api", "infra");
+    row = rowOf(menu)!;
+    press(menu);
+    api.push({ ...V_API_BOTH_QA, tags: [{ ...V_API_BOTH_QA.tags[0], members: ["web", "tests"] }, V_API_BOTH_QA.tags[1], V_API_BOTH_QA.tags[2]], seq: 9 });   // infra off: archived
+    api.push(renamed(V_API_BOTH_QA, 0, "platform", 10));   // back under the renamed tag
+    assert.equal(row.sub(), HIDE_SUB("infra"), "still the pressed words");
+    win.fire("pointercancel");   // a cancel releases like a pointerup
+    await tick();
+    assert.equal(row.sub(), HIDE_SUB("platform"), "the newest parked run painted");
+    // K4: a push that changed the resolution under the press: the click after the release is judged against the words on the page
+    // (infra), so it is refused with nothing written and the menu open; the parked re-dress then lands (archived) and a second click
+    // hides the copy the row names
+    hooks.views = V_API_BOTH_QA; hooks.writes = [];
+    menu = api.open("api", "infra");
+    row = rowOf(menu)!;
+    press(menu);
+    api.push({ ...V_API_BOTH_QA, tags: [{ ...V_API_BOTH_QA.tags[0], members: ["web", "tests"] }, V_API_BOTH_QA.tags[1], V_API_BOTH_QA.tags[2]], seq: 11 });
+    win.fire("pointerup");
+    const d1 = hooks.dismissed;
+    row.click();
+    assert.deepEqual([hooks.writes.length, hooks.dismissed, menu.isConnected], [0, d1, true], "refused: the row read infra, the copy is under archived alone; nothing written, the menu open");
+    assert.equal(row.sub(), HIDE_SUB("archived"), "the refused click's own refresh re-dressed the row at once (after the release, nothing is held)");
+    await tick();
+    assert.equal(row.sub(), HIDE_SUB("archived"), "the parked run found the words dressed and left the node");
+    row.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "archived", id: "g2" }]], "the second click acts on the words shown");
+    writeTabGroups(d);
+    // K5: a push that changes nothing the row shows leaves its child nodes (round 4 re-dressed on every run): another session's tag
+    // change, the seq bumped
+    hooks.views = V_API_BOTH_QA; hooks.writes = [];
+    menu = api.open("api", "infra");
+    fly = flyOf(menu);
+    row = rowOf(menu)!;
+    kids = row.children.slice();
+    api.push({ ...V_API_BOTH_QA, tags: [V_API_BOTH_QA.tags[0], { ...V_API_BOTH_QA.tags[1], members: ["old1"] }, V_API_BOTH_QA.tags[2]], seq: 12 });
+    assert.ok(sameNodes(row.children, kids), "unchanged words: the same child nodes (no press here)");
+    assert.equal(row.sub(), HIDE_SUB("infra"));
+    // K6: the same words under a new id (an ack replacing a placeholder): the node stands and the click writes the new id
+    hooks.views = V; hooks.writes = [];
+    menu = api.open("loose", "");
+    fly = flyOf(menu);
+    const inp = fly.all().find((n) => n.has("ctx-tag-input"))!; inp.value = "qa"; for (const fn of inp.listeners.keydown || []) fn({ key: "Enter" });
+    const held = hooks.views as typeof V;
+    const pendingId = viewTagUnion(held).find((g) => g.name === "qa")!.localId!;
+    api.push({ ...held, tags: held.tags.map((t) => (t.id === pendingId ? { ...t, id: "g7" } : t)), seq: 5 });
+    row = rowOf(menu)!;
+    kids = row.children.slice();
+    api.push({ ...held, tags: held.tags.map((t) => (t.id === pendingId ? { ...t, id: "g7" } : t)), seq: 6 });   // a frame with the same words
+    assert.ok(sameNodes(row.children, kids), "the same words: no rebuild");
+    row.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "loose", name: "qa", id: "g7" }]], "the click writes the id the row's section carries");
+    // K7: a press with the secondary button holds nothing (a right press yields no click and often no pointerup)
+    hooks.views = V_API_BOTH_QA; hooks.writes = [];
+    menu = api.open("api", "infra");
+    row = rowOf(menu)!;
+    menu.fire("pointerdown", { button: 2 });
+    assert.equal(win.count("pointerup"), 0, "no hold taken");
+    api.push(renamed(V_API_BOTH_QA, 0, "platform", 13));
+    assert.equal(row.sub(), HIDE_SUB("platform"), "re-dressed at once");
   });
 });
 
