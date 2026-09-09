@@ -219,7 +219,14 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   assert.match(VIEW, /const bar2 = noteBar\(err\);[\s\S]*?const re = el\("button", "fileview-btn fileview-err-dl"\) as HTMLButtonElement;[\s\S]*?bar2\.appendChild\(re\);/);
   assert.match(VIEW, /const bar2 = el\("div", "fileview-err"\);\n\s*bar2\.id = "fileview-save-err";\n\s*bar2\.textContent = msg;\n\s*box\.insertBefore\(bar2, main\);/, "the notice bar mounts above the body row");
   // the panel: .fc-panel.fileview-aside > (.fc-sec-head > .fc-head | .fc-composer | .fc-sec-cards > .fc-cards > .fc-card | .fc-sec-send > .fc-send)
-  assert.match(PANEL, /this\.root = el\("div", "fc-panel"\);\n\s*this\.ctx\.aside\(this\.root\);/);
+  // the root is made once, on the first open, and handed to the viewer as the aside; the first creation also installs the
+  // root's own listeners (the scroll listener the saved line's side follows in the list layout: decision 43, 2026-09-09), so
+  // lines may stand between the creation and the hand-over (none did before it). The pin admits any number, and holds that
+  // nothing there re-makes the root, hands the viewer another node, or leaves the method (a method-level line is indented
+  // two spaces, openPanel's body four)
+  const rootMade = /this\.root = el\("div", "fc-panel"\);\n((?:[^\n]*\n)*?)\s*this\.ctx\.aside\(this\.root\);/.exec(PANEL);
+  assert.ok(rootMade, "the .fc-panel root is the node handed to ctx.aside");
+  assert.doesNotMatch(rootMade![1], /this\.root\s*=|\.aside\(|^ {0,2}\S/m, "between the root's creation and its hand-over: no other root, no other aside, the same method");
   assert.match(PANEL, /sections = \{ head: el\("div", "fc-sec-head"\), cards: el\("div", "fc-sec-cards"\), send: el\("div", "fc-sec-send"\), log: el\("div", "fc-sec-log"\) \};/);
   assert.match(PANEL, /composerBox = el\("div", "fc-composer"\);/);
   assert.match(PANEL, /composerActs = el\("div", "fc-actions"\);/);

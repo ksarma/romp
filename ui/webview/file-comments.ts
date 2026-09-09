@@ -131,7 +131,8 @@ const BULK_VERBS = new Set(["accept-all", "reject-all"]);
 // person never saw. mutate therefore keeps each change as its card showed it (seen), and mutateOnce decides nothing
 // when a change still pending under that id reads differently now (changedSince): the row under the card says so and
 // the list, re-read, is theirs again — the BULK_VERBS rule, for an id whose content moved. An id that is GONE is left
-// to the host, which refuses it `no-change` by name (the review2 suite pins that path).
+// to the host, which refuses it `no-change` by name (the review2 suite pins that path). The seen set the Send's accept
+// reads (decision 41) keeps the same texts per seen change (seenTexts), and a status that grows one makes it unseen again.
 const DECIDE_VERBS = new Set(["accept", "reject"]);
 /** A change as its card showed it when Accept or Reject was clicked: the texts, which the id does not fix. */
 export type SeenChange = { id: string; kind: string; oldText: string; newText: string };
@@ -993,6 +994,14 @@ class Panel {
   sending = false;
   sendOpts = { todo: true, track: true, accept: true };   // all checked by default (decision 8); `accept` is the Slice 2 checkbox
   sentNote: string | null = null;
+  // the last send's acknowledgment, kept while the saved line displaces it at the panel's foot (landSaved, in the margin
+  // layout, where the line takes its position): what comes back there when the line ends (restoreSent) — at a gesture, at
+  // the settled re-read that finds the card in view, at the panel's close — so the foot never shows neither. The review,
+  // 2026-09-09, round 2: a reply's landing read its card, taller with the composer's box in it, as below the track's box,
+  // and the composer's close re-laid the card whole in view; the pass's re-read ended the line, and the acknowledgment
+  // was gone with it, with no gesture of the person's. Set with the acknowledgment (doSend) and cleared with it when the
+  // next confirm opens (fcsend): a line standing then comes down on nothing, since the next send's acknowledgment replaces it.
+  sentAck: string | null = null;
   // the todo the send answers when SEVERAL are offered (todoOpts' radio group; the todo-file follow-on, 2026-09-07): the id
   // picked, "" for none, null while nothing was picked — the first candidate then, and again when the pick left the list (a
   // todo settled from elsewhere, or answered by the send before). With one candidate the checkbox (sendOpts.todo) decides.
@@ -1125,6 +1134,18 @@ class Panel {
   // markNew) until seen; `newKeys` is the set of card keys the current render marks. The set lives with the panel, so a
   // Raw/Rendered switch, a reload, a close and reopen of the aside keep it; a new file is a new panel.
   seenKeys: Set<string> | null = null;
+  // the texts of every SEEN pending change, by its entry key, as they read when it was marked seen (the seeds above, a
+  // gesture, the person's own write: recordSeen, recordPending). The key is the change's id, and the id is stable while the
+  // change under it is not (DECIDE_VERBS' comment): a same-author track-edit landing inside or beside a pending change is
+  // coalesced into it and grows its texts under the same id, so a status can bring a seen id with text nobody has looked
+  // at. A status whose pending change reads differently from this record takes the change out of the seen set and files
+  // it as an arrival again (noteArrivals, grownSince): the dot, the line under the header and the Send's unseen count name
+  // it, and the next gesture with its card on screen sees it anew — the person's own changes are theirs whatever they
+  // read. Before this the Send accepted a change grown under a seen id and the confirm counted it among the seen (the
+  // review, 2026-09-09, round 2); the decisions' own guard (changedSince) caught growth after the press alone. Detached
+  // changes and comments have no texts here; a seen change with no record (one seen while detached and re-attached since)
+  // is recorded as it stands, not filed anew.
+  seenTexts = new Map<string, SeenChange>();
   seenOpen = false;                           // whether a status has landed while the panel was open: until one has, the next to land is a newly opened panel's first, all seen (noteArrivals)
   arrivals = new Map<string, Entry>();
   newKeys = new Set<string>();
@@ -1330,7 +1351,7 @@ class Panel {
         // every click and Enter (the 2026-09-07 review, both finds). Cancelling the click ends the anchor's activation;
         // the chat pane's link handler stands aside for a panel mark on the word that the delegate cancels.
         fcchange: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard("chg:" + x.dataset.id!); },
-        fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
+        fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.sentAck = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
         fcsavedgo: () => { const out = this.savedOut; this.savedOut = null; if (out) this.scrollCard(out.key); this.reflect(); },   // the saved line (savedLine; decision 43): the card into view as the focus, and the line is over
         fcsendcancel: () => { this.sendConfirm = false; this.sendNote = ""; this.noteBox.value = ""; this.render(); },   // closed on purpose: the note goes with it
         fcsendgo: () => { void this.doSend(); },
@@ -1660,6 +1681,7 @@ class Panel {
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
     if (this.margin) this.layoutOff();                 // the body's end padding and the placement go with the aside (a reopen's first pass brings them back)
     this.savedOut = null;                              // the line saying where a saved card stands (savedLine) was for this panel's view: a reopen shows the list afresh
+    this.restoreSent(null);                            // …with the acknowledgment the line displaced back at the foot (sentAck)
     this.clearLanding();                               // the Reveal that cued a row was this panel's gesture; the cards it led from are gone
     this.hiddenSaved = null;                           // the line about a save this panel showed nothing for was read with the panel open (hiddenSavedRow)
     this.stopPoll();
@@ -2454,7 +2476,9 @@ class Panel {
    *  filter shows the changes alone has no card in the list and no mark in the text (renderCards, paintAll): no focus and
    *  no line here — the line noteHiddenSave raises (hiddenSavedRow) says where the card is. The side is read once here and
    *  again at the end of every pass and at every scroll while the line stands (reflectLines), where the geometry is
-   *  settled: the composer's close grows the track's box and can bring the card into it, and the line ends with that.
+   *  settled: the composer's close re-lays the cards — a reply's box leaves its card, which the pass measured with the box
+   *  in it, and a comment's slot leaves the track's box, which grows by it — and can bring the card into the box, and the
+   *  line ends with that (the acknowledgment it displaced comes back: restoreSent).
    *  Returns whether the line was raised: a comment's save renders it then (saveComposer), the composer's close
    *  re-rendering the composer alone. */
   private landSaved(c: Composer, had: Set<string>, r: Status, note: string): boolean {
@@ -2465,9 +2489,11 @@ class Panel {
     const side = this.cardWhere(key);
     if (side === null) return false;                   // whole in view, or no card to point at
     this.savedOut = { key, side };
-    // the margin layout: the position is the line's now (renderSend), and an earlier send's acknowledgment gives way. The list
-    // layout's line stands under the header (savedLineHead), and the acknowledgment keeps its place at the foot: cleared there
-    // too, it went for no reason of position, and only when the card landed out of view (the review, 2026-09-09)
+    // the margin layout: the position is the line's while it stands (renderSend), and an earlier send's acknowledgment gives
+    // way to it — kept (sentAck) to come back in its place when the line ends (restoreSent; the field's comment has the case
+    // that lost it). The list layout's line stands under the header (savedLineHead), and the acknowledgment keeps its place
+    // at the foot: cleared there too, it went for no reason of position, and only when the card landed out of view (the
+    // review, 2026-09-09)
     if (this.margin) this.sentNote = null;
     return true;
   }
@@ -2516,8 +2542,12 @@ class Panel {
    *  standing takes the status's entry for it, in its place in the order: a change keeps its key when the sidecar's rebase
    *  detaches it (store.detached) or re-attaches it as a hunk, and the entry's `pending` says which it is now, so the
    *  accept option counts the arrived changes the accept will touch, not the ones it found pending at first sight (the
-   *  review, 2026-09-09). Nothing until the first render seeded the set (render), and the first status to land while the
-   *  panel is open is all seen too (seenOpen): a newly opened panel's first status is never an arrival. */
+   *  review, 2026-09-09). A SEEN pending change whose texts are not the ones the person saw (seenTexts, grownSince: a
+   *  same-author track-edit coalesced into it under the same id) is unseen again — out of the set, filed as an arrival
+   *  like a new change, unless it is the person's own — and a seen pending change with no record yet (seen while detached,
+   *  re-attached since) is recorded as it stands. Nothing until the first render seeded the set (render), and the first
+   *  status to land while the panel is open is all seen too (seenOpen): a newly opened panel's first status is never an
+   *  arrival. */
   private noteArrivals(s: Status): void {
     const seen = this.seenKeys;
     if (seen === null) return;
@@ -2525,6 +2555,7 @@ class Panel {
     // the first status to land while the panel is open is the newly opened panel's first (the fields' comment): the render
     // seeded the set from the probe's status, asked with the panel closed, and everything this one adds is seen as well. One
     // landing while closed — the open's re-ask answered after a close — is nobody's first: the reopen's own is
+    if (!this.seenOpen && this.open) this.recordPending(s);   // …with its pending changes' texts (seenTexts), for the seed below
     if (!this.seenOpen) {
       if (!this.open) return;
       this.seenOpen = true;
@@ -2533,12 +2564,35 @@ class Panel {
     }
     const now = new Set(entries.map((e) => e.key));
     for (const k of Array.from(this.arrivals.keys())) if (!now.has(k)) this.arrivals.delete(k);
+    for (const k of Array.from(this.seenTexts.keys())) if (!now.has(k)) this.seenTexts.delete(k);   // a change gone from the status (decided, or its record pruned) has no texts to hold
     for (const e of entries) {
-      if (seen.has(e.key)) continue;
+      if (seen.has(e.key)) {
+        // a seen pending change reads as the person saw it: seen still (recorded now if it has no record yet); one that reads
+        // differently is text they have not seen — out of the set, and the rule below files it as any other entry
+        if (!e.pending || !this.grownSince(e.key, s)) { if (e.pending) this.recordSeen(e.key, s); continue; }
+        seen.delete(e.key); this.seenTexts.delete(e.key);
+      }
       if (this.arrivals.has(e.key)) { this.arrivals.set(e.key, e); continue; }   // refreshed in place: a Map's set on a key it holds keeps the order
+      if (e.author === YOU) this.recordSeen(e.key, s);   // the person's own write: its texts are seen text (seenTexts)
       if (e.author === YOU) seen.add(e.key);
       else this.arrivals.set(e.key, e);
     }
+  }
+  /** The texts of a seen pending change, kept with its key (seenTexts; the field's comment): the status's hunk under that
+   *  key, as it reads now. Nothing for a key that names no pending change of `s` — a comment, a reply, a detached change. */
+  private recordSeen(key: string, s: Status | null = this.status): void {
+    if (!key.startsWith("chg:")) return;
+    for (const c of seenChanges(s, { ids: [key.slice(4)] })) this.seenTexts.set(key, c);
+  }
+  /** Every pending change of `s` recorded as seen text (the seeds: the render's, the first open status's). */
+  private recordPending(s: Status): void {
+    for (const h of s.hunks || []) this.recordSeen("chg:" + String(h.id), s);
+  }
+  /** Whether a seen pending change reads differently now from the texts the person saw (seenTexts): the same comparison the
+   *  decisions stand down on (changedSince). A change with no record is not grown: there is nothing to compare it with. */
+  private grownSince(key: string, s: Status): boolean {
+    const rec = this.seenTexts.get(key);
+    return !!rec && changedSince([rec], s.hunks || []).length > 0;
   }
   /** The card an entry shows on: a change's own; a comment's or a reply's the comment's card, which for a comment bound
    *  to a pending change is the change's card (cardKey, as the list shows it). */
@@ -2570,7 +2624,7 @@ class Panel {
     if (this.arrivals.size && !on("fcarrivals")) {
       for (const [k, e] of Array.from(this.arrivals)) {
         if (!this.entryShown(e)) continue;
-        keys.add(this.arrivalCard(e)); this.seenKeys?.add(k); this.arrivals.delete(k);
+        keys.add(this.arrivalCard(e)); this.seenKeys?.add(k); this.recordSeen(k); this.arrivals.delete(k);
       }
     }
     const was = this.sendPress;
@@ -2626,7 +2680,7 @@ class Panel {
    *  and count row, when it is up (renderSend's words and state, syncAcceptOption: a change this gesture marked seen is one
    *  the send now accepts, and a box that was disabled with nothing seen comes on); and the saved line (savedLine: the
    *  card's side now, or removed — the key with it — once the card is whole in view, gone from the list, or the person has
-   *  moved on). */
+   *  moved on; the acknowledgment it displaced comes back in its place, restoreSent). */
   private reflectLines(): void {
     const b = this.root?.querySelector('[data-act="fcarrivals"]') as HTMLElement | null;
     if (b) { if (!this.arrivals.size) b.remove(); else b.textContent = this.arrivalText(); }
@@ -2637,6 +2691,7 @@ class Panel {
       const side = this.cardWhere(this.savedOut.key);
       if (side === null) this.savedOut = null; else this.savedOut.side = side;
     }
+    if (!this.savedOut) this.restoreSent(line);         // the line is over: the acknowledgment it displaced is back, where the line stood
     if (!this.savedOut) { if (line) this.removeLine(line); }
     else if (line) line.textContent = savedWhereWords(this.savedOut.side);
   }
@@ -2648,6 +2703,17 @@ class Panel {
     const held = document.activeElement === line;
     line.remove();
     if (held) this.focusNear({ act: "fcsavedgo", card: line.dataset.id });
+  }
+  /** The saved line is over, and the acknowledgment it displaced at the foot (landSaved, the margin layout: sentNote
+   *  cleared, sentAck kept) is back: in the field, for the next render (renderSend), and in place before the line when the
+   *  line stands in the Send section (reflectLines ends it there with no render), so the foot shows the one or the other
+   *  and never neither. Nothing when the acknowledgment shows already (the list layout's line never displaced it) or when
+   *  none stands (fcsend cleared both: the confirm is up, and the next send's acknowledgment replaces it). `line` is null at
+   *  the panel's close (closePanel): the field alone. */
+  private restoreSent(line: HTMLElement | null): void {
+    if (this.sentNote !== null || this.sentAck === null) return;
+    this.sentNote = this.sentAck;
+    if (line && line.parentNode && this.sections.send.contains(line)) line.parentNode.insertBefore(el("div", "fc-note fc-sent", this.sentNote), line);
   }
   /** The marks in the body of every card the render marks new (newKeys) wear the attribute too: after each paint pass the
    *  marks are fresh (paintAll unwraps and repaints them), and render runs after every pass. */
@@ -3986,6 +4052,7 @@ class Panel {
       const who = this.sessionName();
       const base = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
       this.sentNote = base;                            // an accept resolves no comment (decision 42), so nothing leaves the visible list on a send and the line has no tail
+      this.sentAck = base;                             // kept for the saved line's end, when the line has displaced it (the field's comment; restoreSent)
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });
       this.sendConfirm = false;
       this.sendNote = ""; this.noteBox.value = "";     // sent: the words went with the message; a refusal (the catch) keeps them
@@ -4036,7 +4103,9 @@ class Panel {
     // the arrivals (the arrivals follow-on): the first render with a status seeds the seen set with all of it — the person
     // is looking at the whole file, and nothing in it arrived while they were; the renders after mark the arrival cards
     // (newKeys → renderCard, renderChangeCard) and their marks in the body (markNew)
+    const seeding = this.seenKeys === null && !!s;
     if (this.seenKeys === null && s) this.seenKeys = new Set(statusEntries(s).map((e) => e.key));
+    if (seeding && s) this.recordPending(s);           // …and the texts of its pending changes, which a later status is read against (seenTexts)
     this.newKeys = new Set(Array.from(this.arrivals.values(), (e) => this.arrivalCard(e)));
     this.markNew();
     head.replaceChildren(this.renderHead(s));

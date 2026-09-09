@@ -1930,6 +1930,14 @@ a.fileview-gh-note { border-style: dashed; }
    .fc-note and .fc-sent on it as on the note, so the Send section's tiers below count it as the note and not as growth */
 .fc-saved { display: block; background: none; border: 0; padding: 0; font: inherit; font-size: 0.86em; cursor: pointer; text-align: left; }
 .fc-saved:hover { text-decoration: underline; }
+/* under the header, where the list layout stands the line (file-comments.ts savedLineHead), its neighbour is the arrivals
+   line: two one-line notices under the header, each a button pointing at a card, so the line wears that row's size, weight
+   and padding there (.fc-sec's, the arrivals line's dress) and not the sent note's 0.86em it keeps beside the note at the
+   margin layout's foot. Similar kinds of information wear the same size (ui/CLAUDE.md, font sizes; the seen review, round
+   2, 2026-09-09: the two rows stood stacked at 0.82em/600 over 0.86em/400). The colours keep their meanings, the accent for
+   what arrived and --green for what was saved. The margin layout never puts the line in the head (savedLineHead), so the
+   rule is the list layout's alone. */
+.fc-head > .fc-saved { padding: 2px 0; font-size: 0.82em; font-weight: 600; }
 .fc-log { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--card-border); }
 /* the row carries no size of its own: its time is the SAME .fc-time a card head wears, and a 0.72em time inside a
    0.86em row compounds to 0.62em (ui/CLAUDE.md, font sizes) — the body size sits on the text span beside it */

@@ -1,0 +1,279 @@
+// The seen follow-on's third review round in a REAL engine (plans/file-review.md, decision 43, "The seen follow-on (2026-09-09)"
+// under Slice 2; the review of 2026-09-09, round 3): the worktree's file-comments.ts bundled the way the webview is built,
+// mounted over a rendered markdown body under feed.css's own rules, as file-comments-margin-fixes-browser.test.ts mounts it
+// (its harness, copied). What only an engine can show: a reply's box stands INSIDE its card (placeComposer), and the pass
+// measures the card taller by it — so a reply saved on a card whose head is in the track's box and whose end, with the box,
+// is past it, is read at the landing as below the box, and the composer's close re-lays the card whole in view, where the
+// re-read at the end of that pass ends the line with no gesture of the person's (before: that re-read was held by a source
+// pin alone; in Chromium nothing else ends the line, since the track's scroll does not move); and the acknowledgment of the
+// send before it, which the line displaced at the foot, is back there (before: gone with the line, and the foot showed
+// neither). Runs in Chromium and Firefox; skips LOUDLY without a playwright browser (CI installs none), as the other browser
+// legs do. Synthetic values only: invented prose, placeholder ids.
+import { test } from "node:test";
+import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { createRequire } from "node:module";
+
+const requireCjs = createRequire(__filename);
+const EXT = process.cwd();                                        // npm test runs in vscode-extension
+const UI = path.resolve(EXT, "..", "ui", "webview");
+const FEED = fs.readFileSync(path.join(UI, "feed.css"), "utf8");
+
+/** The panel's registry entry and marked, bundled as the webview build bundles them (in memory), as window.__romp. */
+function bundle(): string {
+  const esbuild = requireCjs("esbuild");
+  const r = esbuild.buildSync({
+    stdin: {
+      contents: 'import { fileCommentsAction } from "./file-comments";\nimport { marked } from "marked";\n(window as any).__romp = { fileCommentsAction, marked };\n',
+      resolveDir: UI, loader: "ts", sourcefile: "seen-review3-probe.ts",
+    },
+    bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
+    nodePaths: [path.join(EXT, "node_modules")], logLevel: "silent",
+  });
+  return r.outputFiles[0].text;
+}
+/** The sheet's rules the layout lives under: the body, the rendered prose, the buttons, and the whole file-comments block
+ *  (the row, the aside and its fold, the panel, the cards, the highlights, the margin layout). */
+function sheet(): string {
+  const a = FEED.indexOf("/* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts)");
+  const b = FEED.indexOf("/* ── end file comments panel ── */");
+  assert.ok(a >= 0 && b > a, "the file-comments block's markers in feed.css");
+  const rule = (sel: string): string => {
+    const m = new RegExp("\\n(" + sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + " \\{[^}]*\\})").exec(FEED);
+    assert.ok(m, "a rule for " + sel + " in feed.css");
+    return m![1];
+  };
+  // `.fileview` is the viewer's card, the ancestor the fold's container query resolves against (its container-type)
+  return [rule(".fileview"), rule(".fileview-body"), rule(".fileview-md"), rule(".fileview-md p"), rule(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6"), rule(".fileview-btn"), FEED.slice(a, b)].join("\n");
+}
+// the viewer's own ancestry: `.fileview` (the card) > `.fileview-main` (the row) > `.fileview-body` + the aside the panel mounts.
+// 530px: the review's 500px plus the filter's row (All · Comments · Changes, under the toggles), so the track holds what it did
+// then — the reply case below centers paragraph 3's card while the reply's box still stands in it, and a card taller than the
+// track is clipped at its head by the excess (file-comments-margin-fixes.test.ts), which the box's leaving does not undo
+const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>
+body { margin: 0; padding: 0; font: 14px/1.5 sans-serif; background: #1e1e1e; color: #ccc; --card-border: #444; --fg: #ccc; --dim: #999; --text-faint: #777; --accent: #9cd2ff; --accent-fg: #0c1a2e; --accent-wash: rgba(156,210,255,0.15); --warn: #e0a030; --green: #7c7; --bg: #1e1e1e; --overlay-05: rgba(255,255,255,0.05); --radius-pill: 999px; --surface-raised: #252526; --shadow-menu: none; }
+${sheet()}
+#wrap { width: 1000px; height: 530px; }</style></head><body><div class="fileview" id="wrap"><div class="fileview-main" id="main"><div class="fileview-body" id="body"><div class="fileview-md" id="md"></div></div></div></div><script src="/dist/seen-review3.js"></script></body></html>`;
+
+// ── the document and its comments (synthetic prose) ────────────────────────────────────────────────
+const SID = "11111111-2222-3333-4444-555555555555";
+const ABS = "/repo/notes-api/docs/report.md";
+const T0 = 1757145600000;
+const PARA = (i: number): string => "Paragraph " + i + " of the report says something about the cache, the latency and the plan for the next release, in enough words to wrap onto a second line.";
+const SRC = "# Report\n\n" + Array.from({ length: 40 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+const quoteOf = (i: number): string => "Paragraph " + i + " of the report";
+const comment = (i: number, n: number): Record<string, unknown> => ({
+  id: (T0 + n) + "-" + i, author: "you", ts: T0 + n, body: "Note on paragraph " + i + ".",
+  anchor: { quote: quoteOf(i), prefix: "", suffix: " says something about the cache" }, replies: [], resolved: false,
+});
+const WHOLE = { id: (T0 - 5000) + "-0", author: "you", ts: T0 - 5000, body: "Add a summary at the top.", replies: [], resolved: false };
+// replies of one line and of two (the second wraps in the 340px card), so the open cards' heights step through the band a
+// header-term scroll clipped — (track − header − gap, track − gap], the header's height wide — whatever the engine's font
+// metrics: at least one candidate lands in it (the leg asserts so), and the tallest does not fit the track at all
+const REPLY = (i: number, long: boolean): Record<string, unknown> => ({ author: "api", ts: T0 + 100 + i, body: long ? "Reply " + (i + 1) + ": the cache is the one the api session added for the notes list, and the latency figure is from the staging run last week." : "Reply " + (i + 1) + " about the cache." });
+const replies = (n: number, longAt: number | null): Record<string, unknown>[] => Array.from({ length: n }, (_, i) => REPLY(i, i === longAt));
+const CANDIDATES: Array<{ para: number; n: number; longAt: number | null }> = [{ para: 12, n: 3, longAt: null }, { para: 16, n: 3, longAt: 0 }, { para: 20, n: 4, longAt: null }, { para: 24, n: 4, longAt: 0 }, { para: 28, n: 5, longAt: null }, { para: 32, n: 6, longAt: null }];
+const CANDS: Array<Record<string, unknown>> = CANDIDATES.map((c, k) => ({ ...comment(c.para, 10 + k), replies: replies(c.n, c.longAt) }));
+// marks on paragraphs 3 and 4 (a line apart: the second card cannot fit beside its paragraph), the candidates four paragraphs
+// apart (closed, none reaches the next), and on paragraph 40 (the last one)
+const COMMENTS: Array<Record<string, unknown>> = [WHOLE, comment(3, 1), comment(4, 2), ...CANDS, comment(40, 4)];
+const KEYS: Record<string, string> = { c3: COMMENTS[1].id as string, c4: COMMENTS[2].id as string, c40: COMMENTS[COMMENTS.length - 1].id as string, whole: WHOLE.id };
+CANDIDATES.forEach((c, k) => { KEYS["p" + c.para] = CANDS[k].id as string; });
+// one change: a word the session inserted in paragraph 6, painted in Rendered as a tint (the foot goes to the footer)
+const INS_AT = SRC.indexOf("Paragraph 6 of the report");
+const HUNK = { id: "h1", author: "api", ts: T0 - 30000, kind: "ins", curFrom: INS_AT, curTo: INS_AT + 9, baseFrom: INS_AT, baseTo: INS_AT, oldText: "", newText: "Paragraph", anchor: null };
+const STATUS = {
+  verb: "status", root: "/repo/notes-api", storePath: "/repo/notes-api/.trackchanges/docs%2Freport.md.json",
+  trackedBy: { kind: "file", entry: "docs/report.md" }, agentTooling: "present",
+  fileMtimeNs: "1757145600000000001", storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003",
+  store: { v: 3, path: "docs/report.md", suggestions: [], comments: COMMENTS },
+  hunks: [HUNK], log: [],
+  unsent: { comments: COMMENTS.map((c) => c.id), replies: [], accepted: 0, rejected: 0, watermark: null },
+};
+
+type Box = { top: number; bottom: number; height: number };
+type Scene = {
+  margin: boolean; footIn: string | null; listHeight: number; bodyScrollHeight: number; offset: number;
+  cards: Record<string, Box & { pushed: string | null; leader: string }>; marks: Record<string, Box | null>;
+  bodyScroll: number; trackScroll: number; flex: string;
+  bodyRange: number; trackRange: number;                          // each scroller's farthest scrollTop (scrollHeight - clientHeight)
+  bodyBox: Box; trackBox: Box;                                    // the two scrollers' boxes in the viewport (the track's ends above the footer)
+  trackHeight: number; composerHidden: boolean;                   // the track's box height; whether the composer is closed
+  saved: string | null;                                           // the line at the foot for a saved card out of view (decision 43), its words
+  ack: string | null;                                             // the send's acknowledgment at the foot ("Sent to api at …"), when one stands
+  sentLines: number;                                              // how many lines wear the acknowledgment's dress (.fc-sent): the line, the acknowledgment
+};
+
+/** Mount the panel over the rendered document, answer its status asks, open it, and let the paint and the pass run. */
+function mount(page: any, status: Record<string, unknown> = STATUS): Promise<void> {
+  return page.evaluate(async ([src, status, abs, sid]: [string, Record<string, unknown>, string, string]) => {
+    const w = window as any;
+    const body = document.getElementById("body")!, md = document.getElementById("md")!;
+    md.innerHTML = w.__romp.marked.parse(src);
+    const posted: any[] = []; w.__posted = posted;
+    const rendered: Array<() => void> = []; w.__rendered = rendered;
+    const ctx = {
+      path: abs, sid, todoId: null,
+      body: () => body, mode: () => "rendered", text: () => src, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null,
+      renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
+      onRendered: (cb: () => void) => { rendered.push(cb); }, onSelection: () => { /* inert */ }, onSaved: () => { /* inert */ }, onClose: () => { /* inert */ },
+      post: (m: any) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
+      aside: (node: HTMLElement | null) => { const main = document.getElementById("main")!; main.querySelector(".fileview-aside")?.remove(); if (node) { node.classList.add("fileview-aside"); main.appendChild(node); } },
+      setMode: () => { /* inert */ }, scrollToOffset: () => { /* inert */ }, reload: () => { /* inert */ },
+    };
+    const unit = w.__romp.fileCommentsAction.mount(ctx) as HTMLElement;
+    document.body.appendChild(unit);
+    const settle = () => new Promise<void>((r) => setTimeout(r, 0));
+    const reply = async () => { const last = posted[posted.length - 1]; window.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: last.reqId, ...status } })); await settle(); await settle(); };
+    await reply();                                                // the probe
+    (unit.querySelector("button") as HTMLButtonElement).click();  // open
+    await reply();
+    for (const cb of rendered) cb();                              // the viewer's onRendered: the paint pass over the body
+    await settle();
+    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));   // the observers' frame
+  }, [SRC, status, ABS, SID]);
+}
+const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.evaluate((keys: Record<string, string>) => {
+  const body = document.getElementById("body")!;
+  const aside = document.querySelector(".fileview-aside") as HTMLElement;
+  const track = aside.querySelector(".fc-sec-cards") as HTMLElement;
+  const list = track.querySelector(".fc-cards") as HTMLElement;
+  const box = (el: Element): { top: number; bottom: number; height: number } => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height }; };
+  const cards: Record<string, any> = {}, marks: Record<string, any> = {};
+  for (const [name, key] of Object.entries(keys)) {
+    const card = aside.querySelector('.fc-card[data-id="' + key + '"]') as HTMLElement | null;
+    cards[name] = card ? { ...box(card), pushed: card.dataset.pushed ?? null, leader: card.style.getPropertyValue("--fc-push") } : null;
+    const act = key.startsWith("chg:") ? "fcchange" : "fcopen", id = key.startsWith("chg:") ? key.slice(4) : key;
+    const m = body.querySelector('[data-act="' + act + '"][data-id="' + id + '"]');
+    marks[name] = m ? box(m) : null;
+  }
+  const foot = aside.querySelector(".fc-foot");
+  return {
+    margin: aside.classList.contains("fc-margin"), footIn: foot ? (foot.parentElement as HTMLElement).className : null,
+    listHeight: parseFloat(list.style.height || "0"), bodyScrollHeight: body.scrollHeight, offset: track.getBoundingClientRect().top - body.getBoundingClientRect().top,
+    cards, marks, bodyScroll: body.scrollTop, trackScroll: track.scrollTop, flex: getComputedStyle(document.getElementById("main")!).flexDirection,
+    bodyRange: body.scrollHeight - body.clientHeight, trackRange: track.scrollHeight - track.clientHeight, bodyBox: box(body), trackBox: box(track),
+    trackHeight: track.clientHeight, composerHidden: (aside.querySelector(".fc-composer") as HTMLElement).hidden,
+    saved: (aside.querySelector('[data-act="fcsavedgo"]') as HTMLElement | null)?.textContent ?? null,
+    ack: (aside.querySelector(".fc-sec-send .fc-sent:not(.fc-saved)") as HTMLElement | null)?.textContent ?? null,
+    sentLines: aside.querySelectorAll(".fc-sent").length,
+  };
+}, keys);
+const frames = (page: any, n = 2): Promise<void> => page.evaluate((n: number) => new Promise<void>((r) => { const step = (k: number) => (k ? requestAnimationFrame(() => step(k - 1)) : r()); step(n); }), n);
+const near = (a: number, b: number, msg: string, tol = 1) => assert.ok(Math.abs(a - b) <= tol, msg + ": " + a + " vs " + b);
+
+let pw: any = null;
+try { pw = requireCjs("playwright"); } catch { pw = null; }
+
+async function inBrowser(t: any, name: string, body: (page: any) => Promise<void>): Promise<void> {
+  if (!pw) { t.skip("playwright is not installed under vscode-extension — the browser leg needs it (CI installs no browsers)"); return; }
+  let browser: any;
+  try { browser = await pw[name].launch(); }
+  catch (e) { t.skip("no playwright " + name + " on this box — this leg needs it (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+  const errors: string[] = [];
+  try {
+    const js = bundle();
+    const page = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+    page.on("pageerror", (e: Error) => { errors.push(e.message); });
+    await page.route("http://romp.test/**", (route: any) => {
+      const u = new URL(route.request().url());
+      if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE });
+      if (u.pathname === "/dist/seen-review3.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
+      return route.fulfill({ status: 404, body: "" });
+    });
+    await page.goto("http://romp.test/page");
+    await page.waitForFunction(() => !!(window as any).__romp);
+    await body(page);
+    assert.deepEqual(errors, [], "no script error in the page");
+  } finally { await browser.close(); }
+}
+
+/** The last request the panel posted, answered with `status` (the kernel's reply as a window message). */
+const answer = (page: any, status: Record<string, unknown>): Promise<void> => page.evaluate((status: Record<string, unknown>) => {
+  const p = (window as any).__posted; const last = p[p.length - 1];
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: last.reqId, ...status } }));
+}, status);
+const lastVerb = (page: any): Promise<string> => page.evaluate(() => { const p = (window as any).__posted; return p.length ? p[p.length - 1].verb : ""; });
+const awaitVerb = (page: any, verb: string): Promise<void> => page.waitForFunction((verb: string) => { const p = (window as any).__posted; return p.length > 0 && p[p.length - 1].verb === verb; }, verb, { timeout: 5000 });
+const click = (page: any, sel: string): Promise<void> => page.evaluate((sel: string) => { (document.querySelector(sel) as HTMLElement).click(); }, sel);
+/** Press Show more on a card the margin layout folded (its row shows); false when the card offers none. */
+const unfold = (page: any, key: string): Promise<boolean> => page.evaluate((key: string) => {
+  const row = document.querySelector('.fileview-aside .fc-card[data-id="' + key + '"] .fc-clip-row') as HTMLElement | null;
+  if (!row || row.hidden) return false;
+  (row.querySelector("button") as HTMLElement).click();
+  return true;
+}, key);
+const cardSel = (key: string, inner: string): string => '.fileview-aside .fc-card[data-id="' + key + '"] ' + inner;
+const wholeIn = (c: Box, of: Box): boolean => c.top >= of.top - 1 && c.bottom <= of.bottom + 1;
+const NS9 = "1757145600000000009", NS10 = "1757145600000000010";
+// no change in the file: the Send confirm offers no accept box, so the send that puts up the acknowledgment carries the
+// comments alone (an accept's round trip is the send-seen legs' business)
+const STATUS0 = { ...STATUS, hunks: [] as unknown[] };
+const lastPosted = (page: any): Promise<any> => page.evaluate(() => { const p = (window as any).__posted; return p[p.length - 1]; });
+const awaitType = (page: any, type: string): Promise<void> => page.waitForFunction((type: string) => { const p = (window as any).__posted; return p.length > 0 && p[p.length - 1].type === type; }, type, { timeout: 5000 });
+/** The kernel's acknowledgment of the last send. */
+const answerSent = (page: any): Promise<void> => page.evaluate(() => {
+  const p = (window as any).__posted; const last = p[p.length - 1];
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSent", reqId: last.reqId, queued: false } }));
+});
+const settle = (page: any): Promise<void> => page.evaluate(() => new Promise<void>((r) => setTimeout(r, 0)));
+
+for (const name of ["chromium", "firefox"]) {
+  test(`in ${name}: a reply saved on a card whose end, with the reply's box in it, is past the track's box: the landing reads the card below, the composer's close re-lays it whole in view and the pass's re-read ends the line with no gesture; nothing scrolls; the acknowledgment of the send before it, which the line displaced, is back at the foot`, async (t) => {
+    await inBrowser(t, name, async (page) => {
+      await mount(page, STATUS0);
+      let s = await scene(page, KEYS);
+      assert.equal(s.margin, true, "the fixture: the margin layout is on");
+      // a send first: the acknowledgment at the foot
+      await click(page, '.fileview-aside [data-act="fcsend"]');
+      await frames(page, 1);
+      await click(page, '.fileview-aside [data-act="fcsendgo"]');
+      await awaitType(page, "fileCommentsSend");
+      await answerSent(page);
+      await settle(page); await settle(page);
+      await awaitVerb(page, "status");                     // the send re-asks status
+      await answer(page, STATUS0);
+      await frames(page, 3);
+      s = await scene(page, KEYS);
+      assert.match(s.ack || "", /^Sent to api at /, "the fixture: the acknowledgment stands");
+      assert.equal(s.saved, null);
+      // paragraph 3's card opened by its head (the focus, level with its mark), Reply pressed: the box stands in the card
+      await click(page, cardSel(KEYS.c3, ".fc-card-head"));
+      await frames(page, 3);
+      await click(page, cardSel(KEYS.c3, '[data-act="fcreply"]'));
+      await frames(page, 2);
+      await page.focus(".fileview-aside .fc-composer .fc-input");
+      await page.keyboard.type("Which cache do you mean?");
+      await frames(page, 2);
+      s = await scene(page, KEYS);
+      assert.equal(s.composerHidden, false, "the fixture: the composer is up for the reply");
+      const withBox = s.cards.c3.height;
+      // the text scrolled so the card's end, with the box, is 20px past the track's box: a scroll of the body by d moves the
+      // card up by d (the lock carries it onto the track)
+      const d = s.cards.c3.bottom - (s.trackBox.bottom + 20);
+      const want = Math.max(0, s.bodyScroll + d);
+      await page.evaluate((y: number) => { document.getElementById("body")!.scrollTop = y; }, want);
+      await frames(page, 3);
+      s = await scene(page, KEYS);
+      assert.equal(s.bodyScroll, want, "the fixture: the body is where it was put");
+      near(s.trackScroll, want, "the fixture: the track follows", 1);
+      assert.ok(s.cards.c3.top >= s.trackBox.top - 1 && s.cards.c3.top < s.trackBox.bottom, "the fixture: the card's head is in the track's box: " + JSON.stringify(s.cards.c3) + " against " + JSON.stringify(s.trackBox));
+      assert.ok(s.cards.c3.bottom > s.trackBox.bottom + 1, "the fixture: its end, with the box in it, is past the track's box: " + s.cards.c3.bottom + " vs " + s.trackBox.bottom);
+      await page.keyboard.press("Control+Enter");           // the save chord
+      await awaitVerb(page, "reply");
+      const c3r = { ...COMMENTS[1], replies: [{ author: "you", ts: T0 + 9000, body: "Which cache do you mean?" }] };
+      await answer(page, { ...STATUS0, verb: "reply", storeMtimeNs: NS10, store: { ...STATUS0.store, comments: COMMENTS.map((c) => (c.id === KEYS.c3 ? c3r : c)) } });
+      await frames(page, 4);
+      s = await scene(page, { ...KEYS });
+      assert.equal(s.composerHidden, true, "the composer closed");
+      assert.equal(s.bodyScroll, want, "nothing moved: a save never moves the view (decision 43)");
+      near(s.trackScroll, want, "the track neither", 1);
+      assert.ok(s.cards.c3.height < withBox - 20, "the fixture: the card measures shorter without the box: " + s.cards.c3.height + " vs " + withBox);
+      assert.ok(wholeIn(s.cards.c3, s.trackBox), "the card, without the box, is whole in the track's box: " + JSON.stringify(s.cards.c3) + " in " + JSON.stringify(s.trackBox));
+      assert.equal(s.saved, null, "the line ended at the pass's re-read after the close, with no gesture (before: 'Saved · the card is below' stood over a card in view)");
+      assert.match(s.ack || "", /^Sent to api at /, "the acknowledgment the line displaced is back at the foot (before: gone)");
+      assert.equal(s.sentLines, 1, "one line in the acknowledgment's dress: the acknowledgment");
+    });
+  });
+}
