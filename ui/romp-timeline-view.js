@@ -283,6 +283,24 @@ function lensLabel(l) {
   if (l.none) parts.push('no tags');
   return parts.join(' + ') || 'All';
 }
+// The folded "pane filters" line for one pane (the user 2026-09-09, whose ten tags made the open
+// matrix fill the dialog): All, no tags, or the tag names the lens shows in the USER'S tag order
+// (`order`, the union's, not the order the chips were clicked in), 'no tags' last as lensLabel puts
+// it, cut with a count past `max` names (six by default; Infinity for the full list a hover shows).
+function lensSummary(l, order, max) {
+  if (lensAll(l)) return 'All';
+  const idx = new Map((order || []).map((n, i) => [n, i]));
+  const at = (n) => (idx.has(n) ? idx.get(n) : idx.size);   // a name the union no longer lists sorts last
+  const parts = (l.tags || []).slice().sort((a, b) => at(a) - at(b));
+  if (l.none) parts.push('no tags');
+  const cap = max || 6;
+  if (parts.length <= cap) return parts.join(', ');
+  return parts.slice(0, cap).join(', ') + ' +' + (parts.length - cap) + ' more';
+}
+// The Sessions & tags dialog's "pane filters" fold: folded by default, and the choice holds for the
+// page lifetime (a module variable, the way modelChoicesRev does), not per open, so a user who opened
+// the matrix finds it open on the next look and one who left it folded is not shown it again.
+let paneFiltersOpen = false;
 // THIS surface's lens: the timeline keys on actives.timeline (per-surface selections, the user
 // 2026-08-25). A pre-lens blob (an older kernel, a client-held legacy shape) derives its lens from
 // the legacy scalar EXACTLY as the kernel normalizer seeds it — behavior migrates, not just shape:
@@ -1064,6 +1082,9 @@ class TimelinePanel {
     this._localLens = null;      // {fields, reason}: a filter kept LOCAL because no kernel could save it (the Obsidian panel, kernel down): applied in _curViews, said in the Filter menu, cleared by the next lens write a kernel takes (_kernelViewsAnswer)
     this._viewsMenu = null;      // the Show-dropdown element, when open
     this._viewsDialog = null;    // the sessions/group dialog backdrop, when open
+    this._tagColorPop = null;    // the tag colour popover a dialog row's dot opens, when open
+    this._tagColorAnchor = null; // …and the dot it hangs on, re-pointed when a repaint replaces the node
+    this._tagColorFocus = null;  // the row whose dot takes focus at the next repaint (after a pick)
     this._viewsDialogKey = null; // its Escape hook {doc, fn}, removed on every close path
     this._palette = [];          // group color choices (the kernel ships its palette on the payload)
     // "Collapse idle gaps" now lives in the SETTINGS dialog (romp:settings.collapseGaps), moved out of the
@@ -3957,6 +3978,7 @@ class TimelinePanel {
   _closeViewsMenu() { if (this._viewsMenu) { this._viewsMenu.remove(); this._viewsMenu = null; } }
   _closeViewsDialog() {
     if (!this._viewsDialog) return;
+    this._closeTagColorPop();   // the colour popover is the dialog's; it never outlives it
     this._viewsDialog.remove(); this._viewsDialog = null; this._viewsDialogBuild = null;
     this._tagEditErr = null;   // a notice the dialog showed was seen; it does not follow the user to the gear or the Filter menu
     this._tagNewDraft = null; this._tagNewInput = null;   // the join menu's draft dies with the dialog (_closeLaneMenu's rule)
@@ -3964,6 +3986,91 @@ class TimelinePanel {
       try { this._viewsDialogKey.doc.removeEventListener('keydown', this._viewsDialogKey.fn); } catch (e) {}
       this._viewsDialogKey = null;
     }
+  }
+
+  // The tag colour popover (the user 2026-09-09): the identity palette, opened from a tag row's colour
+  // dot in the Sessions & tags dialog, in place of the twelve swatches every row used to carry inline
+  // (which made each row three lines tall, so ten tags filled the page). The same swatches in the T164
+  // balanced split, the current one ringed and focused on open; a pick takes the route the inline
+  // swatches took (_editTagUnion color, then the dialog's repaint), so the optimistic copy, the ack and
+  // a refusal behave exactly as before. One popover at a time: opening another closes this one, and
+  // the dot toggles its own shut. It closes on the pick, on Escape (the dialog's key hook, which then
+  // leaves the dialog open) and on a press anywhere else on the dialog (the backdrop's pointerdown).
+  // It lives in the host document beside the dialog, one z-index above it, placed like the menus:
+  // below the dot, flipped above when below cannot hold it.
+  _openTagColorPop(tg, anchorEl) {
+    const key = unionKey(tg);
+    const reopen = !!(this._tagColorPop && this._tagColorPop._key === key);
+    this._closeTagColorPop();
+    if (reopen) return;
+    const pop = document.body.createDiv();
+    pop.setAttribute('style', 'position:fixed;z-index:1003;' + MENU_STYLE + 'padding:8px;');
+    pop.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
+    pop._key = key;
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', 'colour of \u201c' + tg.name + '\u201d');
+    pop.addEventListener('click', (e) => e.stopPropagation());
+    const pal = this._palette && this._palette.length ? this._palette : [tg.color || MODEL_FG];
+    // balanced swatch rows: ceil-split (T164); a width-driven flex wrap gave arbitrary 5/5/2 runs
+    const cols = Math.ceil(pal.length / Math.ceil(pal.length / 6));
+    const grid = pop.createDiv();
+    grid.setAttribute('role', 'radiogroup');
+    grid.setAttribute('style', 'display:grid;grid-template-columns:repeat(' + cols + ',18px);gap:8px;align-items:center;');
+    const sws = [];
+    const known = pal.indexOf(tg.color) >= 0;
+    pal.forEach((c, i) => {
+      const sw = grid.createSpan();
+      const cur = c === tg.color;
+      sw.setAttribute('role', 'radio');
+      sw.setAttribute('aria-checked', cur ? 'true' : 'false');
+      sw.setAttribute('aria-label', c);
+      sw.setAttribute('tabindex', cur || (!known && i === 0) ? '0' : '-1');   // one tab stop; the arrows move it
+      sw.setAttribute('style', 'display:inline-block;width:18px;height:18px;border-radius:50%;cursor:pointer;background:' + c + ';'
+        + (cur ? 'outline:2px solid ' + MENU_FG + ';outline-offset:1px;' : 'opacity:0.7;'));
+      if (!cur) {
+        sw.addEventListener('mouseenter', () => { sw.style.opacity = '1'; });
+        sw.addEventListener('mouseleave', () => { sw.style.opacity = '0.7'; });
+      }
+      const pick = () => {
+        this._closeTagColorPop();
+        this._tagColorFocus = key;   // the repaint puts focus back on this row's dot
+        // the tag as the dialog shows it NOW, not as it was when the popover opened: a repaint in
+        // between (an ack, a refusal) rebuilds the union objects
+        const now = viewTagUnion(this._curViews()).find((u) => unionKey(u) === key) || tg;
+        this._editTagUnion(now, { color: c });
+        if (this._viewsDialogBuild) this._viewsDialogBuild();
+      };
+      sw.addEventListener('click', pick);
+      sw.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); return; }
+        const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowDown' ? cols : e.key === 'ArrowUp' ? -cols : 0;
+        if (!step) return;
+        e.preventDefault();
+        const j = Math.max(0, Math.min(sws.length - 1, i + step));
+        sws.forEach((s2, k) => s2.setAttribute('tabindex', k === j ? '0' : '-1'));
+        try { sws[j].focus(); } catch (e2) {}
+      });
+      sws.push(sw);
+    });
+    const h = this._menuHost(anchorEl.getBoundingClientRect());
+    h.doc.body.appendChild(pop);
+    const w = pop.offsetWidth || cols * 26 + 16;
+    pop.style.left = Math.max(6, Math.min(Math.round(h.rect.left), (h.win.innerWidth || 9999) - w - 6)) + 'px';
+    pop.style.top = Math.round(menuTop(h.rect, pop.offsetHeight || 0, h.win.innerHeight || 9999)) + 'px';
+    this._tagColorPop = pop;
+    this._tagColorAnchor = anchorEl;
+    try { anchorEl.setAttribute('aria-expanded', 'true'); } catch (e) {}
+    const first = sws.find((s2) => s2.getAttribute('aria-checked') === 'true') || sws[0];
+    setTimeout(() => { try { first.focus(); } catch (e) {} }, 0);
+  }
+  // `refocus`: focus back on the dot (Escape). A pick refocuses through the repaint instead, and an
+  // outside press leaves focus where the press put it.
+  _closeTagColorPop(refocus) {
+    const pop = this._tagColorPop;
+    if (!pop) return;
+    pop.remove(); this._tagColorPop = null;
+    const a = this._tagColorAnchor; this._tagColorAnchor = null;
+    if (a) { try { a.setAttribute('aria-expanded', 'false'); if (refocus) a.focus(); } catch (e) {} }
   }
 
   _openViewsMenu(anchorEl) {
@@ -4191,8 +4298,12 @@ class TimelinePanel {
         ct.setAttribute('style', 'font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
         capT.createDiv().setAttribute('style', 'height:1px;flex:1;background:' + HAIRLINE + ';');
         const tgrid = card.createDiv();
+        // the table keeps its natural height up to a share of the viewport and scrolls within itself
+        // past that (the user 2026-09-09: with many tags the sections above the sessions took the
+        // page); it does not shrink below the share, so the sessions table (flex:1) takes what is left
         tgrid.setAttribute('style', 'display:grid;grid-template-columns:max-content max-content max-content 1fr;'
-          + 'column-gap:14px;row-gap:4px;align-items:center;margin:2px 0 6px;');
+          + 'column-gap:14px;row-gap:4px;align-items:center;margin:2px 0 6px;'
+          + 'flex:0 0 auto;max-height:35vh;overflow-y:auto;');
         // `held`: the reason a gesture cannot be honoured here; the action renders disabled (dim, no
         // pointer, aria-disabled) wearing that reason as its tooltip, in place of a click that could
         // only end in the refusal notice (review find, 2026-09-08)
@@ -4348,24 +4459,42 @@ class TimelinePanel {
             r.addEventListener('click', () => { this._tagEditorFor = this._tagEditorFor === unionKey(tg) ? null : unionKey(tg); this._tagRenameDraft = null; build(); });
             }
           }
-          // the color — the identity-palette swatches inline in the row's last column
+          // the colour: ONE dot wearing the tag's colour (the user 2026-09-09: the inline palette,
+          // twelve swatches per row, made every row three lines tall and ten tags filled the page).
+          // The palette opens on demand as a popover anchored to the dot (_openTagColorPop: click, or
+          // Enter / Space on it); a pick there takes the route the inline swatches took.
           const colCell = tgrid.createDiv();
-          // balanced swatch rows: ceil-split (T164) — width-driven flex wrap gave arbitrary 5/5/2
-          // runs; inline styles are this file's convention (it also runs inside Obsidian)
-          const swN = (this._palette && this._palette.length) || 1;
-          const swCols = Math.ceil(swN / Math.ceil(swN / 6));
-          colCell.setAttribute('style', 'display:grid;grid-template-columns:repeat(' + swCols
-            + ',14px);gap:6px;align-items:center;');
+          colCell.setAttribute('style', 'display:flex;align-items:center;');
           if (editable) {
-            if (held) { colCell.setAttribute('title', held); colCell.setAttribute('aria-disabled', 'true'); }
-            for (const c of (this._palette && this._palette.length ? this._palette : [tc])) {
-              const sw = colCell.createSpan();
-              sw.setAttribute('style', 'width:14px;height:14px;border-radius:50%;cursor:' + (held ? 'default' : 'pointer') + ';background:' + c + ';'
-                + (c === tg.color ? 'outline:2px solid #ffffff;outline-offset:1px;' : held ? 'opacity:0.35;' : 'opacity:0.7;'));
-              if (!held) sw.addEventListener('click', () => { this._editTagUnion(tg, { color: c }); build(); });
+            const dot = colCell.createSpan();
+            dot.dataset.tagDot = unionKey(tg);   // the popover's anchor, re-found after a repaint
+            dot.setAttribute('role', 'button');
+            dot.setAttribute('style', 'display:inline-block;width:14px;height:14px;border-radius:50%;background:' + tc + ';'
+              + (held ? 'cursor:default;opacity:0.35;' : 'cursor:pointer;'));
+            if (held) { dot.setAttribute('title', held); dot.setAttribute('aria-disabled', 'true'); }
+            else {
+              const open = !!(this._tagColorPop && this._tagColorPop._key === unionKey(tg));
+              dot.setAttribute('tabindex', '0');
+              dot.setAttribute('title', 'change the colour of \u201c' + tg.name + '\u201d');
+              dot.setAttribute('aria-haspopup', 'dialog');
+              dot.setAttribute('aria-expanded', open ? 'true' : 'false');
+              const ring = (c) => { dot.style.outline = c ? '2px solid ' + c : ''; dot.style.outlineOffset = c ? '2px' : ''; };
+              dot.addEventListener('mouseenter', () => ring(OUTLINE_FG));   // hover: the outline chrome
+              dot.addEventListener('mouseleave', () => ring(''));
+              dot.addEventListener('focus', () => ring(ACCENT));            // focus: the accent cue
+              dot.addEventListener('blur', () => ring(''));
+              dot.addEventListener('click', () => this._openTagColorPop(tg, dot));
+              dot.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._openTagColorPop(tg, dot); } });
+              if (open) this._tagColorAnchor = dot;   // this repaint replaced the node the popover hangs on
+              if (this._tagColorFocus === unionKey(tg)) {   // a pick closed the popover: focus lands back on the dot
+                this._tagColorFocus = null;
+                setTimeout(() => { try { dot.focus(); } catch (e) {} }, 0);
+              }
             }
           }
         }
+        // a repaint that dropped the popover's row (its tag deleted from another surface) closes it
+        if (this._tagColorPop && !viewTagUnion(v).some((tg) => unionKey(tg) === this._tagColorPop._key)) this._closeTagColorPop();
         // [+ New tag] — the table's final row, at the dialog's own scale. While a create is in flight
         // the row reads "creating…" and takes no click (the 2026-09-05 review: a second
         // click before the ack made a second tag); the ack's repaint brings the button back.
@@ -4419,8 +4548,20 @@ class TimelinePanel {
         const capF = card.createDiv();
         capF.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:4px 0;');
         capF.createDiv().setAttribute('style', 'height:1px;flex:0 0 8px;background:' + HAIRLINE + ';');
-        const cf = capF.createSpan({ text: 'pane filters — what each pane shows' });
-        cf.setAttribute('style', 'font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
+        // the caption is the section's fold (the user 2026-09-09: five rows of every tag each, with ten
+        // tags, filled the dialog). Folded, the section is one summary line per pane; the caret opens
+        // the matrix. The choice holds for the page (paneFiltersOpen), not per open.
+        const cf = capF.createSpan({ text: 'pane filters — what each pane shows ' + (paneFiltersOpen ? '\u25BE' : '\u25B8') });
+        cf.setAttribute('style', 'font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;cursor:pointer;');
+        cf.setAttribute('role', 'button');
+        cf.setAttribute('tabindex', '0');
+        cf.setAttribute('aria-expanded', paneFiltersOpen ? 'true' : 'false');
+        cf.setAttribute('title', paneFiltersOpen ? 'fold the filters to a summary' : 'open the filters to change them');
+        cf.addEventListener('mouseenter', () => { cf.style.opacity = '1'; });
+        cf.addEventListener('mouseleave', () => { cf.style.opacity = '0.6'; });
+        const toggleFilters = () => { paneFiltersOpen = !paneFiltersOpen; build(); };
+        cf.addEventListener('click', toggleFilters);
+        cf.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFilters(); } });
         capF.createDiv().setAttribute('style', 'height:1px;flex:1;background:' + HAIRLINE + ';');
         const acts = v.actives || {};
         const feedEcho = () => {
@@ -4445,35 +4586,57 @@ class TimelinePanel {
           build();
         };
         const rows = [['All surfaces', '*'], ['Chat', 'chat'], ['Sessions', 'timeline'], ['Outline', 'outline'], ['Feed', 'feed']];
-        for (const [label, key] of rows) {
+        const paneRow = (label, key) => {   // the label column both forms share, so folding moves nothing sideways
           const row = card.createDiv();
-          row.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:2px 0;flex-wrap:wrap;');
+          row.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:2px 0;');
           const lb = row.createSpan({ text: label });
           lb.setAttribute('style', 'flex:0 0 88px;font-size:0.82em;opacity:0.6;font-style:italic;');
           if (key === 'feed') lb.setAttribute('title', "as last set from this dialog — the feed pane's own filter button may have changed it since");
-          const lens = lensFor(key);
-          const mixed = lens === null;
-          const base = mixed ? { all: true } : lens;
-          const pill = (text, selected, color, apply) => {
-            const c2 = color || MODEL_FG;
-            const s2 = row.createSpan({ text });
-            s2.setAttribute('style', 'cursor:pointer;padding:1px 8px;border-radius:9px;font-size:0.82em;'
-              + 'border:1px solid ' + c2 + ';color:' + c2 + ';'
-              + (selected ? 'background:' + SEL_BG + ';opacity:1;font-weight:650;' : 'background:transparent;opacity:0.6;'));
-            s2.addEventListener('mouseenter', () => { s2.style.opacity = '1'; });
-            s2.addEventListener('mouseleave', () => { if (!selected) s2.style.opacity = '0.6'; });
-            s2.addEventListener('click', apply);
-            return s2;
-          };
-          pill('All', !mixed && lensAll(base), null, () => applyFor(key, { all: true }));
-          pill('no tags', !mixed && !lensAll(base) && !!base.none, null, () => applyFor(key, lensToggle(base, 'none')));
-          for (const g of viewTagUnion(v))
-            pill(g.name, !mixed && !lensAll(base) && (base.tags || []).indexOf(g.name) >= 0, g.color || MODEL_FG,
-              () => applyFor(key, lensToggle(base, { tag: g.name })));
-          if (mixed) {
-            const mx = row.createSpan({ text: '(mixed)' });
-            mx.setAttribute('style', 'font-size:0.82em;opacity:0.5;font-style:italic;');
-            mx.setAttribute('title', 'the four panes currently hold different filters — picking here sets them all the same way');
+          return row;
+        };
+        if (!paneFiltersOpen) {
+          // FOLDED: one line per pane (the bulk row is a control, not a pane) saying what it shows, in
+          // the user's tag order, cut with a count when long; the full list is the hover
+          const order = viewTagUnion(v).map((g) => g.name);
+          for (const [label, key] of rows) {
+            if (key === '*') continue;
+            const row = paneRow(label, key);
+            const lens = lensFor(key);
+            const sm = row.createSpan({ text: lensSummary(lens, order) });
+            sm.setAttribute('style', 'font-size:0.82em;opacity:0.85;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;');
+            sm.setAttribute('title', lensSummary(lens, order, Infinity));
+          }
+        } else {
+          for (const [label, key] of rows) {
+            const row = paneRow(label, key);
+            // the chips wrap inside their own cell, so a long row's second line starts under the first
+            // chip, not under the pane label (thirty tags wrap by design, not under pressure)
+            const cell = row.createDiv();
+            cell.setAttribute('style', 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1 1 auto;min-width:0;');
+            const lens = lensFor(key);
+            const mixed = lens === null;
+            const base = mixed ? { all: true } : lens;
+            const pill = (text, selected, color, apply) => {
+              const c2 = color || MODEL_FG;
+              const s2 = cell.createSpan({ text });
+              s2.setAttribute('style', 'cursor:pointer;padding:1px 8px;border-radius:9px;font-size:0.82em;'
+                + 'border:1px solid ' + c2 + ';color:' + c2 + ';'
+                + (selected ? 'background:' + SEL_BG + ';opacity:1;font-weight:650;' : 'background:transparent;opacity:0.6;'));
+              s2.addEventListener('mouseenter', () => { s2.style.opacity = '1'; });
+              s2.addEventListener('mouseleave', () => { if (!selected) s2.style.opacity = '0.6'; });
+              s2.addEventListener('click', apply);
+              return s2;
+            };
+            pill('All', !mixed && lensAll(base), null, () => applyFor(key, { all: true }));
+            pill('no tags', !mixed && !lensAll(base) && !!base.none, null, () => applyFor(key, lensToggle(base, 'none')));
+            for (const g of viewTagUnion(v))
+              pill(g.name, !mixed && !lensAll(base) && (base.tags || []).indexOf(g.name) >= 0, g.color || MODEL_FG,
+                () => applyFor(key, lensToggle(base, { tag: g.name })));
+            if (mixed) {
+              const mx = cell.createSpan({ text: '(mixed)' });
+              mx.setAttribute('style', 'font-size:0.82em;opacity:0.5;font-style:italic;');
+              mx.setAttribute('title', 'the four panes currently hold different filters — picking here sets them all the same way');
+            }
           }
         }
       }
@@ -4612,8 +4775,15 @@ class TimelinePanel {
     build();
     this._viewsDialogBuild = build;   // tagEditFailed repaints the open dialog with the refusal
     const h = this._menuHost({ left: 0, top: 0, bottom: 0, right: 0 });
-    back.addEventListener('pointerdown', (e) => { if (e.target === back) this._closeViewsDialog(); });
-    const onKey = (e) => { if (e.key === 'Escape') this._closeViewsDialog(); };
+    back.addEventListener('pointerdown', (e) => {
+      // a press anywhere on the dialog outside the colour popover closes it (the popover lives beside
+      // the dialog in the host document, so its own presses never arrive here); a press on its own
+      // dot is left to the dot's click, which toggles it shut
+      if (this._tagColorPop && e.target !== this._tagColorAnchor) this._closeTagColorPop();
+      if (e.target === back) this._closeViewsDialog();
+    });
+    // Escape closes the colour popover first (focus back on its dot); the dialog goes on the next press
+    const onKey = (e) => { if (e.key === 'Escape') { if (this._tagColorPop) this._closeTagColorPop(true); else this._closeViewsDialog(); } };
     h.doc.addEventListener('keydown', onKey);
     this._viewsDialogKey = { doc: h.doc, fn: onKey };
     h.doc.body.appendChild(back);
@@ -6404,4 +6574,4 @@ class TimelinePanel {
   body(s) { return s ? '<div class="b">' + s + '</div>' : ''; }
 }
 
-module.exports = { TimelinePanel, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, laneDeviations, viewVisible, viewLabel, viewMoreCount, viewToggleMember, viewTagUnion, lensAll, lensToggle, lensVisible, lensLabel, timelineLens, loadModelChoices, MODEL_CHOICES };
+module.exports = { TimelinePanel, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, laneDeviations, viewVisible, viewLabel, viewMoreCount, viewToggleMember, viewTagUnion, lensAll, lensToggle, lensVisible, lensLabel, lensSummary, timelineLens, loadModelChoices, MODEL_CHOICES };

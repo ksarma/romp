@@ -301,9 +301,11 @@ test("the dialog sizes to the screen: 90% ceiling both axes, padded edges, wrap 
   assert.match(SRC, /MENU_STYLE \+ 'box-sizing:border-box;width:min\(1200px,90vw\);max-height:90vh;'\s*\n\s*\+ 'overflow:hidden;display:flex;flex-direction:column;padding:22px 26px;font-size:13px;'/,
     "the card's screen-sized border-box footprint + edge padding, declared after the menu spec");
   // wrap stays GRACEFUL, not needless: the wide card lays the rows out on their lines; these
-  // containers wrap only when the window genuinely narrows
-  assert.match(SRC, /row\.setAttribute\('style', 'display:flex;align-items:center;gap:6px;margin:2px 0;flex-wrap:wrap;'\);/,
-    "the five filter rows fold only under real pressure");
+  // containers wrap only when the window genuinely narrows. Re-aimed 2026-09-09 (the many-tags
+  // change): the filter chips wrap inside their own cell, so a long row's second line starts under
+  // the first chip rather than under the pane label; the row itself no longer wraps
+  assert.match(SRC, /cell\.setAttribute\('style', 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1 1 auto;min-width:0;'\);/,
+    "the five filter rows' chips wrap within their own cell");
   assert.match(SRC, /chips\.setAttribute\('style', 'display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-width:0;'\);/,
     "membership chip cells ditto");
   assert.match(SRC, /gridBox\.setAttribute\('style', 'flex:1 1 auto;min-height:0;overflow-y:auto;'\);/,
@@ -425,7 +427,9 @@ test("executed: tagEditFailed reverts the optimistic copy and keeps the reason f
 test("federation v1+ruling source pins: header/chips route through the UNION dispatcher, loudly on failure", () => {
   // rename/recolor/delete fan out to EVERY home; chip ✕ removes everywhere; add prefers local
   assert.match(SRC, /this\._editTagUnion\(tg, \{ rename: nv2 \}\);/);
-  assert.match(SRC, /this\._editTagUnion\(tg, \{ color: c \}\); build\(\);/);
+  // the recolor rides the colour popover since 2026-09-09 (the many-tags change), which re-resolves the
+  // tag at pick time (`now`) and repaints through the dialog's build closure; the dispatcher is the same
+  assert.match(SRC, /this\._editTagUnion\(now, \{ color: c \}\);\n\s*if \(this\._viewsDialogBuild\) this\._viewsDialogBuild\(\);/);
   assert.match(SRC, /this\._editTagUnion\(tg, \{ delete: true \}\);/);
   assert.match(SRC, /this\._editTagUnion\(g, \{ remove: \[s\.id\] \}\); rebuild\(\);/);
   assert.match(SRC, /this\._editTagUnion\(g, \{ add: rowIds\.filter\(\(id\) => g\.members\.indexOf\(id\) < 0\) \}\); rebuild\(\);/);
@@ -613,8 +617,9 @@ test("a gesture the host cannot honour is DISABLED with the reason as its toolti
     "the disabled action: dim, no pointer, the reason as tooltip, no listeners");
   assert.match(SRC, /action\(del, 'delete', [^\n]*, held\);\n\s*if \(!held\) \{/, "delete's hover and click ride only when not held");
   assert.match(SRC, /action\(ren, 'rename', 'rename this tag \(everywhere it is defined\)', held\);\n\s*if \(!held\) \{/, "rename's too");
-  assert.match(SRC, /if \(held\) \{ colCell\.setAttribute\('title', held\); colCell\.setAttribute\('aria-disabled', 'true'\); \}/, "the swatch cell says why");
-  assert.match(SRC, /if \(!held\) sw\.addEventListener\('click', \(\) => \{ this\._editTagUnion\(tg, \{ color: c \}\); build\(\); \}\);/, "…and its swatches take no click");
+  // re-aimed 2026-09-09 (the many-tags change): the inline swatches became one colour dot that opens a
+  // popover; a held dot wears the reason and takes no click (its listeners ride the else branch)
+  assert.match(SRC, /if \(held\) \{ dot\.setAttribute\('title', held\); dot\.setAttribute\('aria-disabled', 'true'\); \}\n\s*else \{/, "the colour dot says why, and opens nothing");
   // the chip: a ✕ that would remove the pair from a remote half no bridge can reach is not drawn; the tooltip says why
   assert.match(SRC, /const homesHolding = \(g\.remotes \|\| \[\]\)\.filter\(\(rt\) => \(rt\.members \|\| \[\]\)\.indexOf\(s\.id\) >= 0\)\.map\(\(rt\) => rt\.host\);\n\s*if \(homesHolding\.length && !this\._remoteBridge\(\)\) \{/);
   assert.match(SRC, /ch\.setAttribute\('title', 'tagged "' \+ g\.name \+ '": ' \+ this\._unreachableText\(homesHolding, localHolds\)\);\n\s*ch\.setAttribute\('aria-disabled', 'true'\);\n\s*continue;/);
@@ -790,12 +795,13 @@ test("dialog polish + reachable tag management (the user 2026-08-25)", () => {
   // tag management reachable from EVERY open: rows with rename/recolor/delete via the union dispatcher
   assert.match(SRC, /text: 'the tags'/);
   assert.match(SRC, /this\._editTagUnion\(tg, \{ delete: true \}\);\n\s*build\(\);/, "delete without a tag-scoped open");
-  assert.match(SRC, /this\._editTagUnion\(tg, \{ color: c \}\); build\(\);/, "the identity-palette recolor");
+  assert.match(SRC, /this\._editTagUnion\(now, \{ color: c \}\);/, "the identity-palette recolor (from the colour popover since 2026-09-09)");
 });
 
 test("the dialog redesign: tag TABLE with delete/rename/color actions, five filter rows (the user 2026-08-25, revised same day)", () => {
   // TAGS: a TABLE (the user's revision of the chip cloud) — each row the tag pill at normal size
-  // with NO ✕ on it, then delete | rename | color swatches as their own columns; delete wears the
+  // with NO ✕ on it, then delete | rename | the colour dot as their own columns (the dot opens the
+  // palette as a popover since 2026-09-09, timeline-tags-scale.test.ts); delete wears the
   // destructive convention (dim at rest, red on hover); [+ New tag] is the table's FINAL row
   assert.match(SRC, /grid-template-columns:max-content max-content max-content 1fr;/, "the tag table's four columns");
   assert.match(SRC, /the tag itself: the normal pill, NO ✕ — actions live beside it, never on it/);
