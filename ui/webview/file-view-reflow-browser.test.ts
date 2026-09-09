@@ -50,10 +50,13 @@ const placed = (page: any): Promise<unknown> => page.waitForFunction(() => {
   const cards = Array.from(document.querySelectorAll(".fc-sec-cards .fc-card[data-id]"));
   return cards.length > 0 && cards.every((c) => (c as HTMLElement).style.top !== "");
 }, null, { timeout: 10000 });
-/** The reflow's frame has run (the probe's count moved past `reflows`), then four frames: the panel's re-place is the
- *  frame after the reflow (scheduleLayout's requestAnimationFrame, and the sizer's), and the cards' tops stand by then. */
-const reflowed = async (page: any, reflows: number): Promise<void> => {
-  await page.waitForFunction((n: number) => (window as any).__reflows > n, reflows, { timeout: 10000 });
+/** The hooks' frame has run (the probe's count of onRendered calls, reflow or paint, moved past `paints`), then four
+ *  frames: the panel's re-place is the frame after the reflow (scheduleLayout's requestAnimationFrame, and the sizer's), and
+ *  the cards' tops stand by then. The wait is on `__paints`, which moves whether the hook ran as a reflow or as a paint, so
+ *  a viewer that still fires a paint here reaches the assertions below and fails on them in about a second; a wait on
+ *  `__reflows` alone would time out at 10 s with no message. */
+const reflowed = async (page: any, paints: number): Promise<void> => {
+  await page.waitForFunction((n: number) => (window as any).__paints > n, paints, { timeout: 10000 });
   await frames(page, 4);
 };
 
@@ -79,7 +82,7 @@ test("in a browser, the real module: a pane narrowing and a text-size step leave
 
     // (1) the pane narrower: paragraph 30's mark moves down as the text wraps more; the cards follow one frame later
     await page.setViewportSize({ width: 700, height: 600 });
-    await reflowed(page, r0.reflows);
+    await reflowed(page, r0.paints);
     const r1 = await read(page);
     assert.equal(r1.reflows, r0.reflows + 1, "one reflow for the width change (the observer's frame)");
     assert.equal(r1.paints - r1.reflows, r0.paints - r0.reflows, "no paint proper: the hooks ran with why 'reflow' only");
@@ -93,7 +96,7 @@ test("in a browser, the real module: a pane narrowing and a text-size step leave
     // (2) a text-size step: the text grows around the marks; the same holds
     await keepMarks(page);
     await page.click('button[aria-label="Larger text"]');
-    await reflowed(page, r1.reflows);
+    await reflowed(page, r1.paints);
     const r2 = await read(page);
     assert.equal(r2.reflows, r1.reflows + 1, "one reflow for the step");
     assert.equal(r2.paints - r2.reflows, r1.paints - r1.reflows, "no paint proper for the step");

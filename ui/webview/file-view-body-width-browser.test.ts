@@ -9,9 +9,11 @@
 // prose carry no --fv-body-w, every top-level table carries the body's content width, a nested table none; the tables follow
 // a width change (the pane narrower, the aside open), a re-render (Raw and back: mdBlock rebuilds the root, no report follows,
 // renderBody stamps), and the URL viewer, which has no width observer, leaves the property unset so the sheet's fallback holds
-// (the cap is the column). The geometry itself (18px insets, the cap under a visible scrollbar) is
-// file-view-scrollbar-browser.test.ts's and file-view-typescale-browser.test.ts's. Skips loudly without a browser. Synthetic
-// values only.
+// (the cap is the column). The first leg is the regression guard: at the commit before the change the body carried the
+// property and it fails there. The URL-viewer leg pins the fallback that already held before the change (that viewer never
+// had a width observer), so it passes on both sides and guards the invariant, not the change. The geometry itself (18px
+// insets, the cap under a visible scrollbar) is file-view-scrollbar-browser.test.ts's and
+// file-view-typescale-browser.test.ts's. Skips loudly without a browser. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, frames, paintsReach, REPORT, ORIGIN, type Mode } from "./real-viewer-leg";

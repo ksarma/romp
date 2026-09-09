@@ -8,8 +8,8 @@
 // the bench the viewer page). Synthetic values only; no session data.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { EXT } from "./real-viewer-leg";   // the cwd's tree, the one place that says so (no environment variable; its header)
 
-export const EXT = process.cwd();
 export const KERNEL_PY = path.resolve(EXT, "..", "kernel", "kernel.py");
 export const readKernel = (file: string = KERNEL_PY): string => fs.readFileSync(file, "utf8");
 

@@ -5,7 +5,7 @@
 // Files pane one step cost over a second and a drag of sixty steps was a 20 s main-thread block. The ghost's clamp is the
 // drag's clamp (a pane never goes under min(120px, a quarter of the pair)). Synthetic page, no session data.
 import { test } from "node:test";
-import assert from "node:assert/strict";
+import * as assert from "node:assert/strict";
 import { inBrowser, ORIGIN, frames } from "./real-viewer-leg";
 import { shellPage, readKernel } from "./shell-drag-leg";
 

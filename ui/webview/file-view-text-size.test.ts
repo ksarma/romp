@@ -578,7 +578,7 @@ test("a press on the title bar settles no selection: with a passage selected in 
 
 // ── the re-measure: every reflow of a text view fires the seam's onRendered ────────────────────────
 
-test("a size step fires onRendered once (the panel re-runs its paint pass over the moved text); a clamped step fires nothing", async (t) => {
+test("a size step fires onRendered once, as a reflow (the panel re-places its cards over the moved text and keeps its marks); a clamped step fires nothing", async (t) => {
   const o = await open(REPORT, t);
   assert.equal(paints, 1, "the open's paint");
   o.up.click();
