@@ -6931,11 +6931,45 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");
       // what these rows show, as one string (round 4): each union's name, id, colour, pending state and hold on this session. A
       // views arrival rebuilds the flyout only when it changed (rebuildFly, below): a frame that changed nothing here leaves the
-      // rows and the text typed into New tag… alone, and one that did carries the text across the rebuild
+      // rows alone, and one that did rebuilds them in front of the New tag… input, which stays as it is
       const flySig = () => JSON.stringify(unionFor().map((g) => [g.name, g.localId, g.color, !!g.pending, g.members.includes(id)]));
       let builtSig = "";
+      // THE NEW TAG… INPUT IS ONE NODE (round 5): built once per flyout and never moved, so a rebuild keeps its text, caret, selection,
+      // focus, undo stack and IME composition with no restore code (round 4 built a new input on every build and copied the value and
+      // the focus back, which put the caret at the end and collapsed a selection). The rows above it are rebuilt in front of it (add),
+      // and the foot below it, Configure tags…, stays too (before, replaceChildren swept the foot on every rebuild after the first).
+      // New tag… — an inline input, never a native prompt (the menus vocabulary)
+      const nrow = el("div", "ctx-item ctx-item-newtag");
+      const inp = el("input", "ctx-tag-input") as HTMLInputElement;
+      inp.placeholder = "New tag…"; inp.maxLength = 40;
+      inp.addEventListener("click", (e2) => e2.stopPropagation());
+      inp.addEventListener("keydown", (e2) => {
+        if (e2.key !== "Enter") return;
+        if (createInFlight(viewsWrites)) return;   // one create at a time: the ack re-arms the input (syncNewTagInput)
+        const name = inp.value.trim();
+        if (!name) return;
+        const existing = unionFor().find((g) => g.name === name);
+        if (existing) { aimAdd(existing.name); editUnion(existing, { add: [id] }); build(); sb.textContent = subText(); return; }
+        const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
+        const used = new Set(viewTags(nv).map((t) => t.color));
+        const color = paletteColors.find((c) => !used.has(c)) || paletteColors[0] || "#1EA1EB";
+        // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id and the ack's
+        // blob (which carries it) replaces this copy — no client-minted id can collide with a
+        // store it has not read (the legacy path re-ids it: postTagEdit)
+        const tg = { id: "pending-" + Date.now().toString(36), name, color, members: [id] };
+        nv.tags = viewTags(nv).concat([tg]);
+        delete nv.groups;
+        aimAdd(name);   // a copy with no group goes under the new tag: the menu speaks for it there (no row until the ack, which re-dresses the menu)
+        // ONE targeted create carrying the session — the tag and its first member land together
+        postTagEdit(nv, { op: "create", name, color, sids: [id] }, tg.id);
+        build(); sb.textContent = subText();
+      });
+      nrow.appendChild(inp);
+      tagsFlyNewInput = inp; syncNewTagInput();
+      sub.appendChild(nrow);   // on the flyout before the first build: the rows are inserted in front of it
+      const add = (n: HTMLElement) => sub.insertBefore(n, nrow);   // a row above the input
       const build = () => {
-        sub.replaceChildren();
+        while (sub.firstChild && sub.firstChild !== nrow) sub.firstChild.remove();   // the rows above the input; the input's row and the foot stay put
         builtSig = flySig();   // the blob these rows are built from
         for (const g of holding()) {                             // one chip per NAME — never a host prefix
           const row = el("div", "ctx-item ctx-item-toggle");
@@ -6948,17 +6982,17 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
             // tag (a ✕ here posted the placeholder id and was refused as a tag that does not exist)
             // — the same "creating…" the input reads
             const busy = el("span", "ctx-item-sub"); busy.textContent = "creating…"; row.appendChild(busy);
-            sub.appendChild(row);
+            add(row);
             continue;
           }
           const x = el("button", "ctx-tag-x") as HTMLButtonElement;
           x.type = "button"; x.textContent = "✕"; x.title = "remove this tag from the session — everywhere it holds it";
           x.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { remove: [id] }); build(); sb.textContent = subText(); });
           row.appendChild(x);
-          sub.appendChild(row);
+          add(row);
         }
         const others = unionFor().filter((g) => !g.members.includes(id) && !g.pending);   // a tag being created is not joinable yet
-        if (holding().length && others.length) sub.appendChild(el("div", "ctx-sep"));
+        if (holding().length && others.length) add(el("div", "ctx-sep"));
         // ONE-CLICK MOVE (tab groups on tags, the user 2026-09-04): while the strip is sectioned, each
         // other tag's row reads "Move to <name>": one click adds that tag and drops THE GROUP THIS COPY
         // SITS IN (T264b: a session under several tags has a copy in each group, and the menu opened
@@ -6989,7 +7023,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
             row.appendChild(bodyE);
             row.addEventListener("click", (e2) => { e2.stopPropagation(); aimAdd(g.name); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
           }
-          sub.appendChild(row);
+          add(row);
         }
         // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
         // per-browser view preference like the fold itself (romp:tabgroups), PER SECTION: one entry per
@@ -7009,7 +7043,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         if (home) {
           const sec = sectionRef(home);
           const on = isPinned(tabGroups(), sec, id);
-          sub.appendChild(el("div", "ctx-sep"));
+          add(el("div", "ctx-sep"));
           const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));   // no ctx-sub-capped: the flyout's per-row cap bounds the sub-line (round 5)
           const chip = el("span", "ctx-tag-dot"); chip.style.background = home.color || "var(--dim)"; row.appendChild(chip);
           const bodyE = el("span", "ctx-item-body");
@@ -7020,38 +7054,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           row.appendChild(bodyE);
           // the click SETS the state this row showed (!on): a toggle would flip whatever a re-render stored between the render and the click
           row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroupsPruned(setPinned(tabGroups(), sec, id, !on)); build(); });
-          sub.appendChild(row);
+          add(row);
         }
-        if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));
-        // New tag… — an inline input, never a native prompt (the menus vocabulary)
-        const nrow = el("div", "ctx-item ctx-item-newtag");
-        const inp = el("input", "ctx-tag-input") as HTMLInputElement;
-        inp.placeholder = "New tag…"; inp.maxLength = 40;
-        inp.addEventListener("click", (e2) => e2.stopPropagation());
-        inp.addEventListener("keydown", (e2) => {
-          if (e2.key !== "Enter") return;
-          if (createInFlight(viewsWrites)) return;   // one create at a time: the ack re-arms the input (syncNewTagInput)
-          const name = inp.value.trim();
-          if (!name) return;
-          const existing = unionFor().find((g) => g.name === name);
-          if (existing) { aimAdd(existing.name); editUnion(existing, { add: [id] }); build(); sb.textContent = subText(); return; }
-          const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
-          const used = new Set(viewTags(nv).map((t) => t.color));
-          const color = paletteColors.find((c) => !used.has(c)) || paletteColors[0] || "#1EA1EB";
-          // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id and the ack's
-          // blob (which carries it) replaces this copy — no client-minted id can collide with a
-          // store it has not read (the legacy path re-ids it: postTagEdit)
-          const tg = { id: "pending-" + Date.now().toString(36), name, color, members: [id] };
-          nv.tags = viewTags(nv).concat([tg]);
-          delete nv.groups;
-          aimAdd(name);   // a copy with no group goes under the new tag: the menu speaks for it there (no row until the ack, which re-dresses the menu)
-          // ONE targeted create carrying the session — the tag and its first member land together
-          postTagEdit(nv, { op: "create", name, color, sids: [id] }, tg.id);
-          build(); sb.textContent = subText();
-        });
-        nrow.appendChild(inp);
-        tagsFlyNewInput = inp; syncNewTagInput();
-        sub.appendChild(nrow);
+        if (holding().length || others.length) add(el("div", "ctx-sep"));
         refreshHideRow();   // every edit above rebuilds this flyout: the Hide tab row speaks for the copy where it now sits (keyed on the write, no timer)
       };
       build();
@@ -7083,16 +7088,11 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       place();
       reseatFly = () => { if (sub.isConnected) place(); };
       // the views arrival's rebuild (refreshTags runs it after the Tags row's sub-line): only while this flyout is on the menu and
-      // the blob changed what the rows show; the New tag… input is a new node each build, so its text and focus carry across.
+      // the blob changed what the rows show; the New tag… input is one node that never moves (above), so nothing is carried.
       // The hook that runs this is one deferred run through the menu's hold (round 5): a rebuild that arrives under a pressed pointer
       // waits for the release, and the two checks here run INSIDE that parked run, since the hover close can take the flyout off
       // while a run is parked and a later frame can change the signature again
-      rebuildFly = () => {
-        if (!sub.isConnected || flySig() === builtSig) return;
-        const was = tagsFlyNewInput, typed = was ? was.value : "", focused = !!was && document.activeElement === was;
-        build();
-        if (tagsFlyNewInput) { tagsFlyNewInput.value = typed; if (focused) tagsFlyNewInput.focus(); }
-      };
+      rebuildFly = () => { if (!sub.isConnected || flySig() === builtSig) return; build(); };
       if (focusInput) (sub.querySelector(".ctx-tag-input") as HTMLInputElement | null)?.focus();
       // leave-tolerance: entering either surface cancels the pending close; leaving both arms it
       sub.addEventListener("pointerenter", cancelHoverTimers);

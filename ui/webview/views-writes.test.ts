@@ -336,7 +336,7 @@ test("pins: render.ts builds every lens and order write from the store's blob (p
   const at = RENDER.indexOf("const editUnion = (g: TagUnion");
   const fly = RENDER.slice(at, RENDER.indexOf("// BROWSE FILES", at));
   assert.equal((fly.match(/if \(g\.localId && !g\.pending\) \{/g) || []).length, 2, "a pending union takes no add or remove op");
-  assert.match(fly, /if \(g\.pending\) \{[\s\S]{0,500}busy\.textContent = "creating…"; row\.appendChild\(busy\);\s*\n\s*sub\.appendChild\(row\);\s*\n\s*continue;/,
+  assert.match(fly, /if \(g\.pending\) \{[\s\S]{0,500}busy\.textContent = "creating…"; row\.appendChild\(busy\);\s*\n\s*add\(row\);\s*\n\s*continue;/,
     "a held tag whose create is in flight renders with no ✕");
   assert.match(fly, /const others = unionFor\(\)\.filter\(\(g\) => !g\.members\.includes\(id\) && !g\.pending\);/, "…and is not offered to join or move to");
   // T264b's review (upstream, folded 2026-09-08): the menu speaks for the right-clicked copy's group when it has one; since round 3 of the

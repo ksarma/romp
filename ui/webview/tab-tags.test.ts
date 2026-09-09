@@ -83,7 +83,7 @@ test("presentation: one chip per NAME, identity dot, ✕ — and never a host pr
 });
 
 test("one-click MOVE between groups (tab groups, 2026-09-04): 'Move to <name>' adds the target and drops the HOME tag on ONE blob; '+' adds without moving", () => {
-  const fly = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), RENDER.indexOf("// New tag… — an inline input"));
+  const fly = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), RENDER.indexOf("// Configure tags… at the foot, behind the divider"));   // the New tag… input is built before the rows since round 5 of the tab menu review, so the block runs to the foot
   // the computation sits in showTabMenu's scope since the menu's Hide tab row shares it (the user 2026-09-09; tab-hide.test
   // executes both readers): homeNow, which the flyout reads on every build of its own
   assert.match(fly, /const home = homeNow\(\);   \/\/ read per build: a move or a remove above changes the copy's group \(the Hide tab row reads the same\)/,

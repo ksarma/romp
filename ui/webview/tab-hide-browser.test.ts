@@ -998,6 +998,9 @@ const rect = (e: Element | null) => { if (!e) return null; const r = e.getBoundi
   flyLabelAt(label: string) { return rect(flyRow(label)?.querySelector(".ctx-item-label") ?? null); },
   mark() { marked = rowOf()?.querySelector(".ctx-item-label") ?? null; return !!marked; },
   sameLabel() { return !!marked && rowOf()?.querySelector(".ctx-item-label") === marked; },
+  inputAt() { return rect(ctxMenuEl?.querySelector(".ctx-tag-input") ?? null); },
+  markInput() { marked = ctxMenuEl?.querySelector(".ctx-tag-input") ?? null; return !!marked; },
+  sel() { const i = ctxMenuEl?.querySelector(".ctx-tag-input") as HTMLInputElement | null; return i ? { value: i.value, start: i.selectionStart, end: i.selectionEnd, dir: i.selectionDirection, focused: document.activeElement === i, same: i === marked } : null; },
   state() {
     const row = rowOf();
     return { menu: !!ctxMenuEl && ctxMenuEl.isConnected, label: row?.querySelector(".ctx-item-label")?.textContent ?? null, sub: row?.querySelector(".ctx-item-sub")?.textContent ?? null,
@@ -1018,7 +1021,8 @@ function bundleMenu(): string {
 }
 const MENU_PROBE_PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/styles.css><style>body{margin:0}</style></head><body><script src=/menu-probe.js></script></body></html>`;
 type MenuState = { menu: boolean; label: string | null; sub: string | null; hides: any[][]; edits: any[]; dismissed: number; flyRows: (string | null)[]; stored: any };
-test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer input (menu review round 5): a push between mousedown and mouseup on the Hide tab row, a Move to row or the Show when folded row waits for the release, so the click lands (the hide written by the copy's id, the move posted, the pin written) and the rebuild follows; a push that changes nothing the row shows leaves its label node", async (t) => {
+type Sel = { value: string; start: number | null; end: number | null; dir: string | null; focused: boolean; same: boolean };
+test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer input (menu review round 5): a push between mousedown and mouseup on the Hide tab row, a Move to row or the Show when folded row waits for the release, so the click lands (the hide written by the copy's id, the move posted, the pin written) and the rebuild follows; a push that changes nothing the row shows leaves its label node; the New tag input keeps its text, caret, selection and focus through a rebuild, and Configure tags stays", async (t) => {
   let pw: any = null;
   try { pw = requireCjs("playwright"); } catch { pw = null; }
   if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
@@ -1100,6 +1104,39 @@ test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer inp
       await settle();
       assert.equal(await menu("sameLabel"), false, where("changed words: re-dressed"));
       assert.equal((await state()).sub, "hidden in platform; to show it, open the group's view");
+      // M5: THE NEW TAG INPUT THROUGH A REBUILD. Typed by keyboard, the caret moved to 3 of a ten-character draft; a recolour pushed (a
+      // signature change: the rows are rebuilt): the caret is still at 3 in the same, still-focused node, and the next keystroke lands
+      // there (round 4 built a new input, copied the value back and refocused it, so the caret jumped to the end); a range selection
+      // survives another rebuild with its direction; the foot, Configure tags…, is still on the flyout (round 4's replaceChildren
+      // swept it on every rebuild after the first)
+      await open("infra");
+      assert.ok(await menu("openFly"));
+      const inAt = await menu("inputAt") as { x: number; y: number };
+      await page.mouse.click(inAt.x, inAt.y);
+      assert.ok(await menu("markInput"));
+      await page.keyboard.type("biling-two");
+      await page.keyboard.press("Home");
+      for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+      let sel = await menu("sel") as Sel;
+      assert.deepEqual([sel.value, sel.start, sel.end, sel.focused], ["biling-two", 3, 3, true], where("the draft, the caret at 3"));
+      await menu("push", recoloured(V_QA, 12));
+      await settle();
+      sel = await menu("sel") as Sel;
+      assert.deepEqual([sel.value, sel.start, sel.end, sel.focused, sel.same], ["biling-two", 3, 3, true, true], where("after the rebuild: the same node, the caret still at 3, focus kept (round 4: 10, the end)"));
+      await page.keyboard.type("l");
+      sel = await menu("sel") as Sel;
+      assert.equal(sel.value, "billing-two", where("the next keystroke lands at the caret"));
+      await page.keyboard.down("Shift");
+      for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+      await page.keyboard.up("Shift");
+      sel = await menu("sel") as Sel;
+      assert.deepEqual([sel.start, sel.end, sel.dir], [4, 7, "forward"], where("a range selection"));
+      await menu("push", { ...recoloured(V_QA, 13), tags: recoloured(V_QA, 13).tags.map((tg, i) => (i === 2 ? { ...tg, color: "#fedcba" } : tg)) });
+      await settle();
+      sel = await menu("sel") as Sel;
+      assert.deepEqual([sel.value, sel.start, sel.end, sel.dir, sel.focused, sel.same], ["billing-two", 4, 7, "forward", true, true], where("the selection survives the rebuild (round 4 collapsed it to the end)"));
+      s = await state();
+      assert.ok(s.flyRows.includes("Configure tags…"), where("the foot stands through the rebuilds: " + JSON.stringify(s.flyRows)));
       assert.deepEqual(errors, [], where("no page errors"));
       await page.close();
     } finally { await browser.close(); }

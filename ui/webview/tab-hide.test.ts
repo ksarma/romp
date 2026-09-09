@@ -553,6 +553,11 @@ class FakeEl {
   append(...cs: FakeEl[]) { for (const c of cs) this.appendChild(c); }
   replaceChildren(...cs: FakeEl[]) { this.children = []; this.append(...cs); }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; }
+  get firstChild(): FakeEl | null { return this.children[0] ?? null; }
+  insertBefore(n: FakeEl, ref: FakeEl | null) { if (!ref) return this.appendChild(n); const at = this.children.indexOf(ref); this.children.splice(at, 0, n); n.parent = this; return n; }
+  /** an input's selection (round 5): the fields a browser keeps on the element, so a node that is never moved keeps them */
+  selectionStart = 0; selectionEnd = 0; selectionDirection = "none";
+  setSelectionRange(a: number, b: number, dir = "none") { this.selectionStart = a; this.selectionEnd = b; this.selectionDirection = dir; }
   get parentNode(): FakeEl | null { return this.parent; }
   after(...cs: FakeEl[]) { const p = this.parent!; const at = p.children.indexOf(this); p.children.splice(at + 1, 0, ...cs); for (const c of cs) c.parent = p; }
   addEventListener(k: string, fn: (ev: unknown) => void) { (this.listeners[k] ||= []).push(fn); }
@@ -816,8 +821,13 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.match(RENDER, /document\.body\.appendChild\(menu\);\s*\n\s*ctxMenuEl = menu;\s*\n\s*tabMenuViewsHook = \(\) => \{ void hold\.defer\(\(\) => \{ if \(gone\(\)\) return; refreshHideRow\(\); refreshTags\(\); \}\); \};[^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "set once the menu is on the page, before the seat: one run through the menu's hold (round 5), the row's refresh and the Tags block's, dropped once the menu is dismissed");
   assert.equal(RENDER.split("tabMenuViewsHook = ").length - 1, 2, "assigned by showTabMenu and cleared by dismissTabMenu; nowhere else (the declaration reads `let tabMenuViewsHook:`)");
   assert.match(MENU, /sb\.textContent = subText\(\);\s*\n(?:\s*\/\/[^\n]*\n)+\s*let rebuildFly = \(\) => \{\};\s*\n\s*refreshTags = \(\) => \{ sb\.textContent = subText\(\); rebuildFly\(\); \};/, "the Tags block's refresh: the sub-line re-read, then the flyout's rebuild (a no-op while it is closed)");
-  assert.match(MENU, /const flySig = \(\) => JSON\.stringify\(unionFor\(\)\.map\(\(g\) => \[g\.name, g\.localId, g\.color, !!g\.pending, g\.members\.includes\(id\)\]\)\);\s*\n\s*let builtSig = "";\s*\n\s*const build = \(\) => \{\s*\n\s*sub\.replaceChildren\(\);\s*\n\s*builtSig = flySig\(\);/, "what the rows show, stamped at every build");
-  assert.match(MENU, /reseatFly = \(\) => \{ if \(sub\.isConnected\) place\(\); \};\s*\n(?:\s*\/\/[^\n]*\n)+\s*rebuildFly = \(\) => \{\s*\n\s*if \(!sub\.isConnected \|\| flySig\(\) === builtSig\) return;\s*\n\s*const was = tagsFlyNewInput, typed = was \? was\.value : "", focused = !!was && document\.activeElement === was;\s*\n\s*build\(\);\s*\n\s*if \(tagsFlyNewInput\) \{ tagsFlyNewInput\.value = typed; if \(focused\) tagsFlyNewInput\.focus\(\); \}\s*\n\s*\};/, "the rebuild, run inside the hook's one deferred run (round 5), its two checks inside that parked run: only while the flyout is on the menu and the blob changed what the rows show; the typed text and the focus carry across (the input is a new node each build)");
+  assert.match(MENU, /const flySig = \(\) => JSON\.stringify\(unionFor\(\)\.map\(\(g\) => \[g\.name, g\.localId, g\.color, !!g\.pending, g\.members\.includes\(id\)\]\)\);\s*\n\s*let builtSig = "";\s*\n(?:\s*\/\/[^\n]*\n)+\s*const nrow = el\("div", "ctx-item ctx-item-newtag"\);\s*\n\s*const inp = el\("input", "ctx-tag-input"\) as HTMLInputElement;[\s\S]{0,2200}?\n\s*nrow\.appendChild\(inp\);\s*\n\s*tagsFlyNewInput = inp; syncNewTagInput\(\);\s*\n\s*sub\.appendChild\(nrow\);[^\n]*\n\s*const add = \(n: HTMLElement\) => sub\.insertBefore\(n, nrow\);[^\n]*\n\s*const build = \(\) => \{\s*\n\s*while \(sub\.firstChild && sub\.firstChild !== nrow\) sub\.firstChild\.remove\(\);[^\n]*\n\s*builtSig = flySig\(\);/, "the New tag… input is ONE node per flyout (round 5), on the flyout before the first build; the rows go in front of it and a build clears only what stands above it; what the rows show is stamped at every build");
+  const flyBlock = MENU.slice(MENU.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), MENU.indexOf("const armHoverClose = "));
+  assert.doesNotMatch(flyBlock.replace(/\/\/[^\n]*/g, ""), /replaceChildren|sub\.appendChild\(row\)/, "no rebuild sweeps the input or the foot: every row goes through add");
+  assert.equal(flyBlock.split("add(").length - 1, 7, "four rows and three dividers go in front of the input");
+  assert.equal(flyBlock.split("sub.appendChild(").length - 1, 3, "appended to the flyout directly: the input's row before the first build, then the foot (its divider and Configure tags…) after it");
+  assert.match(MENU, /reseatFly = \(\) => \{ if \(sub\.isConnected\) place\(\); \};\s*\n(?:\s*\/\/[^\n]*\n)+\s*rebuildFly = \(\) => \{ if \(!sub\.isConnected \|\| flySig\(\) === builtSig\) return; build\(\); \};/, "the rebuild, run inside the hook's one deferred run (round 5), its two checks inside that parked run: only while the flyout is on the menu and the blob changed what the rows show; nothing is carried, since the input is one node that never moves");
+  assert.doesNotMatch(flyBlock, /typed|focused/, "no value or focus copied back: the round-4 restore is gone with the node it restored");
   assert.match(RENDER, /type TabGroupsState, type SectionRef \} from "\.\/tab-groups";/, "SectionRef reaches render.ts");
   assert.match(MENU, /plus\.addEventListener\("click", \(e2\) => \{ e2\.stopPropagation\(\); aimAdd\(g\.name\); editUnion\(g, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); \}\);/, "the + beside a Move to row aims too (round 5): from the one-holder fallback it confirms that holder as the copy, so the add is an add and the row stays");
   // round 3: THE MENU'S SEAT. One seat for the menu (the cursor's corner clamped inside the pane; the emoji picker's anchor follows),
@@ -853,7 +863,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*let dressed: string \| null = null;[^\n]*\n\s*refreshHideRow = \(\) => \{\s*\n\s*const home = phoneLayout\(\) \? undefined : homeNow\(\);\s*\n\s*if \(!home\) \{ shown = null; if \(dressed === null\) return; dressed = null; row\.remove\(\); reseat\(\); return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*const lab = hidden \? "Show tab" : "Hide tab";\s*\n\s*const sub = hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`;\s*\n\s*const words = lab \+ "\\n" \+ sub;\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(row\.parentNode && words === dressed\) return;\s*\n\s*dressed = words;\s*\n\s*dressToggle\(row, "tab", hidden, lab, sub\);\s*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*reseat\(\);\s*\n\s*\};\s*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\);\s*\n\s*const now = homeNow\(\);\s*\n\s*if \(!now\) \{ dismissTabMenu\(\); return; \}\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| !sameSection\(sec, shown\)\) \{ refreshHideRow\(\); return; \}\s*\n\s*dismissTabMenu\(\);\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/,
     "round 5: the guard runs before the dismissal, so a refused click re-dresses the row on a menu still on the page; the no-home branch dismisses explicitly; a click that writes dismisses first, as every other row does");
   assert.equal(MENU.split("phoneLayout()").length - 1, 1, "the gate is read once, in the refresh (the flyout's home read is untouched)");
-  assert.match(MENU, /sub\.appendChild\(nrow\);\s*\n\s*refreshHideRow\(\);/, "the flyout's build ends with the refresh: every edit path there (a move, a remove, a +, a new or an existing tag) rebuilds the flyout");
+  assert.match(MENU, /add\(el\("div", "ctx-sep"\)\);\s*\n\s*refreshHideRow\(\);[^\n]*\n\s*\};\s*\n\s*build\(\);/, "the flyout's build ends with the refresh: every edit path there (a move, a remove, a +, a new or an existing tag) rebuilds the flyout");
   assert.equal(MENU.split("refreshHideRow()").length - 1, 3, "called at build, at the end of the flyout's build, and by the click that found the resolution moved off the copy the row named (round 4); the views hook that also calls it is set past the menu's build (pinned above); no timer, no other caller");
   assert.equal(MENU.split("reseat()").length - 1, 2, "the refresh's two exits seat again; no other caller, no timer");
   const bellAt = MENU.indexOf('toggle("bell"'), billingAt = MENU.indexOf("// Billing submenu"), tagsAt = MENU.indexOf('l.textContent = "Tags"');
@@ -1397,11 +1407,24 @@ test("executed: THE MENU FOLLOWS THE PUSH (menu review round 4). A views arrival
     assert.ok(sameNodes(fly.children, rowsBefore), "not rebuilt: the same row nodes");
     assert.equal(inputOf(fly).value, "qa-", "the typed text stands");
     assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"), "the row re-read and unchanged");
-    // P4: a frame that changed what the flyout shows (a third tag appeared) while text is typed: rebuilt, the text carried across
+    // P4: a frame that changed what the flyout shows (a third tag appeared) while text is typed and the input is focused with the caret
+    // inside it: the rows are rebuilt in front of the SAME input node (round 5), so its text, caret, selection and focus stand with no
+    // restore (round 4 built a new input, copied the value back and called focus(), which put the caret at the end); the foot stays too
+    const inp0 = inputOf(fly);
+    inp0.focus(); inp0.setSelectionRange(1, 2, "backward");
+    const focusCalls = FakeEl.focusCalls;
+    const footBefore = fly.children.filter((it) => it.has("ctx-item-configtags") || it.has("ctx-item-newtag"));
+    assert.equal(footBefore.length, 2);
     api.push({ ...V, tags: [...V.tags, { id: "g6", name: "draft", color: "#f0f", members: [] as string[] }], seq: 5 });
     assert.ok(!sameNodes(fly.children, rowsBefore), "rebuilt");
     assert.deepEqual(joinRows(fly), ["Move to archived", "Move to draft"], "the new tag's row is there");
-    assert.equal(inputOf(fly).value, "qa-", "the typed text carried across the rebuild");
+    assert.equal(inputOf(fly), inp0, "the same input node (round 4: a new one each build)");
+    assert.equal(inp0.value, "qa-", "the typed text stands");
+    assert.deepEqual([inp0.selectionStart, inp0.selectionEnd, inp0.selectionDirection], [1, 2, "backward"], "the selection stands");
+    assert.equal(FakeEl.focused, inp0, "still the focused element: never removed from the page");
+    assert.equal(FakeEl.focusCalls, focusCalls, "no focus() call: nothing to restore");
+    assert.ok(fly.children.filter((it) => it.has("ctx-item-configtags") || it.has("ctx-item-newtag")).every((n, i) => n === footBefore[i]), "the foot (the input's row, Configure tags…) stands, the same nodes");
+    assert.ok(fly.children.indexOf(inp0.parent!) > fly.children.findIndex((it) => it.label() === "Move to draft"), "the new row went in above the input");
     assert.equal(hooks.writes.length, 0);
     // P5: after the menu is dismissed, a push touches nothing: the hook is cleared with the menu (the real dismissTabMenu is pinned to
     // clear it; the stub here mirrors that line)
