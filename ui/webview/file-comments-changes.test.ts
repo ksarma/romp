@@ -277,8 +277,7 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
   assert.match(SRC, /sendOpts = \{ todo: true, track: true, accept: true \};/);
   assert.match(SRC, /if \(split\.seen\.length \+ split\.unseen\.length\) opts\.appendChild\(this\.acceptOption\(s\)\);/, "the option stands whenever a change is pending; its words and state are syncAcceptOption's");
   const syncOpt = SRC.split("private syncAcceptOption(cb: HTMLInputElement, s: Status): void {")[1].split("\n  }\n")[0];
-  assert.match(syncOpt, /acceptOptionLabel\(split\.seen\.length, split\.unseen\.length, resolvedByAccept\(s\.store, split\.seen\)\)/,
-    "the words are the model's (acceptOptionLabel): the seen pending changes the send accepts, the unseen ones it leaves pending (decision 41, 2026-09-09), and the comments bound to the SEEN changes that the accept resolves (the lost-update probe, the same day)");
+  assert.match(syncOpt, /acceptOptionLabel\(split\.seen\.length, split\.unseen\.length\)/, "the words are the model's (acceptOptionLabel) over the seen split; an accept resolves no comment (decision 42), so no resolve count");
   assert.match(syncOpt, /cb\.disabled = split\.seen\.length === 0;/, "nothing seen: the box is off, there is nothing it may accept");
   assert.match(SRC, /else if \(k === "todo" \|\| k === "track" \|\| k === "accept"\) this\.sendOpts\[k\] = t\.checked;/, "the three checkboxes land in sendOpts…");
   assert.match(SRC, /if \(k === "todopick"\) this\.todoPick = t\.value;/, "…and the todo radio group (the todo-file follow-on) in todoPick; anything else flips nothing");

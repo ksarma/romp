@@ -89,7 +89,6 @@ import {
   todoChoices, todoChoiceLabel, TODO_OPENED_FROM, type TodoChoice,   // the todo a send answers (the todo-file follow-on, 2026-09-07)
   statusEntries, arrivalWords, acceptOptionLabel, YOU, type Entry,   // the arrivals notice (the arrivals follow-on, 2026-09-09)
   partitionPending,   // the Send's accept takes the seen pending changes only (decision 41, 2026-09-09)
-  resolvedByAccept, sentNoteWords,   // a send whose accept resolves comments says so (the lost-update probe, 2026-09-09)
   noteTooLong, trimNote,   // the Send confirm's note box (the user's ruling, 2026-09-09); trimNote: the note as the kernel reads it
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
@@ -3811,11 +3810,6 @@ class Panel {
     if (!unsentCount(s.unsent) && !note) return;
     const parts: SendParts = sendParts(s);
     let tracked = !!s.trackedBy;
-    // the comments open before the send: the accept-all resolves the ones bound to the changes it accepts (the host's rule),
-    // and a comment that leaves the visible list must leave a visible word behind (the lost-update probe, 2026-09-09: seven
-    // comments the session had answered folded under a collapsed Resolved with nothing said). Counted off the reply below
-    const openBefore = new Set((s.store ? s.store.comments : []).filter((c) => !c.resolved).map((c) => c.id));
-    let moved = 0;
     // the keyboard in the note box as the send begins: the render below takes the confirm down for the wait (renderSend), and
     // the box with it, and a box out of the document drops the keyboard to the body. A refusal brings the box back with its
     // words (the confirm stands: sendConfirm) and the keyboard goes back into it (the finally), so the chord sends again —
@@ -3850,10 +3844,6 @@ class Panel {
           return;
         }
         accepted = decided.length;
-        // the comments the accept resolved: unresolved before, resolved in the reply. The Resolved fold opens before the
-        // renders that follow, so the cards stay in view with the session's replies, and the acknowledgment line names them (sentNoteWords)
-        moved = (a.store ? a.store.comments : []).filter((c) => openBefore.has(c.id) && !!c.resolved).length;
-        if (moved) this.resolvedOpen = true;
       }
       const counts = sendCounts(parts, acceptIds.length > 0, accepted);
       // the todo this send answers (chosenTodoId): the one the confirm offered — the file was opened from it, or the
@@ -3874,7 +3864,7 @@ class Panel {
       if (todoId && reply.todoStamped) answeredAt.set(todoId, reqSeq);   // …as of this request: a status issued after this point that lists the todo releases it (applyStatus)
       const who = this.sessionName();
       const base = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
-      this.sentNote = sentNoteWords(base, accepted, moved);   // …and what the accept moved to Resolved, when it did
+      this.sentNote = base;                            // an accept resolves no comment (decision 42), so nothing leaves the visible list on a send and the line has no tail
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });
       this.sendConfirm = false;
       this.sendNote = ""; this.noteBox.value = "";     // sent: the words went with the message; a refusal (the catch) keeps them
@@ -4995,14 +4985,14 @@ class Panel {
     return l;
   }
   /** The accept option's words and state from the seen split (decision 41): "accept the N pending changes you have seen",
-   *  the unseen count after it, and the comments the accept resolves counted over the SEEN changes (resolvedByAccept); with
+   *  the unseen count after it; with
    *  nothing seen the box is unchecked and disabled, since there is nothing it may accept — the person's own choice
    *  (sendOpts.accept, decision 8's default) is kept for when a look brings a change to the seen side. Called by the render
    *  (acceptOption) and in place after a gesture marked arrivals seen (reflectSeen), so both write the same thing. */
   private syncAcceptOption(cb: HTMLInputElement, s: Status): void {
     const split = this.pendingSplit(s);
     const label = cb.parentElement ? cb.parentElement.querySelector("span") : null;
-    if (label) label.textContent = acceptOptionLabel(split.seen.length, split.unseen.length, resolvedByAccept(s.store, split.seen));
+    if (label) label.textContent = acceptOptionLabel(split.seen.length, split.unseen.length);
     cb.disabled = split.seen.length === 0;
     cb.checked = split.seen.length > 0 && this.sendOpts.accept;
   }

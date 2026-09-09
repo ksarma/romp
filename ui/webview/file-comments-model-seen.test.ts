@@ -46,14 +46,11 @@ test("acceptOptionLabel: the seen count and 'you have seen'; the unseen count af
 test("acceptOptionLabel with nothing seen: no count to accept; the words say every pending change is unseen and that nothing is accepted until the person looks", () => {
   assert.equal(acceptOptionLabel(0, 3), "accept the pending changes you have seen (all 3 pending changes are unseen; nothing is accepted until you look)");
   assert.equal(acceptOptionLabel(0, 1), "accept the pending changes you have seen (the 1 pending change is unseen; nothing is accepted until you look)");
-  assert.equal(acceptOptionLabel(0, 1, 1), "accept the pending changes you have seen (the 1 pending change is unseen; nothing is accepted until you look)", "nothing accepted resolves nothing: no resolve clause");
 });
 
-test("acceptOptionLabel with the comments the accept resolves: one parenthesis, the resolve first, the unseen after it, joined with a semicolon", () => {
-  assert.equal(acceptOptionLabel(2, 0, 1), "accept the 2 pending changes you have seen (resolves 1 comment)");
-  assert.equal(acceptOptionLabel(2, 1, 1), "accept the 2 pending changes you have seen (resolves 1 comment; 1 unseen stays pending)");
-  assert.equal(acceptOptionLabel(11, 3, 7), "accept the 11 pending changes you have seen (resolves 7 comments; 3 unseen stay pending)");
-  assert.equal(acceptOptionLabel(2, 0, 0), "accept the 2 pending changes you have seen");
+test("acceptOptionLabel takes two counts: an accept resolves no comment (decision 42), so the option has no resolve clause", () => {
+  assert.equal(acceptOptionLabel.length, 2);
+  for (const [seen, unseen] of [[2, 0], [2, 1], [0, 3]] as Array<[number, number]>) assert.ok(!acceptOptionLabel(seen, unseen).includes("resolves"));
 });
 
 test("the option never says 'arrived since you last looked': the unseen pending changes are the arrivals line's count, said once there", () => {
@@ -61,7 +58,7 @@ test("the option never says 'arrived since you last looked': the unseen pending 
 });
 
 test("vocabulary: no romp nouns in the words a person reads here, and none of the words CONTEXT.md sets aside", () => {
-  for (const t of [acceptOptionLabel(3, 2, 1), acceptOptionLabel(0, 2), acceptOptionLabel(1, 0)]) {
+  for (const t of [acceptOptionLabel(3, 2), acceptOptionLabel(0, 2), acceptOptionLabel(1, 0)]) {
     assert.doesNotMatch(t, /\b(card|board|goal|column|nudge|fleet)\b/i, t);
     assert.doesNotMatch(t, /\b(suggestion|diff|thread|annotation)\b/i, t);
   }

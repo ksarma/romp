@@ -1086,16 +1086,6 @@ export function arrivalWords(arrivals: Entry[], nameOf: (author: string, authorI
   return listWords(names) + " made " + listWords(parts) + " since you last looked";
 }
 
-/** The unresolved comments bound to a pending change: what a Send's accept-all resolves along with the changes (the host
- *  resolves a comment when its change is accepted). The confirm says so before the send and the acknowledgment line after it (sentNoteWords; the
- *  lost-update probe, 2026-09-09: seven comments the session's edits had answered folded under a collapsed Resolved with
- *  nothing said). */
-export function resolvedByAccept(store: Store | null, hunks: Hunk[]): number {
-  if (!store) return 0;
-  const pending = new Set(hunks.map((h) => h.id));
-  return store.comments.filter((c) => !c.resolved && typeof c.suggestionId === "string" && pending.has(c.suggestionId)).length;
-}
-
 /** The pending changes split by whether the person has seen them (decision 41: the Send's accept takes the seen ones only).
  *  Seen is the panel's set of entry keys (statusEntries' "chg:" + id for a change): a change whose card or mark was on
  *  screen at one of the person's gestures, or that the panel's first status held, or that the person wrote. A null set is
@@ -1108,28 +1098,17 @@ export function partitionPending(hunks: Hunk[], seen: ReadonlySet<string> | null
 }
 
 /** The Send confirm's accept option (decision 41): "accept the N pending changes you have seen", and in one parenthesis
- *  after it what else there is to say, joined with "; ": "resolves M comments" when `resolves` unresolved comments are
- *  bound to the seen changes, and "K unseen stay pending" when `unseen` pending changes have not been on screen at a
- *  gesture of the person's yet (the same K the arrivals line counts as changes since they last looked, so it is not said
- *  twice here). With NO seen change the option has nothing to accept: "accept the pending changes you have seen (all K
- *  pending changes are unseen; nothing is accepted until you look)" — the panel shows that box unchecked and disabled.
- *  The default of a box that can be checked is decision 8's and is not this function's. */
-export function acceptOptionLabel(seen: number, unseen: number, resolves = 0): string {
+ *  after it "K unseen stay pending" when `unseen` pending changes have not been on screen at a gesture of the person's yet
+ *  (the same K the arrivals line counts as changes since they last looked, so it is not said twice here). With NO seen
+ *  change the option has nothing to accept: "accept the pending changes you have seen (all K pending changes are unseen;
+ *  nothing is accepted until you look)" — the panel shows that box unchecked and disabled. The default of a box that can
+ *  be checked is decision 8's and is not this function's. An accept resolves no comment (decision 42; before it, the
+ *  option named the comments the host's accept resolved), so there is nothing else to say. */
+export function acceptOptionLabel(seen: number, unseen: number): string {
   if (seen <= 0) {
     const all = unseen === 1 ? "the 1 pending change is unseen" : "all " + unseen + " pending changes are unseen";
     return "accept the pending changes you have seen (" + all + "; nothing is accepted until you look)";
   }
   const base = "accept the " + seen + " pending " + (seen === 1 ? "change" : "changes") + " you have seen";
-  const parts: string[] = [];
-  if (resolves > 0) parts.push("resolves " + plural(resolves, "comment", "comments"));
-  if (unseen > 0) parts.push(unseen + " unseen " + (unseen === 1 ? "stays" : "stay") + " pending");
-  return parts.length ? base + " (" + parts.join("; ") + ")" : base;
-}
-
-/** The acknowledgment line after a send whose accept-all resolved comments (the panel's `sentNote`; the words under Send, not a
- *  note in CONTEXT.md's sense, which is the Send box's): the base ("Sent to api at 10:32", "Queued for api") and
- *  what moved to Resolved, so nothing leaves the visible list without a visible word; the base alone when nothing moved. */
-export function sentNoteWords(base: string, accepted: number, moved: number): string {
-  if (moved <= 0) return base;
-  return base + " · accepted " + plural(accepted, "change", "changes") + "; " + plural(moved, "comment", "comments") + " with the session's replies moved to Resolved";
+  return unseen > 0 ? base + " (" + unseen + " unseen " + (unseen === 1 ? "stays" : "stay") + " pending)" : base;
 }

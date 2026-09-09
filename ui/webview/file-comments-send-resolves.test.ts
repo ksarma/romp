@@ -1,12 +1,12 @@
-// A send whose accept resolves comments says so and shows them (the lost-update probe, 2026-09-09; plans/file-review.md,
-// the arrivals follow-on under Slice 2), driven AS A PANEL over the third review round's stand-in
-// (file-comments-review-fixes-3.test.ts, copied here). In the incident the Send's accept (then an accept-all) resolved the seven
-// comments the session's edits had answered (the host resolves a comment when its change is accepted), and the panel folded them
-// under a collapsed "Resolved (N)" with nothing said. Now the confirm's accept option reads "accept the N pending changes you have
-// seen (resolves M comments)" when M unresolved comments are bound to the seen pending changes, the unseen count in the same
-// parenthesis when there is one; the send accepts the seen changes by id (decision 41); and after a send whose accept resolved
-// comments, the Resolved fold opens before the renders that follow and the acknowledgment line names what moved. The host's
-// rule and the box's default are unchanged. Synthetic fixtures only: the notes-api world, placeholder ids.
+// A send's accept resolves no comment (decision 42, 2026-09-09; plans/file-review.md, the seen follow-on under Slice 2), driven
+// AS A PANEL over the third review round's stand-in (file-comments-review-fixes-3.test.ts, copied here). History: in the
+// lost-update probe of 2026-09-09 the Send's accept (then an accept-all) resolved the seven comments the session's edits had
+// answered (the host resolved a comment when its change was accepted) and the panel folded them under a collapsed
+// "Resolved (N)" with nothing said; this module then pinned the confirm's "(resolves M comments)" clause, the fold opening and
+// the acknowledgment line's tail. Decision 42 ended the host's resolve-on-accept, so all three went: the option names the
+// seen and unseen changes only, a comment bound to an accepted change stays open in the list with the session's reply, no
+// fold opens, and the acknowledgment line is the base alone. The send accepts the seen changes by id (decision 41).
+// Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import type { FileViewActionCtx } from "./file-view";
@@ -393,32 +393,28 @@ const withChanges = (over: Partial<Status> = {}): Status => status({
   store: { v: 3, path: "docs/report.md", suggestions: [{ id: "h1", authorId: SID }, { id: "h3", authorId: SID }], comments: [first, second, bound(false)] },
   hunks: [h1, h3], unsent: { comments: [first.id, bound(false).id], replies: [], accepted: 0, rejected: 0, watermark: T0 - 60000 }, ...over,
 });
-/** After the send's accept of both seen changes: no pending change, the bound comment resolved (the host's rule), the decisions unsent. */
+/** After the send's accept of both seen changes: no pending change, the bound comment as it was — open (decision 42: the host
+ *  resolves nothing on an accept) — and the decisions unsent. */
 const accepted = (): Status => status({
-  storeMtimeNs: "1757145600000000005", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [first, second, bound(true)] }, hunks: [],
+  storeMtimeNs: "1757145600000000005", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [first, second, bound(false)] }, hunks: [],
   unsent: { comments: [first.id, bound(false).id], replies: [], accepted: 2, rejected: 0, watermark: T0 - 60000 },
 });
 const foldOf = (aside: El): El | null => aside.querySelector('[data-act="fcresolved"]');
 
-test("the confirm's accept option names the comments the accept resolves, in one parenthesis with the arrivals' count when both apply", async (t: TestContext) => {
+test("the confirm's accept option names the seen changes and never a resolve, with an open comment bound to one of them (before: \"(resolves 1 comment)\")", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, withChanges());
   aside.querySelector('[data-act="fcsend"]')!.click();
   const cb = aside.querySelector('input[data-opt="accept"]')!;
-  assert.equal(cb.parentNode!.textContent, "accept the 2 pending changes you have seen (resolves 1 comment)");
+  assert.equal(cb.parentNode!.textContent, "accept the 2 pending changes you have seen");
   assert.equal(cb.checked, true, "the default is untouched");
-  // the bound comment resolved already: nothing to resolve, the option as before
-  aside.querySelector('[data-act="fcsendcancel"]')!.click();
-  saved(w, "1757145600000000004"); await flush();
-  answer(w, withChanges({ fileMtimeNs: "1757145600000000004", store: { v: 3, path: "docs/report.md", suggestions: [{ id: "h1", authorId: SID }, { id: "h3", authorId: SID }], comments: [first, second, bound(true)] } })); await flush();
-  aside.querySelector('[data-act="fcsend"]')!.click();
-  assert.equal(aside.querySelector('input[data-opt="accept"]')!.parentNode!.textContent, "accept the 2 pending changes you have seen");
+  assert.ok(!cb.parentNode!.textContent.includes("resolves"));
 });
 
-test("a send whose accept resolves the comment: the Resolved fold opens with the comment's card and the session's reply in it, and the acknowledgment line names what moved (before: a collapsed fold, no card, the plain acknowledgment)", async (t: TestContext) => {
+test("a send's accept leaves the bound comment open: no Resolved fold, its card stays in the list with the session's reply, and the acknowledgment line is the base alone (before: the fold opened and the line named what moved)", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, withChanges());
-  assert.equal(foldOf(aside), null, "nothing resolved yet: no fold");
+  assert.equal(foldOf(aside), null, "nothing resolved: no fold");
   aside.querySelector('[data-act="fcsend"]')!.click();
   aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
   const acc = lastOf(w, "fileComments", "accept");
@@ -429,25 +425,23 @@ test("a send whose accept resolves the comment: the Resolved fold opens with the
   assert.ok(msg, "then the send");
   assert.equal(msg.accepted, 2);
   sent(w); await flush();
-  answer(w, status({ storeMtimeNs: "1757145600000000005", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [first, second, bound(true)] }, hunks: [], unsent: NO_UNSENT })); await flush();
-  const fold = foldOf(aside);
-  assert.ok(fold, "the Resolved fold is offered");
-  assert.equal(fold!.textContent, "▾ Resolved (1)", "open (before: ▸ Resolved (1))");
-  const card = aside.querySelector('.fc-card[data-id="' + bound(true).id + '"]');
-  assert.ok(card, "the resolved comment's card is rendered (before: none)");
-  assert.ok(card!.textContent.includes("resolved"), "as resolved");
+  answer(w, status({ storeMtimeNs: "1757145600000000005", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [first, second, bound(false)] }, hunks: [], unsent: NO_UNSENT })); await flush();
+  assert.equal(foldOf(aside), null, "no comment resolved, no fold (before: an open Resolved (1))");
+  const card = aside.querySelector('.fc-card[data-id="' + bound(false).id + '"]');
+  assert.ok(card, "the bound comment's card is in the list, open");
+  assert.ok(!card!.textContent.includes("resolved"));
   card!.querySelector(".fc-card-head")!.click();      // open it: the run of turns shows the session's reply
-  const open = aside.querySelector('.fc-card[data-id="' + bound(true).id + '"]')!;
+  const open = aside.querySelector('.fc-card[data-id="' + bound(false).id + '"]')!;
   assert.ok(open.classList.contains("open"));
   assert.ok(open.textContent.includes(REPLY), "with the session's reply");
-  assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at .+ · accepted 2 changes; 1 comment with the session's replies moved to Resolved$/, "the acknowledgment line names what moved (before: the plain acknowledgment)");
+  assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at [^·]+$/, "the acknowledgment line is the base alone (before: · accepted 2 changes; 1 comment ... moved to Resolved)");
 });
 
-test("a send that resolves nothing leaves the fold and the note as they were", async (t: TestContext) => {
+test("a send with no bound comment: the same words, the same plain acknowledgment", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, withChanges({ store: { v: 3, path: "docs/report.md", suggestions: [{ id: "h1", authorId: SID }, { id: "h3", authorId: SID }], comments: [first, second] }, unsent: { comments: [first.id], replies: [], accepted: 0, rejected: 0, watermark: T0 - 60000 } }));
   aside.querySelector('[data-act="fcsend"]')!.click();
-  assert.equal(aside.querySelector('input[data-opt="accept"]')!.parentNode!.textContent, "accept the 2 pending changes you have seen", "no bound comment: nothing to resolve");
+  assert.equal(aside.querySelector('input[data-opt="accept"]')!.parentNode!.textContent, "accept the 2 pending changes you have seen");
   aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
   const acc = lastOf(w, "fileComments", "accept");
   assert.deepEqual(acc.args, { ids: ["h1", "h3"] });

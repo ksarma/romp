@@ -692,7 +692,7 @@ test("at source: doSend's accept is the by-id accept over the seen split, after 
   const sync = SRC.slice(SRC.indexOf("private syncAcceptOption("), SRC.indexOf("private todoOpts("));
   assert.ok(sync.includes("cb.disabled = split.seen.length === 0;"));
   assert.ok(sync.includes("cb.checked = split.seen.length > 0 && this.sendOpts.accept;"));
-  assert.ok(sync.includes("resolvedByAccept(s.store, split.seen)"), "the resolve count is over the seen changes");
+  assert.ok(!sync.includes("resolvedByAccept"), "an accept resolves no comment (decision 42): no resolve count on the option");
   assert.ok(!/setTimeout|setInterval|Date\.now/.test(SRC.slice(SRC.indexOf("private pendingSplit("), SRC.indexOf("private todoOpts("))), "no timer: seen is the gesture's");
 });
 

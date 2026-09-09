@@ -579,18 +579,19 @@ test("an open closed before its own status answered: that answer lands on a clos
 });
 
 // ── the accept option rewritten in place ──────────────────────────────────────────────────────────
-// the person's comment bound to the first change (suggestionId): the accept resolves it along with the change
+// the person's comment bound to the first change (suggestionId): the accept leaves it as it is (decision 42), so the option
+// says nothing about it
 const bound: StoreComment = { id: (T0 + 2000) + "-8", author: "you", ts: T0 + 2000, body: "Shorter, and say which cache.", suggestionId: "h1", replies: [], resolved: false };
 const storeWith = (comments: StoreComment[]): Status["store"] => ({ v: 3, path: "docs/report.md", suggestions: [], comments });
 
-test("the Send confirm's accept option, rewritten in place when a gesture marks an arrived change seen, keeps naming the comments the accept resolves", async (t) => {
+test("the Send confirm's accept option, rewritten in place when a gesture marks an arrived change seen, moves the change to the seen side and never names a resolve, bound comment or not", async (t) => {
   const { w, ok } = await open(t, textWorld(), status({ store: storeWith([whole, findings, passage, closing, bound]) }));
   await land(w, ok, arrived({ store: storeWith([whole, findingsR, passageR, closing, bound, line9, mine2]) }));
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (resolves 1 comment; 1 unseen stays pending)", "renderSend's words: both clauses, the resolve counted over the seen change the comment is bound to");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)", "renderSend's words: the unseen clause alone — the bound comment is not the accept's to resolve (decision 42)");
   const confirm = w.aside().querySelector(".fc-confirm");
   scrollBody(w, 340); gesture(w.body, "wheel");        // the arrived change's card (360) is in the box [340, 500): seen
-  assert.equal(acceptLabel(w), "accept the 2 pending changes you have seen (resolves 1 comment)", "the unseen clause goes, the resolve clause stays (a regression of the in-place rewrite once dropped it)");
+  assert.equal(acceptLabel(w), "accept the 2 pending changes you have seen", "the unseen clause goes with the look");
   assert.equal(w.aside().querySelector(".fc-confirm"), confirm, "rewritten in place: no render rebuilt the confirm");
   assert.ok(!isNew(w.card(CHG2)));
   w.close();
