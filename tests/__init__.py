@@ -86,3 +86,8 @@ os.environ["ROMP_SERVE_PORT"] = "1"
 # sys.path itself. One module object either way.
 from . import romp_load as _romp_load  # noqa: E402
 sys.modules.setdefault("romp_load", _romp_load)
+
+# `import lab_dist` in the served-lab modules (tests/lab_dist.py, the one owner of the vscode-extension/dist
+# build) resolves the same way, for the same reason.
+from . import lab_dist as _lab_dist  # noqa: E402
+sys.modules.setdefault("lab_dist", _lab_dist)
