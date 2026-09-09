@@ -1,23 +1,24 @@
-// The click that ends a drag-selection inside a body mark opens nothing (plans/file-review.md, Slice 2, the marks' click
-// rule; the fix of 2026-09-09; file-comments.ts dragClick). The user's requirement: a comment must be possible inside a
-// tracked change other than by replying to the change. A change mark and a comment highlight are controls (data-act
-// fcchange and fcopen, tabIndex, role=button), and a drag begun and ended inside one fires a click on it, the common
-// ancestor of the press and the release; the click opened the card and its scroll hid the Comment float the same mouseup
-// had offered. The guard reads the click's own state: a non-collapsed selection whose anchor and focus both lie in the
-// viewer's body is a drag's, and the handler does nothing; a collapsed selection, none, one outside the body or one with
-// an end outside opens the card as before; a click with no pointer behind it (`detail` 0: Enter or Space through the
-// row's keydown, element.click()) opens the card whatever selection stands. The guard's line is the BODY, not the clicked
-// mark: a non-collapsed selection whose ends both lie in another row, none in the mark, is the body's too and the click
-// opens nothing. The `elsewhere` cases pin that line on purpose, so a guard narrowed to the clicked mark (`x.contains`)
-// turns them red instead of passing unnoticed: the review of 2026-09-09 found the shipped module green under either
-// width. A real browser reaches the case, since not every press collapses a standing selection: a deletion label
-// (`span.fc-del`, `user-select: none`, its text CSS-generated) and a mark inside an author's link keep it, and the click
-// arrives with the selection standing in another paragraph (the same review's probe, Chromium and Firefox). Whether that
-// click should open the card, the guard narrowed to the mark, is the user's call on the record; a narrowing flips the
-// `elsewhere` expectations with the guard. Driven here over the behavior suite's DOM stand-in with the selection faked
-// per case (window.getSelection is what the panel reads), the pointer's click carrying detail 1 and the keyboard's 0 as
-// browsers dispatch them; file-comments-markclick-browser.test.ts drags a real mouse in Chromium and Firefox. Synthetic
-// fixtures only: the notes-api world, placeholder ids.
+// The marks' drag guard is judged against the CLICKED mark, not the whole body (plans/file-review.md, Slice 2, the marks'
+// click rule; the review of 2026-09-09 of the fix of that day; file-comments.ts dragClick and endInside). The first guard
+// read any non-collapsed selection with both ends in the body as this click's drag, so a click on a control whose press
+// cannot collapse a standing selection was dropped while words stood selected anywhere in the body: a deletion's struck
+// label (`span.fc-del`, user-select: none, its text CSS-generated, so its press touches no selection), a region
+// rectangle (the overlay cancels its pointerdown), a mark inside an author's link, a framed picture — verified with a
+// real mouse in Chromium and Firefox, Rendered and Raw, on origin/main's behaviour too, where every such click opened
+// its card. The guard now asks whether the selection's anchor and focus both lie inside the control the click landed on
+// (the target's nearest data-act, the element the delegate routed): a drag begun and ended inside one mark puts both
+// ends there; a selection standing elsewhere, or one that merely spans the mark from outside, has none, and its click
+// opens the card whatever stands selected. An engine may report a drag's end at the mark's edge as a point in the mark's
+// parent (at the mark's index, or the next) or in the neighbouring text node (its end, or the next one's start) rather
+// than in the mark, and the guard takes those as the mark's (endInside). The click the guard stands down also SHOWS
+// nothing: the delegate's press pulse (actions.ts flash, `.romp-acted`, added before the handler runs) comes off in the
+// same task, as render.ts's once() does for a swallowed repeat. With the panel CLOSED the marks are painted too, and a
+// drag inside one behaves as a drag over any passage does with the panel closed: no panel opens, no card (the review's
+// ruling; the Comment float is a panel-open affordance, the plan's Comment-on-a-selection bullet); a plain click on the
+// mark opens the panel and the card as before. Driven over the behavior suite's DOM stand-in (a copy, as every module
+// carries: the selection faked per case with the offsets the guard reads, the pointer's click carrying detail 1 as
+// browsers dispatch it); file-comments-markclick-controls-browser.test.ts drives a real mouse over the real viewer and
+// panel in Chromium and Firefox. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import type { FileViewActionCtx } from "./file-view";
@@ -29,13 +30,15 @@ const ABS = "/repo/notes-api/docs/report.md";
 const ROOT = "/repo/notes-api";
 const STORE_PATH = ROOT + "/.trackchanges/docs%2Freport.md.json";
 const T0 = 1757145600000;
-// the CURRENT text: the session's insertion already applied (the file on disk always reads as if accepted)
+// the CURRENT text: the session's insertion already applied, its deletion already gone (the file on disk reads as if accepted)
 const DOC = "# Report\n\n## Findings\nThe api session cut p95 latency by 40% and the p99 by 10%.\n\n"
   + "We recommend shipping the cache in v1.2.\n\nRisks remain in the fallback path.\n\nNext steps: measure again.\n";
 const at = (needle: string): number => { const i = DOC.indexOf(needle); assert.ok(i >= 0, needle); return i; };
-// the insertion inside the findings line, and a passage comment on the recommendation
+// the insertion inside the findings line, the deletion at the head of the last line (a point: its label is CSS-generated), and
+// a passage comment on the recommendation
 const INS = " and the p99 by 10%";
 const h2: Hunk = { id: "h2", author: "api", ts: T0 - 80000, kind: "ins", curFrom: at(INS), curTo: at(INS) + INS.length, baseFrom: at(INS), baseTo: at(INS), oldText: "", newText: INS, anchor: null };
+const h3: Hunk = { id: "h3", author: "api", ts: T0 - 70000, kind: "del", curFrom: at("Next steps"), curTo: at("Next steps"), baseFrom: at("Next steps"), baseTo: at("Next steps") + 5, oldText: "Some ", newText: "", anchor: null };
 const passage: StoreComment = {
   id: T0 + "-118", author: "you", ts: T0, body: "Which cache? Say which.",
   anchor: { quote: "shipping the cache in v1.2", prefix: "We recommend ", suffix: "." }, replies: [], resolved: false,
@@ -45,12 +48,12 @@ function status(): Status {
     verb: "status", root: ROOT, storePath: STORE_PATH, trackedBy: { kind: "file", entry: "docs/report.md" }, agentTooling: "present",
     fileMtimeNs: "1757145600000000001", storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003",
     store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage] },
-    hunks: [h2], log: [],
+    hunks: [h2, h3], log: [],
     unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 0, watermark: null },
   };
 }
 
-// ── the DOM stand-in (the behavior suite's, with a click's `detail`): ancestry, attributes, events, a small selector engine ──
+// ── the DOM stand-in (the behavior suite's, with a click's `detail` and the siblings the guard's edge rule reads) ──
 class Ev {
   target: El | Txt | null = null;
   currentTarget: El | null = null;
@@ -73,6 +76,8 @@ class Txt {
   get textContent(): string { return this.data; }
   get length(): number { return this.data.length; }
   get parentElement(): El | null { return this.parentNode; }
+  get previousSibling(): El | Txt | null { return sibling(this, -1); }
+  get nextSibling(): El | Txt | null { return sibling(this, 1); }
   splitText(off: number): Txt {
     const tail = new Txt(this.data.slice(off));
     this.data = this.data.slice(0, off);
@@ -81,6 +86,7 @@ class Txt {
     return tail;
   }
 }
+const sibling = (n: El | Txt, d: number): El | Txt | null => { const p = n.parentNode; if (!p) return null; const i = p.childNodes.indexOf(n); return p.childNodes[i + d] || null; };
 type Compound = { tag: string | null; classes: string[]; attrs: Array<[string, string | null]> };
 function parseSel(sel: string): Compound[][] {
   return sel.split(",").map((g) => g.trim()).filter(Boolean).map((g) => g.split(/\s+/).map((s) => {
@@ -107,6 +113,8 @@ class El {
   get ownerDocument(): typeof doc { return doc; }
   get parentElement(): El | null { return this.parentNode; }
   get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
+  get previousSibling(): El | Txt | null { return sibling(this, -1); }
+  get nextSibling(): El | Txt | null { return sibling(this, 1); }
   get className(): string { return this.attrs.get("class") || ""; }
   set className(v: string) { this.attrs.set("class", v); }
   get classes(): string[] { return this.className.split(/\s+/).filter(Boolean); }
@@ -297,7 +305,6 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
 }
 const flush = () => new Promise<void>((r) => setImmediate(r));
 const lastOf = (w: World, type: string, verb?: string) => [...w.posted].reverse().find((m) => m.type === type && (verb === undefined || m.verb === verb));
-const countOf = (w: World, type: string, verb?: string) => w.posted.filter((m) => m.type === type && (verb === undefined || m.verb === verb)).length;
 function answer(w: World, s: Status, m = lastOf(w, "fileComments", "status")): void {
   assert.ok(m, "a status ask is outstanding");
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: m.reqId, ...s } }));
@@ -305,98 +312,148 @@ function answer(w: World, s: Status, m = lastOf(w, "fileComments", "status")): v
   if (s.storePath && s.storeMtimeNs !== null) w.mtimes[s.storePath] = s.storeMtimeNs;
   if (s.root && s.configMtimeNs !== null) w.mtimes[s.root + "/.trackchanges/config.json"] = s.configMtimeNs;
 }
-function refuse(w: World, m: any, code: string, error: string): void {
-  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsFailed", reqId: m.reqId, verb: m.verb, code, error } }));
-}
-async function openPanel(w: World, s: Status = status()): Promise<{ unit: El; button: El; aside: El }> {
+/** Mount the panel's unit over the stand-in and answer its first status ask: the marks paint with the panel CLOSED (every
+ *  status runs paintAll); with `open`, click the unit's button and answer the second ask, so the aside mounts. */
+async function mount(w: World, open: boolean, s: Status = status()): Promise<{ unit: El; button: El; aside: El | null }> {
   const fc = await import("./file-comments");
   const unit = fc.fileCommentsAction.mount(w.ctx) as unknown as El;
   const button = unit.childNodes[0] as El;
   answer(w, s); await flush();
-  button.click();
-  answer(w, s); await flush(); await flush();
-  const aside = w.main.querySelector(".fileview-aside")!;
-  assert.ok(aside, "the panel is mounted beside the body");
+  if (open) { button.click(); answer(w, s); await flush(); await flush(); }
+  const aside = w.main.querySelector(".fileview-aside");
+  assert.equal(!!aside, open, open ? "the panel is mounted beside the body" : "the panel stays closed");
   return { unit, button, aside };
 }
-const card = (aside: El, key: string): El | null => aside.querySelector('.fc-card[data-id="' + key + '"]');
-const act = (root: El, a: string, id?: string): El | null => root.querySelector('[data-act="' + a + '"]' + (id ? '[data-id="' + id + '"]' : ""));
-const texts = (els: El[]) => els.map((e) => e.textContent);
-
+const card = (main: El, key: string): El | null => main.querySelector('.fileview-aside .fc-card[data-id="' + key + '"]');
+const markOf = (w: World, act: string, id: string): El => {
+  const m = w.body.querySelector('[data-act="' + act + '"][data-id="' + id + '"]');
+  assert.ok(m, act + " " + id + " is marked in the body");
+  return m!;
+};
 
 // ── the panel, driven ─────────────────────────────────────────────────────────────────────────────
 /** A pointer's click on `el`: detail 1, as a mouse or a finger dispatches it (the stand-in's click() is element.click(), detail 0). */
 const mouse = (el: El): void => { dispatch(el, new Ev("click", { detail: 1 })); };
-type Sel = { isCollapsed: boolean; anchorNode: El | Txt | null; focusNode: El | Txt | null } | null;
-type Outcome = { open: boolean; scrolled: number; focusMoved: boolean; asides: number };
-/** Open the panel over the stand-in, fake the live selection as `selOf` reads it off the mark and the aside, activate the
- *  mark by the pointer or by Enter, and read what followed: the card's state, the scrolls, the focus, the aside count. */
-async function activate(t: TestContext, act: "fcchange" | "fcopen", id: string, key: string, selOf: (mark: El, aside: El) => Sel, via: "mouse" | "enter" = "mouse"): Promise<Outcome> {
+/** What the guard reads of a selection: the ends with their offsets (the offsets carry the edge cases). */
+type Sel = { isCollapsed: boolean; anchorNode: El | Txt | null; focusNode: El | Txt | null; anchorOffset?: number; focusOffset?: number } | null;
+type Outcome = { open: boolean; scrolled: number; focusMoved: boolean; asides: number; acted: boolean };
+/** Mount the panel (open, or closed) over the stand-in, fake the live selection as `selOf` reads it off the clicked mark and
+ *  the body, click the mark with the pointer (or activate it by Enter), and read what followed: the card's state, the
+ *  scrolls, the focus, the aside count, and whether the clicked node still wears the delegate's press pulse. */
+async function press(t: TestContext, act: "fcchange" | "fcopen", id: string, key: string, selOf: (mark: El, body: El) => Sel,
+  opts: { via?: "mouse" | "enter"; panel?: "open" | "closed" } = {}): Promise<Outcome> {
   const w = world(); t.after(() => w.close());
   t.after(() => { win.getSelection = () => null; });
-  const { aside } = await openPanel(w, status());
-  const mark = w.body.querySelector('[data-act="' + act + '"][data-id="' + id + '"]');
-  assert.ok(mark, act + " " + id + " is marked in the body");
-  assert.ok(mark!.childNodes[0] instanceof Txt, "the mark wraps its words");
-  assert.equal(card(aside, key)!.classes.includes("open"), false, "the card starts collapsed");
-  win.getSelection = () => selOf(mark!, aside);
-  if (via === "enter") mark!.focus();
+  await mount(w, (opts.panel || "open") === "open");
+  const mark = markOf(w, act, id);
+  const c0 = card(w.main, key);
+  assert.equal(!!c0 && c0.classes.includes("open"), false, "the card starts collapsed, or unmounted with the panel");
+  win.getSelection = () => selOf(mark, w.body);
+  if (opts.via === "enter") mark.focus();
   const scrolls = scrolledInto.length, focus = doc.activeElement;
-  if (via === "mouse") mouse(mark!);
-  else dispatch(mark!, new Ev("keydown", { key: "Enter" }));   // the row's keydown: x.click(), a click with no pointer behind it
+  if (opts.via === "enter") dispatch(mark, new Ev("keydown", { key: "Enter" }));   // the row's keydown: x.click(), a click with no pointer behind it
+  else mouse(mark);
+  const acted = mark.classes.includes("romp-acted");   // read in the click's own task: flash's timer runs 280 ms later
   await flush();
-  const c = card(aside, key);
-  return { open: !!c && c.classes.includes("open"), scrolled: scrolledInto.length - scrolls, focusMoved: doc.activeElement !== focus, asides: w.main.querySelectorAll(".fileview-aside").length };
+  const c = card(w.main, key);
+  return { open: !!c && c.classes.includes("open"), scrolled: scrolledInto.length - scrolls, focusMoved: doc.activeElement !== focus, asides: w.main.querySelectorAll(".fileview-aside").length, acted };
 }
-const inMark = (m: El): Sel => ({ isCollapsed: false, anchorNode: m.childNodes[0], focusNode: m.childNodes[0] });
-const caretInMark = (m: El): Sel => ({ isCollapsed: true, anchorNode: m.childNodes[0], focusNode: m.childNodes[0] });
-const none = (): Sel => null;
-const inAside = (_m: El, aside: El): Sel => { const head = aside.querySelector(".fc-card-head")!; return { isCollapsed: false, anchorNode: head, focusNode: head }; };
-const halfIn = (m: El, aside: El): Sel => ({ isCollapsed: false, anchorNode: m.childNodes[0], focusNode: aside.querySelector(".fc-card-head") });
-/** A selection standing elsewhere in the body: both ends in the Risks row's text, a Raw row that carries neither the
- *  change mark nor the comment highlight, so nothing of it lies in the clicked mark. The body's, not the mark's. */
-const elsewhere = (m: El): Sel => {
-  const body = m.closest(".fileview-body")!;
-  const row = body.querySelectorAll(".fv-ct").find((ct) => ct.textContent.startsWith("Risks remain"))!;
-  assert.ok(row && !row.contains(m) && !m.contains(row), "the Risks row stands apart from the mark");
-  const words = row.childNodes[0];
-  assert.ok(words instanceof Txt && !m.contains(words), "the selection's ends lie in another row's text, none in the mark");
-  return { isCollapsed: false, anchorNode: words, focusNode: words };
+const rowText = (body: El, starts: string): Txt => {
+  const ct = body.querySelectorAll(".fv-ct").find((x) => x.textContent.startsWith(starts));
+  assert.ok(ct, "a Raw row starting " + JSON.stringify(starts));
+  const words = ct!.childNodes.find((n) => n instanceof Txt) as Txt | undefined;
+  assert.ok(words, "the row has words");
+  return words!;
 };
+const firstText = (m: El): Txt => { const n = m.childNodes[0]; assert.ok(n instanceof Txt, "the mark wraps its words"); return n; };
+const inMark = (m: El): Sel => ({ isCollapsed: false, anchorNode: firstText(m), focusNode: firstText(m), anchorOffset: 2, focusOffset: 9 });
+const caretInMark = (m: El): Sel => ({ isCollapsed: true, anchorNode: firstText(m), focusNode: firstText(m), anchorOffset: 3, focusOffset: 3 });
+/** Words selected in another row of the body, none of it in the clicked mark: the state a reader leaves by selecting a
+ *  passage to read or copy, or by dropping the Comment float. */
+const elsewhere = (m: El, body: El): Sel => { const words = rowText(body, "Risks remain"); assert.ok(!m.contains(words), "the selection stands apart from the mark"); return { isCollapsed: false, anchorNode: words, focusNode: words, anchorOffset: 0, focusOffset: 5 }; };
+/** A selection that passes over the mark from outside: its anchor in the row above the mark's, its focus in the row below —
+ *  or, for a mark on the last row, three characters into the text after the mark in its own row. */
+const spanning = (m: El, body: El): Sel => {
+  const rows = body.querySelectorAll(".fv-cl");
+  const own = m.closest(".fv-cl")!; const i = rows.indexOf(own);
+  const above = rows.slice(0, i).reverse().find((r) => r.textContent !== "")!, below = rows.slice(i + 1).find((r) => r.textContent !== "");
+  const a = above.querySelector(".fv-ct")!.childNodes.find((n) => n instanceof Txt) as Txt;
+  const f = (below ? below.querySelector(".fv-ct")!.childNodes.find((n) => n instanceof Txt) : m.nextSibling) as Txt | null;
+  assert.ok(a && f instanceof Txt && !m.contains(a) && !m.contains(f), "both ends lie outside the mark, around it");
+  return { isCollapsed: false, anchorNode: a, focusNode: f, anchorOffset: 2, focusOffset: 3 };
+};
+/** The mark's place among its parent's children, and the text nodes either side of it (the Raw paint splits the row's text around the mark). */
+function around(m: El): { parent: El; index: number; before: Txt; after: Txt } {
+  const parent = m.parentNode!; const index = parent.childNodes.indexOf(m);
+  const before = parent.childNodes[index - 1], after = parent.childNodes[index + 1];
+  assert.ok(before instanceof Txt && after instanceof Txt, "the mark stands between two text nodes of its row");
+  return { parent, index, before: before as Txt, after: after as Txt };
+}
 
-test("a change mark: the pointer's click arriving with a selection inside the body opens nothing — no card, no scroll, no focus change", async (t) => {
-  const r = await activate(t, "fcchange", "h2", "chg:h2", inMark);
-  assert.deepEqual(r, { open: false, scrolled: 0, focusMoved: false, asides: 1 }, JSON.stringify(r));
+test("a change mark: a selection standing elsewhere in the body, none of it in the mark, is not this click's drag — the card opens (the blocker: the guard's line is the clicked mark, not the body)", async (t) => {
+  const r = await press(t, "fcchange", "h2", "chg:h2", elsewhere);
+  assert.equal(r.open, true, JSON.stringify(r));
+  assert.ok(r.scrolled > 0, "…and the card's open scrolls the mark into view, as a plain click's does: " + JSON.stringify(r));
 });
 
-test("a change mark: a click with the selection collapsed, or none, opens the card as before", async (t) => {
-  assert.equal((await activate(t, "fcchange", "h2", "chg:h2", caretInMark)).open, true, "a plain click leaves a caret: the card opens");
-  assert.equal((await activate(t, "fcchange", "h2", "chg:h2", none)).open, true, "no selection at all: the card opens");
+test("a deletion's point (its label CSS-generated, so its press collapses nothing): the click with a selection standing elsewhere opens its card", async (t) => {
+  const w = world(); t.after(() => w.close());
+  await mount(w, true);
+  const point = markOf(w, "fcchange", "h3");
+  assert.ok(point.classes.includes("fc-del") && point.childNodes.length === 0, "a zero-width point, its label in data-fc-text: " + point.className);
+  w.close();
+  const r = await press(t, "fcchange", "h3", "chg:h3", elsewhere);
+  assert.equal(r.open, true, JSON.stringify(r));
+  const s = await press(t, "fcchange", "h3", "chg:h3", spanning);
+  assert.equal(s.open, true, "a selection that passes over the point from outside is not its drag either: " + JSON.stringify(s));
 });
 
-test("a change mark: a selection outside the body, or with one end outside it, is not the body's drag — the card opens", async (t) => {
-  assert.equal((await activate(t, "fcchange", "h2", "chg:h2", inAside)).open, true, "words selected in the aside: the card opens");
-  assert.equal((await activate(t, "fcchange", "h2", "chg:h2", halfIn)).open, true, "a selection with its focus in the aside: the card opens");
+test("a comment highlight: a selection standing elsewhere in the body, or one passing over the highlight from outside, is not its drag — the card opens", async (t) => {
+  assert.equal((await press(t, "fcopen", passage.id, passage.id, elsewhere)).open, true, "words selected in another row: the card opens");
+  assert.equal((await press(t, "fcopen", passage.id, passage.id, spanning)).open, true, "a selection spanning the highlight from outside: the card opens");
 });
 
-test("a change mark: a selection standing elsewhere in the body, both ends in another row and none in the mark, is the body's too — the click opens nothing (the guard's line is the body, not the clicked mark)", async (t) => {
-  const r = await activate(t, "fcchange", "h2", "chg:h2", elsewhere);
-  assert.deepEqual(r, { open: false, scrolled: 0, focusMoved: false, asides: 1 }, JSON.stringify(r));
-});
-
-test("a change mark: Enter on the focused mark opens the card with the body selection standing (a click with no pointer behind it is never a drag's)", async (t) => {
-  const r = await activate(t, "fcchange", "h2", "chg:h2", inMark, "enter");
+test("a change mark: a selection spanning the mark from outside (an end in the row above, one in the row below) is not its drag — the card opens", async (t) => {
+  const r = await press(t, "fcchange", "h2", "chg:h2", spanning);
   assert.equal(r.open, true, JSON.stringify(r));
 });
 
-test("a comment highlight: the same guard — the drag's click opens nothing, the caret's click opens the card, Enter opens it with the selection standing", async (t) => {
-  const r = await activate(t, "fcopen", passage.id, passage.id, inMark);
-  assert.deepEqual(r, { open: false, scrolled: 0, focusMoved: false, asides: 1 }, JSON.stringify(r));
-  assert.equal((await activate(t, "fcopen", passage.id, passage.id, caretInMark)).open, true, "the caret's click opens the comment's card");
-  assert.equal((await activate(t, "fcopen", passage.id, passage.id, inMark, "enter")).open, true, "Enter opens it");
+test("the drag's own click (both ends inside the mark) still opens nothing: no card, no scroll, no focus change — and no press pulse, taken back in the click's own task", async (t) => {
+  const r = await press(t, "fcchange", "h2", "chg:h2", inMark);
+  assert.deepEqual(r, { open: false, scrolled: 0, focusMoved: false, asides: 1, acted: false }, JSON.stringify(r));
+  const h = await press(t, "fcopen", passage.id, passage.id, inMark);
+  assert.deepEqual(h, { open: false, scrolled: 0, focusMoved: false, asides: 1, acted: false }, "the highlight, the same: " + JSON.stringify(h));
+  // the control: a click that acts keeps the delegate's acknowledgement on the node it pressed
+  const p = await press(t, "fcchange", "h2", "chg:h2", caretInMark);
+  assert.equal(p.open, true, "a plain click leaves a caret: the card opens");
+  assert.equal(p.acted, true, "…and the pressed node wears the pulse (the acknowledgement rule, ui/CLAUDE.md)");
+  const e = await press(t, "fcchange", "h2", "chg:h2", inMark, { via: "enter" });
+  assert.equal(e.open, true, "Enter on the focused mark opens the card with the selection standing (detail 0 is never a drag's)");
 });
 
-test("a comment highlight: a selection standing elsewhere in the body, none of it in the highlight, is the body's too — the click opens nothing", async (t) => {
-  const r = await activate(t, "fcopen", passage.id, passage.id, elsewhere);
-  assert.deepEqual(r, { open: false, scrolled: 0, focusMoved: false, asides: 1 }, JSON.stringify(r));
+test("a drag's end reported at the mark's edge — in the mark's parent at the mark's index or the next, or in the neighbouring text node at its end or start — is the mark's; one past the edge is not", async (t) => {
+  const edge = (pick: (m: El) => { node: El | Txt; offset: number }, end: "anchor" | "focus") => (m: El): Sel => {
+    const inside = { node: firstText(m), offset: 2 }; const e = pick(m);
+    const a = end === "anchor" ? e : inside, f = end === "focus" ? e : inside;
+    return { isCollapsed: false, anchorNode: a.node, focusNode: f.node, anchorOffset: a.offset, focusOffset: f.offset };
+  };
+  // the parent, at the mark's index (its start) or the next (its end)
+  assert.equal((await press(t, "fcchange", "h2", "chg:h2", edge((m) => ({ node: around(m).parent, offset: around(m).index + 1 }), "focus"))).open, false, "focus in the parent just after the mark: the drag's");
+  assert.equal((await press(t, "fcchange", "h2", "chg:h2", edge((m) => ({ node: around(m).parent, offset: around(m).index }), "anchor"))).open, false, "anchor in the parent just before the mark (a drag begun at its first character): the drag's");
+  assert.equal((await press(t, "fcchange", "h2", "chg:h2", edge((m) => ({ node: around(m).parent, offset: around(m).index + 2 }), "focus"))).open, true, "focus in the parent past the text after the mark: not the mark's, the card opens");
+  // the neighbouring text nodes
+  assert.equal((await press(t, "fcchange", "h2", "chg:h2", edge((m) => ({ node: around(m).after, offset: 0 }), "focus"))).open, false, "focus at the start of the text node after the mark: the drag's");
+  assert.equal((await press(t, "fcchange", "h2", "chg:h2", edge((m) => ({ node: around(m).after, offset: 1 }), "focus"))).open, true, "focus one character into the text after the mark: the drag left the mark, the card opens");
+  assert.equal((await press(t, "fcchange", "h2", "chg:h2", edge((m) => ({ node: around(m).before, offset: around(m).before.length }), "anchor"))).open, false, "anchor at the end of the text node before the mark: the drag's");
+  assert.equal((await press(t, "fcchange", "h2", "chg:h2", edge((m) => ({ node: around(m).before, offset: around(m).before.length - 1 }), "anchor"))).open, true, "anchor one character before the mark: not the mark's, the card opens");
+});
+
+test("with the panel closed the marks are painted, and a drag inside one behaves as a drag over any passage does then: no panel opens, no card; a plain click on the mark opens both", async (t) => {
+  const r = await press(t, "fcchange", "h2", "chg:h2", inMark, { panel: "closed" });
+  assert.deepEqual(r, { open: false, scrolled: 0, focusMoved: false, asides: 0, acted: false }, JSON.stringify(r));
+  const p = await press(t, "fcchange", "h2", "chg:h2", caretInMark, { panel: "closed" });
+  assert.equal(p.asides, 1, "the plain click mounts the panel: " + JSON.stringify(p));
+  assert.equal(p.open, true, "…and opens the card");
+  const d = await press(t, "fcchange", "h3", "chg:h3", elsewhere, { panel: "closed" });
+  assert.equal(d.asides === 1 && d.open, true, "the deletion's point with a selection standing elsewhere, panel closed: the panel and the card open: " + JSON.stringify(d));
 });

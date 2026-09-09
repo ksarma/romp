@@ -707,8 +707,9 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   same way; Send to session is not narrowed. An unpainted change
   always has a card, so the compact view never dead-ends. A comment can be made inside a change
   without replying to it (2026-09-09): a click or a tap on a change mark or a comment highlight opens
-  its card, and a selection made by dragging inside one leaves a comment on those words, since the
-  click that ends a drag is not a tap (the panel's `dragClick`). Session colors come from one
+  its card, whatever selection stands elsewhere in the body, and a selection made by dragging inside
+  one leaves a comment on those words, since the click that ends a drag is not a tap (the panel's
+  `dragClick`, which reads the selection against the clicked mark alone; decision 41). Session colors come from one
   `GET /sessions` fetch per panel open, mapping `authorId` to name and color; an author with no
   live match gets a neutral chip with its label.
 - **Comment on a selection**: selecting a passage still seeds the quote chip when a chat composer
@@ -2403,14 +2404,30 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   here and in the note.
 - The marks' drag rule (2026-09-09, decision 41): `ui/webview/file-comments-markclick.test.ts` drives the
   `fcchange` and `fcopen` handlers over the behavior suite's stand-in with the live selection faked per case
-  (inside the body, collapsed, none, in the aside, one end out; the pointer's click with `detail` 1 and the
-  keyboard's activation through the row's keydown with 0, as browsers dispatch them);
+  (inside the mark, elsewhere in the body with none of it in the mark, collapsed, none, in the aside, one end
+  out; the pointer's click with `detail` 1 and the keyboard's activation through the row's keydown with 0, as
+  browsers dispatch them);
   `ui/webview/file-comments-markclick-browser.test.ts` drags a real mouse inside an insertion's mark over the
   real viewer and panel in Chromium and Firefox, Rendered and Raw, the mark off the body's centre so the old
   behaviour scrolled: no card opens, the body does not scroll, the float stands, the composer opens on the
   selection, Save posts a passage comment the reply paints as its own card and highlight, a plain click on the
   mark still opens its card and scrolls, and the keyboard's activation of the focused mark opens it with the
-  selection standing.
+  selection standing; its second test per engine selects words in another paragraph and clicks a deletion's
+  struck label, and in Rendered an insertion's mark and a comment highlight inside an author's link, marks whose
+  press collapses no selection: each opens its card and scrolls as with no selection (in Raw the link's label
+  is plain text, whose press collapses the selection, the control). `ui/webview/file-comments-markclick-controls.test.ts`
+  drives the guard as read against the clicked mark over the stand-in: a selection standing elsewhere in the body, or
+  spanning the mark from outside, leaves the click a click for a change mark, a deletion's point and a comment
+  highlight; the drag's own click still opens nothing and leaves no press pulse; a drag's end reported at the mark's
+  edge is the mark's and one past it is not; and with the panel closed a drag inside a mark opens no panel and no
+  card while a plain click opens both. `ui/webview/file-comments-markclick-controls-browser.test.ts` makes that state
+  with a real mouse over the real viewer and panel in Chromium and Firefox: with words selected in another paragraph a
+  click on a deletion's label, on a mark inside an author's link, on a region rectangle and on a framed figure opens
+  its card; a drag inside an insertion's mark opens nothing and leaves no pulse; a drag ending at the mark's last
+  character is the drag's; a tap on the deletion label with a selection standing opens the card (Chromium's touch);
+  and with the panel closed the label and the frame open the panel and the card, the drag neither.
+  `tools/file-review-plan-markclick.test.mjs` holds this bullet, the surface sentence and decision 41 to the panel,
+  the sheets, the overlay and the four modules.
 
 ## Docs
 
@@ -2603,14 +2620,33 @@ document stands on its own, each with the reasoning it was given.
     the press and the release, and the card's open (`showCard`, `centerOn`) scrolled the mark to the body's centre
     and hid the Comment float the same mouseup had offered beside the selection (`hideFloatOnScroll`). The rule is
     event-based: the click that ends a drag is not a tap. In the `fcchange` and `fcopen` handlers a click arriving
-    with a non-collapsed selection whose anchor and focus both lie in the viewer's body does nothing (`dragClick`):
-    no card, no scroll, no focus change; the float stands and the composer opens on the selection as for any
-    passage. A plain click or a tap collapses the selection at the press and opens the card as before; a selection
-    elsewhere (the aside, another pane) changes nothing; a click with no pointer behind it (`detail` 0: the
-    keyboard's activation of the focused mark) opens the card whatever selection stands. The comment saved is an
-    ordinary passage comment, its own card and highlight, no `suggestionId`. `file-comments-markclick.test.ts`
-    drives the guard over the stand-in; `file-comments-markclick-browser.test.ts` drags a real mouse inside an
-    insertion's mark in Chromium and Firefox, Rendered and Raw. Client-only; no kernel change.
+    with a non-collapsed selection whose anchor and focus both lie inside the clicked mark does nothing
+    (`dragClick`): no card, no scroll, no focus change; the float stands and the composer opens on the selection as
+    for any passage. A plain click or a tap on a change's text or on a comment highlight collapses a standing
+    selection at the press, so it opens the card as before; a selection elsewhere (another paragraph, the aside,
+    another pane) changes nothing; a click with no pointer behind it (`detail` 0: the keyboard's activation of the
+    focused mark) opens the card whatever selection stands. The guard reads the clicked mark rather than the whole body
+    since the slice's review (2026-09-09, with a real mouse in Chromium and Firefox, Rendered and Raw). As first
+    built it read any selection with both ends in the body as a drag's, on the premise that a press collapses a
+    standing selection, which holds only for a press on text the press can select: a press on a deletion's struck
+    label (generated text under `user-select: none`), on a region rectangle (the figure overlay cancels its
+    `pointerdown`, and with it the mousedown that would have collapsed one), on a mark inside an author's link (a
+    draggable anchor) or on a framed picture collapses nothing, so with words selected in another paragraph a click
+    on any of them opened nothing until the selection was dropped. Read against the mark, the guard yields only to
+    the drag's own selection: a drag that ends on the mark it began in puts both ends inside it, a drag that leaves
+    the mark fires its click on the common ancestor and never on the mark, a selection standing elsewhere or spanning
+    the mark from outside has no end inside it, and no selection end can lie inside a deletion's point or a rectangle,
+    so those clicks open the card whatever stands selected. An engine may report a drag's end at the mark's edge as a
+    point in the mark's parent or in the neighbouring text rather than in the mark; `endInside` takes both as the
+    mark's. The click stood down shows nothing: the press pulse the delegate put on the mark before the handler ran
+    comes off in the same task (`actions.ts`). With the panel closed the marks are painted too, and a drag inside one
+    behaves as a drag over any passage does then: no panel opens and no card, since the Comment float is the open
+    panel's; a plain click on the mark opens both. The comment saved is an ordinary passage comment, its own card and
+    highlight, no `suggestionId`. `file-comments-markclick.test.ts` and `file-comments-markclick-controls.test.ts`
+    drive the guard over the stand-in; `file-comments-markclick-browser.test.ts` and
+    `file-comments-markclick-controls-browser.test.ts` drag a real mouse in Chromium and Firefox, Rendered and Raw:
+    inside an insertion's mark, and, with words selected in another paragraph, on a deletion's label, the marks inside
+    a link, a region rectangle and a framed figure. Client-only; no kernel change.
 
 ## Open questions for the user
 

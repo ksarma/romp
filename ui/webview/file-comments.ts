@@ -421,6 +421,21 @@ function unframeImage(img: HTMLElement, marks: string[]): void {
   img.style.outline = ""; img.style.outlineOffset = "";
   delete img.dataset.act; delete img.dataset.id;
 }
+/** Whether a selection end (`node`, `offset`) lies inside the mark `x`, or at one of its edges (Panel.dragClick). A drag
+ *  that ends at the mark's boundary may be reported by the engine not as a point inside the mark but as one in the mark's
+ *  parent, at the mark's index (its start) or the next (its end), or at the end of the text node before the mark or the
+ *  start of the one after it: the same caret, another node. Any other node is outside the mark. */
+function endInside(x: Element, node: Node, offset: number): boolean {
+  if (x.contains(node)) return true;
+  const p = x.parentNode;
+  if (!p) return false;
+  if (node === p) { const i = Array.prototype.indexOf.call(p.childNodes, x); return offset === i || offset === i + 1; }
+  if (node.nodeType === 3) {
+    if (node === x.previousSibling) return offset === (node as Text).length;
+    if (node === x.nextSibling) return offset === 0;
+  }
+  return false;
+}
 
 function el(tag: string, cls?: string, text?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -1407,23 +1422,37 @@ class Panel {
   }
   /** Remember an element this panel painted into the body — for owns, and for the document's listeners (panelMark). */
   private mark(x: Element): void { this.marks.add(x); PANEL_MARKS.add(x); }
-  /** Whether a click on a body mark is the end of a drag that selected text in the body, and not a tap. A drag begun and
-   *  ended inside one mark fires a click on the mark, the common ancestor of the press and the release, and the mark is a
-   *  control (fcchange, fcopen): the click opened the card, showCard's centerOn scrolled the mark to the body's centre, and
-   *  that scroll hid the Comment float the same mouseup had just offered beside the selection (hideFloatOnScroll), so a
+  /** Whether a click on a body mark is the end of a drag that selected text inside THAT mark, and not a tap. A drag begun
+   *  and ended inside one mark fires a click on the mark, the common ancestor of the press and the release, and the mark is
+   *  a control (fcchange, fcopen): the click opened the card, showCard's centerOn scrolled the mark to the body's centre,
+   *  and that scroll hid the Comment float the same mouseup had just offered beside the selection (hideFloatOnScroll), so a
    *  comment inside a tracked change could be left only by replying to the change (the user, 2026-09-09, who wanted one
-   *  on the change's own words). The event is the click's own state: a click arriving with a non-collapsed selection whose
-   *  anchor and focus both lie in the body is a drag's, and the handler does nothing — the float stands, and the composer
-   *  opens on the selection as for any passage. A plain click or a tap collapses the selection at the press, so it opens
-   *  the card as before; a selection elsewhere (the aside, another pane) is not the body's and changes nothing. A click
-   *  with no pointer behind it, `detail` 0 — Enter or Space through the row's keydown (x.click()), assistive technology —
-   *  is never a drag's, whatever selection stands, so the keyboard opens the card unaffected. */
+   *  on the change's own words). The event is the click's own state, read against the control the click landed on (the
+   *  target's nearest data-act: the element the delegate routed here, resolved the same way): a click arriving with a
+   *  non-collapsed selection whose anchor and focus both lie inside that mark is a drag's, and the handler does nothing —
+   *  the float stands, and the composer opens on the selection as for any passage. The mark, not the body: a press
+   *  collapses a standing selection only through text the press can select, so a selection left standing elsewhere in
+   *  the body (a passage read, copied, or offered a comment and left) survives a press on a deletion's struck label
+   *  (user-select: none), on a region's rectangle (the overlay cancels its pointerdown), on a mark inside an author's
+   *  link (draggable) or on a framed picture, and a guard that read any body selection as the drag's left every such
+   *  control dead until the reader clicked plain text (the 2026-09-09 review of this fix). A drag that leaves the mark
+   *  fires its click on the common ancestor, never on the mark, and no selection end can lie inside a point mark or a
+   *  rectangle, so those clicks open the card whatever stands selected. An engine may report a drag's end at the mark's
+   *  edge as a point in the mark's parent, or in the neighbouring text, rather than in the mark (endInside takes both as
+   *  the mark's). A click with no pointer behind it, `detail` 0 — Enter or Space through the row's keydown (x.click()),
+   *  assistive technology, the overlay's hand-on — is never a drag's, whatever selection stands, so the keyboard opens
+   *  the card unaffected. The click stood down acts on nothing and shows nothing: the press pulse the delegate put on the
+   *  mark before the handler ran (actions.ts flash) comes off in the same task, before a frame paints it, as the tab
+   *  list's once() takes it off a swallowed repeat (render.ts). */
   private dragClick(ev: Event): boolean {
     if ((ev as MouseEvent).detail === 0) return false;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.anchorNode || !sel.focusNode) return false;
-    const body = this.ctx.body();
-    return body.contains(sel.anchorNode) && body.contains(sel.focusNode);
+    const at = ev.target as Element | null;
+    const x = at && typeof at.closest === "function" ? at.closest("[data-act]") : null;
+    if (!x || !endInside(x, sel.anchorNode, sel.anchorOffset) || !endInside(x, sel.focusNode, sel.focusOffset)) return false;
+    x.classList.remove("romp-acted");
+    return true;
   }
   /** The handlers, each routed only for an element the panel owns. The delegate helper has already flashed
    *  the element by then (a cosmetic pulse); nothing else happens for the file's markup. */
