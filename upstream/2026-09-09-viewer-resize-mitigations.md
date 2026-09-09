@@ -1,9 +1,9 @@
 ---
 title: The file viewer under a big reviewed note: a mark is painted from the blocks its range touches, a reflow re-places the Comments panel cards instead of running its paint pass, the pane divider drag moves a ghost line and resizes the panes once at release, and the pane-wide table width property is non-inherited and written on the tables
 status: candidate
-where: fork branch perf-viewer-resize (ui/webview/anchor-map.ts (wrapBetween: the blocks between the two holders, not a walk of the whole document), ui/webview/file-view.ts (fireRendered carries a why of reflow or paint; stampBodyWidth writes --fv-body-w on each top-level table), ui/webview/file-comments.ts (the onRendered hook answers a reflow with scheduleLayout), ui/webview/styles.css and ui/webview/feed.css (@property --fv-body-w, inherits: false), kernel/kernel.py (_LANDING_JS: the vertical gutter drags #gv-ghost and writes the two grows at mouseup); tests: anchor-map.test.ts, file-view-reflow-browser.test.ts, file-view-body-width-browser.test.ts, shell-gutter-drag-browser.test.ts over ui/webview/shell-drag-leg.ts, file-view-text-size.test.ts, tests/test_kernel_pane_rail.py; the bench under tools/viewer-resize-* is fork infrastructure)
+where: fork PR #420, branch viewer-freeze-fixes, cut from the working branch perf-viewer-resize (ui/webview/anchor-map.ts (wrapBetween: the blocks between the two holders, not a walk of the whole document), ui/webview/file-view.ts (fireRendered carries a why of reflow or paint; stampBodyWidth writes --fv-body-w on each top-level table), ui/webview/file-comments.ts (the onRendered hook answers a reflow with scheduleLayout), ui/webview/styles.css and ui/webview/feed.css (@property --fv-body-w, inherits: false), kernel/kernel.py (_LANDING_JS: the vertical gutter drags #gv-ghost and writes the two grows at mouseup); tests: anchor-map.test.ts, file-view-reflow-browser.test.ts, file-view-body-width-browser.test.ts, shell-gutter-drag-browser.test.ts over ui/webview/shell-drag-leg.ts, file-view-text-size.test.ts, tests/test_kernel_pane_rail.py; the bench under tools/viewer-resize-* is fork infrastructure, fork PR #421 stacked on #420)
 added: 2026-09-09
-pr:
+pr: 420
 tier: fix
 offered:
 closed:
