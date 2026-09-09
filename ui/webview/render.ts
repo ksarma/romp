@@ -5566,7 +5566,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   // THE COUNT, and THE NON-FOLDING DOOR (rounds 1 and 2 of the tabhide review, 2026-09-08). On EVERY OPEN header
   // the count is a real button with its own words (sectionDoorTitle: they lead with the count's visible text),
   // the way to the section's snapshot that leaves the fold as it is (show-group on the #tabs delegate), the door
-  // a keyboard reaches; over members hidden inside the section it reads "K hidden" (headWords), and the pip and
+  // a keyboard reaches; over members hidden inside the section it reads "S+K" (headWords: strip tabs + hidden), and the pip and
   // the ⚑ flag below act the same. Before round 1, the pane was reachable from an open group only through the
   // header's click, which folds the group over its reader, and the flag on an open header opened a group that
   // was already open; after it the door existed only once something was hidden, so the FIRST hide of a group
@@ -5596,7 +5596,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     n.draggable = true;
     n.addEventListener("dragstart", (e) => { e.preventDefault(); e.stopPropagation(); });
   }
-  n.textContent = words.count;   // folded: the hidden members (a pinned one shows itself; all pinned: the total); open: the total, or "K hidden" over hidden members (headWords)
+  n.textContent = words.count;   // folded: the hidden members (a pinned one shows itself; all pinned: the total); open: the total, or the compact "S+K" over hidden members (headWords)
   head.appendChild(n);
   // THE MEMBER-DERIVED MARKS ride the header whenever it stands in for a member with no tab on the strip:
   // folded, the unpinned members; open, the members hidden inside the section (the user 2026-09-08). An open
