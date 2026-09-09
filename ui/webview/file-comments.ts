@@ -1064,7 +1064,7 @@ class Panel {
   cardSizer: ResizeObserver | null = null;    // the cards of the current render: one growing (a crop, a box inside it) pushes the cards below
   expandIntent: { key: string; wasOpen: boolean } | null = null;   // a card head clicked, as seen before the delegate toggles it (installLayout → afterRender)
   // the focus (the focus follow-on, 2026-09-08): the card the person last acted on — a mark clicked, a card opened by its
-  // head, a reference followed, a Show more, a save — which the pass anchors the layout on (card-layout.ts): level with its
+  // head, a reference followed, a Show more, a save, a Reveal — which the pass anchors the layout on (card-layout.ts): level with its
   // mark whatever stands above it, the cards above moved up by the least that clears it. Before it, a tall change card above
   // a comment pushed the comment's card a viewport below its highlight, and the click on the highlight scrolled the
   // highlight to the body's top edge with the card still out of sight. Cleared when the list no longer holds the card
@@ -2999,13 +2999,15 @@ class Panel {
   }
   /** Reveal: switch to Raw and scroll to the passage — a comment's located range, or a change's start — for
    *  a comment or change the view does not show (a Rendered deletion the map refused, any change with Show changes
-   *  inline off), so the compact card never dead-ends. Where Raw shows no mark of ours for the subject either, the row
-   *  the scroll centred is cued (landOn), so the landing is not a guess among identical rows. */
+   *  inline off), so the compact card never dead-ends. In the margin layout the card is made the focus first
+   *  (revealInRaw), so the switch's own pass lays it level with its Raw mark before the scroll centers the row. Where Raw
+   *  shows no mark of ours for the subject either, the row the scroll centred is cued (landOn), so the landing is not a
+   *  guess among identical rows. */
   reveal(key: string): void {
     if (key.startsWith("chg:")) {
       const c = this.changeView().cards.find((x) => x.key === key);
       if (!c || c.detached) return;                    // a detached change's offset points into a text that has moved on
-      this.ctx.setMode("raw");
+      this.revealInRaw(key);
       this.ctx.scrollToOffset(c.curFrom);
       this.landOn(c.curFrom, "fcchange", c.id);
       return;
@@ -3019,9 +3021,25 @@ class Panel {
     }
     const loc = this.located.get(key);
     if (!loc || !loc.range) return;
-    this.ctx.setMode("raw");
+    this.revealInRaw(key);
     this.ctx.scrollToOffset(loc.range.start);
     this.landOn(loc.range.start, "fcopen", key);
+  }
+  /** A Reveal's switch to Raw, with the card made the focus FIRST when the margin layout is up (the merge audit,
+   *  2026-09-09). setMode re-renders the body synchronously and its onRendered pass lays the margin (paintAll, render,
+   *  placeCards), so a focus written before the call has that pass lay the revealed card level with its Raw mark, and
+   *  scrollToOffset then centers a row whose card is already beside it. Before, reveal() set no focus: the pass laid the
+   *  margin on the focus it had — the tall change card the person had unfolded — and the card whose Reveal was clicked
+   *  was pushed under it, wholly outside the track's box while its passage sat mid-body; goTo and scrollCard make their
+   *  card the focus before they scroll, and Reveal did not. focusOn before the switch would not do: a card Reveal is
+   *  offered for is loose in the view where it is offered (no mark to be laid level with), and the pass spends a loose
+   *  focus (placeCards: laidOn). A switch that paints nothing (a file with no Rendered view is Raw already; the seam's
+   *  setMode returns) ran no pass, so one runs here where the last pass did not lay the cards on this card; where it did,
+   *  nothing runs twice. With Show changes inline off Raw paints no mark either, and the pass falls to the focus it had. */
+  private revealInRaw(key: string): void {
+    if (this.margin) this.focusCard = key;            // the focus: the switch's pass lays the card level with its Raw mark (card-layout.ts)
+    this.ctx.setMode("raw");
+    if (this.margin && this.laidOn !== key) this.placeCards(false);
   }
   /** The landing cue, after a Reveal's switch and scroll (the note above LANDING_BG): the Raw row holding `offset` —
    *  the SAME row the viewer's scrollToOffset centred, by the same count of line ends before the offset, clamped to the
