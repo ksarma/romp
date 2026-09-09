@@ -127,9 +127,11 @@ const G = { itemId: "11111111-2222-3333-4444-555555555555:g1", title: "t" };
 const J = (v: unknown) => JSON.parse(JSON.stringify(v));   // drops undefined-valued keys, so shapes compare by content
 
 test("isSlashCommand mirrors the kernel's shape test: a slash, a name, then whitespace or the end, at the head of the trimmed text", () => {
-  for (const t of ["/clear", "/clear ", " /compact", "/model opus", "/fast on", "/effort high\nmore lines", "/mcp:x", "/9lives", "/re-run now", "/clear\nfile.png"])
+  // "/r\u00e9sum\u00e9" and "/caf\u00e9 now": the name's tail is Unicode, as the kernel's \w is; "/\u00e9" is not: the first
+  // character is ASCII on both sides
+  for (const t of ["/clear", "/clear ", " /compact", "/model opus", "/fast on", "/effort high\nmore lines", "/mcp:x", "/9lives", "/re-run now", "/clear\nfile.png", "/r\u00e9sum\u00e9", "/caf\u00e9 now", "/a\u0663"])
     assert.ok(isSlashCommand(t), JSON.stringify(t));
-  for (const t of ["", "a /clear", "/", "/ clear", "//", "/Users/x", "/a/b", "/-x", "/clear,now", "not a command", "see /clear"])
+  for (const t of ["", "a /clear", "/", "/ clear", "//", "/Users/x", "/a/b", "/-x", "/clear,now", "not a command", "see /clear", "/\u00e9", "/\u00e9 x"])
     assert.ok(!isSlashCommand(t), JSON.stringify(t));
 });
 

@@ -56,8 +56,10 @@ const isGoalCite = (c: unknown): boolean =>
 
 /** The kernel's own shape test for a slash command, mirrored (kernel _SLASH_CMD_RE: a slash, a name, then
  *  whitespace or the end, at the head of the trimmed text). Shape-matched, not checked against a command
- *  list, as there: the CLI owns what executes, this only decides that the text must reach it alone. */
-const SLASH_COMMAND_RE = /^\/[A-Za-z0-9][\w:-]*(\s|$)/;
+ *  list, as there: the CLI owns what executes, this only decides that the text must reach it alone. The
+ *  name's tail is Unicode letters and digits, underscore, colon and hyphen: Python's \w is Unicode where
+ *  JavaScript's is ASCII, and a user-defined command may carry an accented letter (review round 2). */
+const SLASH_COMMAND_RE = /^\/[A-Za-z0-9][\p{L}\p{N}_:-]*(\s|$)/u;
 export function isSlashCommand(text: string): boolean { return SLASH_COMMAND_RE.test((text || "").trim()); }
 
 /** The messages a release posts, in order (render.ts routes each through routeUserMessage). The rule is
