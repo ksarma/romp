@@ -63,12 +63,15 @@ MODELS = [{"value": "gpt-5-test", "label": "GPT-5 Test"}]
 
 def _revive_patched(focused, failed):
     """_revive_session_inner's neighbours, stubbed: no SDK backend, a ready Codex client, a known name and
-    cwd, no command pre-warm, no pusher; the asker's focus and any reviveFailed land in the two lists."""
+    cwd, no command pre-warm, no pusher; the asker's focus lands in `focused`, and every view send in
+    `failed` as (app, wid, message). A failed revive sends one reviveFailed to the asking dashboard's chat
+    AND feed (the feed's parked card latched Revive on the click and re-arms on the reply for its own sid;
+    the browser-frames review, 2026-09-08), so the app is part of what a test pins."""
     return mock.patch.multiple(km, _sdk=lambda: None, _codex_ready=lambda: True, _name_of=lambda sid: "web",
                                _cwd_of=lambda sid: "/TESTDIR", _commands_for_cwd=lambda cwd: None,
                                _push_soon=lambda: None,
                                _reveal_chat_for=lambda client, msg: focused.append(msg),
-                               _send_to_view=lambda app, msg, wid: failed.append(msg))
+                               _send_to_view=lambda app, msg, wid: failed.append((app, wid, msg)))
 
 
 class FakeCodex:
@@ -545,11 +548,15 @@ class GateFlipFrame(unittest.TestCase):
              mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"):
             km._revive_session_inner(g, {"wid": "w-chat"})
         live = be.live_sessions()
-        self.assertEqual(([m["type"] for m in failed], focused, be._session(g).dead,
+        # the one notice reaches the asker's chat AND feed, the shape tests/test_kernel_revive.py pins for the
+        # SDK arm (the pin follows the resolved kernel, which sends both since the browser-frames review)
+        self.assertEqual(([(a, w, m["type"]) for a, w, m in failed], focused, be._session(g).dead,
                           [r["name"] for r in live.values()], [t for t, _ in inner], be.gate_closings()),
-                         (["reviveFailed"], [], True, ["api"], [True], 1),
-                         "the revive failed and rolled its flip back; door A ran on the flipped row and is live; "
-                         "the rollback found A live, so no closing was counted")
+                         ([("chat", "w-chat", "reviveFailed"), ("feed", "w-chat", "reviveFailed")], [], True,
+                          ["api"], [True], 1),
+                         "the revive failed, told the asker's chat and feed, and rolled its flip back; door A ran "
+                         "on the flipped row and is live; the rollback found A live, so no closing was counted")
+        self.assertEqual(failed[0][2], failed[1][2], "one notice, the same words, to both panes")
         frames = self._frames()
         self.assertEqual(sorted(a for a, _ in frames), ["chat", "feed", "timeline"],
                          "the real backend's rollback: the aborting revive still announces the gate it saw closed")
