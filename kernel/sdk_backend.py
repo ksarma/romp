@@ -5045,7 +5045,9 @@ class SdkSession:
         # again is nothing to apply, so set_effort and set_auth request no reconnect for it, and a pick
         # equal to a pending one is already applying. A session that has not launched has no shape yet and
         # takes every pick, since its first connect reads the reg.
-        self._launching = None        # {"effort", "mode", "auth"}: the shape _options composed for the connect in progress
+        self._launching = None        # {"effort", "mode", "auth"}: the shape _options composed for the connect in
+        #   progress; None again once _connect_landed stamps it (the spawn window ENDS at the landing, so the
+        #   already-applying guards read a cleared value after it; review round 3)
         self._launched_effort = None  # effort_launch_shape(sess.effort) of the running process
         self._launched_mode = None    # the permission mode the running process RUNS: its launch mode, or the last
         #   live switch the CLI confirmed (_do_set_mode). snapshot reports it while a bypass pick is held (the
@@ -5714,6 +5716,7 @@ class SdkSession:
         the spawn takes about 1.5 s, and a repeat pick of the pending value inside that window used to
         read as unchanged against the early stamp and clear the pending flag, so this landing never
         wrote the applied record; against the running process's stamp it reads as already applying.
+        The landing also clears _launching: the spawn window the guards compare against is over.
 
         Then the pending switches this connect carried are APPLIED. A pending /effort switch, when it IS
         the shape that launched (a pick made during the spawn stays pending for the reconnect its own
@@ -5736,6 +5739,12 @@ class SdkSession:
             self._launched_effort = launching.get("effort")
             self._launched_mode = launching.get("mode")
             self._launched_auth = launching.get("auth")
+        # the spawn window ENDS here (review round 3, 2026-09-09): _launching described the connect in
+        # progress, and it is the running process now. Left standing, the already-applying guards in
+        # set_effort, set_auth and set_mode kept reading it as a connect still in progress: a process
+        # launched in bypass, live-switched out of it and re-picked into bypass logged "already applying"
+        # and never reconnected, and every consult then rang the contract problem
+        self._launching = None
         if self._effort_pending:
             if self._launched_effort is None or effort_launch_shape(self._effort_pending) == self._launched_effort:
                 append_effort_applied(self.backend.state_dir, self.sid, self._effort_pending)

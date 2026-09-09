@@ -6285,6 +6285,47 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(s.snapshot()["mode"], "plan")
         self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["mode"])
 
+    def test_j4_a_bypass_re_pick_after_a_live_switch_out_of_bypass_reconnects(self):
+        # _launching was set by _options and never cleared, so after the landing the already-applying guard
+        # still read it as a connect in progress: a process launched in bypass, live-switched to default and
+        # re-picked into bypass logged "already applying, no new request" and never reconnected, and with
+        # both reconnect flags False every consult rang the red contract problem (review round 3). The spawn
+        # window ends at _connect_landed, which clears _launching; the guard still refuses a repeat pick
+        # DURING the spawn, before the landing
+        class _OK:
+            async def set_permission_mode(self_, m): pass
+        s = self._sess(mode="bypassPermissions")
+        s.perm_mode = "bypassPermissions"
+        s.client = _OK()
+        s.set_mode_live = lambda mode, prev="default": asyncio.run(s._do_set_mode(mode, prev))
+        s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "bypassPermissions", "auth": "login"}
+        s._connect_landed()
+        self.assertEqual(s._launched_mode, "bypassPermissions")
+        self.assertIsNone(s._launching, "the landing ends the spawn window")
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        self.assertTrue(s.backend.set_mode(self.SID, "default"))
+        self.assertEqual(s._launched_mode, "default", "the CLI confirmed the live switch: the process runs default")
+        self.assertEqual(asked, [], "a live switch out of bypass needs no reconnect")
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        self.assertEqual(asked, [1], "the re-pick into bypass reconnects: nothing is applying")
+        self.assertTrue(any("mode (web): set to bypassPermissions; reconnecting to apply" in str(m) for m in self.logs), self.logs)
+        self.assertFalse(any("already applying" in str(m) for m in self.logs), self.logs)
+        # during the spawn (before the landing) the guard still refuses the repeat pick
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        live = []
+        s.set_mode_live = lambda mode, prev="default": live.append((mode, prev))
+        s._reset_reconnect_state()
+        s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "bypassPermissions", "auth": "login"}
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        s.perm_mode = "bypassPermissions"; s.mode = "bypassPermissions"   # the declared pick, riding the connect
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        self.assertEqual(asked, [], "the connect in progress launches bypass: already applying")
+        self.assertEqual(live, [])
+        self.assertTrue(any("already applying, no new request" in str(m) for m in self.logs), self.logs)
+
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
         # RUNS: the effort it launched with, the mode it runs, the fast state the init reported, the CLI's
@@ -6492,7 +6533,7 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertTrue(c1.torn_down, "the old client was abandoned")
         self.assertEqual(c2.options.effort, "low", "the new client launched the pick")
         self.assertEqual(s._launched_effort, ("low", False), "stamped where the connect lands")
-        self.assertEqual(s._launching["effort"], ("low", False))
+        self.assertIsNone(s._launching, "the spawn window ended at the landing (review round 3)")
         self.assertFalse(sb.read_reg(self.be.state_dir, self.SID).get("effortPending"))
         self.assertEqual(self._applied(), ["low"], "the applied record, once, at the landing")
         self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
