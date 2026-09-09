@@ -47,7 +47,9 @@ test("degenerate inputs stay sane", () => {
 test("a `br` box opens a row even when it would have fit — the line-per-group strip's headers (T264)", () => {
   // T264 (the user 2026-09-08): every tag group starts on its own line, so the real strip breaks
   // before each header whatever the remaining width; the simulation must wrap at the same places or
-  // the pointer's slot would read against rows the strip does not have
+  // the pointer's slot would read against rows the strip does not have. On the fork the strip does
+  // this only under the stripGroupRows setting (the user 2026-09-08, whose strip of eleven tag groups
+  // became eleven rows); the geometry is the same whenever a `br` box is present
   const boxes = [{ id: "a", w: 50 }, { id: "b", w: 50 }, { id: "\0head:api", w: 40, br: true }, { id: "c", w: 50 }];
   // row 0: a, b (100 of 400 used — b's row had room for the header, but the header opens row 1)
   assert.equal(dragSlotIndex(boxes, 400, 0, 20, 10, 5), 0, "row 0, left of a");
