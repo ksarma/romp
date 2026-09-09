@@ -73,8 +73,7 @@ class Base(unittest.TestCase):
     def tearDown(self):
         jd.set_pending_cut_provider(None)
         jd.end_pass_frame(True)
-        jd._PARSE_CACHE.clear()
-        jd._CHAIN_MEMO.clear()
+        jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         jd._rebind_state(self._saved_state)
 
     def write(self, recs):
@@ -531,8 +530,8 @@ class WriteMomentStandDown(Base):
 
 
 class ChainMemo(Base):
-    """The write-moment chain memo (perf plan B1, 2026-09-06): _rewound_away answers an unchanged
-    session without a second FileAdapter, and every input the adapter reads busts the memo — a
+    """The write-moment chain memo: _rewound_away answers an unchanged session without a second
+    FileAdapter, and every input the adapter reads busts the memo — a
     transcript append, a states resumeFork row (by the states file's own stat, and by the lineage
     closure it grows), a from-file leaving that closure, the pending cut — and the key is taken
     before the build reads, so a write that lands mid-build is never sealed under it. A build that
@@ -778,6 +777,90 @@ class ChainMemo(Base):
         self.assertIn(SID, jd._CHAIN_MEMO)
         jd._rebind_state(self.td / "state")
         self.assertEqual(jd._CHAIN_MEMO, {})
+
+    def test_a_from_file_rewritten_in_place_invalidates_by_its_own_stat(self):
+        # the lineage from-files are frozen after their fork in practice, but the key stats them anyway:
+        # a from-file that grows in place moves no candidate stat, no states stat and no closure
+        # membership, so only its own (mtime, size) in the key can bust the memo
+        frm = "22222222-3333-4444-5555-666666666666"
+        fpath = self.td / (frm + ".jsonl")
+        fpath.write_text("\n".join(json.dumps(r) for r in self.base_recs()) + "\n")
+        self.write([uline(T0 + 100, "continues after the machine cut", "u5", None),
+                    aline(T0 + 110, "Stitched reply.", "a5", "u5")])
+        jd.STATESDIR.mkdir(parents=True, exist_ok=True)
+        (jd.STATESDIR / (SID + ".jsonl")).write_text(
+            json.dumps({"resumeFork": {"from": frm, "to": SID}, "t": T0 + 90}) + "\n")
+        self.assertFalse(jd._rewound_away(SID, str(self.path), "u2"), "the stitch hangs u5 under a2: u2 is kept")
+        self.assertEqual(len(self.built), 1)
+        with open(fpath, "a") as f:
+            for r in self.fork_recs():                            # the from-file's tip is now a3: u2 rewound
+                f.write(json.dumps(r) + "\n")
+        self.assertEqual(jd._rewound_away(SID, str(self.path), "u2"), "durable")
+        self.assertEqual(len(self.built), 2, "the from-file's stat alone busted the memo")
+
+    def test_two_threads_that_miss_together_both_build_outside_the_lock(self):
+        # the build runs outside _CHAIN_LOCK, which serializes the dict operations only: two callers
+        # that miss together both build (the loser's populate is one wasted adapter walk, never the
+        # judge pools stalled behind one builder holding the lock)
+        import threading
+        self.write(self.base_recs() + self.fork_recs())
+        before = jd.chain_memo_stats()
+        orig, broken, out = em.chain_membership, [], []
+        barrier = threading.Barrier(2, timeout=10)              # the event: both builders inside the build at
+        #                                                         once; the timeout only bounds the failure
+
+        def meeting(*a, **k):
+            try:
+                barrier.wait()
+            except threading.BrokenBarrierError:
+                broken.append(1)
+            return orig(*a, **k)
+        em.chain_membership = meeting
+        try:
+            ts = [threading.Thread(target=lambda: out.append(jd._rewound_away(SID, str(self.path), "u2")))
+                  for _ in range(2)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        finally:
+            em.chain_membership = orig
+        self.assertEqual(broken, [], "both builders were inside the build at once: neither held the lock there")
+        self.assertEqual(out, ["durable", "durable"])
+        self.assertEqual(len(self.built), 2)
+        self.assertEqual(jd.chain_memo_stats()["populate"] - before["populate"], 2)
+        self.assertEqual(jd._rewound_away(SID, str(self.path), "u2"), "durable")
+        self.assertEqual(len(self.built), 2, "the third call is a hit")
+
+    def test_a_same_identity_rewrite_is_served_stale_until_the_memo_is_cleared(self):
+        # WHY every test site that clears _PARSE_CACHE clears _CHAIN_MEMO beside it: both key on the
+        # transcript's (mtime, size), so a fixture rewritten in place to the same byte count inside one
+        # clock tick keeps its key, and a memo an earlier test populated serves the OLD verdict for the
+        # new bytes without reading the file. Deterministic here: the mtime is pinned back with
+        # os.utime, never left to the clock. em's records cache keys on the same identity and is
+        # cleared beside the two, so the rebuild reads the new bytes and the chain memo's own
+        # contribution is what the test isolates.
+        recs = self.base_recs() + self.fork_recs()
+        self.write(recs)
+        want = self.path.stat().st_size
+        st = os.stat(self.path)
+        self.assertEqual(jd._rewound_away(SID, str(self.path), "u2"), "durable")
+        self.assertEqual(len(self.built), 1)
+        # the same byte count with u2 LIVE: the fork rows go, a padded row under a2 makes up the length
+        pad = want - len(("\n".join(json.dumps(r) for r in self.base_recs() + [uline(T0 + 60, "", "u9", "a2")]) + "\n").encode())
+        self.assertGreaterEqual(pad, 0, "the filler row fits inside the original byte count")
+        live = self.base_recs() + [uline(T0 + 60, "x" * pad, "u9", "a2")]
+        self.write(live)
+        os.utime(self.path, ns=(st.st_atime_ns, st.st_mtime_ns))
+        now = os.stat(self.path)
+        self.assertEqual((now.st_mtime_ns, now.st_size), (st.st_mtime_ns, st.st_size), "precondition: same identity")
+        self.assertEqual(jd._rewound_away(SID, str(self.path), "u2"), "durable",
+                         "the hazard: the memo serves the pre-rewrite verdict for bytes under which u2 is live")
+        self.assertEqual(len(self.built), 1, "...without a build, so nothing read the new bytes")
+        jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()          # the swept sites' form
+        em._JSONL_CACHE.clear()                                  # the records cache under the adapter, same key
+        self.assertFalse(jd._rewound_away(SID, str(self.path), "u2"), "cleared: rebuilt from the new bytes, u2 kept")
+        self.assertEqual(len(self.built), 2)
 
 
 class PlanSessionIntegration(Base):

@@ -570,7 +570,8 @@ class DiskMemo(unittest.TestCase):
         self.assertEqual(jd._disk_rev(self.SID), 7, "and the CAS still sees the file's revision")
 
     def test_a_stale_memo_identity_never_passes_the_cas(self):
-        """Found in review (2026-09-06). Three publishes of one store inside one mtime tick can leave the
+        """Found in review of an earlier draft that served the CAS from the memo (2026-09-06). Three publishes
+        of one store inside one mtime tick can leave the
         memo's identity on a file the memo does not describe: K publishes and seeds; B and C, holding older
         snapshots, both check and pass the CAS against K's file, rebase, and publish in turn; C's temp is
         created after B's rename freed K's inode and gets it back, at K's size, in K's tick. The memo still
@@ -692,6 +693,59 @@ class DiskMemo(unittest.TestCase):
         self.assertIsNone(jd._disk_entry(self.SID), "absent: a create")
         self.assertFalse(jd._matches_disk(self.SID, s))
         self.assertEqual(jd._disk_rev(self.SID), 0)
+
+    # ── housekeeping ─────────────────────────────────────────────────────────
+    def test_every_non_object_top_level_raises_value_error_from_the_save_readers(self):
+        """_disk_parse's last check: a top-level JSON value that is not an object (a list, a string, null, a
+        number) and bytes that are not UTF-8 all raise ValueError from both save-path readers, so the save
+        neither publishes over the file nor escapes with an AttributeError from `.get` on a list, and nothing
+        is remembered about the file."""
+        self._seed()
+        s = jd.load_goals(self.SID)
+        jd.save_goals(self.SID, s)                        # warm: the memo holds the healthy file
+        st = os.stat(self._file())
+        for i, shape in enumerate((b"[]", b'"a string"', b"null", b"42", b"\xff\xfe{"), start=1):
+            self._file().write_bytes(shape)
+            os.utime(self._file(), ns=(st.st_atime_ns, st.st_mtime_ns + i * 1_000_000_000))   # a moved key: the read runs
+            with self.assertRaises(ValueError, msg=repr(shape)):
+                jd._matches_disk(self.SID, s)
+            self.assertNotIn(str(self._file()), jd._DISK_CONTENT, "%r: not a store, nothing to remember" % shape)
+            with self.assertRaises(ValueError, msg=repr(shape)):
+                jd._disk_rev(self.SID)
+            self.assertEqual(self._file().read_bytes(), shape, "neither reader touched the file")
+
+    def test_an_unserializable_store_is_not_swallowed_by_the_no_op_check(self):
+        """_own_hash answers None for a store json.dumps cannot serialize; the no-op check then answers False
+        and save_goals raises from its own json.dumps with the file untouched: a publish the check merely
+        failed to understand is never skipped as a no-op."""
+        self._seed()
+        s = jd.load_goals(self.SID)
+        jd.save_goals(self.SID, s)                        # a warm no-op
+        before = self._file().read_bytes()
+        s["nodes"][next(iter(s["nodes"]))]["summary"] = {1, 2}     # a set: not JSON
+        with self.assertRaises(TypeError):
+            jd.save_goals(self.SID, s)
+        self.assertEqual(self._file().read_bytes(), before, "the publish raised on its own terms; the file is untouched")
+
+    def test_the_eviction_sweep_holds_the_memo_lock_while_it_iterates(self):
+        """_disk_memo_evict_absent iterates the memo under _DISK_CONTENT_LOCK, so a judge thread's _disk_seed
+        or _disk_entry landing mid-sweep cannot change the dict under the iteration. Probed from inside the
+        sweep's own os.path.exists calls: the lock is held at every probe. No threads, no clock."""
+        self._seed()
+        jd.save_goals(self.SID, jd.load_goals(self.SID))
+        self.assertIn(str(self._file()), jd._DISK_CONTENT)
+        probes, real_exists = [], os.path.exists
+
+        def probing(p):
+            got = jd._DISK_CONTENT_LOCK.acquire(blocking=False)
+            if got:
+                jd._DISK_CONTENT_LOCK.release()
+            probes.append(got)
+            return real_exists(p)
+        with mock.patch.object(os.path, "exists", probing):
+            jd._disk_memo_evict_absent()
+        self.assertGreaterEqual(len(probes), 1, "the sweep probed the entry's path")
+        self.assertEqual(set(probes), {False}, "the lock was held at every probe")
 
     # ── housekeeping ─────────────────────────────────────────────────────────
     def test_rebind_state_clears_the_memo(self):

@@ -542,11 +542,25 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-group-door { margin: 0; padding: 1px 3px; border: 0; border-radius: 3px; background: none; color: inherit; font: inherit; letter-spacing: inherit; line-height: 1; cursor: pointer; }
 .tab-group-door:hover { background: var(--accent-wash); opacity: 1; }
 .tab-group-door:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; opacity: 1; }
-/* the separator's 6px gutters are PADDING, not margin, and the 1px line is the content box: its box
-   is then the full 13px it occupies in the row, so the tab drag's virtual layout (which measures
-   getBoundingClientRect widths) wraps where the real strip wraps, and paintTabRowLines reads its
-   offsetTop as the row's. */
-.tab-group-sep { flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px; background: var(--box-border); background-clip: content-box; }
+/* THE UNTAGGED TRAIL'S DIVIDER in the inline layout (the fork's default; render.ts makeTrailSep): the
+   strip as it was before T264. Its 6px gutters are PADDING, not margin, and the 1px line is the content
+   box: its box is then the full 13px it occupies in the row, so the tab drag's virtual layout (which
+   measures getBoundingClientRect widths) wraps where the real strip wraps. Scoped off the row break
+   below, which wears .tab-group-sep too (the boundary sectionHeadOf reads) and must keep no box. */
+.tab-group-sep:not(.tab-group-break) { flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px; background: var(--box-border); background-clip: content-box; }
+/* ONE GROUP PER LINE (T264, the user 2026-09-08: the grouped strip read as one long concatenation).
+   ON THE FORK the breaks are emitted only under the gear's "One tag group per row in the tab strip"
+   setting (stripGroupRows, off by default: the user 2026-09-08, whose strip of eleven tag groups
+   became eleven rows; upstream's default is the per-row layout). This rule styles them when present.
+   A break is a zero-height flex item spanning the whole row, so the item after it — a group's header,
+   or the untagged trail's first tab — opens a new line: the chip sits at the left edge and its tabs
+   follow, wrapping onto further rows as they need. Zero height, so it adds no rhythm of its own
+   (the Yatharth seam is a column gap only); no pointer, so it can neither take a drop nor a hover.
+   Under the setting the untagged trail stands behind no visible divider: a line of its own, with
+   no chip, already says "in no tag" (the trail stays unlabeled by the user's ruling); the element
+   keeps the .tab-group-sep class as the boundary sectionHeadOf reads. The tab drag's virtual layout
+   (dragslot.ts) opens a row at the same places (`br`), so a drag wraps where the strip wraps. */
+.tab-group-break { flex: 0 0 100%; height: 0; margin: 0; padding: 0; pointer-events: none; }
 .tab-usertodo { flex: 0 0 auto; color: rgba(255, 255, 255, 0.75); font-size: 10px; line-height: 1; }
 /* Vertical context gauge right of the name (the user 2026-08-08): the statusline battery rotated
    upright — fills bottom-up with the context-used %, in the SAME global-colormap colour (fill set
@@ -784,6 +798,11 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    (overflow-y:auto alone makes overflow-x compute to auto, which allowed it) */
 /* overflow-y: scroll (not auto) so the chat scrollbar + its gutter are ALWAYS shown and never
    auto-hide on the side — and the content doesn't shift when it would appear (the user 2026-06-16). */
+/* The browser's scroll anchoring stays ON here (measured 2026-09-08, T262e): after a scroll that slides the
+   virtualization window, the pane's rewindow write keeps the focus unit still and Chrome's anchoring then absorbs
+   the LATER layout changes the pane does not compensate (spacer re-measures, late-sizing rows). With
+   overflow-anchor: none the visible line drifted 194-246 px after every such scroll on a headless run; with it on,
+   0 px on every row. Do not add overflow-anchor: none to #content. */
 #content { flex: 1 1 auto; overflow-y: scroll; overflow-x: hidden; padding: 8px 0 12px; }
 /* a clearly-visible always-on thumb for the chat pane (brighter than the faint global thumb) */
 #content::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.04); }
@@ -997,7 +1016,8 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    SAME box — a normal column puts the header first and the list below it, reading top-to-bottom, so
    everything stays within the one bordered rectangle. flex 0 0 auto HOLDS its content; capped at
    min(50vh, 340px) so it never crowds the composer, with the inner .bg-list scrolling. A top+side gap sets it
-   off from the transcript (the "little divider"). */
+   off from the transcript (the "little divider"). The open LIST itself shows about six rows and scrolls
+   beyond (the .bg-list cap below, 2026-09-08). */
 #bg-tasks { flex: 0 0 auto; min-height: 0; max-height: min(50vh, 340px); overflow: hidden;
   box-sizing: border-box; margin: 8px 10px 6px; border: 1px solid var(--box-border); border-radius: 8px;
   background: var(--box-bg); display: flex; flex-direction: column; }
@@ -1022,6 +1042,13 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 /* level 2: a flat list of task LINES (no boxes) BELOW the header, fills the box and scrolls when many */
 .bg-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   display: flex; flex-direction: column; padding: 4px 2px; }
+/* …but never more than about six rows (29px each: 12px text at the page's 1.6 line height plus 5px padding
+   top and bottom) before it scrolls (the user 2026-09-08, whose phone showed the open box over the transcript:
+   seven agents in flight fit under the box's 340px cap without scrolling, so the open list took half the screen
+   and left about three lines of chat). The header keeps the counts, so the fold stays glanceable. The cap
+   lifts while a row's details are open (:has), so a command's output tail is not read through two nested
+   scrolls; the box's own cap above still bounds it. */
+.bg-list:not(:has(.bg-task.open)) { max-height: 180px; }
 .bg-task { --bgt: var(--st-working-bg); }
 .bg-task.bg-failed { --bgt: var(--st-blocked-bg); }
 .bg-task.bg-completed { --bgt: var(--st-ready-bg); }
@@ -1756,14 +1783,30 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    the pane's — "2 days ago" is wider than the 47px gutter, and the old gutter-pinned box clipped
    the leading digit at the pane edge (the user 2026-08-18, with a screenshot). Smaller than the
    stamp on purpose — context, not the time itself. */
-/* the user-message scroll notches (render.ts paintScrollMarks, the user 2026-08-17): passive fixed
-   chrome over the scroller's right edge, one 2px tick per user message at its proportional position.
-   The blue is the OUTGOING-BUBBLE blue (#2b6cef, "yours"), deliberately not the romp accent. */
+/* the scroll notches (render.ts paintScrollMarks, the user 2026-08-17): the BOX is passive fixed chrome
+   over the scroller's right edge (it never intercepts the native scrollbar); each notch is a 2px tick at
+   its message's proportional position and, since T260, a LINK to that message (the [data-act] rules
+   below). Blue = the OUTGOING-BUBBLE blue (#2b6cef, "yours"), deliberately not the romp accent; gray
+   (.machine, further down) = machine-sent. */
 .scroll-marks { position: fixed; z-index: 3; pointer-events: none; width: 12px; }
 .scroll-marks .scroll-mark { position: absolute; right: 1px; width: 8px; height: 2px;
   border-radius: 1px; background: var(--you); opacity: 0.65;
   transition: top 180ms ease; }   /* history streaming in rescales the map — carried, not teleported */
 @media (prefers-reduced-motion: reduce) { .scroll-marks .scroll-mark { transition: none; } }
+/* a notch is a LINK to its message (T260, the user 2026-09-08): the box above stays pointer-events:none —
+   the native scrollbar under it keeps working wherever a notch is not — and only a notch that knows its
+   message (data-act) takes the pointer, with the link cursor. The painted mark stays 8×2; the HIT box is
+   the ::before, 12px wide and padded up to 2px above and below (a 6px target for a 2px line), each pad
+   CLAMPED per notch to half the gap to its neighbour (--hit-t / --hit-b, set by paintScrollMarks) so no
+   pad reaches a neighbour's paint: hover, tip and click always answer for the notch under the pointer.
+   The pads do sit over the scrollbar thumb's track: where notches are dense the thumb is grabbable only
+   in the gaps — the price of clickable notches ON the scrollbar, kept small on purpose; the wheel over a
+   notch still scrolls the transcript (the box forwards it). Hover: full opacity plus an accent ring
+   (the focus family's colour; never a status colour, never a size change). The machine notch's dimmer
+   opacity (its rule below) yields to :hover by specificity, so a gray notch lights up the same. */
+.scroll-marks .scroll-mark[data-act] { pointer-events: auto; cursor: pointer; }
+.scroll-marks .scroll-mark[data-act]::before { content: ""; position: absolute; left: -2px; right: -2px; top: calc(-1 * var(--hit-t, 2px)); bottom: calc(-1 * var(--hit-b, 2px)); }
+.scroll-marks .scroll-mark[data-act]:hover { opacity: 1; box-shadow: 0 0 0 1.5px var(--accent); }
 .rail-day {
   position: fixed; z-index: 3; pointer-events: none; white-space: nowrap; line-height: 1;
   font-size: 0.66em; letter-spacing: 0.03em; color: var(--dim); opacity: 0.85;

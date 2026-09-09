@@ -34,9 +34,18 @@ update` starts a session called "update".
 **Updates and update notices** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own at the next quiet moment, and
 *Off* stops both the checks and the banners, so a machine whose owner merges to `main` all day
-hears nothing about it and keeps running what it has until they restart Romp themselves. The
-reload prompt that reads "A newer romp build is available" is separate and stays on in every
-mode: it means the page you are looking at runs older code than the kernel, and a reload fixes it.
+hears nothing about it and keeps running what it has until they restart Romp themselves. Reloads
+are separate from that control and happen in every mode: a page the kernel serves reloads itself
+when the kernel serving it restarts or serves a newer build than the page runs, once any gesture
+in progress has ended and any file still shipping has settled, and the notification center's one
+line says which happened. The banner that reads "A newer romp build is available" appears only
+where the page cannot reload itself, such as a host that forbids it; the VS Code panes keep their
+own prompt, because their bundle comes from the installed extension. A chat page with an
+attachment still uploading first finishes the upload, then reloads. The message waiting on the
+upload is sent if that session's tab is the active one; otherwise it stays in that tab's composer
+with the file attached, and a notice says so. A notice still on screen when the page reloads,
+that one or a failed save's, is shown again on the fresh page. If the upload has not finished
+within a minute, the page reloads anyway and reports the lost attachment on the next load.
 
 **User todos.** A session can flag a decision or an input it needs from you and keep working
 meanwhile. Each open todo is listed under *Waiting on you* on the card at the bottom of that
@@ -160,9 +169,15 @@ op uses; a store that cannot be read or written answers 200 with `ok:false` and
 the reason the dashboards see, and an unknown key or a wrong type is a 400
 naming it. The panel finds the kernel through the `serve-port` record the
 kernel writes beside `serve-token` in the state directory once its socket is
-bound; with no record, or nothing answering on it, the panel refuses the
-gesture and says the kernel is not running rather than writing a file the
-kernel cannot check.
+bound; with a record nothing answers on, the panel refuses the gesture and says
+the kernel is not running rather than writing a file the kernel cannot check.
+With no record at all (a kernel older than the panel wrote the token and no
+port) it tries the port the command line resolves, `ROMP_KERNEL_PORT`, then
+`ROMP_SERVE_PORT`, else `29855`, and its refusal says so when nothing answers
+there. Record or fallback, the panel first asks the port to prove itself: a
+`GET /healthz` with no token, on `127.0.0.1` only, must answer `200 ok` with
+the kernel's `X-Romp-Boot` identity before the token is sent, and a port that
+answers as anything else is refused by name and never sees the token.
 
 `--env` gives one session its own environment, so two sessions in the same
 directory can run with different toggles (a `FEATURE_FLAG=1`, a `CLAUDE_CODE_*`
@@ -370,6 +385,26 @@ romp mail remote                 # legacy singleton scheme only (ROMP_POSTAL_PEE
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
 | `add_user_todo(text, detail?, file?)` | The session flags something it needs from you and keeps working; offered only while the **User todos** switch is on. `text` is the one-line todo, `detail` optional longer context, `file` the absolute path of the file the todo is about (User todos, above) |
 | `withdraw_user_todo(id)` | Take back a todo by the id `add_user_todo` returned |
+
+### When a send is refused
+
+A send whose record cannot be written, or that cannot be placed in the
+recipient's inbox, is refused: the bus answers `503` with `ok: false` and the
+reason, nothing is delivered and nothing is recorded, and the sender still
+holds the text to retry. Two outcomes are not refusals, because the message is
+already in the recipient's hands: the recipient read it in the instant before
+its record failed, or the bus could not take it back out of the inbox. The
+send then answers the id, and the bus says on stderr and on the dashboard that
+the message log has no record of that message. A bus stopped between placing a
+message and recording it writes the missing record from the message's own
+headers at its next start. `check_sent` and `romp mail sent`
+show a message the bus had to give up on later (a cross-host record it could
+not write, a file it could not read, a write a restart found unfinished) as
+`bounced`, marked `refused` with the reason; a peer's refusal that did come
+back as a note still reads `undeliverable, returned to you`. A message file the bus cannot read, in a
+recipient's inbox or in the cross-host outbox, is moved aside once (see the
+state files below), its sender's receipt reads refused, and the dashboard's
+error center says so under the `refused` kind.
 
 ### Claude Code 2.1.224 or newer
 
@@ -1932,12 +1967,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
-- `goals`: `loads`, `loads_shared`, `saves`, `writes` on the goal stores.
-  `loads` counts `load_goals` calls and `loads_shared` the `load_goals_shared`
-  calls the shared read-only cache answered, a hit or a version parsed there;
-  the calls it hands to `load_goals` count under `loads`, so the two together
-  are every store read. A save that would rewrite identical bytes is a save
-  without a write. `scans`, `scan_hits`,
+- `goals`: `loads`, `saves`, `writes` on the goal stores through the writer's
+  loader (`load_goals`) and `save_goals`; the pusher's read-only loads go
+  through the shared store cache and show under `memos.shared`, not here.
+  `loads_shared` is the one number this block keeps for those reads: the calls
+  the cache answered (a hit, or a version parsed there), so
+  `loads + loads_shared` is every store read; the cache's own hit/miss split is
+  `memos.shared`. A save that would rewrite identical bytes is a save without
+  a write. `scans`, `scan_hits`,
   `scan_parses` count the give-up scan behind the judge-failure notice: calls,
   stores served from its per-store memo, and stores read and parsed (or
   attempted) because they were new, changed, or failed to parse on the
@@ -1952,11 +1989,22 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cost a conditional tail save would remove); `romp perf` prints it as a rate
   on the `goals` line so that item can be judged from a measurement.
   `unreadable_stores` is a gauge, not a counter: the goals files currently in
-  a read-failure episode (the file exists and did not read or parse on its
-  last read, so `load_goals` answers an empty fallback, every judge stage
-  stands down on the session and `save_goals` refuses to publish over it until
-  it reads). `romp perf` prints it on the `goals` line when it is not zero, and
-  the kernel warns the chat pane once per episode for a listed session.
+  a fault episode. A read-failure episode is a file that exists and did not
+  read; bytes that do not parse are no episode on a read (`load_goals`
+  quarantines them aside and answers a fresh store); met by a save's strict
+  read they end the publish and stand as a `store-unwritable` episode.
+  `load_goals` raises on a read fault, never an empty store; the per-session
+  boundary (`load_goals_or_fault`) contains the fault to that session, files
+  one `store-unreadable` judge-errors row per episode and skips the session's
+  goal-derived work for that build or pass; a judge pass that reaches the
+  store outside that boundary files a `pass-crash` row for the session
+  instead (the captioner reads through it, so its fault is the
+  `store-unreadable` row); nothing is published over the file, and the next
+  good read or publish through the boundary ends the episode. A publish that
+  failed (`store-unwritable`), on the write or on the save's own read of the
+  file, stands in the same table. `romp perf` prints it on the `goals` line
+  when it is not zero, and the kernel warns the chat pane once per episode
+  for a listed session.
   `lineage_reads` counts `resume_lineage` calls, each a read and parse of one
   session's whole states file: the episode-boundary check consults it only for
   a head the memoized episode log does not hold yet, so at steady state the
@@ -1966,57 +2014,39 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   episode log and so reads its lineage every pass (benign; one read per such
   session per pass); or the guard order in `_episode_boundary_check` regressed.
   `romp perf` prints the rate on the `goals` line.
-- `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
-  on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
-  per-session worker they run; the workers' share is `cpu_ms_workers`; the
-  producer thread's own per-pass work is not included and shows under the
-  process line's "other"), `wakes` (every wake of the producer: the backends'
-  pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
-  several, so this is an upper bound on the poke rate), `wakes_event` and
-  `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`
-  is the number of wakes a pass absorbed), `chain_memo` with `hit`, `miss`,
-  `populate`, `bypass`: the memo behind the write-moment chain check, which
-  asks before every planner mint whether the prompt sits on a rewound-away
-  branch. A hit served a memoized check, a miss built one, a populate stored
-  one (a build that failed is a miss with no populate), and a bypass built
-  without memoizing because an input file could not be stat'd. `tiers` holds
-  the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
-  `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
-  and archiver): `ran` (per-session stage
-  runs), `skipped` (runs the gate declined because nothing the tier reads had
-  changed), `stamped` (runs that ended complete and recorded what they
-  judged), `bypassed` (runs with no signature to record, or whose parse ran
-  under a cut that moved after the gate looked), `incomplete` (runs a
-  deferral or a failed call left unfinished; for the courier, scans that
-  produced pending rows, or whose link repair found the sender's tracker
-  completed or the sender outside the discover window, so the next pass scans
-  the session again; for the index tier, sessions that had a caption or an
-  archive to write this pass, or whose captions file, archive record or unit
-  cache exists and did not read, or whose unit-cache publish failed; the
-  read and publish failures each write one `judge-errors.jsonl` row per
-  failure episode, `captions-unreadable`, `session-archive-unreadable`,
-  `units-cache-unreadable` or `units-cache-write-failed`, beside the
-  `store-unreadable` row a goals file that does not read writes, and the
-  session runs again every pass until the file reads; an archive record that
-  reads but is not one is content, so the archiver rebuilds it, with the row
-  still written once), `due_clock` (runs a
-  background task's deadline made due), plus `stamps`, the number of
-  per-session records held. The index tier's signature is the session's
-  parse pair, captions file, archive record and unit cache, and no goal
-  store: its idle path reads none.
-  `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
-  `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
-  the `judge` line, since the judge's CPU share alone cannot tell a cheaper
-  pass from a faster cadence.
-- `memos`: one block per memo the kernel keeps, each a flat map of counters.
-  `goals_snap` is the judge pass's goal-store snapshot, which re-reads a store
-  only when its file changed: `hit` and `miss` (stores served from memory
-  against decoded, summed over passes), `fail` (file versions that did not
-  decode), `evict` (entries dropped for files gone from the directory), `punch`
-  (entries copied so a user gesture could be applied to them), `live` and
-  `snap` (the feed's store reads served live through the shared cache against
-  those served from the pass snapshot), and the gauges `entries` and `bytes`
-  (memoized files and their summed size). `lift_gate` is
+- `memos`: the three identity memos on the goal-store path. `pass` is the
+  judge pass's stat-keyed store memo (`hit`, `miss`, `fail`, `evict`, `punch`,
+  `live`, `snap`, and its occupancy `entries`, `bytes`); `shared` is the
+  pusher's shared read-only store cache (`hit`, `miss`, `compare_miss`,
+  `refuse`, `dup`, `absent`, `corrupt`, `unreadable_journal`, `evict`,
+  `fallback`, `poisoned`, with `entries`, `bytes` and `off`); `chain` is the
+  write-moment chain memo (`hit`, `miss`, `populate`, `bypass`). The compaction
+  sweep after each judge pass evicts from `pass` and `shared` the entries of
+  stores no session in the discover window owns, so both stay bounded by the
+  live board.
+  In `pass`, `hit` and `miss` are stores served from memory against decoded,
+  summed over passes; `fail` is a file version that did not decode (remembered
+  until the file changes) or a read that failed (read again next pass), either
+  way out of the snapshot and served live; `evict` counts entries dropped for
+  files gone from the directory or for stores no discovered session owns;
+  `punch` entries copied so a user gesture could be applied to them; `live` and
+  `snap` the feed's store reads served live through the shared cache against
+  those served from the pass snapshot; `entries` and `bytes` are the memoized
+  files and their summed size. In `shared`, `compare_miss` is an identity that
+  matched with bytes that did not; `refuse` a fill under a moving archive,
+  served but not published; `dup` a concurrent fill of the same version
+  published first; `absent`, `corrupt` and `unreadable_journal` stores handed
+  to the writer's loader or served as a fresh store; `evict` entries dropped
+  for files gone from the directory or for stores no discovered session owns;
+  `fallback` calls served by the writer's loader while the cache is off;
+  `poisoned` write attempts on a shared view; `bytes` the raw store bytes held
+  for the compare and `off` 1 once a write attempt switched the cache off,
+  until the kernel restarts. In `chain`, the memo behind the write-moment
+  chain check, which asks before every planner mint whether the prompt sits on
+  a rewound-away branch, a hit served a memoized check, a miss built one, a
+  populate stored one (a build that failed is a miss with no populate), and a
+  bypass built without memoizing because an input file could not be stat'd.
+  The rest are the kernel's own memos, each a flat map of counters. `lift_gate` is
   the awaiting-lift job's per-session identity gate: `skip` and `load`
   (session-cycles that took no store read against the ones that read it, a
   probe on the shared read-only view), `shared` (probes the shared cache
@@ -2042,18 +2072,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `deleg_miss` (the delegated-work check, same memo), `lifted` (lifts the
   wake-only dead-man filed), `evict` (entries dropped for sessions that left
   the alive set), `stale` (entries released because the parse cache no longer
-  holds the pinned turns) and the gauge `entries`. `goals_shared`
-  is the shared read-only goal-store cache the pusher's read-only sites load
-  through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
-  did not), `refuse` (a fill under a moving archive, served but not
-  published), `dup` (a concurrent fill of the same version published first),
-  `absent`, `corrupt` and `unreadable_journal` (stores handed to the writer's
-  loader or served as a fresh store), `evict` (entries dropped for files gone
-  from the directory), `fallback` (calls served by the writer's loader while
-  the cache is off), `poisoned` (write attempts on a shared view), and the
-  gauges `entries`, `bytes` (the raw store bytes held for the compare) and
-  `off` (1 once a write attempt switched the cache off, until the kernel
-  restarts).
+  holds the pinned turns) and the gauge `entries`.
   `wire` is the pusher's per-build wire caches: `feed_cards_hit` and
   `feed_cards_miss` (the per-card encode served from its memo against run),
   `feed_body` and `bars_body` (whole frames serialized, at most once per build
@@ -2149,6 +2168,44 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   build after a transcript write scans every turn again, since a parse mints
   new atom lists. `hit` and `miss` count turns served from the memo against
   turns scanned, plus the gauge `entries` (sessions held).
+- `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
+  on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
+  per-session worker they run; the workers' share is `cpu_ms_workers`; the
+  producer thread's own per-pass work is not included and shows under the
+  process line's "other"), `wakes` (every wake of the producer: the backends'
+  pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
+  several, so this is an upper bound on the poke rate), `wakes_event` and
+  `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`
+  is the number of wakes a pass absorbed; the write-moment chain memo's
+  counters are under `memos.chain`, not here). `tiers` holds
+  the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
+  `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
+  and archiver): `ran` (per-session stage
+  runs), `skipped` (runs the gate declined because nothing the tier reads had
+  changed), `stamped` (runs that ended complete and recorded what they
+  judged), `bypassed` (runs with no signature to record, or whose parse ran
+  under a cut that moved after the gate looked), `incomplete` (runs a
+  deferral or a failed call left unfinished; for the courier, scans that
+  produced pending rows, or whose link repair found the sender's tracker
+  completed or the sender outside the discover window, so the next pass scans
+  the session again; for the index tier, sessions that had a caption or an
+  archive to write this pass, or whose captions file, archive record or unit
+  cache exists and did not read, or whose unit-cache publish failed; the
+  read and publish failures each write one `judge-errors.jsonl` row per
+  failure episode, `captions-unreadable`, `session-archive-unreadable`,
+  `units-cache-unreadable` or `units-cache-write-failed`, beside the
+  `store-unreadable` row a goals file that does not read writes, and the
+  session runs again every pass until the file reads; an archive record that
+  reads but is not one is content, so the archiver rebuilds it, with the row
+  still written once), `due_clock` (runs a
+  background task's deadline made due), plus `stamps`, the number of
+  per-session records held. The index tier's signature is the session's
+  parse pair, captions file, archive record and unit cache, and no goal
+  store: its idle path reads none.
+  `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
+  `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
+  the `judge` line, since the judge's CPU share alone cannot tell a cheaper
+  pass from a faster cadence.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 256 keys; further keys
@@ -2777,6 +2834,19 @@ lands in the same second; the `remotes.json` sidecar is 0600, since its rows
 carry tokens), the file is rewritten without them, and one stderr line plus one
 Log entry under the `refused` kind names each host as a clipped repr, never the
 raw string.
+
+The postal service's own files live under `postal/` there: `mail/<session>/`
+(a maildir per recipient), `outbox/<host>/` and `readbox/<host>/` (cross-host
+mail and read receipts awaiting their peer). A record or message file the bus
+cannot parse or read is moved aside once, never deleted, to
+`<name>.corrupt-<UTC stamp>` beside the original (an inbox file lands beside
+its `new/` directory, out of every listing; a `-1`, `-2` suffix when two land
+in the same second), the rest of the store is served, the sender's receipt for
+that message reads refused, and the error center says so under the `refused`
+kind. At start the bus removes the temporary files a crash left behind (a
+message written but never placed, a store record never finished), closes each
+one's receipt as refused, and says so once. The sidecars are yours to inspect
+or delete.
 
 ## Switches
 

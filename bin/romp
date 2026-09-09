@@ -1468,7 +1468,7 @@ print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   cpu/pass %s ms
       "wakes %d (event %d, backstop %d, %d sets absorbed)"
       % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-",
          ("%.0f" % (dl("judge", "cpu_ms_sum") / jp)) if jp else "-",
-         dl("judge", "chain_memo", "hit"), dl("judge", "chain_memo", "miss"), jw, jev, jbs, max(0, jw - jev)))
+         dl("memos", "chain", "hit"), dl("memos", "chain", "miss"), jw, jev, jbs, max(0, jw - jev)))
 # the evidence gate, per gated tier: per-session runs the tier made against the ones it declined
 # (skipped / (ran + skipped) is the acceptance number for the gate), then the runs that ended without a
 # stamp when there were any (incomplete: a deferral or a failed call; due_clock: a background deadline

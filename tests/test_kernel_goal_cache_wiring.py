@@ -1,9 +1,9 @@
-"""The kernel side of the shared read-only goal-store cache (performance plan P9 / C1).
+"""The kernel side of the shared read-only goal-store cache (kernel/judge.py load_goals_shared).
 
 kernel/judge.py's load_goals_shared serves one deep-frozen parsed store per file version; this module pins
 WHICH kernel sites load through it (the pusher's read-only sites), in which spelling (bare, or through the
-per-session fault boundary jd.load_goals_shared_or_fault that upstream #1019 brought, steer 1 of the 2026-09-08
-fold), and which deliberately do not (every writer, the probe-then-write tick jobs), and drives the builders
+per-session fault boundary jd.load_goals_shared_or_fault), and which deliberately do not (every writer,
+the probe-then-write tick jobs), and drives the builders
 over synthetic stores to show the cache in effect: each store parsed once per version across builds, the
 frozen guard reaching a wired site without taking the frame down, the compaction sweep's eviction, and
 one session's failed chat build no longer aborting the whole push. Synthetic fixtures only: placeholder
@@ -15,8 +15,10 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from romp_load import load_source
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -32,6 +34,27 @@ jd = km.jd
 SIDS = ["66666666-1111-4222-8333-44444444440%d" % i for i in range(3)]   # private to this module (synthetic)
 NOW = 1781100000
 T0 = NOW - 3600
+
+
+def _iso(t):
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _uline(t, text, uuid, parent=None):
+    return {"type": "user", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent,
+            "promptSource": "typed", "message": {"role": "user", "content": text}}
+
+
+def _aline(t, text, uuid, parent, stop="end_turn"):
+    return {"type": "assistant", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}],
+                        "stop_reason": stop}}
+
+
+def _tm():
+    """One live tmux entry, every key the feed builder reads."""
+    return {"state": "ready", "color": "#888888", "since": NOW - 60, "model": "", "effort": "",
+            "context": None, "backend": "tmux"}
 
 # The pusher-side READ-ONLY sites, wired (kernel.py). Each reads nodes / status / seams / confirming / log
 # rows and hands nothing to rollup_status, record_verdict or save_goals (audited 2026-09-06; the deep
@@ -130,10 +153,16 @@ class WiringPins(unittest.TestCase):
         src = inspect.getsource(km._compact_goal_stores)
         self.assertIn("jd._disk_memo_evict_absent()", src)
         self.assertIn("jd._shared_evict_absent()", src)
+        # ...and, for the two memos holding PARSED stores, the entries of stores no discovered session owns
+        # (review find, 2026-09-08: neither had a cap)
+        self.assertIn("jd._shared_evict_unowned(", src)
+        self.assertIn("_goals_memo_evict_unowned(", src)
 
     def test_perf_reports_the_cache_beside_the_snapshot_memo(self):
         src = inspect.getsource(km._PerfStats.snapshot)
-        self.assertIn('("goals_shared", jd.shared_store_stats)', src, "one (name, report) pair in the memos loop")
+        # memos.shared: upstream's review named the entry (the fork's offer had it as goals_shared); docs/reference.md
+        # and shared_store_stats' docstring both say memos.shared
+        self.assertIn('("shared", jd.shared_store_stats)', src, "one (name, report) pair in the memos loop")
         self.assertIn('("bg_tops", _bg_tops_report)', src, "…and the placed-launch memo beside it")
 
 
@@ -152,11 +181,18 @@ class SharedViewInBuilds(unittest.TestCase):
         km._timeline_sessions = lambda now, tmux, live_only=False: [
             {"sid": sid, "name": "s%d" % i, "path": os.path.join(self.td.name, "no-such-transcript-%d" % i)}
             for i, sid in enumerate(SIDS)]
+        # the compaction sweep evicts the entries of stores no DISCOVERED session owns, so the three synthetic
+        # stores must be discovered for their entries to survive a sweep (review find, 2026-09-08)
+        self.saved_discover = jd.discover
+        self.discovered = list(SIDS)
+        jd.discover = lambda now, window=None, forks=True: [(sid, "/dev/null", None, "s%d" % i)
+                                                            for i, sid in enumerate(SIDS) if sid in self.discovered]
         self.stats0 = jd.shared_store_stats()
 
     def tearDown(self):
         for nm, v in self.saved.items():
             setattr(km, nm, v)
+        jd.discover = self.saved_discover
         jd._rebind_state(self.saved_state)
         self.td.cleanup()
 
@@ -168,6 +204,72 @@ class SharedViewInBuilds(unittest.TestCase):
             return [json.loads(l) for l in jd.ERRORS.read_text().splitlines() if l.strip()]
         except FileNotFoundError:
             return []
+
+    def _transcript(self, sid, recs):
+        p = Path(self.td.name) / (sid + ".jsonl")
+        p.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+        km._parse_cache.clear()
+        jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
+        return str(p)
+
+    def _private_loads(self):
+        """Count the writer's loader per sid while the context runs: the wired sites must never reach it."""
+        seen, o_load = [], jd.load_goals
+        jd.load_goals = lambda fsid: (seen.append(fsid), o_load(fsid))[1]
+        self.addCleanup(setattr, jd, "load_goals", o_load)
+        return seen
+
+    def test_two_chat_builds_parse_the_store_once(self):
+        # build_session's two loads (the seam-aware seg ids, the ledger tree) take the shared view: two
+        # builds of one tab parse its store once, and the writer's loader is never asked for it.
+        sid = SIDS[0]
+        tpath = self._transcript(sid, [_uline(NOW - 500, "start the next piece", "u1"),
+                                       _aline(NOW - 480, "Done.", "a1", "u1")])
+        sess = [{"sid": sid, "name": "s0", "anchor": None, "path": tpath, "mtime": NOW}]
+        private = self._private_loads()
+        with mock.patch.object(km, "_sessions", lambda now, window=None, forks=True: list(sess)):
+            m1 = km.build_session(sid, NOW, {})
+            m2 = km.build_session(sid, NOW, {})
+        self.assertTrue(m1 and m1["ledger"]["tree"], "premise: the tab's ledger tree shows the goal")
+        self.assertNotIn(sid, private, "the writer's loader was never asked for the tab's store")
+        self.assertEqual(self._delta("miss"), 1, "one parse across two builds")
+        self.assertGreaterEqual(self._delta("hit"), 3, "the first build's second load and both of the second's are hits")
+        self.assertEqual(json.dumps(m1["ledger"]), json.dumps(m2["ledger"]))
+
+    def test_the_feeds_peer_origin_badge_reads_the_shared_peer_view(self):
+        # build_feed's card loop reads a delegation-origin badge's liveness from the PEER's store through the
+        # shared boundary (load_goals_shared_or_fault), never the writer's loader.
+        a, b = SIDS[0], SIDS[1]
+        s = jd.load_goals(b)
+        s["nodes"][b + ":g1"]["origin"] = {"peer": a, "goalId": a + ":g1"}
+        jd.save_goals(b, s)
+        sessions = [{"sid": x, "name": "s%d" % i, "path": "/nonexistent/%s.jsonl" % x, "anchor": 0, "mtime": 0}
+                    for i, x in enumerate((a, b))]
+        shared, o_shared = [], jd.load_goals_shared_or_fault
+        jd.load_goals_shared_or_fault = lambda fsid: (shared.append(fsid), o_shared(fsid))[1]
+        self.addCleanup(setattr, jd, "load_goals_shared_or_fault", o_shared)
+        with mock.patch.object(km, "_alive_sessions", lambda now, tm: list(sessions)), \
+             mock.patch.object(km, "_warm_fleet_bg", lambda now: None):
+            cards = {c["itemId"]: c for c in km.build_feed(NOW, {a: _tm(), b: _tm()})["asks"]}
+        self.assertIn(a, shared, "the peer's store was read through the shared boundary")
+        self.assertTrue(cards[b + ":g1"]["origin"]["live"], "the peer's goal is open: the badge reads live")
+
+    def test_the_message_summary_scan_holds_the_shared_view(self):
+        # _msg_sum_scan_session hands the store to _segs_seam for the seam-aware seg ids: the shared
+        # read-only view, which apply_seams only reads.
+        sid = SIDS[0]
+        tpath = self._transcript(sid, [_uline(NOW - 500, "start the next piece", "u1"),
+                                       _aline(NOW - 480, "Done.", "a1", "u1")])
+        jd.CAPDIR.mkdir(parents=True, exist_ok=True)
+        (jd.CAPDIR / (sid + ".jsonl")).write_text(json.dumps(
+            {"id": "u1", "grain": "segment", "t": NOW - 500, "caption": "Starting the next piece"}) + "\n")
+        seen, o_segs = [], km._segs_seam
+        km._segs_seam = lambda turn, store: (seen.append(store), [])[1]
+        self.addCleanup(setattr, km, "_segs_seam", o_segs)
+        km._msg_sum_scan_session(sid, tpath, NOW)
+        self.assertTrue(seen, "the scan reached the seg loop")
+        self.assertTrue(all(isinstance(st, jd.FrozenStore) for st in seen), "the shared view, not a private load")
+        self.assertEqual(self._delta("miss"), 1)
 
     def test_two_timeline_builds_parse_each_store_once(self):
         fills = []
@@ -247,11 +349,34 @@ class SharedViewInBuilds(unittest.TestCase):
         self.assertEqual(jd.shared_store_stats()["entries"], len(SIDS) - 1)
         self.assertEqual(self._delta("evict"), 1)
 
+    def test_the_compaction_sweep_evicts_the_entries_of_stores_no_discovered_session_owns(self):
+        # The cache had no cap: a store's view stayed resident for the process once read, so a board's whole
+        # history of stores sat in memory (review find, 2026-09-08). The sweep drops the entries of stores no
+        # session in the discover set owns; a later read of one is a miss that refills it.
+        for sid in SIDS:
+            jd.load_goals_shared(sid)
+        self.assertEqual(jd.shared_store_stats()["entries"], len(SIDS))
+        km._compact_goal_stores()
+        self.assertEqual(jd.shared_store_stats()["entries"], len(SIDS), "every store is owned: nothing evicted")
+        self.assertEqual(self._delta("evict"), 0)
+        self.discovered[:] = [SIDS[0]]                     # the other two sessions left the discover window
+        km._compact_goal_stores()
+        self.assertEqual(jd.shared_store_stats()["entries"], 1, "the unowned stores' entries are gone")
+        self.assertEqual(self._delta("evict"), 2)
+        miss0 = self._delta("miss")
+        jd.load_goals_shared(SIDS[1])                      # read again: one miss refills it
+        self.assertEqual(self._delta("miss"), miss0 + 1)
+        self.assertEqual(jd.shared_store_stats()["entries"], 2)
+
 
 class PushSurvivesOneFailedChatBuild(unittest.TestCase):
     """A chat build that raises used to abort the whole push (the cycle-level "push build:" catch returns
     before the feed and the timeline are built). One session's build now fails alone: its frame is skipped
-    this cycle, the other sessions' frames and the timeline still go out, and stderr names it."""
+    this cycle, the other sessions' frames and the timeline still go out, and stderr names it, ONCE per
+    fault episode, with a dashboard bell row beside the stderr line, so the pane that stopped updating is
+    not a silent degrade and a build that fails every cycle is not a traceback every cycle (review find,
+    2026-09-08). The episode is the fault text: a repeat says nothing, a different fault is a new episode,
+    and a build that succeeds ends it."""
     STUBS = ("NAMES", "_tmux_sessions", "_live_names", "_tab_list_tmux", "_chat_tab_sessions", "build_session",
              "_cached_feed", "_cached_timeline", "build_timeline", "_fleet_view_sig", "_comments_frame",
              "_retry_parked_creates")
@@ -288,6 +413,10 @@ class PushSurvivesOneFailedChatBuild(unittest.TestCase):
         km._comments_frame = lambda sid, tmux: None
         km._retry_parked_creates = lambda: None
         km._built_chat.clear(); km._prev_chat_events.clear(); km._prev_chat_ledger.clear()
+        self.saved_bell = list(km._SYNC_NOTICES)          # the dashboard bell ring the fault reaches
+        del km._SYNC_NOTICES[:]
+        km._chat_build_faults.clear()                     # no fault episode carried in from another test
+        self.fail_with = "synthetic: this session's chat build fails"
         self.built = []
         self.chat_frames, self.tl_frames = [], []
         self.chat = {"app": "chat", "alive": True, "sent": {}, "send": lambda s: self.chat_frames.append(json.loads(s))}
@@ -302,11 +431,12 @@ class PushSurvivesOneFailedChatBuild(unittest.TestCase):
         km._prev_chat_events.clear(); km._prev_chat_events.update(pe)
         km._prev_chat_ledger.clear(); km._prev_chat_ledger.update(pl)
         km._last_tab_order[:] = lo
+        km._SYNC_NOTICES[:] = self.saved_bell
 
     def _build_session(self, sid, now, tmux):
         self.built.append(sid)
-        if sid == self.A:
-            raise RuntimeError("synthetic: this session's chat build fails")
+        if sid == self.A and self.fail_with:
+            raise RuntimeError(self.fail_with)
         return {"type": "session", "id": sid, "name": "api", "events": [{"uuid": "e1", "type": "user"}],
                 "ledger": None, "status": {"state": "waiting"}, "color": None}
 
@@ -322,6 +452,38 @@ class PushSurvivesOneFailedChatBuild(unittest.TestCase):
         self.assertIn("synthetic: this session's chat build fails", err.getvalue())
         self.assertNotIn(self.A, km._built_chat, "no cache entry for the failed build")
         self.assertIn(self.B, km._built_chat)
+        # ...and the dashboard hears it (review find, 2026-09-08): one bell row of the kind a state file that
+        # cannot be read wears, naming the session and the fault, so the user is not left reading the kernel
+        # log to learn why one pane stopped updating
+        rows = list(km._SYNC_NOTICES)
+        self.assertEqual(len(rows), 1, "one bell row for the fault: %r" % rows)
+        self.assertEqual(rows[0]["kind"], "refused")
+        self.assertFalse(rows[0]["ok"], "a fault, not a sync that landed")
+        self.assertIn("web", rows[0]["text"], "the row names the session")
+        self.assertIn("RuntimeError: " + self.fail_with, rows[0]["text"], "...and the fault")
+
+    def test_a_build_that_keeps_failing_the_same_way_is_said_once_until_it_changes_or_succeeds(self):
+        def push():
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                km._push([self.chat, self.tl])
+            return err.getvalue().count("push build: chat %s" % self.A[:8])
+        self.assertEqual(push(), 1, "the first cycle says it")
+        self.assertEqual(push(), 0, "the second cycle, same fault: not again")
+        self.assertEqual(push(), 0)
+        self.assertEqual(len(km._SYNC_NOTICES), 1, "one episode, one bell row")
+        self.fail_with = "synthetic: a different fault on the same session"
+        self.assertEqual(push(), 1, "a different fault is a new episode")
+        self.assertEqual(len(km._SYNC_NOTICES), 2)
+        self.assertIn("a different fault", km._SYNC_NOTICES[-1]["text"])
+        self.fail_with = ""                                   # the build succeeds: the episode is over
+        self.assertEqual(push(), 0)
+        self.assertNotIn(self.A, km._chat_build_faults, "a build that succeeds ends the fault episode")
+        self.assertIn(self.A, km._built_chat, "…and its frame is cached like any other")
+        self.fail_with = "synthetic: this session's chat build fails"
+        km._built_chat.pop(self.A, None)                      # the input moved: the build runs again and fails again
+        self.assertEqual(push(), 1, "the same fault after a success is a new episode, said anew")
+        self.assertEqual(len(km._SYNC_NOTICES), 3)
 
 
 if __name__ == "__main__":

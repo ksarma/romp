@@ -111,7 +111,9 @@ class StoreCas(unittest.TestCase):
         jd.save_goals(SID, s)
         gp = jd.GOALDIR / (SID + ".json")
         self.assertNotIn("_unread", json.loads(gp.read_text()), "the mark is never written to disk")
-        nd = jd.load_goals(SID)["nodes"][self._nid(1)]
+        final = jd.load_goals(SID)
+        self.assertNotIn("_unread", final, "a journal that exists and reads leaves no mark")
+        nd = final["nodes"][self._nid(1)]
         self.assertEqual(nd["text"], "A goal, retitled")
         self.assertTrue(nd.get("nodeComplete"), "the journal replays on the next load: the publish lost nothing durable")
 
@@ -358,6 +360,21 @@ class ReadFaultCas(unittest.TestCase):
         self._file().write_text("{not json")
         with self.assertRaises(ValueError):
             jd._disk_rev(self.FSID)
+
+    def test_a_fresh_store_is_not_published_over_a_non_object_file(self):
+        """A top-level JSON value that is not an object is neither a store nor an absent file: a fresh store
+        (base 0, minted while the path was empty) is not published over it, and a gesture's boundary answers
+        the fault instead of None."""
+        s = jd.load_goals(self.FSID)                 # absent: a fresh store at base 0
+        jd.apply_plan(s, "s1", T0, [{"do": "mint", "why": "x", "text": "A goal"}], [])
+        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+        self._file().write_bytes(b"[]")              # meanwhile the path holds a JSON array
+        with self.assertRaises(ValueError):
+            jd.save_goals(self.FSID, s)
+        self.assertEqual(self._file().read_bytes(), b"[]", "nothing was published over bytes that are not a store")
+        self.assertIsInstance(jd.save_goals_or_fault(self.FSID, s), ValueError,
+                              "the gesture boundary answers the fault, not None")
+        self.assertEqual(self._file().read_bytes(), b"[]")
 
     def test_matches_disk_and_rebase_raise_on_a_fault_or_a_corrupt_file(self):
         """Each reader in the save path on its own: a version of either that swallowed the read and answered

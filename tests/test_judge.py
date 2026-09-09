@@ -6324,16 +6324,16 @@ class Distiller(unittest.TestCase):
 
 
 class JudgeFailureScanMemo(unittest.TestCase):
-    """judge_failure_scan's per-store memo (perf plan B9, 2026-09-06). The kernel asks for the give-up
-    count on every timeline build once any store is saved, and the scan used to parse EVERY store each
-    time. Now a store is parsed only when its file identity (inode, mtime_ns, size) changed. What makes
-    that sound is st_mtime_ns strictly increasing across publishes of one path; the inode alone does not,
-    because tmp+rename recycles inode numbers on the second publish (measured on ext4), so the inode
-    distinguishes one publish only. Linux 6.13+ multigrain timestamps guarantee the mtime ordering (the
-    scan's own stat marks the prior inode as queried); a coarse-timestamp kernel has a one-tick aliasing
-    window, smaller than the one-second window of kernel.py's _jf_cache gate. Raw stores under PRIVATE
-    synthetic sids (CLAUDE.md, goal-store fixtures); nothing here goes through load_goals, and the scan
-    must not either (it counts raw file content)."""
+    """judge_failure_scan's per-store memo. The kernel asks for the give-up count on every timeline build
+    once any store is saved, and the scan used to parse EVERY store each time. Now a store is parsed only
+    when its file identity (inode, mtime_ns, size) changed. What makes that sound is st_mtime_ns strictly
+    increasing across publishes of one path; the inode alone does not, because tmp+rename recycles inode
+    numbers on the second publish (measured on ext4), so the inode distinguishes one publish only. Linux
+    6.13+ multigrain timestamps guarantee the mtime ordering (the scan's own stat marks the prior inode as
+    queried); a coarse-timestamp kernel has a one-tick aliasing window, smaller than the one-second window
+    of kernel.py's _jf_cache gate. Raw stores under PRIVATE synthetic sids (CLAUDE.md, goal-store
+    fixtures); nothing here goes through load_goals, and the scan must not either (it counts raw file
+    content)."""
 
     A = "b9b9b9b9-0000-4000-8000-00000000000a"
     B = "b9b9b9b9-0000-4000-8000-00000000000b"
@@ -6356,12 +6356,14 @@ class JudgeFailureScanMemo(unittest.TestCase):
         jd._rebind_state(self.saved_state)
         shutil.rmtree(self.td, ignore_errors=True)
 
-    def _store(self, sid, failed, mt=T0 + 10):
+    def _store(self, sid, failed, mt=T0 + 10, kind="summary-failed"):
+        """`kind` is the warn's kind; one outside _FAILED_WARN_KINDS of the same length ("summary-landed")
+        publishes a store of the same byte size that counts nothing."""
         nid = sid + ":g1"
         nd = {"id": nid, "text": "Ship the notes-api tests", "parentId": None, "nodeComplete": True,
               "blocked": False, "cleared": False, "trail": [], "t": T0, "mt": mt, "summary": ""}
         if failed:
-            nd["warns"] = [{"kind": "summary-failed", "t": T0 + 20, "msg": "the summary gave up"}]
+            nd["warns"] = [{"kind": kind, "t": T0 + 20, "msg": "the summary gave up"}]
         jd.save_goals(sid, {"rompUuid": sid, "seq": 1, "placementsV": jd.PLACEMENTS_V, "placements": {},
                             "status": {nid: "completed"}, "nodes": {nid: nd}})
 
@@ -6415,15 +6417,106 @@ class JudgeFailureScanMemo(unittest.TestCase):
         self.assertEqual(jd.judge_failure_scan()["count"], 1)
         self.assertEqual(jd.judge_failure_scan()["count"], 1)
         self.assertNotIn(self._path(self.B), jd._jf_store_memo, "a parse failure is not memoized")
+        self.assertEqual(len(self.parses), 1, "the good store is parsed once; the broken one never reaches _failed_nodes")
         self.assertEqual(jd.goal_io_stats()["scan_parses"] - io0["scan_parses"], 3,
                          "the broken store is retried on every call (1 + 1), the good one parsed once")
         self._store(self.B, failed=True)                        # repaired and republished: a new mtime_ns, read like any change
         self.assertEqual(jd.judge_failure_scan()["count"], 2)
 
     def test_the_scan_returns_none_when_no_store_is_failing(self):
-        self._store(self.A, failed=False)
+        self._store(self.A, failed=False); self._store(self.B, failed=False)
         self.assertIsNone(jd.judge_failure_scan())
+        self.assertIsNone(jd.judge_failure_scan())
+        self.assertEqual(len(self.parses), 2, "nothing failing is the common case: the memo is kept on a None "
+                                              "return too, so the second call parses nothing")
         self.assertEqual(self.causes, [], "no give-up: the cause is never asked for")
+
+    def _rewrite_in_place(self, path, body, mtime_ns):
+        """Rewrite a store IN PLACE (same inode) and pin its mtime_ns, so one key component moves at a time
+        without depending on inode recycling or on the clock's granularity."""
+        st = os.stat(path)
+        with open(path, "r+b") as f:
+            f.write(body)
+            f.truncate()
+        os.utime(path, ns=(st.st_atime_ns, mtime_ns))
+        return os.stat(path)
+
+    def test_a_newer_mtime_ns_alone_re_reads_a_store_of_the_same_inode_and_size(self):
+        """st_mtime_ns is what keeps the memo sound once tmp+rename has recycled an inode number (two
+        publishes back on ext4): a version with the memo's inode and size but a later mtime_ns is re-read."""
+        self._store(self.A, failed=True)
+        path = self._path(self.A)
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        st1 = os.stat(path)
+        st2 = self._rewrite_in_place(path, Path(path).read_bytes().replace(b"summary-failed", b"summary-landed"),
+                                     st1.st_mtime_ns + 1)
+        self.assertEqual((st2.st_ino, st2.st_size), (st1.st_ino, st1.st_size), "precondition: only mtime_ns moved")
+        self.assertIsNone(jd.judge_failure_scan(), "a later mtime_ns alone is a new version: re-read, and the count clears")
+        self.assertEqual(len(self.parses), 2)
+
+    def test_the_inode_distinguishes_a_publish_when_the_clock_does_not_move(self):
+        """A coarse-timestamp kernel (Linux < 6.13) gives two same-size publishes inside one tick the same
+        mtime_ns; st_ino tells them apart for one publish. save_goals' tmp+rename takes a fresh inode; the
+        new file's mtime_ns is pinned back to the memo's value explicitly."""
+        self._store(self.A, failed=True)
+        path = self._path(self.A)
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        st1 = os.stat(path)
+        self._store(self.A, failed=True, kind="summary-landed")      # same size, not a give-up kind, new inode
+        os.utime(path, ns=(st1.st_atime_ns, st1.st_mtime_ns))
+        st2 = os.stat(path)
+        self.assertEqual((st2.st_size, st2.st_mtime_ns), (st1.st_size, st1.st_mtime_ns), "precondition: size and mtime_ns held")
+        self.assertNotEqual(st2.st_ino, st1.st_ino, "precondition: the publish took a fresh inode")
+        self.assertIsNone(jd.judge_failure_scan(), "the inode alone is a new version")
+        self.assertEqual(len(self.parses), 2)
+
+    def test_a_size_change_alone_is_a_new_version(self):
+        """st_size is defense in depth: romp's writers publish by tmp+rename, so a size change never arrives
+        without a new inode. The one deterministic way to isolate it models a non-rename writer under a clock
+        that does not move: an in-place rewrite at another size with mtime_ns pinned to the memo's."""
+        self._store(self.A, failed=True)
+        path = self._path(self.A)
+        self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        st1 = os.stat(path)
+        st2 = self._rewrite_in_place(path, Path(path).read_bytes().replace(b"summary-failed", b"landed"), st1.st_mtime_ns)
+        self.assertEqual((st2.st_ino, st2.st_mtime_ns), (st1.st_ino, st1.st_mtime_ns), "precondition: only the size moved")
+        self.assertNotEqual(st2.st_size, st1.st_size)
+        self.assertIsNone(jd.judge_failure_scan(), "the size alone is a new version")
+        self.assertEqual(len(self.parses), 2)
+
+    def test_the_key_names_the_version_that_was_read(self):
+        """A publish landing between the listing's stat and the open: the bytes read are the new version's,
+        so the key must be taken by fstat on that descriptor. Keyed on the pre-open stat, the next call
+        would re-parse a store that did not change again (one wasted parse, never a wrong count)."""
+        self._store(self.A, failed=True)
+        path = self._path(self.A)
+        real_open, fired = open, []
+
+        def hooked(fp, *a, **k):
+            if not fired and str(fp) == path:
+                fired.append(1)
+                self._store(self.A, failed=False, mt=T0 + 500)   # a writer lands between the stat and the open
+            return real_open(fp, *a, **k)
+
+        jd.open = hooked                                         # module global shadows the builtin
+        try:
+            self.assertIsNone(jd.judge_failure_scan(), "the bytes read are the new version's")
+        finally:
+            del jd.open
+        self.assertEqual(fired, [1])
+        self.assertEqual(len(self.parses), 1)
+        self.assertIsNone(jd.judge_failure_scan())
+        self.assertEqual(len(self.parses), 1, "the memo key names the version read, so nothing is re-parsed")
+
+    def test_a_store_gone_between_the_glob_and_the_stat_is_skipped(self):
+        import glob
+        self._store(self.A, failed=True)
+        ghost = self._path(self.B)                               # listed, never written
+        real_glob = glob.glob
+        with mock.patch.object(glob, "glob", lambda *a, **k: real_glob(*a, **k) + [ghost]):
+            self.assertEqual(jd.judge_failure_scan()["count"], 1)
+        self.assertEqual(len(self.parses), 1)
+        self.assertNotIn(ghost, jd._jf_store_memo)
 
 
 class RunTriage(unittest.TestCase):
