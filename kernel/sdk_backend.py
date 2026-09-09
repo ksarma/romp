@@ -5527,7 +5527,7 @@ class SdkSession:
         subagent's lifecycle task carries the AGENT ID as its task_id (probe-verified on 2.1.257), so an
         id in both sets is one agent and counts once, as a subagent (review round 1: it read "1 subagent
         and 1 background task"). A Workflow run counts through its task and its agents through the
-        subagent set; the key cycle's own live test reads the same two sets."""
+        subagent set."""
         with self._sub_lock:
             n_sub = len(self._subagents)
             n_task = sum(1 for t in self._bg_tasks if t not in self._subagents)
@@ -8354,8 +8354,8 @@ class SdkSession:
             return sorted(({**v, "agentId": k} for k, v in self._subagents.items()), key=lambda d: d.get("since") or 0)
 
     def _drop_live_work(self, reason: str):
-        """The CLI process is gone (a reconnect abandons the old client: a rewind's, a key cycle's, or a
-        settings switch's once the work it waited for has ended, request_reconnect) and so is the live
+        """The CLI process is gone (a reconnect abandons the old client: a rewind's, or a settings
+        switch's once the work it waited for has ended, request_reconnect) and so is the live
         work INSIDE it: forget every subagent (and every run's roster and slots), and
         retire every lifecycle background task, telling the session which ones it lost the way
         _on_session_gone does when a CLI dies under a live kernel (their completion notifications can
@@ -8389,9 +8389,10 @@ class SdkSession:
     _RECONNECT_CAUSE = "a deliberate restart"   # the death notice's cause on a reconnect that
     #   found work alive. A settings switch (effort/fast/auth/mode/env) waits for the live work to end
     #   before it reconnects (request_reconnect, 2026-09-09), so what still reaches the drop with work
-    #   running is a rewind, whose queue cannot wait, or a key cycle whose loop-side re-check raced a
-    #   launch; the loop cannot tell the two apart here. The session reads this text, and "key cycle" is
-    #   romp's own operation name, so the notice says the one thing the session needs: the restart was
+    #   running is a rewind, whose queue cannot wait, or the immediate-only request form (defer=False)
+    #   when a launch raced its loop-side re-check; the loop cannot tell them apart here. The session
+    #   reads this text, and a romp operation name ("key cycle" was one, retired with romp's key paths)
+    #   would explain nothing to it, so the notice says the one thing the session needs: the restart was
     #   meant (and never says "crash", which a session might grep for: LiveSubagentsRetire.test_f pins that;
     #   review round 1; tests/test_injected_voice.py screens the words)
 
@@ -10927,9 +10928,10 @@ class SdkBackend:
         # The rest of the launched shape, for the setters' unchanged compares (2026-09-09): recorded here
         # as what this connect is ABOUT to run, stamped by _connect_landed once it does (a pick equal to
         # the stamp is nothing to apply; one equal to a pending value is already applying). Auth is the
-        # side actually launched: "key" only when the key was injected. An explicit key pick that found
-        # no source launches un-injected and bills Claude Code's own credential, so it is "login" here,
-        # and once a source exists a key re-pick reconnects and injects (review round 1).
+        # side actually launched: "key" only when the box's helper bills this launch (launch_keyed). An
+        # explicit key pick on a box with no helper launches plain and bills Claude Code's own credential
+        # resolution, so it is "login" here, and once a helper exists a key re-pick reconnects (review
+        # round 1).
         sess._launching = {"effort": effort_shape, "mode": kw["permission_mode"],
                            "auth": "key" if launch_keyed else "login"}
         return ClaudeAgentOptions(**kw)

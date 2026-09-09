@@ -24,11 +24,42 @@ BACKEND_SRC = open(os.path.join(BIN, "romp_sdk_backend.py")).read()
 class EffortReconnect(unittest.TestCase):
     def test_build_session_emits_a_reconnecting_event_while_effort_pending(self):
         src = inspect.getsource(km.build_session)
-        self.assertIn('if (tm0 or {}).get("effortPending"):', src)
-        self.assertIn('events.append({"kind": "reconnecting", "effort": (tm0 or {}).get("effort") or "",', src)
-        # ...carrying the HOLD when the pick waits for live work, so the webview renders a waiting line
-        # instead of the reloading animation (review round 1, 2026-09-09)
-        self.assertIn('"held": (tm0 or {}).get("pickHeld") or None})', src)
+        # ...and while ANY pick is held for the session's live work (review round 2, 2026-09-09): the
+        # event is the chat's only carrier of the hold, and a held mode, fast or billing pick had none
+        self.assertIn('if (tm0 or {}).get("effortPending") or (tm0 or {}).get("pickHeld"):', src)
+        self.assertIn('events.append(_reconnecting_event(tm0))', src)
+
+    def test_the_reconnecting_event_covers_every_held_kind_and_names_the_effort_only_when_it_is_the_pick(self):
+        # behaviour, not a pin: the composed event for the rows the chat can be in
+        ev = km._reconnecting_event({"effortPending": True, "effort": "max", "pickHeld": None})
+        self.assertEqual(ev, {"kind": "reconnecting", "effort": "max", "held": None}, "the armed effort reload")
+        held = {"surfaces": ["mode"], "subagents": 1, "tasks": 0}
+        ev = km._reconnecting_event({"effortPending": False, "effort": "high", "pickHeld": held})
+        self.assertEqual(ev["held"], held, "a held mode pick reaches the chat")
+        self.assertEqual(ev["effort"], "", "the row's effort is what the session runs, not a pick: not sent as one")
+        for kind in ("fast", "auth", "effort"):
+            ev = km._reconnecting_event({"effortPending": kind == "effort", "effort": "high",
+                                         "pickHeld": {"surfaces": [kind], "subagents": 0, "tasks": 2}})
+            self.assertEqual(ev["held"]["surfaces"], [kind], kind)
+            self.assertEqual(ev["effort"], "", "held: the waiting line is keyed on the surfaces (%s)" % kind)
+        self.assertEqual(km._reconnecting_event({"effortPending": False, "effort": "high", "pickHeld": None})["held"], None)
+        self.assertEqual(km._reconnecting_event(None), {"kind": "reconnecting", "effort": "", "held": None})
+
+    def test_the_loop_top_resets_every_arm_field_before_the_drop_and_the_landing_stamps_after_the_handshake(self):
+        # the reconnect loop's top: _reset_reconnect_state is the FIRST statement after the wake clear
+        # (adjacent, not merely somewhere above), and it precedes the teardown's _drop_live_work; the
+        # round-0 line (`self._reconnect = False`) left the deferred arm and its hold standing, and every
+        # test stayed green with it (review round 2, 2026-09-09: the helper was only ever called by hand)
+        loop = BACKEND_SRC[BACKEND_SRC.index("        while not self.ended:\n            self._wake.clear()"):]
+        lines = [l.strip() for l in loop.splitlines()[:3]]
+        self.assertEqual(lines[:3], ["while not self.ended:", "self._wake.clear()",
+                                     "self._reset_reconnect_state()   # every request is served by this connect (a held pick rides it)"])
+        self.assertLess(loop.index("self._reset_reconnect_state()"), loop.index('self._drop_live_work("reconnect")'))
+        self.assertNotIn("self._reconnect = False   #", loop[:loop.index("self._reset_reconnect_state()")])
+        # and the stamps land with the connect: _connect_landed follows the launch-error clear, inside the loop
+        i = loop.index("self.backend._clear_launch_error(self.sid)")
+        tail = [l.strip() for l in loop[i:].splitlines() if l.strip() and not l.strip().startswith("#")]
+        self.assertEqual(tail[1], "self._connect_landed()", tail[:3])
 
     def test_the_held_pick_reaches_the_status_readers(self):
         # the backend snapshot's pickHeld ({surfaces, subagents, tasks} or None) passes through the live
@@ -40,7 +71,7 @@ class EffortReconnect(unittest.TestCase):
     def test_the_reconnecting_notice_precedes_the_queued_bubble(self):
         # like the compacting element, it must sit ABOVE any queued/provisional message
         src = inspect.getsource(km.build_session)
-        i_recon = src.index('events.append({"kind": "reconnecting"')
+        i_recon = src.index('events.append(_reconnecting_event(tm0))')
         i_queued = src.index('events.append({"kind": "queued"')
         self.assertGreater(i_recon, 0)
         self.assertGreater(i_queued, i_recon)

@@ -56,6 +56,26 @@ test("a pick the CLI confirmed reads plainly", () => {
     "Login (user@example.com)");
 });
 
+test("a billing pick HELD for the session's live work says so, and names what bills meanwhile", () => {
+  // the switch reconnects, and the reconnect waits for the session's subagents and background tasks
+  // (2026-09-09); the status's one held marker (pickHeld) carries it. Until review round 2 the row read
+  // "Login (applying, not confirmed yet)" and the sub-line "applying…" for the whole hold, though nothing
+  // was applying; the CLI's last report still describes the running process, so it leads
+  const f = { auth: "login", authLive: "key", authPicked: true, authPending: true,
+              pickHeld: { surfaces: ["auth"], subagents: 1, tasks: 0 } };
+  assert.equal(billingRowText(f), "API key until the background work finishes, then Login");
+  assert.equal(billingSubText(f), "waiting for background work");
+  // no report to name: the pick is named as what waits, never as the fact
+  const g = { auth: "key", authLive: "", authPicked: true, authPending: true, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 2 } };
+  assert.equal(billingRowText(g), "API key applies when the background work finishes");
+  assert.equal(billingSubText(g), "waiting for background work");
+  // a hold on some OTHER pick leaves the billing words alone, and so does the armed reconnect (no hold)
+  const h = { auth: "login", authLive: "", authPicked: true, authPending: true, pickHeld: { surfaces: ["effort"], subagents: 1, tasks: 0 } };
+  assert.equal(billingRowText(h), "Login (applying, not confirmed yet)");
+  assert.equal(billingSubText(h), "applying…");
+  assert.equal(billingSubText({ auth: "login", authPending: true, pickHeld: null }), "applying…");
+});
+
 test("a pick before its init lands shows the pick as the intent, never as a contradiction", () => {
   // a real, open-ended window: spawn writes the reg's auth from a remembered pick and authLive stays ""
   // until the first init's report (a dormant session holds this state indefinitely). Dropping the

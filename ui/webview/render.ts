@@ -88,6 +88,7 @@ import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle } from "./billing-label";
+import { pickHeldLine, pickHeldTitle, badgeHeldTip, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line and the badge tips (pick-held.ts)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
 import { setTip, pruneTip } from "./tip";
@@ -4011,10 +4012,13 @@ function renderCompacting(): HTMLElement {
 // (the romp-accent pulsing dots, the loader motif), so the user sees the "rereading transcript" step the TUI
 // narrates; it clears the instant the new client connects (kernel drops effortPending). Sibling of the
 // compacting element; appended before the queued bubble.
-// While the pick is HELD (ev.held: the kernel waits for the session's live subagents and background tasks
+// While a pick is HELD (ev.held: the kernel waits for the session's live subagents and background tasks
 // to finish before it reloads, since the reload would kill them; 2026-09-09) nothing is reloading yet, so
-// the element says what it waits for, in plain words, with no loader dots: the animation claimed a reload
-// in progress for the whole hold, sometimes hours (review round 1).
+// the element says which pick waits and on what, in plain words, with no loader dots: the animation
+// claimed a reload in progress for the whole hold, sometimes hours (review round 1). The kernel sends the
+// event for every held kind (effort, permission mode, fast mode, billing), and the words come from
+// pick-held.ts, keyed on the counts: work running names it; none left says the pick applies when this
+// turn finishes (review round 2).
 function renderReconnecting(ev: Extract<ChatEvent, { kind: "reconnecting" }>): HTMLElement {
   const turn = el("div", "turn turn-reconnecting");
   turn.appendChild(dot("ring"));
@@ -4022,8 +4026,7 @@ function renderReconnecting(ev: Extract<ChatEvent, { kind: "reconnecting" }>): H
   const txt = el("span", "reconnecting-text");
   if (ev.held) {
     turn.classList.add("turn-reconnecting-held");
-    txt.textContent = ev.effort ? `Applying ${ev.effort} effort when the background work finishes`
-      : "Applying the change when the background work finishes";
+    txt.textContent = pickHeldLine(ev.held);
     line.title = pickHeldTitle(ev.held);
   } else {
     line.appendChild(metaDots());   // the same pulsing accent-blue dots as the switching-dots badge — "it's romp, working"
@@ -4033,16 +4036,6 @@ function renderReconnecting(ev: Extract<ChatEvent, { kind: "reconnecting" }>): H
   line.appendChild(txt);
   turn.appendChild(line);
   return turn;
-}
-
-// A pick waiting for live work before its reconnect: {surfaces, subagents, tasks} from the kernel's
-// status (SdkSession.snapshot pickHeld), counts live so the hover can watch them fall.
-interface PickHeld { surfaces: string[]; subagents: number; tasks: number }
-
-function pickHeldTitle(h: PickHeld): string {
-  const n = h.subagents, m = h.tasks;
-  return `waiting on ${n} subagent${n === 1 ? "" : "s"} and ${m} background task${m === 1 ? "" : "s"}; `
-    + "the session reloads to apply the change when they finish (reloading now would cut them off)";
 }
 
 // LIVE api_retry (the user 2026-07-08): the API returned a retryable error (rate-limit / overload) and the
@@ -14660,12 +14653,17 @@ function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLE
   caret.textContent = "▾";
   btn.appendChild(caret);
   // the styled tip (tip.ts), not a native title — every tooltip wears the one .romp-tip dress
-  setTip(btn, kind === "model" ? "change model (sends /model)"
-    : kind === "effort" ? "change thinking effort (sends /effort)"
-    : kind === "fast" ? "toggle fast mode (sends /fast)"
-    : "change permission mode (shift+tab cycle)");
+  setTip(btn, metaTip(kind));
   btn.addEventListener("click", (e) => { e.stopPropagation(); toggleMetaMenu(kind, btn, forSid ?? null); });
   return btn;
+}
+
+// A badge's standing tip; syncMetaControls restores it when a hold on that kind ends.
+function metaTip(kind: MetaKind): string {
+  return kind === "model" ? "change model (sends /model)"
+    : kind === "effort" ? "change thinking effort (sends /effort)"
+    : kind === "fast" ? "toggle fast mode (sends /fast)"
+    : "change permission mode (shift+tab cycle)";
 }
 
 // The model/effort label tint, from the server-computed colormap RGB (by capability/effort rank, the user
@@ -14720,8 +14718,14 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
     // model resolves live; effort reconnects to apply (--effort is connect-time) — both drive the switching-
     // dots from the server (st.modelPending / st.effortPending), with isMetaPending covering the sub-second
     // before the first server push (the user 2026-07-06).
-    const pending = (kind === "model" && !!st.modelPending) || (kind === "effort" && !!st.effortPending)
-      || isMetaPending(kind, st);
+    // A pick HELD for the session's live work (st.pickHeld names the kinds; 2026-09-09) is neither
+    // resolving nor reloading: the kernel reports the value the session RUNS for that kind, so the label
+    // shows it, a small mark beside it says a change waits, and the tip names the pick and what it waits
+    // on. Neither the loader dots nor the dim pulse: both claimed a change in progress, and the badge
+    // disagreed with the chat's waiting line beside it (review round 2).
+    const held = !!st.pickHeld && st.pickHeld.surfaces.includes(kind);
+    const pending = !held && ((kind === "model" && !!st.modelPending) || (kind === "effort" && !!st.effortPending)
+      || isMetaPending(kind, st));
     const showDots = pending && (kind === "model" || kind === "effort");   // both apply via a resolve/reconnect the server tracks
     if (label) {
       if (showDots) {
@@ -14732,6 +14736,16 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
       label.style.color = showDots ? "" : metaColor(kind, st);   // tint the model name / effort by the colormap rank
     }
     b.classList.toggle("meta-pending", pending);
+    b.classList.toggle("meta-held", held);
+    const mark = b.querySelector(".meta-held-mark") as HTMLElement | null;
+    if (held && !mark) {
+      const m = el("span", "meta-held-mark");
+      m.textContent = "•";
+      b.insertBefore(m, b.querySelector(".meta-caret"));
+    } else if (!held && mark) {
+      mark.remove();
+    }
+    setTip(b, held && st.pickHeld ? badgeHeldTip(kind, st.pickHeld) : metaTip(kind));   // idempotent: tip.ts wires once
   }
 }
 

@@ -35,6 +35,14 @@ export interface BillingFacts {
   authPickUnavailable?: string;   // the explicit pick this box cannot bill: "login" | "key" | "" (kernel pick_unavailable)
   authPickFell?: string;          // the side the launch billed instead: "login" | "key" | ""; absent on an older kernel (kernel pick_fall)
   authAvail?: BillingAvail;       // which sides this box can bill, with the reasons (kernel auth_avail / _auth_avail)
+  pickHeld?: { surfaces: string[] } | null;   // a pick waits for the session's live work before that reconnect
+  //   (the status's one held marker, SdkSession.snapshot pickHeld; 2026-09-09): "auth" among the surfaces
+  //   means the switch is not applying yet, and the CLI's last report still describes the running process
+}
+
+// The billing switch is HELD: picked, pending, and waiting for live work rather than applying.
+export function billingHeld(f: BillingFacts): boolean {
+  return !!(f.authPending && f.pickHeld && f.pickHeld.surfaces.includes("auth"));
 }
 
 // The plain label for one side, naming the login's account when known; "" for no side at all.
@@ -125,6 +133,13 @@ export function billingContradicted(f: BillingFacts): boolean {
 // with the warning and names what is billed; otherwise the CLI's reported side, falling back to the intent
 // before any report has landed.
 export function billingRowText(f: BillingFacts): string {
+  if (billingHeld(f)) {
+    // the running side leads when the CLI reported one (the report still describes the running process:
+    // the kernel keeps it through the hold and clears it at the arm); the pick is named as what waits
+    const now = billingSide(f.authLive || "", f.authAcct), then = billingSide(f.auth || "", f.authAcct);
+    return now ? `${now} until the background work finishes, then ${then}`
+      : `${then} applies when the background work finishes`;
+  }
   if (f.authPending) return billingSide(f.auth || "") + " (applying, not confirmed yet)";
   if (billingPickUnavailable(f)) {
     const fell = billingFellTo(f);
@@ -142,6 +157,7 @@ export function billingRowText(f: BillingFacts): string {
 // The tab menu's Billing item sub-line: the same decision in fewer words, since the switch is one click
 // away and the row is a control's caption.
 export function billingSubText(f: BillingFacts): string {
+  if (billingHeld(f)) return "waiting for background work";
   if (f.authPending) return "applying…";
   if (billingPickUnavailable(f)) {   // the pick names a side this box cannot bill: the launch went to the other one when it exists
     const fell = billingFellTo(f);

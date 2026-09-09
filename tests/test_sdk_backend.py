@@ -5612,9 +5612,10 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertFalse(s._reconnect_when_idle)
         self.assertEqual(self._held(), [])
 
-    def test_e2_the_key_cycles_immediate_only_branch_is_untouched(self):
-        # tests/test_keyswap.py CycleReconnects pins the whole contract; this is the one line that matters
-        # here: defer=False over live work drops the request with its own log line and arms nothing
+    def test_e2_the_immediate_only_request_form_is_untouched(self):
+        # request_reconnect(defer=False), the immediate-only form (its one production caller, the key cycle,
+        # retired with romp's own key paths on 2026-09-09, so this is the form's pin): over live work it
+        # drops the request with its own log line and arms nothing
         s = self._sess()
         self._start(s, "a1")
         s._do_request_reconnect(defer=False)
@@ -5731,7 +5732,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._launched_auth = "login"
         asked = []
         s.request_reconnect = lambda: asked.append(1)
-        with mock.patch.object(sb.SdkBackend, "work_key_configured", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
             self.assertEqual(asked, [1]); self.assertEqual(s._auth_pending, "key")
             self.assertTrue(s.backend.set_auth(self.SID, "login"))
@@ -5821,7 +5822,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._launched_auth = "login"
         asked = []
         s.request_reconnect = lambda: asked.append(1)
-        with mock.patch.object(sb.SdkBackend, "work_key_configured", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
             s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "default", "auth": "key"}
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
@@ -6133,7 +6134,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         # billing, both orders
         s = self._sess(auth="key")
         s._launched_auth = "key"
-        with mock.patch.object(sb.SdkBackend, "work_key_configured", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
             self.assertTrue(s.backend.set_auth(self.SID, "login"))
             self.assertTrue(s._reconnect)
             s._reset_reconnect_state()

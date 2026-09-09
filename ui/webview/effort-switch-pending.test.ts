@@ -36,21 +36,38 @@ test("renderReconnecting draws the accent loader dots + a 'Reloading session' li
 });
 
 test("a pick HELD for live work renders a waiting line, not the reloading animation", () => {
-  // the kernel holds an effort pick while the session's subagents and background tasks run (the reload
-  // would kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the
-  // element then says what it waits for, with no loader dots, and its title names the counts
+  // the kernel holds a pick while the session's subagents and background tasks run (the reload would
+  // kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the element then
+  // says which pick waits and on what, with no loader dots. The words come from pick-held.ts (executed
+  // in pick-held.test.ts, per kind and per state); render.ts is pinned to take them from there
+  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, type PickHeld \} from "\.\/pick-held";/);
   assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null;/);
   assert.match(RENDER, /effortPending\?: boolean; pickHeld\?: PickHeld \| null;/);
-  assert.match(RENDER, /interface PickHeld \{ surfaces: string\[\]; subagents: number; tasks: number \}/);
   assert.match(RENDER, /if \(ev\.held\) \{/);
-  assert.match(RENDER, /Applying \$\{ev\.effort\} effort when the background work finishes/);
-  assert.match(RENDER, /"Applying the change when the background work finishes"/);
+  assert.match(RENDER, /txt\.textContent = pickHeldLine\(ev\.held\);/);
   assert.match(RENDER, /line\.title = pickHeldTitle\(ev\.held\);/);
+  assert.doesNotMatch(RENDER, /Applying \$\{ev\.effort\} effort when the background work finishes/,
+    "the round-1 copy named the effort for every held kind");
   // the dots and the reloading words live in the else branch: a hold shows neither
-  const fn = RENDER.slice(RENDER.indexOf("function renderReconnecting("), RENDER.indexOf("interface PickHeld"));
+  const start = RENDER.indexOf("function renderReconnecting(");
+  const fn = RENDER.slice(start, RENDER.indexOf("\nfunction ", start + 1));   // this function alone
   const held = fn.indexOf("if (ev.held) {"), els = fn.indexOf("} else {");
   assert.ok(held > 0 && els > held);
   assert.ok(fn.indexOf("line.appendChild(metaDots());") > els, "no loader dots while held");
   assert.ok(fn.indexOf("Reloading session") > els, "no reload claim while held");
-  assert.match(RENDER, /waiting on \$\{n\} subagent\$\{n === 1 \? "" : "s"\} and \$\{m\} background task/);
+});
+
+test("a held kind's badge shows the running value with a pending mark: no loader dots, no dim pulse", () => {
+  // syncMetaControls reads the one held marker (st.pickHeld.surfaces) for every kind it draws: the label
+  // stays the value the kernel reports (the running one while held), a small accent mark says a change
+  // waits, and the tip names the pick; effortPending's loader dots and the dim .meta-pending pulse are
+  // both off for a held kind, since each claimed a change in progress (review round 2, 2026-09-09)
+  assert.match(RENDER, /const held = !!st\.pickHeld && st\.pickHeld\.surfaces\.includes\(kind\);/);
+  assert.match(RENDER, /const pending = !held && \(\(kind === "model" && !!st\.modelPending\) \|\| \(kind === "effort" && !!st\.effortPending\)/);
+  assert.match(RENDER, /b\.classList\.toggle\("meta-held", held\);/);
+  assert.match(RENDER, /const m = el\("span", "meta-held-mark"\);/);
+  assert.match(RENDER, /setTip\(b, held && st\.pickHeld \? badgeHeldTip\(kind, st\.pickHeld\) : metaTip\(kind\)\);/);
+  assert.match(CSS, /\.meta-held-mark \{[^}]*color: var\(--accent\)/);
+  // the same sync serves mode, model, effort and fast badges (the kinds the statusline draws)
+  assert.match(RENDER, /type MetaKind = "mode" \| "model" \| "effort" \| "fast";/);
 });

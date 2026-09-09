@@ -232,25 +232,25 @@ class OptionsInjection(_OptionsHarness):
         self.assertEqual(s2._launched_auth, "login")
 
     def test_a_key_pick_that_launched_without_a_key_is_stamped_as_what_launched(self):
-        # an explicit key pick with no source launches un-injected (the test below) and bills Claude Code's
-        # own credential. Stamping it "key" made a later key pick, once a source existed, read as unchanged
-        # in set_auth, so the key was never injected (review round 1); the stamp records the side that
-        # launched, and the re-pick reconnects
-        self.be.work_key = ""
+        # an explicit key pick on a box with no helper launches plain (the test below) and bills Claude Code's
+        # own credential resolution. Stamping it "key" made a later key pick, once a helper existed, read as
+        # unchanged in set_auth, so the helper was never billed (review round 1); the stamp records the side
+        # that launched, and the re-pick reconnects
+        self._no_helper()
         sid = "11111111-2222-3333-4444-%012d" % 7
         sb.write_reg(self.be.state_dir, sid, {"sid": sid, "name": "s7", "cwd": "/tmp", "auth": "key"})
         s = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
         self._options_kw(s)
         s._connect_landed()
         self.assertTrue(s._launched_unkeyed_pick)
-        self.assertEqual(s._launched_auth, "login", "what launched: nothing injected")
+        self.assertEqual(s._launched_auth, "login", "what launched: no helper to bill")
         self.be.sessions[sid] = s
         s.loop = object()                        # a live loop, as far as _note_reconnect_ask is concerned
         asked = []
         s.request_reconnect = lambda: asked.append(1)
-        self.be.work_key = FAKE_KEY              # a source appears
+        _stage_helper(self.cfg)                  # a helper appears in the operator's settings
         self.assertTrue(self.be.set_auth(sid, "key"))
-        self.assertEqual(asked, [1], "the re-pick reconnects and injects")
+        self.assertEqual(asked, [1], "the re-pick reconnects onto the helper")
         self.assertEqual(s._auth_pending, "key")
         # and picking login on that session reads unchanged: the same env either way
         asked.clear()

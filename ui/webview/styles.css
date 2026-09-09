@@ -1669,6 +1669,10 @@ button.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1p
 /* a /model switch resolving: three accent-blue dots IN the badge until the new name lands (the user
    2026-07-03) — the romp loader dot motif. Overrides the .meta-pending dim so the dots read full-strength. */
 .meta-pending .meta-label:has(.meta-dots) { opacity: 1; animation: none; }
+/* a pick HELD for the session's live work (2026-09-09): the label is the value the session RUNS, and this
+   small accent mark beside it says a change waits; neither the dim pulse nor the loader dots, which both
+   claimed a change in progress. The tip names the pick and what it waits on. */
+.meta-held-mark { font-size: 0.55em; color: var(--accent); vertical-align: super; margin-left: 2px; line-height: 1; }
 .meta-dots { display: inline-flex; align-items: center; gap: 3px; }
 .meta-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); display: inline-block; animation: meta-dots 1s ease-in-out infinite; }
 .meta-dots i:nth-child(2) { animation-delay: 0.16s; }

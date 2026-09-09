@@ -36633,12 +36633,13 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # leaves NO record in the chat. While that reconnect is pending, show an animated "Reloading session…"
     # element (mirrors the compacting one) so the user sees the "rereading transcript" step the TUI narrates;
     # it clears the instant the new client connects (effortPending drops). Appended before the queued bubble.
-    # While the pick is HELD for the session's live work (pickHeld: subagents, background tasks, a Workflow
+    # While a pick is HELD for the session's live work (pickHeld: subagents, background tasks, a Workflow
     # run), nothing is reloading yet, so the element carries the hold and the webview renders a waiting
-    # line in its place (review round 1, 2026-09-09: the reloading line ran for the whole hold).
-    if (tm0 or {}).get("effortPending"):
-        events.append({"kind": "reconnecting", "effort": (tm0 or {}).get("effort") or "",
-                       "held": (tm0 or {}).get("pickHeld") or None})
+    # line in its place (review round 1, 2026-09-09: the reloading line ran for the whole hold), and it
+    # shows for EVERY held kind, not only an effort pick (review round 2: a held mode, fast or billing pick
+    # reached no chat surface). _reconnecting_event composes it.
+    if (tm0 or {}).get("effortPending") or (tm0 or {}).get("pickHeld"):
+        events.append(_reconnecting_event(tm0))
     # Live API-RETRY indicator (the user 2026-07-08): while the CLI backs off + retries a rate-limited /
     # overloaded request the turn stalls in 'retrying' — which was visible ONLY as the amber tab border, with
     # NOTHING in the chat ("the border says retrying but the chat shows no sign"). Show an animated "API
@@ -49925,6 +49926,20 @@ def _pick_held_sig(h):
     if not isinstance(h, dict):
         return None
     return (tuple(h.get("surfaces") or ()), h.get("subagents"), h.get("tasks"))
+
+
+def _reconnecting_event(tm0):
+    """The chat's `reconnecting` element for a live row (build_session): {"kind", "effort", "held"}. Shown
+    while an effort reconnect is pending (effortPending) and, since review round 2 (2026-09-09), while ANY
+    pick is held for the session's live work (pickHeld: the status's one marker for a held effort, mode,
+    fast or billing pick), since a held mode, fast or billing pick reached no chat surface before. `effort`
+    names the pick only for the armed effort reconnect: a live row's effort is never empty, the renderer
+    took any effort text as the effort pick's, and while a pick is held the row's effort is the value the
+    session RUNS, not the pick."""
+    tm0 = tm0 or {}
+    held = tm0.get("pickHeld") or None
+    effort = (tm0.get("effort") or "") if (tm0.get("effortPending") and not held) else ""
+    return {"kind": "reconnecting", "effort": effort, "held": held}
 
 
 def _row_items_sig(rows):
