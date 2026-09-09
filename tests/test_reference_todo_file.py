@@ -207,7 +207,7 @@ class TheParagraphSaysWhatTheKernelDoes(_Sandbox):
     def test_the_resume_list_shows_the_path_after_the_text(self):
         km._add_user_todo(RSID, "Need a look at the findings report", file=self.fp)
         block = km._user_todo_context_block(RSID)
-        self.assertRegex(block, r"- Need a look at the findings report \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\) — file: "
+        self.assertRegex(block, r"- Need a look at the findings report \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\); file: "
                                 + re.escape(self.fp))
 
 
@@ -282,7 +282,7 @@ class TheParagraphSaysWhatTheKernelDoesForLinks(_Sandbox):
     def test_the_handed_back_list_shows_the_address_after_the_path(self):
         km._add_user_todo(RSID, "Need a look at the findings report", file=self.fp, link=self.LINK)
         block = km._user_todo_context_block(RSID)
-        self.assertRegex(block, r"- Need a look at the findings report \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\) — file: "
+        self.assertRegex(block, r"- Need a look at the findings report \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\); file: "
                                 + re.escape(self.fp) + "; link: " + re.escape(self.LINK))
 
     def test_the_tools_reply_refuses_before_the_post_and_names_a_kernel_that_kept_no_link(self):

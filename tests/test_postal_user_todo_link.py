@@ -63,6 +63,14 @@ CASES = [
     ("https://example.invalid/\x9bx", False),          # a C1 control, which str.isspace does not read as whitespace (the 2026-09-09 review)
     ("https://example.invalid/a\x85b", False),         # NEL: C1, and whitespace to isspace
     ("https://example.invalid/a\x80b", False),         # the first C1 code point
+    # the round-3 review: the C0/C1 gate let every format character through, and a refused Unicode whitespace rode
+    # the reason as itself; one predicate now (not printable, or whitespace) refuses and spells all of them
+    ("https://example.invalid/a\u200bb", False),       # ZERO WIDTH SPACE: a format character, neither a control nor whitespace to isspace
+    ("\ufeffhttps://example.invalid/x", False),        # a leading BYTE ORDER MARK, the paste artifact: not whitespace, so strip() keeps it
+    ("https://example.invalid/a\u2028b", False),       # LINE SEPARATOR: whitespace to isspace, and shown unspelled before
+    ("https://example.invalid/a\u2060b", False),       # WORD JOINER: a format character
+    ("https://example.invalid/a\xa0b", False),         # NO-BREAK SPACE
+    ("https://example.invalid/caf\u00e9", True),       # a printable character outside ASCII is an address's own, not refused
     ("https://example.invalid/" + "x" * 2048, False),
     (["https://example.invalid/x"], False),
     ({"href": LINK}, False),
@@ -129,16 +137,27 @@ class TheTwoChecksAgree(unittest.TestCase):
         self.assertEqual(pm._TODO_LINK_RE.pattern, km._TODO_LINK_RE.pattern)
         self.assertEqual(pm._TODO_LINK_RE.flags, km._TODO_LINK_RE.flags)
 
-    def test_every_refused_control_is_spelled_out_on_both_sides(self):
-        # a NUL was spelled out and every other control rode the reason as itself, invisible in a reply (the 2026-09-09 review)
+    def test_every_refused_character_is_spelled_out_on_both_sides(self):
+        # a NUL was spelled out and every other control rode the reason as itself, invisible in a reply (the 2026-09-09
+        # review); then the format characters and separators past U+00FF, as \uNNNN (the round-3 review), and the ordinary
+        # space as \x20, since the one predicate that refuses a character also decides its spelling
         for value, esc in (("https://example.invalid/a\x1bb", "\\x1b"), ("https://example.invalid/a\x7fb", "\\x7f"),
                            ("https://example.invalid/\x9bx", "\\x9b"), ("https://example.invalid/a\x85b", "\\x85"),
-                           ("https://example.invalid/a\x00b", "\\0")):
+                           ("https://example.invalid/a\x00b", "\\0"),
+                           ("https://example.invalid/a\u200bb", "\\u200b"), ("\ufeffhttps://example.invalid/x", "\\ufeff"),
+                           ("https://example.invalid/a\u2028b", "\\u2028"), ("https://example.invalid/a\u2060b", "\\u2060"),
+                           ("https://example.invalid/a\xa0b", "\\xa0"), ("https://example.invalid/a b", "\\x20")):
             with self.subTest(link=value):
                 for side, err in (("the tool", pm._todo_link_error(value)), ("the kernel", km._user_todo_link(value)[1])):
                     self.assertIn("whitespace or a control character", err, side)
-                    self.assertIn(esc, err, side + ": the byte is spelled out")
-                    self.assertFalse(any(ord(c) < 32 or 0x7f <= ord(c) <= 0x9f for c in err), side + ": no control character rides the reason")
+                    self.assertIn(esc, err, side + ": the character is spelled out")
+                    self.assertTrue(err.isprintable(), side + ": no unprintable character rides the reason")
+                    self.assertEqual(err.count("example.invalid"), 1, side + ": the address is shown once, spelled")
+        # the two spellers agree above U+FFFF too (Python's \UNNNNNNNN), and on a printable character they are not asked
+        for side in (pm, km):
+            self.assertEqual(side._todo_link_spell("\U000e0001"), "\\U000e0001")
+            self.assertFalse(side._todo_link_bad_char("\u00e9"))
+            self.assertTrue(side._todo_link_bad_char(" "), "the ordinary space is refused, as before")
 
     def test_the_text_and_detail_bounds_are_the_same_constants_and_the_pinned_notes(self):
         # the 2026-09-09 review: neither had a cap, and the webview links every open todo's text and detail on every
@@ -251,6 +270,16 @@ class WiredToTheKernel(unittest.TestCase):
                 self.assertIn("%s is longer than %d characters" % (key, getattr(km, "USER_TODO_%s_MAX" % key.upper())),
                               json.loads(raw.decode())["error"])
         self.assertEqual(len(km._user_todos()[PSID]), 1, "nothing more filed")
+        # a hand-built POST with the detail at the bound inside surrounding whitespace: the route strips before it
+        # measures, as the tool does before it posts (the round-3 review: it measured the raw value, so a padded detail
+        # the tool would have filed was a 400 for every other client), and the row keeps the detail as measured
+        code, raw = _serve_post("/usertodo", {"id": PSID, "text": " " + TEXT + " ", "detail": " \n" + "d" * km.USER_TODO_DETAIL_MAX + "\t "},
+                                {"X-Romp-Token": km.TOKEN})
+        self.assertEqual(code, 200, raw)
+        rows = km._user_todos()[PSID]
+        self.assertEqual(len(rows), 2, "filed, not refused")
+        self.assertEqual(rows[-1]["detail"], "d" * km.USER_TODO_DETAIL_MAX, "stored stripped, as the tool's post is")
+        self.assertEqual(rows[-1]["text"], TEXT)
 
     def test_a_link_beside_a_file_rides_both_and_the_text_links_too(self):
         root = os.path.join(self.td.name, "notes-api")

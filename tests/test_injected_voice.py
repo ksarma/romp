@@ -1029,6 +1029,22 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34"}
             results["add: noted, link not recorded"] = pm._mcp_call(
                 "add_user_todo", {"text": "Need a review of the pull request", "link": "https://example.invalid/pull/1"})[0]
+            # the bounds on the line and the detail (the 2026-09-09 review): each refusal names the bound and the
+            # length before any post
+            results["add: text too long"] = pm._mcp_call("add_user_todo", {"text": "N" * (pm.TODO_TEXT_MAX + 1)})[0]
+            results["add: detail too long"] = pm._mcp_call(
+                "add_user_todo", {"text": "Need the port", "detail": "d" * (pm.TODO_DETAIL_MAX + 1)})[0]
+            # the kernel's own account of a link lost on the way to an older remote kernel rides the reply verbatim
+            # behind the tool's lead-in, so it is scanned here too: the sample is the kernel's wording (kernel.py, the
+            # /usertodo forward's linkWarning; test_user_todos.py holds the real sentence to this veil as well)
+            canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34",
+                             "linkWarning": ("the link https://example.invalid/pull/1 was not recorded. The session manager on "
+                                             "TESTHOST runs an older version that does not keep a todo's link (an update and a "
+                                             "restart there fix that), so the todo stands there without it. If the link "
+                                             "matters, withdraw it and file it again with the address in its detail, where it "
+                                             "becomes a link too.")}
+            results["add: noted, link warning relayed"] = pm._mcp_call(
+                "add_user_todo", {"text": "Need a review of the pull request", "link": "https://example.invalid/pull/1"})[0]
             canned["res"] = None                    # unreachable kernel / non-2xx
             results["add: couldn't save"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
             results["withdraw: unreachable"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
@@ -1054,6 +1070,10 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
         self.assertIn("About the file: that path did not resolve", results["add: noted, path unresolved"])
         self.assertIn("Refused: the link ftp://example.invalid/x is not an http or https address", results["add: link refused"])
         self.assertIn("About the link: https://example.invalid/pull/1 was not recorded", results["add: noted, link not recorded"])
+        self.assertIn("Too long: the line takes at most %d characters" % pm.TODO_TEXT_MAX, results["add: text too long"])
+        self.assertIn("Too long: 'detail' takes at most %d characters" % pm.TODO_DETAIL_MAX, results["add: detail too long"])
+        self.assertIn("About the link: the link https://example.invalid/pull/1 was not recorded. The session manager on TESTHOST",
+                      results["add: noted, link warning relayed"])
         self.assertIn("Withdrawn", results["withdraw: withdrawn"])
         self.assertIn("Nothing changed", results["withdraw: no open note"])
         self.assertIn("Already closed", results["withdraw: already answered"])

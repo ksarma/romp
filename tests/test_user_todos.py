@@ -320,12 +320,19 @@ class LinkCarriedByATodo(_StoreSandbox):
     def test_each_refusal_names_its_reason(self):
         self.assertIn("is not a string", km._user_todo_link(["x"])[1])
         self.assertIn("whitespace or a control character", km._user_todo_link("https://example.invalid/a b")[1])
+        self.assertIn("\\x20", km._user_todo_link("https://example.invalid/a b")[1],
+                      "the space is spelled out too: one predicate decides the refusal and the spelling (the round-3 review)")
         self.assertIn("\\0", km._user_todo_link("https://example.invalid/a\x00b")[1], "a NUL is spelled out: in a reply it is invisible")
-        for value, esc in (("https://example.invalid/a\x1bb", "\\x1b"), ("https://example.invalid/\x9bx", "\\x9b"), ("https://example.invalid/a\x7fb", "\\x7f")):
+        for value, ch, esc in (("https://example.invalid/a\x1bb", "\x1b", "\\x1b"), ("https://example.invalid/\x9bx", "\x9b", "\\x9b"),
+                               ("https://example.invalid/a\x7fb", "\x7f", "\\x7f"),
+                               # the format characters and separators the C0/C1 gate let through, spelled \uNNNN (the round-3 review)
+                               ("https://example.invalid/a\u200bb", "\u200b", "\\u200b"), ("\ufeffhttps://example.invalid/x", "\ufeff", "\\ufeff"),
+                               ("https://example.invalid/a\u2028b", "\u2028", "\\u2028"), ("https://example.invalid/a\u2060b", "\u2060", "\\u2060")):
             err = km._user_todo_link(value)[1]
-            self.assertIn("whitespace or a control character", err, "a C1 control is a control character too (the term as _PINNED_CTRL_RE reads it; the 2026-09-09 review)")
+            self.assertIn("whitespace or a control character", err, "a C1 control or a format character is refused with the controls (the 2026-09-09 review)")
             self.assertIn(esc, err, "spelled out, as the NUL is")
-            self.assertNotIn(value[-2], err, "the byte itself never rides the reason")
+            self.assertNotIn(ch, err, "the character itself never rides the reason")
+        self.assertIsNone(km._user_todo_link("https://example.invalid/caf\u00e9")[1], "a printable character outside ASCII passes")
         long = "https://example.invalid/" + "x" * km._TODO_LINK_MAX
         err = km._user_todo_link(long)[1]
         self.assertIn("longer than %d characters" % km._TODO_LINK_MAX, err)
@@ -370,12 +377,15 @@ class LinkCarriedByATodo(_StoreSandbox):
             km._add_user_todo(LSID, "Need a review of the pull request", link=LINK)
             km._add_user_todo(LSID, "Need a look at the other note", file=fp)
         block = km._user_todo_context_block(LSID)
-        self.assertRegex(block, r"- Need a look at the findings report \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\) — file: "
+        self.assertRegex(block, r"- Need a look at the findings report \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\); file: "
                                 + re.escape(fp) + "; link: " + re.escape(LINK) + "\n")
-        self.assertRegex(block, r"- Need a review of the pull request \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\) — link: " + re.escape(LINK) + "\n")
-        self.assertRegex(block, r"- Need a look at the other note \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\) — file: " + re.escape(fp) + "\n",
-                         "a todo with a file alone reads as before")
-        self.assertEqual(len(re.findall(r"\) — ", block)), 3, "one tail per row, each after the row's parenthesis")
+        self.assertRegex(block, r"- Need a review of the pull request \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\); link: " + re.escape(LINK) + "\n")
+        self.assertRegex(block, r"- Need a look at the other note \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\); file: " + re.escape(fp) + "\n",
+                         "a todo with a file alone reads the same way")
+        self.assertEqual(len(re.findall(r"\); (?:file|link): ", block)), 3, "one tail per row, each after the row's parenthesis")
+        for ln in block.splitlines():
+            if ln.startswith("- "):
+                self.assertNotIn("\u2014", ln, "a row's tail follows a semicolon, not an em dash (the round-3 review)")
 
 
 class ResolutionStamps(_StoreSandbox):
@@ -804,9 +814,14 @@ class Routes(_StoreSandbox):
         self.assertNotIn("link", res, "no link echoed: the signal the tool reads")
         self.assertNotIn("warning", res, "the file's key is the file's alone")
         self.assertIn("the link " + LINK + " was not recorded", res["linkWarning"])
-        self.assertIn("the kernel on TESTHOST predates a todo's link", res["linkWarning"])
-        self.assertIn("update romp there and restart it", res["linkWarning"], "the remedy for the machine")
-        self.assertIn("address in its text", res["linkWarning"], "and for this todo: the text links too")
+        self.assertIn("The session manager on TESTHOST runs an older version that does not keep a todo's link", res["linkWarning"])
+        self.assertIn("an update and a restart there fix that", res["linkWarning"], "the remedy for the machine")
+        self.assertIn("address in its detail", res["linkWarning"],
+                      "and for this todo: the detail links too, and holds an address the 300-character text may not (the round-3 review)")
+        for word in ("romp", "kernel", "card", "board", "goal", "nudge", "cleared", "dismissal", "status check"):
+            self.assertNotIn(word, res["linkWarning"].lower(),
+                             "%r: the tool relays this sentence to the agent verbatim (test_injected_voice.py's veil), so the kernel "
+                             "is the session manager here, as in the tool's own skew sentence" % word)
         self.assertIn("link not recorded on TESTHOST", err.getvalue())
         self.assertIn("predates a todo's link", err.getvalue())
         # a file and a link both lost to the same older kernel: each named under its own key
@@ -1060,7 +1075,7 @@ class ContextBlock(_StoreSandbox):
         day = km.time.strftime("%Y-%m-%d", km.time.localtime(NOW))
         bullets = [ln for ln in block.splitlines() if ln.startswith("- ")]
         self.assertEqual(bullets, [
-            "- Need a look at the findings report (ut-11111111, opened %s) — file: /srv/notes-api/docs/report.md" % day,
+            "- Need a look at the findings report (ut-11111111, opened %s); file: /srv/notes-api/docs/report.md" % day,
             "- Need the staging port (ut-22222222, opened %s)" % day])
 
     def test_a_marker_shaped_file_path_is_neutralized(self):

@@ -282,7 +282,7 @@ class Link(unittest.TestCase):
     """The optional `link` (the user 2026-09-08): the http or https address the need is about. The tool
     checks it BEFORE any post (_todo_link_error, the kernel's _user_todo_link twin): a value that is not such
     an address is refused in the tool's own reply and nothing is saved, so the agent files again with an
-    address, or puts it in the text, where it links too. A good one rides the post stripped, the kernel
+    address, or puts it in the text or detail, where it links too. A good one rides the post stripped, the kernel
     echoes it as stored, and a reply that echoes none to a body that sent one is an older kernel's, named
     in the reply the way the file's skew is (never swallowed; the todo stands, so no error flag). PRIVATE
     synthetic sid (the fixture rule)."""
@@ -365,14 +365,15 @@ class Link(unittest.TestCase):
     def test_the_kernels_own_link_warning_is_relayed_and_no_skew_of_the_tools_is_read(self):
         # a hub kernel that forwarded the todo to an older remote says so under `linkWarning` (its own key, apart from
         # the file's `warning`): the tool relays the kernel's words after the filing and adds no sentence of its own
-        lw = ("the link %s was not recorded (the kernel on TESTHOST predates a todo's link: update romp there and "
-              "restart it); the todo stands there without it" % self.LINK)
+        lw = ("the link %s was not recorded. The session manager on TESTHOST runs an older version that does not keep a "
+              "todo's link (an update and a restart there fix that), so the todo stands there without it. If the link "
+              "matters, withdraw it and file it again with the address in its detail, where it becomes a link too." % self.LINK)
         self.canned = {"ok": True, "todoId": "ut-0a1b2c3d", "linkWarning": lw}
         out, err = pm._mcp_call("add_user_todo", {"text": "Need a review of the pull request", "link": self.LINK})
         self.assertFalse(err, "the todo was filed")
         self.assertIn("Noted (id ut-0a1b2c3d)", out)
         self.assertIn("About the link: " + lw, out)
-        self.assertNotIn("older version", out, "the kernel's account stands alone")
+        self.assertNotIn("on this machine", out, "the tool's own skew sentence is not added: the kernel's account stands alone")
         self.assertEqual(out.count("About the link"), 1)
         self.assertTrue(out.index("Noted") < out.index("About the link"))
         # a file warning and a link warning from the same reply: each under its own label, the file's first

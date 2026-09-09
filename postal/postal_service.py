@@ -4365,7 +4365,7 @@ MCP_TOOLS = [
     # its parent session — the right behavior (the need belongs to the session the user talks to),
     # it just means "who filed this" is always the session, never an individual subagent.
     {"name": "add_user_todo",
-     "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line (at most 300 characters) saying what you need and why; add detail (at most 4000) only if the line can't carry it. When the need is a look at a file, pass the file's absolute path as `file`; when it is a look at a web page (a change under review, an issue, a document online), pass its address as `link`. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
+     "description": "Flag something you need from the person you work for (a decision, an input, or an action only they can provide) while you keep working on what you can. Give one short line (at most 300 characters) saying what you need and why; add detail (at most 4000) only if the line can't carry it. When the need is a look at a file, pass the file's absolute path as `file`; when it is a look at a web page (a change under review, an issue, a document online), pass its address as `link`. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs: only things you are waiting on them for.",
      "inputSchema": {"type": "object",
                      "properties": {"text": {"type": "string", "description": "one short line, at most 300 characters: what you need from them and why; a file path in it becomes a link the person can open (an absolute path, a ~/, ./ or ../ path, a relative path ending in a file extension, or a file:// URI), and so does an http or https address"},
                                     "detail": {"type": "string", "description": "optional longer context, at most 4000 characters, only when the short line can't carry it; a file path or a web address in it becomes a link the same way"},
@@ -4407,8 +4407,10 @@ USER_TODO_TOOLS = ("add_user_todo", "withdraw_user_todo")   # the pair the user-
 # A todo's `link` (the user 2026-09-08): an http or https address, checked HERE before any post, so a value that
 # is not one is refused in the tool's own reply and the kernel is never asked (the kernel checks the same shape,
 # _user_todo_link, and answers 400 for every other client; the two must agree, tests hold them to it). The rule:
-# a string; no whitespace or control character (C0, DEL or the C1 set) anywhere; at most TODO_LINK_MAX characters;
-# `http://` or `https://` then a host. None and a blank string are no link.
+# a string; no whitespace and no character that does not print (_todo_link_bad_char: a control character, C0, DEL or
+# C1, and the Unicode format characters and separators, U+200B or U+2028 say) anywhere, each one spelled out in the
+# reason (_todo_link_spell); at most TODO_LINK_MAX characters; `http://` or `https://` then a host. None and a blank
+# string are no link.
 TODO_LINK_MAX = 2048
 _TODO_LINK_RE = re.compile(r"^https?://[^\s/?#]+", re.I)
 # The bounds on a todo's text and detail (the kernel's USER_TODO_TEXT_MAX / USER_TODO_DETAIL_MAX, the pinned notes'
@@ -4416,6 +4418,30 @@ _TODO_LINK_RE = re.compile(r"^https?://[^\s/?#]+", re.I)
 # bound and nothing is posted, not the kernel's 400 folded into "couldn't save that" and a retry of the same text.
 TODO_TEXT_MAX = 300
 TODO_DETAIL_MAX = 4000
+
+
+def _todo_link_bad_char(c):
+    """A character no web address holds: whitespace (the ordinary space included) or one that does not print
+    (str.isprintable: the C0, DEL and C1 controls, the Unicode format characters such as U+200B, U+FEFF and
+    U+2060, the separators such as U+2028, surrogates, unassigned and private-use code points). One predicate
+    for the refusal and for the spelling (_todo_link_spell), so no refused character rides a reason as itself:
+    the C0/C1 gate this replaces let the format characters through and showed U+2028 unspelled (the 2026-09-09
+    review). An identical copy of the kernel's (kernel.py); tests/test_postal_user_todo_link.py holds the two
+    to one verdict and one wording."""
+    return not c.isprintable() or c.isspace()
+
+
+def _todo_link_spell(c):
+    """A refused character spelled out, so a reply shows it (the character itself is invisible there): \\0 for
+    NUL, \\xNN below U+0100, \\uNNNN up to U+FFFF and \\UNNNNNNNN above, Python's own spellings."""
+    o = ord(c)
+    if o == 0:
+        return "\\0"
+    if o < 0x100:
+        return "\\x%02x" % o
+    if o <= 0xFFFF:
+        return "\\u%04x" % o
+    return "\\U%08x" % o
 
 
 def _todo_link_error(value):
@@ -4429,10 +4455,9 @@ def _todo_link_error(value):
     if not raw:
         return None
     shown = raw if len(raw) <= 80 else raw[:60] + "... (%d characters)" % len(raw)
-    if any(ord(c) < 32 or 0x7f <= ord(c) <= 0x9f or c.isspace() for c in raw):
-        # every refused control spelled out (a NUL as \0, the rest as \xNN): in a reply the byte itself is invisible
-        shown = "".join(c if not (ord(c) < 32 or 0x7f <= ord(c) <= 0x9f) else ("\\0" if c == "\x00" else "\\x%02x" % ord(c))
-                        for c in shown)
+    if any(_todo_link_bad_char(c) for c in raw):
+        # every refused character spelled out (_todo_link_spell), by the one predicate that refused it
+        shown = "".join(_todo_link_spell(c) if _todo_link_bad_char(c) else c for c in shown)
         return "the link %s holds whitespace or a control character, which no web address does%s" % (shown, fix)
     if len(raw) > TODO_LINK_MAX:
         return "the link %s is longer than %d characters, the most an address here may be%s" % (shown, TODO_LINK_MAX, fix)
@@ -4664,8 +4689,8 @@ def _mcp_call(name, args):
         lerr = _todo_link_error(link_)
         if lerr:
             return ("Refused: %s. Nothing was saved, so the person you work for will not see this yet; file it "
-                    "again with the address as `link`, or with the address in the text, where it becomes a link "
-                    "too." % lerr), True
+                    "again with the address as `link`, or with the address in the text or detail, where it becomes a "
+                    "link too." % lerr), True
         if isinstance(link_, str) and link_.strip():
             body["link"] = link_.strip()
         res = _kernel_post("/usertodo", body)
@@ -4713,7 +4738,7 @@ def _mcp_call(name, args):
             out += (" About the link: %s was not recorded. The session manager on this machine runs an older "
                     "version that does not keep a todo's link (an update and a restart fix that), so this todo "
                     "shows without it. If the link matters, withdraw this todo and file it again with the address "
-                    "in its text, where it becomes a link too." % body["link"])
+                    "in its text or detail, where it becomes a link too." % body["link"])
         return out, False
     if name == "withdraw_user_todo":
         # Take back a flagged need, by id. An unknown or already-cleared id is a LOUD, plain

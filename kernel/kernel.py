@@ -7003,6 +7003,30 @@ USER_TODO_TEXT_MAX = 300
 USER_TODO_DETAIL_MAX = 4000
 
 
+def _todo_link_bad_char(c):
+    """A character no web address holds: whitespace (the ordinary space included) or one that does not print
+    (str.isprintable: the C0, DEL and C1 controls, the Unicode format characters such as U+200B, U+FEFF and
+    U+2060, the separators such as U+2028, surrogates, unassigned and private-use code points). One predicate
+    for the refusal and for the spelling (_todo_link_spell), so no refused character rides a reason as itself:
+    the C0/C1 gate this replaces let the format characters through and showed U+2028 unspelled (the 2026-09-09
+    review). The postal tool carries an identical copy (postal_service.py); tests/test_postal_user_todo_link.py
+    holds the two to one verdict and one wording."""
+    return not c.isprintable() or c.isspace()
+
+
+def _todo_link_spell(c):
+    """A refused character spelled out, so a reply shows it (the character itself is invisible there): \\0 for
+    NUL, \\xNN below U+0100, \\uNNNN up to U+FFFF and \\UNNNNNNNN above, Python's own spellings."""
+    o = ord(c)
+    if o == 0:
+        return "\\0"
+    if o < 0x100:
+        return "\\x%02x" % o
+    if o <= 0xFFFF:
+        return "\\u%04x" % o
+    return "\\U%08x" % o
+
+
 def _user_todo_link(value):
     """A todo's optional `link` as the store keeps it, and the reason it is REFUSED: (stored, error). (None, None)
     when no link was given (None or a blank string). Unlike `file` (_user_todo_file: kept as given with a warning,
@@ -7010,10 +7034,12 @@ def _user_todo_link(value):
     and the todo is not filed (the user 2026-09-08): the chip would open nothing, there is no resolution step
     that could mend it, and the agent hears why in the same reply it would have read the id from, so filing
     again costs one call and loses nothing. Refused: a value that is not a string, one holding whitespace or a
-    control character (C0, DEL or the 8-bit C1 set, the term as _PINNED_CTRL_RE reads it; no web address does,
-    and the reason spells each one out), one longer than _TODO_LINK_MAX, and one that is
+    character that does not print (_todo_link_bad_char: a control character, C0, DEL or C1, and the Unicode
+    format characters and separators, U+200B or U+2028 say; no web address holds one, and the reason spells
+    each out, _todo_link_spell), one longer than _TODO_LINK_MAX, and one that is
     not `http://` or `https://` followed by a host. Accepted as written (stripped of surrounding whitespace): the
-    kernel does not fetch it, so a mistyped host is stored as typed, like a mistyped absolute `file`."""
+    kernel does not fetch it, so a mistyped host is stored as typed, like a mistyped absolute `file`; a printable
+    character outside ASCII (an accented letter in a path) is an address's own and passes."""
     if value is None:
         return None, None
     fix = "; pass one http or https address, as a string"
@@ -7023,10 +7049,9 @@ def _user_todo_link(value):
     if not raw:
         return None, None
     shown = raw if len(raw) <= 80 else raw[:60] + "... (%d characters)" % len(raw)
-    if any(ord(c) < 32 or 0x7f <= ord(c) <= 0x9f or c.isspace() for c in raw):
-        # every refused control spelled out (a NUL as \0, the rest as \xNN): in a reply the byte itself is invisible
-        shown = "".join(c if not (ord(c) < 32 or 0x7f <= ord(c) <= 0x9f) else ("\\0" if c == "\x00" else "\\x%02x" % ord(c))
-                        for c in shown)
+    if any(_todo_link_bad_char(c) for c in raw):
+        # every refused character spelled out (_todo_link_spell), by the one predicate that refused it
+        shown = "".join(_todo_link_spell(c) if _todo_link_bad_char(c) else c for c in shown)
         return None, ("the link %s holds whitespace or a control character, which no web address does%s"
                       % (shown, fix))
     if len(raw) > _TODO_LINK_MAX:
@@ -7692,7 +7717,9 @@ def _user_todo_context_block(sid):
         # and the address it carries (the user 2026-09-08), after the file, the same way
         link = _neutralize_romp_markers(str(t.get("link") or "").strip())
         tail = "; ".join(p for p in (("file: %s" % fpath) if fpath else "", ("link: %s" % link) if link else "") if p)
-        lines.append("- %s (%s%s)%s" % (text, t["id"], when, (" — %s" % tail) if tail else ""))
+        # the tail follows the parenthesis after a semicolon, its parts split the same way (no em dash in text
+        # romp writes, the 2026-09-09 review; the hook hands the block on whole, tests/romp-usertodo-context.bats)
+        lines.append("- %s (%s%s)%s" % (text, t["id"], when, ("; %s" % tail) if tail else ""))
     if len(rows) > _USER_TODO_CONTEXT_CAP:
         lines.append("- …and %d more from earlier" % (len(rows) - _USER_TODO_CONTEXT_CAP))
     lines += ["", "If one is met or moot now, withdraw it (withdraw_user_todo); otherwise "
@@ -56356,7 +56383,10 @@ class Handler(BaseHTTPRequestHandler):
                 link, lerr = _user_todo_link(body.get("link"))      # None when absent, null or blank
                 if lerr:
                     return self._send(400, json.dumps({"ok": False, "error": lerr}), "application/json")
-                detail = str(body.get("detail") or "")
+                # stripped before it is measured, as the tool strips before it posts and the pinned-notes route
+                # cleans before its bound: measured raw, a detail at the bound inside surrounding whitespace was
+                # a 400 here and a filing there (the 2026-09-09 review). Stored as measured.
+                detail = str(body.get("detail") or "").strip()
                 # the bounds (USER_TODO_TEXT_MAX / USER_TODO_DETAIL_MAX), before any forward or write, as the
                 # pinned-notes route checks its own; the tool refuses the same before it posts
                 if len(text) > USER_TODO_TEXT_MAX:
@@ -56389,10 +56419,16 @@ class Handler(BaseHTTPRequestHandler):
                             # kernel); API for any token holder, which heard plain success before (the
                             # 2026-09-09 review).
                             host = r.get("host") or "that host"
-                            out["linkWarning"] = ("the link %s was not recorded (the kernel on %s predates a "
-                                                  "todo's link: update romp there and restart it); the todo "
-                                                  "stands there without it, so put the address in its text "
-                                                  "meanwhile, where it links too" % (fwd["link"], host))
+                            # In the tool's own veiled words (test_injected_voice.py: the tool relays this sentence
+                            # to the agent verbatim behind "About the link:", so no romp noun; the kernel is "the
+                            # session manager", as the tool's own skew sentence has it), and the remedy for this todo
+                            # names the detail: a link may run to 2048 characters and a text to 300, a detail to 4000
+                            # (the 2026-09-09 review). stderr below keeps the kernel's terms: it is not injected.
+                            out["linkWarning"] = ("the link %s was not recorded. The session manager on %s runs an "
+                                                  "older version that does not keep a todo's link (an update and a "
+                                                  "restart there fix that), so the todo stands there without it. If "
+                                                  "the link matters, withdraw it and file it again with the address "
+                                                  "in its detail, where it becomes a link too." % (fwd["link"], host))
                             sys.stderr.write("user-todos: %s's link not recorded on %s: its kernel predates a "
                                              "todo's link\n" % (sid[:8], host))
                         if res.get("warning"):
