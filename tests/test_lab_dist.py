@@ -11,15 +11,16 @@ does (holding the staging window open long enough to matter):
   3. a marker that names the current inputs skips the build; a changed input, a removed dist, a dependency
      change, a build by another command or a change of build command rebuilds; the marker records the key
      computed BEFORE the build, so a source edited mid-build is caught by the next call;
-  4. the inputs are derived from esbuild.js (entry points in both forms, a comment inside the array dropping
-     nothing, a partial parse an error; then the trees their relative imports reach, one executed test per
-     import shape the scan follows), the dist being built is left out at the top level only, and on the
-     real config the derivation yields the kernel's trees (tests/test_kernel_bundle_staleness.py pins
-     file-level parity);
+  4. the inputs are derived from esbuild.js by a rule that reads no array or object: every quoted string
+     literal naming a path on disk inside the checkout, comments included, contributes its top-level tree
+     (a literal naming nothing on disk contributes nothing; an existing path outside the checkout is an
+     error; then the trees their relative imports reach, one executed test per import shape the scan
+     follows), the dist being built is left out at the top level only, and on the real config the
+     derivation yields the kernel's trees (tests/test_kernel_bundle_staleness.py pins file-level parity);
   5. a build that fails skips the caller (the served labs' standing behaviour) and leaves no marker; a
      build that exceeds its bound raises BuildTimeout, a RuntimeError and never a SkipTest, and releases the
      lock (the bound itself is pinned to the kernel's figures in tests/test_kernel_bundle_vendor_inputs.py,
-     by running the kernel's two build calls over a recording fake);
+     by running all three of the kernel's esbuild calls over a recording fake);
   6. the copy leaves out a staging file the harness did not write, and survives a staged builder running
      outside the lock (the defence-in-depth half);
   7. the lock and the marker are left out of a VSIX (.vscodeignore) and of git (.gitignore);
@@ -389,12 +390,14 @@ class MarkerKeysOnInputs(_Checkout):
 
 
 class InputsDeriveFromEsbuild(unittest.TestCase):
-    """The keyed trees come from esbuild.js, never from a list kept here: the top-level tree of every entry
-    point (both forms), then the trees their relative imports reach."""
+    """The keyed trees come from esbuild.js, never from a list kept here: the top-level tree of every path
+    the config names in a quoted string literal, then the trees their relative imports reach. The checkout
+    is `base/checkout`, so a path OUTSIDE the checkout can exist inside the cleaned temp dir."""
 
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="lab-dist-inputs-")
-        self.addCleanup(shutil.rmtree, self.root, True)
+        self.base = tempfile.mkdtemp(prefix="lab-dist-inputs-")
+        self.addCleanup(shutil.rmtree, self.base, True)
+        self.root = os.path.join(self.base, "checkout")
         self.ext = os.path.join(self.root, "ext")
         self.config = os.path.join(self.ext, "esbuild.js")
         _write(os.path.join(self.ext, "src", "extension.ts"), "export const host = 1;\n")
@@ -428,14 +431,12 @@ const webview = {
 function testBuild() { const entries = []; return { entryPoints: entries, outdir: "out-tests" }; }
 ''')
 
-    ENTRIES = ["ext/node_modules/pkg/build/worker.mjs", "ext/src/extension.ts", "tools/extra/thing.ts",
-               "ui/webview/render.ts"]
-
     def rel(self, pairs):
         return [(os.path.relpath(p, self.root), r) for p, r in pairs]
 
-    def entries(self):
-        return sorted(os.path.relpath(p, self.root) for p in lab_dist.esbuild_entry_points(self.ext))
+    def roots(self):
+        """The trees the config's literals name, before the import follow, relative to the checkout."""
+        return [os.path.relpath(p, self.root) for p in lab_dist.esbuild_roots(self.root, self.ext)]
 
     def imports_of(self, name, text):
         """The relative specifiers the scan reads out of one synthetic webview source holding `text`."""
@@ -443,41 +444,50 @@ function testBuild() { const entries = []; return { entryPoints: entries, outdir
         _write(path, text)
         return list(lab_dist._relative_imports(path))
 
-    def test_entry_points_parse_in_both_forms(self):
-        self.assertEqual(self.entries(), self.ENTRIES)
+    def test_every_quoted_path_the_config_names_contributes_its_tree(self):
+        self.assertEqual(self.roots(), ["ext", "tools", "ui"],
+                         "ext from src/extension.ts and dist, ui and tools from the webview entries; the object-form "
+                         "entry under node_modules is a dependency; outfile, outdir and the format names resolve to "
+                         "nothing on disk")
 
-    def test_a_comment_holding_a_bracket_inside_the_array_drops_no_entry(self):
-        """Line comments are stripped over the whole source BEFORE the array is cut at its `]`: a `]` inside an
-        in-array comment used to end the array there, and every entry after the comment was dropped in
-        silence (the error fired only when nothing at all parsed). The real esbuild.js carries `]` in
-        comments outside its arrays today; this is the day one moves inside."""
+    def test_the_rule_reads_no_array_and_survives_every_shape_that_broke_the_old_parser(self):
+        """The shapes that made an array parser return a shorter list in silence: a `//` inside a string on
+        the line that opens the array (a comment strip took the rest of the line), the record form of
+        entryPoints (no array at all), a URL entry, a comment naming a path that does not exist, a trailing
+        comma, a single-quoted entry, a spread and a ternary. None is parsed as a structure; every quoted
+        literal is resolved on disk, and the roots are exactly the trees the real paths reach."""
         _write(self.config, '''
-const webview = {
-  entryPoints: [
-    "../ui/webview/render.ts",   // see plans/x.md [rationale]
-    { in: "node_modules/pkg/build/worker.mjs", out: "worker" },  // the object form [2]
-    "../tools/extra/thing.ts",
-  ],
-};
-const extension = { entryPoints: ["src/extension.ts"], outfile: "dist/extension.js" };
+const banner = { js: "// built by esbuild.js" }, entryPoints = [
+    "../ui/webview/render.ts",   // see "../plans/render.md" and "../gone/x.ts": neither exists
+    { in: "node_modules/pkg/build/worker.mjs", out: "worker" },
+    'https://cdn.invalid/webview/x.ts',
+    '../tools/extra/thing.ts',
+    ...(production ? ["src/extension.ts"] : []),
+  ];
+const record = { entryPoints: { host: "src/extension.ts" }, outdir: "dist" };
+const picked = production ? ["src/extension.ts"] : ["src/extension.ts"];
 ''')
-        self.assertEqual(self.entries(), self.ENTRIES, "every entry after the bracketed comment is still parsed")
+        self.assertEqual(self.roots(), ["ext", "tools", "ui"])
 
-    def test_an_array_the_parser_does_not_read_whole_is_an_error(self):
-        """A spread, a variable, a block comment, a template literal or an object without `in:` inside the
-        array: each would leave an input unkeyed if the parser returned the entries around it, so each is
-        the loud error, naming the piece it could not read (the template literal's `${name}` reads as an
-        object with no `in:`, which is the error it gets)."""
-        for text, unread in (('entryPoints: ["src/a.ts", ...more]', "...more"),
-                             ('entryPoints: ["src/a.ts", shared]', "shared"),
-                             ('entryPoints: ["src/a.ts", /* "src/b.ts" */ "src/c.ts"]', "/**/"),
-                             ('entryPoints: [`src/${name}.ts`]', "{name}"),
-                             ('entryPoints: ["src/a.ts", { out: "w" }]', '{ out: "w" }')):
-            _write(self.config, "const x = { %s };\n" % text)
-            with self.assertRaises(ValueError, msg=text) as cm:
-                lab_dist.esbuild_entry_points(self.ext)
-            self.assertIn(repr(unread), str(cm.exception), text)
-            self.assertIn("cannot be keyed", str(cm.exception), text)
+    def test_a_path_named_only_in_a_comment_is_keyed_too(self):
+        """Over-approximation by design: the rule does not tell a comment from code, so a tree named only in
+        a comment is keyed, and the cost is a stat sweep of it. The safe direction for a staleness key."""
+        _write(self.config, '''
+// the fixtures under "../data" are read by the tests, not bundled
+const extension = { entryPoints: ["src/extension.ts"] };
+''')
+        self.assertEqual(self.roots(), ["data", "ext"])
+
+    def test_a_literal_naming_nothing_on_disk_contributes_nothing(self):
+        """Noise the config is full of: formats, targets, loader keys, globs, messages, an empty string, an
+        absolute path, the checkout root itself (".."), a template literal, a spread and a variable. None
+        names a tree; the one real path does."""
+        _write(self.config, '''
+const x = { entryPoints: ["src/extension.ts", ...more, shared, `src/${name}.ts`], format: "cjs", target: "node18",
+            loader: { ".woff2": "file" }, external: ["*.png", "../media/*.woff2"], empty: "", abs: "/", up: "..",
+            msg: "esbuild.js: build failed: ", assetNames: "fonts/[name]-[hash]" };
+''')
+        self.assertEqual(self.roots(), ["ext"])
 
     def test_roots_are_the_entry_points_trees_plus_the_trees_their_imports_reach(self):
         self.assertEqual(self.rel(lab_dist.default_inputs(self.root, self.ext)),
@@ -537,27 +547,32 @@ const extension = { entryPoints: ["src/extension.ts"], outfile: "dist/extension.
         _bump(nested)
         self.assertNotEqual(build.key(), before)
 
-    def test_an_entry_point_outside_the_checkout_is_an_error(self):
-        _write(self.config, 'const x = { entryPoints: ["../../elsewhere/x.ts"] };\n')
+    def test_an_existing_path_outside_the_checkout_is_an_error(self):
+        """No top-level tree of the checkout can key it, and the kernel parity test cannot see it either, so
+        it is the loud case. A path outside the checkout that does not exist is noise like any other."""
+        _write(os.path.join(self.base, "elsewhere", "x.ts"), "export const e = 1;\n")
+        _write(self.config, 'const x = { entryPoints: ["src/extension.ts", "../../elsewhere/x.ts"] };\n')
         with self.assertRaises(ValueError) as cm:
             lab_dist.default_inputs(self.root, self.ext)
         self.assertIn("outside the checkout", str(cm.exception))
+        self.assertIn("../../elsewhere/x.ts", str(cm.exception))
+        _write(self.config, 'const x = { entryPoints: ["src/extension.ts", "../../nowhere/x.ts"] };\n')
+        self.assertEqual(self.roots(), ["ext"])
 
-    def test_a_config_with_no_entry_points_is_an_error(self):
-        _write(self.config, "const x = 1;\n")
-        with self.assertRaises(ValueError):
-            lab_dist.esbuild_entry_points(self.ext)
+    def test_a_config_naming_no_path_inside_the_checkout_is_an_error(self):
+        _write(self.config, 'const x = { format: "cjs", entryPoints: [`src/${name}.ts`] };\n')
+        with self.assertRaises(ValueError) as cm:
+            lab_dist.esbuild_roots(self.root, self.ext)
+        self.assertIn("names no path inside the checkout", str(cm.exception))
 
     def test_the_real_config_derives_the_kernel_trees(self):
-        """On this checkout: render.ts (string form) and pdf.worker.mjs (object form) parse; the roots are
-        ui/, vendor/ and vscode-extension/, the trees the kernel's _bundle_inputs reads (file-level parity is
-        pinned in tests/test_kernel_bundle_staleness.py, where the kernel is already loaded); the config and
+        """On this checkout: the config's literals name ui/ and vscode-extension/ (the object-form entry under
+        node_modules is a dependency), the import follow adds vendor/, and the three are the trees the
+        kernel's _bundle_inputs reads (file-level parity, the guard against under-approximation, is pinned
+        in tests/test_kernel_bundle_staleness.py, where the kernel is already loaded); the config and
         package files are keyed, the lock file is content-keyed instead, and nothing under the extension's
         dist, node_modules or out-tests is."""
-        entries = lab_dist.esbuild_entry_points()
-        self.assertTrue(any(e.endswith(os.path.join("ui", "webview", "render.ts")) for e in entries))
-        self.assertTrue(any(e.endswith(os.path.join("pdfjs-dist", "build", "pdf.worker.mjs")) for e in entries),
-                        "the object-form entry parses")
+        self.assertEqual([os.path.relpath(p, lab_dist.ROOT) for p in lab_dist.esbuild_roots()], ["ui", "vscode-extension"])
         self.assertEqual([(os.path.relpath(p, lab_dist.ROOT), r) for p, r in lab_dist.default_inputs()],
                          [("ui", True), ("vendor", True), ("vscode-extension", True)])
         files = set(lab_dist.default()._input_files())
@@ -768,7 +783,7 @@ class ServedModulesUseTheHelper(unittest.TestCase):
                                         "allowlists in test_lab_dist.py, with its reason")
 
     def test_the_ratchet_catches_every_shape_of_the_old_block(self):
-        """The shapes a copy-paste or a rewrite could take, each flagged: the base shape the thirteen modules
+        """The shapes a copy-paste or a rewrite could take, each flagged: the base shape the served modules
         had, a mode flag, single quotes, a prebuilt argv (the kernel's own shape), a constant for dist."""
         shapes = [
             'subprocess.run(["node", "esbuild.js"], cwd=EXT, check=True)\nshutil.copytree(os.path.join(EXT, "dist"), dist)\n',

@@ -1,7 +1,7 @@
 """The served labs' one door to the built bundles (2026-09-09).
 
-Thirteen browser-driven test classes serve the dashboard from a PRIVATE copy of vscode-extension/dist:
-run `node esbuild.js`, then copytree(dist, <lab>/dist). Each class used to do both itself, so under
+The browser-driven test classes serve the dashboard from a PRIVATE copy of vscode-extension/dist: run
+`node esbuild.js`, then copytree(dist, <lab>/dist). Each class used to do both itself, so under
 `pytest -n 8` two classes on two workers built the one dist at the same time, and each copied it while
 the other's build was still landing. esbuild.js stages every output as a hidden sibling of its served
 name (`.<name>.tmp-<pid>-<n>`) and then renames it over that name, so a copy that listed dist during a
@@ -22,14 +22,18 @@ This module owns the build. The rules:
   what shows it). The marker is rewritten, atomically (write a sibling, rename), only AFTER the build
   exits 0, and the build state is computed BEFORE the build and recorded after it, so the marker never
   claims inputs newer than what the build read: a source edited mid-build is caught by the next call.
-- The trees the build state covers are DERIVED from esbuild.js, not listed here: the top-level tree of
-  every entry point (ui/ and vscode-extension/ today; an entry under node_modules is a dependency, keyed
-  by the lock files) and then, to a fixed point, the top-level tree of every relative import a keyed
-  source makes out of the keyed trees (vendor/ today: ui/webview/anchor-map.ts imports
-  vendor/track-changents/engine.js). The kernel's `_bundle_inputs` reads the same trees, and
-  tests/test_kernel_bundle_staleness.py pins that every file it reads is keyed here. node_modules and
-  out-tests (the test build's output) are pruned at any depth, and the dist being built is pruned at the
-  top level only: a source directory named dist at depth is keyed like any other.
+- The trees the build state covers are DERIVED from esbuild.js, not listed here, by a rule that reads no
+  array or object out of the config: every quoted string literal in the file that names a file or
+  directory on disk inside the checkout contributes the top-level tree that holds it (ui/ and
+  vscode-extension/ today; one under node_modules is a dependency, keyed by the lock files; one naming
+  nothing on disk contributes nothing), and then, to a fixed point, the top-level tree of every relative
+  import a keyed source makes out of the keyed trees (vendor/ today: ui/webview/anchor-map.ts imports
+  vendor/track-changents/engine.js). Over-approximation is safe for a staleness key (more files keyed
+  means a rebuild more often, never less); under-approximation is guarded by the kernel's
+  `_bundle_inputs`, which reads the same trees: tests/test_kernel_bundle_staleness.py pins that every file
+  it reads is keyed here. node_modules and out-tests (the test build's output) are pruned at any depth,
+  and the dist being built is pruned at the top level only: a source directory named dist at depth is
+  keyed like any other.
 - Every build and every copy holds the same file lock (fcntl.flock: xdist workers are separate
   processes, so a threading lock would see one worker at a time). The lock is exclusive for readers
   too: flock's shared-to-exclusive upgrade is not atomic (the lock is dropped and retaken, and a
@@ -93,9 +97,11 @@ _STAGING_GLOB = "*.tmp-*"
 _HARNESS_OWN = {LOCK_NAME, MARKER_NAME}
 
 # The bound on one build, in seconds: the kernel's for the same command (kernel/kernel.py: `_rebuild_dist` runs
-# `node esbuild.js` under timeout=180, `_ensure_bundles` under 120), the larger of the two. A real build takes
-# about a second, so only a wedge reaches it. tests/test_kernel_bundle_vendor_inputs.py pins it to the kernel's
-# figures by RUNNING the kernel's two build calls over a recording fake, never by reading the kernel's text.
+# `node esbuild.js` under timeout=180, `_ensure_bundles` under 120, both its first call and its retry after
+# `npm install`), the larger of the two figures. A real build takes about a second, so only a wedge reaches it.
+# tests/test_kernel_bundle_vendor_inputs.py pins it to the kernel's figures by RUNNING all three of the kernel's
+# esbuild calls over a recording fake (the retry by making the first build fail), never by reading the kernel's
+# text.
 BUILD_TIMEOUT = 180
 
 # The suffixes esbuild bundles from the input trees: the kernel's `_bundle_inputs` set (.ts, .js, .mjs, .css)
@@ -111,6 +117,9 @@ _SKIP_DIRS = {"node_modules", "out-tests", "__pycache__"}
 _IMPORTING_SUFFIXES = (".ts", ".js", ".mjs", ".css")
 _RELATIVE_LITERAL = re.compile(r"""["'](\.\.?/[^"'\n]*)["']""")
 _IMPORT_SHAPE = re.compile(r"""(?:\bfrom|\bimport|\brequire\s*\(|@import(?:\s+url\()?)\s*\(?\s*$""")
+# A single- or double-quoted string literal in esbuild.js, escapes kept whole, on one line (a JS string cannot
+# span lines). Template literals are not read: one that named a path would be computed, and none does today.
+_STRING_LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)*)"' r"|'((?:[^'\\\n]|\\.)*)'")
 # The dependency state, relative to the extension dir. package-lock.json moves at checkout time (a merge, a
 # pull); node_modules/.package-lock.json is npm's hidden lockfile, rewritten by every `npm install` and `npm
 # ci`, and it is the one that moves when the installed tree changes AFTER the checkout did (the pull moves the
@@ -150,39 +159,47 @@ def _sources(tree, skip=()):
                 yield os.path.join(dirpath, name)
 
 
-def esbuild_entry_points(ext=EXT):
-    """The entry points esbuild.js names, as absolute paths: every literal `entryPoints: [...]` array, in the
-    string form ("../ui/webview/render.ts") and the object form ({ in: "node_modules/.../pdf.worker.mjs",
-    out: "pdf-worker" }). The test build's `entryPoints: entries` is a variable, not an array, and is left
-    out: it writes out-tests, not dist. Loud when the parse is not whole: no array, an array holding
-    something this parser does not read (a spread, a variable, a block comment), or an object without
-    `in:`. An entry dropped in silence is an unkeyed input, the silent failure this module exists to
-    prevent, so a partial parse is an error, never a shorter list."""
+def esbuild_roots(root=ROOT, ext=EXT):
+    """The top-level trees of the checkout `root` that esbuild.js names, as absolute paths, sorted.
+
+    The rule is deliberately conservative and reads no array or object out of the config: EVERY single- or
+    double-quoted string literal in the file, comments included, is joined to the extension dir and
+    normalized, and one that names a file or directory on disk inside the checkout contributes the
+    top-level tree that holds it ("src/extension.ts" and "dist" contribute vscode-extension,
+    "../ui/webview/render.ts" contributes ui). Everything else contributes nothing: a literal naming nothing
+    on disk (a format, a target, a loader key, a URL, a glob, a message, a path in a comment that no longer
+    exists), an empty or absolute literal, one under node_modules (a dependency, keyed by the lock files),
+    and one that resolves to the checkout root itself (a top-level tree is the unit this key walks).
+
+    Over-approximation is SAFE for a staleness key: a tree named only in a comment is keyed too, and more
+    files keyed means a rebuild more often, never less. Under-approximation is the failure this module
+    exists to prevent, and the parity test in tests/test_kernel_bundle_staleness.py is the guard against
+    it: on the real tree, every file the kernel's `_bundle_inputs` reads must be keyed here. The one shape
+    neither sees is an input named by no literal at all (a computed path); none exists today.
+
+    Loud in two cases: a literal that names an existing path OUTSIDE the checkout, which no top-level tree
+    can key and the parity test cannot see either; and a config naming no path inside the checkout at all,
+    which means the wrong file was read."""
     config = os.path.join(ext, "esbuild.js")
     with open(config, encoding="utf-8") as f:
         src = f.read()
-    # Line comments go first, over the WHOLE source: a `]` inside a comment within the array would otherwise end
-    # the array early and drop every entry after it (a partial parse, which the leftover check below cannot see
-    # once the text is gone). The residual is a `//` inside a string literal (a URL) on an array line: the cut
-    # string leaves an unbalanced quote behind, which the leftover check reports. None in the real file today.
-    src = re.sub(r"//[^\n]*", "", src)
-    entries = []
-    for block in re.findall(r"entryPoints:\s*\[(.*?)\]", src, re.S):
-        for obj in re.findall(r"\{[^}]*\}", block):
-            m = re.search(r"""\bin:\s*["']([^"']+)["']""", obj)
-            if not m:
-                raise ValueError("an entryPoints object without `in:` in %s, %r: the build's inputs cannot be keyed"
-                                 % (config, " ".join(obj.split())))
-            entries.append(m.group(1))
-        block = re.sub(r"\{[^}]*\}", "", block)
-        entries.extend(re.findall(r"""["']([^"']+)["']""", block))
-        leftover = re.sub(r"""["'][^"']+["']|[\s,]""", "", block)
-        if leftover:
-            raise ValueError("an entryPoints array in %s holds %r, which this parser does not read: the build's "
-                             "inputs cannot be keyed" % (config, leftover))
-    if not entries:
-        raise ValueError("no entryPoints array found in %s: the build's inputs cannot be keyed" % config)
-    return [os.path.normpath(os.path.join(ext, e)) for e in entries]
+    node_modules = os.path.join(ext, "node_modules")
+    roots = set()
+    for m in _STRING_LITERAL.finditer(src):
+        literal = m.group(1) if m.group(1) is not None else m.group(2)
+        if not literal or os.path.isabs(literal):
+            continue
+        path = os.path.normpath(os.path.join(ext, literal))
+        if path == root or _under(path, node_modules) or not os.path.exists(path):
+            continue
+        top = _top_tree(path, root)
+        if top is None:
+            raise ValueError("%s names %r, an existing path outside the checkout %s, which cannot be keyed"
+                             % (config, literal, root))
+        roots.add(top)
+    if not roots:
+        raise ValueError("%s names no path inside the checkout %s: the build's inputs cannot be keyed" % (config, root))
+    return sorted(roots)
 
 
 def _relative_imports(path):
@@ -196,21 +213,13 @@ def _relative_imports(path):
 
 def default_inputs(root=ROOT, ext=EXT):
     """What the bundles are built from, as (path, recurse) pairs derived from esbuild.js: the top-level tree
-    of every entry point outside node_modules, then, to a fixed point, the top-level tree of every relative
-    import a keyed source makes out of the keyed trees (esbuild bundles what the entries import). Today that
-    is ui/ and vscode-extension/ from the entries and vendor/ from ui/webview/anchor-map.ts's import of
-    vendor/track-changents/engine.js. An entry point outside the checkout cannot be keyed and is an error,
-    never a source left out in silence."""
+    of every path the config names (esbuild_roots), then, to a fixed point, the top-level tree of every
+    relative import a keyed source makes out of the keyed trees (esbuild bundles what the entries import).
+    Today that is ui/ and vscode-extension/ from the config and vendor/ from ui/webview/anchor-map.ts's
+    import of vendor/track-changents/engine.js. A top-level FILE (root/x.js) is keyed as one file, not
+    walked."""
     dist = os.path.join(ext, "dist")
-    node_modules = os.path.join(ext, "node_modules")
-    inputs = {}
-    for entry in esbuild_entry_points(ext):
-        if _under(entry, node_modules):
-            continue                            # a dependency: the lock files key it
-        top = _top_tree(entry, root)
-        if top is None:
-            raise ValueError("esbuild entry point %s lies outside the checkout %s and cannot be keyed" % (entry, root))
-        inputs[top] = os.path.isdir(top)
+    inputs = {top: os.path.isdir(top) for top in esbuild_roots(root, ext)}
     pending = [p for p, recurse in inputs.items() if recurse]
     while pending:
         tree = pending.pop()

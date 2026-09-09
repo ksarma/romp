@@ -8,10 +8,11 @@ Every bug fix or feature change lands with a test (repo rule). Four suites:
   `kernel/loadsource.py`). `tools/loadsource-sweep.py` converts a file still on
   `SourceFileLoader(...).load_module()` (removed in Python 3.15), and
   `test_state_isolation_order.py` refuses that idiom and isolate state with `XDG_STATE_HOME`.
-  The browser-driven served labs (thirteen modules that serve the dashboard from a copy
-  of the built bundles) take that copy from `lab_dist.copy_dist` (`tests/lab_dist.py`):
+  Every browser-driven served lab (a module that serves the dashboard from a copy of
+  the built bundles) takes that copy from `lab_dist.copy_dist` (`tests/lab_dist.py`):
   one esbuild run per checkout state under a file lock, so xdist workers never copy
-  a build in flight.
+  a build in flight. `tests/test_lab_dist.py` refuses a module that builds or copies
+  dist on its own.
   Golden transcript fixtures: `test_romp_events_golden.py` + `fixtures/`.
   Run: `python3 -m pytest tests/ -q` (~20s; a stalled run is a hang, not slow).
   The `_HAVE_SDK`-gated classes in `test_sdk_backend.py` (OptionsAssembly, the
