@@ -826,13 +826,17 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.doesNotMatch(MENU, /const home = home0 && !home0\.pending \? home0 : undefined;/, "the flyout's own copy of the computation is gone");
 });
 
-test("pinned: the tag-bearing lines never widen the menu (menu review rounds 2 to 4). .ctx-item-sub keeps the menus' one sub-line size, byte-equal in feed.css; a modifier every row whose label or sub-line carries a tag name wears, and no fixed row does, makes the body take the row's spare width and the text contribute nothing to the menu's intrinsic width, so the menu is as wide as its fixed rows alone in every face and the name elides", () => {
+test("pinned: a tag name never widens the MAIN menu (menu review rounds 2 to 5). .ctx-item-sub keeps the menus' one sub-line size, byte-equal in feed.css; a modifier the two menu rows whose sub-line carries a tag name wear (Hide tab, Tags), and no fixed row and no flyout row does, makes the body take the row's spare width and the text contribute nothing to the menu's intrinsic width, so the menu is as wide as its fixed rows alone in every face and the name elides; the Tags flyout's rows keep their natural width up to a per-row cap", () => {
   // the rows are nowrap and the menu is sized by its widest row, so the Hide tab row's sub-line grew the menu with the tag name (a
   // 512px menu at the 40-character maximum in Inter, clipped at a 450px pane's edge). Round 2 capped .ctx-item-sub itself, which cut
   // the Emoji row's sub-line (36.1em in the light theme's Space Grotesk and in a fallback face) and diverged from feed.css's copy of
   // the rule; round 3 moved the 36em cap to the row's modifier, which still widened the dark theme's menu by 28px (Inter's widest
-  // fixed sub-line is 33.1em) and overflowed a 400px pane; round 4 drops the constant for a structural rule, and puts the modifier
-  // on every row whose text carries a tag name (the Tags row's sub-line joins them all). tab-hide-browser.test measures it in Chromium.
+  // fixed sub-line is 33.1em) and overflowed a 400px pane; round 4 dropped the constant for a structural rule, and put the modifier
+  // on every row whose text carries a tag name, the Tags flyout's Move to and Show when folded rows included, which collapsed the
+  // flyout (no wide fixed row holds it open) to the New tag input's width and cut a five-character tag's Show when folded line.
+  // Round 5: the modifier is the main menu's alone (the Hide tab row and the Tags row, whose sub-line joins the names); a flyout row
+  // keeps its natural width up to a per-row cap with an ellipsis, so the ✕ and the + hug their labels as at the base.
+  // tab-hide-browser.test measures both in Chromium.
   assert.match(CSS, /\n\.ctx-item-sub \{ font-size: 0\.82em; opacity: 0\.6; \}\n/, "the one rule for the class: the size and the opacity, nothing else (the menus' one sub-line size)");
   assert.equal(CSS.split("\n.ctx-item-sub {").length - 1, 1, "one rule for the class");
   const FEED = ui("webview", "feed.css");
@@ -843,20 +847,33 @@ test("pinned: the tag-bearing lines never widen the menu (menu review rounds 2 t
   assert.doesNotMatch(CSS, /\.ctx-sub-capped[^\n]*max-width/, "round 4: no em constant (36em left the dark theme's menu 28px wider than its fixed rows)");
   assert.equal(CSS.split("\n.ctx-sub-capped").length - 1, 2, "the modifier's two rules, nothing else");
   assert.doesNotMatch(CSS, /\.ctx-item-hide|\.ctx-item-tags|\.ctx-item-pin/, "the sheet names the modifier, not the rows: any row whose text carries a name wears it");
-  // the wearers: every row whose label or sub-line carries a tag name, and none of the fixed rows
+  // the wearers: the two MAIN-menu rows whose sub-line carries a tag name, and none of the fixed rows and no flyout row (round 5)
   const MENU = RENDER.slice(RENDER.indexOf("function showTabMenu("), RENDER.indexOf("document.body.appendChild(menu);", RENDER.indexOf("function showTabMenu(")));
   const code = RENDER.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
   const wearers = Array.from(code.matchAll(/el\("div", "([^"]*ctx-sub-capped[^"]*)"/g)).map((m) => m[1]).sort();
-  assert.deepEqual(wearers, ["ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped", "ctx-item ctx-item-toggle ctx-item-pin ctx-sub-capped", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped", "ctx-item ctx-item-toggle ctx-sub-capped"],
-    "the Hide tab row (the sub-line names the group), the Tags row (the sub-line joins the names), each Move to row (the label carries the name) and the Show when folded row (the sub-line names the group) wear it, and nothing else");
-  assert.equal(code.split("ctx-sub-capped").length - 1, 4, "four wearers, each on its el() call");
-  assert.match(MENU, /for \(const g of others\) \{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-sub-capped"\);/, "the bare wearer is the Move to row");
+  assert.deepEqual(wearers, ["ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"],
+    "the Hide tab row (the sub-line names the group) and the Tags row (the sub-line joins the names) wear it, and nothing else (round 5: the flyout's rows wore it in round 4, and the flyout collapsed)");
+  assert.equal(code.split("ctx-sub-capped").length - 1, 2, "two wearers, each on its el() call");
+  assert.match(MENU, /for \(const g of others\) \{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle"\);/, "a Move to row wears no modifier (round 5): the flyout's per-row cap bounds its label");
+  assert.match(MENU, /const row = el\("div", "ctx-item ctx-item-toggle ctx-item-pin" \+ \(on \? " current" : ""\)\);/, "the Show when folded row wears none: the per-row cap bounds its sub-line");
   for (const fixed of [/const item = el\("div", "ctx-item ctx-item-toggle"\);/, /const item = el\("div", "ctx-item ctx-item-toggle ctx-item-billing"\);/]) assert.match(MENU, fixed, "a fixed row wears no modifier: " + fixed.source);
+  // the flyout's rows: a per-row cap with an ellipsis (round 2's shape, in the flyout alone), the label's and the sub-line's own, each
+  // chosen so a 19-character name is whole and a 40-character one elides in both faces and both engines (the note gives the measurements)
+  assert.match(CSS, /\n\.ctx-sub-tags \.ctx-item-label \{ max-width: 22em; overflow: hidden; text-overflow: ellipsis; \}\n\.ctx-sub-tags \.ctx-item-sub \{ max-width: 36em; overflow: hidden; text-overflow: ellipsis; \}\n/,
+    "the flyout's two rules, after the modifier's: a label up to 22em (a 19-character destination is 14.5em, a 40-character one 23.8em to 25.5em), a sub-line up to 36em of its own font (the Show when folded line is 30.3em at 19 characters, 38.7em to 41.5em at 40)");
+  assert.equal(CSS.split("\n.ctx-sub-tags").length - 1, 2, "the flyout's two rules, nothing else on its class");
+  assert.ok(CSS.indexOf("\n.ctx-sub-capped .ctx-item-label") < CSS.indexOf("\n.ctx-sub-tags .ctx-item-label"), "the flyout's rules follow the modifier's");
+  assert.doesNotMatch(CSS, /\.ctx-sub-tags[^\n]*(width: 0|min-width|flex)/, "no structural rule in the flyout: nothing there holds it open, so the rows size it");
   assert.match(CSS, /\n\.ctx-item \{ padding: 4px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; \}/, "the rows stay nowrap: the rule elides, it does not wrap (a wrapped row would grow every menu's rows)");
   const note = CSS.slice(CSS.indexOf("/* A row whose sub-line or label carries a tag name wears a modifier"), CSS.indexOf("\n.ctx-sub-capped .ctx-item-body {"));
   assert.ok(note.length > 100 && !note.includes("\u2014"), "the rule's note, no em dash");
   assert.match(note.replace(/\s+/g, " "), /with no per-face constant: in a capped row the body takes the row's spare width and no more/, "the note states the mechanism");
+  assert.match(note.replace(/\s+/g, " "), /The wearers: the Hide tab row and the Tags row, the two rows of the MAIN menu whose sub-line carries a tag name; no row of the Tags flyout \(the rule after this one\)\./, "the note names the two wearers and excludes the flyout (round 5)");
   assert.match(note.replace(/\s+/g, " "), /at 450px, 400px and 383px panes/, "the note names the widths the browser leg measures");
+  const flyNote = CSS.slice(CSS.indexOf("/* The Tags flyout's rows wear no modifier (round 5)"), CSS.indexOf("\n.ctx-sub-tags .ctx-item-label {"));
+  assert.ok(flyNote.length > 100 && !flyNote.includes("\u2014"), "the flyout rule's note, no em dash");
+  assert.match(flyNote.replace(/\s+/g, " "), /A flyout row keeps its natural width up to a per-row cap with an ellipsis \(round 2's shape, in the flyout alone\): 22em for a label, so a 19-character destination is whole \(14\.5em\) and a 40-character one elides \(23\.8em to 25\.5em by face and engine\); 36em of its own font for a sub-line/, "the note states the caps and what they keep whole");
+  assert.match(flyNote.replace(/\s+/g, " "), /The ✕ and the \+ sit beside their labels as at the base, and the flyout is as wide as its widest row up to the cap\./);
   assert.match(RENDER, /inp\.placeholder = "New tag…"; inp\.maxLength = 40;/, "the tag name's own bound, the widest case the leg measures");
 });
 

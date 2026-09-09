@@ -1653,7 +1653,7 @@ test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows:
     "only with a home tag (there is no fold to show through otherwise); the section as the plan keys it (sectionRef: name and local id); the store read with the unions (the migration)");
   assert.doesNotMatch(pin, /isPinned\(tabGroups\(\), home\.name|togglePinned\(tabGroups\(\), home\.name|home\.localId, id\)|readTabGroups\(\)/,
     "never the bare name or the bare id, and never a store read without the unions on a path that writes");
-  assert.match(pin, /const row = el\("div", "ctx-item ctx-item-toggle ctx-item-pin ctx-sub-capped" \+ \(on \? " current" : ""\)\);/, "the menus' ✓ mark when on (and the modifier, since the sub-line carries the tag name: tab-hide.test)");
+  assert.match(pin, /const row = el\("div", "ctx-item ctx-item-toggle ctx-item-pin" \+ \(on \? " current" : ""\)\);/, "the menus' ✓ mark when on (and no width modifier: a flyout row keeps its natural width up to the sheet's per-row cap, round 5 of the tab menu review; tab-hide.test pins the wearers)");
   assert.match(pin, /chip\.style\.background = home\.color \|\| "var\(--dim\)"; row\.appendChild\(chip\);/, "the home tag's chip, like its neighbors");
   assert.match(pin, /lb\.textContent = "Show when folded";/);
   assert.match(pin, /sb2\.textContent = on \? `stays on the strip while \$\{home\.name\} is folded` : `keep this tab on the strip while \$\{home\.name\} is folded`;/,

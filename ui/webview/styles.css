@@ -727,12 +727,23 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    more (flex-basis 0 and min-width 0 inside the row's flex), and its label and sub-line contribute nothing to the
    menu's intrinsic width (width 0, then min-width 100% of the body once laid out), so the menu is as wide as its fixed
    rows alone and the tag-bearing text elides with an ellipsis at whatever width they set, in every face. The wearers:
-   the Hide tab row and the Tags row in the menu, and in the Tags flyout each Move to row and the Show when folded row.
-   Never .ctx-item-sub's or .ctx-item-label's own rule: the fixed rows stay whole in every face (round 3: a cap on the
-   class cut the Emoji row's sub-line). tab-hide.test pins the rule; tab-hide-browser.test measures it in Chromium with
-   Inter and Space Grotesk loaded, with and without the tag-bearing rows, at 450px, 400px and 383px panes. */
+   the Hide tab row and the Tags row, the two rows of the MAIN menu whose sub-line carries a tag name; no row of the
+   Tags flyout (the rule after this one). Never .ctx-item-sub's or .ctx-item-label's own rule: the fixed rows stay whole
+   in every face (round 3: a cap on the class cut the Emoji row's sub-line). tab-hide.test pins the rule;
+   tab-hide-browser.test measures it in Chromium with Inter and Space Grotesk loaded, with and without the tag-bearing
+   rows, at 450px, 400px and 383px panes. */
 .ctx-sub-capped .ctx-item-body { flex: 1 1 0; min-width: 0; }
 .ctx-sub-capped .ctx-item-label, .ctx-sub-capped .ctx-item-sub { width: 0; min-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The Tags flyout's rows wear no modifier (round 5): the flyout has no wide fixed row to hold it open, so the structural
+   rule worn there collapsed it to the New tag input's width and cut a five-character tag's Show when folded line and a
+   sixteen-character Move to label, both whole at the base. A flyout row keeps its natural width up to a per-row cap with an
+   ellipsis (round 2's shape, in the flyout alone): 22em for a label, so a 19-character destination is whole (14.5em) and a
+   40-character one elides (23.8em to 25.5em by face and engine); 36em of its own font for a sub-line, so the Show when
+   folded line is whole for a 19-character name (30.3em) and elides for a 40-character one (38.7em to 41.5em). The ✕ and
+   the + sit beside their labels as at the base, and the flyout is as wide as its widest row up to the cap.
+   tab-hide-browser.test measures the flyout nested in a menu, in both faces. */
+.ctx-sub-tags .ctx-item-label { max-width: 22em; overflow: hidden; text-overflow: ellipsis; }
+.ctx-sub-tags .ctx-item-sub { max-width: 36em; overflow: hidden; text-overflow: ellipsis; }
 /* identity-color swatches (the user 2026-06-29): the romp palette as circles, the current one ringed. A grid
    so 9 colors wrap to a tidy block instead of one long row. */
 /* Billing submenu (the user 2026-08-09: the login/API-key switch lives here now, not the statusline).

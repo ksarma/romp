@@ -6928,7 +6928,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         // the user's call (flagged with T264b); the mechanics are unchanged here.
         const home = homeNow();   // read per build: a move or a remove above changes the copy's group (the Hide tab row reads the same)
         for (const g of others) {
-          const row = el("div", "ctx-item ctx-item-toggle ctx-sub-capped");   // ctx-sub-capped: the label carries the tag name (round 4)
+          const row = el("div", "ctx-item ctx-item-toggle");   // no ctx-sub-capped here: a flyout row keeps its natural width up to the sheet's per-row cap (round 5)
           const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label");
@@ -6966,7 +6966,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const sec = sectionRef(home);
           const on = isPinned(tabGroups(), sec, id);
           sub.appendChild(el("div", "ctx-sep"));
-          const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin ctx-sub-capped" + (on ? " current" : ""));   // ctx-sub-capped: the sub-line carries the tag name (round 4)
+          const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));   // no ctx-sub-capped: the flyout's per-row cap bounds the sub-line (round 5)
           const chip = el("span", "ctx-tag-dot"); chip.style.background = home.color || "var(--dim)"; row.appendChild(chip);
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label"); lb.textContent = "Show when folded"; bodyE.appendChild(lb);

@@ -622,29 +622,31 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (pointer: fine,
     "the desktop: no coarse pointer anywhere, so the act rests unseen until the row's hover or focus (round 1's disclosure)");
 });
 
-// THE TAG-BEARING LINES NEVER WIDEN THE MENU (tab menu review rounds 2 to 4, 2026-09-09): the menu's rows are nowrap and the
-// menu is sized by its widest row, so a row whose text carries a tag name grew the menu with the name (a 512px menu at the
-// 40-character maximum in Inter, clipped at a narrow pane's edge under render.ts's clamp, which never shrinks the menu). Rounds 2
-// and 3 capped the sub-line at 36em of its own font: round 2 on .ctx-item-sub itself, which cut the Emoji row's sub-line, the widest
-// fixed one, in the light theme's Space Grotesk and in a fallback face; round 3 on a modifier the Hide tab row wore, which still left
-// the dark theme's menu 28px wider than its fixed rows (Emoji's sub-line is 33.1em in Inter), so a 400px pane overflowed where the
-// base's menu fit. Round 4 makes the rule structural (styles.css .ctx-sub-capped: the body takes the row's spare width, the label and
-// sub-line contribute nothing to the menu's intrinsic width and elide), worn by every row whose text carries a tag name: the Hide tab
-// row, the Tags row (its sub-line joins the names), each Move to row (its label) and the Show when folded row. Measured here over the
-// real sheet with the faces served from the extension's media (the files the page loads): the dark theme's Inter and the light
-// theme's Space Grotesk (body.theme-light, as theme.ts sets it), each at 450px, 400px and 383px panes, and the no-webfont fallback
-// (the fonts 404'd) at 450px. Each pass inserts the rows FIRST, so the text starts the face's fetch (round 2 awaited fonts.ready over
-// an empty page and read the fallback face while calling it Inter), awaits document.fonts.ready and asserts the FontFace's own status
-// and fonts.check, never the font-family string, then reads: the fixed sub-lines (Rename, Notify me, Emoji) are whole with their
-// loaded-face widths, every tag-bearing line elides, and the menu holding the four tag-bearing rows with 40-character names is as wide
-// (within 1px) as the same menu without them and stays inside the pane under the clamp at every width. The sub-lines are the page's
-// own words, read from render.ts.
+// A TAG NAME NEVER WIDENS THE MAIN MENU (tab menu review rounds 2 to 5, 2026-09-09): the menu's rows are nowrap and the menu is sized
+// by its widest row, so a row whose text carries a tag name grew the menu with the name (a 512px menu at the 40-character maximum in
+// Inter, clipped at a narrow pane's edge under render.ts's clamp, which never shrinks the menu). Rounds 2 and 3 capped the sub-line at
+// 36em of its own font: round 2 on .ctx-item-sub itself, which cut the Emoji row's sub-line, the widest fixed one, in the light theme's
+// Space Grotesk and in a fallback face; round 3 on a modifier the Hide tab row wore, which still left the dark theme's menu 28px wider
+// than its fixed rows (Emoji's sub-line is 33.1em in Inter), so a 400px pane overflowed where the base's menu fit. Round 4 made the
+// rule structural (styles.css .ctx-sub-capped: the body takes the row's spare width, the label and sub-line contribute nothing to the
+// menu's intrinsic width and elide) and put it on every row whose text carries a tag name, the Tags flyout's Move to and Show when
+// folded rows included; round 5 takes it off the flyout, where no wide fixed row holds the menu open, so the rule collapsed the flyout
+// to the New tag input's width and cut a five-character tag's Show when folded line (the next test measures the flyout). The wearers
+// are the two MAIN-menu rows whose sub-line carries a tag name: the Hide tab row and the Tags row (its sub-line joins the names).
+// Measured here over the real sheet with the faces served from the extension's media (the files the page loads): the dark theme's
+// Inter and the light theme's Space Grotesk (body.theme-light, as theme.ts sets it), each at 450px, 400px and 383px panes, and the
+// no-webfont fallback (the fonts 404'd) at 450px. Each pass inserts the rows FIRST, so the text starts the face's fetch (round 2
+// awaited fonts.ready over an empty page and read the fallback face while calling it Inter), awaits document.fonts.ready and asserts
+// the FontFace's own status and fonts.check, never the font-family string, then reads: the fixed sub-lines (Rename, Notify me, Emoji)
+// are whole with their loaded-face widths, both tag-bearing sub-lines elide, and the menu holding the two tag-bearing rows with
+// 40-character names is as wide (within 1px) as the same menu without them and stays inside the pane under the clamp at every width.
+// The sub-lines are the page's own words, read from render.ts.
 const INTER_PATH = path.join(EXT, "media", "InterVariable.woff2");
 const SG_PATH = path.join(EXT, "media", "SpaceGroteskVariable.woff2");
 const MENU_PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/styles.css><style>body{margin:0}</style></head><body></body></html>`;
 type LineRead = { em: number; natural: number; elided: boolean; overflow: string };
 type MenuRead = { faces: string[]; checkInter: boolean; checkSG: boolean; fixed: LineRead[]; tagged: LineRead[]; menuWidth: number; right: number; inner: number };
-test("in Chromium, over the real sheet with the faces loaded: the tag-bearing rows (menu review rounds 2 to 4: Hide tab, Tags, Move to, Show when folded) with 40-character names add nothing to the menu's width in Inter and in the light theme's Space Grotesk at 450px, 400px and 383px panes, and in the fallback face; their text elides; every fixed sub-line is whole, Emoji's 36.1em in Space Grotesk included; the menu stays inside the pane", async (t) => {
+test("in Chromium, over the real sheet with the faces loaded: the main menu's two tag-bearing rows (menu review rounds 2 to 5: Hide tab and Tags) with 40-character names add nothing to the menu's width in Inter and in the light theme's Space Grotesk at 450px, 400px and 383px panes, and in the fallback face; their sub-lines elide; every fixed sub-line is whole, Emoji's 36.1em in Space Grotesk included; the menu stays inside the pane", async (t) => {
   let pw: any = null;
   try { pw = requireCjs("playwright"); } catch { pw = null; }
   if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
@@ -661,9 +663,10 @@ test("in Chromium, over the real sheet with the faces loaded: the tag-bearing ro
   const other40 = "notes-api-customer-invoicing-rollout-one";
   assert.equal(name40.length, 40); assert.equal(other40.length, 40);
   const hide = `hidden in ${name40}; to show it, open the group's view`;
-  const pin = `keep this tab on the strip while ${name40} is folded`;
-  for (const cls of ['"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"', '"ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"', '"ctx-item ctx-item-toggle ctx-sub-capped"', '"ctx-item ctx-item-toggle ctx-item-pin ctx-sub-capped"'])
-    assert.ok(RENDER.includes(`el("div", ${cls}`), "a tag-bearing row wears the modifier this leg puts on its copy: " + cls);
+  for (const cls of ['"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"', '"ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"'])
+    assert.ok(RENDER.includes(`el("div", ${cls}`), "a tag-bearing row of the main menu wears the modifier this leg puts on its copy: " + cls);
+  assert.ok(/for \(const g of others\) \{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle"\);/.test(RENDER) && RENDER.includes('el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));'),
+    "the flyout's Move to and Show when folded rows wear no modifier (round 5): the next test measures them in the flyout, where they render");
   let browser: any;
   try { browser = await pw.chromium.launch(); }
   catch (e) { t.skip("no playwright chromium on this box (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
@@ -681,12 +684,12 @@ test("in Chromium, over the real sheet with the faces loaded: the tag-bearing ro
       await page.goto("http://romp.test/page");
       // the rows first, in the theme's face: the text is what starts the face's fetch. The fixed rows as render.ts builds them
       // (a 14px ctxIcon, the body with a label and a sub-line); the tag-bearing rows as their builders do: Hide tab (icon, label,
-      // sub-line), Tags (icon, label, the joined names, the caret), Move to (chip, label, the +), Show when folded (chip, label, sub-line)
-      await page.evaluate(([light, tagged, rename, bell, emoji, hide, pin, name40, other40]: [boolean, boolean, string, string, string, string, string, string, string]) => {
+      // sub-line), Tags (icon, label, the joined names, the caret). The Move to and Show when folded rows render in the flyout, not
+      // here (round 4 put copies of them in this menu, where the structural rule held; the next test builds the flyout they live in)
+      await page.evaluate(([light, tagged, rename, bell, emoji, hide, name40, other40]: [boolean, boolean, string, string, string, string, string, string]) => {
         if (light) document.body.className = "theme-light";
         const el = (tag: string, cls: string) => { const e = document.createElement(tag); e.className = cls; return e; };
         const icon = () => { const ic = el("span", "ctx-icon"); ic.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; return ic; };
-        const chip = () => { const c = el("span", "ctx-tag-dot"); c.style.background = "var(--dim)"; return c; };
         const body = (lab: string, sub: string | null, tag: boolean) => {
           const b = el("span", "ctx-item-body");
           const l = el("span", "ctx-item-label" + (tag ? " tagged" : "")); l.textContent = lab; b.appendChild(l);
@@ -701,12 +704,9 @@ test("in Chromium, over the real sheet with the faces loaded: the tag-bearing ro
           const h = el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"); h.appendChild(icon()); h.appendChild(body("Hide tab", hide, true)); menu.appendChild(h);
           const tg = el("div", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"); tg.appendChild(icon()); tg.appendChild(body("Tags", name40 + " · " + other40, true));
           const caret = el("span", "ctx-caret"); caret.textContent = "▸"; tg.appendChild(caret); menu.appendChild(tg);
-          const mv = el("div", "ctx-item ctx-item-toggle ctx-sub-capped"); mv.appendChild(chip()); mv.appendChild(body("Move to " + name40, null, true));
-          const plus = el("button", "ctx-tag-x ctx-tag-plus"); plus.textContent = "+"; mv.appendChild(plus); menu.appendChild(mv);
-          const pn = el("div", "ctx-item ctx-item-toggle ctx-item-pin ctx-sub-capped"); pn.appendChild(chip()); pn.appendChild(body("Show when folded", pin, true)); menu.appendChild(pn);
         }
         document.body.appendChild(menu);
-      }, [light, tagged, rename, bell, emoji, hide, pin, name40, other40]);
+      }, [light, tagged, rename, bell, emoji, hide, name40, other40]);
       await page.evaluate(() => (document as any).fonts.ready);   // the fetch the rows started has landed (or failed) before the read
       const r = await page.evaluate(() => {
         const fontSet = (document as any).fonts;
@@ -737,11 +737,10 @@ test("in Chromium, over the real sheet with the faces loaded: the tag-bearing ro
       assert.ok(full.right <= bare.right + 1, `the tag-bearing rows never push the menu's right edge past the fixed rows' in ${face} at ${full.inner}px (right ${full.right} with them, ${bare.right} without)`);
       if (bare.right + 4 <= bare.inner) assert.ok(full.right + 4 <= full.inner, `the menu stays inside the ${full.inner}px pane under the clamp in ${face} (right ${full.right}, menu ${full.menuWidth}px; the fixed rows alone fit at ${bare.right})`);
       else assert.ok(face === "Space Grotesk" && full.inner <= 400, `only the light face's fixed rows overflow, and only under 400px: ${face} at ${full.inner}px, right ${bare.right}`);
-      assert.equal(full.tagged.length, 4, "the four tag-bearing lines were read: " + JSON.stringify(full.tagged));
-      // each tag-bearing line is boxed by the fixed rows' width and elides when its words are wider (the three sub-lines, at 0.82em, are;
-      // the Move to label at the label's size, "Move to " and 40 characters, is about 26em and fits in Inter, so it is whole there)
+      assert.equal(full.tagged.length, 2, "the two tag-bearing sub-lines were read: " + JSON.stringify(full.tagged));
+      // each tag-bearing line is boxed by the fixed rows' width and elides when its words are wider (both sub-lines, at 0.82em, are)
       for (const l of full.tagged) assert.ok(l.overflow === "ellipsis" && (l.elided || l.natural <= l.em + 0.05), `a tag-bearing line elides when its words are wider than its box in ${face} at ${full.inner}px: ${JSON.stringify(l)}`);
-      assert.ok(full.tagged.filter((l) => l.elided).length >= 3, `the three 40-character sub-lines elide in ${face} at ${full.inner}px: ${JSON.stringify(full.tagged)}`);
+      assert.equal(full.tagged.filter((l) => l.elided).length, 2, `the two 40-character sub-lines elide in ${face} at ${full.inner}px: ${JSON.stringify(full.tagged)}`);
       assert.ok(Math.abs(full.menuWidth - bare.menuWidth) <= 1, `the tag-bearing rows add nothing to the menu's width in ${face} at ${full.inner}px: ${full.menuWidth}px with them, ${bare.menuWidth}px without (round 3's 36em cap added 28px in Inter)`);
     };
     for (const width of [450, 400, 383]) {
@@ -765,4 +764,171 @@ test("in Chromium, over the real sheet with the faces loaded: the tag-bearing ro
     holds(fallback, fallbackFull, "the fallback face");
     assert.ok(fallback.fixed[2].em > 30 && fallback.fixed[2].em < 40, "Emoji's sub-line in the fallback face (36.1em in DejaVu Sans): " + JSON.stringify(fallback.fixed[2]));
   } finally { await browser.close(); }
+});
+
+// THE TAGS FLYOUT KEEPS ITS ROWS WHOLE (round 5 of the tab menu review, 2026-09-09): round 4's structural rule, worn by the
+// flyout's Move to and Show when folded rows, collapsed the flyout to the New tag input's intrinsic width (231px in the dark
+// theme, 191px in the light), because no wide fixed row holds a flyout open the way Rename and Emoji hold the main menu: the
+// Show when folded line elided for a five-character tag and Move to labels from about sixteen characters, both whole at the
+// base; round 4's leg measured copies of the two rows inside the MAIN menu, where the rule held, and passed. Round 5: no
+// flyout row wears the modifier; a flyout row keeps its natural width up to a per-row cap with an ellipsis (styles.css
+// .ctx-sub-tags rules: 22em for a label, 36em of its own font for a sub-line). Measured here as the flyout renders: a
+// .ctx-menu.ctx-sub.ctx-sub-tags NESTED in a .ctx-menu beside a Tags row (the flyout's font compounds 0.92 x 0.92; a flat
+// build overstates widths by eight percent), with the rows build() makes (a held row with its ✕, Move to rows with their +,
+// the Show when folded row, the New tag input, Configure tags), in both engines and both faces, the fonts served and their
+// status asserted as in the leg above. Reads: a 5-character and a 19-character destination whole, a 40-character one elided
+// at the cap; the Show when folded line whole for a 5- and a 19-character home and elided for a 40-character one; the ✕ and
+// the + eight pixels after their labels (the row's gap; round 4 put the + at the flyout's right edge, 74px past the label,
+// while the ✕ hugged); the flyout wider than the input and no wider than the cap allows. A second pass builds thirty tags
+// (ui/CLAUDE.md: a change to a tag surface is checked against thirty), placed as render.ts's place() does: every label
+// under 31 characters whole, the 40-character ones elided, the + beside each; the flyout's height against a 700px pane is
+// recorded (about 900px, top clamped to 0, no scroll: the base does the same, out of this change's scope).
+const NAMES30 = ["qa", "infra", "docs", "archived", "notes-api", "notes-api-web", "notes-api-tests", "notes-api-invoicing",
+  "notes-api-customer-billing", "notes-api-search-indexing", "notes-api-auth-and-sessions", "notes-api-mobile-sync",
+  "notes-api-export-pipeline", "notes-api-rate-limits", "notes-api-onboarding", "notes-api-release-candidates",
+  "notes-api-customer-billing-migration-two", "notes-api-customer-invoicing-rollout-one", "notes-api-observability-dash",
+  "web", "api", "tests", "notes-api-import-jobs", "notes-api-webhooks", "notes-api-attachments", "notes-api-sharing-links",
+  "notes-api-editor-collab", "notes-api-templates", "notes-api-backups-and-restore", "notes-api-search-relevance-experiments-3"];
+type FlyLine = { name: string; em: number; natural: number; elided: boolean; overflow: string; gap: number | null };
+type FlyRead = { faces: string[]; checkInter: boolean; checkSG: boolean; fontPx: number; held: FlyLine[]; moves: FlyLine[]; pin: FlyLine; fly: { width: number; height: number; top: number; left: number }; inputWidth: number; inner: { w: number; h: number } };
+test("in Chromium and Firefox, the Tags flyout nested in the menu over the real sheet with the faces loaded (menu review round 5): a 5- and a 19-character destination whole and a 40-character one elided at the cap, the Show when folded line whole for a short home and elided for a 40-character one, the ✕ and the + beside their labels, in Inter and Space Grotesk; thirty tags: every label under 31 characters whole, the 40-character ones elided, the height recorded", async (t) => {
+  let pw: any = null;
+  try { pw = requireCjs("playwright"); } catch { pw = null; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
+  assert.ok(fs.existsSync(INTER_PATH) && fs.existsSync(SG_PATH), "the faces the page loads are in the extension's media");
+  const inter = fs.readFileSync(INTER_PATH), sg = fs.readFileSync(SG_PATH);
+  assert.equal(NAMES30.length, 30); assert.equal(new Set(NAMES30).size, 30);
+  assert.deepEqual(NAMES30.filter((n) => n.length > 30 && n.length < 40), [], "no borderline name: under 31 characters is whole in every face and engine, 40 elides");
+  assert.equal(NAMES30.filter((n) => n.length === 40).length, 3);
+  const N5 = "infra", N19 = "notes-api-invoicing", N40 = "notes-api-customer-billing-migration-two";
+  assert.deepEqual([N5.length, N19.length, N40.length], [5, 19, 40]);
+  assert.match(CSS, /\n\.ctx-sub-tags \.ctx-item-label \{ max-width: 22em;[^\n]*\n\.ctx-sub-tags \.ctx-item-sub \{ max-width: 36em;/, "the flyout's per-row caps this leg measures");
+  for (const engine of ["chromium", "firefox"] as const) {
+    let browser: any;
+    try { browser = await pw[engine].launch(); }
+    catch (e) { t.skip(`no playwright ${engine} on this box (CI installs none): ` + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      /** the menu with a Tags row and the flyout beside it: `held` rows with their ✕, `others` as Move to rows with their +, the pin row for `home` */
+      const pass = async (light: boolean, home: string, held: string[], others: string[]): Promise<FlyRead> => {
+        const page = await browser.newPage({ viewport: { width: 1200, height: 700 } });
+        await page.route("http://romp.test/**", (route: any) => {
+          const u = new URL(route.request().url());
+          if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: MENU_PAGE });
+          if (u.pathname === "/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: CSS });
+          if (u.pathname.endsWith("/InterVariable.woff2")) return route.fulfill({ status: 200, contentType: "font/woff2", body: inter });
+          if (u.pathname.endsWith("/SpaceGroteskVariable.woff2")) return route.fulfill({ status: 200, contentType: "font/woff2", body: sg });
+          return route.fulfill({ status: 404, body: "" });
+        });
+        await page.goto("http://romp.test/page");
+        await page.evaluate(([light, home, held, others]: [boolean, string, string[], string[]]) => {
+          if (light) document.body.className = "theme-light";
+          const el = (tag: string, cls: string) => { const e = document.createElement(tag); e.className = cls; return e; };
+          const chip = () => { const c = el("span", "ctx-tag-dot"); c.style.background = "var(--dim)"; return c; };
+          const menu = el("div", "ctx-menu"); menu.id = "menu"; menu.style.left = "100px"; menu.style.top = "40px";
+          // the Tags row as render.ts builds it (icon, label, the joined names, the caret), the flyout's anchor
+          const tags = el("div", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"); tags.id = "tags";
+          const ic = el("span", "ctx-icon"); ic.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; tags.appendChild(ic);
+          const tb = el("span", "ctx-item-body"); const tl = el("span", "ctx-item-label"); tl.textContent = "Tags"; tb.appendChild(tl);
+          const ts = el("span", "ctx-item-sub"); ts.textContent = held.join(" · "); tb.appendChild(ts); tags.appendChild(tb);
+          const caret = el("span", "ctx-caret"); caret.textContent = "▸"; tags.appendChild(caret); menu.appendChild(tags);
+          // the flyout as build() makes it
+          const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags"); sub.id = "fly";
+          for (const name of held) {
+            const row = el("div", "ctx-item ctx-item-toggle"); row.className += " probe-held"; row.appendChild(chip());
+            const b = el("span", "ctx-item-body"); const l = el("span", "ctx-item-label"); l.textContent = name; b.appendChild(l); row.appendChild(b);
+            const x = el("button", "ctx-tag-x"); (x as HTMLButtonElement).type = "button"; x.textContent = "✕"; row.appendChild(x);
+            sub.appendChild(row);
+          }
+          if (held.length && others.length) sub.appendChild(el("div", "ctx-sep"));
+          for (const name of others) {
+            const row = el("div", "ctx-item ctx-item-toggle"); row.className += " probe-move"; row.appendChild(chip());
+            const b = el("span", "ctx-item-body"); const l = el("span", "ctx-item-label"); l.textContent = "Move to " + name; b.appendChild(l); row.appendChild(b);
+            const plus = el("button", "ctx-tag-x ctx-tag-plus"); (plus as HTMLButtonElement).type = "button"; plus.textContent = "+"; row.appendChild(plus);
+            sub.appendChild(row);
+          }
+          sub.appendChild(el("div", "ctx-sep"));
+          const pn = el("div", "ctx-item ctx-item-toggle ctx-item-pin"); pn.id = "pin"; pn.appendChild(chip());
+          const pb = el("span", "ctx-item-body"); const pl = el("span", "ctx-item-label"); pl.textContent = "Show when folded"; pb.appendChild(pl);
+          const ps = el("span", "ctx-item-sub"); ps.textContent = `keep this tab on the strip while ${home} is folded`; pb.appendChild(ps); pn.appendChild(pb); sub.appendChild(pn);
+          sub.appendChild(el("div", "ctx-sep"));
+          const nrow = el("div", "ctx-item ctx-item-newtag"); const inp = el("input", "ctx-tag-input") as HTMLInputElement; inp.placeholder = "New tag…"; inp.maxLength = 40; nrow.appendChild(inp); sub.appendChild(nrow);
+          sub.appendChild(el("div", "ctx-sep"));
+          const cfg = el("div", "ctx-item ctx-item-configtags"); const cb = el("span", "ctx-item-body"); const cl = el("span", "ctx-item-label"); cl.textContent = "Configure tags…"; cb.appendChild(cl); cfg.appendChild(cb); sub.appendChild(cfg);
+          menu.appendChild(sub);
+          document.body.appendChild(menu);
+          // render.ts's place(): beside the Tags row, right when it fits, the top at the row's clamped to the pane
+          const ir = tags.getBoundingClientRect(), sr = sub.getBoundingClientRect();
+          if (ir.right + 2 + sr.width <= window.innerWidth - 8) sub.style.left = Math.round(ir.right + 2) + "px";
+          else sub.style.left = Math.max(8, Math.round(ir.left) - sr.width - 2) + "px";
+          sub.style.top = Math.max(0, Math.min(ir.top, window.innerHeight - sr.height - 4)) + "px";
+        }, [light, home, held, others]);
+        await page.evaluate(() => (document as any).fonts.ready);
+        const r = await page.evaluate(() => {
+          const fontSet = (document as any).fonts;
+          const faces: string[] = [];
+          for (const f of fontSet as Iterable<{ family: string; status: string }>) faces.push(f.family.replace(/"/g, "") + ":" + f.status);
+          const fly = document.getElementById("fly")!;
+          const fontPx = parseFloat(getComputedStyle(fly.querySelector(".ctx-item-label")!).fontSize);
+          // a line: its box and natural width in its OWN em, whether it elides, and the gap from its text's end (a Range over the text
+          // node; the box's right edge where the text is cut, since the range measures the whole text) to the row's button
+          const read = (row: Element, sel: string, btn: string | null): FlyLine => {
+            const e = row.querySelector(sel)!; const fs = parseFloat(getComputedStyle(e).fontSize); const b = e.getBoundingClientRect();
+            let gap: number | null = null;
+            if (btn) { const range = document.createRange(); range.selectNodeContents(e); gap = +(row.querySelector(btn)!.getBoundingClientRect().left - Math.min(range.getBoundingClientRect().right, b.right)).toFixed(1); }
+            return { name: e.textContent || "", em: +(b.width / fs).toFixed(2), natural: +(e.scrollWidth / fs).toFixed(2), elided: e.scrollWidth > e.clientWidth, overflow: getComputedStyle(e).textOverflow, gap };
+          };
+          const fr = fly.getBoundingClientRect();
+          return { faces, checkInter: fontSet.check("12px Inter"), checkSG: fontSet.check('12px "Space Grotesk"'), fontPx,
+            held: Array.from(fly.querySelectorAll(".probe-held")).map((row) => read(row, ".ctx-item-label", ".ctx-tag-x")),
+            moves: Array.from(fly.querySelectorAll(".probe-move")).map((row) => read(row, ".ctx-item-label", ".ctx-tag-plus")),
+            pin: read(document.getElementById("pin")!, ".ctx-item-sub", null),
+            fly: { width: fr.width, height: fr.height, top: fr.top, left: fr.left },
+            inputWidth: (fly.querySelector(".ctx-tag-input") as HTMLElement).getBoundingClientRect().width,
+            inner: { w: window.innerWidth, h: window.innerHeight } };
+        });
+        await page.close();
+        return r as FlyRead;
+      };
+      const faceOf = (r: FlyRead, light: boolean, where: string) => {
+        if (light) assert.ok(r.faces.includes("Space Grotesk:loaded") && r.checkSG, `Space Grotesk loaded before the read (${where}): ` + JSON.stringify(r.faces));
+        else assert.ok(r.faces.includes("Inter:loaded") && r.checkInter, `Inter loaded before the read (${where}): ` + JSON.stringify(r.faces));
+        return light ? "Space Grotesk" : "Inter";
+      };
+      const whole = (l: FlyLine, what: string) => assert.ok(!l.elided && l.natural <= l.em + 0.05, `${what} is whole: ${JSON.stringify(l)}`);
+      const elided = (l: FlyLine, what: string) => assert.ok(l.elided && l.overflow === "ellipsis" && l.natural > l.em + 0.05, `${what} elides at the cap: ${JSON.stringify(l)}`);
+      const beside = (l: FlyLine, what: string) => assert.ok(l.gap !== null && Math.abs(l.gap - 8) <= 1, `${what}'s button sits eight pixels after its label, the row's gap (round 4 put the + 74px past a short label): ${JSON.stringify(l)}`);
+      for (const light of [false, true]) {
+        for (const home of [N5, N19, N40]) {
+          const others = [N5, N19, N40].filter((n) => n !== home);
+          const r = await pass(light, home, [home], others);
+          const face = faceOf(r, light, `${engine}, home ${home.length}`);
+          const where = `${engine}, ${face}, home ${home.length} characters`;
+          assert.ok(Math.abs(r.fontPx - 11) < 0.2, `the flyout's font is the compounded 11px (0.92 x 0.92 of 13px), not a flat build's 12px: ${r.fontPx} (${where})`);
+          assert.equal(r.moves.length, 2); assert.equal(r.held.length, 1);
+          for (const m of r.moves) {
+            const n = m.name.replace(/^Move to /, "").length;
+            if (n === 40) elided(m, `the 40-character destination (${where})`); else whole(m, `the ${n}-character destination (${where})`);
+            beside(m, `the Move to row (${where})`);
+          }
+          const h = r.held[0];
+          if (home.length === 40) assert.ok(h.natural > 19, `a 40-character held name is 19em or more (${where}): ${JSON.stringify(h)}`); else whole(h, `the ${home.length}-character held name (${where})`);
+          beside(h, `the held row (${where})`);
+          if (home.length === 40) elided(r.pin, `the Show when folded line for a 40-character home (${where})`);
+          else whole(r.pin, `the Show when folded line for a ${home.length}-character home (${where}; round 4 cut it at ${r.inputWidth}px, the input's width)`);
+          assert.ok(r.fly.width > r.inputWidth + 40, `the flyout is sized by its rows, not collapsed to the input (${where}): fly ${r.fly.width}, input ${r.inputWidth}`);
+          assert.ok(r.fly.width <= 36 * 0.82 * r.fontPx + 100, `the flyout is no wider than its widest capped line and the row's chrome allow (${where}): ${r.fly.width}px`);
+        }
+        // THIRTY TAGS (ui/CLAUDE.md): the first held, the other 29 as Move to rows, placed by place()
+        const r30 = await pass(light, NAMES30[0], [NAMES30[0]], NAMES30.slice(1));
+        const face = faceOf(r30, light, `${engine}, thirty`);
+        assert.equal(r30.moves.length, 29);
+        const cut = r30.moves.filter((m) => m.elided).map((m) => m.name.replace(/^Move to /, ""));
+        assert.deepEqual(cut.sort(), NAMES30.filter((n) => n.length === 40).sort(), `at thirty tags exactly the 40-character labels elide (${engine}, ${face}): ${JSON.stringify(r30.moves.map((m) => [m.name.length - 8, m.em, m.natural, m.elided]))}`);
+        for (const m of r30.moves) { beside(m, `a Move to row among thirty (${engine}, ${face})`); assert.equal(m.overflow, "ellipsis"); }
+        whole(r30.pin, `the Show when folded line for the two-character home among thirty (${engine}, ${face})`);
+        assert.ok(r30.fly.width <= 22 * r30.fontPx + 100 && r30.fly.width > r30.inputWidth + 40, `thirty tags: the flyout's width is the capped label's plus the row's chrome (${engine}, ${face}): ${r30.fly.width}px`);
+        t.diagnostic(`${engine}, ${face}, thirty tags: flyout ${Math.round(r30.fly.width)}x${Math.round(r30.fly.height)}px at top ${Math.round(r30.fly.top)} in a ${r30.inner.h}px pane (the height overflows the pane and the top clamps to 0 with no scroll: the base does the same, out of this change's scope); ${cut.length} of 29 labels elide, the 40-character ones`);
+      }
+    } finally { await browser.close(); }
+  }
 });
