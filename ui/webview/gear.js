@@ -136,6 +136,12 @@ var GEAR_HTML =
   '<span><b>Compact transcript</b>' +
   '<span class=rs-sub>Collapse each run of tool uses into one line and hide thinking blocks in the chat.</span>' +
   '</span></label>' +
+  // compact tabs and agents (the user 2026-09-08, whose phone showed about three lines of transcript between the
+  // strip and the box of background work): density only, a body class render.ts applies (dense-chrome.ts)
+  '<label class=rs-row><input type=checkbox id=rs-dense>' +
+  '<span><b>Compact tabs and agents</b>' +
+  '<span class=rs-sub>Keeps more of the transcript in view on a small screen: smaller tabs and group headers in the tab strip, and smaller text and tighter rows in the box of background work under the transcript, with its list capped at about four rows that scroll. Off by default.</span>' +
+  '</span></label>' +
   '<label class=rs-row><input type=checkbox id=rs-branch>' +
   '<span><b>Show git branch</b>' +
   "<span class=rs-sub>Show the session's git branch (when it's in a repo) in the chat bottom bar, beside the directory.</span>" +
@@ -281,6 +287,7 @@ function initGear(post) {
     tc = document.getElementById('rs-tabctx'), fl = document.getElementById('rs-filelink'),
     cs = document.getElementById('rs-chatscheme'),
     tt = document.getElementById('rs-theme'),
+    dn = document.getElementById('rs-dense'),
     cg = document.getElementById('rs-collapsegaps'), ao = document.getElementById('rs-activeonly'),
     fc = document.getElementById('rs-feedcollapsed'),
     jm = document.getElementById('rs-judgemodel'),
@@ -294,7 +301,7 @@ function initGear(post) {
     ths = document.getElementById('rs-thinksum'),
     utd = document.getElementById('rs-usertodos'),
     ans = document.getElementById('rs-autonudge-split'), asub = document.getElementById('rs-autonudge-sub');
-  function load() { try { return Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', collapseGaps: true, activeOnly: true }; } }
+  function load() { try { return Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', denseChrome: false, collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', denseChrome: false, collapseGaps: true, activeOnly: true }; } }
   // mirrors settings.ts tabCtxMode (this file can't import the TS module): the gauge shipped for a
   // few hours as a boolean toggle — false was an explicit hide, true the default nobody chose.
   function tabCtxMode(v) { return (v === 'always' || v === 'never') ? v : (v === false ? 'never' : 'over50'); }
@@ -315,6 +322,7 @@ function initGear(post) {
   if (gb) gb.addEventListener('change', function () { var s = load(); s.showBranch = gb.checked; save(s); });
   if (tc) tc.addEventListener('change', function () { var s = load(); s.tabCtx = tc.value; save(s); });
   if (fl) fl.addEventListener('change', function () { var s = load(); s.fileLinkPane = fl.value; save(s); });   // webview-local pref read at click time (render.ts openPath)
+  if (dn) dn.addEventListener('change', function () { var s = load(); s.denseChrome = dn.checked; save(s); });   // compact tabs and agents: render.ts repaints the strip and the box on the save (a body class)
   // ── the settings' value-picker DROPDOWNS (T117, the user 2026-08-27, screenshot: the Chat
   // tabs and Text scheme pickers rendered every option always-expanded, and the description spans
   // ran off the card's right edge). Progressive disclosure: the CLOSED state is ONE row — the
@@ -1249,7 +1257,7 @@ function initGear(post) {
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
     // full-viewport fallback box blacked out every pane behind the modal.
-    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (fl) fl.value = s.fileLinkPane === 'feed' || s.fileLinkPane === 'pane' ? s.fileLinkPane : 'chat'; if (tc) tc.value = tabCtxMode(s.tabCtx); tcPaint(); csPaint(); ttPaint(); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
+    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (dn) dn.checked = s.denseChrome === true; if (fl) fl.value = s.fileLinkPane === 'feed' || s.fileLinkPane === 'pane' ? s.fileLinkPane : 'chat'; if (tc) tc.value = tabCtxMode(s.tabCtx); tcPaint(); csPaint(); ttPaint(); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
   if (g) g.onclick = function (e) { e.stopPropagation(); openSettings(); };   // hidden anchor; hosts open via the message below
   window.addEventListener('message', function (e) { if (e.data && e.data.romp === 'openSettings') openSettings(); });
   // The shortcuts row: the web shell (same-origin parent) gets the customize link — it opens the
