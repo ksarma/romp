@@ -6725,6 +6725,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       if (row.parentNode && words === dressed) return;
       dressed = words;
       dressToggle(row, "tab", hidden, lab, sub);
+      row.title = sub;   // the whole sentence as the row's tooltip (round 5): the sub-line elides at long names (ctx-sub-capped) and its instruction went with it
       if (!row.parentNode) bellItem.after(row);
       reseat();
     };
@@ -6814,11 +6815,12 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     const sb = el("span", "ctx-item-sub");
     const subText = () => { const names = holding().map((g) => g.name); return names.length ? names.join(" · ") : "none yet — tag it to organize and dispatch"; };
     sb.textContent = subText();
+    tagsItem.title = sb.textContent;   // the whole list as the row's tooltip (round 5): the joined names elide at length; refreshed with the sub-line and at every build of the flyout
     // A CHANGE TO WHAT THE STRIP READS while this menu is open (round 4; tabMenuViewsHook, run by viewsChanged): the sub-line re-reads
     // the names, and the flyout, while open, rebuilds its rows when the change altered what they show (rebuildFly, assigned in openTagsFly;
     // a no-op while it is closed)
     let rebuildFly = () => {};
-    refreshTags = () => { sb.textContent = subText(); rebuildFly(); };
+    refreshTags = () => { sb.textContent = subText(); tagsItem.title = sb.textContent; rebuildFly(); };
     bodyEl.appendChild(sb);
     tagsItem.appendChild(bodyEl);
     const caret = el("span", "ctx-caret"); caret.textContent = "▸"; tagsItem.appendChild(caret);
@@ -7057,6 +7059,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           add(row);
         }
         if (holding().length || others.length) add(el("div", "ctx-sep"));
+        tagsItem.title = subText();   // the Tags row's tooltip follows the flyout's own edits (its sub-line is written by their handlers after this build)
         refreshHideRow();   // every edit above rebuilds this flyout: the Hide tab row speaks for the copy where it now sits (keyed on the write, no timer)
       };
       build();
