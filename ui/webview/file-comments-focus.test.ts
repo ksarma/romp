@@ -277,7 +277,7 @@ const QUOTE = "shipping the cache in v1.2";
 // one logical line per row of the Raw view, each ROW px tall in the measurement table. Row 3 is a long paragraph the
 // session inserted whole (the change whose card is TALL open: its text is a long part, folded in the margin layout); row
 // 5 holds the passage comment under it; blank rows between the later lines make each its own paragraph, and rows 7 and 9
-// carry the essay and the thread when the comment-fold test puts them in the store
+// carry the essay and the talked comment when the comment-fold test puts them in the store
 const LONG = "The api session rewrote the findings as one long paragraph about the cache, the latency budget, the plan for the next release and the reasons the team settled on it, going on for several sentences more than the one line it replaced, so that its card shows far more text than fits beside the passage.";
 const LINES = ["# Report", "", "## Findings", LONG, "", "We recommend " + QUOTE + ".", "", "More text here."];
 for (let i = 8; i < 33; i++) LINES.push(i % 2 ? "Line " + i + " of the report." : "");
@@ -298,14 +298,14 @@ const closing: StoreComment = {   // row 33, the last line
   anchor: { quote: "The closing line of the report", prefix: "", suffix: "." }, replies: [], resolved: false,
 };
 // two comments with long parts of their own, for the comment card's fold (renderCard's fc-more is not renderChange's): the
-// essay's BODY runs past the cap, and the thread's short body carries a RUN OF TURNS that does. Only the comment-fold test
+// essay's BODY runs past the cap, and the talked comment's short body carries a RUN OF TURNS that does. Only the comment-fold test
 // puts them in the store (withLong), so the other tests' numbers stand
 const LONG_BODY = "This paragraph needs the numbers behind it: the latency budget it cites, the cache hit rate the api session measured, the release the plan names and the reasons the team settled on it, each with a pointer to where a reader can check it, or the claim reads as opinion.";
 const essay: StoreComment = {   // row 7
   id: (T0 + 7000) + "-7", author: "you", ts: T0 + 7000, body: LONG_BODY,
   anchor: { quote: "More text here", prefix: "", suffix: "." }, replies: [], resolved: false,
 };
-const thread: StoreComment = {   // row 9
+const talked: StoreComment = {   // row 9: a comment with a run of three turns under it (the name the focus-review module gives the shape)
   id: (T0 + 9000) + "-9", author: "you", ts: T0 + 9000, body: "Is this line still current?",
   anchor: { quote: "Line 9 of the report", prefix: "", suffix: "." }, resolved: false,
   replies: [
@@ -336,14 +336,14 @@ function status(over: Partial<Status> = {}): Status {
 }
 /** The status with the later comment on row 5 in the store too (the leader test). */
 const withRec = (storeMtimeNs: string): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, rec] }, storeMtimeNs });
-/** The status with the essay and the thread in the store too (the comment-fold test). */
-const withLong = (storeMtimeNs: string): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, essay, thread] }, storeMtimeNs });
+/** The status with the essay and the talked comment in the store too (the comment-fold test). */
+const withLong = (storeMtimeNs: string): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, essay, talked] }, storeMtimeNs });
 
 // ── the viewer stand-in: the body row, the seam as closures, a measurement table ───────────────────
 // Geometry: the body's box is at viewport y=100, BODY_VIEW tall; the header stands OFFSET tall above the track and the
 // footer FOOTER tall below it, so the track's box is TRACK tall; row i's text sits at 100 + ROW·i − scrollTop; a card is
 // CARD tall closed and OPEN tall open — except a card with a long part (the change card's old and new text; the essay's
-// body and the thread's run of turns, in the comment-fold test), which is TALL open and folded (eight lines of the part)
+// body and the talked comment's run of turns, in the comment-fold test), which is TALL open and folded (eight lines of the part)
 // and WHOLE once Show more is pressed. A long part (LONG_PART: more than 200 characters) measures PART_ALL of content in
 // a box of PART_CAP until its card wears fc-more — the table's reading of the sheet's cap; a short part fits its box.
 const ROW = 60, OFFSET = 60, FOOTER = 40, CARD = 40, OPEN = 120, TALL = 200, WHOLE = 400, BODY_VIEW = 260, TRACK = BODY_VIEW - OFFSET - FOOTER;   // TRACK 160
@@ -710,8 +710,8 @@ test("the list layout clips nothing: after the fold the rows are hidden and no p
 test("the comment card's fold (renderCard's fc-more, apart from the change card's): a body and a run of turns longer than the cap are cut and offer Show more; Show more lifts the cap — the card wears fc-more, the part's box is its content, the card is WHOLE and the card under it yields — and makes the card the focus, its mark centered; a status keeps it; Show less folds it again", async (t) => {
   const { w } = await open(t, textWorld(), withLong("1757145600000000002"));
   const body = w.body, track = w.track();
-  assert.ok(LONG_BODY.length > LONG_PART && thread.replies!.map((r) => r.body!).join("").length > LONG_PART && thread.body.length <= LONG_PART, "the fixture: the essay's body and the thread's run of turns are long parts; the thread's body is not");
-  assert.equal(w.top(essay.id), desired(7)); assert.equal(w.top(thread.id), desired(9));
+  assert.ok(LONG_BODY.length > LONG_PART && talked.replies!.map((r) => r.body!).join("").length > LONG_PART && talked.body.length <= LONG_PART, "the fixture: the essay's body and the talked comment's run of turns are long parts; the talked comment's body is not");
+  assert.equal(w.top(essay.id), desired(7)); assert.equal(w.top(talked.id), desired(9));
   const partOf = (key: string, cls: string): El => w.card(key)!.querySelectorAll(".fc-clip").find((p) => p.className === cls)!;
   // the essay's body: opened by its head, the card is TALL and folded, its body cut at the cap
   headOf(w, essay.id).click(); await tick();
@@ -721,9 +721,9 @@ test("the comment card's fold (renderCard's fc-more, apart from the change card'
   assert.equal(f.hidden, false); assert.equal(f.label, "Show more"); assert.equal(f.more, false);
   assert.equal(partOf(essay.id, "fc-body fc-clip").clientHeight, PART_CAP, "the body's box is the cap");
   assert.equal(w.card(essay.id)!.getBoundingClientRect().height, TALL);
-  assert.equal(w.top(thread.id), desired(7) + TALL + 8, "the thread's card under the folded card");
+  assert.equal(w.top(talked.id), desired(7) + TALL + 8, "the talked comment's card under the folded card");
   // Show more: the card wears fc-more, so the sheet lifts the cap (the table: the part's box is its content), the card is
-  // WHOLE and the thread's card yields by that much; the card is the focus and its mark is centered — taller than the
+  // WHOLE and the talked comment's card yields by that much; the card is the focus and its mark is centered — taller than the
   // track, so the fallback: the mark's top a gap under the body's top. From the top first, so that the centering shows
   body.scrollTop = 0; body.dispatchEvent(new Ev("scroll"));
   f.row!.querySelector("button")!.click(); await tick();
@@ -735,7 +735,7 @@ test("the comment card's fold (renderCard's fc-more, apart from the change card'
   assert.equal(bodyPart.clientHeight, bodyPart.scrollHeight, "the body's box is its content: the cap is lifted");
   assert.equal(w.card(essay.id)!.getBoundingClientRect().height, WHOLE);
   assert.equal(w.top(essay.id), desired(7), "the focus: level with its highlight");
-  assert.equal(w.top(thread.id), desired(7) + WHOLE + 8, "the thread's card under the whole card");
+  assert.equal(w.top(talked.id), desired(7) + WHOLE + 8, "the talked comment's card under the whole card");
   const markGap = desired(7) + OFFSET - 8;
   assert.ok(desired(7) + WHOLE + 8 - TRACK > markGap, "the fixture: the whole card's end needs more scroll than keeps the mark's top in view");
   assert.equal(body.scrollTop, markGap, "Show more centered the mark: the least-scroll fallback for a card taller than the track (before: 0)");
@@ -751,23 +751,23 @@ test("the comment card's fold (renderCard's fc-more, apart from the change card'
   assert.equal(f.more, false); assert.deepEqual(f.clipped, ["fc-body fc-clip"]); assert.equal(f.label, "Show more");
   assert.equal(partOf(essay.id, "fc-body fc-clip").clientHeight, PART_CAP, "capped again");
   assert.equal(w.card(essay.id)!.getBoundingClientRect().height, TALL);
-  assert.equal(w.top(thread.id), desired(7) + TALL + 8);
+  assert.equal(w.top(talked.id), desired(7) + TALL + 8);
   assert.equal(body.scrollTop, markGap, "a fold scrolls nothing");
-  // the thread's run of turns: its short body fits; the run is the part the cap cuts
-  headOf(w, essay.id).click(); await tick();           // the essay folded by its head, out of the thread's way
-  headOf(w, thread.id).click(); await tick();
-  f = foldOf(w, thread.id);
+  // the talked comment's run of turns: its short body fits; the run is the part the cap cuts
+  headOf(w, essay.id).click(); await tick();           // the essay folded by its head, out of the talked comment's way
+  headOf(w, talked.id).click(); await tick();
+  f = foldOf(w, talked.id);
   assert.equal(f.parts, 2, "the body and the run of turns");
   assert.deepEqual(f.clipped, ["fc-replies fc-clip"], "the run is cut; the short body is not");
   assert.equal(f.hidden, false); assert.equal(f.label, "Show more"); assert.equal(f.more, false);
-  assert.equal(partOf(thread.id, "fc-replies fc-clip").clientHeight, PART_CAP);
-  assert.equal(w.card(thread.id)!.getBoundingClientRect().height, TALL);
+  assert.equal(partOf(talked.id, "fc-replies fc-clip").clientHeight, PART_CAP);
+  assert.equal(w.card(talked.id)!.getBoundingClientRect().height, TALL);
   f.row!.querySelector("button")!.click(); await tick();
-  f = foldOf(w, thread.id);
+  f = foldOf(w, talked.id);
   assert.equal(f.more, true, "the card wears fc-more"); assert.deepEqual(f.clipped, []); assert.equal(f.label, "Show less");
-  const run = partOf(thread.id, "fc-replies fc-clip");
+  const run = partOf(talked.id, "fc-replies fc-clip");
   assert.equal(run.clientHeight, run.scrollHeight, "the run's box is its content");
-  assert.equal(w.card(thread.id)!.getBoundingClientRect().height, WHOLE);
+  assert.equal(w.card(talked.id)!.getBoundingClientRect().height, WHOLE);
   w.close();
 });
 
@@ -790,4 +790,13 @@ test("at source: every long part wears fc-clip, the row is rendered hidden, the 
     assert.ok(css.includes(".fc-clip-row[hidden] { display: none; }"), f + ": the hidden row takes no room");
     assert.ok(css.includes(".fc-margin .fc-card[data-pulled]::after { content: \"\"; position: absolute; left: -7px; top: 100%; height: var(--fc-pull, 0px);"), f + ": the leader down");
   }
+});
+
+test("vocabulary: this module's own prose says file comment and run of turns; the word CONTEXT.md sets aside for a forked side session appears nowhere in it (the fixture with turns is `talked`, the name file-comments-focus-review.test.ts gives the same shape), nor the banned sessions-pane word, nor a home path", () => {
+  // file-comments.test.ts and file-comments-changes.test.ts scan themselves the same way: a test module is new prose too,
+  // and its assertion messages print to the person on failure. The scan sets its own guard lines aside.
+  const SELF = web("file-comments-focus.test.ts").split("\n").filter((l) => !l.includes("assert.doesNotMatch(SELF")).join("\n");
+  assert.doesNotMatch(SELF, /\bthreads?\b/i, "a comment with replies is a file comment with a run of turns (CONTEXT.md, File comment: Avoid)");
+  assert.doesNotMatch(SELF, /fleet/i, "no new identifiers or prose in the old word for the sessions pane");
+  assert.doesNotMatch(SELF, /\/home\/[a-z]/, "no absolute home paths");
 });

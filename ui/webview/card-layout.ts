@@ -26,9 +26,14 @@
 // the cards whose marks are below the focus, a marked card wearing the leader up to its mark as any pushed card
 // does; the room above the focus stays for the cards further up the chain, so a small card above a tall one that
 // did not fit keeps its place. Of the loose group, the cards at its END go below, in the list's order, until the
-// rest fit, so the group's head stays at the start. The cards below the focus follow the push-down rule from the
-// end of the last card the focus displaced, as ever from a card's end. Every card so stands at or below the start,
-// where the track's scroll reaches it. A focus with no mark, or one not among the items, changes nothing.
+// rest fit, so the group's head stays at the start. A card laid below the focus stands above nothing, so the cards
+// above are laid again without it — the push-down rule, then the chain — until a pass moves no card past the start: a
+// card the tall card had pushed under its mark sits at its mark again, and a card under a spilled whole-file card
+// takes the start the group gave up (the verification round, 2026-09-09: laid once, the card between a spilled tall
+// card and the focus kept the push the tall card had given it, a leader up a gutter no card stood in). The cards
+// below the focus follow the push-down rule from the end of the last card the focus displaced, as ever from a card's
+// end. Every card so stands at or below the start, where the track's scroll reaches it. A focus with no mark, or one
+// not among the items, changes nothing.
 export type LayoutItem = { key: string; desired: number | null; height: number };
 export type PlacedItem = { key: string; top: number; height: number; desired: number | null; pushed: number };
 export type Layout = { placed: PlacedItem[]; bottom: number };
@@ -59,31 +64,41 @@ export function layoutCards(items: LayoutItem[], gap: number = CARD_GAP, focus: 
   }
   // the focus: the loose group and the cards above the focus as the push-down rule lays them, then each moved up only
   // as far as the card under it needs, from the focus upward — and a card the chain would move past the track's start
-  // laid below the focused card instead, never at a top the track cannot scroll to (the module comment)
+  // laid below the focused card instead, never at a top the track cannot scroll to (the module comment). A card laid
+  // below stands above nothing: the pass runs again without it, so a card it had pushed is laid from its own mark, until
+  // a pass moves no card past the start (each pass adds to the spilled set or is the last; the set is bounded by the items)
   const loose = items.filter((it) => it.desired === null);
   const above = marked.slice(0, f).map((x) => x.it), below = marked.slice(f + 1).map((x) => x.it), fit = marked[f].it;
   const tops = new Map<LayoutItem, number>();
-  for (const it of loose) { tops.set(it, floor); floor += it.height + gap; }
-  for (const it of above) { const top = Math.max(it.desired as number, floor); tops.set(it, top); floor = top + it.height + gap; }
   const focusTop = Math.max(fit.desired as number, gap);
-  let ceiling = focusTop - gap;                      // the lowest bottom the card above may have
   const spilled = new Set<LayoutItem>();             // the cards no room is left for above the focus: below it instead
-  for (const it of above.slice().reverse()) {
-    const top = Math.min(tops.get(it) as number, ceiling - it.height);
-    if (top < 0) { spilled.add(it); continue; }      // past the start: below the focus; the room above stays for the cards further up
-    tops.set(it, top);
-    ceiling = top - gap;
+  for (let grew = true; grew;) {
+    const known = spilled.size;
+    floor = gap;
+    for (const it of loose) if (!spilled.has(it)) { tops.set(it, floor); floor += it.height + gap; }
+    for (const it of above) if (!spilled.has(it)) { const top = Math.max(it.desired as number, floor); tops.set(it, top); floor = top + it.height + gap; }
+    let ceiling = focusTop - gap;                    // the lowest bottom the card above may have
+    for (const it of above.slice().reverse()) {
+      if (spilled.has(it)) continue;                 // laid below the focus by a pass before: no part of the track above it
+      const top = Math.min(tops.get(it) as number, ceiling - it.height);
+      if (top < 0) { spilled.add(it); continue; }      // past the start: below the focus; the room above stays for the cards further up
+      tops.set(it, top);
+      ceiling = top - gap;
+    }
+    // the loose group stands at the start and moves up as one by the least the chain needs, no further than the start;
+    // where even that leaves its end under the ceiling, the cards at its end go below the focus, in the list's order, until
+    // the rest fit (the group's head keeps its place). The cards a pass before sent below are a suffix of the group, the
+    // end going first, so the group this pass lays is the prefix before them
+    let keep = loose.length, shift = 0;
+    while (keep > 0 && spilled.has(loose[keep - 1])) keep--;
+    for (; keep > 0; keep--) {
+      const last = loose[keep - 1];
+      shift = Math.max(0, (tops.get(last) as number) + last.height - ceiling);
+      if ((tops.get(loose[0]) as number) - shift >= 0) break;
+    }
+    loose.forEach((it, i) => { if (i < keep) tops.set(it, (tops.get(it) as number) - shift); else spilled.add(it); });
+    grew = spilled.size > known;
   }
-  // the loose group stands at the start and moves up as one by the least the chain needs, no further than the start;
-  // where even that leaves its end under the ceiling, the cards at its end go below the focus, in the list's order, until
-  // the rest fit (the group's head keeps its place)
-  let keep = loose.length, shift = 0;
-  for (; keep > 0; keep--) {
-    const last = loose[keep - 1];
-    shift = Math.max(0, (tops.get(last) as number) + last.height - ceiling);
-    if ((tops.get(loose[0]) as number) - shift >= 0) break;
-  }
-  loose.forEach((it, i) => { if (i < keep) tops.set(it, (tops.get(it) as number) - shift); else spilled.add(it); });
   for (const it of loose) if (!spilled.has(it)) put(it, tops.get(it) as number);
   for (const it of above) if (!spilled.has(it)) put(it, tops.get(it) as number);
   put(fit, focusTop);

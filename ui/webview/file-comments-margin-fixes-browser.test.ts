@@ -6,9 +6,12 @@
 // header term; one added on top put the card's head under the panel's header for every card taller than the track
 // less the header), that a card taller than the track is clipped at its head by the excess alone, and that a comment
 // saved with the text scrolled far down brings its card into view: a whole-file comment's card loose at the top of the
-// track (the track to it, the body with it through the lock), a reply's card to its mark. Runs in Chromium and Firefox;
-// skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values only:
-// invented prose, placeholder ids.
+// track (the track to it, the body with it through the lock), a reply's card to its mark — the reply's card the focus,
+// level with its mark though the loose group (the whole-file cards) reaches past it, so the group's end is laid below the
+// focused card and its head keeps its place (the focus follow-on's review, 2026-09-08; the one real-engine exercise of
+// card-layout.ts's spill, its fixture pinned so it cannot retire silently). Runs in Chromium and Firefox; skips LOUDLY
+// without a playwright browser (CI installs none), as the other browser legs do. Synthetic values only: invented prose,
+// placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -318,13 +321,28 @@ for (const name of ["chromium", "firefox"]) {
       near(s.cards.c3.top, s.marks.c3!.top, "and level with its mark: the focus");
       assert.equal(s.cards.c3.pushed, null, "the focused card is not pushed");
       const start = s.trackBox.top - s.trackScroll;   // the track's content start, in the viewport
+      const room = s.cards.c3.top - start;            // the focused card's top in the track's content: what stands above it fits in this or spills
+      const { whole, fresh } = s.cards;
+      // the fixture, pinned so the spill below RUNS: this leg is the one real-engine exercise of card-layout.ts's spill
+      // (the focus browser leg only moves a change card up), and a conditional on the placement let it retire silently
+      // with a change to the head's height or the cards' metrics (the verification round, 2026-09-09). The rule moves the
+      // group up as one by the least the chain needs, as far as the start — its top inset given up — so the room is
+      // measured from the start: the head fits with a gap under it; the head and the end, with the gap between them and a
+      // gap under the end, do not
+      assert.ok(whole.height + 8 <= room, "the fixture: the group's head fits above the focused card: " + whole.height + " + 8 in " + room);
+      assert.ok(whole.height + 8 + fresh.height + 8 > room, "the fixture: the group's end does not fit above the focused card, even with the group moved to the start: " + whole.height + " + 8 + " + fresh.height + " + 8 over " + room);
       for (const k of ["whole", "fresh"]) {
         const loose = s.cards[k]!;
         assert.ok(loose.top >= start - 1, k + " stands at or below the track's start (" + start + "): " + JSON.stringify(loose));
         assert.ok(loose.bottom + 8 <= s.cards.c3.top + 1 || loose.top + 1 >= s.cards.c3.bottom + 8, k + " is clear of the focused card: " + JSON.stringify(loose) + " vs " + JSON.stringify(s.cards.c3));
       }
-      assert.ok(s.cards.whole.top < s.cards.c3.top, "the group's head keeps its place at the top of the track");
-      if (s.cards.fresh.top > s.cards.c3.top) near(s.cards.fresh.top, s.cards.c3.bottom + 8, "the group's end, with no room above the focused card, follows it");
+      // the group's head keeps its place: at the inset, moved up only by what the focused card's gap takes from it (nothing,
+      // where it fits with its inset), never past the start
+      near(whole.top, start + 8 - Math.max(0, whole.height + 16 - room), "the group's head keeps its place at the top of the track");
+      // the group's end is laid below the focused card by the push-down rule from its end — in the real engine, not by
+      // chance of the fixture — and wears no leader: a loose card has no mark
+      near(fresh.top, s.cards.c3.bottom + 8, "the group's end, with no room above the focused card, follows it");
+      assert.equal(fresh.pushed, null, "a loose card below the focus wears no leader");
       near(s.trackScroll, s.bodyScroll, "the track came along", 1);
     });
   });

@@ -1,25 +1,22 @@
-// The focus follow-on's review (2026-09-08; plans/file-review.md, "The focus follow-on (2026-09-08)" under the margin-layout
-// note), over the review stand-in file-comments-focus.test.ts drives — copied here with ONE change: focus() lands only on an
-// element that is rendered (no hidden ancestor), as the browsers have it, which is what let the second finding through the
-// stand-in. Three findings, each pinned: a focus written in the LIST layout (a mark or a head clicked there, where no pass
-// runs) is spent by the list's own pass and never anchors the margin layout when the columns come back (a resize is not a
-// click: nothing would center the card, and the cards above it moved from their marks — a tall card up past its mark, and
-// the cards the chain cannot fit above the focused card below it, where the reach rule lays them (card-layout-reach.test.ts;
-// as first built, before that rule, past the track's start, where no scroll reaches a card)); the keyboard stays on Show
-// more / Show less across the render its Enter causes and across any re-render, though the row is rendered hidden until the
-// pass shows it (render refocuses once more after the pass), and goes to the card's head, never the body, where the row
-// stays hidden (the list layout); and a folded run of turns shows its END — the newest turn, the session's latest answer —
-// scrolled to its last row, the sheets' fade at its first lines, instead of the oldest turns with the newest cut. A
-// re-render here is the viewer's repaint (a reload, a mode switch), which runs the render a status does: a status reply
-// after the open answers no ask the panel has posted, so it is dropped and renders nothing. Synthetic fixtures only: the
-// notes-api world, placeholder ids.
+// The focus follow-on's verification review (2026-09-09; plans/file-review.md, "The focus follow-on (2026-09-08)" under the
+// margin-layout note), driven over the review stand-in file-comments-focus.test.ts uses: three gaps in the follow-on's
+// coverage, each closed with the behavior it pins. The card a save landed in becomes the FOCUS (scrollToSaved, scrollCard,
+// focusOn): a reply saved on an OPEN card that is not the focus — pushed under the tall change card whose mark was clicked
+// after the card opened — lands level with its mark and centered, not where the push-down rule left it, a viewport below
+// its mark (the other save tests open the card by its head first, which sets the focus before the save, so they held with
+// the save's own setter removed). A change card's HOSTED comments fold with the card: clipCards reads every fc-clip under
+// the card, so a hosted run of turns is marked cut, scrolled to its end and lifted by the card's one Show more — on a
+// change whose own text is long, and on a short change where the hosted run is the only part cut (a pass that read the
+// card's own parts alone left the run capped by the sheet with no fade and no row: a compact view with no way in). And
+// the fold's choice survives a re-render a STATUS drives (an ask answered with the store), not only the viewer's repaint
+// the earlier modules used. The stand-in and the notes-api world are file-comments-focus.test.ts's, copied as the other
+// focus modules copy them. Synthetic fixtures only: invented prose, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
 import type { Status, StoreComment, Hunk } from "./file-comments-model";
-import { layoutCards } from "./card-layout";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -176,11 +173,8 @@ class El {
   }
   dispatchEvent(ev: Ev): boolean { return dispatch(this, ev); }
   click(): void { this.dispatchEvent(new Ev("click")); }
-  /** Focus lands only on a focusable, enabled, RENDERED element: a div with no tabindex ignores focus(), as the browser does,
-   *  and so does a button in a hidden row — an element that is not being rendered (`display: none`) takes no focus, and
-   *  focus() on it is a no-op. The focus stand-in ignored the row, which is how the keyboard's drop to the body went unseen. */
-  rendered(): boolean { for (let x: El | null = this; x; x = x.parentNode) if (x.hidden) return false; return true; }
-  focus(): void { if (this.tabIndex >= 0 && !this.disabled && this.rendered()) doc.activeElement = this; }
+  /** Focus lands only on a focusable, enabled element — a div with no tabindex ignores focus(), as the browser does. */
+  focus(): void { if (this.tabIndex >= 0 && !this.disabled) doc.activeElement = this; }
   blur(): void { if (doc.activeElement === this) doc.activeElement = doc.body; }
   scrollIntoView(): void { scrolledInto.push(this); }
   getBoundingClientRect(): Rect { return this.rect || (cur ? cur.measure(this) : ZERO); }
@@ -282,7 +276,8 @@ const T0 = 1757145600000;
 const QUOTE = "shipping the cache in v1.2";
 // one logical line per row of the Raw view, each ROW px tall in the measurement table. Row 3 is a long paragraph the
 // session inserted whole (the change whose card is TALL open: its text is a long part, folded in the margin layout); row
-// 5 holds the passage comment under it; blank rows between the later lines make each its own paragraph
+// 5 holds the passage comment under it; blank rows between the later lines make each its own paragraph, and row 11 is the
+// short change when the hosted-fold tests put it in the store (withHosted)
 const LONG = "The api session rewrote the findings as one long paragraph about the cache, the latency budget, the plan for the next release and the reasons the team settled on it, going on for several sentences more than the one line it replaced, so that its card shows far more text than fits beside the passage.";
 const LINES = ["# Report", "", "## Findings", LONG, "", "We recommend " + QUOTE + ".", "", "More text here."];
 for (let i = 8; i < 33; i++) LINES.push(i % 2 ? "Line " + i + " of the report." : "");
@@ -302,17 +297,27 @@ const closing: StoreComment = {   // row 33, the last line
   id: (T0 + 5000) + "-9", author: "you", ts: T0 + 5000, body: "End on the recommendation, not on this.",
   anchor: { quote: "The closing line of the report", prefix: "", suffix: "." }, replies: [], resolved: false,
 };
-// row 7 ("More text here."): a comment with a run of six turns under it. The run is a long part (its text is well past
-// LONG_PART), folded in the margin layout; the comment's own body is short and fits. Only the turns test puts it in the store
-const TURN = (i: number): string => "Turn " + i + " of the run: the api session answers about the cache, the latency budget and what it will change next.";
-const talked: StoreComment = {
-  id: (T0 + 9000) + "-7", author: "you", ts: T0 + 9000, body: "Which cache is this about?",
-  anchor: { quote: "More text here", prefix: "", suffix: "." }, resolved: false,
-  replies: Array.from({ length: 6 }, (_, i) => ({ author: "api", ts: T0 + 10000 + i * 1000, body: TURN(i + 1) })),
+// a comment bound to the change (suggestionId "h1"), so the change card HOSTS it (renderHosted): a short body and a run of
+// three turns, the run a long part of its own. Only the hosted-fold tests put it in the store (withHosted), so the other
+// tests' numbers stand
+const onChange: StoreComment = {
+  id: (T0 + 2000) + "-3", author: "you", ts: T0 + 2000, body: "Cut this to the finding itself.", suggestionId: "h1", resolved: false,
+  replies: [
+    { author: "api", ts: T0 + 2100, body: "The paragraph carries the reasons the team weighed; cutting it loses why the plan changed." },
+    { author: "you", ts: T0 + 2200, body: "Keep the reasons in a footnote, then; the finding should read in one breath." },
+    { author: "api", ts: T0 + 2300, body: "Done in the next revision: the finding in one sentence, the reasons in a footnote under it." },
+  ],
 };
+// a second change, a SHORT one: row 11's line, inserted whole by the session. Its card's own text fits the cap, so the run of
+// turns of the comment bound to it is the one part the fold cuts — Show more must show for a hosted part alone
+const SHORT_LINE = "Line 11 of the report.";
+const SHORT_AT = DOC.indexOf(SHORT_LINE);
+const onShort: StoreComment = { ...onChange, id: (T0 + 3000) + "-11", ts: T0 + 3000, suggestionId: "h2", body: "Is this line needed at all?" };
 const LONG_AT = DOC.indexOf(LONG);
 const hunk: Hunk = { id: "h1", author: "api", ts: T0 - 30000, kind: "ins", curFrom: LONG_AT, curTo: LONG_AT + LONG.length, baseFrom: LONG_AT, baseTo: LONG_AT, oldText: "", newText: LONG, anchor: null };   // row 3
 const CHG = "chg:h1";
+const hunk2: Hunk = { id: "h2", author: "api", ts: T0 - 20000, kind: "ins", curFrom: SHORT_AT, curTo: SHORT_AT + SHORT_LINE.length, baseFrom: SHORT_AT, baseTo: SHORT_AT, oldText: "", newText: SHORT_LINE, anchor: null };   // row 11
+const CHG2 = "chg:h2";
 function status(over: Partial<Status> = {}): Status {
   return {
     verb: "status", root: ROOT, storePath: ROOT + "/.trackchanges/docs%2Freport.md.json", trackedBy: { kind: "file", entry: "docs/report.md" }, agentTooling: "present",
@@ -323,13 +328,17 @@ function status(over: Partial<Status> = {}): Status {
     ...over,
   };
 }
+/** The status with the two bound comments and the short change in the store too (the hosted-fold tests). */
+const withHosted = (storeMtimeNs: string, comments: StoreComment[] = [whole, findings, passage, closing, onChange, onShort], verb = "status"): Status =>
+  status({ verb, store: { v: 3, path: "docs/report.md", suggestions: [], comments }, hunks: [hunk, hunk2], storeMtimeNs });
 
 // ── the viewer stand-in: the body row, the seam as closures, a measurement table ───────────────────
 // Geometry: the body's box is at viewport y=100, BODY_VIEW tall; the header stands OFFSET tall above the track and the
 // footer FOOTER tall below it, so the track's box is TRACK tall; row i's text sits at 100 + ROW·i − scrollTop; a card is
-// CARD tall closed and OPEN tall open — except the change card, whose long part makes it TALL open and folded (eight lines
-// of it) and WHOLE once Show more is pressed. A long part (LONG_PART: more than 200 characters) measures PART_ALL of
-// content in a box of PART_CAP until its card wears fc-more; a short part fits its box.
+// CARD tall closed and OPEN tall open — except a card with a long part (the change card's old and new text; a hosted
+// comment's run of turns, in the hosted-fold tests), which is TALL open and folded (eight lines of the part)
+// and WHOLE once Show more is pressed. A long part (LONG_PART: more than 200 characters) measures PART_ALL of content in
+// a box of PART_CAP until its card wears fc-more — the table's reading of the sheet's cap; a short part fits its box.
 const ROW = 60, OFFSET = 60, FOOTER = 40, CARD = 40, OPEN = 120, TALL = 200, WHOLE = 400, BODY_VIEW = 260, TRACK = BODY_VIEW - OFFSET - FOOTER;   // TRACK 160
 const PART_ALL = 400, PART_CAP = 100, LONG_PART = 200;
 type World = {
@@ -387,7 +396,7 @@ function textWorld(): World {
     if (el.classList.contains("fc-sec-cards")) return R(400, 100 + OFFSET, 340, TRACK);
     if (el.classList.contains("fc-card")) {
       const open = el.classList.contains("open");
-      const h = !open ? CARD : el.dataset.id === CHG ? (el.classList.contains("fc-more") ? WHOLE : TALL) : OPEN;
+      const h = !open ? CARD : el.querySelectorAll(".fc-clip").some(isLongPart) ? (el.classList.contains("fc-more") ? WHOLE : TALL) : OPEN;
       return R(412, 0, 316, h);
     }
     if (el.classList.contains("fc-hl") || el.classList.contains("fc-ins") || el.classList.contains("fc-del")) {
@@ -420,9 +429,9 @@ function textWorld(): World {
 }
 type Posted = Record<string, any>;
 type Ctx = { after(fn: () => void): void };
-async function open(t: Ctx, w: World, s: Status = status(), from: { narrow?: boolean } = {}) {
+async function open(t: Ctx, w: World, s: Status = status()) {
   t.after(() => w.close());                            // a failing assertion must not leave the panel alive (its deadline timers would hold the process)
-  narrow = !!from.narrow; frames.length = 0; RO.all.length = 0; IO.all.length = 0; scrolledInto.length = 0; doc.activeElement = doc.body;
+  narrow = false; frames.length = 0; RO.all.length = 0; IO.all.length = 0; scrolledInto.length = 0; doc.activeElement = doc.body;
   const fc = await import("./file-comments");
   const unit = fc.fileCommentsAction.mount(w.ctx) as unknown as El;
   const button = unit.childNodes[0] as El;
@@ -457,171 +466,144 @@ const foldOf = (w: World, key: string): { row: El | null; hidden: boolean | null
 // the layout the fixture gives: the change card open and folded is TALL (200) at row 3's height, over row 5's passage
 const PUSHED = desired(3) + TALL + 8;                            // 328: where the push-down rule puts the passage's card under the open change card
 const LIFTED = desired(5) - TALL - 8;                            // 32: where the change card goes when the passage is the focus
-// where a focus on the passage sends the cards the chain cannot fit above it, the heading's card and then the loose card:
-// below the focused card, from its end (card-layout.ts: no card past the track's start; card-layout-reach.test.ts has the rule)
-const BELOW_FOCUS = desired(5) + OPEN + 8;                        // 368: the heading's card, wearing the leader up to its mark
-const BELOW_FOCUS_LOOSE = BELOW_FOCUS + CARD + 8;                 // 416: the loose card after it
 
-/** The sheets' fade for a cut run of turns: at its FIRST lines, against the last-lines fade of every other cut part. */
-const RUN_FADE = ".fc-margin .fc-card:not(.fc-more) .fc-replies.fc-clip[data-clipped] { -webkit-mask-image: linear-gradient(to top, black 65%, transparent); mask-image: linear-gradient(to top, black 65%, transparent); }";
+// ── the save's focus ──────────────────────────────────────────────────────────────────────────────
 
-// ── the list layout has no focus ──────────────────────────────────────────────────────────────────
-
-test("a mark clicked in the list layout does not anchor the margin layout when the columns come back: a resize is not a click, so the cards lie by the push-down rule, the loose card at the track's start", async (t) => {
-  const { w } = await open(t, textWorld());
-  narrow = true; resize(); flush();
-  assert.ok(!w.aside().classList.contains("fc-margin"), "the list layout");
-  markOf(w, CHG).click(); await tick();                // the change card opens in the list...
-  markOf(w, passage.id).click(); await tick();         // ...and the passage's: each click wrote a focus the list has no pass to spend
-  assert.ok(w.card(CHG)!.classList.contains("open") && w.card(passage.id)!.classList.contains("open"));
-  narrow = false; resize(); flush();                   // the columns come back: a resize, not a click
-  assert.ok(w.aside().classList.contains("fc-margin"), "the margin layout");
-  // what the messages below say a focus left on the passage would have done, held to the layout rule over this scene: the
-  // change card up to LIFTED, the heading's card and the loose card below the focused card, no card past the start
-  const leaked = Object.fromEntries(layoutCards([
-    { key: whole.id, desired: null, height: CARD }, { key: findings.id, desired: desired(2), height: CARD }, { key: CHG, desired: desired(3), height: TALL },
-    { key: passage.id, desired: desired(5), height: OPEN }, { key: closing.id, desired: desired(33), height: CARD },
-  ], 8, passage.id).placed.map((p) => [p.key, p.top]));
-  assert.deepEqual(leaked, { [CHG]: LIFTED, [passage.id]: desired(5), [findings.id]: BELOW_FOCUS, [whole.id]: BELOW_FOCUS_LOOSE, [closing.id]: desired(33) }, "the fixture: where a focus left on the passage would lay the cards");
-  assert.ok(Object.values(leaked).every((top) => top >= 0), "the fixture: none of them past the start (the reach rule)");
-  assert.equal(w.top(CHG), desired(3), "the change card is level with its mark (a focus left on the passage put it at " + LIFTED + ")");
-  assert.equal(w.top(passage.id), PUSHED, "the passage's card under it: the push-down rule");
-  assert.equal(w.card(passage.id)!.dataset.pushed, "1");
-  assert.equal(w.top(whole.id), 8, "the loose card at the track's start (a focus left on the passage put it at " + BELOW_FOCUS_LOOSE + ", below the focused card)");
-  assert.equal(w.top(findings.id), desired(2), "the heading's card level with its mark (a focus left on the passage put it at " + BELOW_FOCUS + ", below the focused card)");
-  assert.equal(w.aside().querySelectorAll(".fc-card").filter((c) => c.dataset.pulled === "1").length, 0, "no card moved up past its mark");
-  // a click IN the margin layout is the focus, as before
-  markOf(w, passage.id).click(); await tick();
-  assert.equal(w.top(CHG), LIFTED);
-  w.close();
-});
-
-test("the same for a head click in the list layout, and for a panel that opened in the list layout: the first margin pass has no focus", async (t) => {
-  const { w } = await open(t, textWorld(), status(), { narrow: true });
-  assert.ok(!w.aside().classList.contains("fc-margin"), "opened in the list layout");
-  headOf(w, CHG).click(); await tick();
-  headOf(w, passage.id).click(); await tick();
-  assert.ok(w.card(CHG)!.classList.contains("open") && w.card(passage.id)!.classList.contains("open"));
-  narrow = false; resize(); flush();
-  assert.ok(w.aside().classList.contains("fc-margin"));
-  assert.equal(w.top(CHG), desired(3));
+test("a reply saved on an open card that is NOT the focus makes that card the focus: level with its mark and centered, the tall change card above moved up — not left where the push-down rule had it, a viewport below its mark (the save's scrollCard sets the focus; no earlier gesture on this path does)", async (t) => {
+  const { w, ok, last } = await open(t, textWorld());
+  const body = w.body, track = w.track();
+  markOf(w, CHG).click(); await tick();                // the change card open, the focus; the passage's card pushed under it
   assert.equal(w.top(passage.id), PUSHED);
-  assert.equal(w.top(whole.id), 8);
-  assert.equal(w.top(findings.id), desired(2));
+  headOf(w, passage.id).click(); await tick();         // the passage's card opened by its head: the focus, level
+  assert.equal(w.top(passage.id), desired(5));
+  markOf(w, CHG).click(); await tick();                // the change mark again: its card the focus; the OPEN passage card back under it
+  assert.equal(w.top(CHG), desired(3));
+  assert.ok(w.card(passage.id)!.classList.contains("open"), "the fixture: the passage's card is open");
+  assert.equal(w.top(passage.id), PUSHED, "the fixture: open and not the focus, it is pushed under the tall card");
+  assert.equal(w.card(passage.id)!.dataset.pushed, "1");
+  // Reply on the passage's card: the box opens in the card. Reply is not a head click, so the focus stays the change card's
+  actIn(w.card(passage.id)!, "fcreply")!.click(); await tick();
+  const composer = w.aside().querySelector(".fc-composer")!;
+  assert.equal(composer.hidden, false);
+  assert.equal(w.top(passage.id), PUSHED, "Reply moved nothing");
+  assert.equal(w.top(CHG), desired(3));
+  body.scrollTop = 0; body.dispatchEvent(new Ev("scroll"));   // the reader looked at the top of the text meanwhile
+  assert.equal(track.scrollTop, 0);
+  const input = composer.querySelector(".fc-input")!;
+  input.value = "The write-through one.";
+  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true }));   // the save chord
+  await tick();
+  assert.equal(last().verb, "reply");
+  assert.equal(last().args.commentId, passage.id);
+  const replied: StoreComment = { ...passage, replies: [{ author: "you", ts: T0 + 6000, body: "The write-through one." }] };
+  await ok(status({ verb: "reply", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, replied, closing] }, storeMtimeNs: "1757145600000000005" }));
+  assert.ok(w.card(passage.id)!.classList.contains("open"), "the card stays open with its reply");
+  assert.equal(w.card(passage.id)!.getBoundingClientRect().height, OPEN, "the fixture: the card with its one short turn fits the track");
+  assert.equal(w.top(passage.id), desired(5), "the saved card is the focus: level with its mark (the push-down rule alone left it at " + PUSHED + ")");
+  assert.equal(w.card(passage.id)!.dataset.pushed, undefined, "not pushed");
+  assert.equal(w.top(CHG), LIFTED, "the change card moved up: its end a gap above the focused card");
+  const showCard = desired(5) + OPEN + 8 - TRACK;
+  assert.equal(body.scrollTop, showCard, "the save brought the text to the card's mark: the least scroll that shows the card's end");
+  assert.equal(track.scrollTop, showCard, "the track came along");
+  const box = cardBox(w, passage.id), mark = markOf(w, passage.id).getBoundingClientRect();
+  assert.ok(inBox(box, TRACK_BOX), "the whole card is in the track's box: " + JSON.stringify(box));
+  assert.ok(inBox(mark, BODY_BOX), "the highlight is in the body's box: " + JSON.stringify(mark));
+  assert.equal(box.top, mark.top, "and the two are level");
+  assert.deepEqual(scrolledInto, [], "a marked card is centered, not scrollIntoView'd");
+  assert.equal(composer.hidden, true, "the composer closed after");
   w.close();
 });
 
-// ── the keyboard on Show more ─────────────────────────────────────────────────────────────────────
+// ── the hosted comment's fold ──────────────────────────────────────────────────────────────────────
 
-test("the keyboard stays on Show more: Enter opens the part whole and the fresh Show less holds the focus; a re-render keeps it; Show less the same; in the list layout, where the row is hidden, the keyboard goes to the card's head, not the body, and the next render brings it back to the toggle once the columns show the row", async (t) => {
-  const { w } = await open(t, textWorld());
+test("a change card's hosted comment folds with the card: its run of turns is marked cut and scrolled to its end, and the card's one Show more lifts it with the change's text — on a change whose own text is long, and on a short change where the hosted run is the only part the cap cuts, so the row shows for it alone", async (t) => {
+  const { w } = await open(t, textWorld(), withHosted("1757145600000000002"));
+  const runText = onChange.replies!.map((r) => r.body!).join("");
+  assert.ok(runText.length > LONG_PART && onChange.body.length <= LONG_PART && LONG.length > LONG_PART && SHORT_LINE.length <= LONG_PART, "the fixture: the hosted run is a long part and the hosted body is not; the first change's text is long, the second's short");
+  assert.equal(w.card(onChange.id), null, "a bound comment has no card of its own: it is on the change's card");
+  assert.equal(w.card(onShort.id), null);
+  const partsOf = (key: string): El[] => w.card(key)!.querySelectorAll(".fc-clip");
+  const hostedRun = (key: string): El => w.card(key)!.querySelector(".fc-hosted .fc-replies")!;
+  // the long change: its own text and the hosted run are cut; the hosted body fits
   markOf(w, CHG).click(); await tick();
-  const toggle = (): El => foldOf(w, CHG).row!.querySelector("button")!;
-  const b = toggle();
-  assert.equal(foldOf(w, CHG).hidden, false);
-  b.focus();
-  assert.equal(doc.activeElement, b, "the fixture: the shown toggle takes the keyboard");
-  b.click(); await tick();                             // Enter on a focused button is a click
-  assert.notEqual(toggle(), b, "the render rebuilt the row");
-  assert.equal(toggle().textContent, "Show less");
-  assert.equal(doc.activeElement, toggle(), "the keyboard is on the fresh toggle, not the body");
-  // a re-render while the keyboard is on it (the viewer repainted)
-  const fresh = toggle();
-  w.repaint(); await tick();
-  assert.notEqual(toggle(), fresh, "the fixture: the repaint rebuilt the row");
-  assert.equal(toggle().textContent, "Show less");
-  assert.equal(doc.activeElement, toggle(), "kept across a re-render");
-  // Show less: the row is rendered hidden again until the pass finds the part cut
-  toggle().click(); await tick();
-  assert.equal(toggle().textContent, "Show more");
-  assert.equal(foldOf(w, CHG).hidden, false);
-  assert.equal(doc.activeElement, toggle(), "on the fresh Show more");
-  w.repaint(); await tick();
-  assert.equal(doc.activeElement, toggle(), "kept across a re-render, folded");
-  // the fold to the list: no pass shows the row there, so the toggle cannot hold the keyboard; the card's head does
-  narrow = true; resize(); flush();
-  assert.ok(!w.aside().classList.contains("fc-margin"));
-  assert.equal(foldOf(w, CHG).hidden, true);
-  assert.equal(doc.activeElement, headOf(w, CHG), "the nearest place: the card's head, not the body");
-  // the columns come back: the pass shows the row (no render), and the next render puts the keyboard back on the toggle it left
-  narrow = false; resize(); flush();
-  assert.equal(foldOf(w, CHG).hidden, false);
-  assert.equal(doc.activeElement, headOf(w, CHG), "a resize renders nothing: the head keeps it");
-  w.repaint(); await tick();
-  assert.equal(doc.activeElement, toggle(), "the render brings the keyboard back to the toggle");
-  w.close();
-});
-
-test("a card head keeps the keyboard across Enter and a re-render as it did: the second refocus is a no-op when the first landed", async (t) => {
-  const { w } = await open(t, textWorld());
-  headOf(w, passage.id).click(); await tick();
-  headOf(w, passage.id).focus();
-  assert.equal(doc.activeElement, headOf(w, passage.id));
-  headOf(w, passage.id).click(); await tick();         // a fold
-  assert.ok(!w.card(passage.id)!.classList.contains("open"));
-  assert.equal(doc.activeElement, headOf(w, passage.id), "the fresh head holds it");
-  const head = headOf(w, passage.id);
-  w.repaint(); await tick();
-  assert.notEqual(headOf(w, passage.id), head, "the fixture: the repaint rebuilt the card");
-  assert.equal(doc.activeElement, headOf(w, passage.id));
-  w.close();
-});
-
-// ── a folded run of turns shows its end ───────────────────────────────────────────────────────────
-
-test("a folded run of turns shows its end: the box scrolled to its last row — the newest turn — and marked cut, which the sheets fade at its first lines; the comment's short body is untouched; Show more shows the run whole from its start; the list layout folds nothing", async (t) => {
-  const s = status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, talked] } });
-  const { w } = await open(t, textWorld(), s);
-  markOf(w, talked.id).click(); await tick();
-  const card = w.card(talked.id)!;
-  assert.ok(card.classList.contains("open"));
-  const turns = card.querySelector(".fc-replies")!;
-  assert.ok(turns.classList.contains("fc-clip"));
-  assert.ok(turns.textContent.length > LONG_PART, "the fixture: the run is a long part");
-  assert.equal(turns.querySelectorAll(".fc-reply").length, 6);
-  assert.equal(turns.querySelectorAll(".fc-reply")[5].textContent.includes(TURN(6)), true, "the newest turn is the last row");
-  assert.equal(turns.scrollHeight, PART_ALL); assert.equal(turns.clientHeight, PART_CAP);
-  assert.equal(turns.dataset.clipped, "1", "the pass found the cap cut it");
-  assert.equal(turns.scrollTop, PART_ALL - PART_CAP, "scrolled to its end: the last row is in the box (before: 0, the oldest turns)");
-  for (const f of ["styles.css", "feed.css"]) {
-    const css = web(f);
-    assert.ok(css.includes(RUN_FADE), f + ": the cut run's fade at its first lines");
-    assert.ok(css.indexOf(RUN_FADE) > css.indexOf(".fc-margin .fc-card:not(.fc-more) .fc-clip[data-clipped] {"), f + ": after the last-lines fade it overrides");
-  }
-  const body = card.querySelector(".fc-body.fc-clip")!;   // the comment's own body: short, not cut, at its start
-  assert.equal(body.dataset.clipped, undefined); assert.equal(body.scrollTop, 0);
-  let f = foldOf(w, talked.id);
-  assert.equal(f.hidden, false); assert.equal(f.label, "Show more");
-  assert.deepEqual(f.clipped, ["fc-replies fc-clip"]);
-  // Show more: whole, from the start, not marked cut (so no fade)
+  let f = foldOf(w, CHG);
+  assert.equal(f.parts, 3, "the change's text, the hosted comment's body, its run of turns");
+  assert.deepEqual(partsOf(CHG).map((x) => x.className), ["fc-body fc-diff fc-clip", "fc-body fc-clip", "fc-replies fc-clip"]);
+  assert.ok(partsOf(CHG)[1].closest(".fc-hosted") && partsOf(CHG)[2].closest(".fc-hosted"), "the hosted parts stand in the comment's box on the card, not among the card's own children");
+  assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip", "fc-replies fc-clip"], "the pass found the cap cut the change's text and the hosted run");
+  assert.equal(f.hidden, false, "Show more shows"); assert.equal(f.label, "Show more"); assert.equal(f.more, false);
+  assert.equal(hostedRun(CHG).clientHeight, PART_CAP, "the hosted run's box is the cap");
+  assert.equal(hostedRun(CHG).scrollTop, PART_ALL - PART_CAP, "the hosted run shows its end: the newest turn");
+  assert.equal(w.card(CHG)!.getBoundingClientRect().height, TALL);
+  // Show more: the one row lifts every part, the hosted ones with the change's text
   f.row!.querySelector("button")!.click(); await tick();
-  assert.ok(w.card(talked.id)!.classList.contains("fc-more"));
-  const shown = w.card(talked.id)!.querySelector(".fc-replies")!;
-  assert.equal(shown.dataset.clipped, undefined);
-  assert.equal(shown.scrollTop, 0);
-  // Show less: folded to its end again
-  foldOf(w, talked.id).row!.querySelector("button")!.click(); await tick();
-  const again = w.card(talked.id)!.querySelector(".fc-replies")!;
-  assert.equal(again.dataset.clipped, "1");
-  assert.equal(again.scrollTop, PART_ALL - PART_CAP);
-  // the scroll is the pass's, written every time it finds the run cut (a fresh render's box starts at 0)
-  again.scrollTop = 0; resize(); flush();
-  assert.equal(again.scrollTop, PART_ALL - PART_CAP, "the pass scrolled it to its end again");
-  // the list layout: no pass, nothing cut, the run at its start
-  narrow = true; resize(); flush();
-  assert.ok(!w.aside().classList.contains("fc-margin"));
-  const listed = w.card(talked.id)!.querySelector(".fc-replies")!;
-  assert.equal(listed.dataset.clipped, undefined); assert.equal(listed.scrollTop, 0);
+  f = foldOf(w, CHG);
+  assert.equal(f.more, true, "the card wears fc-more"); assert.deepEqual(f.clipped, [], "no fade on any part"); assert.equal(f.label, "Show less");
+  assert.equal(hostedRun(CHG).clientHeight, hostedRun(CHG).scrollHeight, "the hosted run's box is its content");
+  assert.equal(hostedRun(CHG).scrollTop, 0, "the run whole stands at its start");
+  assert.equal(w.card(CHG)!.getBoundingClientRect().height, WHOLE);
+  // Show less: folded again, the run at its end again
+  f.row!.querySelector("button")!.click(); await tick();
+  f = foldOf(w, CHG);
+  assert.equal(f.more, false); assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip", "fc-replies fc-clip"]); assert.equal(f.label, "Show more");
+  assert.equal(hostedRun(CHG).scrollTop, PART_ALL - PART_CAP);
+  // the short change: the hosted run is the ONE part cut, and the row shows for it. A pass that read the card's own parts
+  // alone would leave this run capped by the sheet with no fade and no Show more: the turns above the cut unreachable
+  markOf(w, CHG2).click(); await tick();
+  f = foldOf(w, CHG2);
+  assert.equal(f.parts, 3);
+  assert.deepEqual(partsOf(CHG2).map((x) => x.className), ["fc-body fc-diff fc-clip", "fc-body fc-clip", "fc-replies fc-clip"]);
+  assert.deepEqual(f.clipped, ["fc-replies fc-clip"], "the hosted run alone is cut: the change's own text and the hosted body fit");
+  assert.equal(f.hidden, false, "Show more shows for the hosted part alone");
+  assert.equal(f.label, "Show more"); assert.equal(f.more, false);
+  assert.equal(hostedRun(CHG2).scrollTop, PART_ALL - PART_CAP, "scrolled to its end");
+  assert.equal(w.card(CHG2)!.getBoundingClientRect().height, TALL, "the card is folded at the hosted run's cap");
+  f.row!.querySelector("button")!.click(); await tick();
+  f = foldOf(w, CHG2);
+  assert.equal(f.more, true); assert.deepEqual(f.clipped, []); assert.equal(f.label, "Show less");
+  assert.equal(hostedRun(CHG2).scrollTop, 0);
+  assert.equal(w.card(CHG2)!.getBoundingClientRect().height, WHOLE);
   w.close();
 });
 
-// ── at source ─────────────────────────────────────────────────────────────────────────────────────
+// ── a status's re-render ──────────────────────────────────────────────────────────────────────────
 
-test("at source: the list layout's pass clears the focus before it returns; render refocuses before the pass and once more after it; the pass keeps a run of turns at its end", () => {
-  assert.match(SRC, /if \(!margin\) \{\n(?:\s*\/\/[^\n]*\n)*\s*this\.focusCard = null;\n\s*if \(flipped\) \{ this\.layoutOff\(\); if \(!fromRender\) this\.render\(\); \}\n\s*return;\n\s*\}/, "the list branch of placeCards");
-  assert.match(SRC, /if \(keep\) this\.refocus\(keep, want, false\);\n\s*this\.afterRender\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(keep\) this\.refocus\(keep, want, true\);/, "the refocus after the pass");
-  assert.match(SRC, /const take = \(n: HTMLElement\): boolean => \{ n\.focus\(\{ preventScroll: true \}\); return document\.activeElement === n; \};/, "refocus reads whether the focus took");
-  assert.match(SRC, /if \(part\.classList\.contains\("fc-replies"\)\) this\.keepEnd\(part, over\);/, "the run of turns");
-  assert.match(SRC, /private keepEnd\(part: HTMLElement, cut: boolean\): void \{\n\s*if \(cut\) part\.scrollTop = part\.scrollHeight;\n\s*else if \(part\.scrollTop\) part\.scrollTop = 0;/, "scrolled to its end when cut, back to its start when not");
-  assert.ok(!SRC.includes("mask-image"), "the fade is the sheets', not an inline style");
+test("the fold's choice survives a re-render a STATUS drives: after Show more, an ask answered with the store (Resolve on another card) rebuilds the cards and the change card still wears fc-more and reads Show less; after Show less, the next status leaves it folded, its hosted run scrolled to its end again", async (t) => {
+  const { w, ok } = await open(t, textWorld(), withHosted("1757145600000000002"));
+  const hostedRun = (): El => w.card(CHG)!.querySelector(".fc-hosted .fc-replies")!;
+  headOf(w, closing.id).click(); await tick();          // the two cards the asks below go through, opened for their Resolve (a closed card has no buttons)
+  headOf(w, passage.id).click(); await tick();
+  markOf(w, CHG).click(); await tick();                // the change card open, the focus
+  foldOf(w, CHG).row!.querySelector("button")!.click(); await tick();   // Show more
+  assert.equal(foldOf(w, CHG).more, true);
+  const before = w.card(CHG)!;
+  // an ask answered with a status: Resolve on the closing line's card, the store holding it resolved — the render a status runs
+  actIn(w.card(closing.id)!, "fcresolve")!.click(); await tick();
+  await ok(withHosted("1757145600000000005", [whole, findings, passage, { ...closing, resolved: true }, onChange, onShort], "resolve"));
+  assert.notEqual(w.card(CHG), before, "the fixture: the status rebuilt the cards");
+  let f = foldOf(w, CHG);
+  assert.equal(f.more, true, "the choice survives the status's render: keyed by the card (openBodies)");
+  assert.equal(f.label, "Show less"); assert.deepEqual(f.clipped, []);
+  assert.equal(w.card(CHG)!.getBoundingClientRect().height, WHOLE);
+  assert.equal(hostedRun().scrollTop, 0, "the run whole, at its start");
+  // Show less, then another status: folded stays folded, and the fresh render's run — its box starts at 0 — is at its end again
+  f.row!.querySelector("button")!.click(); await tick();
+  assert.equal(foldOf(w, CHG).more, false);
+  const folded = w.card(CHG)!;
+  actIn(w.card(passage.id)!, "fcresolve")!.click(); await tick();
+  await ok(withHosted("1757145600000000006", [whole, findings, { ...passage, resolved: true }, { ...closing, resolved: true }, onChange, onShort], "resolve"));
+  assert.notEqual(w.card(CHG), folded, "the fixture: rebuilt again");
+  f = foldOf(w, CHG);
+  assert.equal(f.more, false); assert.equal(f.label, "Show more");
+  assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip", "fc-replies fc-clip"], "the pass marked the fresh parts cut");
+  assert.equal(hostedRun().scrollTop, PART_ALL - PART_CAP, "the fresh render's run is scrolled to its end");
+  assert.equal(w.card(CHG)!.getBoundingClientRect().height, TALL);
+  w.close();
+});
+
+test("vocabulary: this module's own prose says file comment and run of turns; the word CONTEXT.md sets aside for a forked side session appears nowhere in it, nor the banned sessions-pane word, nor a home path", () => {
+  const SELF = web("file-comments-focus-verify.test.ts").split("\n").filter((l) => !l.includes("assert.doesNotMatch(SELF")).join("\n");
+  assert.doesNotMatch(SELF, /\bthreads?\b/i, "a comment with replies is a file comment with a run of turns (CONTEXT.md, File comment: Avoid)");
+  assert.doesNotMatch(SELF, /fleet/i, "no new identifiers or prose in the old word for the sessions pane");
+  assert.doesNotMatch(SELF, /\/home\/[a-z]/, "no absolute home paths");
 });

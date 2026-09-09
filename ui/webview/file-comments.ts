@@ -2988,6 +2988,12 @@ class Panel {
     row.classList.remove("fc-landing");
     row.style.background = ""; row.style.boxShadow = "";
   }
+  /** The card into view: in the margin layout it is made the focus first, so the pass lays it level with its mark before
+   *  the scroll reads where it stands. The save is the caller that needs the focus set HERE (scrollToSaved): a reply saved
+   *  on an open card that is not the focus — the change mark above it clicked since the card was opened, the card pushed
+   *  under the tall change card — would otherwise be scrolled to where the push-down rule left it, its mark brought into
+   *  view with the card a viewport below, the defect the focus follow-on fixed (the verification review, 2026-09-09; a
+   *  reference link's card comes through goTo, which sets the focus the same way). */
   scrollCard(id: string): void {
     if (this.margin && this.focusOn(id) && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: the card the focus, level with its mark, its mark to the center; a loose card into the track's box, the body along with it
     this.root?.querySelector('.fc-card[data-id="' + cssId(id) + '"]')?.scrollIntoView({ block: "nearest" });
@@ -3185,7 +3191,12 @@ class Panel {
    *  content is taller than its box), marks them for the fade (`data-clipped`) and shows the card's Show more row, rendered
    *  hidden, so a card with nothing cut offers no toggle. A card in `openBodies` wears `fc-more`: no cap, no fade, and the
    *  row reads Show less. Run before the cards' heights are measured, since the row is part of the height. The list layout
-   *  runs no pass and caps nothing: the rows stay hidden there. A run of turns is cut at its START, not its end (keepEnd). */
+   *  runs no pass and caps nothing: the rows stay hidden there. A run of turns is cut at its START, not its end (keepEnd).
+   *  The parts are every `.fc-clip` UNDER the card, not the card's own children alone: a change card's hosted comments
+   *  (renderHosted, `.fc-hosted`) carry a body and a run of turns of their own, capped by the same sheet rule, and the
+   *  card's one row lifts them with the change's text; a pass that skipped them would leave a hosted run capped with no
+   *  fade and, where the change's own text is short, no Show more at all — a compact view with no way in (the
+   *  verification review, 2026-09-09; file-comments-focus-verify.test.ts drives both). */
   private clipCards(kids: HTMLElement[]): void {
     for (const card of kids) {
       if (!card.classList.contains("fc-card") || !card.dataset.id) continue;
@@ -3193,7 +3204,7 @@ class Panel {
       if (!row) continue;                              // a closed card: no parts
       const open = this.openBodies.has(card.dataset.id);
       let cut = false;
-      for (const part of Array.from(card.querySelectorAll(".fc-clip")) as HTMLElement[]) {
+      for (const part of Array.from(card.querySelectorAll(".fc-clip")) as HTMLElement[]) {   // the card's own parts and its hosted comments'
         const over = !open && part.scrollHeight > part.clientHeight + 1;
         if (over) { part.dataset.clipped = "1"; cut = true; } else delete part.dataset.clipped;
         if (part.classList.contains("fc-replies")) this.keepEnd(part, over);
@@ -3321,12 +3332,17 @@ class Panel {
    *  card IS level because every caller makes it the focus first (focusOn, showCard: the pass anchors the layout on it,
    *  card-layout.ts). Before the focus follow-on (2026-09-08) a card pushed down by a tall card above it was brought in
    *  only as far as kept the mark's top in view, which put the mark at the body's top edge with the card still a
-   *  viewport below (the defect the user hit). That fallback stays for the one case left, a focused card taller than
-   *  the track: the body scrolls the least that shows the card's end, as far as keeps the mark's top in view, so the
-   *  head is cut by the excess alone. Where the body cannot scroll that far (its end, in a body the padding could not
-   *  lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there). False for a
-   *  card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head click on a
-   *  loose card moves nothing, afterRender).
+   *  viewport below (the defect the user hit). That fallback stays where the centered scroll would leave the focused
+   *  card's end past the track's box: the body scrolls the least that shows the card's end, as far as keeps the mark's
+   *  top in view. A card that fits the track lands whole, its head under the track's top; a card taller than the track
+   *  has its head cut by the excess; and one taller than the track by more than the header less the gap meets the cap —
+   *  the mark's top a gap under the body's top, the head cut by the header less the gap and the end still past the box,
+   *  since no scroll shows both ends of such a card (the verification review, 2026-09-09: Show more on a long text is the
+   *  usual way there, and the keyboard stays on its Show less at the foot, as the plan records; the plan's focus paragraph
+   *  and file-comments-margin-fixes.test.ts pin this cap). Where the body cannot scroll that far (its end, in a body the
+   *  padding could not lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there).
+   *  False for a card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head
+   *  click on a loose card moves nothing, afterRender).
    *  Coordinates: `p.top` and `p.height` are the TRACK's content (placeCards wrote the card's top as its mark's top in
    *  the body's content less the header's height), and the lock keeps the track's scrollTop the body's; so the scroll
    *  that shows the card's bottom is the card's bottom plus the gap less the track's box, with no header term. One

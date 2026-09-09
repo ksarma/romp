@@ -1315,8 +1315,15 @@ unchanged. A card the focus moved up past its own mark draws its leader down the
 as a pushed card draws one up. The focus is set before the render whose pass lays the card (`showCard`; the head-click
 listener in `installLayout`; `focusOn`, which `goTo` and `scrollCard` call and which runs a pass when the focus
 changed), and the mark is then centered (`centerOn`) so the mark and its card sit together mid-view; the least-scroll
-fallback stays for a focused card taller than the track, where the mark's top stays in view and the head is cut by the
-excess alone. The focus clears when the list no longer holds the card (a status, the filter, a fold), when the layout
+fallback stays for a focused card taller than the track has room for below the centered mark — the margin note's rule
+above: where the card's end would fall past the track's box with the mark at the body's center, the body scrolls the
+least that shows the card's end, and the mark lands above the center with the card whole and level beside it. That
+room is half the body's height less the footer's and the gap (in the focus fixtures' geometry 82px, against a 160px
+track), so the fallback fires for an open card that fits the track with room to spare, not only for a card taller than
+the track (the verification review, 2026-09-09: this record had narrowed it to the latter, while
+`file-comments-focus.test.ts` and `file-comments-margin-fixes.test.ts` both drive a fitting card through it). A focused
+card taller than the track has its head cut by the excess alone, the scroll capped where the mark's top would leave the
+body's box. The focus clears when the list no longer holds the card (a status, the filter, a fold), when the layout
 ends (`layoutOff`: the fold to the list, edit mode, the panel's close) and with the panel (`dispose`); and a pass in the
 list layout clears one too (the review, 2026-09-08: a mark or a head clicked in the list wrote a focus the list had no
 pass to spend, and the flip to the margin layout — a resize, not a click — anchored on it with nothing centered, the
@@ -1359,7 +1366,10 @@ head where the row stays hidden, a folded run of turns scrolled to its end), `te
 (the guide's sentence scoped to the panel beside the file, with the list under a narrow column showing a long card
 whole) and `tools/file-review-plan-focus-review.test.mjs` (the margin note's rule qualified by the focus and pointing
 here, the Docs section's record of the guide's sentence and the Open question's loose group, each held to the layout,
-the panel, the sheets and the guide).
+the panel, the sheets and the guide); from the verification review (2026-09-09),
+`tools/file-review-plan-focus-centering.test.mjs` (the fallback's trigger as recorded here held to `centerOn`'s
+condition — the card's end against the centered scroll, not its height against the track's — and to the panel fixtures'
+geometry, whose open card fits the track and takes the fallback).
 
 The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that
 recurs. Before it, a comment on a passage whose 24 characters of context matched another copy's was
@@ -2088,7 +2098,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tests/test_guide_files_focus_scope.py` (the guide's sentence scoped to the panel beside the file);
   `tools/file-review-plan-focus-review.test.mjs` holds the margin note's rule, qualified by the focus, the Docs
   section's record of the guide's sentence and the Open question's loose group to the layout, the panel, the
-  sheets and the guide.
+  sheets and the guide. From the verification review (2026-09-09):
+  `tools/file-review-plan-focus-centering.test.mjs` holds the paragraph's account of the centering fallback —
+  its trigger the card's end past the track's box with the mark centered, an open card that fits the track
+  included — to `centerOn`'s condition and the panel fixtures' geometry.
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
