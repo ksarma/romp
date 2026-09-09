@@ -415,10 +415,14 @@ class UnknownSessionRefused(_RouteServer):
     "killed" it, _confirmed_ended found nothing listed and certified the death, and `romp end <typo>`
     printed a bare ok while the real session kept running; /send handed the phantom to the tmux
     backend, whose refusal the route folded into ok:true. A caller that trusted those oks had to
-    re-check the roster to learn nothing had happened. Three doors admit a sid: the names registry, the
-    live map, and the SDK registry's threadOf (a comment thread has neither of the first two). A
-    registered-but-idle sid still passes, so a dead session addressed by id keeps its idempotent end.
-    The gate is asked with the live map _resolve_sid already read, so the refusal path scans once."""
+    re-check the roster to learn nothing had happened. The verdict is _session_gate's, one gate for the WS
+    drive door and these routes: a session a backend reports running is admitted whatever its record reads;
+    else _kernel_knows (the names registry; the SDK registry, any reg the SDK backend wrote, a comment
+    thread's included since a thread has no names/ entry and live_sessions hides it; the live map), so a
+    registered-but-idle sid and a dead non-thread SDK reg both pass and a dead session addressed by id keeps
+    its idempotent end; a registry entry that exists but will not read is a 503 naming the read, not a 404,
+    and so are a comment threads' store and a live session list that will not read. The gate is asked with
+    the live map _resolve_sid already read, so the refusal path scans once."""
 
     GHOST = "no-such-session"
 
