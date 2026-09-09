@@ -1,6 +1,6 @@
 ---
 title: `tools/perf-bench.py`: a state copy is only read (every kernel write into it, the import-time repo-root marker included, lands in a shadow and the census prints on every exit path), the no-transcript error waits for the 365-day backfill and names its counts, and `--cwd-map FROM=TO` resolves a copy whose registry cwds a redaction rewrote
-status: candidate
+status: offered
 where: fork PR #428 (`perf-bench-copy-safety`): `tools/perf-bench.py`, `tests/test_perf_bench.py`
 added: 2026-09-09
 pr: 428
