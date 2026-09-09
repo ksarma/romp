@@ -1307,8 +1307,10 @@ class Panel {
         // also opened a tab to the author's URL, the session's URL, on a file under review; painted over a URL the viewer
         // linked (file-view-links.ts) it stands inside that anchor too, and the anchor's own open followed the card's on
         // every click and Enter (the 2026-09-07 review, both finds). Cancelling the click ends the anchor's activation;
-        // the chat pane's link handler stands aside for a panel mark on the word that the delegate cancels.
-        fcchange: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard("chg:" + x.dataset.id!); },
+        // the chat pane's link handler stands aside for a panel mark on the word that the delegate cancels. The click
+        // that ends a drag-selection inside the mark opens nothing (dragClick): the float the mouseup offered stands
+        // and the composer opens on the selection, a comment inside the change's own text.
+        fcchange: (x, ev) => { ev.preventDefault(); if (this.dragClick(ev)) return; this.openPanel(); this.showCard("chg:" + x.dataset.id!); },
         fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
         fcsendcancel: () => { this.sendConfirm = false; this.sendNote = ""; this.noteBox.value = ""; this.render(); },   // closed on purpose: the note goes with it
         fcsendgo: () => { void this.doSend(); },
@@ -1324,8 +1326,9 @@ class Panel {
         // click is the card's opening, not the activation of whatever the author wrapped the figure in: a linked figure
         // (`[![p95](figs/p95.png)](url)`, which mdBlock gives target=_blank) opened a new tab on every click, Enter and
         // handed-on press on a rectangle inside it, since the overlay and its rectangles stand inside the <a>
-        // (the 2026-09-06 review). Cancelling the click ends the anchor's activation; the card opens as before.
-        fcopen: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard(this.cardKey(x.dataset.id!)); },
+        // (the 2026-09-06 review). Cancelling the click ends the anchor's activation; the card opens as before — unless
+        // the click ends a drag-selection inside the highlight (dragClick), as for a change mark above.
+        fcopen: (x, ev) => { ev.preventDefault(); if (this.dragClick(ev)) return; this.openPanel(); this.showCard(this.cardKey(x.dataset.id!)); },
         fcreplace: (x, ev) => { ev.stopPropagation(); this.startReplace(x.dataset.id!); },   // a region comment's Re-place (Slice 3)
       }),
     });
@@ -1404,6 +1407,24 @@ class Panel {
   }
   /** Remember an element this panel painted into the body — for owns, and for the document's listeners (panelMark). */
   private mark(x: Element): void { this.marks.add(x); PANEL_MARKS.add(x); }
+  /** Whether a click on a body mark is the end of a drag that selected text in the body, and not a tap. A drag begun and
+   *  ended inside one mark fires a click on the mark, the common ancestor of the press and the release, and the mark is a
+   *  control (fcchange, fcopen): the click opened the card, showCard's centerOn scrolled the mark to the body's centre, and
+   *  that scroll hid the Comment float the same mouseup had just offered beside the selection (hideFloatOnScroll), so a
+   *  comment inside a tracked change could be left only by replying to the change (the user, 2026-09-09, who wanted one
+   *  on the change's own words). The event is the click's own state: a click arriving with a non-collapsed selection whose
+   *  anchor and focus both lie in the body is a drag's, and the handler does nothing — the float stands, and the composer
+   *  opens on the selection as for any passage. A plain click or a tap collapses the selection at the press, so it opens
+   *  the card as before; a selection elsewhere (the aside, another pane) is not the body's and changes nothing. A click
+   *  with no pointer behind it, `detail` 0 — Enter or Space through the row's keydown (x.click()), assistive technology —
+   *  is never a drag's, whatever selection stands, so the keyboard opens the card unaffected. */
+  private dragClick(ev: Event): boolean {
+    if ((ev as MouseEvent).detail === 0) return false;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.anchorNode || !sel.focusNode) return false;
+    const body = this.ctx.body();
+    return body.contains(sel.anchorNode) && body.contains(sel.focusNode);
+  }
   /** The handlers, each routed only for an element the panel owns. The delegate helper has already flashed
    *  the element by then (a cosmetic pulse); nothing else happens for the file's markup. */
   private own(acts: Record<string, ActionHandler>): Record<string, ActionHandler> {
