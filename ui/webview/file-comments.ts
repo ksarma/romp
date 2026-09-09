@@ -261,6 +261,10 @@ const IMG_INLINE = new RegExp("!\\[(" + LABEL + ")\\]\\([ \\t]*(?:<([^<>\\n]*)>|
 const IMG_FULL_REF = new RegExp("!\\[(" + LABEL + ")\\]\\[(" + LABEL + ")\\]", "g");
 const IMG_SHORT_REF = new RegExp("!\\[(" + LABEL + ")\\](?![\\[(])", "g");
 const IMG_HTML = /<img\b[^>]*?\bsrc[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/gi;
+// Obsidian's embed, `![[image.png]]` or `![[image.png|300]]` (Slice 4 of plans/markdown-viewer.md; md-config.ts renders
+// the image ones as an <img> the viewer rewrites like `![](image.png)`): the destination is the target before any `|`,
+// trimmed as the renderer trims it. The host (tools/file-comments-host.mjs) reads the same form.
+const IMG_WIKI = /!\[\[([^\[\]|\n]+?)(?:\|[^\[\]\n]*)?\]\]/g;
 const REF_DEF = /^ {0,3}\[((?:\\.|[^\[\]\\])+)\]:[ \t]*<?([^\s>]+)>?/gm;
 const normLabel = (s: string): string => s.trim().replace(/\s+/g, " ").toLowerCase();
 /** Offsets of the source's fenced code blocks, [start, end): an embed written inside one renders as text. */
@@ -292,11 +296,12 @@ export function imageEmbeds(src: string): ImageEmbed[] {
   const push = (start: number, len: number, dest: string | undefined): void => {
     if (dest !== undefined && !inFence(start)) out.push({ start, end: start + len, dest });
   };
-  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF, IMG_HTML]) re.lastIndex = 0;
+  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF, IMG_HTML, IMG_WIKI]) re.lastIndex = 0;
   while ((m = IMG_INLINE.exec(src))) push(m.index, m[0].length, m[2] ?? m[3] ?? "");
   while ((m = IMG_FULL_REF.exec(src))) push(m.index, m[0].length, defs.get(normLabel(m[2] || m[1])));
   while ((m = IMG_SHORT_REF.exec(src))) push(m.index, m[0].length, defs.get(normLabel(m[1])));
   while ((m = IMG_HTML.exec(src))) push(m.index, m[0].length, m[1] ?? m[2] ?? m[3] ?? "");
+  while ((m = IMG_WIKI.exec(src))) push(m.index, m[0].length, m[1].trim());
   out.sort((a, b) => a.start - b.start);
   return out.filter((e, i) => !i || e.start >= out[i - 1].end);   // a shortcut form inside a longer one: the longer wins
 }

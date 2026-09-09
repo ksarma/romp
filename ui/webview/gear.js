@@ -154,6 +154,14 @@ var GEAR_HTML =
   '<option value=chat>The pane you clicked (folders: the Feed pane)</option><option value=feed>The Feed pane</option><option value=pane>The Files pane</option>' +
   '</select>' +
   '</span></div>' +
+  // Figures from the web in a viewed file (plans/markdown-viewer.md decision 8, ruling 2026-09-07): the hosts whose
+  // pictures and clips load when a file opens; every other host is a placeholder the person clicks. The list itself,
+  // one host per line, mirrored from settings.ts figureHosts (the default list is FIGURE_HOSTS_DEFAULT below).
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Pictures from the web in files</b>" +
+  '<span class=rs-sub>A picture or a clip in a viewed file that comes from one of these hosts loads when the file opens. One from any other host shows a placeholder naming the host, and loads on a click; a host loaded that way stays loaded until the page reloads. Files on the session&#39;s own machine always load. One host per line.</span>' +
+  "<textarea id=rs-figurehosts rows=4 spellcheck=false style='margin-top:5px;width:100%;box-sizing:border-box;resize:vertical;font:inherit;background:var(--input-bg, #1e1e1e);color:var(--fg, #ccc);" +
+  "border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 6px'></textarea>" +
+  '</span></div>' +
   // File comments (plans/file-review.md Slice 1): a report, not a switch — whether the viewer's Comments
   // action can appear on THIS kernel's files (node on its PATH) and whether its sessions can reply (the
   // track-changents tooling linked into ~/.claude by install.sh). Read from the gated /defaults, the
@@ -279,6 +287,7 @@ function initGear(post) {
     csg = document.getElementById('rs-suggestcompact'),
     dd = document.getElementById('rs-defaultdir'), gb = document.getElementById('rs-branch'),
     tc = document.getElementById('rs-tabctx'), fl = document.getElementById('rs-filelink'),
+    fh = document.getElementById('rs-figurehosts'),
     cs = document.getElementById('rs-chatscheme'),
     tt = document.getElementById('rs-theme'),
     cg = document.getElementById('rs-collapsegaps'), ao = document.getElementById('rs-activeonly'),
@@ -294,7 +303,19 @@ function initGear(post) {
     ths = document.getElementById('rs-thinksum'),
     utd = document.getElementById('rs-usertodos'),
     ans = document.getElementById('rs-autonudge-split'), asub = document.getElementById('rs-autonudge-sub');
-  function load() { try { return Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', collapseGaps: true, activeOnly: true }; } }
+  // mirrors settings.ts FIGURE_HOSTS_DEFAULT (this file can't import the TS module; gear-figure-hosts.test.ts holds the
+  // two lists equal): github.com and its image hosts, localhost and 127.0.0.1. The kernel's own origin needs no entry.
+  var FIGURE_HOSTS_DEFAULT = ['github.com', 'raw.githubusercontent.com', 'user-images.githubusercontent.com', 'camo.githubusercontent.com', 'avatars.githubusercontent.com', 'objects.githubusercontent.com', 'private-user-images.githubusercontent.com', 'github.githubassets.com', 'localhost', '127.0.0.1'];
+  // mirrors settings.ts figureHosts: the textarea's text (hosts separated by newlines, spaces or commas) as a list of
+  // trimmed lower-case names, the empties dropped; a stored value that is not a list reads as the default list
+  function figureHostList(v) {
+    var parts = Array.isArray(v) ? v : (typeof v === 'string' ? v.split(/[\s,]+/) : null);
+    if (parts === null) return FIGURE_HOSTS_DEFAULT.slice();
+    var out = [];
+    for (var i = 0; i < parts.length; i++) { if (typeof parts[i] !== 'string') continue; var h = parts[i].trim().toLowerCase(); if (h) out.push(h); }
+    return out;
+  }
+  function load() { try { return Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', figureHosts: FIGURE_HOSTS_DEFAULT.slice(), collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', figureHosts: FIGURE_HOSTS_DEFAULT.slice(), collapseGaps: true, activeOnly: true }; } }
   // mirrors settings.ts tabCtxMode (this file can't import the TS module): the gauge shipped for a
   // few hours as a boolean toggle — false was an explicit hide, true the default nobody chose.
   function tabCtxMode(v) { return (v === 'always' || v === 'never') ? v : (v === false ? 'never' : 'over50'); }
@@ -315,6 +336,7 @@ function initGear(post) {
   if (gb) gb.addEventListener('change', function () { var s = load(); s.showBranch = gb.checked; save(s); });
   if (tc) tc.addEventListener('change', function () { var s = load(); s.tabCtx = tc.value; save(s); });
   if (fl) fl.addEventListener('change', function () { var s = load(); s.fileLinkPane = fl.value; save(s); });   // webview-local pref read at click time (render.ts openPath)
+  if (fh) fh.addEventListener('change', function () { var s = load(); s.figureHosts = figureHostList(fh.value); save(s); });   // read by the file viewer at every paint of a rendered markdown file (file-view.ts, figure-gate.ts)
   // ── the settings' value-picker DROPDOWNS (T117, the user 2026-08-27, screenshot: the Chat
   // tabs and Text scheme pickers rendered every option always-expanded, and the description spans
   // ran off the card's right edge). Progressive disclosure: the CLOSED state is ONE row — the
@@ -1249,7 +1271,7 @@ function initGear(post) {
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
     // full-viewport fallback box blacked out every pane behind the modal.
-    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (fl) fl.value = s.fileLinkPane === 'feed' || s.fileLinkPane === 'pane' ? s.fileLinkPane : 'chat'; if (tc) tc.value = tabCtxMode(s.tabCtx); tcPaint(); csPaint(); ttPaint(); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
+    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (fl) fl.value = s.fileLinkPane === 'feed' || s.fileLinkPane === 'pane' ? s.fileLinkPane : 'chat'; if (fh) fh.value = figureHostList(s.figureHosts).join('\n'); if (tc) tc.value = tabCtxMode(s.tabCtx); tcPaint(); csPaint(); ttPaint(); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
   if (g) g.onclick = function (e) { e.stopPropagation(); openSettings(); };   // hidden anchor; hosts open via the message below
   window.addEventListener('message', function (e) { if (e.data && e.data.romp === 'openSettings') openSettings(); });
   // The shortcuts row: the web shell (same-origin parent) gets the customize link — it opens the

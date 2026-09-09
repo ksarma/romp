@@ -1,14 +1,15 @@
 // Strikethrough must require DOUBLE tildes (the user 2026-06-26): marked's built-in GFM `del` fires on a
 // SINGLE tilde, so prose with two "approximately" tildes ("~21 Wh … ~1.5 days") rendered as one big struck-
 // through run. The chat overrides the `del` tokenizer to require ~~ (matching GitHub). The override lives in
-// ui/webview/chat-md.ts (shared by the assistant singleton and the user-text instance), so this test runs the
-// REAL definition — no mirrored copy to drift — and source-pins that render.ts wires it into its marked.
+// ui/webview/md-config.ts (the one configuration the assistant singleton, the viewer, the anchor map and the user-text
+// instance share), so this test runs the REAL definition — no mirrored copy to drift — and source-pins that
+// render.ts wires it into its marked.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { Marked } from "marked";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { delDoubleTilde } from "../../ui/webview/chat-md";
+import { delDoubleTilde } from "../../ui/webview/md-config";
 
 const m = new Marked({ gfm: true, breaks: false }, delDoubleTilde);
 
@@ -24,13 +25,13 @@ test("double ~~ still strikes through", () => {
   assert.match(html, /<del>struck<\/del>/);
 });
 
-test("chat-md.ts holds the del-requires-double-tilde override and render.ts's marked takes it", () => {
+test("md-config.ts holds the del-requires-double-tilde override and render.ts's marked takes it", () => {
   const ui = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
-  const grammar = ui("chat-md.ts");
+  const grammar = ui("md-config.ts");
   assert.match(grammar, /del\(src: string\)/);
   assert.match(grammar, /\/\^~~\(\?=\\S\)\(\[\\s\\S\]\*\?\\S\)~~\//, "the ~~-only del regex");
-  assert.match(grammar, /export const chatMdExtensions: MarkedExtension\[\] = \[delDoubleTilde, /);
+  assert.match(grammar, /export const mdExtensions: MarkedExtension\[\] = \[\n\s*delDoubleTilde,/);
   const render = ui("render.ts");
-  assert.match(render, /marked\.use\(\.\.\.chatMdExtensions\);/, "the singleton takes the shared grammar");
-  assert.doesNotMatch(render, /del\(src: string\)/, "no second copy of the tokenizer in render.ts");
+  assert.match(render, /^applyMdConfig\(\);/m, "the singleton takes the shared grammar");
+  for (const f of ["render.ts", "file-view.ts", "chat-md.ts"]) assert.doesNotMatch(ui(f), /del\(src: string\)/, "no second copy of the tokenizer in " + f);
 });

@@ -18,6 +18,8 @@
 import hljs from "highlight.js/lib/core";
 import { marked, type Tokens } from "marked";
 import { sanitizeMd } from "./md-sanitize";
+import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
+import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
@@ -87,21 +89,13 @@ function langFor(path: string): string | null {
   return LANG[ext] || null;
 }
 
-// marked is a per-bundle singleton. render.ts makes the SAME calls with the SAME choices — GFM without
-// hard breaks, strikethrough only on DOUBLE tildes (marked's stock GFM `del` tokenizer fires on a
-// single ~, so prose between two "approximately" tildes renders struck through; GitHub itself only
-// strikes ~~double~~) — so configuring here too is an idempotent no-op in the chat bundle, and keeps
-// this module correct anywhere it's bundled without render.ts.
-marked.setOptions({ gfm: true, breaks: false });
-marked.use({
-  tokenizer: {
-    del(src: string) {
-      const m = /^~~(?=\S)([\s\S]*?\S)~~/.exec(src);
-      if (!m) return undefined;
-      return { type: "del", raw: m[0], text: m[1], tokens: (this as { lexer: { inlineTokens(s: string): unknown[] } }).lexer.inlineTokens(m[1]) };
-    },
-  },
-} as Parameters<typeof marked.use>[0]);
+// marked is a per-bundle singleton, configured ONCE for every bundle by md-config.ts (Slice 4 of
+// plans/markdown-viewer.md): GFM without hard breaks, strikethrough on DOUBLE tildes only, the math placeholders
+// KaTeX fills after the sanitize, front matter, footnotes, callouts, ==mark==, wikilinks and embeds. render.ts and
+// anchor-map.ts make the same call; the first configures and the rest are no-ops, so this module is correct in
+// any bundle it lands in (files.js and feed.js carry the grammar, the fill and KaTeX through this import; the
+// chat page's viewer parsed with the chat's grammar before, the other two with none).
+applyMdConfig();
 
 // ── view-format preferences ────────────────────────────────────────────────────────────────────────
 // The Raw ⇄ Rendered choice for markdown and the word-wrap toggle persist in localStorage, NOT a kernel
@@ -1507,8 +1501,22 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const ln = Number(x.dataset.line);
     openLinkedFile(p, sid || null, ln > 0 ? ln : null, x.dataset.frag || null);
   };
+  // A gated figure's placeholder (figure-gate.ts; decision 8 of plans/markdown-viewer.md): the click loads every figure
+  // of that host in the document and remembers the host for the page. Read here, on the stable body, since every paint
+  // rebuilds the placeholder (ui/CLAUDE.md, click-safe controls); Enter and Space do the same for a focused one, as its
+  // role says they should. The restore is the acknowledgement: the picture stands where the placeholder was, at once.
+  const loadGate = (g: HTMLElement) => { loadGatedHost(g.dataset.fvHost || "", document); };
+  body.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const g = gateOf(ev.target, body);
+    if (!g) return;
+    ev.preventDefault();
+    loadGate(g);
+  });
   body.addEventListener("click", (ev) => {
     const t = ev.target as Element | null;
+    const g = gateOf(t, body);
+    if (g) { ev.preventDefault(); loadGate(g); return; }
     const x = linkOf(t);
     if (!x) return;
     if (panelMark(t) && !wantsOwnTab(ev)) {                      // a plain click on the panel's mark: the card's, and only the card's
@@ -2272,6 +2280,7 @@ export function openUrlView(href: string): void {
   // the chat's own anchor delegate routes them.
   delegate(body, {
     "fv-anchor": (a, ev) => { ev.preventDefault(); scrollToFragment(body, a.getAttribute("href") || ""); },
+    [GATE_ACT]: (g, ev) => { ev.preventDefault(); loadGatedHost(g.dataset.fvHost || "", document); },   // a gated figure's placeholder (figure-gate.ts): the same click as the local viewer's
   });
   body.addEventListener("submit", (ev) => { ev.preventDefault(); });   // the local viewer's backstop (openFileView), same reason
   body.appendChild(loaderEl());                        // loader first; the fetch below replaces it
@@ -2578,12 +2587,23 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
       // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
       a.setAttribute("href", resolveDocRelative(href, doc.href));
     });
+    // Decision 8 for a URL document: the document's own host loads on open beside the gear's list; every other host
+    // is gated behind a click that names it (figure-gate.ts; the same placeholder, restored by the same action).
+    let own = "";
+    try { own = new URL(doc.href, document.baseURI).hostname; } catch { /* an unparseable location: the list alone */ }
+    gateRemoteFigures(box, document.baseURI, [own]);
   } else if (doc) {
     // Figures on the session's disk: re-pointed at the kernel's /file route by rewriteFigureSrcs (below), which
     // keeps the authored src in `data-fv-src` for the comments panel's embed matching and joins the path the way
     // every other reader of an embed's destination does (a relative src under the file's directory, an absolute
     // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
     rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
+    // Then decision 8 (plans/markdown-viewer.md; figure-gate.ts): a figure whose source is on a host the gear's list
+    // does not name, and that the person has not loaded in this document, is wrapped in a placeholder naming the host
+    // and fetches nothing until the placeholder is clicked. The kernel's own route, being the page's origin, is never
+    // gated, so a file's own attachments load on open; the list is read at every paint (loadSettings inside), so a
+    // change in the gear reaches the next paint, and an open document through the settings listener the gate installs.
+    gateRemoteFigures(box, document.baseURI);
   }
   if (doc && doc.kind === "file") {
     // A file on the session's disk: its links are sorted by file-view-links.ts (linkMarkdownAnchors). A link to the
@@ -2676,15 +2696,44 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
  *  removed. `dir` carries its trailing slash ("" for a bare relative file name, which then resolves against the
  *  session's cwd like the file did). */
 export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {
-  root.querySelectorAll("img[src]").forEach((node) => {
-    const img = node as HTMLElement;
-    const src = img.getAttribute("src") || "";
-    if (!src || src.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(src)) { img.removeAttribute("data-fv-src"); return; }
-    let rel = src;
-    try { rel = decodeURI(src); } catch { /* a malformed escape: the spelling as written */ }
-    img.setAttribute("data-fv-src", src);
-    img.setAttribute("src", fileUrl(rel.startsWith("/") ? rel : dir + rel, sid));
-  });
+  // Every attribute a figure fetches through (figure-gate.ts figureRefs; Slice 4 of plans/markdown-viewer.md): an img's
+  // src and srcset, a `<source>`'s src and srcset (inside a picture, a video or an audio), a video's src and poster, an
+  // audio's and a track's src, and an inline svg's `<image>` or `<feImage>` href, SVG 1.1's `xlink:href` spelling
+  // included. Before this the rewrite read `img[src]` alone, so `<video src="clip.mp4">` and `<audio src="a.mp3">` in a
+  // file were fetched from the PAGE's origin and 404'd, exactly as `![](plot.png)` once did. A srcset is rewritten
+  // candidate by candidate, its descriptors kept (`1x`, `100w`); the authored spelling stays in `data-fv-src` for the
+  // img's src alone, the one attribute the comments panel pairs an embed by. An svg image's xlink:href is moved to the
+  // plain `href` as the anchors' is in mdBlock, so the element carries one attribute every reader agrees on.
+  const path = (one: string): string | null => {
+    if (!one || one.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(one)) return null;   // a web address, a data: URL, an empty src: as written
+    let rel = one;
+    try { rel = decodeURI(one); } catch { /* a malformed escape: the spelling as written */ }
+    return fileUrl(rel.startsWith("/") ? rel : dir + rel, sid);
+  };
+  for (const ref of figureRefs(root)) {
+    const el = ref.el as HTMLElement;
+    if (ref.attr === "srcset") {
+      const cands = parseSrcset(ref.value);
+      let changed = false;
+      for (const c of cands) { const p = path(c.url); if (p !== null) { c.url = p; changed = true; } }
+      if (changed) el.setAttribute("srcset", serializeSrcset(cands));
+      continue;
+    }
+    const p = path(ref.value);
+    if (el.tagName === "IMG" && ref.attr === "src") {
+      if (p === null) { el.removeAttribute("data-fv-src"); continue; }
+      el.setAttribute("data-fv-src", ref.value);
+    }
+    if (ref.attr === "xlink:href") {
+      // SVG 2's rule when both spellings stand: `href` wins. The xlink one goes either way, so the element carries the one
+      // attribute every reader (the gate's figureRefs included) agrees on; its value moves to `href` only when no href stood.
+      el.removeAttributeNS(XLINK_NS, "href");
+      if (!el.hasAttribute("href")) el.setAttribute("href", p === null ? ref.value : p);
+      continue;
+    }
+    if (p === null) continue;
+    el.setAttribute(ref.attr, p);
+  }
 }
 
 /** A pixel-sized `<video>` keeps the shape its `width` and `height` attributes give it, capped or not. The viewer's sheets

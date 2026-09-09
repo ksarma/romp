@@ -77,7 +77,8 @@ import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from ".
 import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
-import { chatMdExtensions, userMdHtml } from "./chat-md";
+import { userMdHtml } from "./chat-md";
+import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
 import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
@@ -94,11 +95,11 @@ for (const [name, lang] of Object.entries({
   try { hljs.registerLanguage(name, lang as any); } catch { /* dup alias */ }
 }
 
-marked.setOptions({ gfm: true, breaks: false });
-// The chat grammar — the ~~-only `del` tokenizer and the KaTeX math extensions — is defined ONCE in
-// chat-md.ts and shared with `userMarked`, the breaks:true instance that renders the user's own words
-// (userMd below). Everything assistant-authored stays on this singleton, breaks:false.
-marked.use(...chatMdExtensions);
+// The grammar — GFM without hard breaks, the ~~-only `del` tokenizer, the KaTeX math extensions and the Obsidian
+// constructs — is defined ONCE in md-config.ts and shared with `userMarked`, the breaks:true instance that renders
+// the user's own words (userMd below), with the viewer (file-view.ts) and with the anchor map (anchor-map.ts).
+// Everything assistant-authored stays on this singleton, breaks:false.
+applyMdConfig();
 
 // One answered (or pending) question on an AskUserQuestion turn: the prompt + its options, plus the
 // user's answer TEXT per question (`chosen`). Answer text may name an option label OR be free-text

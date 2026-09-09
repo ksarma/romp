@@ -12,6 +12,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { FIGURE_SEL } from "./figure-gate";
+import { XLINK_NS } from "./md-links";
 
 // ── a DOM stand-in: attributes and the one selector rewriteFigureSrcs uses ─────────────────────────
 class El {
@@ -26,10 +28,16 @@ class El {
   removeAttribute(k: string): void { this.attrs.delete(k); }
   addEventListener(): void { /* inert */ }
   removeEventListener(): void { /* inert */ }
+  // SVG 1.1's xlink:href, the one namespaced attribute the walk reads (figure-gate.ts figureRefs) and the rewrite removes
+  getAttributeNS(ns: string | null, k: string): string | null { return ns === XLINK_NS ? this.getAttribute("xlink:" + k) : null; }
+  removeAttributeNS(ns: string | null, k: string): void { if (ns === XLINK_NS) this.attrs.delete("xlink:" + k); }
   querySelectorAll(sel: string): El[] {
-    assert.equal(sel, "img[src]", "the stand-in answers the one selector the rewrite uses");
+    // the one selector the rewrite uses, figure-gate.ts's FIGURE_SEL: the tags a figure fetches through (Slice 4 of
+    // plans/markdown-viewer.md widened it from `img[src]` to video, audio, source, track and an svg's image and feImage)
+    assert.equal(sel, FIGURE_SEL, "the stand-in answers the one selector the rewrite uses");
+    const tags = new Set(sel.split(",").map((t) => t.trim().toUpperCase()));
     const out: El[] = [];
-    const walk = (n: El) => { for (const c of n.childNodes) { if (c.tagName === "IMG" && c.hasAttribute("src")) out.push(c); walk(c); } };
+    const walk = (n: El) => { for (const c of n.childNodes) { if (tags.has(c.tagName)) out.push(c); walk(c); } };
     walk(this);
     return out;
   }
@@ -168,4 +176,58 @@ test("a `~/`-anchored src is a relative path whose first segment is `~`: joined 
   // the guide states the two readings in one sentence, in the user's terms
   const guide = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8").replace(/\s+/g, " ");
   assert.match(guide, /A figure path that starts with `~\/` is not expanded to your home folder: it names a folder called `~` next to the file, as other markdown viewers read it, while a link that starts with `~\/` does open under your home folder\./);
+});
+
+// ── Slice 4 of plans/markdown-viewer.md: every attribute a figure fetches through, not img[src] alone ────────────────
+const tag = (name: string, attrs: Record<string, string> = {}, ...kids: El[]) => {
+  const e = new El(name);
+  for (const k of Object.keys(attrs)) e.setAttribute(k, attrs[k]);
+  for (const c of kids) e.appendChild(c);
+  return e;
+};
+
+test("video, audio, source and track srcs, a video's poster and a picture's source srcset go through /file like an img's src; only an img's src keeps data-fv-src", async () => {
+  const video = tag("video", { src: "clip.mp4", poster: "figs/poster.png" });
+  const sourced = tag("video", {}, tag("source", { src: "c.webm" }), tag("track", { src: "subs.vtt" }));
+  const audio = tag("audio", { src: "a.mp3" });
+  const picture = tag("picture", {}, tag("source", { srcset: "pic-2x.png 2x, pic-1x.png 1x" }), tag("img", { src: "pic-fallback.png" }));
+  await rewrite([video, sourced, audio, picture]);
+  assert.equal(video.getAttribute("src"), q(DIR + "clip.mp4"), "a video's src");
+  assert.equal(video.getAttribute("poster"), q(DIR + "figs/poster.png"), "and its poster, which the browser fetches on open");
+  assert.equal(video.getAttribute("data-fv-src"), null, "data-fv-src stays an img's: the panel pairs pictures, not clips");
+  assert.equal((sourced.childNodes[0] as El).getAttribute("src"), q(DIR + "c.webm"), "a <source> inside a video");
+  assert.equal((sourced.childNodes[1] as El).getAttribute("src"), q(DIR + "subs.vtt"), "a <track> inside a video");
+  assert.equal(audio.getAttribute("src"), q(DIR + "a.mp3"));
+  assert.equal((picture.childNodes[0] as El).getAttribute("srcset"), q(DIR + "pic-2x.png") + " 2x, " + q(DIR + "pic-1x.png") + " 1x", "a picture's source srcset, candidate by candidate, descriptors kept");
+  assert.equal((picture.childNodes[1] as El).getAttribute("src"), q(DIR + "pic-fallback.png"));
+  assert.equal((picture.childNodes[1] as El).getAttribute("data-fv-src"), "pic-fallback.png");
+});
+
+test("an img's srcset is rewritten by candidate, its x and w descriptors kept, a remote candidate left as written; the src keeps its own rewrite and data-fv-src", async () => {
+  const both = tag("img", { src: "local.png", srcset: "local-2x.png 2x, https://remote.test/sr.png 3x" });
+  const widths = tag("img", { src: "w.png", srcset: "w-100.png 100w, w-200.png 200w", sizes: "100px" });
+  await rewrite([both, widths]);
+  assert.equal(both.getAttribute("src"), q(DIR + "local.png"));
+  assert.equal(both.getAttribute("data-fv-src"), "local.png");
+  assert.equal(both.getAttribute("srcset"), q(DIR + "local-2x.png") + " 2x, https://remote.test/sr.png 3x", "the local candidate through /file, the web one as written (decision 8's gate judges it)");
+  assert.equal(widths.getAttribute("srcset"), q(DIR + "w-100.png") + " 100w, " + q(DIR + "w-200.png") + " 200w");
+  assert.equal(widths.getAttribute("sizes"), "100px", "sizes is not a source and is untouched");
+});
+
+test("an inline svg's <image> and <feImage> href go through /file; an xlink:href becomes the plain href, so the element carries one attribute", async () => {
+  const image = tag("svg", {}, tag("image", { href: "figs/d.png" }));
+  const xlink = tag("svg", {}, tag("image", { "xlink:href": "figs/e.png" }));
+  const both = tag("svg", {}, tag("image", { href: "figs/f.png", "xlink:href": "figs/g.png" }));
+  const filter = tag("svg", {}, tag("filter", {}, tag("feImage", { href: "figs/h.png" })));
+  const remote = tag("svg", {}, tag("image", { href: "https://remote.test/svg.png" }));
+  await rewrite([image, xlink, both, filter, remote]);
+  assert.equal((image.childNodes[0] as El).getAttribute("href"), q(DIR + "figs/d.png"));
+  const x = xlink.childNodes[0] as El;
+  assert.equal(x.getAttribute("href"), q(DIR + "figs/e.png"), "the XLink spelling is read");
+  assert.equal(x.getAttribute("xlink:href"), null, "and removed after the copy, as mdBlock treats an anchor's");
+  const b = both.childNodes[0] as El;
+  assert.equal(b.getAttribute("href"), q(DIR + "figs/f.png"), "an href the author wrote beside the xlink wins");
+  assert.equal(b.getAttribute("xlink:href"), null, "the xlink is rewritten onto href too, so no second source stands");
+  assert.equal(((filter.childNodes[0] as El).childNodes[0] as El).getAttribute("href"), q(DIR + "figs/h.png"), "a filter's feImage fetches too");
+  assert.equal((remote.childNodes[0] as El).getAttribute("href"), "https://remote.test/svg.png", "a web address stays as written");
 });

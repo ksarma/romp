@@ -26,21 +26,13 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked } from "marked";
+import { applyMdConfig } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
 import { paintChangesRaw, paintChangesRendered, unpaintChanges, deletionLabel, PILCROW, type ChangePaint } from "./anchor-map";
 
 const FIX = (f: string) => path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map-fixtures", f);
 
-// ── the viewer's marked configuration (file-view.ts; pinned by anchor-map.test.ts) ────────────────
-marked.setOptions({ gfm: true, breaks: false });
-marked.use({
-  tokenizer: {
-    del(src: string) {
-      const m = /^~~(?=\S)([\s\S]*?\S)~~/.exec(src);
-      if (!m) return undefined;
-      return { type: "del", raw: m[0], text: m[1], tokens: (this as { lexer: { inlineTokens(s: string): unknown[] } }).lexer.inlineTokens(m[1]) };
-    },
-  },
-} as Parameters<typeof marked.use>[0]);
+// ── the viewer's marked configuration: the one every bundle applies (md-config.ts; pinned by anchor-map.test.ts) ──
+applyMdConfig();
 
 // ── a DOM stand-in: the structural surface anchor-map.ts walks, plus an HTML fragment parser ─────
 class FakeNode {

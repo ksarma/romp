@@ -8,7 +8,7 @@ const store: Record<string, string> = {};
   setItem: (k: string, v: string) => { store[k] = v; },
   removeItem: (k: string) => { delete store[k]; },
 };
-import { loadSettings, saveSettings, DEFAULT_SETTINGS } from "./settings";
+import { loadSettings, saveSettings, DEFAULT_SETTINGS, FIGURE_HOSTS_DEFAULT } from "./settings";
 
 test("loadSettings returns defaults when nothing is stored", () => {
   delete store["romp:settings"];
@@ -94,4 +94,24 @@ test("an unknown key in storage is ignored, known keys still merge", () => {
   const s = loadSettings();
   assert.equal(s.compact, true);
   assert.equal((s as any).future, 42, "merge is shallow — extra keys pass through harmlessly");
+});
+
+// The file viewer's figures from the web (decision 8 of plans/markdown-viewer.md): the hosts whose pictures load on open.
+test("figureHosts defaults to github.com and its image hosts, localhost and 127.0.0.1; a store from before the setting reads as that list; a stored list is trimmed and lower-cased; a foreign value reads as the default", () => {
+  delete store["romp:settings"];
+  assert.deepEqual(loadSettings().figureHosts, [...FIGURE_HOSTS_DEFAULT]);
+  store["romp:settings"] = JSON.stringify({ compact: true });
+  assert.deepEqual(loadSettings().figureHosts, [...FIGURE_HOSTS_DEFAULT], "an older store: the default list");
+  store["romp:settings"] = JSON.stringify({ figureHosts: ["Remote.TEST", " other.test ", ""] });
+  assert.deepEqual(loadSettings().figureHosts, ["remote.test", "other.test"]);
+  store["romp:settings"] = JSON.stringify({ figureHosts: "a.test\nb.test" });
+  assert.deepEqual(loadSettings().figureHosts, ["a.test", "b.test"], "the textarea's text, should a store hold it");
+  store["romp:settings"] = JSON.stringify({ figureHosts: { no: "list" } });
+  assert.deepEqual(loadSettings().figureHosts, [...FIGURE_HOSTS_DEFAULT], "a foreign value never reads as no host at all");
+  store["romp:settings"] = JSON.stringify({ figureHosts: [] });
+  assert.deepEqual(loadSettings().figureHosts, [], "an emptied list is a choice and stands");
+  const saved = saveSettings({ figureHosts: ["x.test"] });
+  assert.deepEqual(saved.figureHosts, ["x.test"]);
+  assert.deepEqual(loadSettings().figureHosts, ["x.test"], "round-trips through storage");
+  delete store["romp:settings"];
 });

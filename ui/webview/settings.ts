@@ -23,6 +23,25 @@ export interface RompSettings {
   changesInline: boolean;   // the file viewer's Comments panel: mark a session's pending changes IN the text (insertions tinted, deletions struck), both views (the inline-display follow-on to plans/file-review.md, 2026-09-07). Toggled from the panel's header ("Show changes inline"), like `subgoals` from the feed footer — the gear MODAL does not show it. ON by default; off, the file reads as it is and every change is its card alone. Read by file-comments.ts at paint time; a flip elsewhere reaches an open panel through onExternalSettingsChange.
   commentsFilter: CommentsFilter;   // the same panel's filter (the filter follow-on, 2026-09-07): which cards the list shows and which marks the text wears — "all" (default), "comments" (comment cards of every kind; no change marks), or "changes" (change cards, each with the comments made on it; no comment highlights or region rectangles). Chosen from the panel's header (All · Comments · Changes), kept here like changesInline, which still applies on top of it; the gear MODAL does not show it. Read by file-comments.ts when a panel opens; a pick elsewhere reaches an open panel through onExternalSettingsChange.
   theme: Theme;   // the OVERALL dashboard theme (the user 2026-08-27, promoting the tab-strip setting): "classic" = the pre-720 dark look; "yatharth" = dark + the contributed strip aesthetic (what chatTabTheme:"yatharth" was); "yatharth-light" = the warm light theme (body.theme-light + the yatharth strip). Migration: a store written before `theme` existed seeds it from chatTabTheme.
+  figureHosts: string[];   // the file viewer's figures from the web (plans/markdown-viewer.md decision 8, ruling 2026-09-07): the hosts whose pictures and clips a viewed file loads when it opens. A figure on any other host shows a placeholder naming the host, which loads it on one click; a host loaded that way stays loaded for the page (figure-gate.ts, per document, not stored here). Default FIGURE_HOSTS_DEFAULT: github.com and its image hosts, localhost and 127.0.0.1; the kernel's own origin is always allowed and needs no entry. Edited in the gear as one host per line; read by file-view.ts at every paint of a rendered markdown file, and a change reaches an open file through onExternalSettingsChange.
+}
+/** The hosts a viewed file's figures load from on open, before the person adds any (decision 8's ruling names github.com
+ *  and its image hosts, the kernel's own /file route and localhost; the route is the page's own origin, which the gate
+ *  allows without an entry). Exact host names: `github.com` does not cover `gist.github.com`. gear.js holds a copy of
+ *  this list as a JS literal (it cannot import this module); gear-figure-hosts.test.ts holds the two equal. */
+export const FIGURE_HOSTS_DEFAULT: readonly string[] = [
+  "github.com", "raw.githubusercontent.com", "user-images.githubusercontent.com", "camo.githubusercontent.com",
+  "avatars.githubusercontent.com", "objects.githubusercontent.com", "private-user-images.githubusercontent.com",
+  "github.githubassets.com", "localhost", "127.0.0.1",
+];
+/** The figureHosts normaliser: an array of strings, or one string as the gear's textarea holds it (hosts separated by
+ *  newlines, spaces or commas), becomes a list of trimmed lower-case names with the empties dropped; anything else a
+ *  store might hold (a number, an object, a store from before the setting existed) reads as the default list, never as
+ *  "no host allowed" and never as a thrown error at paint time. Always a fresh array. */
+export function figureHosts(v: unknown): string[] {
+  const parts = Array.isArray(v) ? v : typeof v === "string" ? v.split(/[\s,]+/) : null;
+  if (parts === null) return [...FIGURE_HOSTS_DEFAULT];
+  return parts.filter((h): h is string => typeof h === "string").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0);
 }
 // Solarized LIGHT is deliberately absent (the user allowed skipping it): its text tiers are designed
 // for a paper-light ground and invert into mud on romp's dark canvas — an unreadable preset is worse
@@ -66,7 +85,7 @@ export function tabCtxMode(v: unknown): TabCtxMode {
 // hand-written "why" as their line; they show the distiller's summary instead (the why demotes to a hover).
 // compact defaults ON (the user 2026-07-14): a fresh install reads the tidy transcript
 // (thinking hidden, tool runs folded); the gear opts back into the full stream.
-export const DEFAULT_SETTINGS: RompSettings = { compact: true, colormap: "aurora", subgoals: true, showIndexJudges: false, showTriageJudges: false, backend: "sdk", defaultDir: "", showBranch: false, tabCtx: "over50", fileLinkPane: "chat", chatScheme: "default", chatTabTheme: "classic", theme: "classic", changesInline: true, commentsFilter: "all" };
+export const DEFAULT_SETTINGS: RompSettings = { compact: true, colormap: "aurora", subgoals: true, showIndexJudges: false, showTriageJudges: false, backend: "sdk", defaultDir: "", showBranch: false, tabCtx: "over50", fileLinkPane: "chat", chatScheme: "default", chatTabTheme: "classic", theme: "classic", changesInline: true, commentsFilter: "all", figureHosts: [...FIGURE_HOSTS_DEFAULT] };
 const KEY = "romp:settings";
 
 export function loadSettings(): RompSettings {
@@ -79,6 +98,7 @@ export function loadSettings(): RompSettings {
       s.fileLinkPane = fileLinkPane(s.fileLinkPane);   // foreign values read as the default
       s.chatScheme = chatScheme(s.chatScheme);   // unknown/legacy values normalize to "default"
       s.commentsFilter = commentsFilter(s.commentsFilter);   // foreign values read as "all"
+      s.figureHosts = figureHosts(s.figureHosts);   // a list of host names; a store from before the setting reads as the default list
       // theme migration (2026-08-28): a store from before `theme` existed seeds it from the old
       // tab-strip pick, so a yatharth strip stays a yatharth strip. chatTabTheme itself is DERIVED
       // from theme ever after (one axis of truth; older readers keep working off the alias).

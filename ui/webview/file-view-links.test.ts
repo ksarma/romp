@@ -511,6 +511,11 @@ test("viewerLinkTarget (marked's walkTokens, before the sanitizer): a same-direc
   for (const n of ["notes.md", "app.test.ts", "archive.tar.gz", "jquery.min.js", "a_b.c.com", "x.y.py", "app.component.vue", "styles.module.less", "report.final.docx", "init.el", "notes.v2.md", "foo.uk", "a.b.uk"]) assert.equal(isHostName(n), false, n);
   const tok = { type: "link", href: "notes.md:7" }; viewerWalkTokens(tok); assert.equal(tok.href, "./notes.md:7");
   const img = { type: "image", href: "notes.md:7" }; viewerWalkTokens(img); assert.equal(img.href, "notes.md:7", "a figure's src is rewriteFigureSrcs's business");
+  // a wikilink token is stamped resolved (Slice 4 of plans/markdown-viewer.md, decision 2): the file kind has a directory for
+  // `[[Note]]` to sit in, so md-config.ts's renderer emits the anchor this pass then turns into a path link; the chat and a
+  // URL document never run this hook and render the dead span
+  const wiki = { type: "wikilink", target: "Note" } as { type: string; target: string; resolved?: boolean }; viewerWalkTokens(wiki); assert.equal(wiki.resolved, true, "stamped");
+  const plain = { type: "text" } as { type: string; resolved?: boolean }; viewerWalkTokens(plain); assert.equal(plain.resolved, undefined, "nothing else is stamped");
 });
 
 test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a path link on the anchor itself (label intact, path normalized), a query alone opens a tab, a fragment alone is the viewer's, a stripped target is a dead link that says why", async () => {

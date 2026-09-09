@@ -138,15 +138,23 @@ test("escaped \\$ never opens math", () => {
 
 const UI = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 
-test("render.ts wires the math extensions into marked, through the shared chat grammar", () => {
-  // chat-md.ts owns the extension list (shared with the breaks:true user-text instance, so a user
-  // message with math renders exactly as before); render.ts applies it to the singleton.
-  const grammar = UI("chat-md.ts");
+test("render.ts wires the math extensions into marked, through the one shared grammar (md-config.ts)", () => {
+  // md-config.ts owns the extension list since Slice 4 of plans/markdown-viewer.md: ONE configuration for the chat's
+  // singleton, the viewer (file-view.ts, so the files and feed bundles carry the grammar), the anchor map and the
+  // breaks:true user-text instance (chat-md.ts), so a user message with math renders exactly as before. The list's
+  // literal is pinned whole: an extension added or dropped changes what every bundle renders, and says so here.
+  const grammar = UI("md-config.ts");
   assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
-  assert.match(grammar, /export const chatMdExtensions: MarkedExtension\[\] = \[delDoubleTilde, \{ extensions: \[mathBlock, mathInline\] \}\];/);
-  const src = UI("render.ts");
-  assert.match(src, /import \{ chatMdExtensions, userMdHtml \} from "\.\/chat-md";/);
-  assert.match(src, /marked\.use\(\.\.\.chatMdExtensions\);/);
+  assert.match(grammar, /export const mdExtensions: MarkedExtension\[\] = \[\n\s*delDoubleTilde,\n\s*\{ extensions: \[mathBlock, mathInline, frontMatter, footnoteDef, footnoteRef, callout, mark, wikilink\] \},\n\];/);
+  assert.match(grammar, /export function applyMdConfig\(\): void \{\n\s*if \(applied\) return;\n\s*applied = true;\n\s*marked\.setOptions\(\{ gfm: true, breaks: false \}\);\n\s*marked\.use\(\.\.\.mdExtensions\);\n\}/, "idempotent: the singleton is configured once however many modules call it");
+  for (const f of ["render.ts", "file-view.ts", "anchor-map.ts"]) {
+    const src = UI(f);
+    assert.match(src, /import \{ applyMdConfig[^}]*\} from "\.\/md-config";/, f + " imports the one configuration");
+    assert.match(src, /^applyMdConfig\(\);/m, f + " applies it at load");
+    assert.doesNotMatch(src, /marked\.(setOptions|use)\(/, f + " configures nothing of its own");
+  }
+  assert.match(UI("chat-md.ts"), /import \{ mdExtensions \} from "\.\/md-config";/, "the user-text instance takes the same list");
+  assert.doesNotMatch(UI("chat-md.ts"), /chatMdExtensions|from "\.\/math"/, "chat-md.ts no longer owns a grammar of its own");
 });
 
 test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md.ts registers renderMathPlaceholders once, and no renderer calls it by hand", () => {
@@ -171,16 +179,17 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md
     "any other syntax error is rendered again with throwOnError: false, KaTeX's own red text as on main, and the placeholder is unwrapped right after either call: the .katex root stands where marked's output used to");
   assert.equal((math.match(/katex\.render\(/g) || []).length, 2, "two katex.render calls in the file: the happy path and the syntax-error rendering, no third");
   assert.doesNotMatch(math, /renderToString/, "marked's output holds no KaTeX markup: the extension emits placeholders only");
-  const grammar = UI("chat-md.ts");
+  const grammar = UI("md-config.ts");
   assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
   assert.match(grammar, /import \{ registerMdPostPass \} from "\.\/md-sanitize";/);
   assert.equal((grammar.match(/registerMdPostPass\(renderMathPlaceholders\);/g) || []).length, 1, "registered once, at load, beside the extension list");
-  assert.ok(grammar.indexOf("export const chatMdExtensions") < grammar.indexOf("registerMdPostPass(renderMathPlaceholders);"), "the fill is registered where the grammar is defined");
+  assert.ok(grammar.indexOf("export const mdExtensions") < grammar.indexOf("registerMdPostPass(renderMathPlaceholders);"), "the fill is registered where the grammar is defined");
+  assert.doesNotMatch(UI("chat-md.ts"), /registerMdPostPass|renderMathPlaceholders/, "chat-md.ts registers nothing: the grammar module does");
   const render = UI("render.ts");
   assert.doesNotMatch(render, /renderMathPlaceholders\(/, "render.ts calls no fill of its own: sanitizeMd runs it");
   assert.doesNotMatch(render, /from "\.\/math"/, "render.ts imports nothing from math.ts; the grammar module carries it");
   const view = UI("file-view.ts");
-  assert.doesNotMatch(view, /from "\.\/math"|from "katex"|renderMathPlaceholders/, "the viewer imports no KaTeX and no fill: it renders math only where a bundle armed the grammar (Slice 4 gives the files and feed bundles both)");
+  assert.doesNotMatch(view, /from "\.\/math"|from "katex"|renderMathPlaceholders/, "the viewer imports no KaTeX and no fill of its own: the grammar module (md-config.ts) carries both into every bundle the viewer lands in, and the sanitize runs the fill (Slice 4)");
   // match on the two function bodies, not the file, so a failure prints the function and not render.ts
   const mdFn = render.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdFn, "md() must exist");
@@ -392,8 +401,12 @@ test("executed: why the order matters: KaTeX's own output is inline styles and s
   assert.equal(MATH_DISPLAY_CLASS, "md-math-display");
 });
 
-test("styles.css imports the KaTeX layout css", () => {
-  assert.match(UI("styles.css"), /@import "katex\/dist\/katex\.min\.css";/);
+test("styles.css and feed.css import the KaTeX layout css (feed.css since Slice 4 of plans/markdown-viewer.md: the feed page hosts the viewer and its bundle carries the grammar)", () => {
+  for (const sheet of ["styles.css", "feed.css"]) {
+    const css = UI(sheet);
+    assert.equal((css.match(/@import "katex\/dist\/katex\.min\.css";/g) || []).length, 1, sheet + " imports the KaTeX sheet once");
+    assert.match(css, /^\.katex-display \{ overflow-x: auto; overflow-y: hidden; \}$/m, sheet + " lets a wide display formula scroll in its own box (byte-equal in both: fileview-parity.test.ts)");
+  }
 });
 
 test("esbuild emits KaTeX woff2 fonts under dist/fonts/", () => {

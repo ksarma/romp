@@ -10,10 +10,11 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Marked } from "marked";
-import { chatMdExtensions, userMdHtml } from "./chat-md";
+import { userMdHtml } from "./chat-md";
+import { mdExtensions } from "./md-config";
 
 // the singleton's configuration, rebuilt on a private instance: gfm, breaks OFF, the same extensions
-const assistant = new Marked({ gfm: true, breaks: false }, ...chatMdExtensions);
+const assistant = new Marked({ gfm: true, breaks: false }, ...mdExtensions);
 const assistantHtml = (src: string) => assistant.parse(src) as string;
 
 // --- executed: the user renderer keeps newlines, the assistant grammar does not ---
@@ -76,8 +77,14 @@ test("the user renderer and the assistant grammar produce identical HTML when th
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 
 test("the singleton stays breaks:false — assistant rendering is unchanged", () => {
-  assert.match(RENDER, /marked\.setOptions\(\{ gfm: true, breaks: false \}\);/);
-  assert.match(RENDER, /marked\.use\(\.\.\.chatMdExtensions\);/, "…and takes the same grammar the user instance does");
+  // the singleton's options live in md-config.ts since Slice 4 of plans/markdown-viewer.md (one configuration for every
+  // bundle); render.ts applies them and configures nothing of its own, and the user instance takes the same list
+  const CONFIG = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "md-config.ts"), "utf8");
+  assert.match(CONFIG, /marked\.setOptions\(\{ gfm: true, breaks: false \}\);\n\s*marked\.use\(\.\.\.mdExtensions\);/, "the one place the singleton is configured");
+  assert.match(RENDER, /^applyMdConfig\(\);/m, "render.ts applies the one configuration");
+  assert.doesNotMatch(RENDER, /marked\.(setOptions|use)\(/, "…and configures nothing of its own");
+  const GRAMMAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "chat-md.ts"), "utf8");
+  assert.match(GRAMMAR, /export const userMarked = new Marked\(\{ gfm: true, breaks: true \}, \.\.\.mdExtensions\);/, "the user instance takes the same grammar the singleton does, with hard breaks");
 });
 
 test("userMd() renders through the breaks:true instance and the SAME sanitizer as md()", () => {

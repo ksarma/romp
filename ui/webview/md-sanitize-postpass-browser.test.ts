@@ -28,8 +28,8 @@ const UI = path.resolve(EXT, "..", "ui", "webview");
 const KATEX_DIST = path.join(EXT, "node_modules", "katex", "dist");
 const KATEX_CSS = fs.readFileSync(path.join(KATEX_DIST, "katex.min.css"), "utf8");
 
-// render.ts's md() minus the PR-link walk, over the real modules: the chat grammar on marked (importing chat-md.ts
-// registers the math fill as sanitizeMd's post-pass), sanitizeMd, then the serialization to innerHTML. No call to the
+// render.ts's md() minus the PR-link walk, over the real modules: the one grammar on marked (importing md-config.ts
+// registers the math fill as sanitizeMd's post-pass; applyMdConfig arms the singleton as every bundle does), sanitizeMd, then the serialization to innerHTML. No call to the
 // fill here: the pipeline is exactly what every sanitizeMd caller in the chat bundle gets, and on a tree where the
 // registration is missing the geometry assertions below show the collapse.
 // `__sanitizeOnly` is the PROFILE alone (DOMPurify under MD_PURIFY with the style hook, no post-pass): what the sanitizer
@@ -37,10 +37,9 @@ const KATEX_CSS = fs.readFileSync(path.join(KATEX_DIST, "katex.min.css"), "utf8"
 const ENTRY = `
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { chatMdExtensions } from "./chat-md";
+import { applyMdConfig } from "./md-config";
 import { sanitizeMd, MD_PURIFY, installMdSanitizeHooks } from "./md-sanitize";
-marked.setOptions({ gfm: true, breaks: false });
-marked.use(...chatMdExtensions);
+applyMdConfig();
 const w = window as any;
 w.__mdPipe = (src: string): string => sanitizeMd(marked.parse(src) as string).innerHTML;
 w.__markedOnly = (src: string): string => marked.parse(src) as string;

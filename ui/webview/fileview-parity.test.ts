@@ -41,6 +41,19 @@ const RULES = [
   ".fileview-md table {", ".fileview-md > table {", ".fileview-md th, .fileview-md td {", ".fileview-md th {", ".fileview-md tbody tr:nth-child(even) {",
   '.fileview-md th[align="center"], .fileview-md td[align="center"] {', '.fileview-md th[align="right"], .fileview-md td[align="right"] {', '.fileview-md th[align="left"], .fileview-md td[align="left"] {',
   ".md code.md-math-src, .fileview-md code.md-math-src {",   // the math fill's source fallback, dressed as unrendered source (math.ts MATH_SOURCE_CLASS)
+  // math in every bundle (Slice 4 of plans/markdown-viewer.md, decision 1): the feed sheet imports the KaTeX CSS as styles.css does, and the display box's twin
+  ".katex-display {",
+  // the Obsidian constructs and the figure gate (Slice 4; md-config.ts and figure-gate.ts render them, anchor-map.ts maps them)
+  ".fileview-md details.md-frontmatter {", ".fileview-md .md-frontmatter-head {", ".fileview-md details.md-frontmatter pre {",
+  ".fileview-md sup.md-fnref {", ".fileview-md sup.md-fnref a {", ".fileview-md .md-footnote {", ".fileview-md .md-fnback {",
+  ".fileview-md .md-callout {", ".fileview-md .md-callout-title {", ".fileview-md details.md-callout .md-callout-title {",
+  ".fileview-md .md-callout-note, .fileview-md .md-callout-info, .fileview-md .md-callout-abstract, .fileview-md .md-callout-summary, .fileview-md .md-callout-tldr, .fileview-md .md-callout-todo, .fileview-md .md-callout-quote, .fileview-md .md-callout-cite, .fileview-md .md-callout-example {",
+  ".fileview-md .md-callout-tip, .fileview-md .md-callout-hint, .fileview-md .md-callout-success, .fileview-md .md-callout-check, .fileview-md .md-callout-done {",
+  ".fileview-md .md-callout-important {",
+  ".fileview-md .md-callout-warning, .fileview-md .md-callout-attention, .fileview-md .md-callout-question, .fileview-md .md-callout-help, .fileview-md .md-callout-faq {",
+  ".fileview-md .md-callout-caution, .fileview-md .md-callout-danger, .fileview-md .md-callout-error, .fileview-md .md-callout-failure, .fileview-md .md-callout-fail, .fileview-md .md-callout-missing, .fileview-md .md-callout-bug {",
+  ".fileview-md mark {", ".md .fv-wikilink, .fileview-md .fv-wikilink {", ".fileview-md a.fv-embed {",
+  ".fileview-md .fv-gate {", ".fileview-md .fv-gate:hover, .fileview-md .fv-gate:focus-visible {", ".fileview-md .fv-gate > :not(.fv-gate-label) {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file

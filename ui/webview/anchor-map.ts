@@ -32,12 +32,18 @@
 // engine, the fingerprint, and the host script use); `end` is exclusive.
 
 import { Lexer, type Token, type Tokens } from "marked";
+import { applyMdConfig, type FrontMatterToken, type FootnoteRefToken, type FootnoteDefToken, type CalloutToken, type MarkToken, type WikilinkToken, calloutTitle } from "./md-config";
 import { findExact } from "./comments";
 // The vendored engine is CommonJS with no declaration file (gaps-3 map, TS7016 under this tsconfig). The
 // import is bundled by esbuild as-is; the two functions used here are typed locally below. If a shared
 // declaration lands later, this directive becomes a no-op.
 // @ts-ignore -- untyped CommonJS module
 import engineUntyped from "../../vendor/track-changents/engine.js";
+
+// The lexer below is the static `Lexer.lex`, which reads marked's module defaults, so the one configuration every
+// renderer applies (md-config.ts) is applied here too: the tokens this walk places are the tokens the viewer
+// rendered, whichever bundle it runs in and whether or not the viewer's module loaded first. Idempotent.
+applyMdConfig();
 
 // ── public types (contract C4) ─────────────────────────────────────────────────────────────────────
 
@@ -112,8 +118,18 @@ const stripWs = (s: string): string => s.replace(/\s+/g, "");
 /** A control the viewer parks inside the rendered markup, not the note's text: the Copy button code-block.ts puts in every
  *  fence's <pre>. Its label "Copy" joined a block's rendered text, so every block holding a fence, and every list or quote
  *  with one anywhere in it, failed to pair with its source and was refused as not matching the file, and paintRendered's
- *  fallback counted the label in its hay (the Slice 3 review). Every walk over a rendered node's text skips it. */
-const isControl = (n: DNode): boolean => hasClass(n, "code-copy");
+ *  fallback counted the label in its hay (the Slice 3 review). Every walk over a rendered node's text skips it, and since
+ *  Slice 4 the other elements whose text is not the note's: a rendered formula (its glyph text is KaTeX's layout of the
+ *  TeX, so the paragraph maps AROUND the formula and the mathInline / mathBlock tokens are zero-text holes), a footnote's
+ *  back link, the front matter's fold label, and a gated figure's placeholder. */
+const CONTROL_CLASSES = [
+  "code-copy",              // the fence's Copy button (code-block.ts)
+  "katex",                  // a formula KaTeX rendered (math.ts renderMathPlaceholders): glyphs laid out from the TeX, not the TeX
+  "md-fnback",              // a footnote definition's back link (md-config.ts): its label is the footnote's number
+  "md-frontmatter-head",    // the front matter's fold control (md-config.ts): its label is the viewer's
+  "fv-gate",                // a gated figure's placeholder (figure-gate.ts): its label names the host, and holds the media
+];
+const isControl = (n: DNode): boolean => CONTROL_CLASSES.some((cls) => hasClass(n, cls));
 
 // ── code lines under a wrap ────────────────────────────────────────────────────────────────────────
 //
@@ -595,8 +611,10 @@ function plainInline(tokens: Token[]): string {
       }
       case "escape": out += (t as Tokens.Escape).raw.slice(1); break;
       case "codespan": { const n = /^`+/.exec(t.raw)![0].length; out += t.raw.slice(n, t.raw.length - n); break; }
-      case "em": case "strong": case "del": case "link": out += plainInline((t as Tokens.Em).tokens); break;
-      case "image": case "br": case "html": break;
+      case "em": case "strong": case "del": case "link": case "mark": out += plainInline((t as Tokens.Em).tokens); break;
+      case "footnoteRef": out += String((t as FootnoteRefToken).n); break;   // the number the reference shows
+      case "wikilink": { const w = t as WikilinkToken; if (!w.image) out += w.text; break; }   // an image embed shows no text
+      case "image": case "br": case "html": case "mathInline": break;   // a formula's glyphs are skipped as a control (isControl)
       default: throw new Refusal(`content of a kind the mapping does not handle (${t.type})`);
     }
   }
@@ -622,11 +640,32 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
         for (let i = n; i < raw.length - n; i++) em.put(raw[i], view.n(p + i));
         break;
       }
-      case "em": case "strong": case "del": {
-        const tt = t as Tokens.Em | Tokens.Strong | Tokens.Del;
-        const d = t.type === "em" ? 1 : t.type === "strong" ? 2 : (/^~+/.exec(raw) || [""])[0].length;
+      case "em": case "strong": case "del": case "mark": {
+        const tt = t as Tokens.Em | Tokens.Strong | Tokens.Del | MarkToken;
+        const d = t.type === "em" ? 1 : t.type === "strong" || t.type === "mark" ? 2 : (/^~+/.exec(raw) || [""])[0].length;
         if (!d || raw.slice(d, raw.length - d) !== tt.text) throw new Refusal(`${t.type} marks the mapping could not place`);
         walkInline(tt.tokens, view.sub(p + d, p + d + tt.text.length), em);
+        break;
+      }
+      case "footnoteRef": {
+        // `[^id]` shows its number, text the source does not hold: a hole the selection may not touch
+        const tt = t as FootnoteRefToken;
+        em.holes.push({ reason: "a footnote reference", startN: view.n(p), endN: view.n(p + raw.length) });
+        em.putHole(String(tt.n), em.holes.length - 1);
+        break;
+      }
+      case "wikilink": {
+        // `[[Note]]`, `[[Note|alias]]`, `![[Note]]`: the shown text is the source text at textOffset (md-config.ts); an image
+        // embed (`![[image.png]]`) is a picture and shows no text
+        const tt = t as WikilinkToken;
+        if (tt.image) break;
+        if (raw.slice(tt.textOffset, tt.textOffset + tt.text.length) !== tt.text) throw new Refusal("a wikilink the mapping could not place");
+        emitText(view.sub(p + tt.textOffset, p + tt.textOffset + tt.text.length), em);
+        break;
+      }
+      case "mathInline": {
+        // rendered by KaTeX into glyphs the walks skip (isControl): a zero-text hole, so the paragraph maps around it
+        em.holes.push({ reason: "a formula", startN: view.n(p), endN: view.n(p + raw.length) });
         break;
       }
       case "link": {
@@ -745,6 +784,37 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         for (const row of tt.rows) for (const cell of row) em.putHole(plainInline(cell.tokens), h);
         break;
       }
+      case "frontMatter": {
+        // one folded block over the YAML (md-config.ts): shown, never mapped; the fold's label is a control the walks skip
+        const tt = t as FrontMatterToken;
+        em.holes.push({ reason: "the front matter", startN: view.n(p), endN: view.n(p + raw.length) });
+        em.putHole(tt.text, em.holes.length - 1);
+        break;
+      }
+      case "footnoteDef": {
+        // `[^id]: text` rendered in place (md-config.ts): line i of `text` is a suffix of raw line i (the marker, or a
+        // continuation line's indent, removed), the blockquote's shape; the back link's label is a control the walks skip
+        const tt = t as FootnoteDefToken;
+        walkInline(tt.tokens, suffixLineView(view.sub(p, p + raw.length), tt.text), em);
+        break;
+      }
+      case "callout": {
+        // `> [!type] Title` and its body (md-config.ts): the `> ` prefixes come off as a blockquote's do; the title line is a
+        // hole (the type marker is not shown, and a missing title is generated from the type), the body maps as blocks
+        const tt = t as CalloutToken;
+        const tv = suffixLineView(view.sub(p, p + raw.length), tt.text);
+        const nl = tt.text.indexOf("\n");
+        const bodyStart = nl < 0 ? tt.text.length : nl + 1;
+        em.holes.push({ reason: "a callout's title", startN: view.n(p), endN: tv.n(bodyStart) });
+        em.putHole(calloutTitle(tt), em.holes.length - 1);
+        walkBlocks(tt.tokens, tv.sub(bodyStart, tt.text.length), em);
+        break;
+      }
+      case "mathBlock": {
+        // a display formula of its own: KaTeX's glyphs are skipped as a control (isControl), so the block has no text
+        em.holes.push({ reason: "a formula", startN: view.n(p), endN: view.n(p + raw.length) });
+        break;
+      }
       case "html": throw new Refusal("an HTML block");
       default: throw new Refusal(`content of a kind the mapping does not handle (${t.type})`);
     }
@@ -834,7 +904,11 @@ function tagOf(t: Token): string | null {
     case "code": return "PRE";
     case "table": return "TABLE";
     case "hr": return "HR";
-    default: return null;
+    // the Slice 4 constructs (md-config.ts), each ONE element in place
+    case "frontMatter": return "DETAILS";
+    case "footnoteDef": return "DIV";
+    case "callout": return (t as CalloutToken).fold ? "DETAILS" : "BLOCKQUOTE";
+    default: return null;   // mathBlock among them: a .katex-display span once filled, a code block when shown as source
   }
 }
 
