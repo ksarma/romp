@@ -3232,7 +3232,14 @@ class Panel {
     this.syncTrack();
   }
   /** The margin layout ends (the fold, edit mode, the panel closing): the sheet's class, the body's end padding, the
-   *  placement and the card observer go. The rows stand in the footer until the render that follows rebuilds the list. */
+   *  placement, the card observer, and what the pass wrote on the list and the cards go. The rows stand in the footer
+   *  until the render that follows rebuilds the list. The list's inline height and the cards' tops and leaders are
+   *  cleared HERE and not left to that render (the merge audit, 2026-09-09): the render rebuilds the list as a rule, but
+   *  while a reply's box stands in a card it grafts around the box and keeps the live list and that card (swapCards), so
+   *  the height the pass gave the list — the body's range, a screen and more past the cards — stayed on it in the list
+   *  layout, and the aside scrolled through empty space under the cards until the box left the card or the columns came
+   *  back; the kept card kept its top and its leader as well (no effect under the list's static positioning, but the
+   *  next margin pass is the one to write them). */
   private layoutOff(): void {
     this.margin = false;
     this.root?.classList.remove("fc-margin");
@@ -3241,6 +3248,13 @@ class Panel {
     this.focusCard = null;                              // the focus is the margin layout's; the list has none
     this.laidOn = null;                                 // and so is the pass's memory of it
     this.cardSizer?.disconnect();
+    const list = Array.from(this.sections.cards.childNodes).find((n) => n.nodeType === 1) as HTMLElement | undefined;
+    if (!list) return;
+    list.style.height = "";
+    for (const node of Array.from(list.childNodes).filter((n) => n.nodeType === 1) as HTMLElement[]) {
+      node.style.top = ""; delete node.dataset.pushed; delete node.dataset.pulled;
+      node.style.removeProperty("--fc-push"); node.style.removeProperty("--fc-pull");
+    }
   }
   /** The body's end padding, written only when it changes (an integer, so the rounding of scrollHeight cannot make the
    *  next pass read a different content height and write again). The track's box ends a footer's height above the

@@ -518,6 +518,46 @@ test("Reveal arms the focus: the deletion's card opened by its head, then the ch
   w.close();
 });
 
+// ── the fold to the list layout clears what the margin pass wrote ─────────────────────────────────
+
+test("the fold to the list layout while a reply's box stands in a card clears what the margin pass wrote on the list and the kept card: no inline height on the list, no top, no leader (before: the rebuild grafted around the box and kept the live list and the card with the pass's height, top and leader, so the aside scrolled through empty space under the cards); the columns size and place them again", async (t) => {
+  const { w } = await open(t, textWorld());
+  headOf(w, passage.id).click(); await tick();          // the passage's card open by its head: the focus for now
+  markOf(w, CHG).click(); await tick();                 // the change card the focus from its mark: the passage's card pushed under it
+  assert.equal(w.top(passage.id), PUSHED, "the passage's card is pushed under the tall card");
+  assert.equal(w.card(passage.id)!.dataset.pushed, "1");
+  actIn(w.card(passage.id)!, "fcreply")!.click(); await tick();   // Reply: the box stands in the card (placeComposer), and Reply is no head click, so the focus stays
+  const box = w.aside().querySelector(".fc-composer")!;
+  assert.equal(box.hidden, false, "the composer is up");
+  const list = w.list(), card = w.card(passage.id)!;
+  assert.ok(card.contains(box), "the reply's box stands in the card");
+  assert.match(String(list.style.height), /px$/, "the margin pass sized the list: " + list.style.height);
+  assert.equal(card.style.top, PUSHED + "px");
+  assert.equal(card.style.getPropertyValue("--fc-push"), (PUSHED - desired(5)) + "px", "the leader's length");
+  narrow = true; resize(); flush();                     // the columns fold: the pass finds the list layout, layoutOff, then the render, which grafts around the box
+  assert.ok(!w.aside().classList.contains("fc-margin"), "the list layout");
+  assert.equal(w.list(), list, "the render kept the live list (the graft around the reply's box)");
+  assert.equal(w.card(passage.id), card, "and the card the box stands in");
+  assert.ok(card.contains(box), "the box still stands in it");
+  assert.equal(list.style.height, "", "no inline height on the list in the list layout");
+  assert.equal(card.style.top, "", "no inline top on the kept card");
+  assert.equal(card.dataset.pushed, undefined, "no leader up");
+  assert.equal(card.dataset.pulled, undefined, "no leader down");
+  assert.equal(card.style.getPropertyValue("--fc-push"), "", "no leader length");
+  assert.equal(card.style.getPropertyValue("--fc-pull"), "");
+  narrow = false; resize(); flush();                    // the columns come back: the pass sizes the list and places the cards again, with no focus (the fold cleared it)
+  assert.ok(w.aside().classList.contains("fc-margin"), "the margin layout is back");
+  assert.match(String(w.list().style.height), /px$/, "the pass sized the list again");
+  assert.equal(w.top(CHG), desired(3), "the push-down rule: the change card at its mark");
+  assert.equal(w.top(passage.id), PUSHED, "the passage's card under it again");
+  assert.equal(w.card(passage.id)!.dataset.pushed, "1");
+  w.close();
+});
+
+test("at source: layoutOff clears the list's inline height and each child's top and leader after the focus and the pass's memory, in that order (the plan's pin holds the two clears adjacent)", () => {
+  assert.ok(/private layoutOff\(\): void \{[\s\S]*?this\.focusCard = null;[^\n]*\n\s*this\.laidOn = null;[\s\S]*?list\.style\.height = "";[\s\S]*?node\.style\.top = ""; delete node\.dataset\.pushed; delete node\.dataset\.pulled;\n\s*node\.style\.removeProperty\("--fc-push"\); node\.style\.removeProperty\("--fc-pull"\);/.test(SRC), "layoutOff: the list's height, then each child's top, leaders and their lengths");
+});
+
 test("at source: reveal() switches through one place that writes the focus in the margin layout before setMode, on the change branch and the comment's, and runs the pass itself where the switch painted nothing", () => {
   assert.ok(/private revealInRaw\(key: string\): void \{\n\s*if \(this\.margin\) this\.focusCard = key;[^\n]*\n\s*this\.ctx\.setMode\("raw"\);\n\s*if \(this\.margin && this\.laidOn !== key\) this\.placeCards\(false\);/.test(SRC), "the focus, the switch, then the pass where the last pass did not lay the cards on the card");
   assert.equal((SRC.match(/this\.revealInRaw\(key\);/g) || []).length, 2, "both branches of reveal() switch through it");

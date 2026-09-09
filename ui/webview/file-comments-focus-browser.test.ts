@@ -13,8 +13,11 @@
 // sheet's `.fc-clip-row { display: flex; }` beats the UA's rule for [hidden], and only its own `[hidden] { display: none; }`
 // keeps a hidden row from rendering a Show more on every card with nothing cut, so the leg reads no box where the pass
 // hides the row (the comment's short card in the margin layout, every card in the list layout) and a box where it shows
-// it. Runs in Chromium and Firefox; skips LOUDLY without a playwright browser (CI installs none), as the other browser
-// legs do. Synthetic values only: invented prose, placeholder ids.
+// it. The second test is the merge audit's (2026-09-09): the fold to the list layout while a reply's box stands in a card
+// used to keep the margin pass's inline height on the list — the rebuild grafts around the box and keeps the live list —
+// so the aside scrolled through a screen and more of empty space under the cards; now the list's box is its children's
+// span and the aside's scroll range is its sections. Runs in Chromium and Firefox; skips LOUDLY without a playwright
+// browser (CI installs none), as the other browser legs do. Synthetic values only: invented prose, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -301,6 +304,88 @@ for (const name of ["chromium", "firefox"]) {
       f = await fold(page, KEYS.chg);
       assert.equal(f.clipped, "1", "clipped again in the margin");
       rowShows(f, "the row is back with the fold");
+    });
+  });
+}
+
+type Listing = {
+  margin: boolean; flex: string; height: string; listBox: number; kidsSpan: number; kids: number;
+  asideScroll: number; asideClient: number; content: number; boxInCard: boolean; value: string; cardTop: string; pushed: string | null; push: string;
+};
+/** The list as the sheet lays it out: its inline height, its box against its children's span, the aside's scroll range
+ *  against its content, and the reply's box and the card it stands in. `content` is what the aside's box model gives its
+ *  sections with the list at its children's span: the aside's padding, each child's box and margins, the gaps between
+ *  them, and the cards section counted with the list's box replaced by the span — so a list taller than its children
+ *  shows as a scroll range past the content. */
+const listing = (page: any, key: string): Promise<Listing> => page.evaluate((key: string) => {
+  const px = (v: string): number => parseFloat(v) || 0;
+  const aside = document.querySelector(".fileview-aside") as HTMLElement;
+  const list = aside.querySelector(".fc-cards") as HTMLElement;
+  const kids = (Array.from(list.children) as HTMLElement[]).map((k) => k.getBoundingClientRect()).filter((r) => r.height > 0);
+  const span = kids.length ? Math.max(...kids.map((r) => r.bottom)) - Math.min(...kids.map((r) => r.top)) : 0;
+  const listBox = list.getBoundingClientRect().height;
+  const cardsSec = aside.querySelector(".fc-sec-cards") as HTMLElement;
+  const children = Array.from(aside.children) as HTMLElement[];
+  const ac = getComputedStyle(aside);
+  let content = px(ac.paddingTop) + px(ac.paddingBottom) + px(ac.borderTopWidth) + px(ac.borderBottomWidth) + px(ac.rowGap) * Math.max(0, children.length - 1);
+  for (const c of children) {
+    const cs = getComputedStyle(c);
+    content += c.getBoundingClientRect().height + px(cs.marginTop) + px(cs.marginBottom) - (c === cardsSec ? listBox - span : 0);
+  }
+  const card = aside.querySelector('.fc-card[data-id="' + key + '"]') as HTMLElement;
+  const box = aside.querySelector(".fc-composer") as HTMLElement;
+  const input = box.querySelector(".fc-input") as HTMLTextAreaElement | null;   // built when the composer opens
+  return {
+    margin: aside.classList.contains("fc-margin"), flex: getComputedStyle(document.getElementById("main")!).flexDirection,
+    height: list.style.height, listBox, kidsSpan: span, kids: kids.length,
+    asideScroll: aside.scrollHeight, asideClient: aside.clientHeight, content,
+    boxInCard: card.contains(box), value: input ? input.value : "", cardTop: card.style.top, pushed: card.dataset.pushed ?? null, push: card.style.getPropertyValue("--fc-push"),
+  };
+}, key);
+const TYPED = "The one the api session added for the notes list.";
+
+for (const name of ["chromium", "firefox"]) {
+  test(`in ${name}: the fold to the list layout while a reply's box stands in a card leaves no inline height on the list, whose box is its children's span, and the aside's scroll range is its sections (before: the rebuild grafted around the box and kept the live list with the margin pass's height, so the aside scrolled through a screen and more of empty space under the cards); the columns size and place the cards again`, async (t) => {
+    await inBrowser(t, name, async (page) => {
+      await mount(page);
+      await click(page, markSel(KEYS.chg)); await frames(page);                                            // the change card open, the focus
+      await click(page, '.fileview-aside .fc-card[data-id="' + KEYS.c + '"] .fc-card-head'); await frames(page);   // the comment's card open by its head: the focus now, the change card up out of its way
+      await click(page, markSel(KEYS.chg)); await frames(page);                                            // the change card the focus again: the comment's card pushed under it
+      let l = await listing(page, KEYS.c);
+      assert.equal(l.margin, true, "the margin layout");
+      assert.equal(l.pushed, "1", "the comment's card is pushed under the tall card");
+      await click(page, '.fileview-aside .fc-card[data-id="' + KEYS.c + '"] [data-act="fcreply"]'); await frames(page);   // Reply: the box into the card
+      await page.focus(".fileview-aside .fc-composer .fc-input");
+      await page.keyboard.type(TYPED);
+      await frames(page);
+      l = await listing(page, KEYS.c);
+      assert.ok(l.boxInCard, "the reply's box stands in the card");
+      assert.equal(l.value, TYPED, "the words typed");
+      assert.match(l.height, /px$/, "the margin pass sized the list: " + l.height);
+      assert.match(l.cardTop, /px$/, "and placed the card: " + l.cardTop);
+      const before = l.height;
+      // the fold: the pass finds the list layout, layoutOff, then the render, which grafts around the box and keeps the list
+      await page.evaluate(() => { document.getElementById("wrap")!.style.width = "600px"; });
+      await frames(page, 3);
+      l = await listing(page, KEYS.c);
+      assert.equal(l.flex, "column", "the sheet stacked the row");
+      assert.equal(l.margin, false, "the list layout");
+      assert.ok(l.boxInCard, "the box still stands in the card: the graft kept them");
+      assert.equal(l.value, TYPED, "and the words with it");
+      assert.equal(l.height, "", "no inline height on the list (before: " + before + " kept from the margin pass)");
+      near(l.listBox, l.kidsSpan, "the list's box is its children's span (" + l.kids + " children)", 8);
+      near(l.asideScroll, l.content, "the aside's scroll range is its content, no empty space under the cards (the aside's box shows " + l.asideClient + ")", 2);
+      assert.equal(l.cardTop, "", "no inline top on the kept card");
+      assert.equal(l.pushed, null, "no leader on the kept card");
+      assert.equal(l.push, "", "no leader length");
+      // the columns come back: the pass sizes the list and places the cards again, with no focus (the fold cleared it)
+      await page.evaluate(() => { document.getElementById("wrap")!.style.width = "1000px"; });
+      await frames(page, 3);
+      l = await listing(page, KEYS.c);
+      assert.equal(l.margin, true, "the margin layout is back");
+      assert.match(l.height, /px$/, "the pass sized the list again: " + l.height);
+      assert.match(l.cardTop, /px$/, "and placed the card: " + l.cardTop);
+      assert.ok(l.boxInCard, "the box stands in the card still");
     });
   });
 }
