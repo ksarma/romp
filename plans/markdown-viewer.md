@@ -863,7 +863,9 @@ build's. Where the code as built departs from the text, why, and which test hold
 4. *The pane-wide table under the centred column.* A table of the note's own (`.fileview-md > table`) is capped at the
    BODY's width less the root's inset, not the column's: `calc(var(--fv-body-w, calc(100% + 36px)) - 36px)`, where
    `--fv-body-w` is the body's content width, written on `.fileview-body` by the width observer file-view.ts already
-   runs for the reflow (the ResizeObserver's report is the layout's own event; one write per report), and `max-width:
+   runs for the reflow (the ResizeObserver's report is the layout's own event; one write per report; since 2026-09-09 the
+   property is registered non-inherited and written on each top-level table instead, since a write on the body restyled
+   every node under it per width change: file-view-body-width-browser.test.ts), and `max-width:
    100%` on every table is the cap for one inside a quote or a list item, the guide's standing promise. The formula
    first proposed for the centring (`margin-inline: calc((100% - 100cqi) / 2)`) was not used: a block with negative
    inline margins starts at its left margin edge, so a narrow table would have sat at the body's edge, left of the

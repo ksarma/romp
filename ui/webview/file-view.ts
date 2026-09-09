@@ -293,6 +293,10 @@ function dropUrlRead(): void {
   }
 }
 
+/** Why the seam's onRendered fired: "paint", the body's nodes are new; "reflow", the same nodes at a new width or text size
+ *  (a hook keeps its wraps and re-measures). */
+export type FileViewRenderWhy = "paint" | "reflow";
+
 // ── viewer action registry (the user 2026-08-22) ── INTERNAL SEAM, no compatibility promise:
 // reshape freely. Anything acting on the OPEN file declares itself here instead of hand-wiring into
 // openFileView's action row, where every file-viewer change used to collide. mount() runs once per
@@ -333,7 +337,7 @@ export interface FileViewActionCtx {
   renderedImages(): HTMLImageElement[];
   /** the session the file was opened from, as the hosting document resolves it (the title-bar chip's source) */
   identity(): FileViewIdentity | null;
-  /** runs after every paint of the body: a text body at once (open, view switch, reload), a media body once it shows —
+  /** runs after every paint of the body, with `why` saying which kind: a text body at once (open, view switch, reload), a media body once it shows —
    *  an image after its load event (at once when it was already complete), a PDF frame at once (whenShown), a PDF's
    *  pages once page 1 is drawn and then again after every page the chunk draws (so an overlay can attach to each) and
    *  after every later page it could not draw (the chunk removes that page's canvas and puts its notice in the shell; the
@@ -343,13 +347,17 @@ export interface FileViewActionCtx {
    *  then, and its cards, which read editing() at render time, take their edit-mode state from this render (the panel's
    *  own begin() ran before the flip, so its render could not). No other paint while the editor holds the body; the exit's
    *  repaint hands the read-mode state back.
-   *  Also after a text view REFLOWS with its text unchanged: a text-size step (the A− / A+ buttons, the wheel) and a
-   *  change of the body's width (the pane resized, the aside opening or closing; a ResizeObserver on the body, so the
-   *  event is the layout's own, never a timer, folded to one call per animation frame and none when the width is back
-   *  where the last call left it). Every position measured from the text has moved by then, so the panel's paint pass
-   *  runs again; a media body's own observers (the figure layer's, the PDF chunk's) already cover theirs, and the
-   *  editor lays out its own text, so neither reflow fires for those */
-  onRendered(cb: () => void): void;
+   *  Every call above is a PAINT (`why` "paint", the default a caller passing nothing gets): the body's nodes are new, and a
+   *  hook that wraps or measures them starts over.
+   *  Also after a text view REFLOWS with its text unchanged (`why` "reflow"): a text-size step (the A− / A+ buttons, the
+   *  wheel) and a change of the body's width (the pane resized, the aside opening or closing; a ResizeObserver on the body,
+   *  so the event is the layout's own, never a timer, folded to one call per animation frame and none when the width is
+   *  back where the last call left it). The nodes stand: a highlight wrapped into the text is still around the same
+   *  characters, so a hook keeps its wraps and re-MEASURES only (the panel re-places its cards; before 2026-09-09 it ran
+   *  its whole paint pass, unwrapping and re-wrapping every mark, once per frame of a pane drag, which at a big reviewed
+   *  file blocked the page for seconds a frame). A media body's own observers (the figure layer's, the PDF chunk's)
+   *  already cover theirs, and the editor lays out its own text, so neither reflow fires for those */
+  onRendered(cb: (why?: FileViewRenderWhy) => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
   onSelection(cb: (sel: Selection) => void): void;
   /** runs when a direct edit's save is acknowledged (fileSaved carries `logged` since Slice 1) */
@@ -1013,14 +1021,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // per open; onClose is how a panel's timer or listener leaves with the viewer (runCloseHooks at
   // both exits). renderBody/fetchFile/doSave are declared below and only ever invoked later, never
   // during mount, so the closures may name them here.
-  const renderHooks: Array<() => void> = [];
+  const renderHooks: Array<(why?: FileViewRenderWhy) => void> = [];
   const selHooks: Array<(sel: Selection) => void> = [];
   const savedHooks: Array<(info: { mtimeNs: string; logged: boolean }) => void> = [];
-  const fireRendered = () => { for (const cb of renderHooks) { try { cb(); } catch { /* a hook must never cost the view */ } } };
-  // A REFLOW's paint keeps the person's selection. The panel answers onRendered by unwrapping and re-wrapping every
-  // highlight (file-comments.ts paintAll), and a selection with an end inside a mark lost that end with the mark's
-  // node: 58 selected characters over a highlight came back as 21 after one A+, 45 as 7 after a pane resize (review
-  // 2026-09-07, round 2). The text has not changed, only its elements, so each end is kept before the hooks run
+  const fireRendered = (why: FileViewRenderWhy = "paint") => { for (const cb of renderHooks) { try { cb(why); } catch { /* a hook must never cost the view */ } } };
+  // A REFLOW's paint keeps the person's selection. The hooks run with `why` "reflow": the panel answers that by re-placing
+  // its cards and leaves its marks standing (file-comments.ts), so the selection now outlives the panel untouched; the
+  // keeping below stands for any hook that does re-wrap on a reflow (a test's marks action does, and the panel did until
+  // 2026-09-09: unwrapping and re-wrapping every highlight in paintAll, and a selection with an end inside a mark lost that
+  // end with the mark's node: 58 selected characters over a highlight came back as 21 after one A+, 45 as 7 after a pane
+  // resize (review 2026-09-07, round 2)). The text has not changed, only its elements, so each end is kept before the hooks run
   // (keepPoint: its node and offset, its offset into the body's text, and which side of a text node it sat on) and
   // put back after (pointBack), direction kept (setBaseAndExtent), but only when the paint cost the selection an
   // end. A selection the paint left standing (both ends in connected nodes, the same text between them) is not
@@ -1043,7 +1053,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const kept = sel && !sel.isCollapsed && sel.anchorNode && sel.focusNode && typeof sel.setBaseAndExtent === "function"
       && typeof document.createRange === "function"
       ? { a: keepPoint(body, sel.anchorNode, sel.anchorOffset), f: keepPoint(body, sel.focusNode, sel.focusOffset), text: sel.toString() } : null;
-    fireRendered();
+    fireRendered("reflow");
     if (!sel || !kept || !kept.a || !kept.f) return;
     if (!sel.isCollapsed && sel.anchorNode?.isConnected && sel.focusNode?.isConnected && sel.toString() === kept.text) return;   // the paint left it standing
     if (kept.a.at === kept.f.at && kept.text === "") return;   // a figure alone: the offsets cannot rebuild it, and would collapse it
@@ -1178,9 +1188,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   }, { passive: true });
   ctx.onClose(() => { if (placeFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placeFrame); placeFrame = 0; });
   // One step of the text size: store it, apply it, and let the panel re-measure over the reflowed text (the
-  // seam's onRendered, the same event every text paint fires; the highlights are re-wrapped and the floating
-  // Comment button hides, since the passage it sat by has moved; a standing selection is kept across the pass,
-  // see fireRenderedKeepingSelection). A step that changes nothing (the table's end) fires nothing: a card may
+  // seam's onRendered with `why` "reflow": the highlights stand and the cards are re-placed over them, and the
+  // floating Comment button hides, since the passage it sat by has moved; a standing selection is kept across the
+  // pass, see fireRenderedKeepingSelection). A step that changes nothing (the table's end) fires nothing: a card may
   // move only on new information (CLAUDE.md), and no paint happened.
   const setTextSize = (pct: number) => {
     if (pct === sizePct) return;
@@ -1208,17 +1218,35 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   }, { passive: false });
   // The body's WIDTH: the Files pane dragged narrower or wider, the aside opening or closing, the window resized.
   // The text reflows (the prose measure follows the pane up to its cap, a table takes the room or scrolls in its
-  // own box) and every position measured from it has moved, so the panel's paint pass runs again, off the
+  // own box) and every position measured from it has moved, so the hooks run again with `why` "reflow", off the
   // layout's own report of the change (a ResizeObserver, never a timer). The observer's first report describes
   // the size at observe(), not a change. The repaint is ONE per animation frame: the reports are folded into the
   // next frame (requestAnimationFrame, the frame's own event) and the frame repaints only if the width it finds
   // differs from the one last painted over, so a burst of reports (several observers' entries, a width that
-  // moved and came back, the body growing taller as a figure loaded) costs one paint pass or none. The panel's
-  // pass re-wraps every highlight and rebuilds its cards (file-comments.ts paintAll, about 10ms with twenty
-  // comments), so a drag at one report per frame still pays it per frame; a narrower reaction is the panel's to
-  // choose. Media bodies have their own observers (the figure layer's, the PDF chunk's), and the editor its own
+  // moved and came back, the body growing taller as a figure loaded) costs one pass or none. The panel answers a
+  // reflow by re-placing its cards and nothing more (file-comments.ts): until 2026-09-09 it ran its whole paint
+  // pass here, unwrapping and re-wrapping every highlight and rebuilding the cards, once per frame of a pane drag,
+  // and at a big reviewed file (15,000 lines, hundreds of comments and changes) that pass took seconds a frame and
+  // blocked the whole dashboard for the drag. Media bodies have their own observers (the figure layer's, the PDF chunk's), and the editor its own
   // layout, so textShowing gates this too. Absent ResizeObserver (a stand-in, an old engine) there is no width
   // event to key on, so nothing fires; absent requestAnimationFrame the report itself is the frame.
+  // The body's CONTENT WIDTH, for the sheets: the pane-wide table's cap (`.fileview-md > table` reads --fv-body-w) is the body
+  // less the root's inset, a width the table's own percentages cannot reach (its 100% is the column). The value is the width
+  // observer's report (below), and it is written on EACH TOP-LEVEL TABLE, not on the body it describes: the property is
+  // registered non-inherited (`@property --fv-body-w { inherits: false }` in styles.css and feed.css), so a write restyles the
+  // tables alone. Until 2026-09-09 it sat on the body as an ordinary (inherited) custom property, and Chromium recomputed the
+  // style of every node under the body on each write: 27 ms a step at 24k nodes, 138 ms at 79k, 259 ms at 134k (a fence-heavy
+  // note), on every width change of the pane (M4 of the 2026-09-09 viewer-resize measurements). mdBlock
+  // rebuilds the root on every render and no report follows a render, so renderBody stamps the fresh tables itself with the
+  // width last reported; before the first report the property is unset and the sheet's fallback holds (the cap is the column).
+  let bodyWidth = -1;        // the body's content width as last reported, -1 before the first report
+  const stampBodyWidth = () => {
+    if (bodyWidth < 0) return;
+    const md = body.querySelector(".fileview-md");
+    if (!md) return;
+    const v = bodyWidth + "px";
+    for (const n of Array.from(md.childNodes)) if (n.nodeType === 1 && (n as Element).tagName === "TABLE") (n as HTMLElement).style.setProperty("--fv-body-w", v);
+  };
   if (typeof ResizeObserver !== "undefined") {
     let paintedWidth = -1;   // the width the last repaint (or the first report) saw
     let seenWidth = -1;      // the latest report's width
@@ -1231,11 +1259,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     };
     const widthObserver = new ResizeObserver((entries) => {
       const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
-      // the body's content width, for the sheets (the pane-wide table's cap, `.fileview-md > table`): on the BODY, which
-      // stands for the open (mdBlock rebuilds .fileview-md on every render and no report follows a render), from the
-      // layout's own report, one write per report; a scrollbar's width is taken, a reserved gutter is none (Slice 3 review,
-      // round 2: `scrollbar-gutter: stable` reserved a blank strip on every body that never scrolls)
-      body.style.setProperty("--fv-body-w", w + "px");
+      // the body's content width, for the sheets (the pane-wide table's cap, `.fileview-md > table`), from the layout's own
+      // report, stamped on the top-level tables (stampBodyWidth above) when it moved; a scrollbar's width is taken, a
+      // reserved gutter is none (Slice 3 review, round 2: `scrollbar-gutter: stable` reserved a blank strip on every body
+      // that never scrolls)
+      if (w !== bodyWidth) { bodyWidth = w; stampBodyWidth(); }
       if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }
       seenWidth = w;
       if (w === paintedWidth || frame) return;
@@ -1382,6 +1410,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
     const kept = keptPlace();                   // the reader's place under the view about to go (null: the loader, or the editor, held the body)
     body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+    stampBodyWidth();                           // the fresh root's tables take the body's width (no report follows a render)
     fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
     shownText = text;
     seat(kept);                                 // then the place, after the hooks as the selection keeper orders it: the same passage at the same height

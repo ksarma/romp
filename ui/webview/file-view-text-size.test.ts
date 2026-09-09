@@ -82,7 +82,7 @@ class El {
   hidden = false; disabled = false; title = ""; type = ""; value = ""; placeholder = ""; spellcheck = true; wrap = "";
   src = ""; alt = ""; href = ""; download = ""; target = ""; rel = "";
   innerHTML = "";
-  style: Record<string, any> = { setProperty: (k: string, v: string) => { this.style[k] = v; } };   // CSSOM's write, for the body's --fv-body-w
+  style: Record<string, any> = { setProperty: (k: string, v: string) => { this.style[k] = v; } };   // CSSOM's write, for the tables' --fv-body-w
   onclick: ((ev: Ev) => void) | null = null;
   scrolled = 0;                                  // scrollIntoView calls (scrollToOffset's visible effect)
   constructor(tag: string) { this.tagName = tag.toUpperCase(); }
@@ -578,7 +578,7 @@ test("a press on the title bar settles no selection: with a passage selected in 
 
 // ── the re-measure: every reflow of a text view fires the seam's onRendered ────────────────────────
 
-test("a size step fires onRendered once (the panel re-runs its paint pass over the moved text); a clamped step fires nothing", async (t) => {
+test("a size step fires onRendered once, as a reflow (the panel re-places its cards over the moved text and keeps its marks); a clamped step fires nothing", async (t) => {
   const o = await open(REPORT, t);
   assert.equal(paints, 1, "the open's paint");
   o.up.click();
@@ -591,10 +591,13 @@ test("a size step fires onRendered once (the panel re-runs its paint pass over t
   o.up.click();
   assert.equal(paints, at, "at the end of the table nothing changed, so nothing fired (no move without new information)");
   // the panel's side of the contract: its onRendered hides the floating Comment button (placed by a passage that has
-  // moved) and re-runs the paint pass that wraps the highlights around the text again
-  assert.match(PANEL, /ctx\.onRendered\(\(\) => \{ this\.hideFloat\(\); [^\n]*this\.paintAll\(\); \}\);/, "file-comments.ts answers onRendered with paintAll");
-  assert.match(VIEW, /onRendered\(cb: \(\) => void\): void;/);
-  assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged: a text-size step/, "the seam's doc names the reflow triggers");
+  // moved) and, told the call is a REFLOW (`why`), re-places its cards over the moved text and leaves its marks standing,
+  // since the nodes are the same (2026-09-09: the whole paint pass ran here once per frame of a pane drag, unwrapping and
+  // re-wrapping every mark, and stalled the dashboard on a big reviewed file; file-view-reflow-browser.test.ts); a paint
+  // proper still runs the pass
+  assert.match(PANEL, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); [^\n]*if \(why === "reflow"\) this\.scheduleLayout\(\); else this\.paintAll\(\); \}\);/, "file-comments.ts answers a reflow with scheduleLayout and a paint with paintAll");
+  assert.match(VIEW, /onRendered\(cb: \(why\?: FileViewRenderWhy\) => void\): void;/);
+  assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged \(`why` "reflow"\): a text-size step/, "the seam's doc names the reflow triggers");
   // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:
   // a selection over a highlight lost the end inside the mark); the body-replacing paints keep nothing
   assert.equal((VIEW.match(/if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(/g) || []).length, 2, "the step and the width's frame, each seating the reader's place after the selection is put back (Slice 2 of plans/markdown-viewer.md)");
@@ -708,8 +711,9 @@ test("both sheets: the measure is the root's inline padding, a centred column of
     assert.doesNotMatch(css, /\.fileview-md > img, \.fileview-md > svg/, name + ": the direct-child media cap went with the constant (100% of the column is the measure for a direct child too)");
     assert.deepEqual(decls(ruleOf(css, ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {")), ["max-width: 100%"], name + ": media a note draws itself shrinks to its column like a picture, at zero class specificity so KaTeX's own svg rule wins (md-sanitize-wide-media-browser.test.ts lays it out)");
     assert.deepEqual(decls(ruleOf(css, ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {')), ["height: auto"], name + ": a pixel-sized one keeps its ratio as it shrinks (a sized <img> too, since Slice 2 of plans/markdown-viewer.md); a percentage-width one keeps the author's height (the cap never shrinks it), and the whole selector sits inside :where so its two attribute tests add no specificity over KaTeX's svg rule");
-    // the table's cap is the BODY's width less the root's 18px inset (--fv-body-w: the body's content width, written on the body
-    // by the viewer's ResizeObserver), and a table wider than the column is moved left by half the excess (a percentage in
+    // the table's cap is the BODY's width less the root's 18px inset (--fv-body-w: the body's content width, written on each
+    // top-level table by the viewer's ResizeObserver; registered non-inherited, so a write restyles the tables alone), and a
+    // table wider than the column is moved left by half the excess (a percentage in
     // translate is of the table's own width; half the body less the padding is half the column), so it grows out of the column
     // evenly, into both gutters, and a table no wider than the column is not moved at all (the min); with the property unset
     // the cap falls back to the column and the shift to none. file-view-typescale-browser.test.ts lays the three widths out
@@ -720,6 +724,7 @@ test("both sheets: the measure is the root's inline padding, a centred column of
       ["max-width: calc(var(--fv-body-w, calc(100% + 36px)) - 36px)", "translate: min(0px, round(calc(var(--fv-body-w, calc(100% + 36px)) / 2 - max(18px, round(down, (var(--fv-body-w, calc(100% + 36px)) - 80ch) / 2, 1px)) - 50%), 1px))"],
       name + ": a table of the page's own is capped at the body's inset and centred on the column once wider than it (with the property unset both read the stand-in: the cap is the column and the shift none)");
     assert.deepEqual(decls(ruleOf(css, ".fileview-body {")), ["flex: 1 1 auto", "min-height: 0", "overflow: auto"], name + ": the body reserves no scrollbar gutter and is no size container (review round 2 of Slice 3 of plans/markdown-viewer.md: the gutter was a blank strip beside every body that does not scroll; the cap reads the observer's width instead)");
+    assert.deepEqual(decls(ruleOf(css, "@property --fv-body-w {")), ['syntax: "*"', "inherits: false"], name + ": the width property is registered non-inherited with no initial value: written on a table it reaches nothing under it (on the body, inherited, every node under the body was restyled per write, 2026-09-09), and unset it is the guaranteed-invalid value, so the var() fallbacks hold (file-view-body-width-browser.test.ts)");
     assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("overflow-wrap: anywhere"), name + ": prose still breaks an unbreakable string");
     assert.ok(decls(ruleOf(css, ".fileview-md pre {")).includes("overflow-x: auto"), name + ": a code block scrolls in its own box");
     assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("white-space: pre-wrap"), name + ": …and wraps first");
@@ -787,8 +792,8 @@ const MD = `<h1 id=h1>Report</h1><p id=p>Prose ${"lorem ipsum ".repeat(40)}</p>
 const PAGE = (mode: "pane" | "feed") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("feed.css")}</style></head>
 <body class="${mode === "pane" ? "fileview-pane" : "fileview-open"}"><div id="romp-fileview"><div class="fileview" id="root"><div class="fileview-bar"><div class="fileview-name"><span class="fileview-dir">/repo/notes-api/docs/</span><span class="fileview-base">report.md</span></div><div class="fileview-acts"><button class="fileview-btn">Rendered</button><button class="fileview-btn">Raw</button><button class="fileview-btn">A−</button><button class="fileview-btn">A+</button><button class="fileview-btn">✕</button></div></div>
 <div class="fileview-main"><div class="fileview-body" id="body"><div class="fileview-md" id="md">${MD}</div></div></div></div></div>
-<script>/* the viewer's one write (file-view.ts, the width observer): the body's content width, for the pane-wide table's cap */
-new ResizeObserver(function (es) { document.getElementById("body").style.setProperty("--fv-body-w", es[es.length - 1].contentRect.width + "px"); }).observe(document.getElementById("body"));</script></body></html>`;
+<script>/* the viewer's one write (file-view.ts, the width observer, stampBodyWidth): the body's content width, on each top-level table, for the pane-wide table's cap */
+new ResizeObserver(function (es) { var v = es[es.length - 1].contentRect.width + "px"; for (var t of document.querySelectorAll("#md > table")) t.style.setProperty("--fv-body-w", v); }).observe(document.getElementById("body"));</script></body></html>`;
 type Lay = { bodyClient: number; gutter: number; bodyScroll: number; docScroll: number; win: number; md: number; p: number; t: number; tClient: number; tScroll: number; pre: number; preScroll: number; preClient: number; pre2: number; lw: number; img: number; img2: number; mdFont: string; h1Font: string; preFont: string };
 const layout = (page: any): Promise<Lay> => page.evaluate(async () => {
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));   // the width observer's report lands before a frame paints
