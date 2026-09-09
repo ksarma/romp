@@ -869,6 +869,12 @@ const KEY_ACTS = new Set(["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"])
  *  arrows step to the next or previous option and choose it, wrapping at the ends; Home and End go to the first and last. */
 const FILTERS: CommentsFilter[] = ["all", "comments", "changes"];
 const FILTER_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"]);
+/** The keys that are no gesture (gesture): Tab moves the keyboard, and a modifier pressed alone begins a chord — neither
+ *  scrolls, edits or presses anything, and the key or the click that follows is the gesture. Counted as gestures, they ended
+ *  the saved line before the keyboard could reach it: a Tab from the Send button removed the line the focus was moving to, and
+ *  a Shift held for Shift+Tab, or a Ctrl for a Ctrl+click on the line, did the same, so no keyboard could ever press it (the
+ *  review, 2026-09-09; measured in Chromium and Firefox). The arrivals line is reached the same way. */
+const NAV_KEYS = new Set(["Tab", "Shift", "Control", "Alt", "AltGraph", "Meta"]);
 
 /** Where a Rendered-view refusal's passage sits in the source, for the switch to Raw. The selection
  *  came from the REFUSED block, so the search starts at that block: a copy of the same words earlier in
@@ -2458,7 +2464,11 @@ class Panel {
     if (this.margin) this.focusOn(key);
     const side = this.cardWhere(key);
     if (side === null) return false;                   // whole in view, or no card to point at
-    this.savedOut = { key, side }; this.sentNote = null;   // the position is the line's now: an earlier send's acknowledgment gives way
+    this.savedOut = { key, side };
+    // the margin layout: the position is the line's now (renderSend), and an earlier send's acknowledgment gives way. The list
+    // layout's line stands under the header (savedLineHead), and the acknowledgment keeps its place at the foot: cleared there
+    // too, it went for no reason of position, and only when the card landed out of view (the review, 2026-09-09)
+    if (this.margin) this.sentNote = null;
     return true;
   }
   /** Which side of the box the person can see a card stands on — "above" when the card's top is above the box's top,
@@ -2495,7 +2505,7 @@ class Panel {
     const key = this.cardKey(saved);
     const side = this.cardWhere(key);
     if (side === null) return;
-    this.savedOut = { key, side }; this.sentNote = null;
+    this.savedOut = { key, side };                     // the list layout's line: the acknowledgment keeps its place (landSaved)
     this.render();                                     // the line into the panel (renderHead)
   }
 
@@ -2538,10 +2548,13 @@ class Panel {
   /** A gesture of the person's (the constructor's listeners; saveComposer; doSend): while arrivals stand, every arrival
    *  whose card is on screen now is seen; and the saved line (savedLine) is over. A press or a key on the arrivals line
    *  itself marks nothing: its click shows the first arrival, and the line must survive the click for the glance it was
-   *  clicked for. A press or a key on the saved line itself ends nothing, for the same reason: its click shows the card. */
+   *  clicked for. A press or a key on the saved line itself ends nothing, for the same reason: its click shows the card. A
+   *  Tab or a modifier pressed alone is no gesture at all (NAV_KEYS): it is how the keyboard reaches either line. */
   gesture(ev?: Event): void {
     if (!this.open) return;
     const t = ev ? (ev.target as Element | null) : null;
+    const kb = ev && ev.type === "keydown" ? (ev as KeyboardEvent) : null;
+    if (kb && NAV_KEYS.has(kb.key)) return;             // a Tab or a modifier alone moves the keyboard and presses nothing (NAV_KEYS)
     // a press, a key or a touch on a control — never a wheel, which scrolls and presses nothing: a wheel over the saved line is
     // the scroll the line says it goes with (the review, 2026-09-09). A touch move is kept: a jittery tap on the line moves
     // too, and its click reads the latch (fcsavedgo).
@@ -2552,7 +2565,6 @@ class Panel {
     // chord in its note box (noteKey). It marks what is on screen seen like any gesture, and the confirm's option and count
     // row stay as the person read them (syncAcceptOption): the send that follows accepts what they say, and redraws the panel.
     // A pointer press needs none of this: the hold parks the change until the release, after the click (reflect).
-    const kb = ev && ev.type === "keydown" ? (ev as KeyboardEvent) : null;
     const press = !!kb && ((on("fcsendgo") && (kb.key === "Enter" || kb.key === " ")) || (t === this.noteBox && composerKeyAction(kb) === "save"));
     const keys = new Set<string>();
     if (this.arrivals.size && !on("fcarrivals")) {
@@ -2625,8 +2637,17 @@ class Panel {
       const side = this.cardWhere(this.savedOut.key);
       if (side === null) this.savedOut = null; else this.savedOut.side = side;
     }
-    if (!this.savedOut) { if (line) line.remove(); }
+    if (!this.savedOut) { if (line) this.removeLine(line); }
     else if (line) line.textContent = savedWhereWords(this.savedOut.side);
+  }
+  /** The saved line out of the panel (reflectLines). A line that holds the keyboard — reached by Tab and pressed with Enter,
+   *  the keyboard's way to it (NAV_KEYS) — would take it to the body with the node (the browser's focus-fixup rule), and the
+   *  next Tab would start the page over; it goes to the card the line pointed at (the button carries the card's key), or to
+   *  the nearest control the panel offers (focusNear) — the review, 2026-09-09. */
+  private removeLine(line: HTMLElement): void {
+    const held = document.activeElement === line;
+    line.remove();
+    if (held) this.focusNear({ act: "fcsavedgo", card: line.dataset.id });
   }
   /** The marks in the body of every card the render marks new (newKeys) wear the attribute too: after each paint pass the
    *  marks are fresh (paintAll unwraps and repaints them), and render runs after every pass. */
@@ -3922,12 +3943,20 @@ class Panel {
         const r = await this.mutate("set-tracked", { on: true, scope: "file" }, "send");
         if (!r) return;
         tracked = !!r.trackedBy;
+        // the accept below takes its baseline from the status it finds (mutate: seenChanges over this.status), and set-tracked
+        // has just applied a fresh one — so a seen change grown between the press and that reply (a track-edit coalesced into
+        // it: the same id, more text) would read as unchanged and be accepted unread. With no track box the accept goes first,
+        // on the press's fence, and a moved store has mutateOnce stand down on the same growth; this path stands down the same
+        // way, against the status the confirm was read from (the review, 2026-09-09): the row says so, and nothing is sent
+        const grown = changedSince(seenChanges(s, { ids: acceptIds }), r.hunks || []);
+        if (grown.length) { this.errors.set("send", { text: changedRowText(grown.length), reload: false }); return; }
       }
       if (acceptIds.length) {
         const a = await this.mutate("accept", { ids: acceptIds }, "send");
         if (!a) return;                                // a refused accept sends nothing: the message would claim decisions never made
-        // A is what the accept DECIDED, read off its reply — never the count the confirm was built from: a change that
-        // grew or went between the two is the host's to refuse or to report, and the message and the log's send entry
+        // A is what the accept DECIDED, read off its reply — never the count the confirm was built from: a change gone
+        // between the two is the host's to refuse by name, one grown is mutateOnce's to stand down on (and the track path's
+        // check above), and the message and the log's send entry
         // must state the same accepts as the accept entry beside it (CLAUDE.md, the authoritative source). A reply
         // that does not say sends nothing: the decisions are in the log already, and the next Send carries them.
         const decided = (a as unknown as { accepted?: unknown }).accepted;
@@ -5061,6 +5090,15 @@ class Panel {
     if (!this.savedOut) return null;
     const b = btn(savedWhereWords(this.savedOut.side), "fcsavedgo", "fc-note fc-sent fc-saved");
     b.title = "Show the card";
+    b.dataset.id = this.savedOut.key;                  // the card it points at: where the keyboard goes when the line leaves under it (removeLine)
+    // the margin layout's Send section scrolls inside itself while the confirm is up (the sheets' grown tier), and the line,
+    // after the confirm in it, stood past the section's box — with the confirm up at a 500px viewer the line was never on
+    // screen, and every way to scroll it in, a wheel or a scrollbar press, is a gesture that ends it (the review, 2026-09-09;
+    // measured in Chromium and Firefox). So it sticks to the section's bottom edge over the rows that scroll, the way the
+    // arrivals line sticks to the head's (the sheets' .fc-arrivals rule), and stands in its own place once the section is
+    // scrolled to it; the sheet's `background: none` on .fc-saved would show the confirm through it. Inline, the todo
+    // option's idiom: the sheets have no rule for the line's place.
+    if (this.margin) { b.style.position = "sticky"; b.style.bottom = "0"; b.style.background = "var(--bg)"; }
     return b;
   }
   /** The confirm's Send: off with nothing unsent and no note (as the kernel reads it, trimNote: words its strip would take to

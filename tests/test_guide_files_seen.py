@@ -6,8 +6,12 @@ none seen the checkbox is off; the panel does each of those.
 The seen follow-on (2026-09-09, decision 41): a Send had accepted eleven changes the user had not looked at. The user keeps
 the checkbox and its default but wants no unseen change accepted by a send. The guide's Send paragraph gained the sentence;
 each clause is cross-checked against the panel and the model, so a reworded sentence, a renamed control or a dropped rule
-fails here. Synthetic: only the repo's own text.
+fails here. The sentence's definition of a seen change (present at the first open, or a card in view at a gesture) is held
+to the panel's seeding and entryShown by tests/test_guide_files_seen_definition.py, which pins the same SENTENCE; the
+seen follow-on's review (2026-09-09) reworded it there and this module's pin has to follow, or the two contradict each
+other and one is red whatever the guide says. Synthetic: only the repo's own text.
 """
+import importlib.util
 import os
 import re
 import unittest
@@ -31,11 +35,14 @@ def _flat(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+# The guide's Send sentence, byte for byte with tests/test_guide_files_seen_definition.py's SENTENCE: a rewording lands in
+# docs/guide.md and in both pins together.
 SENTENCE = ("When changes are pending, a third checkbox, **accept the pending changes you have seen**, accepts before the send "
-            "the pending changes you have looked at, meaning a change whose card or mark was on screen when you scrolled, clicked, "
-            "tapped, or pressed a key, so the session's later edits arrive as new changes instead of folding into an old one; a "
-            "change you have not seen stays pending, and the checkbox says how many do, or, when you have seen none of them, that "
-            "nothing is accepted until you look, and is then off. The message then says how many changes you accepted and rejected.")
+            "the pending changes you have looked at: the ones already there when you first opened the panel, and any that arrived "
+            "later whose card was in view when you scrolled, clicked, tapped, or pressed a key. That way the session's later edits "
+            "arrive as new changes instead of folding into an old one. A change you have not seen stays pending, and the checkbox "
+            "says how many do, or, when you have seen none of them, that nothing is accepted until you look, and is then off. "
+            "The message then says how many changes you accepted and rejected.")
 
 
 class TheSentence(unittest.TestCase):
@@ -46,6 +53,13 @@ class TheSentence(unittest.TestCase):
 
     def test_the_sentence_is_in_the_send_paragraph(self):
         self.assertIn(SENTENCE, self.section)
+        # the definition module pins the same sentence; a rewording that reaches one pin and not the other leaves the
+        # two contradicting each other, red whatever the guide says (the seen follow-on's review round 1 did exactly that)
+        spec = importlib.util.spec_from_file_location("romp_guide_files_seen_definition",
+                                                      os.path.join(HERE, "test_guide_files_seen_definition.py"))
+        definition = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(definition)
+        self.assertEqual(SENTENCE, definition.SENTENCE, "the two guide pins hold one sentence; reword both with the guide")
         self.assertNotIn("accepts them all before the send", self.section, "the accept-all wording is gone")
         self.assertNotIn("resolves comments", self.section, "a decision resolves nothing (decision 42), so the guide no longer says it does")
 

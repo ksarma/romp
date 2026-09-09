@@ -919,7 +919,8 @@ test("at source: the list layout's re-reads — the aside's scroll, the render (
   const closed = SRC.slice(SRC.indexOf("private landClosed("), SRC.indexOf("// ── the arrivals (the arrivals follow-on"));
   assert.ok(closed.length > 0 && closed.length < 3000, "the slice is landClosed alone");
   assert.doesNotMatch(closed, /scrollCard|scrollBoth|scrollIntoView|scrollTop|centerOn|showLoose|setTimeout/, "no scroll, no timer: the side and the line only");
-  assert.ok(closed.includes("this.savedOut = { key, side }; this.sentNote = null;"), "latched the way landSaved latches");
+  assert.ok(closed.includes("this.savedOut = { key, side };"), "latched the way landSaved latches");
+  assert.ok(!closed.includes("sentNote"), "the acknowledgment keeps its place in the list layout, whose line stands under the header and not in its position (the review, 2026-09-09)");
   assert.match(SRC, /const saved = this\.savedLineHead\(\);\n\s*if \(saved\) head\.appendChild\(saved\);\n\s*return head;/, "renderHead: the list layout's line, last in the head");
   assert.match(SRC, /private savedLine\(\): HTMLElement \| null \{\n\s*return this\.margin \? this\.savedButton\(\) : null;/, "renderSend's savedLine: the margin layout's");
   assert.match(SRC, /private savedLineHead\(\): HTMLElement \| null \{\n\s*return this\.margin \? null : this\.savedButton\(\);/, "the head's: the list layout's");

@@ -1976,8 +1976,10 @@ function validateAnchor(anchor) {
 // Reply on a change's card) has no anchor and no target, carries `suggestionId`, and takes its id
 // from the change's current offset the way the other hosts' change threads do; the change must be
 // pending in `suggestions`, else `{error: 'no-change'}`. The other hosts bind a thread to a change
-// on this field (track-edit --thread sets it on a passage comment too), so accept's resolve pass
-// and the panel's card both read it.
+// on this field (track-edit --thread sets it on a passage comment too); here the panel's card and
+// decidedFor read it, and a decision leaves the comment as it was, open or resolved (decision 42,
+// 2026-09-09; before it, accept marked the bound comments resolved — requireCommentsUntouched now
+// refuses a decision that changes one).
 export function buildComment(text, args, now, suggestions) {
   const note = requireNote(args);
   let c;
@@ -2716,8 +2718,9 @@ function checkContentText(shown, content) {
 // AND still among the records being saved (a decision drops its record from the editor's field,
 // and undo takes the decision back with it, so the two never name one id together). `taken`
 // collects the decided ids across both lists, for the membership check against the sidecar and
-// the log once they are loaded (decisionRoots, in doSave) and for the comment resolve pass. The
-// shape is all this checks: whether an id names a change that was pending needs the disk.
+// the log once they are loaded (decisionRoots, in doSave), and for nothing else: a decision touches
+// no comment (decision 42). The shape is all this checks: whether an id names a change that was
+// pending needs the disk.
 function requireDecisions(list, name, submitted, taken) {
   if (!Array.isArray(list)) throw new BadRequest(`save needs ${name}: an array of {id, oldText, newText}`);
   const out = [];
