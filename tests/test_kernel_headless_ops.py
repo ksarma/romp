@@ -31,10 +31,6 @@ _STATE_TMP = tempfile.mkdtemp()
 os.environ["XDG_STATE_HOME"] = _STATE_TMP
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-# No tmux for this module: the routes' 404 path asks the tmux probe whether the live scan answered, which on
-# a box with tmux forks the real server and reads its session list; the tests that need the probe patch
-# _TMUX.available and _TMUX._run explicitly (review round 5, 2026-09-09).
-os.environ["ROMP_TMUX_AVAILABLE"] = "0"
 km = load_source("romp_kernel_headless", os.path.join(BIN, "romp-kernel"))
 
 # The ACCOUNT gate (_limit_hold: a usage limit / monthly spend cap parks every drive op, tested in
@@ -122,12 +118,20 @@ class _RouteServer(unittest.TestCase):
         cls.srv.shutdown()
 
     def setUp(self):
+        # No tmux for the route tests: the routes' 404 path asks the tmux probe whether the live scan answered,
+        # which on a box with tmux forks the real server and reads its session list. Patched per test, never
+        # set in os.environ at import: an environment pin leaks into every module an xdist worker imports
+        # after this one, and turned three tmux-behaviour tests in another module red in the same run. The
+        # tests that need the probe patch _TMUX.available and _TMUX._run over this (review round 5, 2026-09-09).
+        self._tmux_off = mock.patch.object(km._TMUX, "available", lambda: False)
+        self._tmux_off.start()
         for sid, name in KNOWN_SIDS.items():
             _register(sid, name)
 
     def tearDown(self):
         for sid in KNOWN_SIDS:
             _unregister(sid)
+        self._tmux_off.stop()
 
     def _post(self, path, body):
         import urllib.request, urllib.error
