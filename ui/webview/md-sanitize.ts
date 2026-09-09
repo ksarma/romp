@@ -49,7 +49,7 @@
 // What does NOT pass through here: KaTeX. Its layout is all inline style, which the colour-only rule would
 // strip, so the math extensions emit an inert placeholder and KaTeX is rendered into it on the sanitized
 // DOM afterwards (math.ts renderMathPlaceholders), as a POST-PASS this module runs at the end of sanitizeMd
-// for every caller: the module that installs the math grammar (chat-md.ts) registers the fill at load
+// for every caller: the module that installs the math grammar (md-config.ts) registers the fill at load
 // (registerMdPostPass), so the chat's md() and userMd() and the viewer's mdBlock, when it runs inside the
 // chat page whose marked singleton carries that grammar, all render math, and a bundle without the grammar
 // (files.js, feed.js) never sees the pass or KaTeX. A renderer romp itself runs never goes through the
@@ -168,11 +168,11 @@ function keepOnlyInertCheckboxes(root: ParentNode): void {
 
 const postPasses: Array<(root: ParentNode) => void> = [];
 /** Register a DOM pass sanitizeMd runs on every sanitized body before handing it back. For the module that installs a
- *  marked extension whose output needs a render AFTER the sanitize (chat-md.ts: the math placeholders KaTeX fills,
+ *  marked extension whose output needs a render AFTER the sanitize (md-config.ts: the math placeholders KaTeX fills,
  *  math.ts renderMathPlaceholders), registered at load: the grammar and its fill travel together, so every sanitizeMd
  *  caller in a bundle that parses with the grammar renders the same way (the chat's md() and userMd(); the viewer's
- *  mdBlock when it runs inside the chat page, whose marked singleton carries the extensions), and a bundle that never
- *  imports the module (files.js, feed.js) has neither the grammar nor the pass nor the library behind it. One
+ *  mdBlock on every surface, since Slice 4 of plans/markdown-viewer.md put the one configuration in every bundle that
+ *  hosts the viewer; before it files.js and feed.js had neither the grammar nor the pass nor the library). One
  *  mechanism, no per-caller call to forget: the first cut had md() and userMd() call the fill by hand and the chat
  *  page's viewer showed bare TeX (the 2026-09-07 review, round 1). Idempotent: a pass registered twice runs once. */
 export function registerMdPostPass(pass: (root: ParentNode) => void): void {

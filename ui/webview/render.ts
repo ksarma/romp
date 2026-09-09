@@ -1127,7 +1127,7 @@ function el(tag: string, cls?: string): HTMLElement {
 // for the DOM walk below. KaTeX is rendered AFTER the sanitizer, into the inert placeholders the math
 // extensions emit (math.ts renderMathPlaceholders): its layout is all inline style, which the colour-only
 // rule would strip, so it never passes through DOMPurify; the fill is a post-pass sanitizeMd itself runs,
-// registered by chat-md.ts beside the grammar, so neither renderer here calls it (plans/markdown-viewer.md,
+// registered by md-config.ts beside the grammar, so neither renderer here calls it (plans/markdown-viewer.md,
 // Slice 1 review).
 function md(src: string, repo: string | null = prRepoFor()): string {
   // Transcript text (user prompts, assistant output, subagent reports, postal

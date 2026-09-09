@@ -1109,6 +1109,127 @@ that new TeX shapes keep bypassing (a digit-named macro, an aliased definer and 
 past the reading before it); a worker bounds the time itself, whatever the shape, and the heuristics stay as the first
 line.
 
+**The Slice 4 build** (2026-09-09). Branch `mdviewer-s4`, on Slice 3's head (461c6f76, the fork's main merged in).
+The gap analysis behind it ran every construct of a synthetic fixture through the real files, chat and feed bundles
+in headless Chromium at 62cca6d0 and recorded what fetched on open; the browser legs below re-run those scenes over
+the build. Where the code as built departs from the text above, why, and which test holds each rule:
+1. *One module, on the singleton.* `ui/webview/md-config.ts` exports an idempotent `applyMdConfig()` that sets
+   `gfm: true, breaks: false` and registers every extension in one list, `mdExtensions`: the double-tilde `del`
+   rule (moved here from chat-md.ts and file-view.ts, which each held a copy), the math placeholders, front matter,
+   footnotes, callouts, `==mark==`, wikilinks and embeds. render.ts, file-view.ts and anchor-map.ts each call it at
+   load; chat-md.ts builds its `breaks: true` instance for the person's own words from the same list; the fill
+   (`registerMdPostPass(renderMathPlaceholders)`) is registered beside the list. The singleton and not a private
+   `Marked` instance, because `marked.use` writes the module defaults the static `Lexer.lex` reads: anchor-map.ts
+   keeps `Lexer.lex` and sees every token the renderer rendered, whichever module loaded first (measured 2026-09-08:
+   an instance's extensions never reach the static lexer). The eight test copies of the viewer's configuration
+   (anchor-map.test.ts and its six siblings, file-comments-rendered-point-browser) call `applyMdConfig()`, and the
+   four probe bundles (md-sanitize-postpass, -chat-links, -chat-schemeless, -chat-modified-click) arm the singleton
+   the same way. The consequence, flagged to the person as an open ruling: the constructs render in chat replies
+   too. A wikilink there is the dotted dead span (no directory), a reply opening with `---` YAML folds as front
+   matter, `> [!NOTE]` in agent output becomes a titled block, `[^1]` and `==text==` render. md-config.test.ts
+   executes the grammar and the idempotence and pins who calls it; render-math.test.ts pins the list's literal and
+   the three callers; chat-md.test.ts pins the user instance; md-strikethrough.test.ts imports the rule from here.
+2. *Decision 1, math everywhere.* file-view.ts's import of md-config.ts brings the grammar, the fill and KaTeX into
+   files.js and feed.js (math-bundles.test.ts: a metafile of each bundle built with the shipped config holds
+   math.ts, md-config.ts and katex; the viewer imports nothing from render.ts, code-block.test.ts). Production
+   sizes, raw and gzip, before and after: files.js 495,838 / 148,117 to 866,609 / 240,946 (+370,771 / +92,829);
+   feed.js 777,513 / 231,906 to 1,150,102 / 325,693 (+372,589 / +93,787); render.js 1,494,823 / 428,911 to
+   1,511,207 / 433,636 (+16,384 / +4,725, the new extensions). KaTeX is 348,919 bytes of each viewer bundle.
+   feed.css imports `katex/dist/katex.min.css` as styles.css does (esbuild inlines it and emits the fonts once, the
+   same hashed names) and gains the `.katex-display` twin (parity head). md-sanitize-viewer-math-browser flips to
+   the positive: the Files pane renders the same three KaTeX roots as the chat page; md-config-obsidian-browser's
+   second test opens the feed page under feed.css built as the webview build builds it and reads KaTeX's face
+   applied. Slice 5's math item is pulled forward, since math now reaches the viewer: anchor-map.ts skips a
+   `.katex` root's text as a control and makes `mathInline` and `mathBlock` zero-text holes, so a paragraph with
+   inline math maps around the formula and a display formula's paragraph is a hole block (before this, on the chat
+   page, `walkInline`'s default case refused the whole paragraph). anchor-map-obsidian.test.ts and the browser leg
+   select across the formula and get the TeX between. The Web Worker of the design note is NOT built: VS Code's
+   webview CSP has no `worker-src`, and an asynchronous fill changes when `fireRendered` and the seat run over a
+   paint (the comments panel and the reader's place would meet placeholders); the synchronous bounded fill of
+   Slice 1 stays, and the note stays a direction.
+3. *Front matter* renders as ONE element, `details.md-frontmatter` with a `summary` reading "Front matter" and the
+   YAML in a `pre`, escaped text and never author HTML. The tokenizer fires only for the document's first token
+   (`tokens === this.lexer.tokens && tokens.length === 0`: a quote's or a list item's body is lexed into a fresh
+   array, so `> ---` inside a quote stays an hr; `state.top` is not that test). Its raw tiles the source from
+   offset 0, trailing blank lines included, so the block table's first span is `[0, 37]` where it was `[0, 3]` and
+   `[4, 37]`, and the setext h2 the keys used to become (with its minted `md-title-...` id) is gone. anchor-map.ts
+   treats it as a hole block ("the front matter") with the fold label a control; `tagOf` gives DETAILS.
+4. *Footnotes*, our own extension (marked-footnote is not installed and renders at the end, which breaks the 1:1
+   block pairing). `[^id]` renders `sup.md-fnref > a[href="#fn-id"][id="fnref-id"]` showing its number; a second
+   reference to the same note gets `fnref-id-2`. A definition renders IN PLACE as `div.md-footnote[id="fn-id"]`
+   with a back link `a.md-fnback[href="#fnref-id"]` first, one element per definition, so the paragraphs after it
+   pair as before (the acceptance). Numbering is by order of first reference, kept on the lexer instance (one per
+   parse, the anchor map's static lex included), and a definition nothing refers to shows its id. The ids reach the
+   DOM prefixed `user-content-` and the `#fn-id` hrefs land through fragmentTarget in the viewer (the leg clicks
+   both ways) and the chat's `#` delegate. A `[^n]: URL` line is a footnote now, where marked's `def` rule used to
+   swallow it as a link reference (a note that used that form as a real link reference changes rendering). The
+   shown number is a hole ("a footnote reference"); the back link is a control; the definition's text maps past its
+   marker through the blockquote's suffix view. `tagOf` gives DIV.
+5. *Callouts.* A block extension tried before the built-in blockquote: GitHub's `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
+   `[!WARNING]`, `[!CAUTION]` and Obsidian's `[!type] Title` with any type render `blockquote.md-callout` with a
+   `p.md-callout-title` (the author's title, else the type capitalised) and the body lexed as blocks; `[!type]-`
+   and `[!type]+` render a `details` closed or open with the title in its `summary`. The type rides in a class
+   (`md-callout-note`), not the `data-callout` attribute the design named, since the sanitizer drops every data
+   attribute; the sheets tint by class through the page's own tokens (note and its kin the accent, tip green,
+   important teal, warning amber, caution red, any other type the hairline). The title line is a hole ("a callout's
+   title", since the marker is not shown and a missing title is generated); the body maps as blocks. `tagOf` gives
+   BLOCKQUOTE, or DETAILS for a folded one.
+6. *`==mark==`* renders `<mark>` and maps by delimiter width like em and strong; the opener must touch its content,
+   so `a == b` in prose stays literal.
+7. *Decision 2, wikilinks and embeds.* The renderer emits an anchor ONLY when the per-parse walkTokens of the file
+   kind (file-view-links.ts viewerWalkTokens, run by mdBlock for the file kind alone) stamped the token `resolved`:
+   `[[Note]]` becomes `<a href="Note.md">Note</a>` (`.md` appended when the target names no extension; `[[img.png]]`
+   keeps its), `[[Note|alias]]` shows the alias, `[[Note#Heading]]` carries the fragment, `[[#Heading]]` is a
+   section link of the same note; #347's link pass then turns each into a path link to `<dir>/Note.md` with the
+   fragment in `data-frag`, no existence check. Everywhere else (a chat reply, a URL document) the same text is
+   `span.fv-wikilink.fv-dead` with a title that says why. `![[image.png]]` renders an `<img>` when resolved, so
+   rewriteFigureSrcs loads it from the file's folder and `![[image.png|300]]` sets its width; `![[Note]]` is a
+   link-shaped chip `a.fv-embed`; unresolved, an embed is the dead span too (an `<img src="image.png">` in a reply
+   would fetch from the page's own origin). The shown text is the source text at `textOffset` in the raw, so the
+   anchor map places it exactly. The comments panel's embed grammar and the host's (`imageEmbeds` in
+   file-comments.ts and tools/file-comments-host.mjs) read the `![[...]]` form: it was a one-regex addition, so the
+   limit the design allowed for was not taken; file-comments-panel.test.ts and the host's tests hold both readers.
+8. *rewriteFigureSrcs* reads every attribute a figure fetches through (figure-gate.ts figureRefs): an img's `src`
+   and `srcset`, a `source`'s `src` and `srcset`, a video's `src` and `poster`, an audio's and a track's `src`, an
+   svg `image`'s or `feImage`'s `href` and `xlink:href`. A srcset is rewritten candidate by candidate with its
+   descriptors kept (HTML's own parse, a comma inside a URL kept). Only an img's `src` keeps `data-fv-src`, the
+   one attribute the panel pairs an embed by. An `xlink:href` is folded into `href`: when both stand, `href` wins
+   (SVG 2's rule) and the xlink attribute goes either way, so the element carries one attribute every reader agrees
+   on. file-view-figures-absolute.test.ts's selector pin is the gate's `FIGURE_SEL` now, with a case per shape.
+9. *Decision 8, the gate* (figure-gate.ts, run by mdBlock after rewriteFigureSrcs on the sanitized DOM). The allowed
+   set is the gear's `figureHosts` (settings.ts `FIGURE_HOSTS_DEFAULT`: github.com, raw.githubusercontent.com,
+   user-images.githubusercontent.com, camo.githubusercontent.com, avatars.githubusercontent.com,
+   objects.githubusercontent.com, private-user-images.githubusercontent.com, github.githubassets.com, localhost,
+   127.0.0.1; exact names, no wildcard) plus the page's own origin and the kernel's (`window.__rompKernelBase`),
+   which every local figure goes through, plus the hosts clicked in this document (a module Set, per document: a
+   reload or a Raw and back keeps a clicked host loaded, an emptied list gates a host the setting allowed). A media
+   root (img, video, audio, picture, svg; a `source` or `track` through its parent) with a source on another host
+   is wrapped in `span.fv-gate[data-act="fv-load"][role=button][tabindex=0][data-fv-host]`, its label "Image from
+   host. Click to load." (or Video, Audio), sized by the author's pixel `width` and `height` or the sheet's minimum
+   box; every fetching attribute moves to `data-fv-gated-<name>` and `data-fv-src` to `data-fv-gated-fv-src`, so
+   nothing leaves the page and no embed pairs while gated. The element stays inside the placeholder, which keeps the
+   region layer's contract: with the panel open the layer wraps THE img inside the placeholder, and the click
+   leaves the wrapper standing around the loaded picture (the leg reads both). The click is delegated on
+   `.fileview-body` (and the URL viewer's body), never bound to the placeholder, since every paint rebuilds the
+   DOM; Enter and Space on a focused placeholder do the same; the restore is the acknowledgement. One click restores
+   every placeholder waiting on that host alone and relabels one waiting on more. The gear's list reaches an open
+   document through the settings listener (regateFigures on `storage` and `romp:settings`). The placeholder's text
+   is skipped by the anchor map (isControl). The URL kind names the document's own host beside the list; the URL
+   viewer fetches with `mode: "same-origin"`, so that host is always the page's and the arm is redundant in
+   practice, kept as designed. The chat's `md()` is not gated (recorded). Measured on open, DPR 1, the fixture of
+   file-view-figures-gate-browser: the one request that left the page was github.com's picture; `/file` served the
+   file and its `![](fig.png)`; six placeholders held remote.test's img, srcset, poster, picture, svg and second
+   img and one held other.test's. After the click on one remote.test placeholder: remote.test's img.png, img2.png,
+   poster.png and svg.png were fetched and `/file` served local.png; the 2x srcset candidate was not picked at DPR
+   1; for the `<picture>`, Chromium took the fallback img rather than the source's srcset when both came back on an
+   element already in the document (the leg accepts either). A `<picture>` is gated whole, so its local fallback
+   waits with the remote source. The gear's row is a textarea, one host per line; gear.js holds a copy of the
+   default list and the normaliser (it cannot import settings.ts), and gear-figure-hosts.test.ts holds the two
+   equal. figure-gate.test.ts covers the pure parts (the srcset parse, remoteHost, the allowed set, the
+   normaliser); settings.test.ts the field; docs/reference.md and the guide's Figures paragraph describe it.
+10. *Not built here.* Obsidian's `%%comment%%` and `#tag` (the text names them for awareness only) stay literal.
+   Slice 5's other items (refusal reasons for the remaining token names, goTo into a closed details) are untouched.
+
 ### Slice 5: comments anchor on real notes
 
 Pair blocks inside an unclosed HTML container (a flattened walk); match code quotes raw; math tokens

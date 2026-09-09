@@ -347,9 +347,24 @@ block's text; a block that names its language is coloured when the language is o
 viewer knows: bash, python, javascript, typescript, json, xml and html, css, markdown,
 diff, yaml, rust, go, c, java, sql and toml (an ini file's grammar). A block that names
 any other language stays plain rather than being guessed at. Comments in coloured code are
-readable against the block. Printing the page while a markdown file is open prints the
-file alone, black on white, across as many pages as it needs, without the title bar, the
-Comments panel or the Copy buttons.
+readable against the block. TeX math renders wherever the file is shown: `$x^2$` inline and a
+`$$` block on its own, the same in the chat, the feed and the Files pane. Printing the page
+while a markdown file is open prints the file alone, black on white, across as many pages as
+it needs, without the title bar, the Comments panel or the Copy buttons.
+
+**Files written for Obsidian.** The constructs an Obsidian vault uses render as they do there.
+Front matter, the `---` block of keys at the top of a file, folds under a **Front matter** line;
+click it to read the keys. A footnote reference such as `[^1]` is a numbered link to its
+definition, and the definition (`[^1]: ...`) stands where it is written, with a link back to the
+text. A callout (`> [!note] Title` and the body under it) is a titled block tinted by its type;
+GitHub's `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` and `[!CAUTION]` render the same way,
+and a callout written `[!note]-` or `[!note]+` folds closed or open. `==text==` is highlighted.
+A wikilink such as `[[Note]]`, `[[Note|shown text]]` or `[[Note#Section]]` opens `Note.md` from
+the folder of the file you are reading, at the section when one is named, the way a
+`[link](Note.md#Section)` does; `[[#Section]]` scrolls to a section of the same file. An embed
+`![[picture.png]]` shows the picture from the file's folder (`![[picture.png|300]]` sets its
+width), and `![[Note]]` is a link to that file. In the chat, where a reply has no folder to
+resolve against, a wikilink shows as dotted text that says so when you hover it.
 
 **Your place in the file.** The passage at the top of the view stays where it is when
 the file is read again after a session writes it, when you switch between Rendered and
@@ -409,8 +424,15 @@ author's chip, and the card shows that part of the image. When the image's bytes
 comment is shown as stale until you resolve it, or press **Re-place** and drag the rectangle
 again where it belongs now; the comment keeps its words and its replies, and only the
 rectangle changes. A figure embedded in a markdown file, such as `![](plot.png)`, is loaded
-from the file's own folder, so a relative path shows in the Rendered view; a web address or a
-`data:` image is left as written. A figure path that starts with `~/` is not expanded to your
+from the file's own folder, so a relative path shows in the Rendered view, and so are a
+`<video>`, an `<audio>`, a `<source>` and a `<video poster>` written as HTML; a `data:` image is
+left as written. A figure from the web loads when the file opens only if its host is on the
+gear's **Pictures from the web in files** list (github.com and its image hosts, `localhost` and
+`127.0.0.1` to begin with). A figure from any other host shows a box naming the host in its
+place, and makes no request until you click the box; the click loads every figure from that
+host in the file, and the host stays loaded until the page reloads. Edit the list in the gear,
+one host per line; an emptied list loads nothing from the web without a click. A figure path
+that starts with `~/` is not expanded to your
 home folder: it names a folder called `~` next to the file, as other markdown viewers read it,
 while a link that starts with `~/` does open under your home folder. A comment on an embedded
 figure is stored on its embed line,

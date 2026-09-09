@@ -409,6 +409,24 @@ one of 70, 80, 90, 100, 115, 130, 150, 175 or 200 percent, set by the **A−** /
 its headings, the code and the Raw view together, and the prose measure with
 them; a value outside the table reads as 100.
 
+### Pictures from the web in a viewed file
+
+A markdown file shown in the viewer may carry pictures and clips from the web. The
+gear's **Pictures from the web in files** setting is the list of hosts whose figures load
+when the file opens; a figure from any other host is shown as a box naming the host, makes
+no request, and loads on one click, together with every other figure from that host in the
+file. A host loaded that way stays loaded until the page reloads. The list is kept with the
+other gear settings in the browser's own storage (`figureHosts` under `romp:settings`), one
+host name per entry, exact (`github.com` does not cover `gist.github.com`), and it starts as
+`github.com`, `raw.githubusercontent.com`, `user-images.githubusercontent.com`,
+`camo.githubusercontent.com`, `avatars.githubusercontent.com`,
+`objects.githubusercontent.com`, `private-user-images.githubusercontent.com`,
+`github.githubassets.com`, `localhost` and `127.0.0.1`. The kernel's own address, which
+every figure stored beside the file loads through, needs no entry; a `data:` image makes no
+request and is never gated. The setting reaches an open file at once: a change made in
+another tab re-judges the file where it stands. It applies to files shown in the viewer, on
+every surface; a picture in a chat message is not gated.
+
 ### The tab strip's per-browser choices
 
 The chat tab strip keeps its grouping choices in the browser's own storage, under

@@ -18,7 +18,7 @@
 // formula; the constants below say why) and this module's own bounds on the TeX it hands over (one formula's
 // length, one message's total). KaTeX
 // renders with output: "html" ONLY, no MathML twin. The KaTeX layout CSS ships via styles.css
-// (@import "katex/dist/katex.min.css"; fonts emitted to dist/fonts/ by esbuild). chat-md.ts registers the
+// (@import "katex/dist/katex.min.css"; fonts emitted to dist/fonts/ by esbuild). md-config.ts registers the
 // post-pass with the sanitizer (md-sanitize.ts registerMdPostPass), so every sanitizeMd call in the chat
 // bundle renders math, the file viewer's mdBlock included when it runs in the chat page; the files and feed
 // bundles take the grammar, the fill and KaTeX together in Slice 4 (decision 1).
@@ -392,7 +392,7 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
  *  again with throwOnError: false, KaTeX's own red text as on main; a residual throw (an internal error)
  *  takes the belt, the source the same way and a word on the console once per call, so a formula can never
  *  blank a message. A second run over the same root is a no-op: no placeholder survives the first. Plain
- *  and exported: chat-md.ts registers it as sanitizeMd's post-pass, and the tests call it directly. */
+ *  and exported: md-config.ts registers it as sanitizeMd's post-pass, and the tests call it directly. */
 export function renderMathPlaceholders(root: ParentNode): void {
   let rendered = 0;          // characters of TeX handed to KaTeX so far in this call: the budget's meter
   let reported = false;      // the belt's console report, once per call
