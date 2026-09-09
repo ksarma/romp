@@ -776,10 +776,10 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // while there is no section, and ends by seating the menu and the open flyout again (round 3); the click live: the section
   // resolved again, the state SET to the one the row last showed (never a toggle of the click-time bit), nothing written when the
   // copy is already there or has no group any more; the refresh runs once at build
-  assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*refreshHideRow = \(\) => \{\s*\n\s*const home = phoneLayout\(\) \? undefined : homeNow\(\);\s*\n\s*if \(!home\) \{ row\.remove\(\); reseat\(\); return; \}\s*\n\s*hidden = isHidden\(tabGroups\(\), sectionRef\(home\), id\);\s*\n\s*dressToggle\(row, "tab", hidden,\s*\n\s*hidden \? "Show tab" : "Hide tab",\s*\n\s*hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`\);\s*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*reseat\(\);\s*\n\s*\};\s*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\); dismissTabMenu\(\);\s*\n\s*const now = homeNow\(\);\s*\n\s*if \(!now\) return;\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/);
+  assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*refreshHideRow = \(\) => \{\s*\n\s*const home = phoneLayout\(\) \? undefined : homeNow\(\);\s*\n\s*if \(!home\) \{ row\.remove\(\); reseat\(\); shown = null; return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*dressToggle\(row, "tab", hidden,\s*\n\s*hidden \? "Show tab" : "Hide tab",\s*\n\s*hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`\);\s*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*reseat\(\);\s*\n\s*\};\s*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\); dismissTabMenu\(\);\s*\n\s*const now = homeNow\(\);\s*\n\s*if \(!now\) return;\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| \(sec\.localId !== shown\.localId && sec\.name !== shown\.name\)\) \{ refreshHideRow\(\); return; \}\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/);
   assert.equal(MENU.split("phoneLayout()").length - 1, 1, "the gate is read once, in the refresh (the flyout's home read is untouched)");
   assert.match(MENU, /sub\.appendChild\(nrow\);\s*\n\s*refreshHideRow\(\);/, "the flyout's build ends with the refresh: every edit path there (a move, a remove, a +, a new or an existing tag) rebuilds the flyout");
-  assert.equal(MENU.split("refreshHideRow()").length - 1, 2, "called at build and at the end of the flyout's build; no timer, no other caller");
+  assert.equal(MENU.split("refreshHideRow()").length - 1, 3, "called at build, at the end of the flyout's build, and by the click that found the resolution moved off the copy the row named (round 4); no timer, no other caller");
   assert.equal(MENU.split("reseat()").length - 1, 2, "the refresh's two exits seat again; no other caller, no timer");
   const bellAt = MENU.indexOf('toggle("bell"'), billingAt = MENU.indexOf("// Billing submenu"), tagsAt = MENU.indexOf('l.textContent = "Tags"');
   assert.ok(bellAt > 0 && hideAt > bellAt && billingAt > hideAt && tagsAt > billingAt, "after the bell, before Billing and Tags");
@@ -894,6 +894,21 @@ test("executed: THE CLICK IS LIVE (menu review round 1; round 2 puts the mechani
     assert.equal(hooks.dismissed, d2 + 1, "dismissed all the same");
     assert.equal(hooks.writes.length, 1, "nothing written for a copy with no group to hide in");
     assert.deepEqual(readTabGroups(viewTagUnion(hooks.views as typeof V)).hidden, [], "and the store shows it");
+    // C4 (round 4): one OTHER holder left at the click. The row was built for api in infra (api under infra and archived); a push then
+    // took infra off api, so the resolution is archived, the one holder left, while the row still reads infra; a hide there would be
+    // of a copy the user never touched, so the click writes nothing and re-dresses the row for the copy the session has left
+    hooks.views = V_API_BOTH;
+    writeTabGroups(d);
+    menu = api.open("api", "infra");
+    row = rowOf(menu);
+    assert.equal(row.sub(), HIDE_SUB("infra"));
+    hooks.views = { ...V_API_BOTH, tags: [{ ...V_API_BOTH.tags[0], members: V_API_BOTH.tags[0].members.filter((m: string) => m !== "api") }, V_API_BOTH.tags[1]], seq: 5 };
+    const d3 = hooks.dismissed;
+    row.click();
+    assert.equal(hooks.dismissed, d3 + 1, "dismissed all the same");
+    assert.equal(hooks.writes.length, 1, "nothing written: the row named infra, and archived is a copy the user never touched (round 4; before, the click wrote hidden [{api, archived, g2}])");
+    assert.deepEqual(readTabGroups(viewTagUnion(hooks.views as typeof V)).hidden, [], "the store shows it");
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("archived"), "and the row re-dressed for the copy the session has left");
   });
 });
 

@@ -6638,8 +6638,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // since those leave this menu open with the copy elsewhere, so the words never name a group the copy has
   // left (event-keyed on the write, no timer), and the refresh ends by seating the menu and the open flyout
   // again (reseat, above), since the row's coming or going moves what stands below it. The click resolves the
-  // section once more (a push between the refresh and the click) and SETS the state the row promised, the pin
-  // row's idiom: a copy already in that
+  // section once more and SETS the state the row promised, the pin row's idiom, for the copy the row NAMED
+  // and no other (round 4: a views push between the refresh and the click that takes the copy's tag off the
+  // session moves the resolution to the one other holder, and the click then re-dresses the row and writes
+  // nothing rather than hide a copy the user never touched): a copy already in that
   // state where it now sits (another pane hid it there) is left as it is, never flipped back. No home at
   // click time (moved out of every group, or the strip flattened in another pane): the click dismisses and
   // writes nothing. No kernel round trip: nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
@@ -6650,10 +6652,12 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   {
     const row = el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped");   // ctx-sub-capped: its sub-line carries the tag name, which never widens the menu (styles.css)
     let hidden = false;   // the stored bit the row last showed; the click sets its opposite
+    let shown: ReturnType<typeof sectionRef> | null = null;   // the section the row last named (round 4): the click writes for that copy or not at all
     refreshHideRow = () => {
       const home = phoneLayout() ? undefined : homeNow();
-      if (!home) { row.remove(); reseat(); return; }
-      hidden = isHidden(tabGroups(), sectionRef(home), id);
+      if (!home) { row.remove(); reseat(); shown = null; return; }
+      shown = sectionRef(home);
+      hidden = isHidden(tabGroups(), shown, id);
       dressToggle(row, "tab", hidden,
         hidden ? "Show tab" : "Hide tab",
         hidden ? `back on the strip in ${home.name}` : `hidden in ${home.name}; to show it, open the group's view`);
@@ -6665,6 +6669,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       const now = homeNow();
       if (!now) return;
       const sec = sectionRef(now), st = tabGroups();
+      // the copy the row named, or nothing (round 4): a views push between the refresh and the click can move the resolution to
+      // the one other holder (the copy's tag removed from the session), and a hide there would be of a copy the user never touched
+      if (!shown || (sec.localId !== shown.localId && sec.name !== shown.name)) { refreshHideRow(); return; }
       if (isHidden(st, sec, id) === !hidden) return;
       writeTabGroupsPruned(setHidden(st, sec, id, !hidden));
     });
