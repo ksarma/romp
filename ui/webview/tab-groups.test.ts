@@ -435,7 +435,7 @@ test("under stripGroupRows, every group opens a new line: a zero-height full-wid
 });
 
 // ── the fork's default (the user 2026-09-08, whose strip of eleven tag groups became eleven rows): the strip flows inline ──
-test("executed + pinned: with stripGroupRows off (the fork default) the strip emits NO break, a group's head and tabs stay contiguous and the trail stands behind the inline divider; the gear offers the per-row layout", () => {
+test("executed + pinned: with stripGroupRows off (the fork default) the rebuild appends no setting break (the painter's keep breaks are tab-row-keep.test.ts's), a group's head and tabs stay contiguous and the trail stands behind the inline divider; the gear offers the per-row layout", () => {
   // the setting and its default (executed: the real defaults object)
   assert.equal(DEFAULT_SETTINGS.stripGroupRows, false, "off by default on the fork; upstream's default is the per-row layout");
   assert.match(SETTINGS, /stripGroupRows: boolean;/);
@@ -451,7 +451,8 @@ test("executed + pinned: with stripGroupRows off (the fork default) the strip em
   assert.deepEqual(heads.map((it, i) => breaks({ stripGroupRows: false }, it, { childElementCount: i })), [false, false, false], "off: no break ahead of any header, first or later, nor the trail's");
   assert.deepEqual(heads.map((it, i) => breaks({ stripGroupRows: true }, it, { childElementCount: i })), [false, true, false], "on: a break ahead of every header but the strip's first item; the trail's header is itself the break");
   // the plan's items are contiguous per group (executed on the pure module): a head, then its tabs, then the next
-  // head; with no break appended the DOM is the plan in order, so the groups flow inline and wrap as before T264
+  // head; with no break appended by the rebuild the DOM is the plan in order; the painter then places its keep breaks
+  // (tab-row-keep.test.ts) where a header's first tab wrapped
   const unions = viewTagUnion({ tags: [{ id: "t-infra", name: "infra", color: "#1EA1EB", members: ["web", "api"] },
                                        { id: "t-qa", name: "qa", color: "#54B204", members: ["tests"] }] });
   const plan = planStrip(["web", "api", "tests", "loose"], unions, parseTabGroups(null, unions), "web", false);
@@ -486,6 +487,8 @@ test("the tab drag's virtual layout wraps where the strip wraps: headers after a
   assert.match(over, /br: isBreak\(t\) \|\| isBreak\(before\(t\)\) \}\)\);/, "a header after a break, and the break itself, open a row");
   assert.match(over, /if \(ref && ref\.classList\.contains\("tab-group-head"\) && isBreak\(before\(ref as HTMLElement\)\)\) ref = before\(ref as HTMLElement\);/,
     "the slot before a header is the end of the previous row — never between the break and the chip");
+  assert.match(over, /if \(ref && ref\.classList\.contains\("tab-group-sep"\) && !isBreak\(ref\) && isBreak\(before\(ref as HTMLElement\)\)\) ref = before\(ref as HTMLElement\);/,
+    "and so is the slot before the inline divider behind the painter's keep break (review round 1 of the keep-with-next change; executed in tab-row-keep.test.ts)");
   const DS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "dragslot.ts"), "utf8");
   assert.match(DS, /const needsWrap = row !== null && cx > 0 && \(b\.br === true \|\| cx \+ b\.w > containerW\);/, "dragslot honours br (executed in dragslot.test.ts)");
 });

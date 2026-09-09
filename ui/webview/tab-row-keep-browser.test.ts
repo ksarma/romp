@@ -1,0 +1,214 @@
+// THE KEEP PASS IN A REAL ENGINE (review round 1 of the keep-with-next change, 2026-09-09): tab-row-keep.test.ts drives
+// render.ts's painter over a flex-wrap model; this leg runs the SAME lifted code (makeRowBreak, paintTabRowLines,
+// keepGroupsWithTabs, ensureTabRowObserver, sliced verbatim at run time) in headless Chromium under the real sheet,
+// with a live ResizeObserver, and proves what the model cannot:
+//   - the observer's own loop notice: Chromium raises "ResizeObserver loop completed with undelivered notifications"
+//     as a WINDOW ERROR EVENT (not a console message; Playwright's console and pageerror never see it) when an
+//     observed element's size changes inside the callback. Observing #tabs did that on every row the pass added or
+//     dropped. The observer now watches a zero-height width sentinel, and a narrowing sweep that adds and drops rows
+//     through the live observer raises none;
+//   - the drag freeze: a width change while a tab is dragged runs the painter through the observer, and the keep
+//     breaks stand exactly where the drag found them (the same elements, the same places); the paint after dragend
+//     re-places them as a fresh paint would;
+//   - the invariant across widths: no header or divider ends a row above its first tab unless no row can hold the
+//     pair, and the hairlines sit under every row but the last.
+// Skips, never fails, where playwright or Chromium is missing (CI installs none). The notes-api demo world.
+import { test } from "node:test";
+import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { createRequire } from "node:module";
+
+const requireCjs = createRequire(__filename);
+const EXT = process.cwd();                                        // npm test runs in vscode-extension
+const UI = path.resolve(EXT, "..", "ui", "webview");
+const RENDER = fs.readFileSync(path.join(UI, "render.ts"), "utf8");
+const CSS = fs.readFileSync(path.join(UI, "styles.css"), "utf8");
+
+/** a verbatim slice of render.ts, from one marker to the next; both must exist */
+function slice(from: string, to: string): string {
+  const a = RENDER.indexOf(from), b = RENDER.indexOf(to, a + 1);
+  assert.ok(a >= 0 && b > a, `render.ts markers: ${from} .. ${to}`);
+  return RENDER.slice(a, b);
+}
+
+/** The probe: render.ts's own break, painter, pass and observer over a stand-in strip. */
+function probeSource(): string {
+  const BREAK = slice("function makeRowBreak(", "function makeTrailSep(");
+  const PAINT = slice("function paintTabRowLines(", "function tabEmojiNode(");
+  return `
+function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
+let draggedId: string | null = null;   // render.ts's drag state, which the painter reads
+${BREAK}
+${PAINT}
+const errs: string[] = [];
+window.addEventListener("error", (e) => { errs.push(String((e as ErrorEvent).message)); });
+const bar = document.getElementById("tabs")!;
+const barbox = document.getElementById("tabbar")!;
+type Spec = ["head", string] | ["tab", string, string] | ["sep"] | ["add"];
+(window as any).__probe = {
+  /** the rebuild: replaceChildren, the plan appended, the painter, the observer armed */
+  build(spec: Spec[]) {
+    bar.replaceChildren();
+    for (const it of spec) {
+      if (it[0] === "head") { const h = el("div", "tab-group-head"); h.dataset.group = it[1]; h.textContent = it[1] + " 3"; bar.appendChild(h); }
+      else if (it[0] === "tab") { const t = el("div", "tab"); t.dataset.id = it[1]; t.textContent = it[2]; bar.appendChild(t); }
+      else if (it[0] === "sep") bar.appendChild(el("div", "tab-group-sep"));
+      else { const a = el("div", "tab tab-add"); a.textContent = "+"; bar.appendChild(a); }
+    }
+    paintTabRowLines(bar);
+    ensureTabRowObserver(bar);
+  },
+  width(w: number) { barbox.style.width = w + "px"; },
+  drag(id: string | null) { draggedId = id; },
+  paint() { paintTabRowLines(bar); },
+  mark() { Array.from(bar.querySelectorAll(".tab-keep-break")).forEach((k, i) => { (k as HTMLElement).dataset.probe = "k" + i; }); },
+  frames() { return new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))); },
+  survey() {
+    const kids = Array.from(bar.children) as HTMLElement[];
+    const opener = (k: HTMLElement) => k.classList.contains("tab-group-head") || (k.classList.contains("tab-group-sep") && !k.classList.contains("tab-group-break"));
+    const bad: string[] = [];
+    for (let i = 0; i < kids.length - 1; i++) {
+      const k = kids[i], n = kids[i + 1];
+      if (!opener(k) || !n.classList.contains("tab") || !n.dataset.id || n.offsetTop === k.offsetTop) continue;
+      if (k.offsetWidth + n.offsetWidth > bar.clientWidth) continue;   // a pair no row can hold: accepted
+      bad.push(k.textContent + "@" + k.offsetTop + " over " + n.dataset.id + "@" + n.offsetTop);
+    }
+    const rows = new Map<number, number>();
+    for (const k of kids) {
+      if (!(k.classList.contains("tab") || k.classList.contains("tab-group-head") || (k.classList.contains("tab-group-sep") && !k.classList.contains("tab-group-break")))) continue;
+      rows.set(k.offsetTop, Math.max(rows.get(k.offsetTop) ?? 0, k.offsetTop + k.offsetHeight));
+    }
+    const bottoms = [...rows.values()].sort((x, y) => x - y); bottoms.pop();
+    const lines = Array.from(bar.querySelectorAll(".tab-row-line")).map((l) => parseFloat((l as HTMLElement).style.top));
+    const keeps = Array.from(bar.querySelectorAll(".tab-keep-break")) as HTMLElement[];
+    // the strip in DOM order, lines and the sentinel left out: what the drag's virtual layout reads
+    const order = kids.filter((k) => !k.classList.contains("tab-row-line") && !k.classList.contains("tab-row-sentinel"))
+      .map((k) => k.dataset.id || k.dataset.group || (k.classList.contains("tab-keep-break") ? "keep:" + (k.dataset.probe || "?") : k.className));
+    return { bad, lines, bottoms, keeps: keeps.length, probes: keeps.map((k) => k.dataset.probe || null), order,
+             height: bar.offsetHeight, width: bar.clientWidth, rows: rows.size, errs: errs.slice(),
+             sentinels: bar.querySelectorAll(".tab-row-sentinel").length,
+             sentinelW: (bar.querySelector(".tab-row-sentinel") as HTMLElement | null)?.getBoundingClientRect().width ?? -1,
+             sentinelH: (bar.querySelector(".tab-row-sentinel") as HTMLElement | null)?.getBoundingClientRect().height ?? -1 };
+  },
+};
+`;
+}
+
+function bundle(): string {
+  const esbuild = requireCjs("esbuild");
+  const r = esbuild.buildSync({
+    stdin: { contents: probeSource(), resolveDir: UI, loader: "ts", sourcefile: "tab-row-keep-probe.ts" },
+    bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
+    nodePaths: [path.join(EXT, "node_modules")], logLevel: "silent",
+  });
+  return r.outputFiles[0].text;
+}
+// the strip under the real sheet (its @import and font urls 404 here, harmlessly); #tabbar's width is the probe's dial
+const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/styles.css>
+<style>body{margin:0}</style></head>
+<body><div id=tabbar style="width:900px"><div id=tabs></div></div><script src=/probe.js></script></body></html>`;
+
+// the demo world: web with three tabs, api with two, tests folded (no tab follows), the trail with one
+const SPEC = [["head", "web"], ["tab", "a1", "web-frontend"], ["tab", "a2", "web-backend"], ["tab", "a3", "web-gateway"],
+              ["head", "api"], ["tab", "b1", "api-billing"], ["tab", "b2", "api-search"],
+              ["head", "tests"], ["sep"], ["tab", "t1", "scratch"], ["add"]];
+
+type Survey = { bad: string[]; lines: number[]; bottoms: number[]; keeps: number; probes: (string | null)[]; order: string[];
+  height: number; width: number; rows: number; errs: string[]; sentinels: number; sentinelW: number; sentinelH: number };
+
+async function withPage(t: any, body: (page: any, probe: { survey: () => Promise<Survey>; frames: () => Promise<void> }) => Promise<void>): Promise<void> {
+  let pw: any = null;
+  try { pw = requireCjs("playwright"); } catch { pw = null; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
+  let browser: any;
+  try { browser = await pw.chromium.launch(); }
+  catch (e) { t.skip("no playwright chromium on this box (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 400 } });
+    const pageErrors: string[] = [];
+    page.on("pageerror", (e: Error) => { pageErrors.push(e.message); });
+    const js = bundle();
+    await page.route("http://romp.test/**", (route: any) => {
+      const u = new URL(route.request().url());
+      if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE });
+      if (u.pathname === "/probe.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
+      if (u.pathname === "/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: CSS });
+      return route.fulfill({ status: 404, body: "" });
+    });
+    await page.goto("http://romp.test/page");
+    await page.evaluate(() => document.fonts.ready);   // the fonts' once-paint has run before the test's own paints
+    await page.evaluate((spec: unknown) => (window as any).__probe.build(spec), SPEC);
+    assert.deepEqual(pageErrors, [], "the slices ran against the stand-in (a ReferenceError here means render.ts grew a dependency the probe lacks)");
+    const survey = (): Promise<Survey> => page.evaluate(() => (window as any).__probe.survey());
+    const frames = (): Promise<void> => page.evaluate(() => (window as any).__probe.frames());
+    await body(page, { survey, frames });
+  } finally {
+    await browser.close();
+  }
+}
+
+const loopNotice = (errs: string[]) => errs.filter((m) => /ResizeObserver loop/.test(m));
+
+test("in Chromium, through the live observer: a narrowing that adds and drops rows raises no loop notice (the observer watches the width sentinel, whose height the pass cannot change), and the invariant and the hairlines hold at every width", async (t) => {
+  await withPage(t, async (page, { survey, frames }) => {
+    let s = await survey();
+    let flips = 0, heightFlips = 0, withKeeps = 0, steps = 0, sentinelFollows = true;
+    let prev = s;
+    for (let w = 880; w >= 200; w -= 4) {
+      await page.evaluate((w: number) => (window as any).__probe.width(w), w);
+      await frames();
+      s = await survey();
+      steps++;
+      assert.ok(s.width < prev.width, "the strip took the width at " + w);
+      sentinelFollows = sentinelFollows && s.sentinelW === s.width && s.sentinelH === 0;
+      assert.deepEqual(s.bad, [], "no opener ends a row above its first tab at " + w + ": " + JSON.stringify(s.bad));
+      assert.deepEqual(s.lines, s.bottoms, "a hairline under every row but the last at " + w);
+      if (s.keeps) withKeeps++;
+      if (s.keeps !== prev.keeps) { flips++; if (s.height !== prev.height) heightFlips++; }
+      prev = s;
+    }
+    assert.ok(withKeeps > 0 && flips > 0 && heightFlips > 0, `the sweep exercised the pass through the observer: ${steps} widths, ${withKeeps} with a keep break, ${flips} flips, ${heightFlips} changing the strip's height`);
+    assert.deepEqual(loopNotice(s.errs), [], "no 'ResizeObserver loop completed with undelivered notifications' window error across the sweep");
+    assert.deepEqual(s.errs, [], "no window error at all");
+    // the sentinel: one, a child of the strip, as wide as it and zero tall at every width
+    assert.equal(s.sentinels, 1, "one sentinel in the strip");
+    assert.ok(sentinelFollows, "the sentinel followed the strip's width at zero height through the sweep");
+  });
+});
+
+test("in Chromium, mid-drag: a width change runs the painter through the observer and the keep breaks stand where the drag found them, the same elements in the same places; the paint after dragend re-places them as a fresh paint would", async (t) => {
+  await withPage(t, async (page, { survey, frames }) => {
+    const setWidth = async (w: number) => { await page.evaluate((w: number) => (window as any).__probe.width(w), w); await frames(); return survey(); };
+    const norm = (order: string[]) => order.map((x) => x.replace(/^keep:.*/, "keep"));
+    // w0: the first width from wide to narrow where the pass placed a break; w1: a narrower width where a fresh paint
+    // lays the breaks elsewhere (else the freeze would prove nothing). Both found with no drag in progress
+    let w0 = 0, s = await survey();
+    for (let w = 880; w >= 200 && !s.keeps; w -= 4) { s = await setWidth(w); w0 = w; }
+    assert.ok(s.keeps > 0, "a width with a keep break exists in the demo world");
+    const at0 = norm(s.order);
+    let w1 = 0, fresh1: Survey | null = null;
+    for (let w = w0 - 4; w >= 200 && !fresh1; w -= 4) { const f = await setWidth(w); if (JSON.stringify(norm(f.order)) !== JSON.stringify(at0)) { w1 = w; fresh1 = f; } }
+    assert.ok(fresh1, "a narrower width lays the breaks elsewhere");
+    s = await setWidth(w0);
+    assert.deepEqual(norm(s.order), at0, "back at w0 the observer's paint gives the w0 layout again: the pass is a pure function of the width");
+    await page.evaluate(() => (window as any).__probe.mark());
+    const before = await survey();
+    assert.deepEqual(before.probes, before.probes.map((_, i) => "k" + i), "the breaks at dragstart, marked");
+    // the drag: a real width change (a scrollbar, a pane resize) while a1 is dragged
+    await page.evaluate(() => (window as any).__probe.drag("a1"));
+    const during = await setWidth(w1);
+    assert.equal(during.width, fresh1!.width, "the strip took the width");
+    assert.deepEqual(during.probes, before.probes, "the same break elements: none removed, none added");
+    assert.deepEqual(during.order, before.order, "the strip's order, breaks included, as the drag found it");
+    assert.deepEqual(during.lines, during.bottoms, "the hairlines still follow the rows as they now stand");
+    assert.notDeepEqual(norm(during.order), norm(fresh1!.order), "which is not the layout a paint at this width gives: the pass did not run");
+    // dragend: the rebuild re-places the breaks from the layout as it stands
+    await page.evaluate(() => (window as any).__probe.drag(null));
+    await page.evaluate(() => (window as any).__probe.paint());
+    const after = await survey();
+    assert.deepEqual(norm(after.order), norm(fresh1!.order), "the paint after dragend equals a fresh paint at this width");
+    assert.deepEqual(after.bad, [], "and the invariant holds again");
+    assert.deepEqual(loopNotice(after.errs), [], "no loop notice through the drag either");
+  });
+});
