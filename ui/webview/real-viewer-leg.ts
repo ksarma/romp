@@ -86,7 +86,8 @@ export const scriptLiteral = (x: unknown): string => JSON.stringify(x).replace(/
  *  `window.__docs[path]` is the file's text and `window.__mtime` its mtime (both editable from a test); a URL the URL viewer
  *  fetches is answered from `window.__urls[url]` as text/markdown. The poster records every post in `window.__posted` and
  *  answers a `fileComments` ask with a `fileCommentsResult` carrying STATUS and the current mtime while `window.__autoReply`
- *  is on. `window.__paints` counts the seam's onRendered (one per text paint, and one per reflow). */
+ *  is on. `window.__paints` counts the seam's onRendered (one per text paint, and one per reflow), `window.__reflows` the
+ *  reflows among them (`why` "reflow"), so `__paints - __reflows` is the paints proper. */
 export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, theme = ""): string {
   // The sheets in the kernel's order (_chat_page, _feed_page and _files_page in kernel/kernel.py): the surface's sheet (a
   // <link> there), then a <style> holding THEME_CSS and, on the Files pane, files-pane.css after it. `theme` is that
@@ -109,7 +110,7 @@ window.fetch = async function (url) {
   if (/\.svg$/i.test(p)) return new Response(text, { status: 200, headers: { "Content-Type": "image/svg+xml", "X-Romp-Mtime-Ns": window.__mtime } });   // an image: no text header, as the kernel sends it
   return new Response(text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": "1" } });
 };
-window.__paints = 0; window.__seam = null; window.__autoReply = true;
+window.__paints = 0; window.__reflows = 0; window.__seam = null; window.__autoReply = true;
 FV.initFileView(function (m) {
   window.__posted.push(m);
   if (m && m.type === "fileComments" && window.__autoReply) {
@@ -117,7 +118,7 @@ FV.initFileView(function (m) {
     setTimeout(function () { window.dispatchEvent(new MessageEvent("message", { data: reply })); }, 0);
   }
 });
-FV.registerFileViewAction({ id: "probe", mount: function (ctx) { window.__seam = ctx; ctx.onRendered(function () { window.__paints++; }); return null; } });
+FV.registerFileViewAction({ id: "probe", mount: function (ctx) { window.__seam = ctx; ctx.onRendered(function (why) { window.__paints++; if (why === "reflow") window.__reflows++; }); return null; } });
 // what the legs read: the top-visible block of the Rendered view (the first child of .fileview-md whose box ends below the
 // body's top edge) or row of the Raw view, its first characters and its top edge measured from the body's top
 window.topBlock = function () {

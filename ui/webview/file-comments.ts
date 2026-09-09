@@ -1183,7 +1183,13 @@ class Panel {
     ctx.body().addEventListener("load", this.hideFloatOnScroll, true);
     ctx.body().addEventListener("scroll", this.hideFloatOnScroll, { passive: true });
     ctx.onSelection((sel) => this.onSelection(sel));
-    ctx.onRendered(() => { this.hideFloat(); this.retargetComposer(); this.paintAll(); });
+    // a PAINT (new nodes): the whole pass over the body. A REFLOW (the same nodes at a new width or text size, a pane drag's
+    // every frame): the marks stand around the same characters, so only what was MEASURED from the text is redone, the
+    // cards' places (scheduleLayout, one pass per frame) and the float, which sat by a passage that has moved. Until
+    // 2026-09-09 a reflow ran paintAll too, unwrapping and re-wrapping every highlight and change mark and rebuilding the
+    // aside, once per frame of a drag: 1.1 s a frame at 3,000 lines with 200 comments and 200 changes (bench
+    // tools/viewer-resize-bench.ts), and the whole dashboard stalled for the drag on a bigger file.
+    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") this.scheduleLayout(); else this.paintAll(); });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
       if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)

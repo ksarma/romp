@@ -818,7 +818,7 @@ test("the floating Comment button rides the seam's selection hook — before the
 test("the seam in file-view.ts: every member exists, hooks fire where they should, and both exits drain the close hooks", () => {
   for (const m of ["body(): HTMLElement;", 'mode(): "raw" | "rendered" | "media";', "text(): string | null;", "mtimeNs(): string;",
     'media(): "image" | "pdf" | "svg" | null;', "mediaElement(): HTMLImageElement | HTMLElement | null;", "renderedImages(): HTMLImageElement[];",
-    "pdfPages(): HTMLElement[];", "identity(): FileViewIdentity | null;", "onRendered(cb: () => void): void;",
+    "pdfPages(): HTMLElement[];", "identity(): FileViewIdentity | null;", "onRendered(cb: (why?: FileViewRenderWhy) => void): void;",
     "onSelection(cb: (sel: Selection) => void): void;", "onSaved(cb: (info: { mtimeNs: string; logged: boolean }) => void): void;",
     "onClose(cb: () => void): void;", "post(m: Record<string, unknown>): void;", "ensureEditingAllowed(refusal?: string): Promise<boolean>;",
     "setEditBlocked(reason: string | null): void;", "aside(el: HTMLElement | null): void;", 'setMode(mode: "raw" | "rendered"): void;',

@@ -591,10 +591,13 @@ test("a size step fires onRendered once (the panel re-runs its paint pass over t
   o.up.click();
   assert.equal(paints, at, "at the end of the table nothing changed, so nothing fired (no move without new information)");
   // the panel's side of the contract: its onRendered hides the floating Comment button (placed by a passage that has
-  // moved) and re-runs the paint pass that wraps the highlights around the text again
-  assert.match(PANEL, /ctx\.onRendered\(\(\) => \{ this\.hideFloat\(\); [^\n]*this\.paintAll\(\); \}\);/, "file-comments.ts answers onRendered with paintAll");
-  assert.match(VIEW, /onRendered\(cb: \(\) => void\): void;/);
-  assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged: a text-size step/, "the seam's doc names the reflow triggers");
+  // moved) and, told the call is a REFLOW (`why`), re-places its cards over the moved text and leaves its marks standing,
+  // since the nodes are the same (2026-09-09: the whole paint pass ran here once per frame of a pane drag, unwrapping and
+  // re-wrapping every mark, and stalled the dashboard on a big reviewed file; file-view-reflow-browser.test.ts); a paint
+  // proper still runs the pass
+  assert.match(PANEL, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); [^\n]*if \(why === "reflow"\) this\.scheduleLayout\(\); else this\.paintAll\(\); \}\);/, "file-comments.ts answers a reflow with scheduleLayout and a paint with paintAll");
+  assert.match(VIEW, /onRendered\(cb: \(why\?: FileViewRenderWhy\) => void\): void;/);
+  assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged \(`why` "reflow"\): a text-size step/, "the seam's doc names the reflow triggers");
   // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:
   // a selection over a highlight lost the end inside the mark); the body-replacing paints keep nothing
   assert.equal((VIEW.match(/if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(/g) || []).length, 2, "the step and the width's frame, each seating the reader's place after the selection is put back (Slice 2 of plans/markdown-viewer.md)");
