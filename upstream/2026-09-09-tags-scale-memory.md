@@ -3,7 +3,7 @@ title: Tags-scale test: shim nodes inspect as a projection, so a failing asserti
 status: candidate
 where: ui/timeline-tags-scale.test.ts (hideEdges in makeNode, the header note, one new test); vscode-extension/package.json (the test script passes --max-old-space-size). Their PR #1198 carries the same test file
 added: 2026-09-09
-pr:
+pr: 523
 tier: docs
 offered:
 closed:
