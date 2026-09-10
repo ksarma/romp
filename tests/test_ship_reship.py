@@ -43,10 +43,10 @@ The guards here:
     reload fire on the next task, and the notice the nack raised (the file was not saved, the
     held message not sent) must be shown again by the fresh page, once.
   * RelaunchEnv, which runs everywhere: the relaunch stanza the lab writes to its cfg.json for the
-    driver's relaunch of the kernel carries only the environment the relaunched kernel needs, never
-    the runner's whole environment (a runner variable planted as a probe is absent; the lab's own
-    names, the run's private roots and its git isolation present); the served legs check the
-    written file itself.
+    driver's relaunch of the kernel carries only the names the relaunched kernel needs (a name
+    planted in the lab kernel's environment as a probe is absent, and so is a ROMP_TESTS_ name, the
+    run's own, wherever it came from; the lab's own names, the run's private roots and its git
+    isolation present); the served legs check the written file itself.
 
 All fixtures synthetic.
 """
@@ -156,15 +156,22 @@ def _free_port():
 # Never the runner's whole environment: on a machine whose shells carry API keys, a copy of os.environ in that file
 # holds them for the run. The lab's own kernel is started from this process and gets its environment by process,
 # as any child does; only what goes to the file is narrowed.
+# Never a ROMP_TESTS_* name either, the prefix tests/conftest.py exports the run's own names under
+# (ROMP_TESTS_SYSTEM_TMPDIR): no kernel reads one, so whether the lab kernel's environment carries one from the
+# runner or from the lab itself, the file never does.
 RELAUNCH_ENV_PREFIXES = ("ROMP_", "XDG_")
+RELAUNCH_ENV_EXCLUDED_PREFIXES = ("ROMP_TESTS_",)
 RELAUNCH_ENV_NAMES = frozenset(("CLAUDE_CONFIG_DIR", "PATH", "HOME", "TMPDIR", "TMUX_TMPDIR",
                                 "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"))
 
 
 def relaunch_env(env):
     """The part of a lab kernel's environment `env` that a served lab writes to its cfg.json for the driver's
-    relaunch of the kernel."""
-    return {k: v for k, v in env.items() if k.startswith(RELAUNCH_ENV_PREFIXES) or k in RELAUNCH_ENV_NAMES}
+    relaunch of the kernel: the RELAUNCH_ENV_PREFIXES names and RELAUNCH_ENV_NAMES, less the ROMP_TESTS_* names
+    (RELAUNCH_ENV_EXCLUDED_PREFIXES), which are the run's own and which no kernel reads."""
+    return {k: v for k, v in env.items()
+            if (k.startswith(RELAUNCH_ENV_PREFIXES) or k in RELAUNCH_ENV_NAMES)
+            and not k.startswith(RELAUNCH_ENV_EXCLUDED_PREFIXES)}
 
 
 def relaunch_cfg(env, klog):
@@ -469,6 +476,30 @@ class RelaunchEnv(unittest.TestCase):
         self.assertEqual(out["ROMP_KERNEL_PORT"], "4321")
         for name in ("TMPDIR", "TMUX_TMPDIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"):
             self.assertEqual(out.get(name), runner[name], "the run's %s reaches the relaunched kernel" % name)
+
+    def test_the_runs_own_names_never_reach_the_relaunch_env(self):
+        # a name under the prefix tests/conftest.py exports the run's own names under (ROMP_TESTS_SYSTEM_TMPDIR), which
+        # no kernel reads, in the runner's shell: the lab's own kernel inherits it by process with the rest of the
+        # runner's environment (kernel_env is the runner's with the lab's names over it), and the file the relaunch
+        # reads must not carry it. The other half of upstream's pin, a live session's ROMP_MANAGER_PID, ROMP_SID,
+        # ROMP_SESSION_NAME and ROMP_BIN in the runner reaching neither the lab kernel nor the file, needs a kernel_env
+        # built from names (romp-on/romp#1262, the served-fixture-env-whitelist ledger entry) and arrives with it.
+        lab = os.path.join(os.sep, "lab")
+        with mock.patch.dict(os.environ, {"ROMP_TESTS_PROBE": os.path.join(lab, "probe")}):
+            env = _ShipLab.kernel_env(lab, os.path.join(lab, "claude"), os.path.join(lab, "dist"), 4321, "testtok")
+        self.assertIn("ROMP_TESTS_PROBE", sorted(env), "the lab's own kernel inherits the runner's environment, by process")
+        written = sorted(relaunch_cfg(env, os.path.join(lab, "kernel.log"))["env"])
+        self.assertNotIn("ROMP_TESTS_PROBE", written,
+                         "a ROMP_TESTS_ name is the run's own: the relaunched kernel reads none, the file must not carry one")
+        # the same name put in the lab kernel's environment by the lab itself, the way the served labs plant their
+        # probe, and the name conftest exports for this very run: the file carries neither
+        env = _ShipLab.kernel_env(lab, os.path.join(lab, "claude"), os.path.join(lab, "dist"), 4321, "testtok")
+        env["ROMP_TESTS_PROBE"] = os.path.join(lab, "probe")
+        written = sorted(relaunch_cfg(env, os.path.join(lab, "kernel.log"))["env"])
+        self.assertEqual([k for k in written if k.startswith("ROMP_TESTS_")], [],
+                         "planted by the lab or inherited from the runner, the file never carries a ROMP_TESTS_ name")
+        for name in ("ROMP_KERNEL_PORT", "ROMP_SERVE_TOKEN", "ROMP_DIST_DIR", "ROMP_MODEL_CATALOG"):
+            self.assertIn(name, written, "the lab's own %s still reaches the relaunched kernel" % name)
 
 
 class ServedWedge(_ShipLab):

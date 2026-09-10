@@ -148,5 +148,43 @@ One it leaves alone keeps pytest's own rendering.
 `tests/test_env_value_redaction.py` pins the rule, the write-time capture,
 the patterns, the scrub's cost and the hook end to end.
 
+**A lab kernel's environment is built from a list of names, and the file a
+relaunch reads from carries a shorter list.** Every module that boots a hermetic
+kernel (`bin/romp-kernel` under a lab's own `XDG_STATE_HOME`,
+`CLAUDE_CONFIG_DIR` and `ROMP_DIST_DIR`, at a free port with a synthetic serve
+token) builds its environment with `kernel_env` in `tests/test_ship_reship.py`,
+never from a copy of the runner's. A run from a shell on a machine running romp
+carries the live kernel's exports, and a lab kernel that inherited them exited
+when the live manager restarted (`ROMP_MANAGER_PID`, the kernel's parent-death
+watchdog), bound where the live kernel serves (`ROMP_SERVE_HOST`) and dialled
+the machine's postal bus, or started one that nothing stops. From the runner
+`kernel_env` takes `PATH`, `HOME`, the `XDG_*` names and, of the floor
+`tests/conftest.py` sets for the run's children, `TMPDIR`, `TMUX_TMPDIR`,
+`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`, `ROMP_SERVICE_ENV_FILE`,
+`ROMP_SERVICE_ENV`, `ROMP_CLAUDE_BIN` and `ROMP_CLI_SCOPE`; over those go the
+lab's roots and seams, any seam the lab adds by keyword, and a postal bus of its
+own that is never started (`ROMP_POSTAL_PORT` at a free port,
+`ROMP_POSTAL_PEERS=0`, `ROMP_POSTAL_CLIENT_ONLY=1`). The served labs whose
+driver kills and relaunches the kernel (`test_ship_reship.py`,
+`test_dashboard_reload_served.py`) write the relaunch's command, environment and
+log to the lab's `cfg.json` through `relaunch_cfg`, and the environment in that
+file is narrowed once more by `relaunch_env`: the `ROMP_*` and `XDG_*` names,
+`CLAUDE_CONFIG_DIR`, `PATH`, `HOME`, `TMPDIR`, `TMUX_TMPDIR`,
+`GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`, less the `ROMP_TESTS_*` names,
+which conftest exports for the run's own tests (such as
+`ROMP_TESTS_SYSTEM_TMPDIR` above) and no kernel reads. Nothing else a lab put in
+its kernel's environment reaches the file; each served lab plants a probe name
+in that environment and checks the written file for its absence. To give a lab
+kernel another name of the runner's, add the name to the list with its reason
+beside it. `LabKernelEnv` and `RelaunchEnv` in `tests/test_ship_reship.py` pin
+both functions; the served legs check the file itself.
+
+On this fork, until upstream's romp-on/romp#1262 folds (the
+served-fixture-env-whitelist ledger entry), `kernel_env` is
+`_ShipLab.kernel_env`, the runner's environment with the lab's names over it,
+used by the two served labs above alone, and there is no `LabKernelEnv`; the
+relaunch narrowing, the `ROMP_TESTS_` exclusion and the served labs' file
+checks hold as described, pinned by `RelaunchEnv`.
+
 `fixtures/` must stay SYNTHETIC: invented prompts, placeholder UUIDs, hostname
 `TESTHOST` — never real session data.
