@@ -3298,6 +3298,50 @@ class UnknownSessionRefused(_RouteServer):
             km._thread_reg_failed.clear()
 
 
+class NamesSnapshotMemoRace(unittest.TestCase):
+    """_names_snapshot fills and evicts the module-level _names_entry_memo from the pusher thread and from every
+    handler thread that resolves a name (the client doors' by-name read, round 10 of the unknown-name PR), and
+    its eviction walked the LIVE dict outside the try, so a size change by another thread mid-walk raised
+    RuntimeError('dictionary changed size during iteration') out of the function: on the pusher thread nothing
+    catches it (the pusher died until a restart), and on a door thread _unreadable_dormant_named swallowed it
+    and fell to the live map with nothing logged. The eviction walks a copy of the keys inside the try now, so
+    the function keeps its never-raise contract, and the lookup says when it failed (review round 11,
+    2026-09-10; the shape was the base's, reached from handler threads before this PR widened it). The race is
+    made deterministic: a dict subclass whose iteration inserts a key mid-walk, the exact exception a
+    concurrent insert raises."""
+
+    SID = "abab1111-cccc-dddd-eeee-ffffffffffff"
+
+    def setUp(self):
+        km.NAMES.mkdir(parents=True, exist_ok=True)
+        (km.NAMES / self.SID).write_text("race-web\t/work/race-web\n")
+        self.addCleanup(_unregister, self.SID)
+
+    def test_the_eviction_survives_a_size_change_mid_walk(self):
+        class Racing(dict):
+            # the built-in iterator, so the insert raises exactly what a concurrent insert raises
+            def __iter__(self):
+                first = True
+                for k in dict.__iter__(self):
+                    if first:
+                        self["intruder-" + k] = (((0, 0, 0), ["x"]))
+                        first = False
+                    yield k
+        memo = Racing({"stale-entry": ((0, 0, 0), ["gone"])})
+        with mock.patch.object(km, "_names_entry_memo", memo):
+            snap = km._names_snapshot()
+        self.assertEqual(snap.get(self.SID), ["race-web", "/work/race-web"], "the snapshot is read whole")
+        self.assertIn(self.SID, memo, "the fresh entry was memoized")
+
+    def test_a_failed_registry_lookup_is_said_before_the_live_map_decides(self):
+        err = io.StringIO()
+        with mock.patch.object(km, "_names_snapshot", side_effect=RuntimeError("dictionary changed size during iteration")), \
+             contextlib.redirect_stderr(err):
+            self.assertIsNone(km._unreadable_dormant_named("race-web"))
+        self.assertIn("'race-web'", err.getvalue(), "the name is in the log line")
+        self.assertIn("RuntimeError('dictionary changed size during iteration')", err.getvalue(), "and the exception")
+
+
 class CodexRuntimeSelection(unittest.TestCase):
     # The kernel loads codex_backend.py through load_source (kernel/loadsource.py), the fork's loader kept
     # over upstream's SourceFileLoader.load_module() in the 2026-09-07 fold (a standing fork ruling): patch that.

@@ -1930,10 +1930,16 @@ def _names_snapshot():
         #                         runs on the pusher thread's bare loop, so it must NEVER raise (review
         #                         find 2026-08-31: one non-UTF-8 entry would have killed the pusher for
         #                         good, and again on every restart while the file persisted)
+        # the eviction walks a COPY of the memo's keys, inside the try: the memo is a module dict that this
+        # function fills and evicts from the pusher thread and from every handler thread that resolves a
+        # name (the client doors' by-name read since round 10 of the unknown-name PR), and a size change by
+        # another thread mid-walk raised RuntimeError out of a comprehension over the live dict, past the
+        # never-raise contract above (review round 11, 2026-09-10; the shape was the base's, reached from
+        # handler threads before, and the pusher would have died until a restart)
+        for gone in [n for n in list(_names_entry_memo) if n not in snap]:
+            _names_entry_memo.pop(gone, None)          # a removed entry drops its memo
     except Exception:
         pass
-    for gone in [n for n in _names_entry_memo if n not in snap]:
-        _names_entry_memo.pop(gone, None)              # a removed entry drops its memo
     return snap
 
 
@@ -27095,7 +27101,10 @@ def _unreadable_dormant_named(name):
                 return sid
             if torn is None and _reg_unreadable(sid):
                 torn = sid
-    except Exception:
+    except Exception as e:
+        # said, never a silent fall to the live map (the fail-loudly rule; review round 11, 2026-09-10: a
+        # RuntimeError from the memo's eviction landed here with nothing logged and the map decided the name)
+        sys.stderr.write("names registry: the by-name lookup of %r failed (%r); the live map decides the name\n" % (name, e))
         return None
     return torn
 
