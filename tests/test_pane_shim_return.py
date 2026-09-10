@@ -575,7 +575,7 @@ class ReconnectFlag(unittest.TestCase):
     is served skeletons that fill on click or in idle (stated at the kernel's accept). The twin-retire at
     registration was rejected as the signal: it misses a socket the kernel already dropped."""
 
-    def test_the_first_dial_has_no_flag_and_every_redial_after_the_bundles_ready_carries_it_after_iid_and_active(self):
+    def test_the_first_dial_has_no_flag_and_a_redial_after_the_bundles_ready_left_on_a_socket_carries_it_after_iid_and_active(self):
         r = _run(r"""
 function redial(){var live=timers.filter(function(t){return t.live&&t.fn.name==="connect";});live[live.length-1].fn();}
 var first=sockets[0].url;

@@ -423,7 +423,8 @@ class SkeletonReconnect(unittest.TestCase):
         self.assertIn('+((everConnected&&bundleReady&&!readyQueued)?"&reconnect=1":"")', km._shim("chat", 1),
                       "the shim declares the redial once the page has held a socket AND its bundle has said ready AND that "
                       "ready is not still queued for the open (a first socket that died before the bundle evaluated held "
-                      "nothing, and so did one whose bundle said ready only after it died; tests/test_chat_skeleton_reconnect_gate.py)")
+                      "nothing, and so did one whose bundle said ready only after it died): the dial term is "
+                      "everConnected&&bundleReady&&!readyQueued, on connect()'s new WebSocket line in the kernel's shim")
         s = inspect.getsource(km.Handler._ws)
         self.assertIn('reconnect = (q.get("reconnect") or [""])[0] == "1"', s)
         self.assertIn('client["reconnect"] = True', s)

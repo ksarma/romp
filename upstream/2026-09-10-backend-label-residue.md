@@ -8,7 +8,7 @@ tier: fix
 offered:
 closed:
 ---
-Upstream https://github.com/romp-on/romp/pull/1199 renamed the SDK and tmux labels a person reads to Claude Code and Claude Code (tmux), but these user-facing strings kept the old words. The fold renamed them with the docs, and ui/webview/backend-names.test.ts now pins the retired phrases in kernel/kernel.py and kernel/sdk_backend.py. kernel/kernel.py:52998, docs/reference.md:2337 and tests/test_api_health_hover_browser.py:412 and :821 (the api-health hover's tmux count) are absent at the fold tip 459e50d6 but reached upstream with their PR 1197 (merge c830620a, after the tip) carrying the old wording, so they are shared going forward and stay in where:.
+Upstream https://github.com/romp-on/romp/pull/1199 renamed the SDK and tmux labels a person reads to Claude Code and Claude Code (tmux), but these user-facing strings kept the old words. The fold renamed them with the docs, and ui/webview/backend-names.test.ts now pins the retired phrases in kernel/kernel.py and kernel/sdk_backend.py. kernel/kernel.py:52998 and docs/reference.md:2337 are absent at the fold tip 459e50d6 but reached upstream with their PR 1197 (merge c830620a, after the tip) carrying the old wording, and tests/test_api_health_hover_browser.py:412 and :821 (the api-health hover's tmux count) reached upstream with their PR 1203 (merge 4a31744cc, also after the tip), so all three are shared going forward and stay in where:.
 
 Remaining after the fold (shared with upstream verbatim, left for this offer to carry as one PR with the test):
 bin/romp help rows 670, 675, 676, 677, 678 and 708 ("SDK by default", "for the SDK session", "running SDK session's",
@@ -18,10 +18,10 @@ bin/romp-sdk-setup 231 ("only the SDK backend (plain romp new) is disabled."), k
 (the base-class MCP status and MCP controls replies a Claude Code (tmux) session returns and the MCP panel shows a
 person: "MCP status is available on SDK sessions; this one runs in a terminal" and its controls twin; rename "SDK
 sessions" to "Claude Code sessions" beside the sdk_backend.py MCP replies this entry already renamed; no pins),
-docs/read-side.md 219 and 221 (the delivery-leg labels "**SDK session**" and "**tmux session on Claude Code ...**"),
+docs/read-side.md 221 and 223 (the delivery-leg labels "**SDK session**" and "**tmux session on Claude Code ...**"),
 docs/reference.md 2053 ("SDK-backed sessions", the sdkSessionsLive gloss), 2057 and 2156 ("tmux-backed sessions").
-docs/reference.md 1271 ("an SDK-driven CLI") and docs/read-side.md 345 ("an SDK send") describe the Agent SDK
-mechanism and stay by rule. The KINDLBL sdk chip at kernel.py 51992 is a deliberate exception, not an identifier: its
+docs/reference.md 1271 ("an SDK-driven CLI") and docs/read-side.md 347 ("an SDK send") describe the Agent SDK
+mechanism and stay by rule. The KINDLBL sdk chip at kernel.py 51993 is a deliberate exception, not an identifier: its
 value "sdk" is rendered text (the Log popover's filter chip and every sdk entry's chip; pinned by
 tests/test_sdk_error_visibility.py:203), but the chip names the Agent SDK as software, the layer whose errors those
 entries report, and the value is the kind key mirrored in ui/webview/badge-mirror.ts (kind: "sdk"), so it stays; the

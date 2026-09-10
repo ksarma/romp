@@ -136,8 +136,8 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   for a reload or a tab the browser discarded; a `resent: true` copy of the
   `return` row means the kept socket proved dead and the row was re-filed onto
   the redial.
-  A redial from a page whose bundle has said ready declares itself
-  (`reconnect=1` on the `/ws` URL); a redial before the bundle's ready dials as
+  A redial declares itself (`reconnect=1` on the `/ws` URL) once the bundle's ready
+  has left on a socket; before that, or with the ready still queued, it dials as
   a fresh page. The kernel then sends the active tab in full and lists every
   other session as a `skeleton` on the tab strip with one small `status` frame
   each, and the chat pane loads a skeleton on click or one at a time in idle,
