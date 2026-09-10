@@ -522,7 +522,9 @@ test("a skeleton tab is a group's first tab for the keep pass (ruling S2, the 20
   // makeSkeletonTab builds div.tab.tab-skeleton[data-id] (render.ts) and renderTabs appends it where the loaded tab would
   // go, so the pass's first-member read (.tab with a data-id) is true for it; pinned at the source so the model here
   // cannot drift from the builder
-  const sk = RENDER.slice(RENDER.indexOf("function makeSkeletonTab("), RENDER.indexOf("function appendTabCtxGauge("));
+  const skA = RENDER.indexOf("function makeSkeletonTab("), skB = RENDER.indexOf("function appendTabCtxGauge(", skA);
+  assert.ok(skA > 0 && skB > skA, "anchors not found: makeSkeletonTab or appendTabCtxGauge moved; re-anchor");
+  const sk = RENDER.slice(skA, skB);
   assert.match(sk, /el\("div", "tab tab-skeleton"/, "a skeleton wears .tab");
   assert.match(sk, /tab\.dataset\.id = id;/, "…with the id the pass reads");
   assert.match(RENDER, /if \(!first \|\| !first\.classList\.contains\("tab"\) \|\| !first\.dataset\.id\) continue;/,

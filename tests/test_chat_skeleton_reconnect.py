@@ -420,7 +420,9 @@ class SkeletonReconnect(unittest.TestCase):
         self.assertIn("_send_chat_or_status(c, m, ms, change_from, led_changed)", s)
         self.assertNotIn("= _send_chat(c, m, ms, change_from, led_changed)", s,
                          "the pusher's per-client send goes through the skeleton-aware twin")
-        self.assertIn('+(everConnected?"&reconnect=1":"")', km._shim("chat", 1), "the shim declares the redial")
+        self.assertIn('+((everConnected&&bundleReady)?"&reconnect=1":"")', km._shim("chat", 1),
+                      "the shim declares the redial once the page has held a socket AND its bundle has said ready "
+                      "(a first socket that died before the bundle evaluated held nothing; tests/test_chat_skeleton_reconnect_gate.py)")
         s = inspect.getsource(km.Handler._ws)
         self.assertIn('reconnect = (q.get("reconnect") or [""])[0] == "1"', s)
         self.assertIn('client["reconnect"] = True', s)

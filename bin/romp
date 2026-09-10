@@ -2998,7 +2998,7 @@ case "${1:-}" in
             # session runs on the shared app-server and takes none. The kernel refuses too, but with a
             # raw JSON body — this is the same one-line refusal as --model/--effort's, naming the door.
             _why="--codex"; $use_codex || _why="this machine's \`romp engine codex\` default"
-            echo "romp new: --env/--no-env need an SDK session, and $_why makes this a Codex one — a Codex session takes no per-session environment" >&2; exit 2
+            echo "romp new: --env/--no-env need a Claude Code session, and $_why makes this a Codex one — a Codex session takes no per-session environment" >&2; exit 2
         fi
         if [[ -n "$tag_arg" && -z "$msg_arg" ]]; then
             # a tag labels the -m text; without -m there is nothing to label

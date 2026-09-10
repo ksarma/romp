@@ -50966,7 +50966,7 @@ function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // on
 if(returnAt)returnRedialed=true;   // a dial inside a return window (whatever path led here) → the return-fresh row says so
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
 var active="";try{var st0=JSON.parse(localStorage.getItem(SK)||"null");active=(st0&&st0.activeId)||"";}catch(e){}
-ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):"")+(everConnected?"&reconnect=1":""));   // reconnect=1: this page has held a socket before, so it may already hold sessions — the kernel skeletons the tabs it is not looking at (2026-09-07)
+ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):"")+((everConnected&&bundleReady)?"&reconnect=1":""));   // reconnect=1: this page has held a socket before AND its bundle has said ready, so it may already hold sessions; the kernel skeletons the tabs it is not looking at (2026-09-07). A socket that opened and died before the bundle said ready held nothing for the page: that redial carries no term, and the bundle's own ready is served everything whole (2026-09-10; upstream keys on everConnected alone, harmless there because its kernel pops the state on every ready)
 // onopen: flush the queue; a RECONNECT (after a drop) also PROMPTS a reload — the fresh socket resyncs live via
 // the kernel's next push, and the banner offers a full reload for anything a live push doesn't cover. This
 // replaced the old silent location.reload() (the user 2026-07-05: don't foist a reload; let me click). Narrowed by
@@ -51169,14 +51169,16 @@ returnDiag("return",row);});/*end-shim-core*/})();   // filed AFTER the redial s
 """ % (_reload_core(v), app, int(v), caps, NO_STALE_CAP, app, app)
 
 
-def _shim_core_js(app="test", v=0):
+def _shim_core_js(app="test", v=0, caps=""):
     """The shim's decision code alone — the IIFE body between its /*shim-core*/ anchors, formatted for `app` —
     so a node test can run the REAL code (connect/onmessage/onclose, the watchdog, the visibility fast-path,
     the resume stamp, the dispatch FIFO, the return breadcrumbs) at module scope with fakes for Date.now,
     document, WebSocket, MessageChannel and the timers, and read its state back by name. A helper rather than
     a regex in the tests (2026-09-07): test_view_deltas' regex lift of the delta functions is one reflow of its
-    anchor line away from silently matching nothing. Fails loudly if the anchors ever go missing."""
-    js = _shim(app, v)
+    anchor line away from silently matching nothing. Fails loudly if the anchors ever go missing. `caps` reaches
+    the core's CAPS as a page's would, so a test can dial the kernel with the URL the core builds for a
+    READY_GATE_CAP page (tests/test_chat_skeleton_reconnect_gate.py, 2026-09-10)."""
+    js = _shim(app, v, caps)
     a, b = "/*shim-core*/", "/*end-shim-core*/"
     i, j = js.find(a), js.find(b)
     if i < 0 or j < i:
@@ -60233,9 +60235,14 @@ class Handler(BaseHTTPRequestHandler):
             # once the bundle has sent its own, and that re-sent `ready` is NOT a fresh evaluation: the page
             # still holds every session it had. So the reset keeps a declared redial's state, and the
             # pusher's first strip after the re-sent `ready` is the skeleton-marked frame, filled by
-            # _resolve_reconnect. A page reload is a new page whose shim has `everConnected` false, so a
-            # fresh renderer never declares a redial, and its `ready` pops everything: a full strip and full
-            # pushes, as before.
+            # _resolve_reconnect. A fresh renderer declares no redial: a reloaded page's shim has `everConnected`
+            # false on its first dial, and a redial before the bundle has said `ready` carries no term either
+            # (the dial gates on `bundleReady` too, so a first socket that opened and died before the bundle
+            # evaluated does not mark a page that holds nothing; 2026-09-10). So the bundle's own `ready` arrives
+            # on a socket without the flag and pops everything: a full strip and full pushes, as before. The one
+            # residual: a bundle whose `ready` queued while the socket was down set `bundleReady` before the
+            # redial, so that socket carries the term and its flushed `ready` keeps the state; the page is served
+            # skeleton tabs that fill on click or the idle prefetch, never less than it asks for.
             client["redial"] = True
         _register_ws_client(client)
         if client.get("reconnect"):

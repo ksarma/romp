@@ -9,7 +9,10 @@ holds every client that announced READY_GATE_CAP until its bundle says `ready` (
 accept), and its shim re-sends `ready` on a redial once the bundle has sent its own, so on the fork a redial's
 `ready` is NOT a fresh evaluation. The fork keeps upstream's behaviour on both paths with a second flag: `redial`,
 set at accept beside `reconnect` and never consumed, and a reset that keeps a declared redial's skeleton state.
-Path by path, what this module pins:
+That flag made the shim's URL term load-bearing, so the shim declares the redial only once the page has held a
+socket AND its bundle has said `ready` (`everConnected&&bundleReady`, 2026-09-10): a first socket that opened and
+died before the bundle evaluated (the documented mid-load drop) held nothing for the page, and its redial dials as
+a fresh page. Path by path, what this module pins:
 - a redial socket (?caps=readyGate&reconnect=1) is sent NOTHING before its re-sent `ready`: not by the pusher, not by
   the off-cycle push, not by a close confirmation;
 - its first strip after `ready` carries `skeleton`: the reset kept the flag, and the pusher's _resolve_reconnect
@@ -17,7 +20,10 @@ Path by path, what this module pins:
 - a later resolve (activeTab, needFull) fills the set, and the strip says so;
 - a fresh page (no reconnect term) is held the same way, its `ready` pops the state, and its first strip is full
   with no `skeleton` key: every session whole, as before;
-- neither path gets a tabOrder frame from the `ready` handler itself: the guarded push is the only source.
+- neither path gets a tabOrder frame from the `ready` handler itself: the guarded push is the only source;
+- the two halves joined, with the URL the REAL shim builds under node: a page whose first socket opened and died
+  before its bundle's `ready` redials without the reconnect term and its bundle's own `ready` is served everything
+  whole; only a page whose bundle had said `ready` before the drop declares the redial and is served skeletons.
 Synthetic only: the notes-api demo world (web/api/tests/docs), placeholder UUIDs, TESTHOST. Never run raw: the
 loads below set no ROMP_MANAGER_PORT; pytest's conftest poisons the live ports.
 """
@@ -26,8 +32,11 @@ import inspect
 import io
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
+import urllib.parse
 from romp_load import load_source
 from pathlib import Path
 
@@ -54,6 +63,49 @@ TAB_ORDER = [S2, S1, S3, S4]
 SIZES = {S2: 3000, S1: 2000, S3: 1000}        # transcript bytes; S4 has none
 REDIAL = "active=%s&caps=readyGate&reconnect=1" % S1   # what the fork's shim dials after a drop (caps first, reconnect last)
 FRESH = "active=%s&caps=readyGate" % S1               # a page's first socket: the gate announced, no reconnect term
+
+# The browser the shim thinks it runs in, for the tests that dial the kernel with the URL the REAL shim builds
+# (tests/test_pane_shim_return.py runs the same core against the same fakes, in more detail: this is its harness
+# without the record-keeping). `var` at module scope shadows node's own WebSocket / setTimeout / MessageChannel for
+# the core that follows in the same file; the page persisted S1 as its active tab, as the redial reads it.
+_SHIM_HARNESS = r"""
+var NOW=1000000;Date.now=function(){return NOW;};
+var timers=[];var setTimeout=function(fn,ms){timers.push({fn:fn,ms:ms,live:true});return timers.length;};
+var clearTimeout=function(id){if(id&&timers[id-1])timers[id-1].live=false;};
+var setInterval=function(fn,ms){return 1;};
+var docL={};var document={visibilityState:"visible",wasDiscarded:false,
+addEventListener:function(t,f){(docL[t]=docL[t]||[]).push(f);},getElementById:function(){return null;}};
+var window={innerWidth:800,innerHeight:600,parent:{postMessage:function(m){}},
+dispatchEvent:function(e){return true;},sessionStorage:{getItem:function(){return "";}},__rompFed:{inbound:function(h,m){}}};
+var location={protocol:"http:",host:"TESTHOST",search:""};
+var localStorage={getItem:function(){return JSON.stringify({activeId:"%s"});},setItem:function(){}};
+var sockets=[];function WebSocket(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}
+WebSocket.prototype.send=function(s){this.sent.push(s);};WebSocket.prototype.close=function(){this.readyState=3;};
+function MessageChannel(){this.port1={onmessage:null};this.port2={postMessage:function(d){}};}
+function sock(){return sockets[sockets.length-1];}
+function open(){var s=sock();s.readyState=1;s.onopen();return s;}
+function drop(){sock().readyState=3;sock().onclose();var live=timers.filter(function(t){return t.live&&t.fn.name==="connect";});live[live.length-1].fn();}
+""" % S1
+
+
+def _shim_redial_query(scenario):
+    """Run the REAL shim core under node (km._shim_core_js with READY_GATE_CAP announced, as every pane's page
+    announces it) through `scenario`, which drives the first socket to its drop and the redial, and return the
+    query the redial was dialed with minus the page identity (app, delta, iid): the terms the kernel's accept
+    reads (active, caps, reconnect), in the shim's order, ready for _dial."""
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest("node not installed")
+    fx = tempfile.mkdtemp()
+    path = os.path.join(fx, "run.js")
+    with open(path, "w") as f:
+        f.write(_SHIM_HARNESS + km._shim_core_js(app="chat", caps=km.READY_GATE_CAP) + "\n" + scenario
+                + "\nprocess.stdout.write(sock().url);")
+    r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise AssertionError("node failed:\n" + r.stderr)
+    pairs = urllib.parse.parse_qsl(r.stdout.split("?", 1)[1], keep_blank_values=True)
+    return "&".join("%s=%s" % (k, v) for k, v in pairs if k not in ("app", "delta", "iid"))
 
 
 def _sess(sid, n, state):
@@ -264,7 +316,8 @@ class GateDifferential(unittest.TestCase):
     def test_04_a_fresh_page_is_held_the_same_way_and_its_ready_pops_the_state_for_a_full_strip(self):
         c = self._dial(FRESH)
         self.assertIsNone(c.get("reconnect"))
-        self.assertIsNone(c.get("redial"), "a fresh page declares no redial (its shim's everConnected is false)")
+        self.assertIsNone(c.get("redial"), "a fresh page declares no redial (its shim dials with everConnected false, "
+                          "or before its bundle has said ready: test_08)")
         self.assertFalse(c["ready"], "held all the same")
         km._clients.append(c)
         self._every_sender(c)
@@ -297,6 +350,42 @@ class GateDifferential(unittest.TestCase):
         self.assertNotIn("skeleton", self._tab_orders(c)[0])
         self.assertNotIn("skeleton", c)
         self.assertIsNone(c.get("reconnect"), "consumed all the same")
+
+    # ── the two halves joined: the URL the REAL shim dials, served by the real handshake (2026-09-10) ──
+    def test_08_a_first_socket_that_died_before_the_bundles_ready_redials_as_a_fresh_page_and_gets_everything(self):
+        # The documented mid-load drop (the shim's onopen comment: 3/3 headless loads with the first socket dropped
+        # mid-load). The shim's everConnected is true from the first onopen, before the bundle has evaluated; keyed on
+        # it alone the redial would declare itself, the bundle's OWN ready would land on a socket flagged `redial`,
+        # the reset would keep `reconnect`, and _push_one would skeleton every tab for a page that holds nothing
+        # (upstream and the fork before the fold sent everything whole). The term gates on bundleReady too, so this
+        # redial dials as a fresh page and its ready pops the state.
+        q = _shim_redial_query("open();drop();")            # opened, died, redialed: no bundle yet
+        self.assertEqual(q, FRESH, "no reconnect term: the page has held no session")
+        c = self._dial(q)
+        self.assertIsNone(c.get("reconnect"))
+        self.assertIsNone(c.get("redial"))
+        self.assertFalse(c["ready"], "held all the same")
+        km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready"}, c)   # the bundle's own
+        to = self._tab_orders(c)
+        self.assertEqual(len(to), 1)
+        self.assertNotIn("skeleton", to[0], "the full strip")
+        self.assertEqual(sorted(self._sessions(c)), sorted(TAB_ORDER), "every session whole")
+        self.assertEqual(self._statuses(c), [], "no status stand-ins")
+        self.assertNotIn("skeleton", c)
+
+    def test_09_only_a_page_whose_bundle_had_said_ready_before_the_drop_is_served_skeletons(self):
+        # the designed redial, from the same shim: the bundle said ready on the first socket (the page held sessions),
+        # the socket died, the redial declares itself, and the shim's re-sent ready gets the skeleton strip
+        q = _shim_redial_query('open();window.__rompLocalSend({type:"ready"});drop();')
+        self.assertEqual(q, REDIAL, "the reconnect term, after the active hint and the caps")
+        c = self._dial(q)
+        self.assertIs(c.get("redial"), True)
+        km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready"}, c)   # the shim's re-send
+        to = self._tab_orders(c)
+        self.assertEqual(len(to), 1)
+        self.assertEqual(to[0]["skeleton"], [S3, S2])
+        self.assertEqual(self._sessions(c), [S1, S4])
+        self.assertEqual(c["skeleton"], {S2, S3})
 
     # ── the reset, in isolation ──
     def test_06_the_reset_pops_the_state_for_a_fresh_evaluation_and_keeps_it_for_a_declared_redial(self):

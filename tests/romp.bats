@@ -3393,7 +3393,7 @@ PY
     unset ROMP_STATE_DIR                 # the CLI reads default-backend under XDG_STATE_HOME (hermetic here)
     run run_romp new --codex --env FEATURE_FLAG=1 x
     [ "$status" -eq 2 ]
-    [[ "$output" == *"--env/--no-env need an SDK session"* ]]
+    [[ "$output" == *"--env/--no-env need a Claude Code session"* ]]
     [[ "$output" == *"--codex makes this a Codex one"* ]]
     [[ "$output" == *"takes no per-session environment"* ]]
     run run_romp new --codex --no-env x

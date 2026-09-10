@@ -25,7 +25,9 @@ const SHOW_SIG = "function showActive(keep?: { uuid: string; y: number } | null)
 const SHOW_AT = RENDER.indexOf(SHOW_SIG);
 assert.ok(SHOW_AT >= 0, "render.ts: showActive's signature moved; re-anchor SNAP and SHOW");
 const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), SHOW_AT);
-const SHOW = RENDER.slice(SHOW_AT, RENDER.indexOf("function landActive(", SHOW_AT));   // the whole function: a fixed width fell short of the composer lines once upstream #1017's skeleton-click ask joined the loading branch (2026-09-10 fold)
+const SHOW_END = RENDER.indexOf("function landActive(", SHOW_AT);
+assert.ok(SHOW_END > SHOW_AT, "render.ts: landActive moved; re-anchor SHOW");
+const SHOW = RENDER.slice(SHOW_AT, SHOW_END);   // the whole function: a fixed width fell short of the composer lines once upstream #1017's skeleton-click ask joined the loading branch (2026-09-10 fold)
 const TABS = RENDER.slice(RENDER.indexOf("function renderTabs() {"), RENDER.indexOf("function dismissTabMenu() {"));
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
 const DELEGATE = RENDER.slice(RENDER.indexOf('"toggle-group": (el) => {'), RENDER.indexOf('"toggle-group": (el) => {') + 1400);
