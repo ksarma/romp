@@ -30,10 +30,12 @@ update` starts a session called "update".
 
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
 `main`, for new commits, and offers each one once as a banner with an Update button. Update takes
-two clicks: the first turns the button into the restart it is about to run, with a Cancel beside it;
-the second runs it. The armed button names how many sessions the restart stops (every Claude and
-Codex session on the machine) and how many of them it interrupts, with a turn in flight or background
-work running; a tmux session survives a restart and is not counted. The gear's
+two clicks: the first replaces the button with a label naming the restart it is about to run, with a
+red Restart button and a Cancel beside it; the second, on Restart, runs it. The label names how many
+sessions the restart stops (every Claude and Codex session this kernel runs) and how many of them it
+interrupts, with a turn in flight or background work running; a tmux session survives a restart and is
+not counted. When the manager runs more than one kernel, the restart stops the other kernels' sessions
+too: the label says so, and does not count them. The gear's
 **Automatic updates** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
 checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it

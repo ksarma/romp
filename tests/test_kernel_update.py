@@ -864,6 +864,75 @@ class Routes(Fresh):
         finally:
             km._sdk_backend, km._codex_backend = saved
 
+    def test_update_check_says_how_many_other_kernels_the_managers_restart_all_restarts(self):
+        # the counts are this kernel's; the manager's restart-all restarts every kernel in its registry.
+        # otherKernels is read from that registry as the manager itself lists it (GET /status on the
+        # control port, the live map restartAll loops), never from kernels.json: the entries whose port is
+        # not this kernel's. A fake manager answers here; ROMP_MANAGER_PORT points at it for the read
+        import http.server
+        from http.server import ThreadingHTTPServer
+        answer = {"status": 200, "body": ""}
+
+        class FakeManager(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path != "/status":
+                    self.send_response(404); self.end_headers(); return
+                body = answer["body"].encode()
+                self.send_response(answer["status"])
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+        mgr = ThreadingHTTPServer(("127.0.0.1", 0), FakeManager)
+        threading.Thread(target=mgr.serve_forever, daemon=True).start()
+        saved_port = os.environ.get("ROMP_MANAGER_PORT")
+
+        def registry(*ports):
+            return json.dumps({"ok": True, "manager": {"pid": 1, "controlPort": mgr.server_address[1], "stale": False},
+                               "kernels": [{"id": "k%d" % p, "port": p, "pid": 2, "restarts": 0, "upSec": 5} for p in ports]})
+
+        def check():
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            return json.loads(body)["otherKernels"]
+        try:
+            os.environ["ROMP_MANAGER_PORT"] = str(mgr.server_address[1])
+            answer["body"] = registry(km.PORT, 31111)
+            self.assertEqual(check(), 1, "one other kernel in the registry")
+            self.assertEqual(km._other_kernels(), 1)
+            answer["body"] = registry(km.PORT)
+            self.assertEqual(check(), 0, "this kernel alone")
+            answer["body"] = registry(31111, 31112)
+            self.assertEqual(check(), 2, "a registry that does not list this kernel: every entry is another")
+            answer["body"] = registry(km.PORT, 31111, 31112)
+            self.assertEqual(km._manager_kernels(), [{"id": "k%d" % p, "port": p, "pid": 2, "restarts": 0, "upSec": 5}
+                                                     for p in (km.PORT, 31111, 31112)], "the registry as the manager lists it")
+            # unknown, never a guess: the manager answers something other than 200, or a body of another
+            # shape, or nothing at all (a dead port); the route says null and the banner words the label
+            # for this kernel
+            answer["status"], answer["body"] = 500, "{}"
+            self.assertIsNone(check(), "a status other than 200")
+            answer["status"], answer["body"] = 200, "not json"
+            self.assertIsNone(check(), "not JSON")
+            answer["body"] = json.dumps({"ok": True})
+            self.assertIsNone(check(), "no kernels list")
+            answer["body"] = json.dumps({"ok": True, "kernels": "main"})
+            self.assertIsNone(check(), "kernels of another shape")
+            os.environ["ROMP_MANAGER_PORT"] = "1"
+            self.assertIsNone(check(), "nothing answers on the port")
+            # no manager at all (no port in the environment): no restart-all reaches this kernel, so
+            # nothing else restarts with it, and the registry reads empty
+            os.environ.pop("ROMP_MANAGER_PORT", None)
+            self.assertEqual((km._manager_kernels(), check()), ([], 0))
+        finally:
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            mgr.shutdown()
+
     def test_post_update_converges_main_drift_when_no_release_is_pending(self):
         # the drift click is a REAL restart, so the converge is stubbed: a live manager must never hear
         # a test (2026-08-14: this exact route, exercised unstubbed while real drift existed, restart-
