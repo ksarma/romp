@@ -465,7 +465,9 @@ class InputsDeriveFromEsbuild(unittest.TestCase):
     config's (an inherited `--preserve-symlinks` on NODE_OPTIONS makes node keep the textual path); round 13 gave the
     root on the requirer's chain its wording for any requirer (a helper of the checkout with the package installed on
     its own chain was told to install it) and took a one-segment scoped name (`@scope` alone, which npm installs
-    nothing under) out of the bare shapes in both rules."""
+    nothing under) out of the bare shapes in both rules; round 14 reads the bare shape and the package's name from one
+    split of the request in both rules, so an empty scope (`@/x`) and an empty, `.` or `..` segment (`@scope//pkg`,
+    `pkg/../x`, `@scope/./x`) are node's error alone, never a root, an install or the environment."""
 
     def setUp(self):
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="lab-dist-inputs-"))
@@ -1776,7 +1778,7 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
             self.assertFalse(os.path.exists(out), "nothing was derived")
 
     # Round 13: the root on the requirer's chain gives the installed-subpath wording for any requirer, and a one-segment
-    # scoped name is bare in neither rule.
+    # scoped name is bare in neither rule. Round 14: one segment rule in both, for the bare shape and the package's name.
     def test_a_subpath_typo_in_a_helper_with_the_package_on_its_chain_names_the_root_not_a_package_to_install(self):
         """A helper the config requires relatively requires `pkg/nope` with `pkg` installed on the HELPER's chain, in two
         layouts: the helper inside the extension dir (`ext/tools/helper.js`, setUp's `ext/node_modules/pkg` on its chain)
@@ -1830,9 +1832,10 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         the scope directory: with a sibling `@scope/q` installed the directory existed, so the reader called the typo a
         package that IS installed and does not load, run npm ci, and the preload rethrew the same; with no node_modules
         the reader filed the typo as the environment (a skip) and the preload stood in for it, so the typo read green in
-        the real-tree pins. Now a scoped request with fewer than two segments is bare in neither file, like `./x` and
-        `#x`: node's error stands, with no reader line and no stand-in, plain and under the stand-in, with and without
-        node_modules. The control: the two-segment sibling `@scope/q` loads."""
+        the real-tree pins. Now a scoped request with fewer than two non-empty segments is bare in neither file, like
+        `./x` and `#x`: node's error stands, with no reader line and no stand-in, plain and under the stand-in, with
+        and without node_modules. The control: the two-segment sibling `@scope/q` loads. The empty scope and the
+        empty and dot segments are the round-14 test below."""
         _write(os.path.join(self.ext, "node_modules", "@scope", "q", "index.js"), "module.exports = { q: 1 };\n")
         _write(self.config, 'const q = require("@scope/q");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"], q: q.q } };\n')
         self.assertEqual(self.roots(), ["ext"], "the control: the two-segment sibling resolves")
@@ -1849,6 +1852,42 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
                     self.assertNotIn("IS installed", msg, (with_install, request, under_stub))
                     self.assertNotIn("npm ci", msg, (with_install, request, under_stub))
                     self.assertNotIn("tests/lab_dist_stub.py", msg, (with_install, request, under_stub))
+
+    def test_an_empty_scope_or_an_empty_or_dot_segment_names_no_package_never_a_root_an_install_or_the_environment(self):
+        """Round 13 read the request's segments twice: the bare test counted the NON-EMPTY ones and packageName sliced
+        the raw split, so `@scope//pkg` passed as bare and packageName answered `@scope/`, which path.join made the
+        scope directory, answered as the package's root (the reader's "IS installed (.../node_modules/@scope/)" line
+        with `@scope/q` installed, the shape the round-13 comments said could not happen); `@/x`, an empty scope npm
+        cannot install, passed both tests and was filed as the environment (a skip plain, a stand-in under the
+        preload); and a `.` or `..` segment reached path.join, which folded it away, so `pkg/../x` named `pkg` and
+        `@scope/./x` named the scope directory as the installed root, and with no node_modules every one was the
+        environment. Now both rules read the bare shape and the package's name from ONE split (packageOf), and a
+        request with an empty scope or with any empty, `.` or `..` segment names no package: node's error alone, no
+        reader line, no root, no npm ci, no stand-in, plain and under the stand-in, with `@scope/q` and setUp's `pkg`
+        installed and with no node_modules. Each shape is a subtest, so a fails-before names every red one. The trade
+        the rule makes, stated: node folds a doubled slash or a dot segment away once the target exists (`@scope//q`
+        loads with `@scope/q` installed, the control here), so a miss spelled that way is judged a typo to fix in the
+        requirer rather than a package to install; and a trailing slash (`pkg/`, `punycode/`) is an empty segment too,
+        so the round-12 judgment call for `punycode/` with nothing installed (the core-module line) gives way to node's
+        error alone."""
+        _write(os.path.join(self.ext, "node_modules", "@scope", "q", "index.js"), "module.exports = { q: 1 };\n")
+        _write(self.config, 'const q = require("@scope//q");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"], q: q.q } };\n')
+        self.assertEqual(self.roots(), ["ext"], "the control: node folds the doubled slash and the installed sibling loads")
+        for with_install in (True, False):
+            if not with_install:
+                self.no_install()
+            for request in ("@/x", "@scope//pkg", "@scope/./x", "pkg/../x"):
+                _write(self.config, 'const s = require(%s);\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n'
+                                    % json.dumps(request))
+                for under_stub in (False, True):
+                    with self.subTest(request=request, with_install=with_install, under_stub=under_stub):
+                        msg = self.derivation_error(under_stub)
+                        self.assertIn("Cannot find module '%s'" % request, msg)
+                        self.assertNotIn(" requires '", msg, "no reader line: node's error alone")
+                        self.assertNotIn("IS installed", msg)
+                        self.assertNotIn("node_modules/@scope", msg, "the scope directory is named nowhere")
+                        self.assertNotIn("npm ci", msg)
+                        self.assertNotIn("tests/lab_dist_stub.py", msg)
 
     def test_a_missing_node_is_an_error(self):
         """Without node on PATH nothing is derived: the error names node and the config."""
@@ -2044,7 +2083,10 @@ class Packaging(unittest.TestCase):
 
 
 # The text ratchet's allowlists, each a deliberate exemption with its reason. A new module that legitimately
-# names esbuild.js, or copies a tree that is not the extension's dist, is added here on purpose.
+# names esbuild.js, or copies a tree that is not the extension's dist, is added here on purpose; so is the copy
+# primitive lab_dist adopts when the fold brings upstream's tests/dist_copy.py (its docstring names esbuild.js, and
+# it is the copytree lab_dist then calls) with its test, tests/test_dist_copy_staging.py, unless both are dropped in
+# favour of lab_dist; the ledger entry (upstream/2026-09-09-lab-dist-copy-race.md) states the plan.
 _ESBUILD_TEXT_READERS = {
     # these two drive the harness, which requires the config under node through lab_dist (the reader writes
     # module.exports to a file; require.main is not the module, so nothing builds): the derivation tests and the
@@ -2084,10 +2126,11 @@ class ServedModulesUseTheHelper(unittest.TestCase):
 
         The rule it holds: EVERY served module goes through lab_dist.copy_dist, including a module that
         arrives from upstream through a fold still carrying the old `node esbuild.js` + copytree block.
-        Such a module is converted in the merge that brings it and this harness together (whichever of the
-        two lands second): the fold branch cannot convert it (lab_dist does not exist there), and this
-        branch cannot convert a file it does not have. The ratchet turns red on main until that merge
-        converts it, which is the point: the conversion is not optional."""
+        Such a module is converted on the merge that brings it and this harness together (whichever of the
+        two lands second, in a commit on top of that merge): the fold branch cannot convert it (lab_dist does
+        not exist there), and this branch cannot convert a file it does not have. The ratchet turns red until
+        that conversion, on the batch that holds both before it reaches main, which is the point: the
+        conversion is not optional."""
         offenders = []
         for path in sorted(glob.glob(os.path.join(HERE, "*.py"))):
             name = os.path.basename(path)

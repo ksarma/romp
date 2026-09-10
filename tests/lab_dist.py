@@ -174,11 +174,15 @@ _IMPORT_SHAPE = re.compile(r"""(?:\bfrom|\bimport|\brequire\s*\(|@import(?:\s+ur
 # tell the environment from the config (review round 7, decision 2; narrowed in round 9; the chains computed from
 # realpaths and the core modules in round 11; the order of the evidence, the config's chain added to the requirer's
 # and the package-imports specifiers in round 12; the one-segment scoped names and the root's wording for every
-# requirer in round 13): a MODULE_NOT_FOUND for a BARE package name (`esbuild`, `@scope/pkg`; not `./x`, not an
-# absolute path, not `#x`, a package-imports specifier the nearest package.json resolves, which npm ci cannot
-# install, and not `@scope` alone, a scoped name with one segment: npm installs packages under a scope directory and
-# nothing at the directory itself, so the miss is a typo in the requirer, and node's error stays for either shape
-# whatever the requirer) that the CONFIG ITSELF
+# requirer in round 13; one segment rule for the bare shape and the package's name in round 14): a MODULE_NOT_FOUND
+# for a BARE package name (`esbuild`, `@scope/pkg`; not `./x`, not an absolute path, not `#x`, a package-imports
+# specifier the nearest package.json resolves, which npm ci cannot install, and not a name npm cannot install: a
+# scoped name with fewer than two non-empty segments, `@scope` alone, or an empty scope, `@/x`, and any request with
+# an empty, `.` or `..` segment, `@scope//pkg`, `pkg/`, `pkg/../x`, `@scope/./x`; npm installs packages under a
+# scope directory and nothing at the directory itself, and a dot or an empty segment names no package, so the miss
+# is a typo in the requirer, and node's error stays for every one of these shapes whatever the requirer and
+# whatever is installed; the package's name is read from the same segments the shape test passed) that the CONFIG
+# ITSELF
 # required (the error's requireStack starts at the config), whose package ROOT is nowhere on the config's lookup
 # chain (its node_modules chain plus node's global folders, the list `require.resolve.paths` reports, computed from
 # the config's REALPATH: node resolved the config to its realpath and searched from there, so a config reached
@@ -218,9 +222,10 @@ _IMPORT_SHAPE = re.compile(r"""(?:\bfrom|\bimport|\brequire\s*\(|@import(?:\s+ur
 # chains assume node's default symlink mode: under `--preserve-symlinks` node searches from a module's textual path,
 # so a package present on the textual chain and not on the realpath's, or the reverse, is judged differently here and
 # in the stand-in (a residual, stated in tests/lab_dist_stub.py too; the config's own miss, a package on neither
-# chain, is judged alike). The requirer, root and bare-shape tests, in the same order, gate the stand-in in
-# tests/lab_dist_stub.py, which adds one more that this reader has no counterpart for, no node_modules beside the
-# config: the reader files the environment when the root is absent and the name is neither a core module's nor an
+# chain, is judged alike). The bare-shape, root (then core module) and requirer tests, in that order in both rules,
+# gate the stand-in in tests/lab_dist_stub.py, which adds one more that this reader has no counterpart for, no
+# node_modules beside the config (and, between its root and requirer tests, checks that CONFIG_ENV is set): the
+# reader files the environment when the root is absent and the name is neither a core module's nor an
 # imports specifier, and the stand-in refuses when a node_modules sits beside the config and lacks the package (a
 # stale install). So the two agree except on a stale install, where the stand-in's refusal is the loud answer and the
 # reader's skip the quiet one: a miss the reader files as the environment is stood in there, or refused as a stale
@@ -228,17 +233,30 @@ _IMPORT_SHAPE = re.compile(r"""(?:\bfrom|\bimport|\brequire\s*\(|@import(?:\s+ur
 _EXPORTS_READER = """
 const fs = require("fs"), path = require("path"), Module = require("module");
 const [config, out] = process.argv.slice(1);
-// a bare package name: never `./x`, never an absolute path, never `#x` (a package-imports specifier the nearest
-// package.json resolves, which npm ci cannot install), never `@scope` alone (a scoped name with fewer than two
-// segments, `@scope`, `@scope/`, `@`: npm installs packages under a scope directory, `@scope/pkg`, and nothing at the
-// directory itself, so the miss is a typo in the requirer; round 13, before which the scope directory the sibling
-// packages had created passed as the package's root and the typo was called a package that does not load, run npm
-// ci, or with no node_modules the environment): node's error stays, whatever the requirer
-const bare = (r) => !r.startsWith(".") && !r.startsWith("#") && !path.isAbsolute(r) &&
-                    !(r.startsWith("@") && r.split("/").filter(Boolean).length < 2);
-// the package a bare name names: its first segment, two for a scoped one (`@scope/pkg/sub` names @scope/pkg); a
-// one-segment scoped name is not bare, so it never reaches here and a scope directory is never answered as a root
-const packageName = (r) => (r.startsWith("@") ? r.split("/").slice(0, 2) : r.split("/").slice(0, 1)).join("/");
+// the package a request names, or null for a request that names no package, from ONE split of the request (round
+// 14; round 13 split it twice, the bare test over the non-empty segments and packageName over all of them, so
+// `@scope//pkg` passed as bare and named the scope directory as its root, `@/x` passed with an empty scope and was
+// filed as the environment, and `pkg/../x` and `@scope/./x` reached path.join, which folded the dot segment away and
+// named the parent directory as the root). Null, so node's error stays with no line from here, whatever the requirer
+// and whatever is installed, for `./x`, an absolute path, `#x` (a package-imports specifier the nearest package.json
+// resolves, which npm ci cannot install) and every name npm cannot install: a scoped request with fewer than two
+// non-empty segments (`@scope`, `@scope/`, `@`) or an empty scope (`@/x`), and any request with an empty, `.` or
+// `..` segment (`@scope//pkg`, `pkg/`, `pkg/../x`, `@scope/./x`). npm installs packages under a scope directory
+// (`@scope/pkg`) and nothing at the directory itself, and no package is named through a dot or an empty segment, so
+// each is a typo in the requirer (node itself folds a doubled slash or a dot segment away once the target exists,
+// so `@scope//q` loads while `@scope/q` is installed; a miss spelled so is still the typo here, never the
+// environment). Otherwise the name is the first segment, two for a scoped one (`@scope/pkg/sub` names @scope/pkg),
+// read from the same segments the shape test passed, so a scope directory is never answered as a root and the root
+// scan below joins no segment path.join would fold. The same rule, spelled the same, gates the stand-in in
+// tests/lab_dist_stub.py
+const packageOf = (r) => {
+  if (r.startsWith(".") || r.startsWith("#") || path.isAbsolute(r)) return null;
+  const parts = r.split("/");
+  if (parts.some((p) => p === "" || p === "." || p === "..")) return null;
+  const scoped = r.startsWith("@");
+  if (scoped && (parts[0] === "@" || parts.length < 2)) return null;
+  return parts.slice(0, scoped ? 2 : 1).join("/");
+};
 const same = (a, b) => { try { return fs.realpathSync(a) === fs.realpathSync(b); } catch (_) { return false; } };
 const under = (file, dir) => { try { const f = fs.realpathSync(file), d = fs.realpathSync(dir); return f === d || f.startsWith(d + path.sep); } catch (_) { return false; } };
 // the lookup chain of the module at `file`, from the module's realpath, where node searched (its node_modules chain
@@ -253,9 +271,10 @@ try {
   m = require(config);
 } catch (e) {
   const hit = e && e.code === "MODULE_NOT_FOUND" && /^Cannot find module '([^']+)'/.exec(String(e.message));
-  const stack = hit && bare(hit[1]) && Array.isArray(e.requireStack) && e.requireStack.length ? e.requireStack : null;
+  const name = hit ? packageOf(hit[1]) : null;      // null: not a package's name, so node's error is rethrown below
+  const stack = name && Array.isArray(e.requireStack) && e.requireStack.length ? e.requireStack : null;
   if (stack) {
-    const from = stack[0], name = packageName(hit[1]), fromConfig = same(from, config);
+    const from = stack[0], fromConfig = same(from, config);
     // the evidence, in order: the package's root on the requirer's chain, where node searched (a root present means
     // a subpath the installed package does not have, or a package that does not load, whatever the requirer and
     // whatever the package is named: a userland punycode or events shadows the core module of that name for
@@ -288,8 +307,8 @@ try {
       console.error((fromConfig ? config : from) + " requires '" + hit[1] + "'" + (hit[1] === name
                     ? ", a package that IS installed (" + root + ") and does not load: a broken install, run npm ci"
                     : installed
-                      ? ", which node cannot find: a dependency of an installed package is missing, a subpath of a package that IS " +
-                        "installed (" + root + ") and does not have it (installs at versions that disagree: a broken install, run npm ci)"
+                      ? ", which node cannot find: a dependency of an installed package is missing; '" + hit[1] + "' is a subpath of a " +
+                        "package that IS installed (" + root + ") and does not have it (installs at versions that disagree: a broken install, run npm ci)"
                       : ", a subpath of a package that IS installed (" + root + "): a " + (fromConfig ? "config typo" : "typo in " + from) +
                         ", or an install at a version without that file") +
                     "; not a checkout without node_modules, so not the environment");
@@ -381,8 +400,10 @@ def esbuild_exports(ext=EXT):
     last three ran node and carry its stderr (head and tail) and stdout head; the first two are raised before node
     runs, name the directory or node, and carry no stream. One require failure is a skip instead (review round 7,
     decision 2; narrowed in round 9): a MODULE_NOT_FOUND for a bare package name (never `./x`, an absolute path, a
-    `#x` package-imports specifier, which npm ci cannot install, or `@scope` alone, a one-segment scoped name, which
-    npm installs nothing under) that the config itself required, whose package root is nowhere on the config's
+    `#x` package-imports specifier, which npm ci cannot install, or a name npm cannot install: a scoped name with
+    fewer than two non-empty segments or an empty scope, `@scope`, `@/x`, and any request with an empty, `.` or `..`
+    segment, `@scope//pkg`, `pkg/../x`; the package's name is read from the same segments the shape test passed)
+    that the config itself required, whose package root is nowhere on the config's
     lookup chain, computed from the config's realpath, and whose name is not a core module's (`require("esbuild")`
     on a checkout without the extension's node_modules) is the environment, not the config, and the precondition
     the build half skips on, so it raises unittest.SkipTest naming the package and the config, as the build half
