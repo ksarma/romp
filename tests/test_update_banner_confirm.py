@@ -377,6 +377,28 @@ out({ waited: waited, atOnce: atOnce, after: state() });""", check={"state": "ru
                          "the arm shows no counts: the answer that came with the wait recorded none")
         self.assertEqual(s["after"]["label"], "Restart 3 sessions here now, interrupting 1; the other kernel restarts too", "the arm's own re-read fills them in")
 
+    def test_after_a_refused_pull_the_failure_text_shows_without_update_and_a_standing_offer_re_shows_it(self):
+        # review round 6 (2026-09-10): the poll's failed exit re-showed Update whatever the answer carried. A
+        # refused pull re-arms the kernel's drift slot (the next check re-offers once the tree is cured), so
+        # its answer carries no offer, and a click on that Update got the route's 409, which this script
+        # renders as "already ran" though nothing ran. Now Update re-shows only while the answer still
+        # carries an offer (a release tag, or a drift with its sha: a restart request the manager refused
+        # keeps its offer, so a retry can succeed); a failure with none shows its text alone
+        refused_pull = "CHECK.tag = ''; CHECK.drift = ''; CHECK.driftSha = ''; CHECK.failed = 'the romp checkout has uncommitted work, so it was left alone';"
+        refused_request = "CHECK.tag = ''; CHECK.drift = 'restart'; CHECK.driftSha = 'abcdef01'; CHECK.failed = 'romp is updated on disk but the restart request failed (HTTP 500)';"
+        for name, answer, again in (("a refused pull", refused_pull, False), ("a refused restart request", refused_request, True)):
+            # the clicking window: the POST is answered, the poll reads the failure
+            s = run_banner("GO.onclick(); await tick(); await tick(); " + answer
+                           + " CF.onclick(); await tick(); await tick(); await tick(); out(state());")
+            self.assertEqual(len(s["posts"]), 1, name)
+            self.assertTrue(s["msg"].startswith("The update did not finish: "), (name, s["msg"]))
+            self.assertEqual((s["goHidden"], s["goDisabled"], s["armed"]), (not again, False, False), name + ": the clicking window")
+            # a window the running push flipped into the wait
+            s = run_banner("window.__rompUpdateOffer('', '', '', 'b1', 'running'); " + answer + " await tick(); await tick(); out(state());",
+                           check={"tag": ""})
+            self.assertTrue(s["msg"].startswith("The update did not finish: "), (name, s["msg"]))
+            self.assertEqual((s["goHidden"], s["posts"]), (not again, []), name + ": a pushed window")
+
     def test_a_re_read_of_an_arm_that_ended_is_ignored_and_the_resize_listener_lives_with_the_armed_state(self):
         # the arm's re-read fits the label against the row it measured; an answer to a previous arm's
         # re-read landing during a later arm would set the label from an older answer (and fit it against

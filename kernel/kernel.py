@@ -9242,8 +9242,11 @@ _MAIN_CONVERGE_INFLIGHT = [False]   # a main converge (_run_main_update) is runn
 #                                        second converge (review round 5 of the confirm step, 2026-09-10)
 _MAIN_CONVERGE_OUTCOME = [None]     # how the last main converge ended when the banner could not see it end: no
 #                                        manager to restart this kernel (the code is on disk: "updated"), a restart
-#                                        request the manager refused, or a refused pull (both "failed", so Update
-#                                        re-shows where a retry can succeed). The poll's own fields (failed, updated,
+#                                        request the manager refused, a refused pull, or a converge that died on an
+#                                        exception (all "failed"; the banner re-shows Update only while the answer
+#                                        still carries an offer, which the refused request's does and the refused
+#                                        pull's does not: the refusal re-arms the drift slot for the next check).
+#                                        The poll's own fields (failed, updated,
 #                                        why, hint), served by /update-check outside the running gate and LATCHED
 #                                        until the next update starts through either door (_main_converge_begin
 #                                        and the converge's decorator; _run_update for the tag door, whose child's
@@ -10463,8 +10466,10 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
     is set: the decorator above) and ends its wait on a changed boot id, a `failed` or an `updated`
     answer, so every ending the banner cannot see as a restart is latched for its poll
     (_main_converge_outcome, review round 5 of the confirm step, 2026-09-10): a refusal and a restart
-    request the manager did not take as `failed` (Update re-shows), the no-manager case as `updated`
-    with the on-disk wording (no click that cannot work is re-offered). A manager that takes the request
+    request the manager did not take as `failed` (Update re-shows while an offer still stands: the refused
+    request keeps its offer, a refusal re-arms the drift slot and the next check re-offers), the no-manager
+    case as `updated` with the on-disk wording (no click that cannot work is re-offered), and a converge
+    that died on an exception as `failed` too (the decorator, review round 6). A manager that takes the request
     restarts this kernel, and the in-place converge's new bundle reloads the page through the reload core."""
     if kind == "pull":
         remote = _release_remote()
@@ -10477,12 +10482,13 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
                 said = (r.stderr or r.stdout or "").strip()[-120:]
                 why += (" (git: %s)" % said) if said else (" (git exited %d)" % r.returncode)
             _sync_notice("main moved at %s, but %s." % (remote, why), ok=False)
-            _main_converge_outcome(failed=why)    # the banner's wait ends on it and Update re-shows
+            _main_converge_outcome(failed=why)    # the banner's wait ends on it; the text shows alone, since the
+            #                                        slot below is re-armed and no offer stands until the next check
             _MAIN_DRIFT[0] = ""                   # every refusal re-arms: the notice re-fires once cured
         try:
             if not target:
-                refuse("the checkout was left alone: no commit was named for the move. Update again "
-                       "once the next check has read main")
+                refuse("the checkout was left alone: no commit was named for the move; the next check "
+                       "re-reads main and offers the update again")
                 return
             st = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
                                 capture_output=True, text=True, timeout=10)
@@ -10492,7 +10498,7 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
                 return
             if st.stdout.strip():
                 refuse("the romp checkout has uncommitted work, so it was left alone. Commit or "
-                       "stash it, then Update again")
+                       "stash it; the next check offers the update again")
                 return
             f = subprocess.run(["git", "fetch", remote, "main"], cwd=str(ROOT),
                                capture_output=True, text=True, timeout=60)
@@ -56433,7 +56439,12 @@ _UPD_JS = (
     "function poll(){fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){"
     "if(!waiting)return;"
     "if(d.boot&&bootNow&&d.boot!==bootNow){location.reload();return;}"
-    "if(d.failed){waiting=false;go.hidden=false;go.disabled=false;show('The update did not finish: '+d.failed);return;}"
+    # the failed exit re-shows Update only while the answer still carries an offer (a release tag, or a drift
+    # with its sha): a restart request the manager refused keeps its offer, so a retry can succeed; a refused
+    # pull re-arms the kernel's drift slot instead (the next check re-offers once the cause is cured), and a
+    # click on a re-shown Update got the route's 409, which the catch below renders as "already ran" though
+    # nothing ran (review round 6, 2026-09-10). A failure with no offer shows its text alone until then
+    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;show('The update did not finish: '+d.failed);return;}"
     # the kernel words the step by case (`romp refresh` exits 1 with no manager, where `romp up` is
     # the step; review find, 2026-09-08); the fallback is the manager case, for an older kernel
     "if(d.updated){waiting=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"

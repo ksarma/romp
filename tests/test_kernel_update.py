@@ -1281,7 +1281,10 @@ class Routes(Fresh):
         # the manager refused and for a refused pull. Now the outcome is latched (_MAIN_CONVERGE_OUTCOME) and
         # served through the poll's own fields: no manager reads `updated` with the on-disk wording (the poll
         # ends through its d.updated exit and re-offers no click that cannot work), the refused request and the
-        # refused pull read `failed` (Update re-shows where a retry can succeed). Latched, not consumed: the
+        # refused pull read `failed`. The banner re-shows Update on `failed` only while the answer still carries an
+        # offer (review round 6): the refused request keeps its drift slot, the refused pull's refusal re-arms it,
+        # so that answer carries no drift and the failure text shows alone until the next check re-offers (a
+        # re-shown Update got the route's 409, rendered as "already ran" though nothing ran). Latched, not consumed: the
         # running push flipped every window into the wait, so two readers both see it. The converge itself
         # audits no restart request (its own row, with when and sha, is not written); the click's route row,
         # via update-confirmed, stands: exactly one main-converge row. No dial with the variable absent
@@ -1340,11 +1343,17 @@ class Routes(Fresh):
                 self.assertIn("the restart request failed", d["failed"])
                 self.assertIn("HTTP 500", d["failed"])
                 self.assertNotIn("manager", d, "a port is set")
+                self.assertEqual((d["drift"], d["driftSha"]), ("restart", "abcdef01"), "the refused request keeps its offer: Update re-shows")
                 self.assertEqual([ok for _, ok in notices], [False, False])
-                # a refused pull (no commit named for the move): `failed` with the refusal's own words
+                # a refused pull (no commit named for the move): `failed` with the refusal's own words, and the
+                # answer carries no offer (the refusal re-armed the slot), so the banner shows the text alone
+                km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "abcdef01", ""
                 km._run_main_update("pull", True, manager_port=None, target="")
                 d = check()
                 self.assertIn("no commit was named for the move", d["failed"])
+                self.assertIn("the next check re-reads main and offers the update again", d["failed"],
+                              "the text promises the re-offer, never a button that will not show")
+                self.assertEqual((d["drift"], d["driftSha"], km._MAIN_DRIFT[0]), ("", "", ""), "no offer stands after a refused pull")
                 self.assertEqual([ok for _, ok in notices], [False, False, False])
                 self.assertEqual([h for h in hits], [("POST", "/restart-all")], "the refusal dialled nothing")
         finally:
