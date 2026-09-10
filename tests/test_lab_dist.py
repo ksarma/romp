@@ -448,7 +448,11 @@ class InputsDeriveFromEsbuild(unittest.TestCase):
     bound to this test's temp base) so its premise, that no esbuild resolves, holds on a developer's box too;
     round 9 narrowed the stand-in to the config's own requires, to packages whose root is nowhere on the lookup
     paths, and to a checkout with no node_modules beside the config (`no_install`, the CI shape), and the reader
-    files a miss as the environment by the same three tests."""
+    files a miss as the environment by the same three tests; round 10 made the requirer test read the requirer's
+    filename (a require inside a package function the config calls at load had passed the depth test), worded the
+    reader's line for a non-config requirer by where the requirer lies (a helper of the checkout is not an install),
+    named the `require.resolve` limit, and had every derivation error carry the head of node's stderr beside its
+    tail (`pad_checkout`: the headline was lost once the config's path grew long enough)."""
 
     def setUp(self):
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="lab-dist-inputs-"))
@@ -522,6 +526,21 @@ module.exports = { extension, webview, testBuild };
         declines a node_modules that exists and lacks the package (a stale install), so the tests that want a
         stand-in remove it first."""
         shutil.rmtree(os.path.join(self.ext, "node_modules"), ignore_errors=True)
+
+    def pad_checkout(self, length):
+        """Re-roots this test's checkout under nested padding directories inside self.base, so the config's path is
+        at least `length` chars long whatever TMPDIR the run has (round 10: node's stderr repeats the config's path
+        once per stack frame, so the tail alone of a long enough stream lost node's headline; the tests that pin
+        the head use this to make the stream long at any TMPDIR), and plants the one source the padded configs
+        name. Rebinds self.root, self.ext and self.config; the old checkout stays under self.base, unused."""
+        root = self.base
+        while len(os.path.join(root, "checkout", "ext", "esbuild.js")) < length:
+            root = os.path.join(root, "padding-" + "x" * 24)
+        self.root = os.path.join(root, "checkout")
+        self.ext = os.path.join(self.root, "ext")
+        self.config = os.path.join(self.ext, "esbuild.js")
+        _write(os.path.join(self.ext, "src", "extension.ts"), "export const host = 1;\n")
+        self.assertGreaterEqual(len(self.config), length, "the fixture holds: a long config path")
 
     def derivation_error(self, under_stub):
         """The ValueError esbuild_roots raises over this checkout, plain or inside the stand-in's block. A
@@ -859,7 +878,8 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
     def test_a_config_that_ends_the_process_before_the_file_is_written_is_an_error_carrying_both_streams(self):
         """The wrote-no-file branch: a config that calls process.exit(0) at require time leaves node's exit at 0 and
         no file for the reader to have written. The error names the config and carries the stdout head and the
-        stderr tail, the two streams every derivation error attaches."""
+        stderr, whole (it fits in head plus tail, so it is emitted once), the two streams every derivation error
+        attaches."""
         _write(self.config, 'console.log("bye from the config");\nprocess.stderr.write("and on stderr\\n");\nprocess.exit(0);\n'
                             'module.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
         with self.assertRaises(ValueError) as cm:
@@ -868,13 +888,14 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         self.assertIn("wrote no JSON", msg)
         self.assertIn(self.config, msg)
         self.assertIn("stdout head: bye from the config", msg)
-        self.assertIn("stderr tail: and on stderr", msg)
+        self.assertIn("stderr: and on stderr", msg)
+        self.assertNotIn("stderr head:", msg, "a stream that fits is emitted once, not as a head and a tail")
 
     def test_a_require_past_its_bound_is_an_error_naming_the_bound_and_the_stderr(self):
         """A config that wedges at require time (a BOUNDED busy loop: 4 s, then a valid export, so a mutant that
         dropped the timeout finishes instead of hanging the run) under a 1 s bound injected for the test: a
-        ValueError, never a SkipTest, naming the config, the bound and the stderr tail node had written before
-        the loop, raised from the TimeoutExpired, whose `timeout` is the bound as handed to subprocess.run (an
+        ValueError, never a SkipTest, naming the config, the bound and the stderr node had written before the
+        loop, raised from the TimeoutExpired, whose `timeout` is the bound as handed to subprocess.run (an
         exact pin: a bound dropped, tripled or padded by a second shows there, where a wall-clock assertion let a
         2 s bound through and added load sensitivity)."""
         _write(self.config, 'process.stderr.write("spinning\\n");\nconst end = Date.now() + 4000;\nwhile (Date.now() < end) {}\n'
@@ -888,7 +909,7 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
                 msg = str(e)
                 self.assertIn(self.config, msg)
                 self.assertIn("in 1 s", msg)
-                self.assertIn("stderr tail: spinning", msg)
+                self.assertIn("stderr: spinning", msg)
                 self.assertIsInstance(e.__cause__, subprocess.TimeoutExpired)
                 self.assertEqual(e.__cause__.timeout, 1, "the bound handed to subprocess.run is _EXPORTS_TIMEOUT itself")
             else:
@@ -1160,6 +1181,177 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         self.assertIn("required by " + self.config, msg)
         self.assertIn(os.path.join(self.ext, "node_modules") + " exists and holds no such package", msg)
         self.assertIn("npm ci", msg)
+
+    # Round 10: the requirer test reads the requirer's filename, the reader words a non-config requirer's miss by
+    # where the requirer lies, require.resolve is named as outside the stand-in, and every error carries the head of
+    # node's stderr beside its tail.
+    def test_a_probe_inside_an_installed_packages_function_called_at_load_sees_the_real_miss_under_the_stand_in(self):
+        """The round-9 gate read the DEPTH of the load, not the requirer: a bare require executed inside an installed
+        package's FUNCTION that the config calls at load time (`const a = require("a"); a.detect()`) arrived at the
+        config's depth with the package's file as its parent and was stood in, so the probe here took the other
+        branch under the preload and the tools tree dropped out of the derivation in silence (['ext'] under the
+        stand-in, ['ext', 'tools'] plain). The gate now compares the requirer's filename with the module the reader's
+        entry loaded, so the probe throws inside the package under the preload as it does without, and the two
+        derivations are equal. The top-level twin of this shape is the probe test above."""
+        _write(os.path.join(self.ext, "node_modules", "a", "index.js"),
+               'module.exports = { detect() { try { require("pnp-probe"); return "plugnplay"; } catch (e) { '
+               'if (e.code !== "MODULE_NOT_FOUND") throw e; return "plain"; } } };\n')
+        _write(os.path.join(self.root, "tools", "plain.ts"), "export const p = 1;\n")
+        _write(self.config, 'const a = require("a");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts", "../tools/" + a.detect() + ".ts"] } };\n')
+        plain = self.roots()
+        with lab_dist_stub.bare_package_stub():
+            under = self.roots()
+        self.assertEqual(plain, ["ext", "tools"], "the probe took the catch branch and the package answered plain")
+        self.assertEqual(under, plain, "the same derivation under the preload")
+
+    def test_a_hard_require_inside_an_installed_packages_function_called_at_load_is_nodes_error_under_the_stand_in(self):
+        """The hard twin of the probe: an installed package whose function, called by the config at load, requires a
+        bare package that is not installed. Under the round-9 preload the require was stood in and the function's
+        read of the stand-in failed with the stand-in's refusal, naming tests/lab_dist_stub.py, where the real
+        environment fails with node's error; now both ways carry node's headline, the require stack naming the
+        package's file and the reader's line, with the stand-in named nowhere."""
+        _write(os.path.join(self.ext, "node_modules", "a", "index.js"),
+               'module.exports = { version() { return require("b").version; } };\n')
+        _write(self.config, 'const a = require("a");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts", "../tools/" + a.version() + ".ts"] } };\n')
+        for under_stub in (False, True):
+            msg = self.derivation_error(under_stub)
+            self.assertIn("Cannot find module 'b'", msg, under_stub)
+            self.assertIn(os.path.join(self.ext, "node_modules", "a", "index.js"), msg, under_stub)
+            self.assertIn("a dependency of an installed package is missing", msg, under_stub)
+            self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+
+    def test_a_bare_miss_inside_a_module_the_config_loaded_from_the_checkout_names_the_module_not_an_install(self):
+        """A helper file the config requires relatively (`../tools/helper.js`, outside the extension dir on purpose:
+        "under the config's directory" would misclassify it) requires a bare package that is not installed, on a
+        checkout without node_modules. The requirer is not the config, so the miss is node's error plain and under
+        the stand-in (the preload's requirer test fails it); the reader's line used to call every non-config requirer
+        an installed package and tell the developer to run npm ci, which changes nothing here. The line now says the
+        helper is a module the config loaded and that only the config's own requires are filed as the environment or
+        stood in: move the require to esbuild.js, or install the package."""
+        self.no_install()
+        helper = os.path.join(self.root, "tools", "helper.js")
+        _write(helper, 'const g = require("ghost3");\nmodule.exports = { version: g.version };\n')
+        _write(self.config, 'const h = require("../tools/helper.js");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts"], banner: { js: "// " + h.version } } };\n')
+        for under_stub in (False, True):
+            msg = self.derivation_error(under_stub)
+            self.assertIn("Cannot find module 'ghost3'", msg, under_stub)
+            self.assertIn(helper + " requires 'ghost3'", msg, under_stub)
+            self.assertIn(helper + " is a module the config loaded, and only the config's own requires are filed as the "
+                          "environment or stood in; move the require to esbuild.js or install the package", msg, under_stub)
+            self.assertNotIn("run npm ci", msg, under_stub)
+            self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+
+    def test_an_installed_requirer_reached_through_a_symlinked_node_modules_keeps_the_install_wording(self):
+        """The discriminator behind the test above is the realpath: a requirer is installed when its realpath lies
+        under the realpath of an entry of the config's lookup paths, the list `require.resolve.paths` reports. A
+        node_modules that is a symlink to a store whose directory is not itself named node_modules (this checkout's
+        own layout, with the store renamed) keeps the installed wording, which a node_modules path-segment test over
+        node's realpath would lose; the requiring file is named by its realpath, as node reports it."""
+        shutil.rmtree(os.path.join(self.ext, "node_modules"))
+        store = os.path.join(self.base, "store")
+        _write(os.path.join(store, "a", "index.js"), 'const b = require("b");\nmodule.exports = { version: b.version };\n')
+        os.symlink(store, os.path.join(self.ext, "node_modules"))
+        _write(self.config, 'const a = require("a");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        for under_stub in (False, True):
+            msg = self.derivation_error(under_stub)
+            self.assertIn("Cannot find module 'b'", msg, under_stub)
+            self.assertIn(os.path.join(store, "a", "index.js") + " requires 'b'", msg, under_stub)
+            self.assertIn("a dependency of an installed package is missing", msg, under_stub)
+            self.assertNotIn("is a module the config loaded", msg, under_stub)
+            self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+
+    def test_a_require_resolve_of_a_bare_package_is_outside_the_stand_in_and_the_blocks_failure_says_so(self):
+        """The preload wraps Module._load, the door every require() takes; require.resolve() resolves through
+        Module._resolveFilename and makes no load, so a config that resolves a missing bare package that way is not
+        stood in: plain, the reader files the miss as the environment (the error's requireStack starts at the config
+        and the root is nowhere), a skip naming the package; inside the block that skip is the AssertionError, which
+        names this cause beside the other two (round 10; before, the message named only NODE_OPTIONS and the two rules
+        disagreeing, both false for this shape). The real esbuild.js has no require.resolve. The control: a require()
+        of the same name in the same block is stood in."""
+        self.no_install()
+        _write(self.config, 'const p = require.resolve("ghostr");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts"], inject: [p] } };\n')
+        with self.assertRaises(unittest.SkipTest) as cm:
+            lab_dist.esbuild_roots(self.root, self.ext)
+        self.assertIn("no package 'ghostr'", str(cm.exception), "plain, the reader files the miss as the environment")
+        try:
+            with lab_dist_stub.bare_package_stub():
+                lab_dist.esbuild_roots(self.root, self.ext)
+        except unittest.SkipTest as e:
+            self.fail("a skip escaped the stand-in's block: %r" % e)
+        except AssertionError as e:
+            self.assertIn("require.resolve, which the stand-in does not cover", str(e))
+            self.assertIn("'ghostr'", str(e))
+            self.assertIn("tests/lab_dist_stub.py", str(e))
+        else:
+            self.fail("require.resolve of a missing bare package raised nothing inside the block")
+        _write(self.config, 'const g = require("ghostr");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        with lab_dist_stub.bare_package_stub():
+            self.assertEqual(self.roots(), ["ext"], "the control: require() of the same name is stood in")
+
+    def test_node_output_carries_a_short_stream_once_and_both_ends_of_a_long_one(self):
+        """The surface itself, over synthetic streams: a stderr that fits in head plus tail is emitted once, whole,
+        under the label "stderr: " (no head, no tail, nothing counted as omitted); one that does not fit is emitted
+        as its first _STDERR_HEAD chars, the count of chars left out and its last `tail` chars, the two segments
+        never overlapping and never sharing a char; the stdout head is 200 chars either way."""
+        head = lab_dist._STDERR_HEAD
+        fits = "a" * head + "z" * 500
+        msg = lab_dist._node_output("out", fits)
+        self.assertIn("stderr: " + fits + "; stdout head: out", msg)
+        self.assertNotIn("stderr head:", msg)
+        self.assertNotIn("omitted", msg)
+        long = "a" * head + "b" * 77 + "z" * 500
+        msg = lab_dist._node_output("o" * 300, long, tail=500)
+        self.assertIn("stderr head: " + "a" * head + " [77 chars omitted]; stderr tail: " + "z" * 500 + "; stdout head: " + "o" * 200,
+                      msg)
+        self.assertNotIn("b", msg.split("stderr head: ")[1].split("; stdout head")[0], "the 77 chars between the ends are the omitted ones")
+        msg = lab_dist._node_output("", "n" * (head + 2000 + 1), 2000)
+        self.assertIn("[1 chars omitted]", msg, "the exit-1 caller's tail is 2000, and one char over the budget parts the stream")
+
+    def test_a_long_config_path_keeps_nodes_headline_and_the_readers_line_in_the_error(self):
+        """The bare-miss shape (an installed package requires a missing `b`) over a config path of 500 chars or more,
+        whatever TMPDIR the run has: node's stderr starts with the headline and ends with the reader's line, and its
+        stack and requireStack dump between them repeat the config's path eight times (nine under the preload), so
+        the stream ran to 1038 + 8 x len(ext) chars and the 2000-char tail alone lost the headline once the ext path
+        passed about 121 chars. xdist nests the conftest's temp root one level deeper and a sweep's TMPDIR is longer
+        still, so the same-error and subpath tests above went red under `-n` at a TMPDIR of about 60 chars and alone
+        at about 80 while CI's /tmp stayed green: deterministic on path length, not on order or fan-out. The message
+        now carries the head of the stream as well, so both the headline and the reader's line are in it at this
+        length, as a head and a tail (the stream does not fit whole here), plain and under the stand-in."""
+        self.pad_checkout(500)
+        _write(os.path.join(self.ext, "node_modules", "a", "index.js"), 'const b = require("b");\nmodule.exports = { version: b.version };\n')
+        _write(self.config, 'const a = require("a");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        for under_stub in (False, True):
+            msg = self.derivation_error(under_stub)
+            self.assertIn("Cannot find module 'b'", msg, under_stub)
+            self.assertIn(os.path.join(self.ext, "node_modules", "a", "index.js") + " requires 'b'", msg, under_stub)
+            self.assertIn("a dependency of an installed package is missing", msg, under_stub)
+            self.assertIn("stderr head: ", msg, under_stub)
+            self.assertIn("chars omitted]; stderr tail: ", msg, under_stub)
+            self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+
+    def test_a_long_config_path_keeps_an_uncaught_errors_headline_in_the_error(self):
+        """The uncaught-throw shape: the preload's refusal to stand in for `newdep` beside a node_modules that lacks it
+        is thrown, rethrown by the reader (no MODULE_NOT_FOUND code) and left to node, which prints the rethrow's
+        location (`[eval]:NN`), its source line, a caret and a blank line BEFORE the headline, so a one-line head
+        would have carried the location and missed the stand-in's name; the tail alone lost it once the stream passed
+        2000 chars. The message names the config and its node_modules, so the stream grows three chars per char of
+        config path here (two in the message, one in the stack), and 800 puts it past the head-plus-tail budget at
+        any TMPDIR: the head, a run of chars, carries the preamble and the stand-in's name, and the stream is emitted
+        as a head and a tail. The pins are the head's: at this length the tail's reach into the message depends on
+        the run's TMPDIR (the preload's path is in two stack frames), which the test above pins instead."""
+        self.pad_checkout(800)
+        _write(os.path.join(self.ext, "node_modules", "esbuild", "index.js"), 'module.exports = { version: "9.9.9" };\n')
+        _write(self.config, 'const esbuild = require("esbuild");\nconst fresh = require("newdep");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        msg = self.derivation_error(under_stub=True)
+        self.assertIn("stderr head: [eval]:", msg, "the stream parted, and the head starts at the rethrow's location")
+        self.assertIn("tests/lab_dist_stub.py", msg)
+        self.assertIn("declines to stand in for 'newdep'", msg)
+        self.assertIn("required by " + self.config, msg, "the head reaches past the config's path")
 
     def test_a_missing_node_is_an_error(self):
         """Without node on PATH nothing is derived: the error names node and the config."""
