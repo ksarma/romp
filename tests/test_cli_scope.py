@@ -31,11 +31,15 @@ ROMP_CLI_SCOPE=0 for every backend construction):
     that does not answer settles nothing and the boot line lists each value under its own verdict
     (never an unsettled value as in force, never a settled one as unknown), `unsettled` names the
     checks that settled nothing, and no probe runs with the scopes off, without a runner, or for a
-    limit that is not set; every cell of that table is pinned in SettleTable.
+    limit that is not set; every cell of that table is pinned in SettleTable;
+  * the guidance on the soft limit in docs/reference.md and the wrapper's comment block (Docs): equal
+    to the hard one, a same-value worked example the kernel's own size rule accepts, the swap limit at
+    0, the earlyoom rule of thumb and the heap-flag caveat.
 Synthetic fixtures only: placeholder sid, /bin/true as the CLI.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -45,6 +49,7 @@ from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
+DOCS = os.path.join(os.path.dirname(HERE), "docs")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
@@ -1753,6 +1758,424 @@ class SettleTable(_Backend):
         for row in SETTLE_ANCHORS[:-1]:   # the one-limit row's env is on no axis, by design
             self.assertIn(keyed(row), axis_keys, row["name"])
 
+
+class Docs(unittest.TestCase):
+    """The reference's memory-limits subsection and the wrapper's comment rows recommend leaving the soft limit
+    UNSET or setting it EQUAL to the hard one (2026-09-10; before, the worked example put MemoryHigh at 12G under
+    a 16G MemoryMax, and with MemorySwapMax=0 a runaway's anonymous memory has nothing to reclaim, so the
+    throttle stalled it short of the cap for minutes at machine-wide memory pressure). Review holds the MEANING
+    of that prose; these pins hold its SHAPE. Pins 1, 2, 5 and 6 are shape checks with no regex on wording. Pins
+    3 and 4 are word-presence checks: they catch an omission only, since a synonym fails them and a contrary
+    sentence that keeps the words passes them, so what those words say stays with review.
+      1. every ROMP_CLI_SCOPE_<NAME>=<value> token in either text (NAMES: the three sizes and the adjustment)
+         is parsed, in any order. The parser reads spaces or tabs before the `=` and, after it, spaces or tabs
+         or one line break with an optional `#` comment marker, unless the next line opens another token (a
+         reflow can carry the value to the next line of the section, or behind the marker on a wrapper row's
+         continuation line, and a spaced `=` must not hide a pair; a `NAME=` ending its line with the next
+         variable on the line below, the service.env spelling of unset, reads as empty and the next token as its
+         own); one opening backtick or quote right after the `=` is skipped, so a value written as a code span
+         or quoted reads whole (the closing backtick of a `NAME=` reference in a code span, an empty span and a
+         lone quote are skipped the same way, and the value after them is empty, since it ends at once at the
+         backtick or the whitespace that follows); the value ends at whitespace, a backtick, a comma, a
+         semicolon, a closing parenthesis or a pipe (a table cell), and a trailing period or colon and
+         surrounding quotes are stripped (a sentence-final `SWAP_MAX=0.`, a service.env-style `HIGH="28G"` and a
+         code-span MAX=`28G` read as 0, 28G and 28G). A value the kernel's own size or adjustment rule refuses
+         fails naming the token and its own line; an empty value is unset (the kernel's cli_scope_limits and the
+         wrapper skip an empty variable) and is judged as absent. A worked example is one paragraph of the
+         section, or one wrapper row, whose set tokens include MAX; within it each variable is written at most
+         once (a second token fails naming both lines, even when it agrees with the first), SWAP_MAX is set and
+         is 0, and HIGH is absent, `infinity`, or equal to MAX in bytes. A paragraph or row that sets no MAX is
+         no example: a HIGH with a value there fails, since there is no MAX for it to equal, and its other tokens
+         are judged by the kernel's rules only;
+      2. no token pair in either text puts a HIGH below the MAX of its group (the mechanical form of "no
+         below-the-cap guidance");
+      3. the HIGH entry's paragraph, and the HIGH row, name both `unset` and `MemoryMax` (word presence);
+      4. a paragraph of the section names earlyoom together with memory and swap, and a paragraph names the heap
+         flag (max-old-space-size) together with heap (word presence);
+      5. no em dash in the section or the rows;
+      6. the wrapper rows are located by a regex on each row's leading token at its word boundary (the header line
+         may end at the token), independent of row order, and a missing row fails naming it; the section is
+         located by the `#### ` heading directly above the ROMP_CLI_SCOPE_MEMORY_MAX list entry (the variable name,
+         not the heading's words) and runs to the next heading of its level or above; a `#` line or an
+         entry-shaped line inside a fenced code block is neither a heading nor the entry (the locator scans a copy
+         with every fence blanked to spaces of the same length and slices the document itself by the offsets it
+         finds, so the section keeps its fenced text and the tokens in it; a fence opens on three or more
+         backticks or tildes indented up to three spaces, a backtick opener's info string holding no backtick,
+         and closes on a run of the same character at least as long, as CommonMark has it, or runs to the end of
+         the document); a document without the entry, or with a heading of another level nearest above it, fails
+         naming what was looked for.
+    A failing token pin names the property, the offending token and the token's own line, never the text
+    searched; pins 3 and 4 name the words they did not find. Against the tree before this guidance (its 16G/12G
+    example) pins 1 and 2 go red on that pair; 3 and 4 go red there too, since that tree names neither `unset`,
+    nor earlyoom's swap half, nor the heap flag; 5 and 6 hold there."""
+
+    NAMES = ("MEMORY_MAX", "MEMORY_HIGH", "MEMORY_SWAP_MAX", "OOM_SCORE_ADJ")
+    # spaces or tabs before the `=`; after it, spaces or tabs, or one line break with an optional `#` and spaces (a
+    # wrapper row's continuation line opens with the comment marker) unless that next line, past its optional `#`
+    # and spaces, opens another token (then the value is empty and the next token is read on its own, so a
+    # service.env-style `NAME=` line never swallows the line below it); then one optional opening backtick or
+    # quote (a value written as a code span, or quoted); then a value that runs to whitespace, a backtick, a comma,
+    # a semicolon, a closing parenthesis or a pipe (a table cell); it may be empty, which is unset (the kernel's
+    # cli_scope_limits and the wrapper skip an empty variable, so _groups leaves it out of the example). The
+    # closing backtick of a `NAME=` reference in a code span, an empty span and a lone quote are skipped like an
+    # opening quote, and the value after them is empty, since it ends at once at the backtick or the whitespace
+    # that follows; no lookahead guards the skip (with a backtick outside the value class and whitespace ending
+    # it, one changes no reading). The period stays in the class so a `1.5G` (which the wrapper refuses) reaches
+    # the rule whole; _tokens strips a trailing period or colon and surrounding quotes. A backtick between the name
+    # and the `=` is prose, not a token, and is left to review. A CRLF break or a blank line after the `=` reads an
+    # empty value, never the next paragraph's first word (the CRLF case only in a string handed to the parser: the
+    # files are read in text mode, so no CR reaches it from them).
+    TOKEN = re.compile(r"ROMP_CLI_SCOPE_(MEMORY_MAX|MEMORY_HIGH|MEMORY_SWAP_MAX|OOM_SCORE_ADJ)[ \t]*=[ \t]*"
+                       r"(?:\n(?!#?[ \t]*ROMP_CLI_SCOPE_)#?[ \t]*)?[`\"']?([^\s`,;)|]*)")
+    # every spelling the wrapper's size_ok takes (digits, one optional K, M, G or T, or infinity), plus the iB
+    # suffix, so a `16GiB` in an example is compared in bytes and then reported by the kernel-rule check
+    SIZE = re.compile(r"([0-9]+)([KMGT])?(iB)?\Z")
+    SIZE_MULT = {None: 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3, "T": 1024 ** 4}
+    # a row: its `#   ROMP_CLI_SCOPE_<NAME>` header line, keyed at the token's word boundary (the header may end at
+    # the token, with the property on the continuation), and every continuation line (indented comment) up to the
+    # next row, the next comment line at the block's margin, the next non-comment line, or the end of the file
+    ROW = r"(?ms)^#   ROMP_CLI_SCOPE_%s\b.*?(?=^#   ROMP_CLI_SCOPE_\w+\b|^# ?\S|^[^#]|\Z)"
+    # a list entry of the section, under either bullet
+    ENTRY = r"(?ms)^[-*] `ROMP_CLI_SCOPE_%s`.*?(?=^[-*] |^[ \t]*$|\Z)"
+    HEADING = re.compile(r"(?m)^#{1,4} ")
+    # a fenced code block, as CommonMark has it: an opening fence of three or more backticks or tildes, indented up
+    # to three spaces, whose info string (the rest of the line) holds no backtick when the fence is backticks (a
+    # line such as ```x``` is a code span, not a fence; a tilde fence's info string may hold one), through the line
+    # of its closing fence, a run of the same character at least as long as the opener with nothing but spaces or
+    # tabs after it (a shorter run, the other character, or a run with text after it does not close), or to the end
+    # of the document when none closes it. Python's re fails a backreference to a group that did not take part, so
+    # the closer branch is the opener's kind alone.
+    FENCE = re.compile(r"(?ms)^ {0,3}(?:(`{3,})[^`\n]*|(~{3,})[^\n]*)(?:\n|\Z).*?(?:^ {0,3}(?:\1`*|\2~*)[ \t]*$|\Z)")
+
+    @classmethod
+    def _unfenced(cls, doc):
+        """`doc` with every fenced code block blanked to spaces, its newlines kept: the copy has the document's length
+        and line count, so an offset or a line found in it is the same offset or line in the document."""
+        return cls.FENCE.sub(lambda f: re.sub(r"[^\n]", " ", f.group(0)), doc)
+
+    def _section_in(self, doc):
+        """The text of the h4 section holding the ROMP_CLI_SCOPE_MEMORY_MAX list entry, and the line its heading
+        sits on. The section runs from the heading nearest above that entry, which must be a `#### ` one (the
+        variable name locates it, so a reworded heading still does; a heading of another level there means the
+        entry's h4 is gone, not that an earlier h4 owns it), through the line before the next heading of level 1
+        to 4, or to the end of the document. Headings and the entry are read off a copy with every fenced code
+        block blanked to spaces of the same length, so a `# comment` line inside a fence is not a heading and an
+        entry-shaped line there is not the entry, and the section is sliced from the document itself, so it keeps
+        its fenced text. A document without the entry, or whose nearest heading above it is not an h4, fails
+        naming that."""
+        scan = self._unfenced(doc)
+        m = re.search(self.ENTRY % "MEMORY_MAX", scan)
+        if m is None:
+            self.fail("docs/reference.md has no `ROMP_CLI_SCOPE_MEMORY_MAX` list entry (the memory-limits pins locate "
+                      "their section by it)")
+        heads = list(self.HEADING.finditer(scan, 0, m.start()))
+        if not heads or not scan.startswith("#### ", heads[-1].start()):
+            nearest = scan[heads[-1].start():scan.find("\n", heads[-1].start())] if heads else None
+            self.fail("docs/reference.md has no `#### ` heading directly above its `ROMP_CLI_SCOPE_MEMORY_MAX` list entry "
+                      "(the nearest heading above it is %s; the memory-limits pins take the entry's h4 section)"
+                      % (repr(nearest) if nearest else "none"))
+        i = heads[-1].start()
+        end = self.HEADING.search(scan, i + 1)
+        return doc[i:end.start() if end else len(doc)], doc.count("\n", 0, i) + 1
+
+    def _section(self):
+        return self._section_in(open(os.path.join(DOCS, "reference.md"), encoding="utf-8").read())
+
+    @staticmethod
+    def _paragraphs(text):
+        """Blank-line-delimited blocks, with each list item (`- ` or `* `) a paragraph of its own (the four variable
+        entries sit in one block), in file order and each a verbatim slice of the text."""
+        return [p for block in re.split(r"\n[ \t]*\n", text) for p in re.split(r"\n(?=[-*] )", block)]
+
+    def _row_in(self, src, name):
+        m = re.search(self.ROW % name, src)
+        self.assertIsNotNone(m, "the wrapper has no `#   ROMP_CLI_SCOPE_%s` comment row" % name)
+        return m.group(0), src.count("\n", 0, m.start()) + 1
+
+    def _rows(self):
+        src = open(os.path.join(BIN, "romp-cli-scope"), encoding="utf-8").read()
+        return {name: self._row_in(src, name) for name in self.NAMES}
+
+    def _texts(self):
+        """(where, text, the text's first line) for the section and each wrapper row."""
+        sec, line = self._section()
+        out = [("docs/reference.md's memory-limits section", sec, line)]
+        for name, (row, line) in self._rows().items():
+            out.append(("bin/romp-cli-scope's ROMP_CLI_SCOPE_%s row" % name, row, line))
+        return out
+
+    def _tokens(self, text, line=1):
+        """{NAME: [(value, line), ...]} for every token in `text`, whose first line is `line`: the value with a
+        trailing period or colon and surrounding quotes stripped (in that order, so `"28G".` reads 28G), and the
+        line the token starts on."""
+        toks = {}
+        for m in self.TOKEN.finditer(text):
+            v = m.group(2).rstrip(".:").strip("\"'")
+            toks.setdefault(m.group(1), []).append((v, line + text.count("\n", 0, m.start())))
+        return toks
+
+    def _groups(self, texts=None):
+        """(where, the paragraph's first line, {NAME: [(value, line), ...]}) for every paragraph of the section and
+        every wrapper row (`texts`, by default _texts()) that sets a token: the unit a worked example is judged in.
+        An empty value is unset (the kernel's cli_scope_limits and the wrapper skip an empty variable), so it is
+        left out: a `NAME=` line of a service.env example, or a `NAME=` reference in prose, means the variable
+        absent."""
+        out = []
+        for where, text, line in (self._texts() if texts is None else texts):
+            paragraphs = self._paragraphs(text) if where.startswith("docs/") else [text]
+            pos = 0
+            for p in paragraphs:
+                start = text.index(p, pos)
+                pos = start + len(p)
+                toks = {n: [(v, ln) for v, ln in vals if v]
+                        for n, vals in self._tokens(p, line + text.count("\n", 0, start)).items()}
+                toks = {n: vals for n, vals in toks.items() if vals}
+                if toks:
+                    out.append((where, line + text.count("\n", 0, start), toks))
+        return out
+
+    @staticmethod
+    def _at(where, name, v, line):
+        return "%s, line %d: ROMP_CLI_SCOPE_%s=%s" % (where, line, name, v)
+
+    def _bytes(self, v, at=None):
+        """`v` in bytes; `at` names the token for the failure when the value is not one this pin can compare."""
+        if v == "infinity":
+            return float("inf")
+        m = self.SIZE.match(v)
+        self.assertIsNotNone(m, "%s is not a size this pin can compare (digits with an optional K, M, G or T, "
+                                "with or without iB, or infinity)" % (at or repr(v)))
+        return int(m.group(1)) * self.SIZE_MULT[m.group(2)]
+
+    def _examples(self, groups):
+        """Pin 1 over `groups` (_groups): every token passes the kernel's size or adjustment rule; a group setting no
+        MEMORY_MAX is no example, and a MEMORY_HIGH with a value in it fails (there is no MAX for it to equal); in
+        each example (a group setting MEMORY_MAX) every variable is written once, MEMORY_SWAP_MAX is set and is 0,
+        and MEMORY_HIGH is absent, infinity or equal to MEMORY_MAX in bytes. Returns how many examples it judged."""
+        examples = 0
+        for where, pline, toks in groups:
+            for name, vals in toks.items():
+                rule, ok = (("adjustment", sb._cli_scope_adj_ok) if name == "OOM_SCORE_ADJ"
+                            else ("size", sb._cli_scope_size_ok))
+                for v, ln in vals:
+                    self.assertTrue(ok(v), "%s fails the kernel's %s rule" % (self._at(where, name, v, ln), rule))
+            if "MEMORY_MAX" not in toks:
+                for high, ln in toks.get("MEMORY_HIGH", ()):
+                    self.fail("%s has no ROMP_CLI_SCOPE_MEMORY_MAX in its group to equal"
+                              % self._at(where, "MEMORY_HIGH", high, ln))
+                continue
+            examples += 1
+            for name, vals in toks.items():
+                self.assertEqual(len(vals), 1, "%s, line %d: ROMP_CLI_SCOPE_%s is written %d times in one example (%s)"
+                                 % (where, pline, name, len(vals), ", ".join("%s on line %d" % t for t in vals)))
+            mx, mxl = toks["MEMORY_MAX"][0]
+            self.assertIn("MEMORY_SWAP_MAX", toks, "%s: the example sets no ROMP_CLI_SCOPE_MEMORY_SWAP_MAX (0 has a "
+                          "scope over its cap killed, not swapped)" % self._at(where, "MEMORY_MAX", mx, mxl))
+            swap, swl = toks["MEMORY_SWAP_MAX"][0]
+            self.assertEqual(self._bytes(swap, self._at(where, "MEMORY_SWAP_MAX", swap, swl)), 0,
+                             "%s is not 0 (a scope over its cap is killed, not swapped)"
+                             % self._at(where, "MEMORY_SWAP_MAX", swap, swl))
+            for high, hl in toks.get("MEMORY_HIGH", ()):
+                if high != "infinity":
+                    self.assertEqual(self._bytes(high, self._at(where, "MEMORY_HIGH", high, hl)),
+                                     self._bytes(mx, self._at(where, "MEMORY_MAX", mx, mxl)),
+                                     "%s is not equal to ROMP_CLI_SCOPE_MEMORY_MAX=%s (line %d) (write the soft limit "
+                                     "absent, infinity, or equal to the hard one)"
+                                     % (self._at(where, "MEMORY_HIGH", high, hl), mx, mxl))
+        return examples
+
+    def test_every_worked_example_keeps_the_soft_limit_absent_infinity_or_equal_and_swap_at_zero(self):
+        self.assertGreater(self._examples(self._groups()), 0,
+                           "the section has no worked example (no ROMP_CLI_SCOPE_MEMORY_MAX=<value> token)")
+
+    def _no_pair_below(self, groups):
+        """Pin 2 over `groups` (_groups)."""
+        for where, _, toks in groups:
+            for mx, mxl in toks.get("MEMORY_MAX", ()):
+                for high, hl in toks.get("MEMORY_HIGH", ()):
+                    self.assertGreaterEqual(self._bytes(high, self._at(where, "MEMORY_HIGH", high, hl)),
+                                            self._bytes(mx, self._at(where, "MEMORY_MAX", mx, mxl)),
+                                            "%s is below ROMP_CLI_SCOPE_MEMORY_MAX=%s (line %d) in the same example (a "
+                                            "soft limit below the cap)" % (self._at(where, "MEMORY_HIGH", high, hl), mx, mxl))
+
+    def test_no_token_pair_puts_a_soft_limit_below_the_hard_one(self):
+        self._no_pair_below(self._groups())
+
+    def test_the_token_parser_reads_any_order_its_separators_and_every_size_spelling(self):
+        # the mechanics behind pins 1 and 2, on synthetic text: order does not matter; the value ends at whitespace,
+        # a backtick, a comma, a semicolon or a closing parenthesis; each token reports its own line
+        text = ("ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500; `ROMP_CLI_SCOPE_MEMORY_SWAP_MAX=0` and ROMP_CLI_SCOPE_MEMORY_HIGH=infinity\n"
+                "(ROMP_CLI_SCOPE_MEMORY_MAX=28G)")
+        self.assertEqual(self._tokens(text, 1409), {"OOM_SCORE_ADJ": [("500", 1409)], "MEMORY_SWAP_MAX": [("0", 1409)],
+                                                    "MEMORY_HIGH": [("infinity", 1409)], "MEMORY_MAX": [("28G", 1410)]})
+        self.assertEqual(self._tokens("a\nb\nROMP_CLI_SCOPE_MEMORY_MAX=16G\n", 1409), {"MEMORY_MAX": [("16G", 1411)]})
+        # whitespace around the `=`: a spaced `=` or a value reflowed to the next line still makes a pair
+        self.assertEqual(self._tokens("ROMP_CLI_SCOPE_MEMORY_HIGH= 12G ROMP_CLI_SCOPE_MEMORY_HIGH = 12G\n"
+                                      "ROMP_CLI_SCOPE_MEMORY_HIGH\t=\t12G ROMP_CLI_SCOPE_MEMORY_MAX=\n16G"),
+                         {"MEMORY_HIGH": [("12G", 1), ("12G", 1), ("12G", 2)], "MEMORY_MAX": [("16G", 2)]})
+        # a wrapper row's continuation line opens with the comment marker: a value carried there is read past it
+        self.assertEqual(self._tokens("#   ROMP_CLI_SCOPE_MEMORY_MAX=\n#      16G, and ROMP_CLI_SCOPE_MEMORY_SWAP_MAX =\n#\t0."),
+                         {"MEMORY_MAX": [("16G", 1)], "MEMORY_SWAP_MAX": [("0", 2)]})
+        # a CRLF break or a blank line after the `=` reads an empty value, not the next paragraph's word
+        self.assertEqual(self._tokens("ROMP_CLI_SCOPE_MEMORY_MAX=\r\n16G ROMP_CLI_SCOPE_MEMORY_HIGH=\n\n12G"),
+                         {"MEMORY_MAX": [("", 1)], "MEMORY_HIGH": [("", 2)]})
+        # a `NAME=` ending its line with the next variable on the line below (unset, spelled service.env-style) reads
+        # as empty and never swallows that line: the next token is read on its own, in the section, on wrapper rows
+        # (with or without spaces after the `#`) and behind a commented-out line; the example is then judged on its
+        # set values, HIGH absent, and accepted
+        env = "ROMP_CLI_SCOPE_MEMORY_MAX=28G\nROMP_CLI_SCOPE_MEMORY_HIGH=\nROMP_CLI_SCOPE_MEMORY_SWAP_MAX=0\n"
+        rows = "#   ROMP_CLI_SCOPE_MEMORY_MAX=28G\n#   ROMP_CLI_SCOPE_MEMORY_HIGH=\n#ROMP_CLI_SCOPE_MEMORY_SWAP_MAX=0\n"
+        for text in (env, rows, env.replace("\nROMP_CLI_SCOPE_MEMORY_HIGH", "\n# ROMP_CLI_SCOPE_MEMORY_HIGH")):
+            self.assertEqual(self._tokens(text), {"MEMORY_MAX": [("28G", 1)], "MEMORY_HIGH": [("", 2)],
+                                                  "MEMORY_SWAP_MAX": [("0", 3)]}, text)
+            groups = self._groups([("a service.env example", text, 1)])
+            self.assertEqual(groups, [("a service.env example", 1, {"MEMORY_MAX": [("28G", 1)],
+                                                                    "MEMORY_SWAP_MAX": [("0", 3)]})], text)
+            self.assertEqual(self._examples(groups), 1, text)
+            self._no_pair_below(groups)
+        # a value on the line below that is not a token is still the value
+        self.assertEqual(self._tokens("ROMP_CLI_SCOPE_MEMORY_HIGH=\n12G ROMP_CLI_SCOPE_MEMORY_MAX=16G"),
+                         {"MEMORY_HIGH": [("12G", 1)], "MEMORY_MAX": [("16G", 2)]})
+        # a value written as a code span reads whole (the opening backtick skipped, the closing one ends it), and a
+        # pipe ends a value (a table cell)
+        self.assertEqual(self._tokens("ROMP_CLI_SCOPE_MEMORY_HIGH=`28G` |ROMP_CLI_SCOPE_MEMORY_MAX=28G|cap| "
+                                      "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX=`0`."),
+                         {"MEMORY_HIGH": [("28G", 1)], "MEMORY_MAX": [("28G", 1)], "MEMORY_SWAP_MAX": [("0", 1)]})
+        # the closing backtick of a `NAME=` reference in a code span, or an empty span, is skipped like an opening
+        # quote and the value after it is empty (it ends at the space, or at the span's second backtick); empty is
+        # unset, so a prose reference to the assignment form sets nothing and is accepted
+        ref = "unset the `ROMP_CLI_SCOPE_MEMORY_HIGH=` line, or write ROMP_CLI_SCOPE_MEMORY_HIGH=`` there."
+        self.assertEqual(self._tokens(ref), {"MEMORY_HIGH": [("", 1), ("", 1)]})
+        self.assertEqual(self._groups([("docs/reference.md's memory-limits section", ref, 1)]), [])
+        self.assertEqual(self._examples(self._groups([("prose", ref, 1)])), 0)
+        # a trailing period or colon and surrounding quotes are stripped, in that order
+        self.assertEqual(self._tokens('ROMP_CLI_SCOPE_MEMORY_SWAP_MAX=0. ROMP_CLI_SCOPE_MEMORY_HIGH="28G" '
+                                      'ROMP_CLI_SCOPE_MEMORY_SWAP_MAX="0". ROMP_CLI_SCOPE_MEMORY_MAX=28G: '
+                                      "ROMP_CLI_SCOPE_OOM_SCORE_ADJ='500'."),
+                         {"MEMORY_SWAP_MAX": [("0", 1), ("0", 1)], "MEMORY_HIGH": [("28G", 1)], "MEMORY_MAX": [("28G", 1)],
+                          "OOM_SCORE_ADJ": [("500", 1)]})
+        # an empty value is read as such and is unset: the kernel skips an empty variable before its size rule (which
+        # would refuse the empty string), as the wrapper does, so a group setting only an empty HIGH is no example
+        # and fails nothing
+        self.assertEqual(self._tokens("ROMP_CLI_SCOPE_MEMORY_HIGH=, the soft limit"), {"MEMORY_HIGH": [("", 1)]})
+        self.assertFalse(sb._cli_scope_size_ok(""))
+        self.assertEqual(sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_HIGH": ""})[:2], ({}, {}))
+        self.assertEqual(self._groups([("prose", "ROMP_CLI_SCOPE_MEMORY_HIGH=, the soft limit", 1)]), [])
+        # a backtick between the name and the `=` is not a token
+        self.assertEqual(self._tokens("`ROMP_CLI_SCOPE_MEMORY_HIGH`=12G"), {})
+        # every spelling the wrapper accepts compares in bytes
+        for spelled, n in (("1024", 1024), ("16G", 16 * 1024 ** 3), ("16GiB", 16 * 1024 ** 3), ("2T", 2 * 1024 ** 4),
+                           ("512M", 512 * 1024 ** 2), ("4K", 4096), ("0", 0), ("infinity", float("inf"))):
+            self.assertEqual(self._bytes(spelled), n, spelled)
+        self.assertLess(self._bytes("12G"), self._bytes("16G"))     # the pair the old example carried
+        self.assertLess(self._bytes("28G"), self._bytes("infinity"))  # a finite soft limit under an infinite cap is below it
+        # the spellings the wrapper refuses stay loud: `1.5G` reaches the rule whole (the period is not stripped from
+        # inside a value) and is not a size this pin compares either; `16GiB` compares but the rule refuses it
+        self.assertEqual(self._tokens("ROMP_CLI_SCOPE_MEMORY_MAX=1.5G."), {"MEMORY_MAX": [("1.5G", 1)]})
+        for v in ("1.5G", "16GiB", "16g", "50%"):
+            self.assertFalse(sb._cli_scope_size_ok(v), v)
+        with self.assertRaises(AssertionError) as cm:
+            self._bytes("1.5G", "here: ROMP_CLI_SCOPE_MEMORY_MAX=1.5G")
+        self.assertIn("here: ROMP_CLI_SCOPE_MEMORY_MAX=1.5G is not a size", str(cm.exception))
+
+    def test_the_high_entry_and_the_high_row_name_unset_and_memorymax(self):
+        sec, _ = self._section()
+        m = re.search(self.ENTRY % "MEMORY_HIGH", sec)
+        self.assertIsNotNone(m, "the section has no `ROMP_CLI_SCOPE_MEMORY_HIGH` list entry")
+        row, _ = self._rows()["MEMORY_HIGH"]
+        for where, text in (("the reference's ROMP_CLI_SCOPE_MEMORY_HIGH entry", m.group(0)),
+                            ("the wrapper's ROMP_CLI_SCOPE_MEMORY_HIGH row", row)):
+            for word, flags in (("unset", re.IGNORECASE), ("MemoryMax", 0)):
+                self.assertTrue(re.search(r"\b%s\b" % word, text, flags),
+                                "%s does not name %s (the recommendation is unset, or equal to MemoryMax)" % (where, word))
+
+    def test_a_paragraph_names_earlyoom_with_memory_and_swap_and_one_names_the_heap_flag(self):
+        paragraphs = self._paragraphs(self._section()[0])
+        for words in (("earlyoom", "memory", "swap"), ("max-old-space-size", "heap")):
+            hit = any(all(re.search(r"\b%s\b" % re.escape(w), p, re.IGNORECASE) for w in words) for p in paragraphs)
+            self.assertTrue(hit, "no paragraph of the section names %s together" % " and ".join(words))
+
+    def test_no_em_dash_in_the_section_or_the_rows(self):
+        for where, text, line in self._texts():
+            i = text.find("\u2014")
+            self.assertEqual(i, -1, "%s carries an em dash (U+2014) on line %d" % (where, line + text.count("\n", 0, max(i, 0))))
+
+    def test_the_row_and_section_locators_key_on_tokens_and_fail_naming_what_they_looked_for(self):
+        self.assertEqual(sorted(self._rows()), sorted(self.NAMES))   # each row asserted present as it is located
+        # the row locator on a synthetic block with the rows reversed, one header ending at its token (the property
+        # reflowed to the continuation) and one with a tab after it: each row comes back whole and alone
+        after = {"MEMORY_HIGH": "", "OOM_SCORE_ADJ": "\t-p X=  first line of OOM_SCORE_ADJ"}
+        block = "".join("#   ROMP_CLI_SCOPE_%s%s\n#%scontinued %s\n"
+                        % (n, after.get(n, "      -p X=  first line of %s" % n), " " * 40, n)
+                        for n in reversed(self.NAMES)) + "# Sizes are digits.\n"
+        for name in self.NAMES:
+            row, line = self._row_in(block, name)
+            self.assertEqual(row.count("ROMP_CLI_SCOPE_"), 1, "the %s row locator took a neighbour's row" % name)
+            self.assertIn("continued %s\n" % name, row, "the %s row locator dropped its continuation line" % name)
+            self.assertEqual(line, 2 * (len(self.NAMES) - 1 - self.NAMES.index(name)) + 1, name)
+        self.assertIsNone(re.search(self.ROW % "MEMORY_MAX", "#   ROMP_CLI_SCOPE_MEMORY_MAX_FOO  x\n"),
+                          "the MEMORY_MAX row locator matched a longer token")
+        with self.assertRaises(AssertionError) as cm:
+            self._row_in(block.replace("#   ROMP_CLI_SCOPE_MEMORY_HIGH\n", "#   nothing here\n"), "MEMORY_HIGH")
+        self.assertIn("no `#   ROMP_CLI_SCOPE_MEMORY_HIGH` comment row", str(cm.exception))
+        # the section locator on a synthetic document: found by the MEMORY_MAX entry under a reworded heading,
+        # running to the next heading of level 1 to 4 or to the end of the document, with its heading's line
+        body = "#### Limits, reworded\n\nintro\n\n- `ROMP_CLI_SCOPE_MEMORY_MAX`: the cap\n* `ROMP_CLI_SCOPE_MEMORY_HIGH`: the soft one\n\ntail\n"
+        doc = "## Top\n\ntext\n\n" + body
+        self.assertEqual(self._section_in(doc), (body, 5))
+        self.assertEqual(self._section_in(doc + "#### Next\n\nother\n"), (body, 5))
+        self.assertEqual(self._section_in(doc + "## Next\n"), (body, 5))
+        self.assertEqual(self._section_in(doc + "##### Deeper\n\nstill the section\n"),
+                         (body + "##### Deeper\n\nstill the section\n", 5))
+        self.assertEqual(self._section_in(body), (body, 1))
+        self.assertEqual(len(self._paragraphs(body)[2:4]), 2)   # the two entries are paragraphs of their own
+        # fenced code blocks: a `# comment` line fenced between the h4 and the entry is not the nearest heading, a
+        # fence after the list does not end the section (the tail paragraph, and the below-cap pair written in it, are
+        # still read), the tokens inside a fence stay in the section text, and the h4 after it ends the section
+        fence = "```bash\n# a comment, not a heading\nROMP_CLI_SCOPE_MEMORY_MAX=28G\n```\n"
+        tail = "tail: ROMP_CLI_SCOPE_MEMORY_MAX=16G over ROMP_CLI_SCOPE_MEMORY_HIGH=12G\n"
+        body_f = "#### Limits, reworded\n\n" + fence + "\nintro\n\n- `ROMP_CLI_SCOPE_MEMORY_MAX`: the cap\n\n" + fence + "\n" + tail
+        doc_f = "## Top\n\ntext\n\n" + body_f + "#### Next\n\nother\n"
+        sec, line = self._section_in(doc_f)
+        self.assertEqual((sec, line), (body_f, 5))
+        self.assertEqual(self._tokens(sec, line), {"MEMORY_MAX": [("28G", 9), ("28G", 18), ("16G", 21)],
+                                                   "MEMORY_HIGH": [("12G", 21)]})
+        # the blanked copy keeps the document's length and line count, for backtick and tilde fences, indented up to
+        # three spaces, and an unclosed fence runs to the end
+        self.assertEqual(len(self._unfenced(doc_f)), len(doc_f))
+        self.assertEqual(self._unfenced(doc_f).count("\n"), doc_f.count("\n"))
+        self.assertEqual(self._unfenced("a\n~~~\n# x\n~~~\nb\n"), "a\n   \n   \n   \nb\n")
+        self.assertEqual(self._unfenced("  ```\n#### h\n  ```\n"), "     \n      \n     \n")
+        self.assertEqual(self._unfenced("```\n# x\n"), "   \n   \n")
+        self.assertEqual(self._unfenced("`` not a fence\n# h\n"), "`` not a fence\n# h\n")
+        # CommonMark's closer: a run of the same character at least as long as the opener closes (a longer one too);
+        # a shorter run, the other character, or a run with text after it leaves the fence open to the end
+        self.assertEqual(self._unfenced("```\n# x\n````\n#### h\n"), "   \n   \n    \n#### h\n")
+        self.assertEqual(self._unfenced("~~~\n# x\n~~~~~\n# y\n"), "   \n   \n     \n# y\n")
+        self.assertEqual(self._unfenced("````\n# x\n```\n# y\n"), "    \n   \n   \n   \n")
+        self.assertEqual(self._unfenced("```\n# x\n~~~\n# y\n"), "   \n   \n   \n   \n")
+        self.assertEqual(self._unfenced("```\n# x\n``` y\n# z\n"), "   \n   \n     \n   \n")
+        # a backtick fence's info string holds no backtick: a line opening with a triple-backtick code span is not a
+        # fence and the heading after it stands; a tilde fence's info string may hold one
+        self.assertEqual(self._unfenced("```x```\n# h\n"), "```x```\n# h\n")
+        self.assertEqual(self._unfenced("```foo``` is a span\n# h\n"), "```foo``` is a span\n# h\n")
+        self.assertEqual(self._unfenced("~~~ a `b`\n# h\n~~~\n"), "         \n   \n   \n")
+        # a document whose entry has no h4 directly above it (its heading gone, an h2 above; or a longer document with
+        # an h4 further up, which must not be taken instead) and one without the entry fail naming what was looked for
+        for bad, named in ((doc.replace("#### ", "**"), "no `#### ` heading directly above its `ROMP_CLI_SCOPE_MEMORY_MAX` "
+                                                          "list entry (the nearest heading above it is '## Top'"),
+                           ("#### Earlier\n\nx\n\n### Mid\n\n" + body.replace("#### Limits, reworded\n\n", ""),
+                            "the nearest heading above it is '### Mid'"),
+                           ("- `ROMP_CLI_SCOPE_MEMORY_MAX`: no heading at all\n", "the nearest heading above it is none"),
+                           (doc.replace("MEMORY_MAX`", "MEMORY_MOST`"), "no `ROMP_CLI_SCOPE_MEMORY_MAX` list entry"),
+                           # a fenced `#### ` line is not the heading, and a fenced entry-shaped line is not the entry
+                           ("## Top\n\n```\n#### Fenced\n```\n\n- `ROMP_CLI_SCOPE_MEMORY_MAX`: the cap\n",
+                            "the nearest heading above it is '## Top'"),
+                           ("#### Only\n\n```\n- `ROMP_CLI_SCOPE_MEMORY_MAX`: fenced\n```\n",
+                            "no `ROMP_CLI_SCOPE_MEMORY_MAX` list entry")):
+            with self.assertRaises(AssertionError) as cm:
+                self._section_in(bad)
+            self.assertIn(named, str(cm.exception))
 
 if __name__ == "__main__":
     unittest.main()

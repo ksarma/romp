@@ -1287,15 +1287,32 @@ the next manager restart. Four variables in the service environment
   death. The kernel and the other sessions are untouched either way.
 - `ROMP_CLI_SCOPE_MEMORY_HIGH`: the soft limit (`MemoryHigh=`). Above it, the
   scope is throttled and its memory reclaimed; the limit itself kills nothing.
-  A throttled scope does raise memory pressure, and on a machine where
-  `systemd-oomd` is set to act on the user manager's pressure (`systemctl show
-  user@$(id -u).service -p ManagedOOMMemoryPressure` prints `kill`) it can kill
-  the whole scope, `OOMPolicy=continue` notwithstanding; check that setting
-  before relying on the soft limit alone.
+  Leave it unset, or set it equal to `MemoryMax`; the two are the same thing:
+  cgroup v2's `memory.high` defaults to `max`, and usage cannot pass an equal
+  soft limit without reaching the hard one, where `MemoryMax` takes over: with
+  the swap limit below at `0` (the recommendation), or no swap on the machine,
+  the cap is the kill; with swap allowed, the scope swaps first and is killed
+  when its swap allowance is used up (a finite `MemorySwapMax`) or when the
+  machine's swap is full. Never set it below `MemoryMax`:
+  throttling reclaims memory, and with the swap limit at `0` (or no swap) a
+  runaway that allocates tens of GB of anonymous memory in seconds holds none
+  Linux can reclaim, so a lower soft limit only stalls the process for
+  minutes while it creeps toward the cap and the whole machine sits at high
+  memory pressure (measured 2026-09-10 on the administrator's box with a 12G
+  soft limit under a 16G cap and `MemorySwapMax=0`: about 50 MiB every 5
+  seconds, PSI memory `full` at 42 percent; the throttle's delay grows with the
+  overage, so the rate holds for that pair only). That stall is memory pressure
+  `systemd-oomd` can act on: on a machine where it is set to act on the user
+  manager's pressure (`systemctl show user@$(id -u).service -p
+  ManagedOOMMemoryPressure` prints `kill`) it can kill the whole throttled
+  scope, `OOMPolicy=continue` notwithstanding. When the scope can swap, the
+  throttle pushes the runaway's pages to swap instead, the slowdown the swap
+  entry below describes, so a lower soft limit helps in neither case.
 - `ROMP_CLI_SCOPE_MEMORY_SWAP_MAX`: the swap limit (`MemorySwapMax=`). Without
   it, a scope at `MemoryMax` pushes pages to swap instead of being killed, until
   the machine's swap is used up, and the swapping slows every other process. On
-  a machine with swap, set this too.
+  a machine with swap, set it to `0`, so a scope over its limit is killed rather
+  than swapped.
 - `ROMP_CLI_SCOPE_OOM_SCORE_ADJ`: an integer from -1000 to 1000, written to the
   `oom_score_adj` of the process that becomes the CLI, before the CLI starts, on
   every path that starts one: a launch that falls back to a direct run, outside
@@ -1391,16 +1408,42 @@ check a live session, run from a shell inside it: `cat /sys/fs/cgroup$(cut -d:
 -f3 /proc/self/cgroup)/memory.max` prints the limit in bytes, `max` when none
 applies, and fails when the controller is not there.
 
-A suggested starting point for a shared 64 GB machine:
-`ROMP_CLI_SCOPE_MEMORY_MAX=16G`, `ROMP_CLI_SCOPE_MEMORY_HIGH=12G`,
-`ROMP_CLI_SCOPE_MEMORY_SWAP_MAX=0`, `ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500`. One
-session can still take a quarter of the machine, more than any ordinary tool
-call needs; the kernel (a few GB), the other sessions and the system keep the
-rest. A session is throttled once it passes 12 GB and killed when it reaches 16
-GB, without swapping first. An adjustment of 500 adds 500 points to each
-session's OOM score, on a scale where 1000 points is the whole of the machine's
-memory, so the machine-wide killers also choose a runaway session before the
-kernel.
+A suggested starting point for a shared 62 GB machine that hosts a dozen
+sessions: `ROMP_CLI_SCOPE_MEMORY_MAX=28G`, `ROMP_CLI_SCOPE_MEMORY_HIGH=28G`,
+`ROMP_CLI_SCOPE_MEMORY_SWAP_MAX=0`, `ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500` (the
+soft limit is written out equal to the hard one; leaving it unset is the same
+setting). One session can still take nearly half the machine, far more than any
+ordinary tool call needs; the kernel (a few GB), the other sessions and the
+system keep the rest. When a session's scope reaches 28 GB, the cgroup's OOM
+killer kills the largest process in it, with no throttling or swapping first.
+Usually that is a tool's process, and the session goes on with a failed tool
+call. When the CLI is itself the largest process, it dies, and the kernel
+resumes the session with its history, as after any CLI death. An adjustment of
+500 adds 500 points to each session's OOM score, on a scale where 1000 points
+is the whole of the machine's memory, so earlyoom and Linux's OOM killer, which
+rank processes by that score, choose a session before the kernel.
+
+Size the cap to sit inside the threshold of the machine's own OOM killer, so
+the scoped kill happens first. At its defaults, earlyoom acts once available
+memory and free swap are both at or below 10 percent, so with swap it acts
+later than at 10 percent of memory available (`MemorySwapMax=0` keeps the scope
+out of swap and does not change when earlyoom acts). Those thresholds are its
+`-m` and `-s` percentages (`-M` and `-S` in KiB), set in `/etc/default/earlyoom`
+on Debian and Ubuntu; earlyoom logs the thresholds it runs with when it starts
+(`journalctl -u earlyoom -b`), and `pgrep -a earlyoom` shows its flags. On a
+machine running it, the cap plus what the kernel, the other sessions and the
+system hold at the time should stay under that point. `systemd-oomd` chooses a
+whole cgroup by its own rules (reclaim activity on its pressure path, swap use
+on its swap path; `man oomd.conf`) and is not steered by `oom_score_adj`. A
+machine with neither is bounded by Linux's OOM killer at exhaustion. earlyoom
+and Linux's OOM killer choose a process by `oom_score`, so with the adjustment
+of 500 on every session they pick a session before the kernel, but the pick is
+not scoped to the runaway's cgroup and can be a well-behaved session. Staying
+under the threshold keeps the kill inside the scope that caused it. A heap
+flag on the process is no substitute for the cap: node's
+`--max-old-space-size` limits the V8 heap only, and a typed array's backing
+store is allocated outside it, so a process can pass that figure many times
+over with the flag in force.
 
 The limits cover what runs in the session's scope: the CLI, its tool shells,
 their `setsid` children, and a private tmux server started directly from a tool
