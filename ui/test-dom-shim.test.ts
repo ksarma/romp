@@ -235,18 +235,30 @@ const src = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
  *  - a constructor parameter property (`constructor(public EDGE: N[] = [])`, with or without a default);
  *  - an assignment through any name (`this.EDGE = null`, `n.EDGE = []`, `c.EDGE = p`, `c.EDGE = this.host`).
  *  Out of scope, by design: an edge under another name (a `kids` list), a shorthand key (`{ EDGE }`, or `EDGE,` alone
- *  on a line), a spread of a base built elsewhere (`{ tag, ...base }`), a value that is a member expression, a call
- *  or a `new` not rooted at this (`up.EDGE = g.document`, `EDGE = new Doc()`), a logical value (`n.EDGE = p || null`),
- *  an object literal or a non-empty array literal as the value (`win.EDGE = {}`, `EDGE: [kidA, kidB]`, `n.EDGE = [a,
- *  b]`), an Object.defineProperty of an edge whatever its enumerable flag (a descriptor holding a getter defeats a
- *  regex), a declared field whose type carries a comma (`EDGE: Record<string, N>;`), and a class field right after a
- *  `}` on the same line (a one-line method's body, a `{}` constructor, a static block: `constructor(public t: string)
- *  {} EDGE: N | null = null;`). A value is read by its first operand, a bare name whatever follows it other than a
- *  type continuation, a member or a call (`framed ? win : {}` is read through `framed`), or, for a conditional, by its
- *  final operand after the last colon (`win.EDGE = opts.framed ? {} : win`), the head and the middle operand free of
- *  parentheses; a conditional with a member-expression head whose final operand is an object literal, a member or a
- *  call (`win.EDGE = opts.framed ? win : {}`) is not read. A regex reads shape, not meaning, and some code that
- *  initialises no edge reads as a shape:
+ *  on a line), a computed key (`{ ["EDGE"]: null }`: the lexer blanks the string; `{ [k]: null }`: the identifier
+ *  carries no edge name), a spread of an object built elsewhere (`{ tag, ...base }`, `{ ...edges }` with edges from
+ *  Object.fromEntries, a helper or an import: the name is in another expression or file; a spread of a same-file
+ *  literal is read through that literal's own key), a bracket-notation write (`c["EDGE"] = this`: the lexer blanks the
+ *  key, and the assignment shape needs a dot), a compound assignment (`c.EDGE ??= this`, `c.EDGE ||= []`: the
+ *  assignment shape matches a bare equals sign), a class field whose type starts on the line after the colon (`EDGE:`
+ *  ending a line, `N | null = null;` or `N | null;` on the next: the field shape's type runs to the end of its own
+ *  line), a value that is a member expression, a call or a `new` not rooted at this (`up.EDGE = g.document`, `EDGE =
+ *  new Doc()`), a logical value (`n.EDGE = p || null`), an object literal or a non-empty array literal as the value
+ *  (`win.EDGE = {}`, `EDGE: [kidA, kidB]`, `n.EDGE = [a, b]`), an Object.defineProperty of an edge whatever its
+ *  enumerable flag (a descriptor holding a getter defeats a regex), a declared field whose type carries a comma
+ *  (`EDGE: Record<string, N>;`), and a class field right after a `}` on the same line (a one-line method's body, a
+ *  `{}` constructor, a static block: `constructor(public t: string) {} EDGE: N | null = null;`). A value is read by
+ *  its first operand, a bare name whatever follows it other than a type continuation, a member or a call (`framed ?
+ *  win : {}` is read through `framed`), or, for a conditional, by its final operand after the last colon (`win.EDGE =
+ *  opts.framed ? {} : win`), the head and the middle operand free of parentheses; a conditional with a
+ *  member-expression head whose final operand is an object literal, a member or a call (`win.EDGE = opts.framed ? win
+ *  : {}`) is not read. Checked in the tree at this head (2026-09-10; a TypeScript-AST walk over the 786 test
+ *  files under ui/ and ui/webview/ and a grep agree): no computed key, bracket write or wrapped field names an
+ *  edge; no object literal that spreads is a node (none carries tagName, nodeType, nodeName, tag or appendChild); and
+ *  the one compound write, ui/webview/timeline-boot.test.ts's `this.children ??= []` on a helper prototype whose
+ *  children are nodeFactory nodes, is in a file that calls nodeFactory. So no fake reaches the ratchet through these
+ *  shapes today; a new one in any of them is the reviewer's to catch, with the callers pin below for the files that
+ *  call hideEdges. A regex reads shape, not meaning, and some code that initialises no edge reads as a shape:
  *  a destructuring default at line start (`function mk({\n  EDGE = [],\n})`) reads as a class field, where the
  *  one-line forms do not (a brace after `(`, `=`, `,`, let, const or var opens no class body, and a `;` inside such a
  *  one-line brace group separates type members, not class members, so `type N = { tag: string; EDGE: N | null }` is
@@ -505,16 +517,16 @@ test("ratchet: every UI test file that initialises an edge calls the shared modu
   const matching = files.filter((f) => needsListing(src(f)));
   assert.deepEqual(matching.filter((f) => !ALLOWLIST.includes(f) && !NON_DOM.includes(f)), [],
     "a UI test file's code initialises an edge-named property (parentNode, parentElement, parent, children, childNodes, a child or sibling pointer, " +
-    "ownerDocument or host) without calling the shared module; a failing assertion on such an object can allocate tens of GB. Three paths, one import and " +
-    "one line each: (1) a fake DOM: build its nodes with nodeFactory(, or call hideEdges(this) at the end of the class's constructor (hideEdges(obj) on an " +
-    "object literal), imported from ui/test-dom-shim.ts as a named import or a namespace import (shim.hideEdges(); a .js suffix on the specifier is read " +
-    "too), and add a projection test. The import alone is not enough, and a call token in a comment or a string is not a call: the call in code is what " +
-    "counts. (2) A non-DOM use of an edge name (a local reassigned at line start, a typed parameter after a comma, a type literal's member, a fixture's " +
-    "field): rename it, or add the file to NON_DOM_EDGES with its reason and raise NON_DOM_EDGES_MAX in the same commit. (3) The allowlist below is " +
-    "closed: it names the files that predate the rule, a renamed listed file replaces its entry, and neither the list nor ALLOWLIST_MAX goes up");
+    "ownerDocument or host) without calling the shared module; a failing assertion on such an object can allocate tens of GB. Three paths: (1) a fake DOM: " +
+    "build its nodes with nodeFactory(, or call hideEdges(this) at the end of the class's constructor (hideEdges(obj) on an object literal), imported from " +
+    "ui/test-dom-shim.ts as a named import or a namespace import (shim.hideEdges(); a .js suffix on the specifier is read too), and add a projection test: " +
+    "one import and one line. The import alone is not enough, and a call token in a comment or a string is not a call: the call in code is what counts. " +
+    "(2) A non-DOM use of an edge name (a local reassigned at line start, a typed parameter after a comma, a type literal's member, a fixture's field): " +
+    "rename it, or add the file to NON_DOM_EDGES with its reason and its count of edge-initialising lines and raise NON_DOM_EDGES_MAX in the same commit. " +
+    "(3) Neither fits: ask the reviewer. ALLOWLIST, the unmigrated fakes, is empty since 2026-09-10 and closed: no file joins it and ALLOWLIST_MAX stays 0");
   assert.deepEqual(ALLOWLIST.filter((f) => !matching.includes(f)), [],
-    "an allowlisted file no longer initialises an edge in code, calls the shared module now, is gone, or was renamed (its new name replaces this entry and " +
-    "ALLOWLIST_MAX stands); otherwise take it off the list and set ALLOWLIST_MAX to the list's new length in the same commit");
+    "an allowlisted file no longer initialises an edge in code, calls the shared module now, or is gone: take it off the list and set ALLOWLIST_MAX to the " +
+    "list's new length in the same commit");
   assert.deepEqual(NON_DOM.filter((f) => !matching.includes(f)), [],
     "a file listed in NON_DOM_EDGES no longer initialises an edge-named key in code, calls the shared module now, or is gone: take it off and lower NON_DOM_EDGES_MAX to the new length in the same commit");
   assert.equal(ALLOWLIST.length, ALLOWLIST_MAX,
@@ -549,12 +561,14 @@ test("the NON_DOM_EDGES count pin: a listed file's copy with one more edge-initi
 test("every ui/webview test file whose code calls hideEdges( initialises an edge the detector reads: a caller the detector cannot see is a shape drift, the credential read but the rule not", () => {
   // ui/test-dom-shim.test.ts (its text uses EDGE) and ui/timeline-tags-scale.test.ts (nodeFactory nodes, hideEdges on a variant-shape
   // node it builds) are the two callers outside ui/webview/ that the detector does not read, by design; the webview files are the rule's
+  // scope, so every hideEdges( caller there must initialise an edge the detector reads
   const callers = testFiles().filter((f) => f.startsWith("webview/") && /\bhideEdges\(/.test(blank(src(f), true)));
   assert.ok(callers.length >= 100, "the sweep found " + callers.length + " webview callers");
   assert.deepEqual(callers.filter((f) => !initsEdge(src(f))), [],
-    "a ui/webview test file calls hideEdges( on an object whose edge the detector does not read (a shorthand key, a spread, a computed key), so the ratchet " +
-    "would stay green if the call came off. Write the edge in a shape it reads (a declared field, `EDGE: [] as any[]` on a literal), or add the shape to the " +
-    "detector with a POSITIVE case");
+    "a ui/webview test file calls hideEdges( on an object whose edge the detector does not read (the docstring's out-of-scope list: a shorthand key, a " +
+    "computed key, a spread of an object built elsewhere, a bracket-notation write, a compound assignment, a class field whose type starts on the line after " +
+    "the colon; the docstring records the tree check that found no fake in any of them on 2026-09-10), so the ratchet would stay green if the call came off. " +
+    "Write the edge in a shape it reads (a declared field, `EDGE: [] as any[]` on a literal), or add the shape to the detector with a POSITIVE case");
 });
 
 test("the files that carried the shim's copies import nodeFactory or hideEdges, call it, and keep no node factory of their own; this file's own code initialises no edge", () => {
