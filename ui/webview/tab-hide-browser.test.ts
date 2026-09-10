@@ -665,8 +665,9 @@ test("in Chromium, over the real sheet with the faces loaded: the main menu's tw
   const hide = `hidden in ${name40}; to show it, open the group's view`;
   for (const cls of ['"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"', '"ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"'])
     assert.ok(RENDER.includes(`el("div", ${cls}`), "a tag-bearing row of the main menu wears the modifier this leg puts on its copy: " + cls);
-  assert.ok(/for \(const g of others\) \{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle"\);/.test(RENDER) && RENDER.includes('el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));'),
-    "the flyout's Move to and Show when folded rows wear no modifier (round 5): the next test measures them in the flyout, where they render");
+  // the flyout's rows (Move to, Show when folded) wear no modifier: tab-hide.test pins their class strings; this leg measures the main menu
+  // alone and the next one measures the flyout, so no source pin of theirs sits here (round 6: a pin duplicated there made this leg red at
+  // the round-4 base before any browser launched, and the measured red the next leg exists for was never reached)
   let browser: any;
   try { browser = await pw.chromium.launch(); }
   catch (e) { t.skip("no playwright chromium on this box (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
@@ -802,7 +803,8 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
   assert.equal(NAMES30.filter((n) => n.length === 40).length, 3);
   const N5 = "infra", N19 = "notes-api-invoicing", N40 = "notes-api-customer-billing-migration-two";
   assert.deepEqual([N5.length, N19.length, N40.length], [5, 19, 40]);
-  assert.match(CSS, /\n\.ctx-sub-tags \.ctx-item-label \{ max-width: 22em;[^\n]*\n\.ctx-sub-tags \.ctx-item-sub \{ max-width: 36em;/, "the flyout's per-row caps this leg measures");
+  // the per-row caps this leg measures are pinned in tab-hide.test; no copy of that pin here, so against a sheet without them this leg goes
+  // red on the measurement (the 40-character destination not eliding), which is what it is for (round 6)
   for (const engine of ["chromium", "firefox"] as const) {
     let browser: any;
     try { browser = await pw[engine].launch(); }
