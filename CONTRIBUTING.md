@@ -20,10 +20,15 @@ cd vscode-extension && npm ci && npm test
 worker's V8 heap at 2 GB (`--max-old-space-size=2048`). Node's default concurrency is
 one worker per core minus one, so a 32-core machine would start 31 test processes at
 once, some driving a headless Chromium, and overlapping runs there ran the machine out
-of memory. V8's default heap scales with the machine's RAM (about a quarter of it, up to
-about 4 GB on 64-bit: 4144 MB measured under node 22 on the machine that ran the suite,
-about 2 GB on an 8 GB laptop), so the cap is what bounds eight workers to 16 GB. It is
-sized at about 8x the largest DOM fixture measured, `ui/timeline-tags-scale.test.ts` at
+of memory. V8's default heap limit is set from memory: node hands V8 the smaller of the
+machine's RAM and the process's cgroup memory limit (`process.constrainedMemory()`), and
+on 64-bit V8 sets the old generation to half of that below 4 GB, 2 GB from 4 GB up to
+15 GB, and 4 GB from 15 GB up (node 22; the `heap_size_limit` it reports adds the young
+generation: 4144 MB measured under node 22 on the machine that ran the suite, 2096 MB
+under a 4 to 14 GB cgroup, about 2 GB on an 8 GB laptop). So the flag halves the default
+only on hosts or cgroups of 15 GB or more; below that V8 already defaults to 2 GB or
+less, and eight workers are bounded to 16 GB either way. The cap is sized at about 8x the
+largest DOM fixture measured, `ui/timeline-tags-scale.test.ts` at
 210 to 246 MB RSS over ten runs (the suite-wide per-file peak was not measured). The cap
 bounds the V8 heap only (objects, strings, arrays); ArrayBuffer and typed-array backing
 stores live outside it, so it would not have stopped the runaway of 2026-09-09, in which
