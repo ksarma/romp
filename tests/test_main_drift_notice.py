@@ -718,8 +718,9 @@ class PersistentDismissal(unittest.TestCase):
 
     def test_update_check_route_blanks_dismissed_offers(self):
         src = inspect.getsource(km)
-        self.assertIn('"tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0])', src,
+        self.assertIn('tag = "" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]', src,
                       "a page load can no longer re-derive a dismissed offer")
+        self.assertIn('"tag": tag,', src, "and the answer carries the filtered tag (the counts are read only when it, or a drift sha, is set)")
 
 
 class PlainInstallCopy(unittest.TestCase):

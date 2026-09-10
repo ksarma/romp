@@ -337,7 +337,7 @@ GO.onclick(); var second = state(); await tick(); await tick(); out({ first: fir
                 ("push", {"mode": "", "tag": "", "sessions": None, "midTurn": None},
                  "window.__rompUpdateOffer('v0.1.0','v0.2.0','','b1','');")):
             s = run_banner(push + """
-CHECK.sessions = 2; CHECK.midTurn = 0;               // the kernel knows by the time of the click
+CHECK.tag = 'v0.2.0'; CHECK.sessions = 2; CHECK.midTurn = 0;   // the kernel knows by the time of the click, and the offer stands
 GO.onclick(); var atOnce = state(); await tick(); await tick(); var filled = state();
 CF.onclick(); await tick(); out({ atOnce: atOnce, filled: filled, after: state() });""", check=check)
             a = s["atOnce"]
@@ -399,6 +399,20 @@ out({ waited: waited, atOnce: atOnce, after: state() });""", check={"state": "ru
             self.assertTrue(s["msg"].startswith("The update did not finish: "), (name, s["msg"]))
             self.assertEqual((s["goHidden"], s["posts"]), (not again, []), name + ": a pushed window")
 
+    def test_a_page_loaded_with_nothing_offered_records_no_counts_from_that_answer(self):
+        # review round 6 (2026-09-10): the kernel reads no counts when nothing is offered (no registry dial on an
+        # idle page load), so that answer's nulls mean not asked, not unknown. note() recorded them anyway, and
+        # the first arm after a later push said "other kernels may restart too (the manager did not answer)"
+        # though the manager was never asked. note() now records nothing from an answer that carries no offer;
+        # the arm's own re-read, made while the offer stands, fills the counts in
+        s = run_banner("""
+window.__rompUpdateOffer('v0.1.0', 'v0.2.0', '', 'b1', ''); CHECK.tag = 'v0.2.0'; CHECK.sessions = 3; CHECK.midTurn = 1; CHECK.otherKernels = 0;
+GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: atOnce, after: state() });""",
+                       check={"tag": "", "sessions": None, "midTurn": None, "otherKernels": None})
+        self.assertEqual((s["atOnce"]["label"], s["atOnce"]["armed"]), ("Restart every session now", True),
+                         "no claim about a manager the kernel never asked")
+        self.assertEqual(s["after"]["label"], "Restart 3 sessions now, interrupting 1", "the arm's re-read fills the counts in")
+
     def test_a_re_read_that_answers_running_changes_neither_the_label_nor_the_held_counts(self):
         # review round 6 (2026-09-10): an update started elsewhere between the click and the arm's re-read (another
         # window's confirm, the auto converge) answers state running with every count null, since the kernel
@@ -424,8 +438,8 @@ fetch = function (u, o) { if (u !== '/update-check') return realFetch(u, o);
   return new Promise(function (res) { pending.push(function (d) { res({ ok: true, status: 200, json: function () { return Promise.resolve(d); } }); }); }); };
 var plain = state(); GO.onclick(); var armed1 = state(); CX.onclick(); var cancelled = state();
 GO.onclick(); var armed2 = state();
-pending[1]({ boot: 'b1', sessions: 5, midTurn: 2, otherKernels: 0 }); await tick(); await tick(); var second = state();
-pending[0]({ boot: 'b1', sessions: 9, midTurn: 9, otherKernels: 0 }); await tick(); await tick(); var stale = state();
+pending[1]({ boot: 'b1', tag: 'v0.2.0', sessions: 5, midTurn: 2, otherKernels: 0 }); await tick(); await tick(); var second = state();
+pending[0]({ boot: 'b1', tag: 'v0.2.0', sessions: 9, midTurn: 9, otherKernels: 0 }); await tick(); await tick(); var stale = state();
 CX.onclick(); var done = state();
 out({ plain: plain, armed1: armed1, cancelled: cancelled, armed2: armed2, second: second, stale: stale, done: done, reads: pending.length });""")
         self.assertEqual(s["reads"], 2, "each arm re-read once")

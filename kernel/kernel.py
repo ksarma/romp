@@ -56328,8 +56328,11 @@ _UPD_JS = (
     # 0 form ("nothing to interrupt") is a claim about a count the kernel has not made. A kernel no
     # manager started answers 0 other kernels (the registry read asks nothing) and manager:false, and its
     # label is the on-disk form (label above); `manager` is false only when the field says so, since an
-    # older kernel's answer has no field and its restart forms stand
-    "function note(d){if(!d)return;impact={sessions:(typeof d.sessions==='number')?d.sessions:null,midTurn:d.midTurn||0,"
+    # older kernel's answer has no field and its restart forms stand. An answer that carries no offer (no
+    # release tag, no drift with its sha) records nothing (review round 6, 2026-09-10): the kernel reads no
+    # counts when no label can be worded from them, so its nulls there mean not asked, and recording them
+    # made the first arm after a later push say the manager did not answer
+    "function note(d){if(!d||!(d.tag||(d.drift&&d.driftSha)))return;impact={sessions:(typeof d.sessions==='number')?d.sessions:null,midTurn:d.midTurn||0,"
     "others:(typeof d.otherKernels==='number')?d.otherKernels:null,manager:d.manager!==false};}"
     # the confirm's face follows the label (review round 5): Update, in Update's green, when the click
     # updates on disk and restarts nothing; Restart, in the error red, when it restarts sessions. Set at
@@ -58867,8 +58870,13 @@ class Handler(BaseHTTPRequestHandler):
                 dsha = _MAIN_DRIFT[0] or _MAIN_DRIFT[1]
                 if dsha in dis:
                     dsha = ""
+                tag = "" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]
                 # the counts are read only when a label can be worded from them (the offer's arm and
-                # the load of a page with an offer pending): while an update runs through EITHER door
+                # the load of a page with an offer pending). With nothing offered (no release tag after
+                # the dismissal filter and no drift sha: an idle page load) neither is read (review round
+                # 6 of the confirm step, 2026-09-10: until then every idle page load dialled the registry
+                # and waited its timeout on a silent manager), so a null count in such an answer means
+                # not asked, and the banner records none of it (note()). And while an update runs through EITHER door
                 # (the tag door's detached child, _UPDATE_STATE; the drift door's converge thread or
                 # the auto converge, _MAIN_CONVERGE_INFLIGHT) the banner shows the wait and its poll
                 # reads boot, failed and updated alone, so the registry read (a loopback GET, up to 1 s
@@ -58878,8 +58886,9 @@ class Handler(BaseHTTPRequestHandler):
                 # every window's poll dial the registry every 3 s and a page loaded mid-converge saw
                 # the drift still offered)
                 running = _UPDATE_STATE[0] == "running" or _MAIN_CONVERGE_INFLIGHT[0]
-                imp = None if running else _restart_impact()     # None while the SDK backend is still being built: unknown
-                oth = None if running else _other_kernels()      # None when the manager's registry could not be read
+                counted = bool(tag or dsha) and not running
+                imp = _restart_impact() if counted else None     # None while the SDK backend is still being built: unknown
+                oth = _other_kernels() if counted else None      # None when the manager's registry could not be read
                 # the drift converge's latched outcome (_MAIN_CONVERGE_OUTCOME): served whether or not a
                 # converge is still marked running (it is written before the flag clears), to every window
                 # that polls (latched until the next update starts through either door: _main_converge_begin,
@@ -58893,7 +58902,7 @@ class Handler(BaseHTTPRequestHandler):
                     failed, updated, why, hint = out["failed"], out["updated"], out["why"], out["hint"]
                 answer = {
                     "cur": _kernel_ver() or "",
-                    "tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]),
+                    "tag": tag,
                     "mode": _update_mode(),
                     "state": ("running" if running else ""), "failed": failed, "updated": updated, "why": why, "hint": hint,
                     # the pending MAIN-DRIFT offer (2026-08-15): a page loaded after the push can

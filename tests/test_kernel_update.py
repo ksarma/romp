@@ -882,6 +882,7 @@ class Routes(Fresh):
             d = json.loads(body)
             return d["sessions"], d["midTurn"]
         try:
+            km._UPDATE_AVAIL[0] = "v0.7.0"      # an offer: the counts are read only when a label can be worded (review round 6)
             km._sdk_backend, km._codex_backend = Fake((3, 1)), Fake((2, 1))
             self.assertEqual(check(), (5, 2), "a mixed box: Claude and Codex sessions summed")
             km._sdk_backend, km._codex_backend = Fake((3, 1)), None
@@ -954,6 +955,7 @@ class Routes(Fresh):
                              "whatever the registry answered; absent or empty: present)")
             return d["otherKernels"]
         try:
+            km._UPDATE_AVAIL[0] = "v0.7.0"      # an offer: the counts are read only when a label can be worded (review round 6)
             os.environ["ROMP_MANAGER_PORT"] = str(mgr.server_address[1])
             answer["body"] = registry(km.PORT, 31111)
             self.assertEqual(check(), 1, "one other kernel in the registry")
@@ -1050,6 +1052,7 @@ class Routes(Fresh):
         dials, notices, audits = [], [], []
         saved_port = os.environ.get("ROMP_MANAGER_PORT")
         try:
+            km._UPDATE_AVAIL[0] = "v0.7.0"      # an offer: the counts are read only when a label can be worded (review round 6)
             with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(port, dials)), \
                  mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
                  mock.patch.object(km, "_checkout_sha", return_value="abcdef0123456789"), \
@@ -1101,6 +1104,62 @@ class Routes(Fresh):
             km._MANAGER_READ_FAULT[0] = ""
             mgr.shutdown()
 
+    def test_update_check_reads_no_counts_and_dials_no_registry_when_nothing_is_offered(self):
+        # review round 6 of the confirm step (2026-09-10): the registry read and the impact count ran on every
+        # idle /update-check, a page load with no offer pending included, against the route's own comment (read
+        # only when a label can be worded from them): every idle page load dialled the manager and waited its
+        # 1 s timeout on a silent one. Both are skipped when nothing is offered (no release tag after the
+        # dismissal filter, no drift sha): every count null, no dial, and the banner's note() records nothing
+        # from such an answer (the node scenario in tests/test_update_banner_confirm.py), since null there means
+        # not asked, not unknown. The connection class refuses every port: a read that runs is seen as a dial
+        import contextlib
+        saved_port, saved_be = os.environ.get("ROMP_MANAGER_PORT"), (km._sdk_backend, km._codex_backend)
+        dials, asked, err = [], [], io.StringIO()
+
+        class Fake:
+            def restart_impact(self):
+                asked.append(1)
+                return (3, 1)
+
+        def check():
+            with contextlib.redirect_stderr(err):
+                _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            return json.loads(body)
+        try:
+            os.environ["ROMP_MANAGER_PORT"] = "7777"
+            km._sdk_backend, km._codex_backend = Fake(), None
+            km._UPDATE_AVAIL[0] = ""
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(-1, dials, allow={self.port})):
+                d = check()
+                self.assertEqual((d["tag"], d["drift"], d["sessions"], d["midTurn"], d["otherKernels"], d["state"]),
+                                 ("", "", None, None, None, ""), "nothing offered: every count null")
+                self.assertEqual((dials, asked), ([], []), "nothing offered: no registry read, no impact count")
+                self.assertNotIn("manager", d, "a port is set: the field is absent, as before")
+                km._UPDATE_AVAIL[0] = "v0.7.0"
+                km._dismiss_update("v0.7.0")
+                d = check()
+                self.assertEqual((d["tag"], d["sessions"], d["otherKernels"]), ("", None, None), "a dismissed release is no offer")
+                self.assertEqual((dials, asked), ([], []))
+                km._UPDATE_AVAIL[0] = "v0.7.1"
+                d = check()
+                self.assertEqual((d["tag"], d["sessions"], d["midTurn"], d["otherKernels"]), ("v0.7.1", 3, 1, None),
+                                 "a release offered: the counts are read (the registry dial is refused by the rail: null)")
+                self.assertEqual((len(dials), len(asked)), (1, 1))
+                km._UPDATE_AVAIL[0] = ""
+                km._MAIN_DRIFT[1] = "abcdef01"
+                d = check()
+                self.assertEqual((d["drift"], d["driftSha"], d["sessions"]), ("restart", "abcdef01", 3), "a drift offered: the same")
+                self.assertEqual((len(dials), len(asked)), (2, 2))
+        finally:
+            km._sdk_backend, km._codex_backend = saved_be
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            km._MANAGER_READ_FAULT[0] = ""
+
     def test_update_check_reads_no_registry_while_the_update_runs(self):
         # while the update runs the banner shows the wait and its poll reads boot, failed and updated alone,
         # so the route skips the registry read (a loopback GET, up to 1 s on a manager that accepts and
@@ -1126,6 +1185,7 @@ class Routes(Fresh):
         km._MANAGER_READ_FAULT[0] = ""
         err = io.StringIO()
         try:
+            km._UPDATE_AVAIL[0] = "v0.7.0"      # an offer: the counts are read only when a label can be worded (review round 6)
             os.environ["ROMP_MANAGER_PORT"] = str(srv.getsockname()[1])
             km._UPDATE_STATE[0] = "running"
             t0 = time.monotonic()
@@ -1502,6 +1562,7 @@ class Routes(Fresh):
         km._MANAGER_PORT_FAULT[0] = ""
         err = io.StringIO()
         try:
+            km._UPDATE_AVAIL[0] = "v0.7.0"      # an offer: the counts are read only when a label can be worded (review round 6)
             with contextlib.redirect_stderr(err):
                 self.assertEqual((km._manager_port(" 7777 "), km._manager_port("7_777"), km._manager_port("abc"), km._manager_port("\u00b2")),
                                  (7777, None, None, None), "decimal digits only: a superscript two passes isdigit and fails int()")
@@ -1603,6 +1664,7 @@ class Routes(Fresh):
             self.assertFalse(t.is_alive(), "the registry read did not return within 10 s: the timeout did not reach the connection")
             return got[0], time.monotonic() - t0
         try:
+            km._UPDATE_AVAIL[0] = "v0.7.0"      # an offer: the counts are read only when a label can be worded (review round 6)
             os.environ["ROMP_MANAGER_PORT"] = str(srv.getsockname()[1])
             with contextlib.redirect_stderr(err):
                 ks, took = read(0.2)
