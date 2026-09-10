@@ -65,6 +65,16 @@ class _RecordingManager(BaseHTTPRequestHandler):
         pass
 
 
+def _notice_mock(notices, kinds=None):
+    """A _sync_notice stand-in with the real signature (text, ok, kind): records (text, ok) on `notices`
+    and the kind on `kinds`. The refusal notice files under kind "refused" (review round 2, 2026-09-10)."""
+    def side_effect(text, ok=True, kind="sync"):
+        notices.append((text, ok))
+        if kinds is not None:
+            kinds.append(kind)
+    return side_effect
+
+
 class ManagerHopsCarryTheToken(unittest.TestCase):
     def setUp(self):
         _RecordingManager.hits = []
@@ -119,7 +129,7 @@ class ManagerHopsCarryTheToken(unittest.TestCase):
         with mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
              mock.patch.object(km, "_checkout_sha", return_value="abcdef12"), \
              mock.patch.object(km, "_audit_restart_request", lambda *a, **k: None), \
-             mock.patch.object(km, "_sync_notice", side_effect=lambda m, ok=True: notices.append((m, ok))):
+             mock.patch.object(km, "_sync_notice", side_effect=_notice_mock(notices)):
             km._run_main_update("restart", immediate=True, manager_port=self.port)
             km._run_main_update("restart", immediate=False, manager_port=self.port)
         self.assertEqual(self._hits(2), [("/restart-all", km.TOKEN), ("/restart-all?when=quiet", km.TOKEN)])
@@ -130,15 +140,16 @@ class ManagerHopsCarryTheToken(unittest.TestCase):
         # says what the refusal means and the way out, and the stderr line and the audit row are new
         _RecordingManager.answer = 401
         self._clear_audit()
-        notices, err = [], io.StringIO()
+        notices, kinds, err = [], [], io.StringIO()
         with mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
              mock.patch.object(km, "_checkout_sha", return_value="abcdef12"), \
-             mock.patch.object(km, "_sync_notice", side_effect=lambda m, ok=True: notices.append((m, ok))), \
+             mock.patch.object(km, "_sync_notice", side_effect=_notice_mock(notices, kinds)), \
              contextlib.redirect_stderr(err):
             km._run_main_update("restart", immediate=True, manager_port=self.port)
         self.assertEqual(self._hits(), [("/restart-all", km.TOKEN)])
         said = [m for m, ok in notices if not ok]
         self.assertEqual(len(said), 1, notices)
+        self.assertEqual(kinds, ["refused"], "filed under the bell's refused kind, not the machine-sync one (review round 2)")
         self.assertIn("romp is updated on disk but the restart request failed", said[0])
         self.assertIn("the manager refused (HTTP 401)", said[0])
         self.assertIn("romp refresh", said[0], "and the way out")
@@ -200,8 +211,8 @@ class ManagerHopsCarryTheToken(unittest.TestCase):
                 _RecordingManager.answer = status
                 _RecordingManager.hits = []
                 self._clear_audit()
-                notices, err = [], io.StringIO()
-                with mock.patch.object(km, "_sync_notice", side_effect=lambda m, ok=True: notices.append((m, ok))), \
+                notices, kinds, err = [], [], io.StringIO()
+                with mock.patch.object(km, "_sync_notice", side_effect=_notice_mock(notices, kinds)), \
                      contextlib.redirect_stderr(err):
                     refused = km._restart_this_kernel("test restart", manager_port=self.port)
                 self.assertEqual(self._hits(), [("/restart-all", km.TOKEN)])
@@ -211,6 +222,7 @@ class ManagerHopsCarryTheToken(unittest.TestCase):
                 self.assertIn(tell, refused)
                 self.assertIn("romp refresh", refused)
                 self.assertEqual([m for m, ok in notices if not ok], [refused], "the same text reaches the bell")
+                self.assertEqual(kinds, ["refused"], "under the refused kind")
                 lines = [l for l in err.getvalue().splitlines() if "refused POST /restart-all" in l]
                 self.assertEqual(len(lines), 1, err.getvalue())
                 self.assertIn("HTTP %d" % status, lines[0])
@@ -266,8 +278,8 @@ class TheRestartHandlerAcksWhatTheManagerSaid(unittest.TestCase):
 
     def test_a_refused_hop_answers_502_with_the_refusal_and_an_accepted_one_200(self):
         _RecordingManager.answer = 401
-        notices = []
-        with mock.patch.object(km, "_sync_notice", side_effect=lambda m, ok=True: notices.append((m, ok))), \
+        notices, kinds = [], []
+        with mock.patch.object(km, "_sync_notice", side_effect=_notice_mock(notices, kinds)), \
              contextlib.redirect_stderr(io.StringIO()):
             code, ack = self._post()
         self.assertEqual(code, 502, ack)
@@ -275,6 +287,7 @@ class TheRestartHandlerAcksWhatTheManagerSaid(unittest.TestCase):
         self.assertIn("HTTP 401", ack["error"])
         self.assertIn("romp refresh", ack["error"])
         self.assertEqual([m for m, ok in notices if not ok], [ack["error"]], "the same refusal reaches the bell")
+        self.assertEqual(kinds, ["refused"], "under the refused kind (review round 2, 2026-09-10)")
         self.assertEqual(_RecordingManager.hits, [("/restart-all", km.TOKEN)], "the hop ran BEFORE the ack")
         _RecordingManager.answer = 200
         code, ack = self._post()

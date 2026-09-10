@@ -25668,7 +25668,10 @@ def _report_manager_refusal(door, status, body, reason="", head="The restart did
     _audit_restart_request(_MANAGER_REFUSED_ACTION, door=door, status=status, reason=reason, error=err[:200],
                            tokenSrc=src)
     text = "%s: %s. %s." % (head, why, fix)
-    _sync_notice(text, ok=False)
+    # kind "refused" (review round 2, 2026-09-10): filed under the default "sync" kind the row wore the
+    # machine-sync label, and a mute on that kind (the one that records successes, so a plausible mute)
+    # hid every refused restart with it; the bell's DESC for "refused" names a refused restart too
+    _sync_notice(text, ok=False, kind="refused")
     return text
 
 
@@ -53060,7 +53063,7 @@ sdk:"romp's Claude Code backend, the machinery that actually runs your sessions,
 sync:"romp moved commits between your machines by itself \u2014 a push to a remote, a pull from one, or an ask that a peer fast-forward itself. Successes are logged as well as failures, so this is the record of what romp did to your machines; the network panel shows a sync while it is still running",
 locate:"a click that should have jumped to a message in the chat couldn't find it. Usually the chat is missing part of its history; reload the pane if it keeps happening",
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
-refused:"a setting that could not be saved, or a state file that could not be read. A change you made \u2014 a lane or tab setting, a card bell, a lane order \u2014 was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults",
+refused:"a setting that could not be saved, a state file that could not be read, or a restart the manager refused. A change you made \u2014 a lane or tab setting, a card bell, a lane order \u2014 was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults. Or the kernel asked its manager to restart and the manager refused (it does not hold the serve token the kernel sent, or cannot read its own): nothing restarted, and the entry carries the status and the way out",
 undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read the live session list (tmux did not answer; the same send works once it does), or it could not read the comment threads' store while resolving a session name, or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a refused reply, interrupt, end or compact files a row there with no text; a clear, drop or undo refused over the goals file writes nothing there"};
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
