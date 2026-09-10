@@ -15,6 +15,7 @@ import { billingRowText, billingSubText, billingSide, billingContradicted, picke
 
 const ROOT = path.resolve(process.cwd(), "..");
 const KERNEL = fs.readFileSync(path.join(ROOT, "kernel", "kernel.py"), "utf8");
+const BILLING = fs.readFileSync(path.join(ROOT, "ui", "webview", "billing-label.ts"), "utf8");
 
 test("an unpicked session whose CLI reports the key reads 'API key', whatever the seeded intent", () => {
   // the apiKeyHelper box: the intent was seeded "login" (no key of romp's), the CLI found the key
@@ -64,11 +65,33 @@ test("a billing pick HELD for the session's live work says so, and names what bi
   const f = { auth: "login", authLive: "key", authPicked: true, authPending: true,
               pickHeld: { surfaces: ["auth"], subagents: 1, tasks: 0 } };
   assert.equal(billingRowText(f), "API key until the background work finishes, then Login");
-  assert.equal(billingSubText(f), "waiting for background work");
+  assert.equal(billingSubText(f), "waiting until the background work finishes");
   // no report to name: the pick is named as what waits, never as the fact
   const g = { auth: "key", authLive: "", authPicked: true, authPending: true, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 2 } };
   assert.equal(billingRowText(g), "API key applies when the background work finishes");
-  assert.equal(billingSubText(g), "waiting for background work");
+  assert.equal(billingSubText(g), "waiting until the background work finishes");
+  // the work is done and the pick waits for a turn to finish (review round 4, 2026-09-10): the row and the
+  // sub-line name the turn, the way the chat line does, through pick-held.ts's one clause (heldUntil); until
+  // round 4 both read only the surfaces and said "the background work" for a wait that can last indefinitely
+  // (authPending stands from the pick to the landing). Both forms of the row: with a report and without
+  const open = { ...f, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: true } };
+  assert.equal(billingRowText(open), "API key until this turn finishes, then Login");
+  assert.equal(billingSubText(open), "waiting until this turn finishes");
+  const idle = { ...f, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: false } };
+  assert.equal(billingRowText(idle), "API key until the next turn finishes, then Login");
+  assert.equal(billingSubText(idle), "waiting until the next turn finishes");
+  const older = { ...f, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0 } };
+  assert.equal(billingRowText(older), "API key until this turn finishes, then Login", "a payload without the bit keeps this turn");
+  assert.equal(billingSubText(older), "waiting until this turn finishes");
+  assert.equal(billingRowText({ ...g, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: false } }),
+    "API key applies when the next turn finishes");
+  assert.equal(billingRowText({ ...g, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: true } }),
+    "API key applies when this turn finishes");
+  assert.equal(billingSubText({ ...g, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: false } }),
+    "waiting until the next turn finishes");
+  // and the clause is pick-held.ts's, never a second wording here
+  assert.match(BILLING, /import \{ heldUntil, type PickHeld \} from "\.\/pick-held";/);
+  assert.doesNotMatch(BILLING, /until the background work finishes|waiting for background work/);
   // a hold on some OTHER pick leaves the billing words alone, and so does the armed reconnect (no hold)
   const h = { auth: "login", authLive: "", authPicked: true, authPending: true, pickHeld: { surfaces: ["effort"], subagents: 1, tasks: 0 } };
   assert.equal(billingRowText(h), "Login (applying, not confirmed yet)");

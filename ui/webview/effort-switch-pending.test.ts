@@ -40,7 +40,7 @@ test("a pick HELD for live work renders a waiting line, not the reloading animat
   // kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the element then
   // says which pick waits and on what, with no loader dots. The words come from pick-held.ts (executed
   // in pick-held.test.ts, per kind and per state); render.ts is pinned to take them from there
-  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, type PickHeld \} from "\.\/pick-held";/);
+  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, type PickHeld \} from "\.\/pick-held";/);
   assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null;/);
   assert.match(RENDER, /effortPending\?: boolean; pickHeld\?: PickHeld \| null;/);
   assert.match(RENDER, /if \(ev\.held\) \{/);
@@ -83,4 +83,21 @@ test("a held kind's badge shows the running value with a pending mark: no loader
   assert.match(rule, /line-height: 1/);
   // the same sync serves mode, model, effort and fast badges (the kinds the statusline draws)
   assert.match(RENDER, /type MetaKind = "mode" \| "model" \| "effort" \| "fast";/);
+});
+
+test("the tab tooltip's Mode and Effort rows show a held pick the way the Billing row does", () => {
+  // showTabTip's Mode and Effort rows read the status value with no pickHeld read, so during a hold they showed
+  // the running value flat while the Billing row in the same popover explained its hold; for a tab that is not
+  // the active one the tooltip is the only place its mode and effort can be read (review round 4, 2026-09-10).
+  // The rows take their held shape from pick-held.ts (heldRowValue, executed in pick-held.test.ts), the same
+  // "until" clause the Billing row and sub-line use, so the three rows of one popover agree
+  const start = RENDER.indexOf("function showTabTip(");
+  const fn = RENDER.slice(start, RENDER.indexOf("\nfunction ", start + 1));
+  assert.ok(start > 0 && fn.length > 0);
+  assert.match(fn, /const held = s\.status\.pickHeld;/);
+  assert.match(fn, /const heldRow = \(kind: string, now: string\) => held && held\.surfaces\.includes\(kind\) \? heldRowValue\(now, kind, held\) : now;/);
+  assert.match(fn, /rows\.push\(\["Mode", heldRow\("mode", prettyMode\(s\.status\.mode\)\)\]\);/);
+  assert.match(fn, /rows\.push\(\["Effort", heldRow\("effort", s\.status\.effort\)\]\);/);
+  assert.match(fn, /rows\.push\(\["Billing", billingRowText\(s\.status\)\]\);/, "the Billing row keeps its own decision, from billing-label.ts");
+  assert.doesNotMatch(fn, /badgeHeldTip|pickHeldLine/, "not the badge tip's words (it ends on what the badge shows) nor the chat line's");
 });

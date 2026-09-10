@@ -88,7 +88,7 @@ import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle } from "./billing-label";
-import { pickHeldLine, pickHeldTitle, badgeHeldTip, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line and the badge tips (pick-held.ts)
+import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips and the tab tooltip's held rows (pick-held.ts)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
 import { setTip, pruneTip } from "./tip";
@@ -5483,9 +5483,16 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   if (s.cwd) rows.push(["📁", s.cwd]);
   if (s.gitBranch) rows.push(["⎇", s.gitBranch]);
   if (s.workTree) rows.push(["Worktree", s.workTree.dir + (s.workTree.branch ? "  ⎇ " + s.workTree.branch : "")]);
-  if (s.status.mode) rows.push(["Mode", prettyMode(s.status.mode)]);
+  // Mode and Effort while a pick of theirs is HELD for the session's live work (review round 4, 2026-09-10):
+  // the status reports the value the session RUNS, and the row says so and when the pick takes over, in the
+  // Billing row's shape and with the same "until" clause (pick-held.ts heldRowValue). Until round 4 the two
+  // rows showed the running value flat while the Billing row beside them explained its hold, and for a tab
+  // that is not the active one this tooltip is the only place its mode and effort can be read
+  const held = s.status.pickHeld;
+  const heldRow = (kind: string, now: string) => held && held.surfaces.includes(kind) ? heldRowValue(now, kind, held) : now;
+  if (s.status.mode) rows.push(["Mode", heldRow("mode", prettyMode(s.status.mode))]);
   if (s.status.model) rows.push(["Model", s.status.model]);
-  if (s.status.effort) rows.push(["Effort", s.status.effort]);
+  if (s.status.effort) rows.push(["Effort", heldRow("effort", s.status.effort)]);
   // Backend is a plain labelled FIELD now, under the others (the user 2026-07-08 — no longer a coloured
   // "SDK backend" badge at the top of the tooltip; it reads as one of the session's config fields).
   if (be === "sdk" || be === "tmux" || be === "codex") rows.push(["Backend", backendLabel(be)]);   // the shared names (T288); a tmux session keeps its label whatever the offer setting says

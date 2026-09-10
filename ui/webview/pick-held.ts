@@ -16,13 +16,31 @@
 // (SdkSession._adopt_fast_state). Its line says the fast mode control is restored, never that a fast pick is
 // waiting, since the toast has just said the pick is back off; and it says nothing about a badge, since the
 // kernel blanks the fast badge while the refusal's reason stands, so no held mark or tip renders for it
-// (review round 3b, 2026-09-09).
+// (review round 3b, 2026-09-09). The clause that says WHEN a held pick applies is one function (heldUntil), and
+// the surfaces outside this module that name it (billing-label.ts's row and sub-line, render.ts's tooltip
+// rows through heldRowValue) take it from here (review round 4, 2026-09-10).
 
 export interface PickHeld { surfaces: string[]; subagents: number; tasks: number; inflight?: boolean }
 
 // Which turn's end applies the pick once the work is done: the open one, or the session's next when none is.
 function turnPhrase(h: PickHeld): string {
   return h.inflight === false ? "the next turn" : "this turn";
+}
+
+// When a held pick applies, as the clause every surface hangs its own words on: while work runs, when it
+// finishes; once it has, when the open turn finishes, or the session's next when none is open. ONE phrase
+// (review round 4, 2026-09-10): the Billing row, the tab menu's Billing sub-line and the tab tooltip's Mode
+// and Effort rows all take it from here, so none of them can say "the background work" at zero counts while
+// the chat line beside them names the turn.
+export function heldUntil(h: PickHeld): string {
+  return h.subagents + h.tasks > 0 ? "the background work finishes" : `${turnPhrase(h)} finishes`;
+}
+
+// A status row's value while its kind is held (the tab tooltip's Mode and Effort rows): what the session runs
+// now, then when the picked value takes over, in the Billing row's shape ("API key until ..., then Login"). The
+// status carries no picked value for these kinds during a hold, so the pick is named by its kind.
+export function heldRowValue(now: string, kind: string, h: PickHeld): string {
+  return `${now} until ${heldUntil(h)}, then the picked ${pickKindName(kind)}`;
 }
 
 // The kind names in the user's words; a surface this build does not know is named as the kernel sent it.

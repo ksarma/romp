@@ -6,7 +6,11 @@
 // "waiting on 0 subagents and 0 background tasks" once the work was done (review round 2, 2026-09-09).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { pickHeldLine, pickHeldTitle, pickHeldSubject, badgeHeldTip, workPhrase, pickKindName } from "./pick-held";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { pickHeldLine, pickHeldTitle, pickHeldSubject, badgeHeldTip, workPhrase, pickKindName, heldUntil, heldRowValue } from "./pick-held";
+
+const WEBVIEW = path.resolve(process.cwd(), "..", "ui", "webview");
 
 test("work still running: the line names the pick and the counts, per kind", () => {
   assert.equal(pickHeldLine({ surfaces: ["effort"], subagents: 2, tasks: 1 }),
@@ -111,4 +115,41 @@ test("the refused opt-in's flagless relaunch is a restore, not a pick: the line 
   assert.deepEqual(pickHeldSubject({ surfaces: ["fast-reset", "mode"], subagents: 1, tasks: 0 }),
     { text: "The permission mode pick", plural: false }, "the subject counts picks only");
   assert.equal(pickKindName("fast-reset"), "fast mode restore");
+});
+
+test("one 'until' clause for every surface that says when a held pick applies, and the tooltip rows take the Billing row's shape", () => {
+  // the Billing row and the tab menu's Billing sub-line read only the surfaces, so at zero counts they still said
+  // "the background work" while the chat line beside them named the turn; the tab tooltip's Mode and Effort rows
+  // showed the running value flat, with no sign of the hold the Billing row in the same popover explained
+  // (review round 4, 2026-09-10). heldUntil is the one phrase; heldRowValue is the tooltip rows' shape. The
+  // callers are pinned here and executed in billing-label.test.ts; render.ts's rows are pinned in
+  // effort-switch-pending.test.ts
+  assert.equal(heldUntil({ surfaces: ["auth"], subagents: 1, tasks: 0 }), "the background work finishes");
+  assert.equal(heldUntil({ surfaces: ["auth"], subagents: 0, tasks: 2, inflight: false }), "the background work finishes",
+    "work still running: the counts decide, whatever the turn bit");
+  assert.equal(heldUntil({ surfaces: ["auth"], subagents: 0, tasks: 0, inflight: true }), "this turn finishes");
+  assert.equal(heldUntil({ surfaces: ["auth"], subagents: 0, tasks: 0, inflight: false }), "the next turn finishes");
+  assert.equal(heldUntil({ surfaces: ["auth"], subagents: 0, tasks: 0 }), "this turn finishes", "a payload without the bit keeps this turn");
+  // the same clause the chat line ends on once the work is done
+  for (const h of [{ surfaces: ["effort"], subagents: 0, tasks: 0, inflight: true }, { surfaces: ["effort"], subagents: 0, tasks: 0, inflight: false }]) {
+    assert.ok(pickHeldLine(h).endsWith(`when ${heldUntil(h)}`), pickHeldLine(h));
+    assert.ok(badgeHeldTip("effort", h).includes(`applies when ${heldUntil(h)};`), badgeHeldTip("effort", h));
+  }
+  // the tooltip rows, per kind: the running value, then when the pick takes over
+  assert.equal(heldRowValue("high", "effort", { surfaces: ["effort"], subagents: 2, tasks: 0 }),
+    "high until the background work finishes, then the picked effort");
+  assert.equal(heldRowValue("high", "effort", { surfaces: ["effort"], subagents: 0, tasks: 0, inflight: true }),
+    "high until this turn finishes, then the picked effort");
+  assert.equal(heldRowValue("Accept edits", "mode", { surfaces: ["mode", "effort"], subagents: 0, tasks: 0, inflight: false }),
+    "Accept edits until the next turn finishes, then the picked permission mode");
+  assert.equal(heldRowValue("Default", "mode", { surfaces: ["mode"], subagents: 0, tasks: 1 }),
+    "Default until the background work finishes, then the picked permission mode");
+  // the callers take the clause from here: no second wording anywhere
+  const BILLING = fs.readFileSync(path.join(WEBVIEW, "billing-label.ts"), "utf8");
+  const RENDER = fs.readFileSync(path.join(WEBVIEW, "render.ts"), "utf8");
+  assert.match(BILLING, /import \{ heldUntil, type PickHeld \} from "\.\/pick-held";/);
+  assert.match(BILLING, /const until = heldUntil\(f\.pickHeld!\);\s*\n\s*return now \? `\$\{now\} until \$\{until\}, then \$\{then\}` : `\$\{then\} applies when \$\{until\}`;/);
+  assert.match(BILLING, /if \(billingHeld\(f\)\) return `waiting until \$\{heldUntil\(f\.pickHeld!\)\}`;/);
+  assert.doesNotMatch(BILLING, /until the background work finishes|waiting for background work/, "the old fixed wording is gone");
+  assert.match(RENDER, /heldRowValue\(now, kind, held\)/);
 });
