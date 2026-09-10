@@ -391,24 +391,6 @@ const ALLOWLIST = [
   "webview/file-comments-about-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-arrivals-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-editing-cards.test.ts",
-  "webview/file-comments-editing-landed.test.ts",
-  "webview/file-comments-editing-moved-latch.test.ts",
-  "webview/file-comments-editing-races.test.ts",
-  "webview/file-comments-editing-round3.test.ts",
-  "webview/file-comments-figure-page.test.ts",
-  "webview/file-comments-filter-fixes.test.ts",
-  "webview/file-comments-filter-review.test.ts",
-  "webview/file-comments-filter-saved-line.test.ts",
-  "webview/file-comments-filter.test.ts",
-  "webview/file-comments-focus-audit.test.ts",
-  "webview/file-comments-focus-review.test.ts",
-  "webview/file-comments-focus-verify-2.test.ts",
-  "webview/file-comments-focus-verify.test.ts",
-  "webview/file-comments-focus.test.ts",
-  "webview/file-comments-follow.test.ts",
-  "webview/file-comments-inline-review.test.ts",
-  "webview/file-comments-inline-toggle.test.ts",
   "webview/file-comments-margin-fixes.test.ts",
   "webview/file-comments-margin-image-pad.test.ts",
   "webview/file-comments-margin-review.test.ts",
@@ -530,7 +512,7 @@ const ALLOWLIST = [
 // The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
 // alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
 // is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 149;
+const ALLOWLIST_MAX = 131;
 // the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
 // tags-scale test whose shim it grew from
 const SWITCHED = [

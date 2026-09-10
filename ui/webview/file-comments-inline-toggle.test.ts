@@ -14,10 +14,12 @@
 // default, the listener's install. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, Hunk, StoreComment } from "./file-comments-model";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -82,8 +84,11 @@ type Reg = { type: string; cb: Listener; capture: boolean };
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public data: string) {}
+  parentNode!: El | null;
+  constructor(public data: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.data; }
   get length(): number { return this.data.length; }
   get parentElement(): El | null { return this.parentNode; }
@@ -109,15 +114,21 @@ function parseSel(sel: string): Compound[][] {
 class El {
   nodeType = 1;
   tagName: string;
-  parentNode: El | null = null;
-  childNodes: Array<El | Txt> = [];
+  parentNode!: El | null;
+  childNodes!: Array<El | Txt>;
   attrs = new Map<string, string>();
   listeners: Reg[] = [];
   hidden = false; disabled = false; readOnly = false; title = ""; type = ""; value = ""; checked = false; placeholder = "";
   innerHTML = "";
   style: Record<string, string> = {};
   rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  // the edges are created hidden and hideEdges hides the rest: a node inspects as its own projection (ui/test-dom-shim.ts)
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get ownerDocument(): typeof doc { return doc; }
   get parentElement(): El | null { return this.parentNode; }
   get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
@@ -251,6 +262,22 @@ win.getSelection = () => null;
 win.confirm = () => true;
 (globalThis as any).window = win;
 (globalThis as any).document = doc;
+
+// The stand-in's nodes inspect as their own projection: hideEdges (ui/test-dom-shim.ts) makes every own property that
+// holds an object, and every accessor, non-enumerable, so a failing assertion's dump of a node is a few lines and not
+// the whole tree (a dump that walked parentNode up to the body grew to tens of GB before the box killed it, 2026-09-09).
+test("stand-in: a node enumerates and inspects as its own projection, never the tree", () => {
+  const root = doc.createElement("div");
+  const kid = root.appendChild(doc.createElement("span"));
+  kid.className = "fc-x"; kid.dataset.id = "k1"; kid.addEventListener("click", () => { /* inert */ });
+  const leaf = kid.appendChild(doc.createTextNode("leaf"));
+  for (const n of [root, kid, leaf]) {
+    const own = n as unknown as Record<string, unknown>;
+    assert.ok(Object.keys(own).every((k) => staysEnumerable(own[k])), "only primitives enumerate on " + n.constructor.name + ": " + Object.keys(own).join(", "));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump is the node's own projection:\n" + dump);
+  }
+});
 const store = new Map<string, string>();
 (globalThis as any).localStorage = {
   getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
@@ -381,6 +408,8 @@ const card = (aside: El, key: string): El | null => aside.querySelector('.fc-car
 const act = (root: El, a: string, id?: string): El | null => root.querySelector('[data-act="' + a + '"]' + (id ? '[data-id="' + id + '"]' : ""));
 const texts = (els: El[]) => els.map((e) => e.textContent);
 const marksOf = (w: World, id?: string): El[] => w.body.querySelectorAll('[data-act="fcchange"]' + (id ? '[data-id="' + id + '"]' : ""));
+/** The same nodes in the same order: identity, since a deepEqual of two nodes compares their projections (the edges are hidden), not the trees. */
+const sameNodes = (a: El[], b: El[]): boolean => a.length === b.length && a.every((n, i) => n === b[i]);
 const tags = (c: El): string[] => texts(c.querySelectorAll(".fc-card-head .fc-tag"));
 const isLink = (c: El): boolean => c.querySelector(".fc-ref")!.classes.includes("fc-link");
 
@@ -551,7 +580,7 @@ test("a flip elsewhere — the settings signal another pane or the gear raises, 
   const before = marksOf(w);
   win.dispatchEvent(new Event("romp:settings"));
   await flush();
-  assert.deepEqual(marksOf(w), before, "no new information, no repaint");
+  assert.ok(sameNodes(marksOf(w), before), "no new information, no repaint");
   store.delete(SETTINGS_KEY);
 });
 
