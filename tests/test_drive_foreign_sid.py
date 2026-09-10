@@ -317,7 +317,9 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
     name, and every op is driven through a refusing gate with a name and with a name and text, so the undelivered
     row and the modal are asserted against the classification. An op the door accepts that the table does not
     classify is reported by name, so a new op cannot land without saying what its name means to a refusal, and a
-    tuple edit without a table edit is red (review round 10, 2026-09-09)."""
+    tuple edit without a table edit is red (review round 10, 2026-09-09). An arm of the chain the listing cannot
+    read is red too, by its source text, so an op cannot go unclassified because its arm was keyed on a shape
+    the walk did not resolve (review round 11, 2026-09-10)."""
 
     NAME, TEXT = "title-I-typed", "a paragraph I typed"
     # `name` is a title the user typed: the row's text and the modal's copy when the op carries no text
@@ -337,17 +339,33 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
 
     def _accepted_ops(self):
         """Every op string _drive's front door accepts, read from its source: the ops named in the first if/elif
-        chain that tests `t`, a local tuple (ID_OPS) resolved from the function body and a module tuple from the
-        kernel. A listing only: nothing here reads what an arm does with the message."""
+        chain that tests `t`, resolved through the function body's local tuple, list, set and dict assigns
+        (ID_OPS), the kernel's module tuples (_TARGET_NAME_OPS) and inline tuple, list and set literals. A listing
+        only: nothing here reads what an arm does with the message. An arm the listing cannot read is RED, never
+        skipped: an arm of the chain that yields no op, or a `t in <name>` whose name resolves to nothing, is
+        reported by its source text (round 11: an arm keyed on a local set or dict, a frozenset(...) call or a
+        BinOp yielded an empty set silently and the pin stayed green with the op unclassified; round 9's walk
+        did not catch this either, its unclassified list flagging only arms that also read msg["name"], so this
+        is a stricter check, not a restoration)."""
         import ast
         import inspect
         import textwrap
         fn = ast.parse(textwrap.dedent(inspect.getsource(km._drive))).body[0]
-        local_tuples = {}
+
+        def literal_ops(node):
+            # the op strings of a tuple, list or set literal, or a dict literal's keys; None for any other shape
+            if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+                return tuple(e.value for e in node.elts if isinstance(e, ast.Constant))
+            if isinstance(node, ast.Dict):
+                return tuple(k.value for k in node.keys if isinstance(k, ast.Constant))
+            return None
+        local_ops = {}
         for stmt in fn.body:
-            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name) \
-                    and isinstance(stmt.value, (ast.Tuple, ast.List)):
-                local_tuples[stmt.targets[0].id] = tuple(e.value for e in stmt.value.elts if isinstance(e, ast.Constant))
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+                ops = literal_ops(stmt.value)
+                if ops is not None:
+                    local_ops[stmt.targets[0].id] = ops
+        unreadable = []
 
         def ops_of(test):
             out = set()
@@ -356,10 +374,17 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
                     for op, right in zip(n.ops, n.comparators):
                         if isinstance(op, ast.Eq) and isinstance(right, ast.Constant):
                             out.add(right.value)
-                        elif isinstance(op, ast.In) and isinstance(right, (ast.Tuple, ast.List)):
-                            out.update(e.value for e in right.elts if isinstance(e, ast.Constant))
-                        elif isinstance(op, ast.In) and isinstance(right, ast.Name):
-                            out.update(local_tuples.get(right.id) or getattr(km, right.id, ()))
+                        elif isinstance(op, ast.In):
+                            ops = literal_ops(right)
+                            if ops is None and isinstance(right, ast.Name):
+                                ops = local_ops.get(right.id)
+                                if ops is None:
+                                    held = getattr(km, right.id, None)
+                                    ops = tuple(held) if isinstance(held, (tuple, list, set, frozenset, dict)) else None
+                            if not ops:
+                                unreadable.append(ast.unparse(right))
+                            else:
+                                out.update(ops)
             return out
 
         def mentions_t(node):
@@ -369,9 +394,15 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
             if isinstance(stmt, ast.If) and mentions_t(stmt.test):
                 node = stmt
                 while isinstance(node, ast.If):
-                    accepted |= ops_of(node.test)
+                    ops = ops_of(node.test)
+                    if not ops:
+                        unreadable.append(ast.unparse(node.test))
+                    accepted |= ops
                     node = node.orelse[0] if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If) else None
                 break
+        self.assertEqual(unreadable, [], "arms of _drive's front door, or names they test `t` against, that this listing "
+                                         "cannot read: key the arm on a literal or a local or module tuple, list, set or "
+                                         "dict, or teach the listing the shape, so the arm's ops are classified")
         return accepted
 
     def test_every_accepted_op_is_classified_and_its_refusal_keeps_the_name_as_classified(self):
