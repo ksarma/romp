@@ -2456,18 +2456,30 @@ class CrashHeal(unittest.TestCase):
                     time.sleep(0.001)
                 return orig_mark(sid)
             be._transcript_mark = slow_mark
-            orig_write, held = sb.write_reg, []
+            orig_write, held, order, locked = sb.write_reg, [], [], []
 
             def holding_write(state_dir, sid, reg):
                 if threading.current_thread() is s.thread and not held \
                         and any(sb.is_crash_resume_nudge(sb._queue_text(e)) for e in reg.get("queue") or []):
                     held.append(True)
+                    locked.append(s._lock.locked())      # the heal holds the session's _lock across this write
                     deadline = time.time() + 1.0
                     while time.time() < deadline and be.sessions.get(self.SID) in (s, None):
                         time.sleep(0.005)
+                    r = orig_write(state_dir, sid, reg)
+                    order.append("written")              # the fold is on disk from here
+                    return r
                 return orig_write(state_dir, sid, reg)
+            orig_enqueue = sb.SdkSession.enqueue
+
+            def observing_enqueue(self_, text, todo="", send_id=""):
+                r = orig_enqueue(self_, text, todo=todo, send_id=send_id)
+                if self_ is s and r is False:
+                    order.append("refused")              # the send observed the closed queue
+                return r
             result = []
-            with mock.patch.object(sb, "write_reg", holding_write):
+            with mock.patch.object(sb, "write_reg", holding_write), \
+                    mock.patch.object(sb.SdkSession, "enqueue", observing_enqueue):
                 sender = threading.Thread(target=lambda: result.append(be.send(self.SID, "second")), daemon=True)
                 sender.start()
                 self.assertTrue(in_mark.wait(10), "the second send holds the dying session")
@@ -2477,6 +2489,12 @@ class CrashHeal(unittest.TestCase):
             self.assertFalse(sender.is_alive(), "the send returned")
             self.assertEqual(result, [True], "the send is accepted")
             self.assertEqual(held, [True], "the heal's write was held")
+            # round 7 (tests-1): the mechanism, not only the outcome (which the pop-and-write hold of be._lock guarantees
+            # on its own): the refused send observes the closed queue only after the fold is on disk, because the write
+            # runs inside the session's _lock hold that closes it. With the write dedented out of that hold the send is
+            # refused while the heal's write is still held, and every outcome assertion here stays green.
+            self.assertEqual(locked, [True], "the fold's write ran under the session's _lock")
+            self.assertEqual(order, ["written", "refused"], "the send saw the closed queue only once the fold was on disk")
             rep = be.sessions.get(self.SID)
             self.assertIsNotNone(rep)
             self.assertIsNot(rep, s, "the heal spawned the replacement")
