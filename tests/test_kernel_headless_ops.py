@@ -2986,6 +2986,40 @@ class UnknownSessionRefused(_RouteServer):
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
 
+    def test_the_corroboration_text_names_a_torn_record_a_pane_carries_and_offers_no_retry(self):
+        # _unconfirmed_end_text's reg cause said "try again" while _backend_reports_running read the live map, so
+        # a torn reg whose sid a tmux pane carried (`romp resume <id>` sets a pane's @romp-session-id) was
+        # promised a retry no writer serves: a pane is no writer for the SDK backend's record. Round 9 made the
+        # predicate the SDK backend's running set alone and claimed the text's change, and nothing failed before
+        # it. At a cold cache the pane's row stands in the map, the state the old predicate read as running
+        # (review round 10, 2026-09-09).
+        sid, name = "abab5555-6666-7777-8888-999999999999", "retry-pane-web"
+        reg_path = km.jd.STATE / "sdk" / (sid + ".json")
+        reg_path.parent.mkdir(parents=True, exist_ok=True)
+        _register(sid, name)
+        reg_path.write_bytes(b"{not json")
+        _forget_regs([reg_path])
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        try:
+            with mock.patch.object(km._TMUX, "available", lambda: True), \
+                 mock.patch.object(km._TMUX, "_run", _tmux_server([sid])):
+                self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), "tmux",
+                                 "the premise: the pane's row stands in the map")
+                self.assertTrue(km._reg_unreadable(sid))
+                self.assertFalse(km._backend_reports_running(sid), "a pane is no writer for the SDK backend's record")
+                self.assertNotIn("try again", km._unconfirmed_end_text({"cause": "reg"}, sid=sid).lower())
+                self.assertIn(km._tilde(str(reg_path)), km._unconfirmed_end_text({"cause": "reg"}, sid=sid))
+                self.assertNotIn("Try again", km._unconfirmed_end_text({"cause": "reg"}, name=name, sid=sid))
+                self.assertIn(km._tilde(str(reg_path)), km._unconfirmed_end_text({"cause": "reg"}, name=name, sid=sid))
+                # the probe's cause keeps its retry: tmux answers again
+                self.assertIn("Try again", km._unconfirmed_end_text({"cause": "probe"}, name=name, sid=sid))
+        finally:
+            _unregister(sid)
+            _drop_regs([reg_path])
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
     def test_a_spelling_outside_the_name_alphabet_is_the_unknown_refusal_before_any_file_is_read(self):
         # the gate asked _reg_unreadable for any spelling the resolution handed back unchanged, a path segment
         # included, so `romp end ../<file>` built STATE/sdk/../<file>.json, read a file of the kernel's own under
