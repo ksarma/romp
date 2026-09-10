@@ -3494,8 +3494,13 @@ def scope_pid(unit: str) -> int | None:
 #     journal at the instant of exit; 58/58 killed by hand had only the Started line), and it survives
 #     the collection the Result does not. It is whole-life, so for a non-SIGKILL exit it is no verdict
 #     (a contained kill under `continue` logs it too); for the SIGKILL + collected cell it is what tells
-#     the OOM killer from a kill by hand or a userspace killer (earlyoom, systemd-oomd), which leave no
-#     line: with the line the cell is "oom", without it "sigkill" (round 4). An empty or failed journal
+#     the OOM killer from a kill by hand or earlyoom, which leave no line: with the line the cell is
+#     "oom", without it "sigkill" (round 4). systemd-oomd, the other userspace killer, DOES leave a line:
+#     the manager logs `<unit>: systemd-oomd killed N process(es) in this unit.` for a kill it made
+#     (SCOPE_JOURNAL_OOMD_LINE; verified on systemd 255, a scratch scope carrying oomd's xattrs and a kill
+#     -9 produced it through this read), and the heal reads it as a third kill line (round 5): "oom" with
+#     it, since a kill on memory pressure is one, the evidence naming systemd-oomd. Without the policy an
+#     oomd kill also stops the scope whole, and the stop line names it there. An empty or failed journal
 #     read is a clause in the plain line, never silence, and for the SIGKILL + collected cell it is the
 #     hedged "sigkill" too: a definite out-of-memory verdict needs a definite record.
 # The heal asks about the dead CLI's OWN scope by its exact unit name (SdkSession.cli_scope_unit, read
@@ -3522,6 +3527,9 @@ SCOPE_SHOW_TIMEOUT = 10.0
 SCOPE_JOURNAL_ARGV = ["journalctl", "--user", "-n", "5", "-o", "cat", "-t", "systemd", "-u"]
 SCOPE_JOURNAL_OOM_LINE = "Failed with result 'oom-kill'"
 SCOPE_JOURNAL_KILL_LINE = "A process of this unit has been killed by the OOM killer"
+# the manager's line for a kill by systemd-oomd: `<unit>: systemd-oomd killed <N|some> process(es) in this unit.`
+# (unit.c, MESSAGE_ID d989611b15e44c9dbf31e3c81256e4ed); the count varies, so the match is the head (round 5)
+SCOPE_JOURNAL_OOMD_LINE = "systemd-oomd killed"
 SCOPE_JOURNAL_STARTED = "Started "     # the manager's line at each start of a unit: `Started <unit> - <description>.`
 SCOPE_RESULT_OOM = "oom-kill"
 CGROUP_ROOT = "/sys/fs/cgroup"
@@ -3612,12 +3620,32 @@ def journal_oom_stop(journal_text: str, unit: str | None = None) -> bool:
 
 
 def journal_oom_kill(journal_text: str, unit: str | None = None) -> bool:
-    """Whether a unit's journal tail (SCOPE_JOURNAL_ARGV) records the OOM killer taking a process in the
-    scope in its newest life (journal_life): the user manager's `A process of this unit has been killed by
-    the OOM killer` line (SCOPE_JOURNAL_KILL_LINE), written on the cgroup-empty event and surviving the
-    unit's collection. Whole-life within the start: a contained kill under OOMPolicy=continue leaves it
-    too, so what it decides is the caller's (oom_verdict: the SIGKILL + collected cell only). Pure."""
-    return any(SCOPE_JOURNAL_KILL_LINE in ln for ln in journal_life(journal_text, unit))
+    """Whether a unit's journal tail (SCOPE_JOURNAL_ARGV) records an OOM kill of a process in the scope in
+    its newest life (journal_life): the user manager's `A process of this unit has been killed by the OOM
+    killer` line (SCOPE_JOURNAL_KILL_LINE), written on the cgroup-empty event and surviving the unit's
+    collection, or its `systemd-oomd killed N process(es) in this unit` line for a kill by systemd-oomd
+    (SCOPE_JOURNAL_OOMD_LINE, round 5). Whole-life within the start: a contained kill under
+    OOMPolicy=continue leaves either too, so what it decides is the caller's (oom_verdict: the SIGKILL +
+    collected cell only). Pure."""
+    return any(SCOPE_JOURNAL_KILL_LINE in ln or SCOPE_JOURNAL_OOMD_LINE in ln for ln in journal_life(journal_text, unit))
+
+
+def journal_oom_line(journal_text: str, unit: str | None = None) -> str | None:
+    """The line of a unit's journal tail (SCOPE_JOURNAL_ARGV) that names an OOM kill in its newest life
+    (journal_life), as the clause the evidence quotes, or None: the whole-scope stop line first
+    (SCOPE_JOURNAL_OOM_LINE, systemd's own record of the stop), then the manager's line for a kill by the
+    kernel's OOM killer (SCOPE_JOURNAL_KILL_LINE), then its line for a kill by systemd-oomd, quoted as
+    written past the unit's name and without its period since it carries the count (`systemd-oomd killed
+    1 process(es) in this unit`; round 5). Pure."""
+    life = journal_life(journal_text, unit)
+    if any(SCOPE_JOURNAL_OOM_LINE in ln for ln in life):
+        return SCOPE_JOURNAL_OOM_LINE
+    if any(SCOPE_JOURNAL_KILL_LINE in ln for ln in life):
+        return SCOPE_JOURNAL_KILL_LINE
+    for ln in life:
+        if SCOPE_JOURNAL_OOMD_LINE in ln:
+            return (ln.split(": ", 1)[1] if ": " in ln else ln).rstrip(".")
+    return None
 
 
 def oom_verdict(props: dict, oom_kill: int | None, exit_code: int | None, baseline: int | None = None,
@@ -3683,8 +3711,7 @@ def oom_verdict(props: dict, oom_kill: int | None, exit_code: int | None, baseli
             # a loaded unit's Result is read, so it is stated (round 4, correctness-2); a collected or
             # unshown unit has none (props {}), and its cells keep their words
             shown = ", Result=%s" % props["Result"] if props.get("Result") else ""
-            if journal is not None and (journal_oom_kill(journal) or journal_oom_stop(journal)):
-                line = SCOPE_JOURNAL_OOM_LINE if journal_oom_stop(journal) else SCOPE_JOURNAL_KILL_LINE
+            if journal is not None and (line := journal_oom_line(journal)):
                 return ("oom", "the CLI was killed by signal 9; %s%s%s; the journal records an OOM kill in its scope (%s)"
                                % (counter(), base, shown, line))
             if journal is not None:
@@ -13578,7 +13605,7 @@ class SdkBackend:
         if journal_oom_stop(text):
             return text, "the journal says systemd stopped the scope over an OOM kill (%s)" % SCOPE_JOURNAL_OOM_LINE
         if journal_oom_kill(text):
-            return text, "the journal records an OOM kill in the scope (%s)" % SCOPE_JOURNAL_KILL_LINE
+            return text, "the journal records an OOM kill in the scope (%s)" % journal_oom_line(text, unit)
         return text, "the journal's newest lines for the scope record no OOM kill"
 
     def _turn_completed(self, sid: str):

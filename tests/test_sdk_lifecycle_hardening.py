@@ -774,6 +774,11 @@ class CrashHeal(unittest.TestCase):
                    "%s: Failed with result 'oom-kill'.\n" % (UNIT, UNIT, UNIT))
     JOURNAL_KILL = "Started %s - /usr/bin/claude.\n%s: A process of this unit has been killed by the OOM killer.\n" % (UNIT, UNIT)
     JOURNAL_STARTED = "Started %s - /usr/bin/claude.\n" % UNIT
+    # round 5: systemd-oomd's kill leaves the manager's own line (verified on systemd 255 with the oomd xattrs set on a
+    # scratch scope); and a user manager at LogLevel=warning keeps the stop line (LOG_WARNING) without the kill line
+    # (LOG_NOTICE), so the stop line stands alone under `stop`
+    JOURNAL_OOMD = "Started %s - /usr/bin/claude.\n%s: systemd-oomd killed 1 process(es) in this unit.\n" % (UNIT, UNIT)
+    JOURNAL_STOP_ONLY = "Started %s - /usr/bin/claude.\n%s: Failed with result 'oom-kill'.\n" % (UNIT, UNIT)
     EVENTS = staticmethod(lambda n: "low 0\nhigh 0\nmax 37\noom %d\noom_kill %d\noom_group_kill 0\n" % (min(n, 1), n))
     KILL = -9   # SIGKILL_EXIT: the OOM killer's signature, the primary signal
 
@@ -892,7 +897,29 @@ class CrashHeal(unittest.TestCase):
                                            journal=self.JOURNAL_OOM)
         self.assertIn("the journal records an OOM kill in its scope (Failed with result 'oom-kill'))", self._died_line(logs))
         self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
-        # the Started line alone (a kill -9 by hand, earlyoom, systemd-oomd), an empty journal, journalctl raising
+        # round 5 (rules-2): the stop line ALONE files oom too (a user manager at LogLevel=warning drops the kill line)
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(load="not-found", cgroup=""), exit_code=self.KILL, baseline=0,
+                                           journal=self.JOURNAL_STOP_ONLY)
+        self.assertIn("the journal records an OOM kill in its scope (Failed with result 'oom-kill'))", self._died_line(logs))
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
+        # round 5 (correctness-4, D4): systemd-oomd's kill is the third kill line, a definite record: "oom", the evidence
+        # naming systemd-oomd with the count the manager wrote, in the died line and in the plain line
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(load="not-found", cgroup=""), exit_code=self.KILL, baseline=0,
+                                           journal=self.JOURNAL_OOMD)
+        line = self._died_line(logs)
+        self.assertIn("the OOM killer took a process in its scope %s (the CLI was killed by signal 9; the scope was already "
+                      "collected, so its counter could not be read (oom_kill was 0 at the turn's start); the journal records an OOM "
+                      "kill in its scope (systemd-oomd killed 1 process(es) in this unit))" % self.UNIT, line)
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
+        scope_line = [m for m in logs if "session scope result" in m]
+        self.assertEqual(len(scope_line), 1, logs)
+        self.assertIn("; the journal records an OOM kill in the scope (systemd-oomd killed 1 process(es) in this unit)", scope_line[0])
+        self.assertEqual(be.problems(), [])
+        # the Started line alone (a kill -9 by hand, or earlyoom, which leaves no line), an empty journal, journalctl raising
         # and journalctl exiting non-zero: each is the hedged "sigkill" kind and the killed notice, never out of
         # memory (a definite verdict needs a definite record), with the journal's clause in both lines
         cases = (("Started only", dict(journal=self.JOURNAL_STARTED),
@@ -1312,6 +1339,29 @@ class CrashHeal(unittest.TestCase):
         # naming it count (the manager's `<unit>: ...` lines)
         self.assertTrue(sb.journal_oom_kill(self.JOURNAL_KILL))
         self.assertTrue(sb.journal_oom_kill(self.JOURNAL_KILL, self.UNIT))
+        # round 5 (D4): systemd-oomd's line is a kill line too, and journal_oom_line names the deciding line for the evidence
+        # (the stop line over the kill line, the oomd line as written past the unit's name, without its period)
+        self.assertEqual(sb.SCOPE_JOURNAL_OOMD_LINE, "systemd-oomd killed")
+        self.assertTrue(sb.journal_oom_kill(self.JOURNAL_OOMD))
+        self.assertTrue(sb.journal_oom_kill(self.JOURNAL_OOMD, self.UNIT))
+        self.assertFalse(sb.journal_oom_kill(self.JOURNAL_OOMD + self.JOURNAL_STARTED), "the oomd kill was the previous life's")
+        self.assertEqual(sb.journal_oom_line(self.JOURNAL_OOMD, self.UNIT), "systemd-oomd killed 1 process(es) in this unit")
+        self.assertEqual(sb.journal_oom_line(self.JOURNAL_OOMD), "systemd-oomd killed 1 process(es) in this unit")
+        self.assertEqual(sb.journal_oom_line(self.JOURNAL_KILL, self.UNIT), sb.SCOPE_JOURNAL_KILL_LINE)
+        self.assertEqual(sb.journal_oom_line(self.JOURNAL_OOM, self.UNIT), sb.SCOPE_JOURNAL_OOM_LINE, "the stop line over the kill line")
+        self.assertEqual(sb.journal_oom_line(self.JOURNAL_STOP_ONLY, self.UNIT), sb.SCOPE_JOURNAL_OOM_LINE)
+        self.assertIsNone(sb.journal_oom_line(self.JOURNAL_STARTED, self.UNIT))
+        self.assertIsNone(sb.journal_oom_line("", None))
+        self.assertIsNone(sb.journal_oom_line("%s: systemd-oomd killed some process(es) in this unit.\n" % self.OLDER, self.UNIT),
+                          "another unit's oomd line, when the unit is given")
+        kind, ev = sb.oom_verdict({}, None, K, 0, counter_note=note, journal=self.JOURNAL_OOMD, journal_note="the journal records an OOM kill")
+        self.assertEqual((kind, ev), ("oom", "the CLI was killed by signal 9; %s (oom_kill was 0 at the turn's start); the journal "
+                                             "records an OOM kill in its scope (systemd-oomd killed 1 process(es) in this unit)" % note))
+        self.assertEqual(sb.oom_verdict({}, None, K, 0, counter_note=note, journal=self.JOURNAL_STOP_ONLY)[1],
+                         "the CLI was killed by signal 9; %s (oom_kill was 0 at the turn's start); the journal records an OOM kill in its "
+                         "scope (Failed with result 'oom-kill')" % note, "the stop line alone files oom (round 5, rules-2)")
+        self.assertIsNone(sb.oom_verdict({}, None, 143, 0, journal=self.JOURNAL_OOMD),
+                          "like the kernel killer's line, oomd's is whole-life: no verdict without a SIGKILL exit")
         self.assertFalse(sb.journal_oom_kill(self.JOURNAL_KILL + self.JOURNAL_STARTED), "the kill was the previous life's")
         self.assertFalse(sb.journal_oom_kill(self.JOURNAL_STARTED))
         self.assertFalse(sb.journal_oom_kill(""))
