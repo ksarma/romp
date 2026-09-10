@@ -11585,7 +11585,12 @@ class SdkBackend:
 
     def interrupt(self, sid: str) -> bool:
         s = self.sessions.get(sid)
-        if not s:
+        if not s or s._queue_sealed:
+            # A stop click during the crash heal's scope reads (round 6, fresh-1): the CLI is already dead and
+            # the heal is about to resume the session, so there is nothing to interrupt and no 'idle' record
+            # belongs over the trailing 'working' cut marker; before the reads ran ahead of the pop (round 4)
+            # the click found no session here and returned False the same way. _queue_sealed is set only at
+            # the cut, before the reads, and a replacement is a fresh session, so no live session is refused.
             return False
         s.interrupt()
         append_state(self.state_dir, sid, "idle", int(time.time()) - 1, by="interrupt")

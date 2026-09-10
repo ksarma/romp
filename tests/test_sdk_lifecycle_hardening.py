@@ -2551,6 +2551,31 @@ class CrashHeal(unittest.TestCase):
         self.assertIn("reg %s unreadable: skipping the sealed queue write rather than gutting the reg (2 pending text(s) "
                       "did not reach it)" % self.SID[:8], failed[0])
 
+    def test_a_stop_click_during_the_heals_scope_read_is_refused_and_writes_no_idle_record(self):
+        # round 6 (fresh-1): during the heal's pre-pop reads SdkBackend.interrupt still found the dying session in
+        # be.sessions, so a stop click in that window returned True and appended an 'idle' state record (by
+        # interrupt) over the trailing 'working' cut marker for a CLI already dead, while the heal proceeded anyway;
+        # before round 4 the pop came first and the click returned False with no state write. The interrupt refuses
+        # a sealed session now: False, no record, and the heal's nudge still heads the replacement's queue and the reg.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        states = Path(d, "states", self.SID + ".jsonl")
+        with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
+            before = states.read_text()
+            with self.subTest(reading="the click is refused"):
+                self.assertIs(be.interrupt(self.SID), False)
+            with self.subTest(reading="no idle record over the cut marker"):
+                self.assertEqual(states.read_text(), before)
+            sent.set()
+            s.thread.join(10)
+            rep = be.sessions.get(self.SID)
+            self.assertIsNotNone(rep)
+            self.assertIsNot(rep, s, "the heal proceeded")
+            self.assertEqual(rep.pending(), [sb.CRASH_RESUME_NUDGE_OOM], "the nudge heads the replacement's queue")
+            self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
+            self.assertEqual(sb.last_state_value(Path(d), self.SID), "working", "the cut marker stands")
+
     def test_a_send_during_the_read_under_a_crash_loop_refusal_is_parked_in_the_reg(self):
         # round 5 (fresh-2): with the one resume spent (_heal_attempts 1), a send that reaches the dying session during
         # the read is accepted and its text folded into the reg by the refusal's own write (the mirror is sealed from
