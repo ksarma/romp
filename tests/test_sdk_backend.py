@@ -9004,6 +9004,46 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._connect_landed()
         self.assertEqual((s.snapshot()["modePending"], s._launched_mode), (False, "bypassPermissions"))
 
+    def test_y13_a_recorded_on_pick_reverted_while_an_earlier_fast_name_rides_the_arm_withdraws_the_riding_name_too(self):
+        # set_fast's recorded-pick off passed standing=unlocked (review round 12, kernel-1), on the round-10 premise that a
+        # flagged running connection's off is a real change a riding fast name stands for. In that branch the running
+        # process has fast off whatever its flag (a flagged connection running fast takes the live send instead), so the
+        # off is no change, and the one shape where a fast name rides beside a recorded on pick is this one, test_y7 (i)
+        # continued: a FLAGGED connection running off, an effort pick's arm half, fast on (the reconnect route: the name
+        # rides the arm), the old process's init answering the ask with a refusal (_adopt_fast_state clears the ask and
+        # records the restore), then fast on again (recorded; its request queued behind the loop) and off. The off
+        # returned to the running state, but the flag kept the earlier on pick's name riding, so fastPending stayed true
+        # through a relaunch that composes flagless (the ask is off after the off). No standing keyword: the riding name
+        # leaves with the surface. The refusal's aside (the riding name surviving the refusal itself) is not this test's
+        refusal = {"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"}
+        s = self._sess(effort="high"); s._launched_effort = sb.effort_launch_shape("high")
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = True                             # the running connection carries the flag; fast is off live
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))               # the idle arm: the arm half
+        self.assertFalse(s._connecting); self.assertIsNotNone(s._launching)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))                  # the reconnect route: the name rides the arm
+        self.assertEqual(set(s._reconnect_riding), {"effort", "fast"}); self.assertTrue(s.snapshot()["fastPending"])
+        s._adopt_fast_state(refusal)                                         # the old process's init answers the ask
+        self.assertFalse(s.fast_opt); self.assertEqual(s.fast, "off")
+        self.assertIn("fast-reset", s._reconnect_riding, "the restore's request armed onto the standing arm")
+        q = self._Queue(); s.loop = q                                        # the loop thread now runs behind the picks
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))                  # recorded: the arm stands, its request waits
+        self.assertIn("fast", s._reconnect_surfaces); self.assertTrue(s.fast_opt)
+        del self.logs[:]
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertNotIn("fast", s._reconnect_riding, "the withdrawn on pick's name leaves the arm, flagged connection or not")
+        self.assertNotIn("fast", s._reconnect_surfaces); self.assertFalse(s.snapshot()["fastPending"])
+        self.assertEqual(s.fast, "off"); self.assertFalse(s.fast_opt)
+        self.assertTrue(any("fast (web): set to off; the pending on pick is withdrawn" in str(m) for m in self.logs), self.logs)
+        q.flush()                                                            # the queued request and the withdrawal's settle
+        self.assertTrue(s._reconnect, "the arm stands for the effort pick and the restore")
+        self.assertFalse(s.snapshot()["fastPending"])
+        s._reset_reconnect_state()                                           # the loop top composes flagless
+        s._launching = s.backend._launch_shape(s); s._connecting = True; s._fast_unlocked = bool(s.fast_opt)
+        self.assertFalse(s._fast_unlocked); self.assertFalse(s.snapshot()["fastPending"]); self.assertEqual(s.fast, "off")
+        s._connect_landed()
+        self.assertFalse(s.snapshot()["fastPending"])
+
 
 class SettingsPickThroughTheLoop(unittest.TestCase):
     """The reconnect a settings pick asks for, driven through the REAL loop (_amain) against a stand-in SDK

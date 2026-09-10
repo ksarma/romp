@@ -6028,10 +6028,12 @@ class SdkSession:
         reload (review round 11 corrected the gloss that said nothing is withdrawn). set_mode computes it once, for
         the arm-half re-pick (a reconnect in flight with its launching stamp standing and no connect composed yet,
         and the re-picked mode differing from what the running process has: a repeat click of the arm's own pick),
-        and passes it at every one of its withdraw sites, so it is True only with a connect in flight; set_fast passes
-        `unlocked` in its recorded-pick branch, where a flagged running connection's off is a real change a riding fast
-        name stands for, a branch reached only by a kernel-thread off between the on's ask and the loop thread's arm.
-        A name found riding counts as withdrawn for the settle's line ("withdrawn", not "repeat")."""
+        and passes it at every one of its withdraw sites, so it is True only with a connect in flight. set_mode alone
+        passes it (review round 12; the review's kernel-1): rounds 10 and 11 had set_fast pass the connection's flag in
+        its recorded-pick branch, on the premise that a flagged running connection's off is a real change a riding fast
+        name stands for; the running process has fast off there whatever its flag, so the off is no change, and the
+        flag kept the name of an earlier on pick, re-recorded after the old process's init refused it, riding through
+        a flagless relaunch. A name found riding counts as withdrawn for the settle's line ("withdrawn", not "repeat")."""
         with self._hold_write():
             present = surface in self._reconnect_surfaces
             self._reconnect_surfaces.discard(surface)
@@ -13737,8 +13739,13 @@ class SdkBackend:
                 # this returns to the state the process runs: the pick is withdrawn through the one withdraw
                 # routine (review round 3, 2026-09-09; set_mode's shape), which ends the hold and the reconnect
                 # when nothing else asked. The running state is off (a flagless connection reports off), so
-                # the badge reads it whether or not the arm had flipped it
-                s._withdraw_held_pick("fast", standing=unlocked)
+                # the badge reads it whether or not the arm had flipped it. No standing keyword (review round 12;
+                # the review's kernel-1): the running process has fast off whatever its flag (a flagged connection
+                # running fast took the live send above), so this off is no change for a riding name to stand for;
+                # a fast name riding the arm beside the recorded surface is an earlier on pick's, re-recorded after
+                # the old process's init refused it (_adopt_fast_state), and it leaves with the surface. Rounds 10
+                # and 11 passed the connection's flag here, which kept that name riding through a flagless relaunch
+                s._withdraw_held_pick("fast")
                 s.fast = "off"
                 self._log("fast (%s): set to off; the pending on pick is withdrawn" % s.name)
                 self._wake_push()
