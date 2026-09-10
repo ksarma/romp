@@ -479,7 +479,8 @@ you click sits level with its passage whatever stands above it, and a long card 
 lines with **Show more** at its foot. Neither happens in the list under a narrow column, where a
 long card shows whole. Select a
 passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection (it
-hides when you scroll and appears again when you select); type the comment
+hides when you scroll and appears again when you select, and it follows a selection you make or change from the
+keyboard); type the comment
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
 Saving leaves the text where it is. When the new card lands out of view, a line at the foot of the panel, **Saved · the card is above** (or **below**), says where it went; click the line to bring the card into view, or leave it: it goes with your next scroll, click, tap, or key, except Tab or a modifier key pressed on its own, so you can reach it from the keyboard.
@@ -496,10 +497,13 @@ the card, under the comment and its replies. The passage it
 refers to is highlighted in the file, and a comment on text that occurs more than once stays
 on the occurrence you chose. When the file has changed around that occurrence and the panel can
 no longer tell which copy the comment meant, its highlight is dashed and the card carries a
-**passage recurs** tag: the copy shown is a guess, and the card says so. When the session has
+**passage recurs** tag: the copy shown is a guess, and the card says so. Where two comments cover
+the same text, the text carries one highlight, and a click where they overlap opens both cards,
+the one you clicked in front. When the session has
 rewritten the passage, the card
 says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
-show it.
+show it. Going to a comment whose passage sits inside a closed fold (a `<details>` block, a
+callout written `[!note]-`) opens the fold first.
 
 **Figures.** On an image, whether it is a file of its own or a figure in a markdown page,
 drag a rectangle to comment on that part of it. The rectangle stays on the picture with the
