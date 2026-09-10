@@ -2755,7 +2755,45 @@ PYEOF
         _dn_mgr=""
         if "${ROMP_MANAGER_BIN:-romp-manager}" status >/dev/null 2>&1; then
             _dn_mgr=1
-            "${ROMP_MANAGER_BIN:-romp-manager}" down >/dev/null 2>&1 || true
+            # The stop, with its answer kept. The control client exits 3 when the manager ANSWERED and
+            # refused (its write gate: HTTP 401, the serve token this romp read is not one the manager
+            # holds, so it runs under another state root or is another romp's; HTTP 503, the manager cannot
+            # read its own token file), and 1 for no answer at all (a timeout, a connection error), which
+            # the poll below handles as before. A refusal is final: seven seconds of polling would not
+            # change it, and a manager that refused this romp's token is not this romp's to stop, so the
+            # hold is released, the marker taken back, and the answer said with the status, the manager's
+            # own words and the remedy (review round 1, 2026-09-10: the answer used to be discarded and
+            # the refusal reported as a manager that would not leave, with "stop it by hand").
+            _dn_mout="$("${ROMP_MANAGER_BIN:-romp-manager}" down 2>&1)" && _dn_mrc=0 || _dn_mrc=$?
+            if [[ "$_dn_mrc" -eq 3 ]]; then
+                _dn_mref="$(DN_OUT="$_dn_mout" DN_TOK="$(_romp_state_dir)/serve-token" DN_ENV="${ROMP_SERVE_TOKEN:+1}" python3 - <<'PYEOF'
+import json, os, re
+out = os.environ.get("DN_OUT") or ""
+m = re.search(r"answered HTTP (\d{3})", out)
+code = m.group(1) if m else "?"
+try:
+    err = str((json.loads(out[out.index("{"):]) or {}).get("error") or "").strip()
+except Exception:
+    err = ""
+src = "ROMP_SERVE_TOKEN" if os.environ.get("DN_ENV") else os.environ.get("DN_TOK") or "its token file"
+if code == "401":
+    fix = ("The serve token this romp read from %s is not one the manager holds, so the manager runs under "
+           "another state root or belongs to another romp. Check ROMP_STATE_DIR and ROMP_MANAGER_PORT, or stop "
+           "it from the shell that started it." % src)
+elif code == "503":
+    fix = ("The manager cannot read its own serve-token file. Make that file a regular file of yours at mode "
+           "0600 under the manager's state root, then run romp down again.")
+else:
+    fix = "See the manager's log."
+print(code)
+print("HTTP %s%s. %s" % (code, (": " + err) if err else "", fix))
+PYEOF
+)"
+                _dn_mcode="${_dn_mref%%$'\n'*}"
+                _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_nocancel" "the manager on :$_dn_mport refused the stop (HTTP $_dn_mcode)"
+                echo "romp down: the manager on :$_dn_mport refused the stop (${_dn_mref#*$'\n'}) The kernel keeps running." >&2
+                exit 1
+            fi
             for _ in $(seq 1 28); do
                 "${ROMP_MANAGER_BIN:-romp-manager}" status >/dev/null 2>&1 || break
                 sleep 0.25

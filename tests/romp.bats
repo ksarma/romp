@@ -2978,6 +2978,74 @@ PY
     [ "$status" -ne 0 ]
 }
 
+@test "romp down: a manager that refuses the stop (401, 503) is said at once with the status, the reason and the remedy; no poll, no stop-it-by-hand" {
+    command -v node >/dev/null 2>&1 || skip "node not available"
+    # Review round 1 (2026-09-10): the manager's write gate answers /stop 401 when this romp's token is not
+    # one it holds (another state root, another romp's manager) and 503 when it cannot read its own token
+    # file. `romp down` discarded the answer, polled status for seven seconds and printed "a manager is still
+    # running ... Stop it by hand", hiding both the refusal and the remedy. The stand-in here is the control
+    # port: it answers /status like a running manager, refuses /stop with the given status and the manager's
+    # own body, records every request, and stays up (a refused stop stops nothing).
+    local bin; bin="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)"
+    unset ROMP_SERVE_TOKEN
+    mkdir -p "$XDG_STATE_HOME/romp"; printf 'refused-down-token\n' > "$XDG_STATE_HOME/romp/serve-token"
+    mock_service 3                                           # no login service: down goes to the manager's own /stop
+    local code body mport i t0
+    for code in 401 503; do
+        rm -f "$TEST_DIR/mgr-seen"
+        if [ "$code" = 401 ]; then body="serve token required: send it in X-Romp-Token (the serve-token file under the kernel's state root: /x/state/serve-token for the primary kernel)"
+        else body='the manager cannot read the serve token (/x/state/serve-token: EACCES); state-changing requests are refused until it can'; fi
+        free_port mport
+        python3 - "$mport" "$TEST_DIR/mgr-seen" "$code" "$body" <<'PY' &
+import http.server, json, os, sys
+port, seen, code, body = int(sys.argv[1]), sys.argv[2], int(sys.argv[3]), sys.argv[4]
+class H(http.server.BaseHTTPRequestHandler):
+    def _note(self):
+        with open(seen, "a") as f:
+            f.write("%s %s token=%s\n" % (self.command, self.path.split("?")[0], self.headers.get("X-Romp-Token") or "-"))
+    def _json(self, status, obj):
+        data = json.dumps(obj).encode()
+        self.send_response(status); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(data)
+    def do_GET(self):
+        self._note()
+        if self.path.startswith("/status"):
+            return self._json(200, {"ok": True, "manager": {"pid": os.getpid(), "controlPort": port}, "kernels": [{"id": "main"}]})
+        self.send_response(404); self.end_headers()
+    def do_POST(self):
+        self._note()
+        self._json(code, {"ok": False, "error": body})
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+PY
+        MGR_PID=$!
+        for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
+        export ROMP_MANAGER_PORT=$mport ROMP_MANAGER_BIN="$bin/romp-manager"
+        t0=$SECONDS
+        run run_romp down --now
+        [ "$status" -eq 1 ]
+        [ $((SECONDS - t0)) -le 3 ]                              # said at once: no seven-second poll
+        [[ "$output" == *"romp down: the manager on :$mport refused the stop (HTTP $code: "* ]]
+        [[ "$output" == *"The kernel keeps running."* ]]
+        [[ "$output" != *"Stop it by hand"* ]]
+        [[ "$output" != *"still running"* ]]
+        if [ "$code" = 401 ]; then
+            [[ "$output" == *"X-Romp-Token"* ]]                  # the manager's own words
+            [[ "$output" == *"read from $XDG_STATE_HOME/romp/serve-token is not one the manager holds"* ]]
+            [[ "$output" == *"Check ROMP_STATE_DIR and ROMP_MANAGER_PORT"* ]]
+        else
+            [[ "$output" == *"cannot read the serve token"* ]]
+            [[ "$output" == *"Make that file a regular file of yours at mode 0600"* ]]
+        fi
+        grep -qx 'POST /stop token=refused-down-token' "$TEST_DIR/mgr-seen"
+        [ "$(grep -c '^POST ' "$TEST_DIR/mgr-seen")" -eq 1 ]     # one ask, never repeated
+        [ "$(grep -c '^GET /status' "$TEST_DIR/mgr-seen")" -le 2 ]   # the probe before the ask, nothing after it
+        [ ! -f "$XDG_STATE_HOME/romp/down-by-romp" ]            # the marker taken back: nothing is down
+        [[ "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" == *"\"action\": \"down-failed\""* ]]
+        [[ "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" == *"refused the stop (HTTP $code)"* ]]
+        kill "$MGR_PID" 2>/dev/null || true; MGR_PID=""
+    done
+}
+
 # ─── Help (-h / --help) ──────────────────────────────────────────────
 
 @test "-h prints usage and starts no session" {

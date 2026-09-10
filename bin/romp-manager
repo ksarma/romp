@@ -1131,9 +1131,17 @@ function control(method, pathname, kernel, params) {
     if (t.token) headers['X-Romp-Token'] = t.token;
     else console.error(`romp-manager: the serve token could not be read (${t.why}); the manager refuses ${pathname} without it`);
   }
+  // Three exits a caller can tell apart (bin/romp's down step keys on them): 0, the manager took it; 3,
+  // the manager ANSWERED and refused (a 4xx or 5xx: its body is on stdout, and one stderr line names the
+  // door and the status); 1, no answer (the timeout and the connection error below). A refusal is not a
+  // manager that will leave if waited for, so the caller should not wait for it.
   const req = http.request(u, { method, timeout: 4000, headers }, (res) => {
     let b = ''; res.on('data', (d) => (b += d));
-    res.on('end', () => { try { process.stdout.write(JSON.stringify(JSON.parse(b), null, 2) + '\n'); } catch (e) { process.stdout.write(b + '\n'); } process.exit(res.statusCode < 400 ? 0 : 1); });
+    res.on('end', () => {
+      if (res.statusCode >= 400) console.error(`romp-manager: the manager on :${CONTROL_PORT} answered HTTP ${res.statusCode} to ${method} ${pathname}`);
+      try { process.stdout.write(JSON.stringify(JSON.parse(b), null, 2) + '\n'); } catch (e) { process.stdout.write(b + '\n'); }
+      process.exit(res.statusCode < 400 ? 0 : 3);
+    });
   });
   req.on('timeout', () => { req.destroy(); console.error(`romp manager did not respond on :${CONTROL_PORT}`); process.exit(1); });
   req.on('error', () => { console.error(`romp manager is not running on :${CONTROL_PORT} — start it with \`romp up\`.`); process.exit(1); });

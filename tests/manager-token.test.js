@@ -383,17 +383,27 @@ test('the control client sends the token file\'s value on restart-all, restart a
   } finally { srv.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('the control client with no token to send says so once on stderr, still asks, and exits 1 on the refusal, printing it', async () => {
+test('the control client with no token to send says so once on stderr, still asks, and exits 3 on the refusal, printing it with the status', async () => {
   const { srv, seen, port } = await recordingStandIn({ code: 401, body: '{"ok":false,"error":"serve token required"}' });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-cli-none-'));
   try {
     const env = Object.assign({}, process.env, { ROMP_MANAGER_PORT: String(port), ROMP_STATE_DIR: dir });
     delete env.ROMP_SERVE_TOKEN;
     const r = await runClient(['restart-all'], env);
-    assert.equal(r.status, 1, r.stderr);
+    assert.equal(r.status, 3, `a refusal exits 3, distinct from no answer (1): ${r.stderr}`);
+    assert.match(r.stderr, /answered HTTP 401 to POST \/restart-all/, 'the status and the door, for the caller and the human');
     assert.equal((r.stderr.match(/the serve token could not be read/g) || []).length, 1, r.stderr);
     assert.match(r.stderr, /serve-token/);                      // the file to repair
     assert.match(r.stdout, /serve token required/);            // the manager's own answer, printed
     assert.deepEqual(seen, [['POST', '/restart-all', undefined]]);
   } finally { srv.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the control client exits 1, not 3, when nothing answers: a closed port is no refusal', async () => {
+  const port = await freePort();
+  const env = Object.assign({}, process.env, { ROMP_MANAGER_PORT: String(port), ROMP_STATE_DIR: MODULE_STATE, ROMP_SERVE_TOKEN: 'zq9-any-zq9' });
+  const r = await runClient(['down'], env);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /not running on :/);
+  assert.equal(r.stdout, '');
 });
