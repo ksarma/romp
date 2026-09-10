@@ -45,7 +45,7 @@ const tests = section('## Tests', '## Docs');
 const decisions = section('## Decisions', '## Open questions for the user');
 const open = section('## Open questions for the user', '## Upstream');
 
-// Decision 41 on this branch; a sibling branch adds decisions of its own, and whichever lands second renumbers, so the
+// Decision 44 on this branch; a sibling branch adds decisions of its own, and whichever lands second renumbers, so the
 // decision is found by its title, never by its number.
 const D_TITLE = '**A comment can be made inside a tracked change without replying to the change** (2026-09-09).';
 const dAt = decisions.indexOf(D_TITLE);
@@ -56,10 +56,10 @@ const decision = next ? decisions.slice(dAt, dAt + D_TITLE.length + next.index) 
 // ── the records: what the plan says ─────────────────────────────────────────────────────────────────────────
 
 test('the surface sentence: a click or a tap on a mark opens its card whatever selection stands elsewhere, and the guard reads the clicked mark', () => {
-  assert.ok(surface.includes('A comment can be made inside a change without replying to it (2026-09-09): a click or a tap on a change mark or a comment highlight opens its card, whatever selection stands elsewhere in the body, and a selection made by dragging inside one leaves a comment on those words, since the click that ends a drag is not a tap (the panel\'s `dragClick`, which reads the selection against the clicked mark alone; decision 41).'));
+  assert.ok(surface.includes('A comment can be made inside a change without replying to it (2026-09-09): a click or a tap on a change mark or a comment highlight opens its card, whatever selection stands elsewhere in the body, and a selection made by dragging inside one leaves a comment on those words, since the click that ends a drag is not a tap (the panel\'s `dragClick`, which reads the selection against the clicked mark alone; decision 44).'));
 });
 
-test('decision 41 records the guard against the clicked mark, the review that narrowed it, the marks whose press collapses nothing, the edge tolerance and the pulse', () => {
+test('decision 44 records the guard against the clicked mark, the review that narrowed it, the marks whose press collapses nothing, the edge tolerance and the pulse', () => {
   assert.ok(decision.includes('In the `fcchange` and `fcopen` handlers a click arriving with a non-collapsed selection whose anchor and focus both lie inside the clicked mark does nothing (`dragClick`)'));
   assert.ok(decision.includes('A plain click or a tap on a mark opens the card as before: its click arrives with the selection collapsed, or standing with no end inside the clicked mark, and the guard yields only to a selection whose ends both lie inside that mark, whatever the control\'s press did to a standing selection'), 'the plain click is explained by the guard\'s line, not by a collapse at the press');
   assert.ok(!/collapses (a|the) (standing )?selection at the press, so it opens the card/.test(decision), 'no collapse-at-press premise stands for any control: a comment highlight inside an author\'s link keeps a standing selection through its press (the browser leg\'s second test)');
@@ -78,11 +78,11 @@ test('Open questions carries nothing of the marks\' drag rule: the build answere
 });
 
 test('the Tests bullet names the stand-in\'s cases, the browser leg\'s second test, the controls modules and this module, and the four modules exist with the cases credited', () => {
-  assert.ok(tests.includes('The marks\' drag rule (2026-09-09, decision 41): `ui/webview/file-comments-markclick.test.ts` drives the `fcchange` and `fcopen` handlers over the behavior suite\'s stand-in with the live selection faked per case (inside the mark, elsewhere in the body with none of it in the mark, collapsed, none, in the aside, one end out; the pointer\'s click with `detail` 1 and the keyboard\'s activation through the row\'s keydown with 0, as browsers dispatch them);'));
+  assert.ok(tests.includes('The marks\' drag rule (2026-09-09, decision 44): `ui/webview/file-comments-markclick.test.ts` drives the `fcchange` and `fcopen` handlers over the behavior suite\'s stand-in with the live selection faked per case (inside the mark, elsewhere in the body with none of it in the mark, collapsed, none, in the aside, one end out; the pointer\'s click with `detail` 1 and the keyboard\'s activation through the row\'s keydown with 0, as browsers dispatch them);'));
   assert.ok(tests.includes('its second test per engine selects words in another paragraph and clicks a deletion\'s struck label, and in Rendered an insertion\'s mark and a comment highlight inside an author\'s link, marks whose press collapses no selection: each opens its card and scrolls as with no selection (in Raw the link\'s label is plain text, whose press collapses the selection, the control).'));
   assert.ok(tests.includes('`ui/webview/file-comments-markclick-controls.test.ts` drives the guard as read against the clicked mark over the stand-in: a selection standing elsewhere in the body, or spanning the mark from outside, leaves the click a click for a change mark, a deletion\'s point and a comment highlight; the drag\'s own click still opens nothing and leaves no press pulse; a drag\'s end reported at the mark\'s edge is the mark\'s and one past it is not; and with the panel closed a drag inside a mark opens no panel and no card while a plain click opens both.'));
   assert.ok(tests.includes('`ui/webview/file-comments-markclick-controls-browser.test.ts` makes that state with a real mouse over the real viewer and panel in Chromium and Firefox: with words selected in another paragraph a click on a deletion\'s label, on a mark inside an author\'s link, on a region rectangle and on a framed figure opens its card; a drag inside an insertion\'s mark opens nothing and leaves no pulse; a drag ending at the mark\'s last character is the drag\'s; a tap on the deletion label with a selection standing opens the card (Chromium\'s touch); and with the panel closed the label and the frame open the panel and the card, the drag neither.'));
-  assert.ok(tests.includes('`tools/file-review-plan-markclick.test.mjs` holds this bullet, the surface sentence and decision 41 to the panel, the sheets, the overlay and the four modules.'));
+  assert.ok(tests.includes('`tools/file-review-plan-markclick.test.mjs` holds this bullet, the surface sentence and decision 44 to the panel, the sheets, the overlay and the four modules.'));
   for (const f of ['file-comments-markclick.test.ts', 'file-comments-markclick-browser.test.ts', 'file-comments-markclick-controls.test.ts', 'file-comments-markclick-controls-browser.test.ts']) {
     assert.ok(fs.existsSync(path.join(REPO, 'ui', 'webview', f)), `${f} exists`);
   }

@@ -709,7 +709,7 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   without replying to it (2026-09-09): a click or a tap on a change mark or a comment highlight opens
   its card, whatever selection stands elsewhere in the body, and a selection made by dragging inside
   one leaves a comment on those words, since the click that ends a drag is not a tap (the panel's
-  `dragClick`, which reads the selection against the clicked mark alone; decision 41). Session colors come from one
+  `dragClick`, which reads the selection against the clicked mark alone; decision 44). Session colors come from one
   `GET /sessions` fetch per panel open, mapping `authorId` to name and color; an author with no
   live match gets a neutral chip with its label.
 - **Comment on a selection**: selecting a passage still seeds the quote chip when a chat composer
@@ -2402,7 +2402,7 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tools/file-review-plan-filter-fixes.test.mjs` holds the note's second-round sentences to the panel
   and this inventory to the tree: every suite named `file-comments-filter…` under `ui/webview` is named
   here and in the note.
-- The marks' drag rule (2026-09-09, decision 41): `ui/webview/file-comments-markclick.test.ts` drives the
+- The marks' drag rule (2026-09-09, decision 44): `ui/webview/file-comments-markclick.test.ts` drives the
   `fcchange` and `fcopen` handlers over the behavior suite's stand-in with the live selection faked per case
   (inside the mark, elsewhere in the body with none of it in the mark, collapsed, none, in the aside, one end
   out; the pointer's click with `detail` 1 and the keyboard's activation through the row's keydown with 0, as
@@ -2426,7 +2426,7 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   its card; a drag inside an insertion's mark opens nothing and leaves no pulse; a drag ending at the mark's last
   character is the drag's; a tap on the deletion label with a selection standing opens the card (Chromium's touch);
   and with the panel closed the label and the frame open the panel and the card, the drag neither.
-  `tools/file-review-plan-markclick.test.mjs` holds this bullet, the surface sentence and decision 41 to the panel,
+  `tools/file-review-plan-markclick.test.mjs` holds this bullet, the surface sentence and decision 44 to the panel,
   the sheets, the overlay and the four modules.
 
 ## Docs
@@ -2612,7 +2612,7 @@ document stands on its own, each with the reasoning it was given.
     panel's Log shows it. The acknowledgment line after a send (Sent to <session> at <time>) is unchanged. A kernel change: the panel and the kernel land together,
     and the kernel restarts to go live.
 
-41. **A comment can be made inside a tracked change without replying to the change** (2026-09-09). The user wants
+44. **A comment can be made inside a tracked change without replying to the change** (2026-09-09). The user wants
     selecting words inside a change's new text and commenting on them to work as it does for any other passage;
     Reply on the change's card must not be the only way to comment on a change. The mapping, the composer and the
     save already accepted such a passage. The mark blocked it by mouse: a change mark and a comment highlight are
