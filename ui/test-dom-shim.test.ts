@@ -323,6 +323,7 @@ const needsListing = (s: string) => initsEdge(s) && !switched(s);
 // fixture with a children list: dumps of a few lines today, listed because the rule is uniform and the cure is the
 // same call on the object.
 const ALLOWLIST = [
+  "webview/actions.test.ts",
   "webview/anchor-map-block-edges.test.ts",
   "webview/anchor-map-boundary-points.test.ts",
   "webview/anchor-map-change-marks.test.ts",
@@ -378,6 +379,8 @@ const ALLOWLIST = [
   "webview/file-comments-margin-image-pad.test.ts",
   "webview/file-comments-margin-review.test.ts",
   "webview/file-comments-margin.test.ts",
+  "webview/file-comments-markclick-controls.test.ts",
+  "webview/file-comments-markclick.test.ts",
   "webview/file-comments-page-states.test.ts",
   "webview/file-comments-pages.test.ts",
   "webview/file-comments-panel.test.ts",
@@ -405,8 +408,12 @@ const ALLOWLIST = [
   "webview/file-comments-reveal-title.test.ts",
   "webview/file-comments-review-fixes-3.test.ts",
   "webview/file-comments-review-fixes.test.ts",
+  "webview/file-comments-seen-fixes.test.ts",
+  "webview/file-comments-seen-review2.test.ts",
+  "webview/file-comments-seen-review3.test.ts",
   "webview/file-comments-send-note.test.ts",
   "webview/file-comments-send-resolves.test.ts",
+  "webview/file-comments-send-seen.test.ts",
   "webview/file-comments-todo-choices-review.test.ts",
   "webview/file-comments-todo-choices.test.ts",
   "webview/file-comments-todopick-focus.test.ts",
@@ -415,6 +422,7 @@ const ALLOWLIST = [
   "webview/file-view-edit-races.test.ts",
   "webview/file-view-figures-absolute.test.ts",
   "webview/file-view-links.test.ts",
+  "webview/file-view-notice.test.ts",
   "webview/file-view-pdf-backstop.test.ts",
   "webview/file-view-pdf-chunk-latch.test.ts",
   "webview/file-view-pdf-frame.test.ts",
@@ -472,11 +480,14 @@ const ALLOWLIST = [
   "webview/waiting-file-chip-unframed.test.ts",
   "webview/waiting-file-chip.test.ts",
 ];
-// The list's exact length on 2026-09-10, after the detector's fourth round. The ratchet pins it by equality, so a file
-// that comes off lowers this in the same commit, a renamed file leaves it alone, and a new file may not join: neither
-// the list nor this number goes up. A same-commit swap (one off, one on) is the one move no count pin sees; the first
-// assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 148;
+// The list's exact length on 2026-09-10, after the detector's fourth round: the 148 files whose code initialised an
+// edge when the rule was written, plus the eight class fakes main added between this branch's base and its landing
+// (actions, file-comments-markclick, file-comments-markclick-controls, file-comments-seen-fixes, -seen-review2,
+// -seen-review3, file-comments-send-seen, file-view-notice), listed at the final rebase because they predate the rule.
+// The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
+// alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
+// is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
+const ALLOWLIST_MAX = 156;
 // the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
 // tags-scale test whose shim it grew from
 const SWITCHED = [
