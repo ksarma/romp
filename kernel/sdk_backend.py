@@ -3524,8 +3524,9 @@ SCOPE_SHOW_TIMEOUT = 10.0
 # prints the messages bare, `-t systemd` keeps the user manager's own lines only (a scope member's `logger`
 # lines carry the unit too and would push the manager's out of the window: verified, six logger lines
 # displaced the Started line), and `-n 5` bounds the read to the newest few; the unit follows. The window
-# is read from its LAST `Started <unit>` line (journal_life), so an earlier same-named unit's death inside
-# it is cut off.
+# is read from its LAST `Started ` line (journal_life; whatever the manager's StatusUnitFormat= puts after
+# the word, since `-u <unit> -t systemd` already restricts the read to this unit's manager lines), so an
+# earlier same-named unit's death inside it is cut off.
 SCOPE_JOURNAL_ARGV = ["journalctl", "--user", "-n", "5", "-o", "cat", "-t", "systemd", "-u"]
 SCOPE_JOURNAL_OOM_LINE = "Failed with result 'oom-kill'"
 SCOPE_JOURNAL_KILL_LINE = "A process of this unit has been killed by the OOM killer"
