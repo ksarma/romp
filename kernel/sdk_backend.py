@@ -5686,21 +5686,44 @@ class SdkSession:
         (review round 3, 2026-09-09). set_mode calls it for a live pick of a non-bypass mode while a pick
         INTO bypass waits (review round 2); set_effort, set_auth and set_fast call it when the pick returns
         to the value the process runs while a different pick is pending (held for live work, or deferred to
-        the turn's end). Forget the surface, so pickHeld stops naming it, and when it was the only one
-        pending end the hold and the reconnect it asked for: the reconnect would relaunch the very shape
-        the process runs (until round 3 the revert left the arm standing, and the settle that found no
-        work relaunched the identical shape). When other picks remain the arm stands for them. A pending
-        rewind records no surface and depends on the deferred arm, so its arm stands. Loop thread, queued
-        behind the request it withdraws (call_soon_threadsafe keeps the order), so the two cannot
-        interleave."""
-        if surface not in self._reconnect_surfaces:
-            return
+        the turn's end). Two halves, one per thread (review round 4, 2026-09-10):
+
+        The KERNEL thread, here, forgets the surface at once. The surface set is written on the thread the
+        picks arrive on, in the order the user made them: _note_reconnect_ask adds, this discards, and the
+        readers on that thread (set_mode's already-applying guard, set_fast's off branch, snapshot's pickHeld)
+        see current membership. Until round 4 the discard ran on the loop, queued, and a revert followed by
+        a re-pick of the same surface lost the re-pick: the loop's discard ran after the re-pick's add, so
+        the set read empty with the hold standing (effort, fast), or set_mode read the stale membership and
+        logged "already applying" for a pick nothing was applying (the re-pick into bypass never landed and
+        every consult rang the contract problem). The loop thread writes the set only at its two clears
+        (the arm and the loop top, after the picks they clear were served) and the refusal relaunch's own
+        surface (_adopt_fast_state).
+
+        The LOOP thread then settles what the withdrawal leaves (_settle_withdrawal, queued behind the
+        request it withdraws): with the set empty and nothing armed it ends the hold and the reconnect it
+        asked for, since the reconnect would relaunch the very shape the process runs (until round 3 the
+        revert left the arm standing, and the settle that found no work relaunched the identical shape); with
+        a surface still recorded the arm stands for it. A pending rewind records no surface and depends on
+        the deferred arm, so its arm stands."""
         self._reconnect_surfaces.discard(surface)
+        if self.loop is not None and not self.ended:
+            self.loop.call_soon_threadsafe(self._settle_withdrawal, surface)
+
+    def _settle_withdrawal(self, surface: str) -> None:
+        """The loop half of _withdraw_held_pick: decide the hold's fate from the set as it stands NOW, never
+        from the membership the kernel thread saw (a re-pick of the same surface may have re-added it since).
+        Loop thread only."""
         if self._reconnect or not self._reconnect_when_idle:
             return
         if self._reconnect_surfaces:
-            self._log_quietly("reconnect (%s): the withdrawn %s pick leaves %s pending; the reconnect stands"
-                              % (self.name, surface, self._picks_phrase(self._pick_names(), "pending", "pending")))
+            if surface in self._reconnect_surfaces:
+                # the same surface asks again: a newer pick re-added it after the revert, and the reconnect it
+                # asks for is the one standing
+                self._log_quietly("reconnect (%s): a newer %s pick asks again after the withdrawn one; the "
+                                  "reconnect stands" % (self.name, surface))
+            else:
+                self._log_quietly("reconnect (%s): the withdrawn %s pick leaves %s pending; the reconnect stands"
+                                  % (self.name, surface, self._picks_phrase(self._pick_names(), "pending", "pending")))
             self.backend._poke()
             return
         if self._rewind_to and not self._rewind_armed:
@@ -5744,8 +5767,13 @@ class SdkSession:
         alone, not the fed-untaken hold: a fed text drains into the NEXT turn, whose settle arms."""
         if not self._reconnect_held_for_work or self._reconnect or self.ended:
             return None
+        names = self._pick_names()
+        if not names:
+            # a hold names picks: with every surface withdrawn on the kernel thread the hold is over for the
+            # readers, whether or not the loop has settled the flag yet (_withdraw_held_pick, review round 4)
+            return None
         n_sub, n_task = self._live_work_counts()
-        return {"surfaces": self._pick_names(), "subagents": n_sub, "tasks": n_task, "inflight": self.inflight != 0}
+        return {"surfaces": names, "subagents": n_sub, "tasks": n_task, "inflight": self.inflight != 0}
 
     def _connect_landed(self) -> None:
         """The (re)connect is up (the reconnect loop, right after the handshake): the shape _options
@@ -12885,8 +12913,7 @@ class SdkBackend:
                 # routine (review round 3, 2026-09-09; set_mode's shape), which ends the hold and the reconnect
                 # when nothing else asked. The running state is off (a flagless connection reports off), so
                 # the badge reads it whether or not the arm had flipped it
-                if s.loop is not None and not s.ended:
-                    s.loop.call_soon_threadsafe(s._withdraw_held_pick, "fast")
+                s._withdraw_held_pick("fast")
                 s.fast = "off"
                 self._log("fast (%s): set to off; the pending on pick is withdrawn" % s.name)
                 self._wake_push()
@@ -12956,8 +12983,8 @@ class SdkBackend:
                 # the bypass pick is withdrawn (review round 2, 2026-09-09; the loop-side bookkeeping
                 # runs behind the request it withdraws, and ends the reconnect when nothing else asked)
                 withdrawn = mode != "bypassPermissions" and "mode" in s._reconnect_surfaces
-                if withdrawn and s.loop is not None and not s.ended:
-                    s.loop.call_soon_threadsafe(s._withdraw_held_pick, "mode")
+                if withdrawn:
+                    s._withdraw_held_pick("mode")
                 s.set_mode_live(mode, prev=prev)
                 self._log("mode (%s): set to %s; applied live%s"
                           % (s.name, mode, "; the held bypass pick is withdrawn" if withdrawn else ""))
@@ -13046,8 +13073,7 @@ class SdkBackend:
                 s.effort = value
                 s._effort_pending = ""
                 self._update_reg(sid, effort=value, effortPending=False)
-                if s.loop is not None and not s.ended:
-                    s.loop.call_soon_threadsafe(s._withdraw_held_pick, "effort")
+                s._withdraw_held_pick("effort")
                 self._log("effort (%s): set to %s; the pending %s pick is withdrawn" % (s.name, value, reverted))
             else:
                 if reg.get("effort") != value or s.effort != value:
@@ -13176,8 +13202,7 @@ class SdkBackend:
                 s.auth = value
                 s._auth_pending = ""
                 self._update_reg(sid, auth=value, authPending=False)
-                if s.loop is not None and not s.ended:
-                    s.loop.call_soon_threadsafe(s._withdraw_held_pick, "auth")
+                s._withdraw_held_pick("auth")
                 self._log("auth (%s): set to %s; the pending %s pick is withdrawn" % (s.name, value, reverted))
             else:
                 if s.auth != value or reg.get("auth") != value:

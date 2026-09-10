@@ -5297,6 +5297,20 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         def call_soon_threadsafe(self, cb, *a):
             cb(*a)
 
+    class _Queue:
+        """A loop double that QUEUES: the callbacks run when the test flushes them, in order, as the loop
+        thread would serve them after the kernel thread's picks."""
+        def __init__(self):
+            self.queued = []
+
+        def call_soon_threadsafe(self, cb, *a):
+            self.queued.append((cb, a))
+
+        def flush(self):
+            while self.queued:
+                cb, a = self.queued.pop(0)
+                cb(*a)
+
     class _Res:
         uuid = "r1"
         num_turns = 1
@@ -6548,6 +6562,89 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s.inflight = 1                                   # the delivery turn opened
         self.assertTrue(s._pick_held()["inflight"], "a turn is open: the pick waits for it to finish")
         self.assertTrue(s.snapshot()["pickHeld"]["inflight"])
+
+    def test_o_a_revert_then_a_re_pick_before_the_loop_serves_the_withdraw_keeps_the_re_pick(self):
+        # the setters added a surface on the kernel thread, but the revert only QUEUED the withdraw, which
+        # discarded on the loop: a revert then a re-pick of the same surface before the loop served the
+        # withdraw lost the re-pick (review round 4). Mode: set_mode's guard read the stale membership and
+        # logged "already applying" while the withdraw then ended the hold, so the reg said bypass and the
+        # process ran default for good, every consult ringing the contract problem; effort and fast: the hold
+        # stood with no surface (no badge mark, a subject-less chat line, no fast flip at the arm). The
+        # discard is the kernel thread's now, in the order the picks arrive, and the loop decides the hold's
+        # fate from the set it finds. A queuing loop double, since the _Now double serves each call at once
+        class _OK:
+            async def set_permission_mode(self_, m): pass
+        q = self._Queue()
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"; s.client = _OK()
+        s.loop = q
+        s.set_mode_live = lambda mode, prev="default": asyncio.run(s._do_set_mode(mode, prev))
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        self.assertTrue(s.backend.set_mode(self.SID, "plan"))                # the revert: forgotten now, settled later
+        self.assertNotIn("mode", s._reconnect_surfaces, "the kernel thread forgets the surface at once")
+        self.assertIsNone(s.snapshot()["pickHeld"], "and the readers see no hold before the loop has run")
+        self.assertEqual(s._launched_mode, "plan")
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))   # the re-pick, before the loop serves the withdraw
+        self.assertIn("mode", s._reconnect_surfaces)
+        self.assertFalse(any("already applying" in str(m) for m in self.logs), self.logs)
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["mode"])
+        q.flush()                                                            # the loop serves: request, withdraw, request
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work, "the re-pick's reconnect stands")
+        self.assertIn("mode", s._reconnect_surfaces)
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["mode"])
+        self.assertEqual(s.snapshot()["mode"], "plan", "the running mode while the bypass pick is held")
+        self.assertTrue(any("a newer mode pick asks again after the withdrawn one; the reconnect stands" in str(m)
+                            for m in self.logs), self.logs)
+        self.assertEqual([m for m in self._withdrawn() if "only one pending" in m], [])
+        self.assertEqual([m for m in self.logs if "it arms at the settle that finds none" in str(m)], [],
+                         "the loop's own held line is not repeated: the setters said it")
+        self._stop(s, "a1")
+        out = self._settle(s)
+        self.assertTrue(out["reconnect"], "the settle reconnects for the re-picked bypass")
+        self.assertIn("the held mode pick reconnects now", self._armed()[0], self.logs)
+        self.assertEqual(s.perm_mode, "bypassPermissions")
+        self.assertEqual(sb.read_reg(s.backend.state_dir, self.SID).get("mode"), "bypassPermissions")
+        # effort: the surface stays and the hold stands for the re-pick
+        q = self._Queue()
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        s.loop = q
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertTrue(s.backend.set_effort(self.SID, "high"))
+        self.assertNotIn("effort", s._reconnect_surfaces); self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertIn("effort", s._reconnect_surfaces); self.assertEqual(s._effort_pending, "max")
+        q.flush()
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["effort"])
+        self.assertTrue(sb.read_reg(s.backend.state_dir, self.SID).get("effortPending"))
+        self.assertTrue(any("a newer effort pick asks again after the withdrawn one" in str(m) for m in self.logs), self.logs)
+        self.assertEqual([m for m in self._withdrawn() if "only one pending" in m], [])
+        self._stop(s, "a1")
+        self.assertTrue(self._settle(s)["reconnect"])
+        self.assertIn("the held effort pick reconnects now", self._armed()[0], self.logs)
+        # fast: the surface stays, and the arm flips the badge for the re-picked opt-in
+        q = self._Queue()
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = False
+        s.loop = q
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertNotIn("fast", s._reconnect_surfaces); self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertIn("fast", s._reconnect_surfaces); self.assertTrue(s.fast_opt)
+        q.flush()
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["fast"])
+        self.assertEqual(s.snapshot()["fast"], "off", "held: the badge shows the running state")
+        self.assertTrue(any("a newer fast pick asks again after the withdrawn one" in str(m) for m in self.logs), self.logs)
+        self._stop(s, "a1")
+        self.assertTrue(self._settle(s)["reconnect"])
+        self.assertEqual(s.fast, "on", "the arm flips: the flag rides this connect")
+        self.assertIn("the held fast pick reconnects now", self._armed()[0], self.logs)
 
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
