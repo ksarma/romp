@@ -167,6 +167,7 @@ function state() {
            armed: BOX.classList.contains("rup-arm"), goHidden: GO.hidden, goDisabled: GO.disabled,
            labelHidden: LBL.hidden, confirmHidden: CF.hidden, cancelHidden: CX.hidden, notNowHidden: DM.hidden, posts: posts(),
            checks: FETCHES.filter(function (f) { return f.url === "/update-check"; }).length, reloads: RELOADS,
+           dismissals: FETCHES.filter(function (f) { return f.url === "/update-dismiss"; }).map(function (f) { return f.body; }),
            pointerdownCapture: caps(LISTENERS.pointerdown),
            boxFocusout: (BOX.listeners.focusout || []).length, goFocusout: (GO.listeners.focusout || []).length,
            paneWired: FRAMES.map(function (f) { return caps(f.contentDocument.listeners.pointerdown); }),
@@ -438,6 +439,54 @@ GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: at
                        " CF.onclick(); await tick(); await tick(); await tick(); out(state());")
         self.assertTrue(s["msg"].startswith("The update did not finish: the fetch failed"), s["msg"])
         self.assertEqual((s["goHidden"], s["notNowHidden"]), (True, False), "a failure with no offer standing: the text alone, with Not now")
+
+    def test_not_now_after_a_failed_ending_hides_the_message_and_dismisses_nothing(self):
+        # review round 7 (2026-09-10): the failed ending's Not now posted /update-dismiss with curTag, the identifier
+        # this window last offered. After a refused pull that is the refused target's sha, while the failure's own
+        # text promises the next check's re-offer; the dismissal is durable (the drift check pushes nothing for a
+        # dismissed sha and every page load filters it), so the promised re-offer never came, anywhere. A window the
+        # running push flipped into the wait had offered nothing and posted an empty tag, which the kernel ignores,
+        # so one message's Not now dismissed durably in one window and nothing in another. The failed ending now
+        # clears curTag: Not now hides the message and posts nothing, in every window, whether or not an offer still
+        # stands, and the next push of the same identifier shows again. The plain offer's Not now and the updated
+        # ending's (in the window that clicked) still post the identifier: those dismissals are the ones meant
+        refused_pull = ("CHECK.tag = ''; CHECK.drift = ''; CHECK.driftSha = ''; "
+                        "CHECK.failed = 'the romp checkout has uncommitted work, so it was left alone. Commit or stash it; the next check offers the update again';")
+        refused_request = "CHECK.tag = ''; CHECK.drift = 'restart'; CHECK.driftSha = 'abcdef01'; CHECK.failed = 'romp is updated on disk but the restart request failed (HTTP 500)';"
+        repush = " window.__rompUpdateOffer('v0.1.0', 'abcdef01', 'pull', 'b1', ''); out({ ended: ended, hidden: hidden, reoffered: state() });"
+        # the window that clicked, offered the pull at its load: a refused pull leaves no offer standing
+        s = run_banner("GO.onclick(); await tick(); await tick(); " + refused_pull
+                       + " CF.onclick(); await tick(); await tick(); await tick(); var ended = state(); DM.onclick(); var hidden = state();" + repush,
+                       check={"tag": "", "drift": "pull", "driftSha": "abcdef01"})
+        e = s["ended"]
+        self.assertTrue(e["msg"].endswith("the next check offers the update again"), e["msg"])
+        self.assertEqual((e["goHidden"], e["notNowHidden"], e["dismissals"]), (True, False, []), "the text alone, with Not now")
+        self.assertEqual((s["hidden"]["shown"], s["hidden"]["dismissals"]), (False, []), "Not now hides the message and posts no dismissal")
+        r = s["reoffered"]
+        self.assertEqual((r["shown"], r["goHidden"]), (True, False), "the next check's push of the same sha shows in this window")
+        self.assertTrue(r["msg"].startswith("new romp commits are on main (abcdef01)"), r["msg"])
+        # the window that clicked, with the offer still standing (a restart request the manager refused)
+        s = run_banner("GO.onclick(); await tick(); await tick(); " + refused_request
+                       + " CF.onclick(); await tick(); await tick(); await tick(); var ended = state(); DM.onclick(); var hidden = state();" + repush,
+                       check={"tag": "", "drift": "restart", "driftSha": "abcdef01"})
+        self.assertEqual((s["ended"]["goHidden"], s["ended"]["notNowHidden"]), (False, False), "Update re-shows beside the text")
+        self.assertEqual((s["hidden"]["shown"], s["hidden"]["dismissals"]), (False, []), "Not now hides it and dismisses nothing: the offer stands for the next push")
+        self.assertTrue(s["reoffered"]["shown"])
+        # a window the running push flipped into the wait, which never showed the offer (curTag empty)
+        s = run_banner("window.__rompUpdateOffer('', '', '', 'b1', 'running'); " + refused_request
+                       + " await tick(); await tick(); var ended = state(); DM.onclick(); var hidden = state();" + repush, check={"tag": ""})
+        self.assertEqual((s["ended"]["goHidden"], s["ended"]["notNowHidden"]), (False, False), "a pushed window")
+        self.assertEqual((s["hidden"]["shown"], s["hidden"]["dismissals"]), (False, []), "no empty-tag post either")
+        self.assertTrue(s["reoffered"]["shown"])
+        # the controls: the plain offer's Not now posts the offered tag, and so does the updated ending's in the window that clicked
+        s = run_banner("DM.onclick(); out(state());")
+        self.assertEqual((s["shown"], s["dismissals"]), (False, [{"tag": "v0.2.0"}]), "the plain offer's Not now dismisses the offer, durably")
+        s = run_banner("GO.onclick(); await tick(); await tick(); CHECK.tag = ''; CHECK.updated = 'abcdef01'; CHECK.why = 'no manager is running this kernel'; CHECK.hint = 'run romp up to start one';"
+                       " CF.onclick(); await tick(); await tick(); await tick(); DM.onclick(); out(state());")
+        self.assertEqual((s["shown"], s["dismissals"]), (False, [{"tag": "v0.2.0"}]), "the updated ending's Not now posts the identifier this window offered")
+        s = run_banner("window.__rompUpdateOffer('', '', '', 'b1', 'running'); CHECK.tag = ''; CHECK.updated = 'abcdef01'; await tick(); await tick(); DM.onclick(); out(state());",
+                       check={"tag": ""})
+        self.assertEqual((s["shown"], s["dismissals"]), (False, []), "a pushed window offered nothing, so its Not now after the updated ending posts nothing")
 
     def test_the_wait_text_promises_no_restart_and_no_reload_when_no_manager_started_the_kernel(self):
         # review round 6 (2026-09-10): on a kernel no manager started, the wait copy promised a restart and a

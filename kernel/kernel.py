@@ -56488,12 +56488,21 @@ _UPD_JS = (
     # nothing ran (review round 6, 2026-09-10). A failure with no offer shows its text alone until then.
     # Both endings show Not now (set here: disarm() sets dm.hidden only while armed), so the message can be
     # dismissed, and the updated ending hides Update in the clicking window too (it stood there disabled,
-    # where a pushed window had it hidden), so every window ends in one shape (review round 6). Not now on
-    # an ended wait posts /update-dismiss with curTag, the identifier this window last offered: after a pull
-    # that left the code on disk with no manager that is the pulled sha, which the kernel's next pass would
-    # offer again as a restart drift, and the dismissal is durable, so that offer stays quiet until a newer
-    # sha. Not now's own meaning, said here because the message it dismisses is not the offer it names
-    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;show('The update did not finish: '+d.failed);return;}"
+    # where a pushed window had it hidden), so every window ends in one shape (review round 6). What that
+    # Not now dismisses differs by ending (review round 7, 2026-09-10). After the updated ending it posts
+    # /update-dismiss with curTag, the identifier this window last offered, in the window that clicked: after
+    # a pull that left the code on disk with no manager that is the pulled sha, which the kernel's next pass
+    # would offer again as a restart drift, and the dismissal is durable, so that offer stays quiet until a
+    # newer sha (a window the running push flipped into the wait offered nothing, so its curTag is empty and
+    # its Not now hides the message alone). After the failed ending Not now hides the message and dismisses
+    # nothing, in every window: the failure's own text promises the next check's re-offer (a refused pull
+    # re-arms the drift slot; a refused restart request keeps its offer), and a durable dismissal of the
+    # refused target would stop that re-offer everywhere, on every page load and in the drift check's push.
+    # curTag is cleared here, so dm.onclick posts nothing and the page-local dismissedTag stays empty, and the
+    # next push of the same identifier shows in this window too. Round 6 had that Not now post the tag the
+    # clicking window had offered (the refused target) and an empty tag from a pushed window, which the
+    # kernel ignores, so one message dismissed durably in one window and nothing in another
+    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;curTag='';show('The update did not finish: '+d.failed);return;}"
     # the kernel words the step by case (`romp refresh` exits 1 with no manager, where `romp up` is
     # the step; review find, 2026-09-08); the fallback is the manager case, for an older kernel
     "if(d.updated){waiting=false;go.hidden=true;dm.hidden=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
@@ -56566,8 +56575,10 @@ _UPD_JS = (
     "box.addEventListener('focusout',function(e){if(!armed)return;var t=e&&e.relatedTarget;if(t&&box.contains(t))return;if(!t&&press)return;disarm();});"
     "window.addEventListener('blur',function(){press=false;disarm();});"
     "document.addEventListener('visibilitychange',function(){if(document.hidden)disarm();});"
-    "dm.onclick=function(){dismissedTag=curTag;box.classList.remove('show');"
-    # persist the Not-now (the user 2026-08-31): page loads and kernel restarts stop re-offering
+    "dm.onclick=function(){dismissedTag=curTag;box.classList.remove('show');if(!curTag)return;"
+    # persist the Not-now (the user 2026-08-31): page loads and kernel restarts stop re-offering. Nothing is
+    # posted without an identifier (review round 7, 2026-09-10): the kernel ignores an empty tag, and the poll's
+    # failed ending clears curTag so that its Not now hides the message and dismisses nothing (its comment says why)
     "try{fetch('/update-dismiss',{method:'POST',headers:{'Content-Type':'application/json'},"
     "body:JSON.stringify({tag:curTag})}).catch(function(){});}catch(e){}};"
     # a page loaded while the update runs records no counts: the kernel answers none in that state (the
