@@ -59,7 +59,11 @@ class KernelKnows(unittest.TestCase):
         self.assertFalse(km._kernel_knows(THEIRS))
 
 
-class RefusesForeignDriveOps(unittest.TestCase):
+class _ForeignDriveFixture(unittest.TestCase):
+    """The refusing gate: a names registry that knows OURS alone, no SDK backend, and a backend_for that records
+    what reaches it. No tests of its own, so a class that needs the fixture inherits it and not another class's
+    tests."""
+
     def setUp(self):
         self.sent = []
         self.client = {"send": lambda s: self.sent.append(json.loads(s))}
@@ -75,6 +79,8 @@ class RefusesForeignDriveOps(unittest.TestCase):
         km._name_of, km._sdk = self._name_of, self._sdk
         km.Sessions.backend_for = staticmethod(self._backend_for)
 
+
+class RefusesForeignDriveOps(_ForeignDriveFixture):
     def test_a_send_to_a_foreign_session_never_reaches_a_backend(self):
         handled = km._drive({"type": "sendMessage", "id": THEIRS, "text": "did you get this?"}, self.client)
         self.assertTrue(handled, "the op is CONSUMED — refused, not passed on to be silently retried")
@@ -299,33 +305,50 @@ class RefusesForeignDriveOps(unittest.TestCase):
         self.assertEqual((msg["sid"], msg["op"]), (sid, "sendMessage"))
 
 
-class TypedNameOpsClassifyEveryNameReadingArm(unittest.TestCase):
+class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
     """The records writer folds `name` into a refusal's text for the ops in _TYPED_NAME_OPS and keeps it as the
-    row's target for those in _TARGET_NAME_OPS; an op whose arm reads msg["name"] and sits in neither tuple is a
-    refusal that drops a typed title or files a session name as text (round 8's compact). The tuples are pinned
-    to the handlers themselves: the ops of every _drive arm that reads the message's name, in its condition or
-    its body, are exactly the union of the two tuples (review round 9, 2026-09-09)."""
+    row's target for those in _TARGET_NAME_OPS; an op whose handler reads the message's name and sits in neither
+    tuple is a refusal that drops a typed title or files a session name as text (round 8's compact). Round 9 pinned
+    the tuples with a syntactic walk of _drive's dispatch chain for msg["name"] and msg.get("name"), which an alias,
+    a hoisted local, msg.pop and a helper taking msg all passed. This pin is executed instead: every op the front
+    door accepts is enumerated from the source (the one use of the AST, to LIST the ops, never to detect a read),
+    each is classified HERE, by hand, as carrying a typed title, addressing its session by name, or carrying no
+    name, and every op is driven through a refusing gate with a name and with a name and text, so the undelivered
+    row and the modal are asserted against the classification. An op the door accepts that the table does not
+    classify is reported by name, so a new op cannot land without saying what its name means to a refusal, and a
+    tuple edit without a table edit is red (review round 10, 2026-09-09)."""
 
-    def test_the_ops_whose_arms_read_a_name_are_the_two_tuples(self):
+    NAME, TEXT = "title-I-typed", "a paragraph I typed"
+    # `name` is a title the user typed: the row's text and the modal's copy when the op carries no text
+    TYPED = {"renameSession": "the new name", "forkSession": "the fork's name",
+             "commentPromote": "the promoted session's name", "commentCreate": "the thread's name (a text-less create)"}
+    # `name` is the session ADDRESSED (the timeline keys these by session name): the row's target, never its text
+    TARGET = {"compact": "the session to compact", "sendCommand": "the session the command goes to"}
+    # every other op the front door accepts: `name` means nothing to its handler, and a refusal keeps none
+    NAMELESS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "dismissDialog", "answerAsk",
+                "navAsk", "toggleAsk", "submitAsk", "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho",
+                "apiRetry", "setModel", "setEffort", "setMode", "setFast", "setAuth", "endSession", "moveSession",
+                "stopTask", "rewindFiles", "mcpAction", "commentReply", "commentResolve", "commentDelete", "commentSeen",
+                "userTodoAnswer", "userTodoDismiss", "unpinNote", "commentMerge", "askFollowUp")
+    # what the front door needs beside `type` to read a message as a drive op: an id for the id ops, nothing for
+    # the ops addressed by name, and the Continue shape for askFollowUp (itemId plus cont, which carries no text)
+    FRONT_DOOR = {"askFollowUp": {"itemId": THEIRS + ":1", "cont": True}}
+
+    def _accepted_ops(self):
+        """Every op string _drive's front door accepts, read from its source: the ops named in the first if/elif
+        chain that tests `t`, a local tuple (ID_OPS) resolved from the function body and a module tuple from the
+        kernel. A listing only: nothing here reads what an arm does with the message."""
         import ast
         import inspect
         import textwrap
         fn = ast.parse(textwrap.dedent(inspect.getsource(km._drive))).body[0]
-
-        def reads_name(node):
-            for n in ast.walk(node):
-                if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "msg" \
-                        and isinstance(n.slice, ast.Constant) and n.slice.value == "name":
-                    return True
-                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "get" \
-                        and isinstance(n.func.value, ast.Name) and n.func.value.id == "msg" \
-                        and n.args and isinstance(n.args[0], ast.Constant) and n.args[0].value == "name":
-                    return True
-            return False
+        local_tuples = {}
+        for stmt in fn.body:
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name) \
+                    and isinstance(stmt.value, (ast.Tuple, ast.List)):
+                local_tuples[stmt.targets[0].id] = tuple(e.value for e in stmt.value.elts if isinstance(e, ast.Constant))
 
         def ops_of(test):
-            # the ops an arm's condition admits: t == "op", t in ("a", "b"), t in _A_MODULE_TUPLE; a local name
-            # (ID_OPS) resolves to nothing, and an arm this pin cannot classify may not read a name (below)
             out = set()
             for n in ast.walk(test):
                 if isinstance(n, ast.Compare) and isinstance(n.left, ast.Name) and n.left.id == "t":
@@ -335,34 +358,73 @@ class TypedNameOpsClassifyEveryNameReadingArm(unittest.TestCase):
                         elif isinstance(op, ast.In) and isinstance(right, (ast.Tuple, ast.List)):
                             out.update(e.value for e in right.elts if isinstance(e, ast.Constant))
                         elif isinstance(op, ast.In) and isinstance(right, ast.Name):
-                            out.update(getattr(km, right.id, ()))
+                            out.update(local_tuples.get(right.id) or getattr(km, right.id, ()))
             return out
 
-        readers, unclassified, arms = set(), [], 0
+        def mentions_t(node):
+            return any(isinstance(n, ast.Name) and n.id == "t" for n in ast.walk(node))
+        accepted = set()
         for stmt in fn.body:
-            node = stmt
-            while isinstance(node, ast.If):
-                ops = ops_of(node.test)
-                arms += bool(ops)
-                if reads_name(node.test) or any(reads_name(b) for b in node.body):
-                    if ops:
-                        readers.update(ops)
-                    else:
-                        unclassified.append(ast.unparse(node.test)[:80])
-                tail = node.orelse
-                if len(tail) == 1 and isinstance(tail[0], ast.If):
-                    node = tail[0]
-                else:
-                    if any(reads_name(b) for b in tail):
-                        unclassified.append("the chain's final else")
-                    node = None
-        self.assertGreater(arms, 30, "the walk found _drive's dispatch chain")
-        self.assertEqual(unclassified, [], "an arm this pin cannot classify by op reads the message's name")
-        expected = set(km._TYPED_NAME_OPS) | set(km._TARGET_NAME_OPS)
-        self.assertEqual(readers, expected,
-                         "ops whose arm reads the message's name but sit in neither tuple: %s; tuple members whose arm "
-                         "reads no name: %s" % (sorted(readers - expected), sorted(expected - readers)))
-        self.assertEqual(set(km._TYPED_NAME_OPS) & set(km._TARGET_NAME_OPS), set(), "an op is typed text or a target")
+            if isinstance(stmt, ast.If) and mentions_t(stmt.test):
+                node = stmt
+                while isinstance(node, ast.If):
+                    accepted |= ops_of(node.test)
+                    node = node.orelse[0] if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If) else None
+                break
+        return accepted
+
+    def test_every_accepted_op_is_classified_and_its_refusal_keeps_the_name_as_classified(self):
+        import pathlib
+        accepted = self._accepted_ops()
+        self.assertGreater(len(accepted), 30, "the front door's chain was found")
+        classified = set(self.TYPED) | set(self.TARGET) | set(self.NAMELESS)
+        self.assertEqual(sorted(accepted - classified), [],
+                         "ops the drive door accepts that this pin does not classify: say whether the op's `name` is a "
+                         "typed title (TYPED), the session it addresses (TARGET) or nothing (NAMELESS)")
+        self.assertEqual(sorted(classified - accepted), [], "classified ops the drive door no longer accepts")
+        self.assertEqual(set(km._TYPED_NAME_OPS), set(self.TYPED), "the typed-name tuple and this table disagree")
+        self.assertEqual(set(km._TARGET_NAME_OPS), set(self.TARGET), "the target tuple and this table disagree")
+        self.assertEqual(set(self.TYPED) & set(self.TARGET), set(), "an op is typed text or a target")
+        with tempfile.TemporaryDirectory() as d:
+            saved = km.jd.STATE
+            km.jd.STATE = pathlib.Path(d)
+            records = pathlib.Path(d) / "undelivered.jsonl"
+
+            def rows():
+                return [json.loads(x) for x in records.read_text().splitlines()] if records.exists() else []
+            try:
+                with mock.patch.object(km._TMUX, "available", lambda: False), \
+                     mock.patch.object(km, "_thread_names", lambda: {}), \
+                     mock.patch.dict(km._remotes, {}, clear=True):
+                    for op in sorted(accepted):
+                        door = self.FRONT_DOOR.get(op) or ({} if op in self.TARGET else {"id": THEIRS})
+                        for text in (None, self.TEXT):
+                            msg = dict(door, type=op, name=self.NAME)
+                            if text is not None:
+                                msg["text"] = text
+                            del self.sent[:]
+                            before = len(rows())
+                            self.assertTrue(km._drive(msg, self.client),
+                                            (op, "the op did not reach the gate: its front-door keys are missing from FRONT_DOOR"))
+                            new = rows()[before:]
+                            self.assertEqual(len(new), 1, (op, msg, "one refusal, one row"))
+                            self.assertEqual(len(self.sent), 1, (op, msg, self.sent))
+                            row, modal = new[0], self.sent[0]
+                            expect_text = text if text is not None else (self.NAME if op in self.TYPED else "")
+                            expect_target = self.NAME if op in self.TARGET else ""
+                            self.assertEqual((row["op"], row["text"], row["target"]), (op, expect_text, expect_target),
+                                             (op, msg, "the row keeps the name as the classification says"))
+                            self.assertEqual((modal["type"], modal["op"], modal["copy"]), ("err", op, expect_text), (op, msg))
+                            self.assertEqual(row["sid"], modal["sid"], op)
+                            self.assertEqual(modal["sid"], self.NAME if op in self.TARGET else THEIRS, op)
+                            if expect_text:
+                                self.assertIn("Your text is saved verbatim", modal["text"], (op, msg))
+                            else:
+                                self.assertIn("The refusal is recorded in undelivered.jsonl", modal["text"], (op, msg))
+                                self.assertNotIn("Your text is saved verbatim", modal["text"], (op, msg))
+                self.assertEqual(self.reached, [], "nothing was handed to a backend")
+            finally:
+                km.jd.STATE = saved
 
 
 if __name__ == "__main__":

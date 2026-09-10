@@ -18571,7 +18571,9 @@ _FOREIGN_OP_VERB = {"sendMessage": "message", "askFollowUp": "reply", "askText":
 # and "Copy my text" copied it, under the title "That action was not delivered" since the verb table knew
 # compactSession only). commentCreate's entry is inert for a message its handler accepts, since the handler requires
 # `text` and the fold reads text first; it holds for a text-less create refused at the gate, whose title is then the
-# one typed thing to keep. tests/test_drive_foreign_sid.py pins both tuples to the _drive arms that read the name.
+# one typed thing to keep. tests/test_drive_foreign_sid.py pins both tuples to a hand-kept classification of every op
+# the front door accepts, each driven through a refusing gate (round 10; round 9's syntactic walk of the arms for
+# msg["name"] and msg.get("name") missed an alias, a hoisted local, msg.pop and a helper taking the message).
 _TYPED_NAME_OPS = ("renameSession", "forkSession", "commentPromote", "commentCreate")
 _TARGET_NAME_OPS = ("compact", "sendCommand")
 
