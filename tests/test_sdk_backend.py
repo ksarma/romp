@@ -7713,9 +7713,15 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertTrue(s.backend.set_fast(self.SID, "on"))
         q.flush()
         self.assertTrue(s._reconnect, "the flagless connect does not serve the fast pick")
-        self.assertEqual(s.fast, "on", "the arm's flip: the flag rides the reconnect it armed")
+        # the arm made no flip (review round 11, correctness-1): the connect in progress runs without the flag, and the
+        # badge reads it until the loop top composes the arm's own connect, the one that carries the flag (test_y10)
+        self.assertEqual(s.fast, "off", "no flip at an arm made under a flagless connect in progress")
         self.assertTrue(any("fast (web): set to on; reconnecting to apply" in str(m) for m in self.logs), self.logs)
         self.assertFalse(any("no second reconnect" in str(m) for m in self.logs), self.logs)
+        s._connect_landed()                                                                          # the flagless landing
+        self.assertEqual(s.fast, "off")
+        s._reset_reconnect_state()                                                                   # the loop top: the arm's own connect composes, flagged
+        self.assertEqual(s.fast, "on", "the flip lands with the connect that carries the flag")
 
     def test_x5_a_served_request_deferred_behind_a_queued_text_or_an_open_turn_arms_nothing(self):
         # the served check ran only at the immediate arm (review round 6, kernel-4): a request the composed connect
@@ -8764,6 +8770,60 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertFalse(s.backend.session_meta(self.SID)["modeSwitching"])
         row = s.backend._live_row(sb.read_reg(s.backend.state_dir, self.SID), self.SID)
         self.assertIs(row["modeSwitching"], False, "a dormant row: no switch in flight")
+
+    def test_y10_a_fast_pick_armed_inside_a_flagless_compose_flips_the_badge_at_its_own_compose_not_at_the_arm(self):
+        # the arm flipped fast to on for every arm that carried the name (review round 11, correctness-1), an arm made in
+        # the composed half of a FLAGLESS compose included, although the connect in progress runs without the flag: the
+        # badge read on at the arm, off at the intermediate landing's init, on again at the flagged relaunch's. The arm
+        # flips only when no connect is in progress; the loop top flips when it composes the arm's own connect, the one
+        # that carries the flag (_reset_reconnect_state). s.fast read beside fastPending across the intermediate landing,
+        # test_y4's shape
+        def state(s):
+            return s.fast, s.snapshot()["fastPending"]
+
+        def composed(s):
+            """The loop top and _options: the connect in progress, composed from the session."""
+            s._reset_reconnect_state()
+            s._launching = s.backend._launch_shape(s); s._connecting = True; s._fast_unlocked = bool(s.fast_opt)
+
+        def session():
+            s = self._sess(effort="high"); s._launched_effort = sb.effort_launch_shape("high")
+            s.fast = "off"; s.thread = mock.Mock(is_alive=lambda: True)
+            return s
+        s = session()
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))       # the idle arm: the window opens
+        composed(s)                                                  # flagless (the ask is off)
+        self.assertFalse(s._fast_unlocked)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))          # armed after the connect in progress
+        self.assertTrue(s._reconnect)
+        self.assertEqual(state(s), ("off", True), "pending; the badge still reads the flagless connect in progress")
+        s._connect_landed()                                          # the effort connect lands, flagless
+        self.assertEqual(state(s), ("off", True), "the landing changes nothing: there was no on to fall from")
+        composed(s)                                                  # the loop top composes the arm's own connect, flagged
+        self.assertTrue(s._fast_unlocked)
+        self.assertEqual(state(s), ("on", True), "the flip lands with the connect that carries the flag")
+        s._connect_landed()
+        self.assertEqual(state(s), ("on", False))
+        # control: the ARM half (no connect in progress) flips at the arm, as every idle arm does: the connect the loop
+        # composes next is this arm's own
+        s = session()
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertFalse(s._connecting); self.assertIsNotNone(s._launching)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertEqual(state(s), ("on", True), "the arm half's flip stands")
+        composed(s)
+        self.assertEqual(state(s), ("on", True))
+        s._connect_landed()
+        self.assertEqual(state(s), ("on", False))
+        # control: fast on then off inside the flagless compose is a withdrawal (test_y7 a): no name rides, and the loop
+        # top flips nothing
+        s = session()
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        composed(s)
+        self.assertTrue(s.backend.set_fast(self.SID, "on")); self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertEqual(state(s), ("off", False))
+        s._connect_landed(); composed(s)
+        self.assertEqual(state(s), ("off", False), "nothing rides: nothing flips at the loop top")
 
 
 class SettingsPickThroughTheLoop(unittest.TestCase):

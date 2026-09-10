@@ -5712,8 +5712,12 @@ class SdkSession:
         mid-turn pick whose turn then spawned work began its hold with the picked value in place, the fast
         badge reading on under the held mark and the billing row losing the report it names as what bills
         until the work finishes): fast to on when the flag rides this connect (the badge's optimism; the next
-        init re-asserts), auth_live cleared since the CLI's report described the process this reconnect
-        replaces (set_auth). Until round 4 the rewind's request set _reconnect itself, so an auth or fast
+        init re-asserts), and only when no connect is in progress (review round 11, 2026-09-10; the review's
+        correctness-1: an arm made in the composed half of a flagless compose stands for the reconnect AFTER
+        the landing, and the connect in progress runs without the flag, so a flip here read on, then off at
+        that landing's init, then on at the flagged relaunch's; the loop top flips it when it composes the
+        arm's own connect, _reset_reconnect_state), auth_live cleared since the CLI's report described the
+        process this reconnect replaces (set_auth). Until round 4 the rewind's request set _reconnect itself, so an auth or fast
         pick riding a rewind never got its flips: after the landing the Billing row showed the contradiction
         warning (the key picked, the login reported) until the new process's first init, which for a bare
         rollback is the user's next message. Returns the names riding, for the caller's log line; clears
@@ -5740,7 +5744,9 @@ class SdkSession:
         # the next set and the landing moves them over; with none (the idle arm, the settle's, the arm half of the
         # window before the loop top composes) they ride the connect the loop composes next
         (self._reconnect_riding_next if self._connecting else self._reconnect_riding).update(names)
-        if self.fast_opt and "fast" in names:
+        # the badge's flip only for a connect THIS arm's loop top composes next (review round 11): with a connect in
+        # progress the arm stands for the reconnect after its landing, and that connect runs without the flag
+        if self.fast_opt and "fast" in names and not self._connecting:
             self.fast = "on"
         if "auth" in names:
             self.auth_live = ""
@@ -6167,6 +6173,12 @@ class SdkSession:
             # the landing does this move on the normal path and leaves the next set empty here)
             self._reconnect_riding.update(self._reconnect_riding_next)
             self._reconnect_riding_next.clear()
+            # the badge's flip for a fast name riding THIS connect, the one composed next from fast_opt (review round
+            # 11, 2026-09-10; the review's correctness-1): an arm made under a connect in progress flipped nothing
+            # (_arm_reconnect), since that connect ran without the flag; the idle and arm-half arms flipped already,
+            # and this write is the same value
+            if self.fast_opt and "fast" in self._reconnect_riding:
+                self.fast = "on"
         if deferred:
             what = self._picks_phrase(names, "pending", "pending") if names else "the pending reconnect"
             # the verb agrees in number, as the arm's line does (review round 4): two picks ride, one rides, and
