@@ -19,12 +19,16 @@ import * as assert from "node:assert/strict";
 import { readPlace } from "./reader-place";
 import { sourceBlockSpans, renderedBlockIndex } from "./anchor-map";
 import { GATE_CLASS, GATE_LABEL_CLASS, GATE_ACT } from "./figure-gate";
+import { hideEdges } from "../test-dom-shim";
 
 // ── a DOM stand-in ─────────────────────────────────────────────────────────────────────────────────
+// Nodes hide their edges at construction (hideEdges, ui/test-dom-shim.ts), so a failing assertion's dump shows a node's primitives
+// and not the tree (the ratchet in ui/test-dom-shim.test.ts).
 class FakeNode {
   nodeType = 0;
   parentNode: FakeNode | null = null;
   childNodes: FakeNode[] = [];
+  constructor() { hideEdges(this); }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as FakeText).data : this.childNodes.map((c) => c.textContent).join(""); }
 }
 class FakeText extends FakeNode { nodeType = 3; constructor(public data: string) { super(); } }
@@ -34,7 +38,7 @@ class FakeElement extends FakeNode {
   scrollTop = 0;
   /** the box a test gives the element; none means no layout */
   box: { top: number; bottom: number } | null = null;
-  constructor(public tagName: string) { super(); }
+  constructor(public tagName: string) { super(); hideEdges(this); }
   getAttribute(n: string): string | null { return this.attrs.has(n) ? (this.attrs.get(n) as string) : null; }
   setAttribute(n: string, v: string): void { this.attrs.set(n, v); }
   appendChild(n: FakeNode): FakeNode { this.childNodes.push(n); n.parentNode = this; return n; }

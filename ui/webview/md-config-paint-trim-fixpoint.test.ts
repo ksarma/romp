@@ -22,10 +22,13 @@ import assert from "node:assert/strict";
 import { marked } from "marked";
 import { applyMdConfig } from "./md-config";
 import { paintRendered, trimCollapsedMarks, TRIM_PASSES_MAX, TRIM_STATS } from "./anchor-map";
+import { hideEdges, defineHidden } from "../test-dom-shim";
 
 applyMdConfig();
 
 // -- a DOM stand-in that measures, its Range reading an element's box ----------------------------------------------------------
+// Nodes hide their edges at construction (hideEdges, ui/test-dom-shim.ts; the sibling pointers through defineHidden), so a failing
+// assertion's dump shows a node's primitives and not the tree (the ratchet in ui/test-dom-shim.test.ts).
 /** The width a text node lays out at, by the test's rule of the moment. */
 type Measure = (t: FakeText, doc: FakeDocument) => number;
 /** A mark's padding, 2 px a side (feed.css `.fc-hl { padding: 0 2px }`): what a Range over an outer mark's contents reads of an
@@ -73,7 +76,7 @@ class FakeNode {
   parentNode: FakeElement | null = null;
   previousSibling?: FakeNode | null;
   nextSibling?: FakeNode | null;
-  constructor(public ownerDocument: FakeDocument) {}
+  constructor(public ownerDocument: FakeDocument) { hideEdges(this); }
   get childNodes(): FakeNode[] { return []; }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as FakeText).data : this.childNodes.map((c) => c.textContent).join(""); }
   get isConnected(): boolean { let n: FakeNode = this; while (n.parentNode) n = n.parentNode; return n instanceof FakeElement && n.tagName === "#ROOT"; }
@@ -93,7 +96,7 @@ class FakeElement extends FakeNode {
   nodeType = 1;
   attrs = new Map<string, string>();
   kids: FakeNode[] = [];
-  constructor(doc: FakeDocument, public tagName: string) { super(doc); }
+  constructor(doc: FakeDocument, public tagName: string) { super(doc); hideEdges(this); }
   get childNodes(): FakeNode[] { return this.kids; }
   getAttribute(n: string): string | null { return this.attrs.has(n) ? (this.attrs.get(n) as string) : null; }
   setAttribute(n: string, v: string): void { this.attrs.set(n, v); }
@@ -103,13 +106,13 @@ class FakeElement extends FakeNode {
     for (let i = 0; i < this.kids.length; i++) {
       const c = this.kids[i];
       c.parentNode = this;
-      if (this.ownerDocument.pointers) { c.previousSibling = this.kids[i - 1] ?? null; c.nextSibling = this.kids[i + 1] ?? null; }
+      if (this.ownerDocument.pointers) { defineHidden(c, "previousSibling", this.kids[i - 1] ?? null); defineHidden(c, "nextSibling", this.kids[i + 1] ?? null); }
     }
     this.ownerDocument.touched();
   }
   private detach(n: FakeNode): void {
     const p = n.parentNode;
-    if (p) { p.kids.splice(p.kids.indexOf(n), 1); n.parentNode = null; if (p.ownerDocument.pointers) { n.previousSibling = null; n.nextSibling = null; } p.relink(); }
+    if (p) { p.kids.splice(p.kids.indexOf(n), 1); n.parentNode = null; if (p.ownerDocument.pointers) { defineHidden(n, "previousSibling", null); defineHidden(n, "nextSibling", null); } p.relink(); }
   }
   appendChild(n: FakeNode): FakeNode { this.detach(n); this.kids.push(n); this.relink(); return n; }
   insertBefore(n: FakeNode, ref: FakeNode | null): FakeNode {

@@ -3478,7 +3478,7 @@ class Panel {
    *  re-place, a comment on the file, a region, a refusal, the Raw view's row mark) changes no line and measures nothing
    *  (md-config-paint-presel-kinds-browser.test.ts: zero Range measurements for those kinds). After the repaint the boxes' marks
    *  are what a paint pass leaves under the same target: no padding-only mark and no bare rendered blank beyond the pass's own
-   *  recorded shape, pending and after Cancel alike (md-config-paint-presel-retrim-browser .test.ts, the item of fourteen links at
+   *  recorded shape, pending and after Cancel alike (md-config-paint-presel-retrim-browser.test.ts, the item of fourteen links at
    *  300 to 600 px, the whole item and four of its links), the nesting of overlapping comments and of a highlight over a change
    *  mark the pass's, and a target inside the embed chip repainting the paragraph around it
    *  (md-config-paint-presel-scope-browser.test.ts, round 16). The price is a fresh paint of the boxes' marks to the trim's
@@ -3491,7 +3491,17 @@ class Panel {
    *  passes and one) and about 1.3 s for main's untrimmed paint, the recorded shape (plan item 2, the paint's cost) and not
    *  optimised; the passes are the fixpoint's, so no reordering makes them fewer. A composer that paints no target costs the
    *  render alone (a reply on that paragraph 20 to 28 ms, a comment on the file 1.5; 38 to 42 and 18 to 22 with round 14's trim of
-   *  4,260 measurements). */
+   *  4,260 measurements). What the repaint painted again it re-files as the pass does (paintAll's two filings): a highlight whose
+   *  every mark the trim removed is filed as not painted, a change whose every mark it removed as not shown, and a change whose
+   *  mark stands again as shown; and when a filing moved the cards are rendered HERE, since the callers render the composer alone
+   *  after a passage's Comment and after Cancel (renderFrom) and the cards read the filings at render time (renderChangeCard's tag,
+   *  Reveal and link; renderCard's link and Reveal). The Slice 4 review's round 17 found the tag stale in both directions on a
+   *  session's insertion of one soft hyphen, a character the index records and the trim measures, rendered as a hyphen at a line
+   *  break and as nothing elsewhere, so the target's padding moving the paragraph's wrap point across it moved the filing at every
+   *  open and Cancel while the card said the opposite until the next render (a plain space never reaches the shape: the index skips
+   *  whitespace, so it is never painted; md-config-paint-presel-refile-browser.test.ts, both directions, the paragraph in a
+   *  monospace face at a fixed measure so the wrap point is the design's and not the face's). A filing that did not move renders
+   *  nothing: the caller's render stands, and no card moves on no new information. */
   private repaintPresel(): void {
     const src = this.ctx.text(); const root = this.contentRoot();
     if (src === null || !root || this.ctx.mode() !== "rendered") {   // a media body, or the Raw view (a row mark, no layout-time trim)
@@ -3523,6 +3533,7 @@ class Panel {
     // inside the highlight it falls in; a highlight painted again around a standing point lands split on either side of it)
     let changes = false;
     for (const b of boxes) { if (Array.from(b.querySelectorAll('[data-act="fcchange"]')).some((m) => this.marks.has(m))) { changes = true; break; } }
+    const shownBefore = changes ? new Set(this.paintedChanges) : null;   // the pass's filing of the changes, read against the repaint's below
     // the highlights in the pass's order: cards(), and after them any mark whose card the model no longer lists, in document order
     const order = this.cards().map((c) => c.id).filter((id) => ids.has(id));
     for (const id of ids) if (!order.includes(id)) order.push(id);
@@ -3545,10 +3556,21 @@ class Panel {
       this.paintPresel(root, src, true);
     }
     this.trimBlanks();
-    for (const a of again) { const l = this.located.get(a.id); if (l) this.located.set(a.id, { ...l, painted: this.ownMarks("fcopen", a.id).length > 0 }); }
-    if (changes) for (const c of this.passChanges) if (!c.marks.some(standing)) this.paintedChanges.delete(c.id);
+    // the re-filing, the pass's (paintAll): a highlight or a change whose every mark the trim removed is filed as not painted or not
+    // shown, a change whose mark stands again as shown; `refiled` when a card's filing moved, since the cards read it at render time
+    let refiled = false;
+    for (const a of again) {
+      const l = this.located.get(a.id); if (!l) continue;
+      const painted = this.ownMarks("fcopen", a.id).length > 0;
+      if (painted !== l.painted) { refiled = true; this.located.set(a.id, { ...l, painted }); }
+    }
+    if (shownBefore) {
+      for (const c of this.passChanges) if (!c.marks.some(standing)) this.paintedChanges.delete(c.id);
+      if (this.paintedChanges.size !== shownBefore.size || Array.from(this.paintedChanges).some((id) => !shownBefore.has(id))) refiled = true;
+    }
     if (held) this.refocusMark(held);
     this.paintRegions();                               // the composer's pending region and the re-place cue live on the overlays
+    if (refiled) this.render();                        // a filing moved: the cards say so now, in the same call (the docblock)
   }
   /** The body was repainted, possibly over NEW text (the poll saw the file move and reloaded it; Reload;
    *  a refresh; a save through the editor): a pending passage follows its passage into that text

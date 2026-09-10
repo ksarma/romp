@@ -1834,14 +1834,22 @@ const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 //   pass at the same width paints the blank again and runs the same cascade over the same layout, so it unwraps the same marks in
 //   the same number of passes and leaves the same blanks bare (md-config-paint-trim-fixpoint-browser.test.ts leg 1 holds a second
 //   pass at each of its widths equal to the first in passes, blank marks kept and bare blanks); a pass at another width runs that
-//   width's cascade, with its own gaps or none. The shape follows the pass count: in every cell the Slice 4 review's round 16
-//   measured, a trim that converged in two passes (the first unwrapped the wrap points' blanks, the second found nothing more
-//   collapsed) left no blank bare, and one that took three or more left tens to hundreds. In the real pane, one comment across the
-//   120-link item leaves 24 of its 119 spaces bare at a content width of 420 px, 13 at 660 and 5 at 460, none at the thirteen
-//   other widths sampled between 220 and 660; across a paragraph of 600 links 167 at 220 px, 116 at 300, 83 at 380, 81 at 420 and
-//   460, 71 at 400 and 49 at 560, none at nine others; the panel's own pass at the pane's opening width, 460 px, leaves 5 and 81,
-//   and a second pass at every width the same counts (plans/markdown-viewer.md, the Slice 4 build note's item 10 (a), records the
-//   shape, its counts under feed.css and under overlapping comments, and the layout-neutral mark as the option that removes it).
+//   width's cascade, with its own gaps or none. In a fresh paint's trim at one width the shape followed the pass count in every
+//   cell the Slice 4 review's round 16 measured (the fixpoint leg's page under feed.css at 19 widths from 220 to 1,000 px and the
+//   real pane at 19 viewports, content widths 220 to 660, each across the 120-link item and a paragraph of 600 links; the leg's
+//   own five widths across the item and the paragraph of 5,000 links): a trim that converged in two passes (the first unwrapped
+//   the wrap points' blanks, the second found nothing more collapsed) left no blank bare, and one that took three or more left
+//   some, from a few to about two thousand with the passage's length: the 120-link item 4 to 24 (4 at 220 px under feed.css, 5 at
+//   460 in the pane), the 600-link paragraph 27 to 207, the 5,000-link paragraph 2,005 at 700 px in eight passes, 1,884 at 400 in
+//   six and 2,095 at 300 in five. A re-trim after a narrowing counts as well the blanks the old width's trim unwrapped that render
+//   at the new one (shape (b), the Event-based paragraph below), so its pass count bounds nothing: the leg's item narrowed from 800
+//   to 700, 400 and 300 px converges in two passes and leaves 12, 10 and 12 bare (five passes and 44 at 500), and the paragraph
+//   648 to 3,267 (three passes at 700 and 500 px, twelve at 400, eleven at 300). In the real pane, one comment across the 120-link
+//   item leaves 24 of its 119 spaces bare at a content width of 420 px, 13 at 660 and 5 at 460, none at the thirteen other widths
+//   sampled between 220 and 660; across the paragraph of 600 links 167 at 220 px, 116 at 300, 83 at 380, 81 at 420 and 460, 71 at
+//   400 and 49 at 560, none at nine others; the panel's own pass at the pane's opening width, 460 px, leaves 5 and 81, and a second
+//   pass at every width the same counts (plans/markdown-viewer.md, the Slice 4 build note's item 10 (a), records the shape, its
+//   counts under feed.css and under overlapping comments, and the layout-neutral mark as the option that removes it).
 // Event-based: the measurement is taken at paint time, and the panel runs the trim again over its standing marks when the seam
 // reports a reflow (file-comments.ts, onRendered "reflow": the body's width changed, a text-size step), so a blank that collapses
 // at the new width loses its mark in the frame the cards are re-placed; a blank trimmed at the old width that renders at the

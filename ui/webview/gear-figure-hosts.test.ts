@@ -2,7 +2,9 @@
 // hosts a gear setting): a textarea holding the figureHosts list one host per line, saved through the same load/save
 // every other row uses, painted on open. gear.js cannot import settings.ts, so it carries a copy of the default list and
 // of the normaliser; both are lifted out by anchor and run here against the TS module's (gear-file-comments.test.ts's
-// idiom), so the two cannot drift apart without this failing. The wiring that needs the whole modal is pinned at source.
+// idiom), so the two cannot drift apart without this failing. The wiring that needs the whole modal is pinned at source;
+// so is the open paint line's union with main's side (the merge of origin/main caf61ebd1 met main's tmux backend offer
+// on the line the row's paint lives on): a resolution dropping either call leaves the gear stale and no other test red.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -64,6 +66,19 @@ test("source: the row is a textarea saved through load/save on change and painte
   assert.match(GEAR, /fhn = document\.getElementById\('rs-figurehosts-note'\),/, "looked up with the other controls");
   assert.equal(GEAR.split("figureHosts: FIGURE_HOSTS_DEFAULT.slice()").length, 3, "load()'s two default literals both carry the list");
   assert.equal(GEAR.split("var FIGURE_HOSTS_DEFAULT = [").length, 2, "one copy of the list in gear.js");
+});
+
+test("source: the open paint line carries the row beside main's tmux backend offer (the merge's union at the one line both sides changed)", () => {
+  // The merge of origin/main caf61ebd1 (the fold's T288 and T290 against the slice's row) conflicted on openSettings' paint
+  // line and was resolved as a union. Nothing else pins main's call on that line, so a replay of the resolution that
+  // dropped either side would paint a stale gear (the offer never shown, or the hosts textarea empty) with every test green.
+  const open = slice(GEAR, "  function openSettings() {", "\n  if (g) g.onclick");
+  const paint = open.split("\n").filter((l) => l.includes("p.hidden = false; feedFull(true); setModalCls(true); var s = load();"));
+  assert.equal(paint.length, 1, "one paint line on open");
+  assert.match(paint[0], /if \(fh\) \{ var fhl = figureHostList\(s\.figureHosts\); fh\.value = fhl\.join\('\\n'\); figureHostsNote\(fhl\); \}/, "the slice's row, painted on open");
+  assert.match(paint[0], /paintBackendOffer\(tb \? tb\.checked : false\)/, "main's tmux backend offer (T288) on the same line");
+  assert.doesNotMatch(paint[0], /if \(bk\) bk\.value = s\.backend/, "the backend select's value line that T288 replaced is gone, not kept beside its replacement");
+  assert.match(open, /romp: 'logUnseenQuery'/, "main's Open log count query (T290), the other line of the hunk, precedes the paint");
 });
 
 test("source: settings.ts declares the field, normalises it on load, and documents the default's scope", () => {

@@ -30,15 +30,18 @@ import { Lexer, marked } from "marked";
 import type { Token } from "marked";
 import { applyMdConfig } from "./md-config";
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, type SelLike, type MapResult, type SourceRange } from "./anchor-map";
+import { hideEdges } from "../test-dom-shim";
 
 applyMdConfig();
 
 // ── a DOM stand-in: the structural surface anchor-map.ts walks, plus an HTML fragment parser (anchor-map.test.ts's) ──
+// Nodes hide their edges at construction (hideEdges, ui/test-dom-shim.ts), so a failing assertion's dump shows a node's primitives
+// and not the tree (the ratchet in ui/test-dom-shim.test.ts).
 class FakeNode {
   nodeType = 0;
   parentNode: FakeNode | null = null;
   childNodes: FakeNode[] = [];
-  constructor(public ownerDocument: FakeDocument) {}
+  constructor(public ownerDocument: FakeDocument) { hideEdges(this); }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as FakeText).data : this.childNodes.map((c) => c.textContent).join(""); }
 }
 class FakeText extends FakeNode {
@@ -48,7 +51,7 @@ class FakeText extends FakeNode {
 class FakeElement extends FakeNode {
   nodeType = 1;
   attrs = new Map<string, string>();
-  constructor(doc: FakeDocument, public tagName: string) { super(doc); }
+  constructor(doc: FakeDocument, public tagName: string) { super(doc); hideEdges(this); }
   getAttribute(n: string): string | null { return this.attrs.has(n) ? (this.attrs.get(n) as string) : null; }
   setAttribute(n: string, v: string): void { this.attrs.set(n, v); }
   removeChild(n: FakeNode): FakeNode { const i = this.childNodes.indexOf(n); if (i >= 0) this.childNodes.splice(i, 1); n.parentNode = null; return n; }
