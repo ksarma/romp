@@ -122,7 +122,15 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   push did; and a row in the dashboard's Log (at most five drop rows, none older
   than an hour, so they never crowd out a backend problem). Every close the
   browser reports for a socket that opened leaves a `wsclose` breadcrumb (code,
-  reason, socket age) in `client-diag.jsonl` (rotated to `.1` at 8 MB); a socket
+  reason, socket age, and `bundleReady`: whether the bundle had said ready when
+  the socket closed) in `client-diag.jsonl` (rotated to `.1` at 8 MB), and the
+  kernel stamps every client-diag row with `reconnect`: whether the socket that
+  carried the row declared the redial term. The queued `wsclose` row rides the
+  redial, so the pair names the redial's kind: both true is a declared redial of
+  a page that was live; both false is a socket that died before the bundle said
+  ready and redialed as a fresh page; `reconnect` false with `bundleReady` true
+  is a ready that reached the shim while its socket was going down and rode the
+  redial as the page's own, so the redial carried no term. A socket
   the shim abandons leaves none — the watchdog's own `watchdog-close` row went
   down the quiet socket before the abandon (the foreground path's abandon sends
   none, but its `return` row queues for the redial), so an armed socket's raise,

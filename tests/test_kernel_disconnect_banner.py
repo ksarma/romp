@@ -132,7 +132,9 @@ class DisconnectBanner(unittest.TestCase):
         # "-quiet" raise rides the redial.)
         self.assertIn('if(openSock===this){try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,'
                       'reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),'
-                      'sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected}', js)
+                      'sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected,bundleReady:bundleReady}', js,
+                      "the row carries the bundle's ready state at the close: with the kernel's stamp of the carrying socket's "
+                      "redial term it tells a declared redial from one the dial term gated off (2026-09-10)")
         # …for a socket that OPENED. A handshake that never opened fires onclose too — every redial of an
         # outage, ~19k in 8 h — and those are counted and reported as ONE row on the next open, never queued
         # one by one; queued breadcrumbs are capped besides. pane-shim-stale.test.ts runs both.
