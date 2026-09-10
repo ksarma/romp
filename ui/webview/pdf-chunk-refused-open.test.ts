@@ -20,6 +20,8 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { makeRender, DEFAULT_MAX_PAGES, pageCapMessage, type PdfLib } from "./pdf-chunk";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a fake pdf.js whose document does not open ──────────────────────────────────────────────────
 
@@ -43,7 +45,8 @@ function refusingLib(message: string): FakeLib {
   return { lib: lib as unknown as PdfLib, calls };
 }
 let created = 0;
-const el = (tag: string) => { created++; return { tagName: tag.toUpperCase(), style: {}, dataset: {}, children: [], appendChild() {}, remove() {} }; };
+// hideEdges: the element inspects as its primitives (ui/test-dom-shim.ts), never as the records and children it hangs
+const el = (tag: string) => { created++; const children: any[] = []; return hideEdges({ tagName: tag.toUpperCase(), style: {}, dataset: {}, children, appendChild() {}, remove() {} }); };
 /** A container render() must never reach for on a document it refuses: every property read throws. */
 const untouchable = () => new Proxy({}, {
   get(_t, k) { throw new Error("render() touched the container (" + String(k) + ") for a document pdf.js refused"); },
@@ -225,5 +228,15 @@ test("in Chromium: a refused open leaves no live Worker behind — three in a ro
     assert.deepEqual(errors, [], errors.join("\n"));
   } finally {
     await browser.close();
+  }
+});
+
+// ── the stand-in's elements are projections (ui/test-dom-shim.ts): a failing assertion dumps an element's primitives, never the tree ──
+test("a stand-in element enumerates its primitives alone, and a dump of it names no edge", () => {
+  const root = el("div"), kid = el("span"); root.children.push(kid); kid.children.push(el("i"));
+  for (const n of [root, kid]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.tagName + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parentNode", "childNodes", "children"]) assert.ok(!dump.includes(edge), n.tagName + " dumps " + edge + ":\n" + dump);
   }
 });

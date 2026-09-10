@@ -29,6 +29,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { makeRender, type PdfLib, type PageInfo, type PageError } from "./pdf-chunk";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const PKG = process.cwd();                                   // vscode-extension, where npm test runs
 const ROOT = path.resolve(PKG, "..");
@@ -46,7 +48,7 @@ class FakeEl {
   className = "";
   dataset: Record<string, string> = {};
   style: Record<string, string> = {};
-  children: FakeEl[] = [];
+  children!: FakeEl[];                       // defined in the constructor, non-enumerable: an edge, not part of the node's projection
   parentElement: FakeEl | null = null;
   textContent = "";
   src = ""; alt: string | undefined = undefined;   // an <img>'s, as the cue sets them
@@ -56,7 +58,11 @@ class FakeEl {
   private w = 300; private h = 150;                // a canvas's element default, which the chunk must not leave in place
   /** set on a page's canvas by the loud-failure test: its getContext answers null, as a browser's does when it cannot */
   contextless = false;
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);   // parentElement, style, dataset and the other edges hide too: a node inspects as its primitives (ui/test-dom-shim.ts)
+  }
   get width(): number { return this.w; }
   set width(v: number) { this.w = v; ops.push({ el: this, op: "width", value: v }); }
   get height(): number { return this.h; }
@@ -208,9 +214,9 @@ test("a first draw: pdf.js is handed a staging canvas that is not the page's and
   assert.deepEqual(ops.slice(from).map((o) => (o.op === "drawImage" ? "drawImage" : o.op + ":" + o.value)),
     ["width:800", "height:" + H(800), "drawImage", "width:0", "height:0"],
     "when the draw lands: the page's canvas sized then filled, nothing between, and the stage zeroed after");
-  assert.deepEqual(ops.slice(from, from + 3).map((o) => o.el), [c1, c1, c1], "the three steps are the page canvas's");
+  assert.deepEqual(ops.slice(from, from + 3).map((o) => o.el === c1), [true, true, true], "the three steps are the page canvas's (by identity: a node inspects as its projection)");
   assert.equal(ops[from + 2].src, stage, "filled from the stage pdf.js drew into");
-  assert.deepEqual(ops.slice(from + 3).map((o) => o.el), [stage, stage], "the zeroing is the stage's: its store is released, not left for the collector");
+  assert.deepEqual(ops.slice(from + 3).map((o) => o.el === stage), [true, true], "the zeroing is the stage's: its store is released, not left for the collector (by identity)");
   assert.deepEqual([c1.width, c1.height], [800, H(800)]);
   assert.equal(drawn.length, 1); assert.equal(drawn[0].canvas, c1 as unknown as HTMLCanvasElement); assert.equal(drawn[0].width, 800);
   h.dispose();
@@ -574,5 +580,15 @@ test("in Chromium: through a sharpening redraw of a heavy page every sampled fra
     assert.deepEqual(errors, [], errors.join("\n"));
   } finally {
     await browser.close();
+  }
+});
+
+// ── the fake DOM's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps an element's primitives, never the tree ──
+test("a fake element enumerates its primitives alone, and a dump of it names neither its children nor its parent", () => {
+  const root = new FakeEl("div"); const kid = new FakeEl("span"); root.appendChild(kid); kid.appendChild(new FakeEl("canvas"));
+  for (const n of [root, kid]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.tagName + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parentNode", "childNodes", "children", "parentElement"]) assert.ok(!dump.includes(edge), n.tagName + " dumps " + edge + ":\n" + dump);
   }
 });

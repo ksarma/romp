@@ -21,6 +21,8 @@
 // settings modal never mounts. Synthetic only: the notes-api demo world, placeholder sids, hostname TESTHOST.
 import { test, mock, after } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in ─────────────────────────────────────────────────────────────────────────────────
 class Style {
@@ -32,8 +34,11 @@ class Style {
 }
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public textContent: string) {}
+  parentNode!: El | null;                   // defined in the constructor, non-enumerable: an edge, not part of the node's projection
+  constructor(public textContent: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get nextSibling(): El | Txt | null { return sib(this, 1); }
   remove(): void { this.parentNode?.removeChild(this); }
 }
@@ -62,8 +67,8 @@ class El extends EventTarget {
   id = ""; title = ""; hidden = false; value = ""; type = ""; checked = false; disabled = false;
   offsetWidth = 0; offsetHeight = 0; clientWidth = 800; clientHeight = 600; isContentEditable = false;
   onclick: ((ev: any) => void) | null = null;
-  parentNode: El | null = null;
-  childNodes: Array<El | Txt> = [];
+  parentNode!: El | null;                   // both edges are defined in the constructor, non-enumerable (ui/test-dom-shim.ts hideEdges):
+  childNodes!: Array<El | Txt>;             // a node inspects as its primitives, never as the tree it hangs in
   dataset: Record<string, string | undefined> = {};
   style = new Style();
   rc = 0;                                   // replaceChildren calls (the name nodes' rebuild)
@@ -83,7 +88,12 @@ class El extends EventTarget {
     },
     contains: (c: string) => this.classes.has(c),
   };
-  constructor(public tagName: string) { super(); this.tagName = tagName.toUpperCase(); }
+  constructor(public tagName: string) {
+    super(); this.tagName = tagName.toUpperCase();
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get className(): string { return [...this.classes].join(" "); }
   set className(v: string) { this.classes = new Set(v.split(/\s+/).filter(Boolean)); }
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
@@ -99,7 +109,7 @@ class El extends EventTarget {
   get previousElementSibling(): El | null { for (let n = sib(this, -1); n; n = sib(n, -1)) if (n instanceof El) return n; return null; }
   get nextElementSibling(): El | null { for (let n = sib(this, 1); n; n = sib(n, 1)) if (n instanceof El) return n; return null; }
   get isConnected(): boolean { return this === body || body.contains(this); }
-  private detachAll(): void { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; }
+  private detachAll(): void { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; }
   private adopt(c: El | Txt | string): El | Txt { const n = typeof c === "string" ? new Txt(c) : c; n.parentNode?.removeChild(n); n.parentNode = this; return n; }
   appendChild<T extends El | Txt>(c: T): T { this.childNodes.push(this.adopt(c) as T); return c; }
   append(...cs: Array<El | Txt | string>): void { for (const c of cs) this.childNodes.push(this.adopt(c)); }
@@ -444,7 +454,8 @@ test("Approve and Deny latch on the click and re-arm on the kernel's quarantineR
 });
 
 test("a handoff recipient's working state is a paint input: the delegating card repaints and its delegation line appears when the recipient starts working; an idle session's card does not repaint", async () => {
-  const handoff = { id: API + ":h1", kind: "handoff", text: "write the README section", who: "api", whoSid: API, whoColor: null, status: "open", t: K0 - 200, last: K0 - 200, children: [] };
+  const children: string[] = [];
+  const handoff = { id: API + ":h1", kind: "handoff", text: "write the README section", who: "api", whoSid: API, whoColor: null, status: "open", t: K0 - 200, last: K0 - 200, children };
   const g1h = { ...g1, tree: [...g1.tree, handoff] };
   await dispatch(frame([g1h, card("g2")._it, g3], { working: ["web"] }));
   assert.equal(card("g1")._delegations.style.display, "none", "api is idle: no delegation line");
@@ -911,4 +922,14 @@ test("a header re-mints its name nodes when its host's link goes down or comes b
   await dispatch(frame([g1, card("g2")._it, card("g3")._it]));
   mock.timers.tick(700);
   mock.timers.reset();
+});
+
+// ── the stand-in's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps a node's primitives, never the tree ──
+test("a node of the DOM stand-in enumerates its primitives alone, and a dump of it names neither parentNode nor childNodes", () => {
+  const root = new El("div"); const kid = new El("span"); kid.append("text"); root.append(kid, new Txt("tail"));
+  for (const n of [root, kid, root.childNodes[1]] as Array<El | Txt>) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.constructor.name + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), n.constructor.name + " dumps an edge:\n" + dump);
+  }
 });

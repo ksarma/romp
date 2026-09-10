@@ -374,11 +374,6 @@ const ALLOWLIST = [
   "webview/card-subgoals.test.ts",
   "webview/codex-meta-choices.test.ts",
   "webview/federation-hidden-hold.test.ts",   // a conditional-valued window parent, read since the sixth review round
-  "webview/feed-keynav-click-focus.test.ts",
-  "webview/feed-keynav-covered.test.ts",
-  "webview/feed-keynav-tabscope-covered.test.ts",
-  "webview/feed-keynav-typing.test.ts",
-  "webview/feed-render-incremental.test.ts",
   "webview/file-comments-about-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-about-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
@@ -395,20 +390,9 @@ const ALLOWLIST = [
   "webview/file-view-notice.test.ts",
   "webview/file-view.test.ts",
   "webview/fileview-chip.test.ts",
-  "webview/fleet-live-clock.test.ts",
   "webview/github-link.test.ts",
   "webview/path-links-pointer-focus.test.ts",
   "webview/path-links.test.ts",
-  "webview/pdf-chunk-abort.test.ts",
-  "webview/pdf-chunk-dropped-images.test.ts",
-  "webview/pdf-chunk-evict-inflight.test.ts",
-  "webview/pdf-chunk-page-cap.test.ts",
-  "webview/pdf-chunk-page-cue.test.ts",
-  "webview/pdf-chunk-refused-open.test.ts",
-  "webview/pdf-chunk-resize.test.ts",
-  "webview/pdf-chunk-staged-draw.test.ts",
-  "webview/pdf-chunk.test.ts",
-  "webview/pdf-lazy-render.test.ts",
   "webview/pdf-new-tab.test.ts",
   "webview/perf-telemetry.test.ts",
   "webview/pinned-notes.test.ts",
@@ -442,7 +426,7 @@ const ALLOWLIST = [
 // The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
 // alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
 // is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 61;
+const ALLOWLIST_MAX = 45;
 // the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
 // tags-scale test whose shim it grew from
 const SWITCHED = [
