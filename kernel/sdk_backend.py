@@ -6300,6 +6300,12 @@ class SdkSession:
             # off (review round 3b, 2026-09-09). No fast badge, held mark or tip renders during the hold:
             # kernel.py blanks the fast badge while fastReason stands. Nothing keys on "fast" for this
             # relaunch: the arm's optimistic flip is gated on fast_opt, which the refusal cleared above.
+            # The pending relaunch's surface follows fast_opt in BOTH directions (review round 4,
+            # 2026-09-10): a fast pick made during this hold replaces the restore surface with its own
+            # (set_fast, the flagged connection's live send), and this refusal, the fed turn's init
+            # re-reporting the reason, puts the restore back, so the chat line, the arm's line and the
+            # arm's flip describe the relaunch that happens
+            self._reconnect_surfaces.discard("fast")
             self._reconnect_surfaces.add("fast-reset")
             self.request_reconnect()
         return changed or refused_ask
@@ -12956,7 +12962,22 @@ class SdkBackend:
                 return False
             s.fast = value
             s._fast_expect = value             # the send's own turn-init is one word stale; let it yield
-            self._log("fast (%s): set to %s; applied live" % (s.name, value))
+            # A relaunch pending on this flagged connection (the refusal's restore, _adopt_fast_state, or a
+            # fast pick made during it) follows the ask (review round 4, 2026-09-10): fast_opt is what
+            # _options hands the flag-settings file, so an on makes the pending relaunch a fast pick (the
+            # chat says a fast pick waits, the arm names it and flips) and an off makes it the restore again.
+            # Until round 4 an on during the restore's hold touched no surface: pickHeld kept naming the
+            # restore and the arm said "fast mode restore" while _options composed a flagged relaunch
+            tail = ""
+            if value == "on" and "fast-reset" in s._reconnect_surfaces:
+                s._reconnect_surfaces.discard("fast-reset")
+                s._reconnect_surfaces.add("fast")
+                tail = "; the pending relaunch carries the flag"
+            elif value == "off" and "fast" in s._reconnect_surfaces:
+                s._reconnect_surfaces.discard("fast")
+                s._reconnect_surfaces.add("fast-reset")
+                tail = "; the pending relaunch drops the flag"
+            self._log("fast (%s): set to %s; applied live%s" % (s.name, value, tail))
             self._wake_push()
             return True
         if value == "off":                     # no flag at connect → fast mode is already off; nothing to send

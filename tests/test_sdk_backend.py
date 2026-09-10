@@ -6765,6 +6765,74 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertTrue(s._reconnect)
         self.assertEqual(s._launching["effort"], sb.effort_launch_shape("max"), "the composed shape stands")
 
+    def test_q_a_fast_pick_during_the_refusals_restore_makes_the_pending_relaunch_a_fast_pick(self):
+        # a fast on during a fast-reset hold took the unlocked live send, re-armed fast_opt and reg.fast, logged
+        # "applied live" and touched no surface: pickHeld kept naming the restore, the arm's line said "fast mode
+        # restore" and _options composed a flagged relaunch (review round 4). The pending relaunch's surface
+        # follows the ask in both directions now: the pick replaces the restore surface, and a second refusal
+        # (the fed turn's init re-reporting the reason, what the real CLI does) or an off puts it back, so the
+        # chat line, the arm's line and the flip describe the relaunch that happens. The pick reaches set_fast
+        # by the composer's /fast on, the setFast ws message or POST /send
+        refusal = {"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"}
+        refusals = lambda: [str(m) for m in self.logs if "refused the toggle" in str(m)]
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = True; s.fast_opt = True
+        self._start(s, "a1")
+        s._adopt_fast_state(refusal)
+        self.assertEqual(s._pick_held()["surfaces"], ["fast-reset"]); self.assertFalse(s.fast_opt)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))              # the pick, during the restore's hold
+        self.assertTrue(s.fast_opt); self.assertEqual(s.pending(), ["/fast on"], "the flagged connection takes the send")
+        self.assertEqual(s._pick_held()["surfaces"], ["fast"], "the pending relaunch is a fast pick")
+        self.assertNotIn("fast-reset", s._reconnect_surfaces)
+        self.assertTrue(any("fast (web): set to on; applied live; the pending relaunch carries the flag" in str(m)
+                            for m in self.logs), self.logs)
+        # no second refusal before the settle: the relaunch carries the flag, and the arm's line and flip say so
+        self._stop(s, "a1")
+        out = self._settle(s)
+        self.assertTrue(out["reconnect"])
+        self.assertIn("the held fast pick reconnects now", self._armed()[0], self.logs)
+        self.assertEqual(s.fast, "on", "the arm's flip: the flag rides this connect"); self.assertTrue(s.fast_opt)
+        self.assertEqual(len(refusals()), 1)
+        # the real CLI re-reports the refusal at the fed turn's init: the second refusal makes it a restore again
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = True; s.fast_opt = True
+        self._start(s, "a1")
+        s._adopt_fast_state(refusal)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertEqual(s._pick_held()["surfaces"], ["fast"])
+        s._adopt_fast_state(refusal)                                       # the fed /fast on turn's init
+        self.assertEqual(len(refusals()), 2); self.assertFalse(s.fast_opt)
+        self.assertEqual(s._pick_held()["surfaces"], ["fast-reset"], "the relaunch is the restore again")
+        self.assertNotIn("fast", s._reconnect_surfaces)
+        self.assertFalse(sb.read_reg(s.backend.state_dir, self.SID).get("fast"))
+        self._stop(s, "a1")
+        out = self._settle(s)
+        self.assertTrue(out["reconnect"])
+        self.assertIn("the held fast mode restore reconnects now", self._armed()[0], self.logs)
+        self.assertNotIn("fast pick", self._armed()[0])
+        self.assertEqual(s.fast, "off", "flagless: no flip")
+        # an off during the pick's pending relaunch makes it the restore again, and says so
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = True; s.fast_opt = True
+        self._start(s, "a1")
+        s._adopt_fast_state(refusal)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertEqual(s.pending(), ["/fast on", "/fast off"])
+        self.assertEqual(s._pick_held()["surfaces"], ["fast-reset"]); self.assertFalse(s.fast_opt)
+        self.assertTrue(any("fast (web): set to off; applied live; the pending relaunch drops the flag" in str(m)
+                            for m in self.logs), self.logs)
+        # a live toggle with no relaunch pending swaps nothing and says nothing more
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = True; s.fast_opt = True
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertEqual(s._reconnect_surfaces, set())
+        self.assertTrue(any(str(m).endswith("fast (web): set to on; applied live") for m in self.logs), self.logs)
+
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
         # RUNS: the effort it launched with, the mode it runs, the fast state the init reported, the CLI's
