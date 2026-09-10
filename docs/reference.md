@@ -550,7 +550,13 @@ same way: the check mark stays on the value you picked, the value the session
 runs meanwhile is tagged "running", and a tooltip row reads "high until the
 background work finishes, then max".
 The same hold and the same line apply to a permission-mode pick into bypass,
-the first fast-mode opt-in and a billing switch. When the CLI refuses that
+the first fast-mode opt-in and a billing switch. Once nothing holds them, a
+mode pick into bypass and the first fast-mode opt-in reload the way an effort
+pick does: the chat shows the same reloading line while the reload runs, and the
+mode or fast badge dims and pulses until it lands. A billing switch's reload
+shows no chat line and no badge pulse; the tab menu's Billing flyout sub-line
+reads "applying…" until it lands. The reload that takes a refused opt-in's flag
+back off shows no reloading line and no pulse either. When the CLI refuses that
 opt-in, the reload that takes the flag back off is held the same way, and the
 line says the fast mode control is restored when the work finishes, or when
 the turn does once no work is running. A pick equal to what the
