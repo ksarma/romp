@@ -369,6 +369,7 @@ const needsListing = (s: string) => initsEdge(s) && !switched(s);
 // fixture with a children list: dumps of a few lines today, listed because the rule is uniform and the cure is the
 // same call on the object.
 const ALLOWLIST = [
+  "timeline-tag-chips.test.ts",   // an object-literal fake the upstream fold added after this branch's base, listed at the final rebase
   "webview/actions.test.ts",
   "webview/anchor-map-block-edges.test.ts",
   "webview/anchor-map-boundary-points.test.ts",
@@ -513,10 +514,12 @@ const ALLOWLIST = [
   "webview/perf-telemetry.test.ts",
   "webview/pinned-notes.test.ts",
   "webview/pr-links.test.ts",
+  "webview/preview-retry-pace.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/render-todo-file-chip.test.ts",
   "webview/setting-stale-fold.test.ts",
   "webview/shell-perf.test.ts",
   "webview/strip.test.ts",
+  "webview/tab-hide.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/tab-row-keep.test.ts",
   "webview/tab-snapshot-view.test.ts",
   "webview/tab-strip-skip-exec.test.ts",
@@ -539,11 +542,13 @@ const ALLOWLIST = [
 // (actions, file-comments-markclick, file-comments-markclick-controls, file-comments-seen-fixes, -seen-review2,
 // -seen-review3, file-comments-send-seen, file-view-notice), listed at the final rebase because they predate the rule,
 // plus federation-hidden-hold, whose conditional-valued window parent the sixth review round's detector reads, plus the
-// seven file-comments-about and file-comments-resolve-answered class fakes main added before the sixth round's rebase.
+// seven file-comments-about and file-comments-resolve-answered class fakes main added before the sixth round's rebase,
+// plus the three main added before the seventh round's rebase: the tab-hide and preview-retry-pace class fakes, and
+// the fold's timeline-tag-chips object-literal fake, the shape the shared module replaced in the other timeline tests.
 // The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
 // alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
 // is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 164;
+const ALLOWLIST_MAX = 167;
 // the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
 // tags-scale test whose shim it grew from
 const SWITCHED = [
