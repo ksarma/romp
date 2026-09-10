@@ -275,8 +275,9 @@ class ReportSurvivesTheRestart(unittest.TestCase):
     def test_a_kernel_with_no_remotes_restarts_exactly_as_before(self):
         src = inspect.getsource(km.Handler)
         self.assertIn("if _fleet and _remotes:", src)
-        self.assertIn("else:\n                    _restart_this_kernel(\"http /restart (local-only)\", "
-                      "manager_port=_mport)", src)
+        # the local leg is asked before the ack since 2026-09-10 (the manager's answer decides the ack),
+        # still with the port resolved before it
+        self.assertIn("refused = _restart_this_kernel(\"http /restart (local-only)\", manager_port=_mport)", src)
 
 
 class AnAskStaysOnThatPeer(unittest.TestCase):

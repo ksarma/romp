@@ -9989,9 +9989,10 @@ def _in_place_converge(target):
 
 _DEPLOY_RESTART_REASONS = ("main-converge", "p2p-update", "self-update",   # ledger reasons that ARE a
                            "kernel-asks-manager-restart-all: self-update")   # deploy restart of this kernel
-_NO_RESTART_ACTIONS = {"main-converge-skip", "bus-converge", "end-on-idle"}   # audit rows that restart no
-#                                                                              kernel (in-place converges; a
-#                                                                              session's own self-close ask)
+_MANAGER_REFUSED_ACTION = "manager-refused-restart-all"   # the manager answered a hop 4xx/5xx: nothing restarted
+_NO_RESTART_ACTIONS = {"main-converge-skip", "bus-converge", "end-on-idle", _MANAGER_REFUSED_ACTION}
+#                                                        # audit rows that restart no kernel (in-place converges;
+#                                                        # a session's own self-close ask; a refused manager hop)
 
 
 def _last_deploy_restart_t():
@@ -10326,13 +10327,17 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
         c = http.client.HTTPConnection("127.0.0.1", int(manager_port or 7432), timeout=5)
         c.request("POST", "/restart-all%s" % ("" if immediate else "?when=quiet"), headers=_manager_headers())
         resp = c.getresponse()
-        resp.read()
+        body = resp.read()
         c.close()
-        if resp.status >= 400:
-            raise RuntimeError("the manager answered HTTP %d" % resp.status)
     except Exception as e:
         _sync_notice("romp is updated on disk but the restart request failed (%s) — "
                      "restart it yourself: romp refresh" % e, ok=False)
+        return
+    if resp.status >= 400:
+        # the manager answered and said no (its write gate: 401, this kernel's token is not one it holds;
+        # 503, it holds none): said three ways, with the notice leading on what did not happen
+        _report_manager_refusal("/restart-all", resp.status, body, reason="main-converge: %s" % kind,
+                                head="romp is updated on disk but the restart request failed")
 
 
 def _update_check_loop():
@@ -25597,7 +25602,7 @@ def _manager_token():
     read the way bin/romp and the manager itself read it: ROMP_SERVE_TOKEN, else the token file under
     this kernel's state root, fresh per call so a reminted file is honoured; this kernel's own TOKEN
     when the file cannot be read (the manager then answers 503 or 401, and the caller reports that
-    rather than guessing)."""
+    rather than guessing: _report_manager_refusal)."""
     t = (os.environ.get("ROMP_SERVE_TOKEN") or "").strip()
     if t:
         return t
@@ -25616,21 +25621,75 @@ def _manager_headers():
     return {"X-Romp-Token": _manager_token()}
 
 
+def _manager_refusal(door, status, body):
+    """What a 4xx or 5xx from a manager write door means, in the user's terms: (why, fix, err). `err` is the
+    manager's own one-line error (it names its token file, never a token); `why` names the status and the
+    cause; `fix` is the way out. 401 is the write gate not holding the token this kernel sent (read from
+    ROMP_SERVE_TOKEN or this kernel's token file: another state root, or a manager that is not this kernel's);
+    503 is a manager that cannot read its own token file (it mints an absent one at its start, so this is a
+    file that exists and cannot be read). `romp refresh` from a terminal runs the manager's control client,
+    which reads the manager's own file, so it lands where this kernel's hop did not."""
+    try:
+        raw = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body or "")
+        err = str((json.loads(raw) or {}).get("error") or "").strip()
+    except Exception:
+        err = ""
+    src = "ROMP_SERVE_TOKEN" if (os.environ.get("ROMP_SERVE_TOKEN") or "").strip() else str(jd.STATE / "serve-token")
+    if status == 401:
+        why = ("the manager refused it (HTTP 401): the serve token this kernel sent, read from %s, is not one "
+               "the manager holds" % src)
+        fix = "Run romp refresh from a terminal, which reads the manager's own token file"
+    elif status == 503:
+        why = ("the manager refused it (HTTP 503): it cannot read its own serve-token file, so it holds no "
+               "token to compare against")
+        fix = "Make that file a regular file of yours at mode 0600 under the manager's state root, then run romp refresh"
+    else:
+        why = "the manager answered HTTP %d" % status
+        fix = "Restart it yourself: romp refresh"
+    return why, fix, err
+
+
+def _report_manager_refusal(door, status, body, reason="", head="The restart did not happen"):
+    """A manager write door answered 4xx or 5xx: say it three ways (review round 1, 2026-09-10; the answer
+    used to be discarded, after the /restart handler had already acked restarting:true). One plain stderr
+    line naming the door, the status, the manager's own words and this kernel's token file; an audit row
+    of its own action (_MANAGER_REFUSED_ACTION, in _NO_RESTART_ACTIONS: no kernel restarted, so the cut
+    reader never takes it for a request); and a sync notice the user reads in the bell, `head` first.
+    Returns the notice text, for a handler that answers its caller with it."""
+    why, fix, err = _manager_refusal(door, status, body)
+    sys.stderr.write("romp-kernel: the manager refused POST %s (HTTP %d%s); this kernel's token file: %s\n"
+                     % (door, status, (": " + err) if err else "", jd.STATE / "serve-token"))
+    _audit_restart_request(_MANAGER_REFUSED_ACTION, door=door, status=status, reason=reason, error=err[:200])
+    text = "%s: %s. %s." % (head, why, fix)
+    _sync_notice(text, ok=False)
+    return text
+
+
 def _restart_this_kernel(reason="", manager_port=_PORT_FROM_ENV):
     """Ask the manager to restart-all (it SIGTERMs this kernel; its exit handler spawns a fresh one).
     Standalone (no manager) → nothing to restart, which is not an error. `reason` lands in
     restart-audit.jsonl so the manager hop is never an anonymous SIGTERM (see _audit_restart_request).
     `manager_port` is the value an HTTP handler resolved BEFORE its ack went out (see _PORT_FROM_ENV);
-    the default reads the env here, for callers with no ack to sequence against."""
+    the default reads the env here, for callers with no ack to sequence against.
+    Returns "" when the manager took the request or none was reachable, else the refusal text: a 4xx or
+    5xx from the manager's write gate, said three ways by _report_manager_refusal, so a handler acks only
+    a restart that will happen (review round 1, 2026-09-10). The connection-failure arm stays silent on
+    purpose: ECONNREFUSED is a standalone kernel, and every test kernel runs against a dead port."""
     _audit_restart_request("kernel-asks-manager-restart-all", reason=reason, pid=os.getpid())
     mport = os.environ.get("ROMP_MANAGER_PORT") if manager_port is _PORT_FROM_ENV else manager_port
     if not mport:
-        return
+        return ""
     try:
         c = http.client.HTTPConnection("127.0.0.1", int(mport), timeout=4)
-        c.request("POST", "/restart-all", headers=_manager_headers()); c.getresponse(); c.close()
+        c.request("POST", "/restart-all", headers=_manager_headers())
+        resp = c.getresponse()
+        body = resp.read()
+        c.close()
     except Exception:
-        pass                                       # no manager reachable → nothing to restart
+        return ""                                  # no manager reachable → nothing to restart
+    if resp.status >= 400:
+        return _report_manager_refusal("/restart-all", resp.status, body, reason=reason)
+    return ""
 
 
 def _is_ask_pull(r, head=None):
@@ -58219,13 +58278,28 @@ class Handler(BaseHTTPRequestHandler):
                 # The value in force when the kernel acks is the value acted on; absent still means
                 # what it always meant (no manager → nothing to restart).
                 _mport = os.environ.get("ROMP_MANAGER_PORT")
-                self._send(200, json.dumps({"ok": True, "restarting": True, "boot": _BOOT_ID,
-                                            "fleet": bool(_fleet)}), "application/json")
                 if _fleet and _remotes:
+                    # the remote half is seconds of network per host, so the ack goes first and the
+                    # report is read back after the reload; a refusal of the local half at the end lands
+                    # on the bell and the audit ledger (_report_manager_refusal)
+                    self._send(200, json.dumps({"ok": True, "restarting": True, "boot": _BOOT_ID,
+                                                "fleet": bool(_fleet)}), "application/json")
                     threading.Thread(target=_fleet_restart_run,
                                      kwargs={"manager_port": _mport}, daemon=True).start()
-                else:
-                    _restart_this_kernel("http /restart (local-only)", manager_port=_mport)
+                    return
+                # Local only: the manager is asked FIRST and the ack says what it answered (review round
+                # 1, 2026-09-10). The ack used to go out before the hop, restarting:true whatever the
+                # manager said; with the manager's write gate a 401 or 503 is a real answer and the
+                # caller must hear it. On a 200 the manager has already sent SIGTERM by the time it
+                # answers, and the drain (_graceful_term, about two seconds) is the ack's window; the
+                # buttons poll /healthz either way.
+                refused = _restart_this_kernel("http /restart (local-only)", manager_port=_mport)
+                if refused:
+                    return self._send(502, json.dumps({"ok": False, "restarting": False, "boot": _BOOT_ID,
+                                                       "fleet": bool(_fleet), "error": refused}),
+                                      "application/json")
+                self._send(200, json.dumps({"ok": True, "restarting": True, "boot": _BOOT_ID,
+                                            "fleet": bool(_fleet)}), "application/json")
                 return
             if u.path == "/fleet-restart":
                 # What the last fleet restart did, read back by the page AFTER it reloads (the restart
