@@ -897,8 +897,9 @@ class Wiring(unittest.TestCase):
         self.assertIn("id=rs-updates", self.gear)
         # the row says what Off does (the user 2026-09-03, who wanted to turn off the notices about
         # new romp commits and could not tell that this switch is where): Off is the notices-off
-        # setting, and the build-reload prompt is named as the one thing it does not cover
-        self.assertIn("Off stops the checks and the banners about new commits and releases", self.gear)
+        # setting, said in upstream's words since #1174 landed (slice 3, ruling G), and the build-reload
+        # prompt is named as the one thing it does not cover
+        self.assertIn("Off never checks", self.gear)
         self.assertIn("is not an update notice and stays on", self.gear)
         for opt in ("value=ask", "value=auto", "value=off"):
             self.assertIn(opt, self.gear)
@@ -910,6 +911,37 @@ class Wiring(unittest.TestCase):
         # honest marked-option injection when a stored value is off this page's list
         self.assertIn("setShow(upm, v.updateMode)", self.gear)
         self.assertIn('msg.get("type") == "setUpdateMode"', self.src)
+
+    def test_the_update_control_is_headed_automatic_updates(self):
+        # The row's heading is upstream's "Automatic updates" (the 2026-09-09 fold, slice 3). The fork had
+        # retitled it "Updates and update notices" (2026-09-03, so that someone looking for the switch that
+        # stops the notices about new commits could tell this was it); the fold trims the fork's divergence to
+        # what upstream lacks, and the help line's own words cover the notices ("one banner covers both",
+        # "Off never checks"). Both sites in gear.js carry the heading, the row and the stale-pick toast's
+        # label table, and the reference names the control by the same heading so a reader finds it in the gear.
+        self.assertIn("<b>Automatic updates <span class=rs-mixed hidden></span></b>", self.gear)
+        self.assertIn("'update-mode': 'Automatic updates',", self.gear)
+        self.assertNotIn("Updates and update notices", self.gear)
+        ref = re.sub(r"\s+", " ", (Path(BIN).parent / "docs" / "reference.md").read_text())
+        self.assertIn("**Automatic updates** control (under *Updates & debug*)", ref)
+        self.assertNotIn("Updates and update notices", ref)
+
+    def test_the_copy_says_an_automatic_update_restarts_at_once_or_converges_in_place(self):
+        # The help line for Install automatically said the converge restarts "at the next quiet
+        # moment". Since T269 every deploy restart is immediate (_run_main_update's immediate=True
+        # default; the auto caller passes no override), and a pulled range that touches no kernel
+        # code converges in place with the kernel left up (_kernel_code_changed + _in_place_converge).
+        # The copy names both routes. The route line is pinned too, so a change to the route flags
+        # the copy for re-reading.
+        self.assertIn("if not _kernel_code_changed(_kernel_sha(), pulled) and _in_place_converge(pulled):",
+                      self.src)
+        self.assertNotIn("quiet moment", self.gear,
+                         "the gear still promises a quiet-window restart; since T269 every deploy restart "
+                         "is immediate and romp refresh --quiet is the only door to the quiet window")
+        self.assertIn("Install automatically converges by itself: a change to kernel code restarts it at "
+                      "once (turns in flight are cut and resume with their history); anything else (the "
+                      "UI, the docs, the postal bus) converges in place with the kernel left up;",
+                      self.gear)
 
     def test_the_copy_says_an_automatic_update_restarts_at_once(self):
         # T269 (folded 2026-09-09): every deploy restart is immediate, and `romp refresh --quiet` is the
@@ -934,9 +966,11 @@ class Wiring(unittest.TestCase):
         for text, where in ((self.gear, "gear.js"), (para, "reference.md")):
             self.assertFalse("quiet moment" in text, "%s: the automatic mode does not wait for a quiet window" % where)
             self.assertIn("converges in place", text, "%s: a change outside kernel code converges with the kernel up" % where)
-        self.assertIn("Install automatically converges by itself: a change to kernel code restarts at once (turns in "
-                      "flight are cut and resume with their history) and anything else (the UI, the docs, the CLI, "
-                      "the postal bus) converges in place with no restart", self.gear)
+        # the gear sentence is upstream's (#1174, the fork's own offer of this copy, landed 2026-09-09): the
+        # later wording by the same author, taken whole at the fold (slice 3, ruling G)
+        self.assertIn("Install automatically converges by itself: a change to kernel code restarts it at once (turns in "
+                      "flight are cut and resume with their history); anything else (the UI, the docs, the postal bus) "
+                      "converges in place with the kernel left up; Off never checks.", self.gear)
         self.assertIn("*Install automatically* converges on its own", para)
         self.assertIn("When the new commits change code the running kernel executes, Romp restarts at once", para)
         self.assertNotIn("`kernel/`, `bin/`", para, "the paragraph names the class rule, not a directory list")

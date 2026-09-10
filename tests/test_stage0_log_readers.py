@@ -517,6 +517,7 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
             def compacting(self, sid): return self.comp
             def clearing(self, sid): return self.clr
             def pending_cut(self, sid): return ""
+            def new_session_auth(self): return "login"   # the chat signature's account component reads the backend's one billing rule (fold slice 3)
         stub = Stub()
         km._sdk = lambda: stub
         s1 = self.sig()
@@ -585,6 +586,7 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
             def clearing(self, sid): return False
             def pending_cut(self, sid): return ""
             def launch_error(self, sid): return None
+            def new_session_auth(self): return "login"   # read by the account component of the chat signature (fold slice 3)
         km._sdk = lambda: Stub()
         s1 = self.sig()
         before = km._views_dirty[0]

@@ -61,7 +61,8 @@ class FreshGuard(unittest.TestCase):
             "_last_state", "_session_awaiting", "_closer_settled", "_revivers_pending",
             "_pending_ops", "_last_assistant_report", "_all_outstanding_delegated")}
         self._orig_jd = {n: getattr(jd, n) for n in ("parsed_session", "load_goals", "load_goals_shared",
-                                                     "_segs", "plan_units", "nudge_redundant")}
+                                                     "load_goals_shared_or_fault", "_segs", "plan_units",
+                                                     "nudge_redundant")}
         self._orig_backend = km.Sessions.backend_for
         km._session_flag = lambda sid, flag: False
         km._compacting_now = lambda sid: False
@@ -85,9 +86,10 @@ class FreshGuard(unittest.TestCase):
         jd.parsed_session = lambda sid, paths, now: {"turns": self.turns}
         self.store = _store()
         jd.load_goals = lambda sid: self.store
-        # the walk decides on jd.load_goals_shared since performance round 5 (2026-09-08); the stub follows
-        # whatever jd.load_goals the test installs, so the walk's snapshot is the stub's first answer and a
-        # store file another test left under the shared GOALDIR is never read instead
+        jd.load_goals_shared_or_fault = lambda sid: (self.store, None)   # the walk reads the shared view; the fresh re-read stays on load_goals
+        # load_goals_shared is stubbed beside it: the judge's load_goals_shared_or_fault resolves that name at call
+        # time and the wake sweep reads it directly (2026-09-09), so the stub follows whatever jd.load_goals the
+        # test installs and a store file another test left under the shared GOALDIR is never read instead
         jd.load_goals_shared = lambda sid: jd.load_goals(sid)
         self.sent = []
         # the tail reads the gate makes, in order: [snapshot, fire-time freshness re-read]
@@ -264,6 +266,7 @@ class FreshGuard(unittest.TestCase):
         working, resolved = self.store, _store()
         resolved["status"][G1] = "completed"
         jd.load_goals = lambda sid: resolved if test.judge_calls else working
+        jd.load_goals_shared_or_fault = lambda sid: (working, None)
         self.judge_replies = [False]
         self._tick()
         self.assertEqual(self.sent, [], "nothing survives → nothing sends")
@@ -276,6 +279,7 @@ class FreshGuard(unittest.TestCase):
         working, blocked = self.store, _store()
         blocked["status"][G1] = "blocked"
         jd.load_goals = lambda sid: blocked if test.judge_calls else working
+        jd.load_goals_shared_or_fault = lambda sid: (working, None)
         self.judge_replies = [False]
         self._tick()
         self.assertEqual(self.sent, [])

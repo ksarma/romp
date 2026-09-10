@@ -10,13 +10,28 @@ control flow, filings and journal exactly as they were and removes the cost:
   - the decision reads the store through jd.load_goals_shared (one parse per store version for every
     reader); the writer's copy is loaded only where a row is filed (_wake_goal's fresh read, and
     _file_wake_answer, which now loads its own copy instead of taking the walk's store);
-  - the planner-placement gate is memoized per session on the identity of the parsed turns, the identity
-    of the shared store, and the two files the computation reads beyond them (the sid's episodes log and
-    cleared.jsonl); an unchanged session costs a shared read and four stats.
+  - the planner-placement gate is memoized per session (_nudge_placement_gate, upstream's since the
+    2026-09-09 fold, ruling A of slice 3) on the parse cache's key for the session, the identity of the
+    shared view object, and the two files the derivation reads beyond them (the sid's episodes log and
+    cleared.jsonl, the second the fork's term); an unchanged session costs one shared read and two stats.
+    A derivation costs a SECOND shared read: the gate re-reads the shared loader afterwards and caches only
+    when the view it derived from is still the current one (upstream's currency check; ruling A lists that
+    re-read as open, to be offered upstream, never edited here), so a derive cycle reads the view twice and
+    a served cycle once. The delegated-work check keeps its own memo (_nudge_deleg_memo) beside the gate's,
+    and the pass evicts both for a sid that leaves the alive set.
 The tests count plan_units / _segs / load_goals / load_goals_shared calls per cycle for the four states
 the brief names, pin that the gate re-evaluates on each of its inputs and only on them, and that the
 shared view never reaches a writer (the frozen guard's poison counter stays at zero). SYNTHETIC fixtures
-only; a PRIVATE sid (the goal-store fixture rule); the same harness shape as test_wake_deadman_toggle."""
+only; a PRIVATE sid (the goal-store fixture rule); the same harness shape as test_wake_deadman_toggle.
+
+RETIRED (ruling A, slice 3, 2026-09-09): the fork's end-of-walk stale-pin sweep and its four tests
+(test_a_gated_session_keeps_its_pin_while_the_parse_is_the_caches_current_one,
+test_a_gated_sessions_pin_is_released_when_the_walk_re_parses_it,
+test_a_pin_is_released_when_another_reader_re_parsed_a_session_gated_before_its_parse,
+test_nothing_cached_is_the_stale_pin_too). Upstream's gate keys on the parse cache's own key rather than
+holding the turns object, so a re-parsed transcript misses on its next visit and no stale pin exists; the
+fork's plan_hit / plan_miss / plan_bypass / stale counters retired with the sweep (the gate's own pair is
+memos.nudgeGate: served / derived)."""
 import json
 import os
 import tempfile
@@ -70,7 +85,7 @@ class _Base(unittest.TestCase):
         jd.EPIDIR = td / "episodes"; jd.EPIDIR.mkdir(parents=True)
         km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear()
         jd._shared_clear()
-        getattr(km, "_NUDGE_GATE_MEMO", {}).clear()
+        km._nudge_gate_memo.clear(); km._nudge_deleg_memo.clear()
         # the shared cache's switch and poison counter are process-wide (one judge module per worker):
         # another module's deliberate frozen-write test leaves the counter raised, so the writer check
         # below is a DELTA over this test, and the switch is on for the test and restored after it
@@ -114,11 +129,14 @@ class _Base(unittest.TestCase):
         self.turns = [{"id": "t1", "ended": True, "end": NOW - 8 * H, "t": NOW - 8 * H - 10, "atoms": []},
                       {"id": "t2", "ended": True, "end": NOW - 7 * H - 100, "t": NOW - 7 * H - 200, "atoms": []}]
 
+        self.parse_gen = 0                          # bumped by _reparse: the parse cache's key for the sid
+
         def _parsed(sid, paths, now):
-            # as the real function records its parse: the end-of-walk sweep keeps a session's memo entry
-            # only while the parse cache's turns object is the one the entry holds
+            # as the real function records its parse, (fileset key, session) in jd._PARSE_CACHE: the gate
+            # keys its memo on that key (upstream's _nudge_placement_gate), and only while the cached
+            # session's turns object is the one the walk holds; a re-parse moves the key (_reparse below)
             sess = {"turns": self.turns}
-            jd._PARSE_CACHE[sid] = (("fixture",), sess)
+            jd._PARSE_CACHE[sid] = (("fixture", self.parse_gen), sess)
             return sess
         jd.parsed_session = _parsed
         jd._PARSE_CACHE.pop(SID, None)
@@ -133,7 +151,7 @@ class _Base(unittest.TestCase):
         km.Sessions.backend_for = self.saved_backend
         km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear()
         jd._shared_clear()
-        getattr(km, "_NUDGE_GATE_MEMO", {}).clear()
+        km._nudge_gate_memo.clear(); km._nudge_deleg_memo.clear()
         jd._PARSE_CACHE.pop(SID, None)
         jd._SHARED_OFF[0] = self.shared_off_before
         try:
@@ -162,6 +180,12 @@ class _Base(unittest.TestCase):
             "rompUuid": SID, "seq": 1, "placements": {}, "status": {self.gid: "working"},
             "nodes": {self.gid: top}}))
         km._SESSION_STAMP_CACHE.clear()
+
+    def _reparse(self):
+        """The transcript re-parsed: the same content as a new turns object under a new parse-cache key,
+        the way parsed_session records a changed transcript."""
+        self.turns = [dict(t) for t in self.turns]
+        self.parse_gen += 1
 
     def _tick(self, now=NOW):
         km._auto_nudge_tick(now, {SID: {"state": ""}})
@@ -199,8 +223,10 @@ class WakeOnlyWalkCost(_Base):
                          "unchanged parse, store, episodes log and cleared.jsonl: the gate is served from the memo")
         self.assertEqual((c1["load_goals"], c2["load_goals"], c3["load_goals"]), (0, 0, 0),
                          "nothing to file: the writer's loader is never taken")
-        self.assertEqual((c1["load_goals_shared"], c2["load_goals_shared"], c3["load_goals_shared"]), (1, 1, 1),
-                         "the decision reads the shared view once per cycle")
+        self.assertEqual((c1["load_goals_shared"], c2["load_goals_shared"], c3["load_goals_shared"]), (2, 1, 1),
+                         "the decision reads the shared view once per cycle; the derive cycle reads it a second "
+                         "time in _nudge_placement_gate's post-derivation currency re-read (upstream's, since the "
+                         "2026-09-09 fold)")
         self.assertEqual(self.fb.sent, [])
         self.assertNoWriterSawTheSharedView()
 
@@ -212,7 +238,8 @@ class WakeOnlyWalkCost(_Base):
         self.assertEqual((c1["segs"], c2["segs"], c3["segs"]), (len(self.turns), 0, 0))
         self.assertEqual((c1["load_goals"], c2["load_goals"], c3["load_goals"]), (0, 0, 0),
                          "still patient: no fresh read, no lift")
-        self.assertEqual((c1["load_goals_shared"], c2["load_goals_shared"], c3["load_goals_shared"]), (1, 1, 1))
+        self.assertEqual((c1["load_goals_shared"], c2["load_goals_shared"], c3["load_goals_shared"]), (2, 1, 1),
+                         "one decision read per cycle, plus the gate's currency re-read on the derive cycle")
         self.assertIsNotNone(self._node().get("awaitingWhy"), "the 6h constant stands")
         self.assertEqual(self._lifts(), [])
         self.assertEqual(self.fb.sent, [])
@@ -228,7 +255,7 @@ class WakeOnlyWalkCost(_Base):
         self.assertIsNone(self._node().get("awaitingWhy"))
         self.assertEqual(c1["plan_units"], 1)
         self.assertEqual(c1["load_goals"], 1, "exactly one writer load: _wake_goal's fresh read, which the lift is filed on")
-        self.assertEqual(c1["load_goals_shared"], 1)
+        self.assertEqual(c1["load_goals_shared"], 2, "the decision read plus the gate's currency re-read after it derived")
         self.assertEqual(self.fb.sent, [], "nudges off: nothing injected")
         c2 = self._cycle(NOW + 5)
         self.assertEqual(c2["plan_units"], 1, "the lift moved the store: a new version is new information, the gate recomputes")
@@ -240,18 +267,19 @@ class WakeOnlyWalkCost(_Base):
 
     def test_a_fallback_store_is_computed_every_cycle_and_never_memoized(self):
         # no store file: load_goals_shared hands through load_goals' private fresh store, a mutable
-        # object that could change under an entry, so the gate runs uncached (plan_bypass) and
-        # publishes nothing. The call counts alone cannot tell this from an identity memo that merely
-        # misses on a fresh object each cycle (review 2026-09-08): the bypass counter and the memo's
-        # occupancy are what pin the branch.
+        # object that could change under an entry, so the gate derives every cycle and caches nothing
+        # (_nudge_placement_gate's currency re-read never finds the fresh object to be the loader's
+        # current view). The call counts alone cannot tell this from an identity memo that merely
+        # misses on a fresh object each cycle (review 2026-09-08): the gate's served / derived pair and
+        # the memo's occupancy are what pin the branch (re-aimed at upstream's gate, ruling A, slice 3).
         self._toggle(False)
-        before = dict(km._nudge_walk_stats)
+        before = dict(km._NUDGE_GATE_STATS)
         c1, c2 = self._cycle(), self._cycle(NOW + 5)
         self.assertEqual((c1["plan_units"], c2["plan_units"]), (1, 1))
-        d = {k: km._nudge_walk_stats[k] - before[k] for k in before}
-        self.assertEqual((d["plan_bypass"], d["plan_miss"], d["plan_hit"]), (2, 0, 0),
+        d = {k: km._NUDGE_GATE_STATS[k] - before[k] for k in before}
+        self.assertEqual((d["derived"], d["served"]), (2, 0),
                          "computed uncached both cycles: neither memoized nor served")
-        self.assertNotIn(SID, km._NUDGE_GATE_MEMO, "no entry holds a private mutable store")
+        self.assertNotIn(SID, km._nudge_gate_memo, "no entry holds a private mutable store")
         self.assertEqual(self.fb.sent, [])
 
 
@@ -266,8 +294,8 @@ class TheGateReEvaluatesOnItsInputsOnly(_Base):
         self.assertEqual(self._cycle(NOW + 5)["plan_units"], 0)
 
     def test_a_new_parse_object_recomputes(self):
-        self.turns = [dict(t) for t in self.turns]       # same content, a new object: a new parse version
-        self.assertEqual(self._cycle(NOW + 5)["plan_units"], 1)
+        self._reparse()                                  # same content, re-parsed: a new object under a new cache key
+        self.assertEqual(self._cycle(NOW + 5)["plan_units"], 1, "the gate keys on the parse cache's key")
         self.assertEqual(self._cycle(NOW + 10)["plan_units"], 0)
 
     def test_a_store_write_recomputes(self):
@@ -280,7 +308,9 @@ class TheGateReEvaluatesOnItsInputsOnly(_Base):
     def test_a_cleared_row_recomputes(self):
         with (jd.STATE / "cleared.jsonl").open("a") as f:
             f.write(json.dumps({"id": SID + ":g9", "op": "clear", "t": NOW}) + "\n")
-        self.assertEqual(self._cycle(NOW + 5)["plan_units"], 1, "plan_units reads cleared.jsonl (_live_anchor_gone)")
+        self.assertEqual(self._cycle(NOW + 5)["plan_units"], 1,
+                         "plan_units reads cleared.jsonl (_live_anchor_gone): _nudge_placement_gate keys its stat "
+                         "beside the episodes log's (the fork's term, ruling A condition 1)")
         self.assertEqual(self._cycle(NOW + 10)["plan_units"], 0)
 
     def test_an_episode_boundary_recomputes(self):
@@ -320,7 +350,7 @@ class ToggleOnUnchanged(_Base):
         self._toggle(True)
         self._seed(stamped=False)
         c1 = self._cycle()
-        self.assertEqual(c1["load_goals_shared"], 1)
+        self.assertEqual(c1["load_goals_shared"], 2, "the decision read, and the gate's currency re-read after it derived")
         self.assertNoWriterSawTheSharedView()
 
 
@@ -329,60 +359,14 @@ class TheWalkGateMemoOnlyServesTheSharedView(_Base):
         self._toggle(False)
         self._seed(stamped=False)
         self._cycle()
-        self.assertIn(SID, km._NUDGE_GATE_MEMO)
+        self.assertIn(SID, km._nudge_gate_memo)
+        self.assertIn(SID, km._nudge_deleg_memo, "the unstamped top's delegated-work check filled the second memo")
         before = dict(km._nudge_walk_stats)
         km._alive_sessions = lambda now, tmux: []
         self._tick(NOW + 5)
-        self.assertNotIn(SID, km._NUDGE_GATE_MEMO, "a sid that left the alive set holds no entry")
-        self.assertEqual((km._nudge_walk_stats["evict"] - before["evict"], km._nudge_walk_stats["stale"] - before["stale"]), (1, 0))
-
-
-class StalePinsAreReleased(_Base):
-    """A session gated upstream of the placement gate never reaches the memo, so without the end-of-walk
-    sweep its entry would hold the parse and store it was last judged under until its next idle cycle
-    (review 2026-09-08). The rule is _bg_placed_tops': keep the pin only while the held turns object is
-    the parse cache's current one."""
-
-    def setUp(self):
-        super().setUp()
-        self._toggle(False)
-        self._seed(stamped=False)
-        self._cycle()                                    # memoized on the current parse
-        self.assertIn(SID, km._NUDGE_GATE_MEMO)
-        self.before = dict(km._nudge_walk_stats)
-
-    def _delta(self, k):
-        return km._nudge_walk_stats[k] - self.before[k]
-
-    def test_a_gated_session_keeps_its_pin_while_the_parse_is_the_caches_current_one(self):
-        km._session_working = lambda turns: True         # gated upstream of the placement gate from now on
-        self._cycle(NOW + 5)
-        self.assertIn(SID, km._NUDGE_GATE_MEMO, "the cache still holds these turns: the pin costs nothing")
-        self.assertEqual((self._delta("stale"), self._delta("evict")), (0, 0))
-
-    def test_a_gated_sessions_pin_is_released_when_the_walk_re_parses_it(self):
-        km._session_working = lambda turns: True
-        self.turns = [dict(t) for t in self.turns]       # the transcript re-parsed: a new turns object
-        self._cycle(NOW + 5)                             # the walk parses (before the working gate), then returns
-        self.assertNotIn(SID, km._NUDGE_GATE_MEMO, "the held turns is no longer the cache's: released")
-        self.assertEqual((self._delta("stale"), self._delta("evict")), (1, 0))
-        km._session_working = lambda turns: False        # idle again: one recomputation, then memoized
-        self.assertEqual(self._cycle(NOW + 10)["plan_units"], 1)
-        self.assertEqual(self._cycle(NOW + 15)["plan_units"], 0)
-
-    def test_a_pin_is_released_when_another_reader_re_parsed_a_session_gated_before_its_parse(self):
-        km._session_flag = lambda sid, flag: True        # muted: the walk returns before it parses
-        jd._PARSE_CACHE[SID] = (("fixture-2",), {"turns": [dict(t) for t in self.turns]})   # a judge's re-parse
-        self._cycle(NOW + 5)
-        self.assertNotIn(SID, km._NUDGE_GATE_MEMO)
-        self.assertEqual(self._delta("stale"), 1)
-
-    def test_nothing_cached_is_the_stale_pin_too(self):
-        km._session_flag = lambda sid, flag: True
-        jd._PARSE_CACHE.pop(SID, None)                   # the cache was cleared whole (its overflow rule)
-        self._cycle(NOW + 5)
-        self.assertNotIn(SID, km._NUDGE_GATE_MEMO, "a conservative drop: one recomputation, never a wrong answer")
-        self.assertEqual(self._delta("stale"), 1)
+        self.assertNotIn(SID, km._nudge_gate_memo, "a sid that left the alive set holds no entry")
+        self.assertNotIn(SID, km._nudge_deleg_memo, "in either memo")
+        self.assertEqual(km._nudge_walk_stats["evict"] - before["evict"], 1, "one eviction per sid, both memos")
 
 
 class FileWakeAnswerLoadsItsOwnCopy(_Base):
@@ -402,22 +386,29 @@ class PerfBlock(_Base):
         snap = km._PERF_STATS.snapshot()
         self.assertIn("nudge_walk", snap["memos"])
         self.assertEqual(set(snap["memos"]["nudge_walk"]),
-                         {"walked", "gated", "loads", "shared", "plan_hit", "plan_miss", "plan_bypass",
-                          "deleg_hit", "deleg_miss", "lifted", "evict", "stale", "entries"})
+                         {"walked", "gated", "loads", "shared", "deleg_hit", "deleg_miss", "lifted", "evict", "entries"})
         for k, v in snap["memos"]["nudge_walk"].items():
+            self.assertIsInstance(v, int, k)
+        # the gate's own pair rides upstream's block (ruling A, slice 3)
+        self.assertEqual(set(snap["memos"]["nudgeGate"]), {"served", "derived"})
+        for k, v in snap["memos"]["nudgeGate"].items():
             self.assertIsInstance(v, int, k)
 
     def test_the_counters_move_with_the_walk(self):
         self._toggle(False)
         self._seed(kind="job", age=7 * H)
         before = dict(km._nudge_walk_stats)
+        before_gate = dict(km._NUDGE_GATE_STATS)
         self._cycle(); self._cycle(NOW + 5); self._cycle(NOW + 60)
         d = {k: km._nudge_walk_stats[k] - before[k] for k in before}
+        g = {k: km._NUDGE_GATE_STATS[k] - before_gate[k] for k in before_gate}
         self.assertEqual(d["walked"], 3)
         self.assertEqual(d["gated"], 0, "every gate passed in this fixture")
-        self.assertEqual((d["loads"], d["shared"]), (3, 3), "three shared reads, all answered by the cache")
-        self.assertEqual((d["plan_miss"], d["plan_hit"]), (2, 1), "computed on the first cycle and after the lift moved the store")
+        self.assertEqual((d["loads"], d["shared"]), (3, 3), "three decision reads, all answered by the cache "
+                                                             "(the gate's currency re-reads are not walk loads)")
+        self.assertEqual((g["derived"], g["served"]), (2, 1), "computed on the first cycle and after the lift moved the store")
         self.assertEqual(d["lifted"], 1)
+        self.assertEqual(d["evict"], 0, "the session stayed alive")
 
 
 if __name__ == "__main__":
