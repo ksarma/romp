@@ -51,6 +51,14 @@ the comment-thread reply further down works in EITHER mode.
 
 ## When tracking is ON: never touch the file with Edit/Write — use the CLIs
 
+Nor through Bash. A shell write reaches the file behind the tools and leaves no
+record: no `cp` or `mv` over it, no `tee`, no `>` or `>>` redirection into it (a
+heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
+`writeFileSync`. Every write to a tracked file goes through `track-edit`. Check
+`track-config`'s exit code as a step of its own, never in a compound command with
+the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
+the copy on exactly the file it must not touch.
+
 For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
 
 - **Make or replace text** — applies the change AND records it as your tracked
@@ -162,3 +170,7 @@ review panel.
 - Always identify the file by the ABSOLUTE path you're handed — this session may
   be in a different working directory, so a relative path won't resolve.
 - Editor mode = one focused change at a time, so each is a clean, reviewable diff.
+- When you commit work in a project that has a `.trackchanges/` folder and does not
+  ignore it, include that folder in the commit: it holds the user's comments on your
+  files and the record of your tracked changes, and it is part of the project's
+  history.

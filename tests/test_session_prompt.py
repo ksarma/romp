@@ -84,6 +84,24 @@ class SessionPrompt(unittest.TestCase):
                      "viewer", "panel", "dashboard", "pane", "chip", "todo id", "waiting on you"):
             self.assertNotIn(word, flat, "%r names machinery the agent cannot see" % word)
 
+    def test_asks_sessions_to_commit_the_comments_folder_with_their_work(self):
+        # The owner found that his sessions never added `.trackchanges/` to git, so the comments on
+        # their files and the record of their tracked changes were not archived with the work
+        # (2026-09-10; plans/file-review.md decision 48). One sentence in Working style, in the
+        # person's voice, conditional on the project having the folder and not ignoring it: the
+        # person's own commits stay theirs, and nothing on the host stages or commits (decision 25).
+        # It names the folder and nothing else of the machinery. The vendored skill carries the
+        # same rule (vendor/track-changents/patches/0007).
+        working, housekeeping = self.text.split("# Housekeeping", 1)
+        flat = re.sub(r"\s+", " ", working).lower()
+        self.assertIn("when you commit work in a project that has a `.trackchanges/` folder and does not ignore it, "
+                      "include that folder in the commit", flat)
+        self.assertIn("it holds my comments on your files and the record of your tracked changes", flat,
+                      "says why, in the person's voice: their comments, the session's tracked changes")
+        self.assertNotIn(".trackchanges", housekeeping, "Housekeeping explains romp's artifacts only")
+        for word in ("romp", "card", "board", "goal", "nudge", "sidecar", "comments log", "panel", "dashboard"):
+            self.assertNotIn(word, flat, "%r names machinery the agent cannot see" % word)
+
     def test_housekeeping_note_preexplains_romp_artifacts(self):
         # The ONE place romp is named to a session (the user 2026-07-25): pre-explain the artifacts
         # every session eventually sees — [romp] notices and <!-- romp-* --> comments — so a kernel

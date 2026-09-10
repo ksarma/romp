@@ -2718,7 +2718,9 @@ document stands on its own, each with the reasoning it was given.
 24. **The guard is scoped to romp sessions by environment**: registered machine-wide, it exits at
     once when `ROMP_SID` is absent.
 25. **Committing is the project's call.** romp writes the sidecar and the comments log and does
-    no git operation; a `.gitignore` line is the opt-out.
+    no git operation; a `.gitignore` line is the opt-out. (2026-09-10: sessions are asked by the
+    skill and the session prompt to include the folder when they commit their work, the person's
+    own commits staying theirs and romp still running no git command; decision 48.)
 26. **Phone**: reading and commenting work there; region drawing waits.
 27. **Renames** rely on the store layer's content-hash healing; no rename UI, and the log keeps
     the record. (The Slice 1 build found that healing runs only when a host calls it, and the host

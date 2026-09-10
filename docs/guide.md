@@ -525,7 +525,9 @@ was sent and when, the changes you accepted or rejected, tracking turned on or o
 direct edits to the file, kept beside the comments in the same folder so git keeps it when the
 project does. Once a change is decided, its card is gone and the Log keeps the decision: the row
 gives the count, and clicking it shows the old and new text of each change. Whether
-`.trackchanges/` is committed is the project's call; a `.gitignore` line keeps it out.
+`.trackchanges/` is committed is the project's call; a `.gitignore` line keeps it out. Sessions are
+asked to include the folder when they commit their own work, so the comments and the changes are
+kept with it; your commits are yours, and nothing here stages or commits anything.
 
 If the **Comments** action is missing on a file, the gear's **File comments** row says why:
 the kernel that owns the file has no node on its PATH, or it predates the feature. The same
