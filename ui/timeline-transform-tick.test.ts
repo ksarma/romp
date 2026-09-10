@@ -11,7 +11,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { nodeFactory } from "./test-dom-shim";
+import { nodeFactory, hideEdges } from "./test-dom-shim";
 
 const makeNode = nodeFactory({ rect: { width: 1400, height: 420, left: 0, top: 0, right: 1400, bottom: 420 } });
 let created = 0;   // every element the view creates: a full draw() makes hundreds, a tick must make none
@@ -361,7 +361,10 @@ test("sub-pixel looks add up: the drift is measured from the build, not the last
 test("the hover re-arms after a tick: the content moved under a pointer that did not", () => {
   const panel = livePanel(liveData(), 3600);
   const calls: any[] = [];
-  const target = { __tlHoverIn: (e: any) => calls.push(e), parentNode: null };   // what elementFromPoint finds under the tracked pointer
+  // what elementFromPoint finds under the tracked pointer; hideEdges, so the one object here that is not a factory node
+  // inspects as a projection too (the ratchet in ui/test-dom-shim.test.ts reads the file, not the object)
+  const target = hideEdges({ __tlHoverIn: (e: any) => calls.push(e), parentNode: null });
+  assert.deepEqual(Object.keys(target), [], "the hover target inspects as a projection: its handler and its parentNode are non-enumerable");
   panel._ptr = { x: 500, y: 40 };
   panel.svg.ownerDocument = { elementFromPoint: () => target };
   advance(panel, 10);
