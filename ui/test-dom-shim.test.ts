@@ -380,15 +380,19 @@ const ALLOWLIST = [
   "webview/card-subgoals.test.ts",
   "webview/chat-exact-tail-exec.test.ts",
   "webview/codex-meta-choices.test.ts",
+  "webview/federation-hidden-hold.test.ts",   // a conditional-valued window parent, read since the sixth review round
   "webview/feed-keynav-click-focus.test.ts",
   "webview/feed-keynav-covered.test.ts",
   "webview/feed-keynav-tabscope-covered.test.ts",
   "webview/feed-keynav-typing.test.ts",
   "webview/feed-render-incremental.test.ts",
-  "webview/federation-hidden-hold.test.ts",   // a conditional-valued window parent, read since the sixth review round
+  "webview/file-comments-about-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
+  "webview/file-comments-about-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
+  "webview/file-comments-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-anchors-unsure-rendered.test.ts",
   "webview/file-comments-anchors-unsure.test.ts",
   "webview/file-comments-anchors.test.ts",
+  "webview/file-comments-arrivals-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-arrivals-fixes.test.ts",
   "webview/file-comments-arrivals-review2.test.ts",
   "webview/file-comments-arrivals.test.ts",
@@ -449,6 +453,9 @@ const ALLOWLIST = [
   "webview/file-comments-reply-move.test.ts",
   "webview/file-comments-reply-place.test.ts",
   "webview/file-comments-reply-review2.test.ts",
+  "webview/file-comments-resolve-answered-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
+  "webview/file-comments-resolve-answered-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
+  "webview/file-comments-resolve-answered.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-reveal-arms-focus.test.ts",
   "webview/file-comments-reveal-landing.test.ts",
   "webview/file-comments-reveal-one-pass.test.ts",
@@ -531,11 +538,12 @@ const ALLOWLIST = [
 // edge when the rule was written, plus the eight class fakes main added between this branch's base and its landing
 // (actions, file-comments-markclick, file-comments-markclick-controls, file-comments-seen-fixes, -seen-review2,
 // -seen-review3, file-comments-send-seen, file-view-notice), listed at the final rebase because they predate the rule,
-// plus federation-hidden-hold, whose conditional-valued window parent the sixth review round's detector reads.
+// plus federation-hidden-hold, whose conditional-valued window parent the sixth review round's detector reads, plus the
+// seven file-comments-about and file-comments-resolve-answered class fakes main added before the sixth round's rebase.
 // The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
 // alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
 // is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 157;
+const ALLOWLIST_MAX = 164;
 // the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
 // tags-scale test whose shim it grew from
 const SWITCHED = [
