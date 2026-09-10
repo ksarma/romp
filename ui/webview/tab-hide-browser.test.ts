@@ -1211,7 +1211,7 @@ test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer inp
       const flyAt = await menu("flyAt") as { x: number; y: number };
       await page.mouse.move(flyAt.x, flyAt.y);
       await page.mouse.wheel(0, -240);   // back up: the input's focus scrolled to the foot, so the wheel has room to move the box the other way
-      await flyScrolledPast(-1).then(() => page.waitForFunction((t: number) => { const f = document.querySelector(".ctx-sub-tags"); return !f || f.scrollTop < t; }, top0, { timeout: 3000 })).catch(() => assert.fail(where("a real wheel over the flyout never moved it")));
+      await page.waitForFunction((t: number) => { const f = document.querySelector(".ctx-sub-tags"); return !f || f.scrollTop < t; }, top0, { timeout: 3000 }).catch(() => assert.fail(where("a real wheel over the flyout never moved it")));
       fs = await menu("flyScroll") as { top: number; height: number; client: number } | null;
       s = await state();
       assert.deepEqual([s.menu, s.dismissed], [true, d6], where("a real wheel over the flyout leaves the menu standing (before: the first wheel tick dismissed it)"));
