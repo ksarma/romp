@@ -249,6 +249,31 @@ class StoreCas(unittest.TestCase):
         self.assertNotIn("_baseRev", json.loads((jd.GOALDIR / (SID + ".json")).read_text()),
                          "the re-stamped base is still never written to disk")
 
+    def test_a_second_uncontended_save_of_the_same_object_does_not_rebase(self):
+        # the re-stamp is exact: the base after a publish is the revision that publish wrote, so a second
+        # save with nobody else publishing in between finds disk == base and never rebases (a stale
+        # re-stamp would rebase every second save; no re-stamp would leave the object base-less)
+        self._seed()
+        gid = self._nid(1)
+        s = jd.load_goals(SID)
+        jd.record_verdict(s, s["nodes"][gid], "planner", "done", T0 + 30, why="shipped")
+        jd.save_goals(SID, s)                        # our first publish
+        r1 = jd._disk_rev(SID)
+        s["nodes"][gid]["summary"] = "Shipped the exporter end to end."   # our second change, SAME object
+        calls, real = [], jd._rebase_onto_disk
+
+        def spy(fsid, store):
+            calls.append(fsid)
+            return real(fsid, store)
+        jd._rebase_onto_disk = spy
+        try:
+            jd.save_goals(SID, s)
+        finally:
+            jd._rebase_onto_disk = real
+        self.assertEqual(calls, [], "nobody else published: the base is the revision the first save wrote")
+        self.assertEqual(jd._disk_rev(SID), r1 + 1)
+        self.assertEqual(s.get("_baseRev"), r1 + 1, "and the object now carries that revision as its base")
+
     def test_an_uncontended_save_does_not_rebase(self):
         self._seed()
         gid = self._nid(1)
@@ -332,6 +357,49 @@ class ReadFaultCas(unittest.TestCase):
                 jd.save_goals(self.FSID, s)
         self.assertEqual(self._file().read_bytes(), before,
                          "the publish did not go ahead over bytes it failed to compare against")
+
+    def test_a_raise_inside_the_cas_loop_keeps_the_object_cas_protected(self):
+        # the window save_goals' docstring left documented on 2026-09-06 (the base popped before the CAS loop,
+        # re-stamped only after the rename, so a raise between the two left the object base-less and its next
+        # save unconditional) is closed (review find, 2026-09-08): when the publish did not happen the object
+        # keeps the base it was loaded at, so the holder's retry is CAS-protected too. The read-fault cases
+        # above raise inside _matches_disk, BEFORE the pop; here the revision read inside the loop fails, then
+        # the rename itself, and then a retry meets a concurrent publish
+        self._seed()
+        before = self._file().read_bytes()
+        s = jd.load_goals(self.FSID)
+        base = s["_baseRev"]
+        jd.record_verdict(s, s["nodes"][self._gid()], "planner", "done", T0 + 30, why="shipped")
+        real = jd._disk_rev
+
+        def faulting(fsid):
+            raise OSError(errno.EIO, "Input/output error", fsid)
+        jd._disk_rev = faulting
+        try:
+            with self.assertRaises(OSError):
+                jd.save_goals(self.FSID, s)
+        finally:
+            jd._disk_rev = real
+        self.assertEqual(s.get("_baseRev"), base, "a raise inside the loop: the object keeps the base it was loaded at")
+        self.assertEqual(self._file().read_bytes(), before, "nothing was published")
+
+        def no_rename(path, target):
+            raise OSError(errno.EIO, "Input/output error", str(target))
+        with mock.patch.object(Path, "rename", no_rename):
+            with self.assertRaises(OSError):
+                jd.save_goals(self.FSID, s)
+        self.assertEqual(s.get("_baseRev"), base, "a raise at the rename: the base is restored too")
+        self.assertEqual(self._file().read_bytes(), before, "nothing was published")
+        other = jd.load_goals(self.FSID)             # a concurrent writer publishes between the failure and the retry
+        jd.apply_plan(other, "s2", T0 + 40, [{"do": "mint", "why": "x", "text": "Their new goal"}],
+                      jd.open_menu(other))
+        jd.save_goals(self.FSID, other)
+        jd.save_goals(self.FSID, s)                  # the retry: CAS-protected, so it rebases instead of stomping
+        after = jd.load_goals(self.FSID)
+        self.assertIn("%s:g2" % self.FSID, after["nodes"], "the other writer's node survives the retried save")
+        kinds = {(e.get("src"), e.get("kind")) for e in after["nodes"][self._gid()].get("log") or []}
+        self.assertIn(("planner", "done"), kinds, "and our verdict landed")
+        self.assertEqual(s.get("_baseRev"), after["rev"], "the retry re-stamped the written revision as the base")
 
     def test_a_file_corrupted_after_load_is_not_overwritten_by_the_save(self):
         """The save path never quarantines (that is load's job, after the evidence is preserved): a store

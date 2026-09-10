@@ -38,9 +38,9 @@ test("where the restored land goes: bottom for follow mode, the anchor when hono
 
 test("render.ts persists SYNCHRONOUSLY for the reload core and on pagehide, into THIS tab's sessionStorage", () => {
   assert.match(RENDER, /import \{ reloadScrollRecord, takeReloadScroll, type ReloadScroll \} from "\.\/reload-restore";/);
-  // the fork's 2026-09-08 fold: the core's hook persists the scroll record AND the toasts on screen (reload-notices.test.ts, the fork's module renamed at the 2026-09-09 fold);
-  // pagehide keeps the scroll record alone, as upstream wrote it
-  assert.match(RENDER, /function persistForReload\(\): void \{ persistScrollForReload\(\); persistNoticesForReload\(\); \}/);
+  // the core's hook writes the scroll record and then the notices on screen (reload-notices.test.ts pins that half);
+  // pagehide writes the scroll record alone
+  assert.match(RENDER, /^function persistForReload\(\): void \{ persistScrollForReload\(\); persistNoticesForReload\(\); \}/m);
   assert.match(RENDER, /\(window as any\)\.__rompPersistForReload = persistForReload;/);
   assert.match(RENDER, /window\.addEventListener\("pagehide", persistScrollForReload\);/);
   const m = RENDER.match(/^function persistScrollForReload\(\): void \{([\s\S]*?)\n\}/m);

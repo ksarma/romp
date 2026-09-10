@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""The judge tiers' EVIDENCE GATE (P1b of the judge perf plan, 2026-09-07): the planner and closer skip a
+"""The judge tiers' EVIDENCE GATE (2026-09-07): the planner and closer skip a
 session's per-pass run when nothing their decision path reads has changed since the run that last judged
-it to completion. P2 (the same day) put the four store-only tiers on the same gate: the unblocker (the
-parse pair and the store trio), the grouper and consolidator (the store trio and cleared.jsonl, no parse),
-the distiller (the store trio, the states file and this sid's stall records, no parse); the StoreTiers,
+it to completion. The four store-only tiers went on the same gate the same day: the unblocker (the parse
+pair and the store trio), the grouper and consolidator (the store trio and cleared.jsonl, no parse), the
+distiller (the store trio, the states file and this sid's stall records, no parse); the StoreTiers,
 StoreReArms, StoreOwnWrites, StoreCompleteness, UnblockerHazard and DrainStaysUngated classes and the four
-FsCompleteness checks below are its tests. J6 of the round-4 perf plan (the same day) put the courier's
-per-session scan on the gate: the pinned parse pair, the store trio and the episode log, with the scan
-marked incomplete when it produced pending rows or its link repair reached another session's store; the
-CourierGate class and the courier's FsCompleteness check are its tests.
+FsCompleteness checks below are its tests. This fork's INDEX tier (the captioner and archiver, run_index)
+runs on the same gate with its stamp written at pass end (_gate_stamp, _run_index): the pinned parse pair, the
+captions file, the archive record and the unit cache, no store; the IndexReaders and IndexGate classes and the
+index tier's FsCompleteness check are its tests.
 
 Why: every pass ran every discovered session in full (a parse, a store load, the unit walk, the closed-turn
 walk, a rollup, an unconditional save), with about two of thirty-three sessions holding anything new per
-pass on the live kernel; the planner and closer were two thirds of an idle pass's CPU.
+pass on the live kernel; the planner and closer were more than half of an idle pass's CPU.
 
 What exact means here, and what every test below protects (CLAUDE.md, cards move on new information):
 the gate never withholds a verdict the ungated pass would have filed from NEW evidence. A run is skipped
@@ -27,34 +27,41 @@ mid-pass (a turn ending after the pass's first touch), an unpoked background tas
 journal gesture, a nudge block, two concurrent writers, a restart (fresh process state), the death drain,
 the archive path.
 
-Accepted lag, recorded here as the design asks: under an open frame every parsed_session caller sees the
-pass-start world (a cache hit too), so the six pusher tick jobs that read the judge parse
-(_interrupt_block_tick, _closer_pending, _awaiting_wake_outcomes, _deferral_sweep_tick,
-_auto_nudge_session, _clear_done_working_notes) see a world up to one pass old for every session, and a
-turn that ends after a pass's first touch is judged next pass, whole. That is the frame's design
-(2026-07-21); the gate adds no lag beyond the producer's 3 s backstop for the clock input.
+Accepted lag, recorded here as the design asks: under an open frame every PASS-THREAD caller of
+parsed_session sees the pass-start world (a cache hit too), so a turn that ends after a pass's first touch is
+judged next pass, whole. That is the frame's design (2026-07-21). The kernel's six pusher tick jobs that read
+the judge parse (_interrupt_block_tick, _closer_pending, _awaiting_wake_outcomes, _deferral_sweep_tick,
+_auto_nudge_session, _clear_done_working_notes) are NOT pass threads (jd._pass_frame; review find,
+2026-09-08): they read the live world every cycle, so the frame costs them nothing, and the gate adds no lag
+beyond the producer's 3 s backstop for the clock input.
 
 PRIVATE synthetic sids (goal-minting fixtures never share the placeholder sid: its override journal is
 replayed on every load), invented text, a notes-api with web/api sessions; the journals are removed in
 tearDown.
 
-The planner and the courier left the evidence gate in the upstream fold of 2026-09-09 (slice 3, ruling 1, the
-reviewer's): upstream's own change gates decide those two passes (_plan_key / _PLANNER_SEEN inside
-_plan_session, their #1173 and #1179; _courier_scan_key / _COURIER_SEEN around _courier_scan in run_courier,
-their #1158 and #1184). Both key the parse cache's (fileset, cut) pair bound to the session object the pass was
-served, taken AFTER the parse and BEFORE the store read, with the store trio and the pass's other inputs; both
-record a session only when the pass placed nothing, retired nothing, left the store's key where it found it
-and set no completeness bit, and any pass that did drops the record again. The fork's gate still wraps the
-other six tiers (_gate_check, _gated, the stamps and _TIER_STATS; FORK_GATED_TIERS), and its two side effects
-survive on the two skipped tiers: pass_done stamps a skip, and the completeness bit gates upstream's record.
-The planner's key also carries three terms upstream's lacks, cleared.jsonl, this sid's death marker and its
-stall slice (ruling 2; tests/test_planner_key_terms.py pins each). The cases below that read the two tiers
-were re-aimed at the resolved mechanism (_runs, _skips, _records and _stamp dispatch per tier; the planner's
-and courier's _TIER_STATS entries read zero), two of them under new names: ReArms' reg-rewrite case now says
-the planner re-plans on a reg rewrite (upstream keys the reg file's identity where the fork read spawnedAt by
-value), and CourierGate's cut case says the cut is keyed as the served world and its clearing re-arms the scan
-(upstream keys the served pair, so there is no pin-to-parse gap to withhold on). RETIRED under ruling 1, the
-mechanism they pinned being gone for the courier: CourierGate's
+TWO GATES on the planner since the fold of 2026-09-10 (upstream #1062, this fork's own offer, landed with both; ruling
+J1 of that fold, which reversed slice 3's ruling 1 for the planner only): the evidence gate in run_plan (_gate_check,
+_gated, the stamps and _TIER_STATS["plan"]) sits AROUND upstream's change gate inside _plan_session (_plan_key /
+_PLANNER_SEEN, their #1173 and #1179), which sees only the sessions the outer gate let through and records only a
+complete pass (the completeness bit unset, nothing placed, nothing retired, the store's key where it found it).
+run_plan never pops _PLANNER_SEEN when the outer gate lets a session through and _plan_session returns 0 on a key
+match, so the inner key must carry every input the outer signature reads or an outer re-arm is swallowed by an inner
+skip and stamped complete: this fork's key carries three terms upstream's lacks, cleared.jsonl, this sid's death
+marker and its stall slice (ruling J2; tests/test_planner_key_terms.py pins each), and PlannerInnerGate below moves
+every outer input alone and asserts the store read is reached. memos.plannerSkip therefore counts the let-through
+sessions only; the tier's own row counts the skips.
+
+The COURIER stays on upstream's change gate alone (_courier_scan_key / _COURIER_SEEN around _courier_scan in
+run_courier, their #1158 and #1184; slice 3's ruling 1, kept by ruling J8 of the 2026-09-10 fold): never on this
+gate (UPSTREAM_SKIP_TIERS), no _TIER_STATS row, pass_done still stamped on a skip and after a scan. Its key is the
+parse cache's (fileset, cut) pair bound to the session object the pass was served, taken AFTER the parse and BEFORE
+the store read, with the store trio and the episode log (the key's docstring holds the inventory); it records a
+session only when the scan placed nothing, repaired nothing and set no completeness bit, and any scan that did
+drops the record again. The CourierGate class and the courier's FsCompleteness check are its tests; the cases read
+it through _runs, _records, _cs and _stamp, which dispatch to _COURIER_STATS and _COURIER_SEEN for that tier.
+CourierGate's cut case says the cut is keyed as the served world and its clearing re-arms the scan (upstream keys
+the served pair, so there is no pin-to-parse gap to withhold on). RETIRED under slice 3's ruling 1, the mechanism
+they pinned being gone for the courier: CourierGate's
 test_a_placed_delegate_with_no_sender_tracker_stamps_after_one_scan and
 test_a_local_sender_outside_the_discover_window_keeps_the_scan_due_and_a_remote_one_does_not, the fork's
 tracker walk over the discovered sender stores that recorded a placed delegate no store could ever link.
@@ -88,6 +95,7 @@ em = jd.em
 
 SID = "aaaaaaaa-1111-2222-3333-444444444444"      # private synthetic sids, never the shared placeholder
 SID2 = "bbbbbbbb-1111-2222-3333-444444444444"
+SID3 = "dddddddd-1111-2222-3333-444444444444"     # a sid with no session of its own (signature-level cases)
 T0 = 1781100000
 NOW = T0 + 5000
 MINT = '{"ops":[{"why":"x","do":"mint","text":"Goal"}]}'
@@ -99,9 +107,13 @@ STORE_TIERS = ("unblock", "group", "consolidate", "distill")
 TRIAGE_TIERS = ("plan", "close", "unblock", "courier", "group", "consolidate", "distill")   # run_triage's order
 ALL_TIERS = TRIAGE_TIERS + ("index",)          # plus the index tier (run_index, on its own thread beside run_triage
 #                                                live; a test pass runs it after the triage tiers)
-UPSTREAM_SKIP_TIERS = ("plan", "courier")      # on upstream's SEEN-key change gates since the 2026-09-09 fold (slice 3,
-#                                                ruling 1): _plan_key / _PLANNER_SEEN, _courier_scan_key / _COURIER_SEEN
-FORK_GATED_TIERS = tuple(t for t in ALL_TIERS if t not in UPSTREAM_SKIP_TIERS)   # the six the evidence gate still wraps
+UPSTREAM_SKIP_TIERS = ("courier",)             # on upstream's SEEN-key change gate alone since the 2026-09-09 fold (slice 3,
+#                                                ruling 1; kept by ruling J8 of the 2026-09-10 fold): _courier_scan_key /
+#                                                _COURIER_SEEN. The planner left this tuple with #1062 (ruling J1): it runs
+#                                                behind the evidence gate AND its own change gate (the module docstring)
+GATED_TRIAGE_TIERS = tuple(t for t in TRIAGE_TIERS if t not in UPSTREAM_SKIP_TIERS)   # upstream's ALL_TIERS: the six
+#                                                triage tiers the evidence gate wraps
+FORK_GATED_TIERS = tuple(t for t in ALL_TIERS if t not in UPSTREAM_SKIP_TIERS)   # the seven it wraps here (jd.GATED_TIERS)
 DELEGATE_REPLY = '{"verdict": "delegating", "goal": 0, "text": "Wire up the export button"}'
 MID = "1781100000.11111_22222.TESTHOST"                         # a delivered peer message's id (synthetic)
 MID2 = "1781100000.33333_44444.TESTHOST"
@@ -181,8 +193,9 @@ def _fresh_store_text(sid):
 class _Gate(unittest.TestCase):
     def setUp(self):
         self.td = Path(tempfile.mkdtemp())
-        jd._rebind_state(self.td)                    # clears the stamps, the value memos and the gate's counters
-        self._reset()                                # ...and upstream's planner and courier counters, which a rebind keeps
+        jd._rebind_state(self.td)                    # clears the stamps, the value memos and the counters
+        self._reset()                                # ...and upstream's planner and courier change-gate counters, which a
+        #                                              rebind keeps (the tables it clears)
         jd.end_pass_frame(True)                      # belt: never inherit a frame a crashed test left open
         for c in (jd._PARSE_CACHE, jd._CHAIN_MEMO, jd._BG_SCAN_CACHE, jd._RECON_MEMO, jd._gone_memo):
             c.clear()
@@ -198,21 +211,34 @@ class _Gate(unittest.TestCase):
         os.environ["CLAUDE_CONFIG_DIR"] = str(self.claude)   # the task store, resolved at call time
         self._saved = (jd.PROJECTS, jd.plan_llm, jd.closer_llm, jd.group_llm, jd.opener_llm, jd._PENDING_CUT_FN,
                        jd._judge_run_impl, jd._rewound_away, jd._judge_run, jd._fileset_key, jd._close_turn,
-                       jd._STAGE_STAMP_MAX)
+                       jd._STAGE_STAMP_MAX, jd.load_goals, jd.save_goals)
         jd.PROJECTS = self.proj
+        # store I/O spies: the stages reach load_goals/save_goals through the module globals, so a
+        # counting wrapper over each sees every load and save a pass makes for the fixture's sids
+        self.io = {"loads": 0, "saves": 0}
+        real_load, real_save = jd.load_goals, jd.save_goals
+
+        def counting_load(*a, **k):
+            self.io["loads"] += 1
+            return real_load(*a, **k)
+
+        def counting_save(*a, **k):
+            self.io["saves"] += 1
+            return real_save(*a, **k)
+        jd.load_goals, jd.save_goals = counting_load, counting_save
         self.plan_calls, self.close_calls = [], []
         jd.plan_llm = lambda text, menu, human=False, **kw: (self.plan_calls.append(text) or MINT)
         jd.opener_llm = lambda text, menu, **kw: (self.plan_calls.append(text) or MINT)
         jd.closer_llm = lambda tt, mt, *a, **k: (self.close_calls.append(tt) or EMPTY_CLOSE)
         jd.group_llm = lambda menu, judge="grouper": '{"ops":[]}'
         jd._PENDING_CUT_FN = None
-        # the store tiers' helpers (P2): hold every block, land every distill, title every mirror top; and a
-        # belt under all of them, since no test here may reach the real model call
+        # the store tiers' helpers: hold every block, land every distill, title every mirror top; and a belt
+        # under all of them, since no test here may reach the real model call
         self._saved_store = (jd.unblock_llm, jd.distill_llm, jd.brief_llm, jd.stall_llm, jd.mirror_title_llm,
                              jd.parsed_session, jd.courier_llm, jd._courier_scan, jd._segs, jd._session_settled,
                              jd.rollup_status)
         self.unblock_calls, self.distill_calls, self.title_calls, self.courier_calls = [], [], [], []
-        # the courier (J6): a delegating verdict with no sender link, so a filed row plants the sender's
+        # the courier (on its own change gate, the module docstring): a delegating verdict with no sender link, so a filed row plants the sender's
         # tracker and files the recipient quiet (the chain walk finds no link to root the mint on)
         jd.courier_llm = lambda text, menu, declared="": (self.courier_calls.append(text) or DELEGATE_REPLY)
         jd.unblock_llm = lambda blocks, since, completed="": (self.unblock_calls.append(blocks) or HOLD_ALL)
@@ -221,7 +247,7 @@ class _Gate(unittest.TestCase):
         jd.stall_llm = lambda text, work, holding: (self.distill_calls.append(text) or "The build has not finished.")
         jd.mirror_title_llm = lambda subject, frame=None, user_ask=None: (self.title_calls.append(subject) or "Write the api tests")
 
-        # the index tier (J7): a caption for every unit, a gist for every prompt, a record for every archive
+        # the index tier (this fork's, on the evidence gate): a caption for every unit, a gist for every prompt, a record for every archive
         self._saved_index = (jd.caption_llm, jd.gist_llm, jd.archive_llm, jd._index_caption_tasks, jd._index_arch_task,
                              jd.session_turn_captions, jd.ARCH_BUDGET)
         self.caption_calls, self.archive_calls = [], []
@@ -241,7 +267,7 @@ class _Gate(unittest.TestCase):
          jd.session_turn_captions, jd.ARCH_BUDGET) = self._saved_index
         (jd.PROJECTS, jd.plan_llm, jd.closer_llm, jd.group_llm, jd.opener_llm, jd._PENDING_CUT_FN,
          jd._judge_run_impl, jd._rewound_away, jd._judge_run, jd._fileset_key, jd._close_turn,
-         jd._STAGE_STAMP_MAX) = self._saved
+         jd._STAGE_STAMP_MAX, jd.load_goals, jd.save_goals) = self._saved
         (jd.unblock_llm, jd.distill_llm, jd.brief_llm, jd.stall_llm, jd.mirror_title_llm,
          jd.parsed_session, jd.courier_llm, jd._courier_scan, jd._segs, jd._session_settled,
          jd.rollup_status) = self._saved_store
@@ -370,45 +396,22 @@ class _Gate(unittest.TestCase):
     def _st(self, tier):
         return dict(jd._TIER_STATS[tier])
 
-    def _ps(self):
-        """Upstream's planner gate counters (planned, skipped, recorded): the planner's since the fold."""
-        return dict(jd._PLANNER_STATS)
-
     def _cs(self):
-        """Upstream's courier gate counters (scanned, skipped, recorded): the courier's since the fold."""
+        """Upstream's courier change-gate counters (scanned, skipped, recorded): the courier's only counters."""
         return dict(jd._COURIER_STATS)
 
     def _runs(self, tier):
-        """Runs of `tier` this pass: `planned` / `scanned` on upstream's two gates, `ran` on the fork's six."""
-        if tier == "plan":
-            return jd._PLANNER_STATS["planned"]
+        """Runs of `tier` this pass: `scanned` on the courier's change gate, `ran` on the evidence gate's seven."""
         if tier == "courier":
             return jd._COURIER_STATS["scanned"]
         return jd._TIER_STATS[tier]["ran"]
 
-    def _skips(self, tier):
-        """Skips of `tier` this pass, whichever gate declined the run."""
-        if tier == "plan":
-            return jd._PLANNER_STATS["skipped"]
-        if tier == "courier":
-            return jd._COURIER_STATS["skipped"]
-        return jd._TIER_STATS[tier]["skipped"]
-
     def _records(self, tier):
-        """Complete runs of `tier` this pass that left a record: `recorded` on upstream's gates, `stamped` on the fork's."""
-        if tier == "plan":
-            return jd._PLANNER_STATS["recorded"]
+        """Complete runs of `tier` this pass that left a record: `recorded` on the courier's change gate, `stamped` on
+        the evidence gate's seven (the planner's inner record is read from planner_skip_stats directly)."""
         if tier == "courier":
             return jd._COURIER_STATS["recorded"]
         return jd._TIER_STATS[tier]["stamped"]
-
-    def _pkey(self, sid, path, now=NOW):
-        """The planner's skip key for `sid` under transcript `path`, as _plan_session takes it: the cache's parse bound
-        to the session object it returned (a parse the cache does not hold keys None, and this helper fails on it)."""
-        session = jd.parsed_session(sid, [str(path)], now)
-        key = jd._plan_key(sid, str(path), session, now)
-        self.assertIsNotNone(key, "the parse is the cache's own")
-        return key
 
     def _rows(self, err):
         """The judge-errors rows with `err`, in file order; none when no row has been written yet."""
@@ -417,16 +420,16 @@ class _Gate(unittest.TestCase):
         return [r for r in (json.loads(l) for l in open(jd.ERRORS) if l.strip()) if r.get("err") == err]
 
     def _reset(self):
+        """Zero the evidence gate's per-tier counters and the two change gates' (the planner's inner, the courier's)."""
         for stats in list(jd._TIER_STATS.values()) + [jd._PLANNER_STATS, jd._COURIER_STATS]:
             for k in stats:
                 stats[k] = 0
 
     def _stamp(self, tier, sid=SID):
         """The record of `tier`'s last complete no-op run over `sid`: the evidence gate's (sig, not_before) stamp for
-        the six tiers it wraps; upstream's recorded key for the planner (_PLANNER_SEEN) and the courier
-        (_COURIER_SEEN), which any pass that worked, wrote or set the completeness bit drops again."""
-        if tier == "plan":
-            return jd._PLANNER_SEEN.get(sid)
+        the seven tiers it wraps (the planner's inner record, _PLANNER_SEEN, is a second table read directly);
+        upstream's recorded key for the courier (_COURIER_SEEN), which any scan that worked, wrote or set the
+        completeness bit drops again."""
         if tier == "courier":
             return jd._COURIER_SEEN.get(sid)
         return jd._STAGE_STAMP.get((tier, sid))
@@ -446,28 +449,26 @@ class Convergence(_Gate):
         self._pass()
         self.assertEqual(len(self.plan_calls), 2, "two ended turns: two work units placed")
         self.assertEqual(len(self.close_calls), 2, "and two turns swept")
-        self.assertEqual((self._runs("plan"), self._st("close")["ran"]), (1, 1))
-        self.assertEqual(self._st("close")["stamped"], 1, "a complete run stamps what it judged")
-        self.assertEqual(self._records("plan"), 0, "the planner placed: upstream's rule records only a pass with nothing "
-                                                  "to do (the fork's gate stamped the pre-run identity here)")
+        self.assertEqual((self._st("plan")["ran"], self._st("close")["ran"]), (1, 1))
+        self.assertEqual((self._st("plan")["stamped"], self._st("close")["stamped"]), (1, 1),
+                         "complete runs stamp what they judged")
         self._reset()
         self._pass()                                                    # the idle follow-on: runs, no calls, no write
         self.assertEqual((len(self.plan_calls), len(self.close_calls)), (2, 2), "no model call")
-        self.assertEqual((self._runs("plan"), self._st("close")["ran"]), (1, 1),
+        self.assertEqual((self._st("plan")["ran"], self._st("close")["ran"]), (1, 1),
                          "the tiers' own publishes re-armed them once")
-        self.assertEqual(self._records("plan"), 1, "nothing to do and the store where the key found it: recorded")
         self._reset()
-        wm = jd.pass_watermark("plan", SID), jd.pass_watermark("close", SID)
-        io0 = jd.goal_io_stats()
-        time.sleep(0.002)
+        for t in ("plan", "close"):                                     # the earlier passes' watermarks go: the skip
+            self.assertIsNotNone(jd._PASS_DONE.pop((t, SID), None), t)  #  must write its own, not inherit one
+        io0 = dict(self.io)
         self._pass()                                                    # the skip
-        io1 = jd.goal_io_stats()
-        self.assertEqual((self._runs("plan"), self._st("close")["ran"]), (0, 0))
-        self.assertEqual((self._skips("plan"), self._st("close")["skipped"]), (1, 1))
+        io1 = dict(self.io)
+        self.assertEqual((self._st("plan")["ran"], self._st("close")["ran"]), (0, 0))
+        self.assertEqual((self._st("plan")["skipped"], self._st("close")["skipped"]), (1, 1))
         self.assertEqual((io1["loads"] - io0["loads"], io1["saves"] - io0["saves"]), (0, 0),
                          "a skipped session costs no store load and no save")
-        self.assertGreater(jd.pass_watermark("plan", SID), wm[0], "a skip stamps pass_done")
-        self.assertGreater(jd.pass_watermark("close", SID), wm[1])
+        self.assertIsNotNone(jd.pass_watermark("plan", SID), "a skip stamps pass_done")
+        self.assertIsNotNone(jd.pass_watermark("close", SID))
         self.assertEqual((len(self.plan_calls), len(self.close_calls)), (2, 2))
 
     def test_a_restart_is_a_full_walk(self):
@@ -475,59 +476,57 @@ class Convergence(_Gate):
         # judges every session, as before the gate
         self._session(SID)
         self._converge()
-        jd._STAGE_STAMP.clear(); jd._PLANNER_SEEN.clear()               # what a restart does: both tables are process state
+        jd._STAGE_STAMP.clear()                                         # what a restart does
         self._pass()
-        self.assertEqual((self._runs("plan"), self._st("close")["ran"]), (1, 1))
+        self.assertEqual((self._st("plan")["ran"], self._st("close")["ran"]), (1, 1))
         self.assertEqual((len(self.plan_calls), len(self.close_calls)), (2, 2), "nothing new: no call either way")
 
     def test_counters_add_up(self):
         self._session(SID)
         self._pass(); self._pass(); self._pass()
-        s = self._st("close")
-        self.assertEqual(s["ran"], s["stamped"] + s["bypassed"] + s["incomplete"], "close")
-        self.assertEqual(set(self._st("plan").values()), {0}, "the planner runs on upstream's gate: the fork's counters "
-                                                              "for it read zero (slice 3, ruling 1)")
-        self.assertEqual(self._ps(), {"planned": 2, "skipped": 1, "recorded": 1},
-                         "the placing pass, the recording pass, the skip (planner_skip_stats, memos.plannerSkip)")
-        self.assertEqual(jd.planner_skip_stats(), self._ps())
+        for t in ("plan", "close"):
+            s = self._st(t)
+            self.assertEqual(s["ran"], s["stamped"] + s["bypassed"] + s["incomplete"], t)
         ts = jd.tier_stats()
-        self.assertEqual(set(ts), set(jd.GATED_TIERS) | {"stamps"}, "the tier set is unchanged (test_perf_stats pins it)")
-        self.assertEqual(ts["stamps"], 1, "one stamp per (gated tier, sid): the closer's; the planner's record is its own table")
-        self.assertEqual(set(jd._PLANNER_SEEN), {SID})
+        self.assertEqual(set(ts), set(jd.GATED_TIERS) | {"stamps"})
+        self.assertEqual(ts["stamps"], 2, "one stamp per (tier, sid)")
 
 
 class ATurnEndingMidPass(_Gate):
     def test_a_turn_ending_after_the_first_touch_is_judged_next_pass_whole(self):
-        # the review's hazard: a tick job (or the index tier) touches the session while its last turn is
-        # OPEN; the turn's final record and the idle row land; the gated planner and closer run. Their
-        # stamps must hold the PRE-append pair (the world they judged), so the next pass runs both stages
-        # over the ended turn. A stamp stat'd at the stage's own moment would record the post-append key
-        # and skip the ended turn until an unrelated write. Without P1a's key pin this test fails.
+        # the review's hazard: a pass thread (the index tier's captioner, say) touches the session while its
+        # last turn is OPEN; the turn's final record and the idle row land; the gated planner and closer check the gate.
+        # The transcript component is the pair the pass PINNED at that first touch, which equals the stamp
+        # the converged run left, so the mid-pass check is a SKIP (no stat of the grown file, no run), the
+        # stamps keep the pre-append pair, and the next pass runs both stages over the ended turn, whole.
+        # A gate reading the live key at its own moment would run here over the frozen (pre-append) parse
+        # and bypass, or stamp the post-append key over a world that never judged the ended turn.
         path = self._session(SID, [uline(T0, "task A", "u1"), aline(T0 + 30, "did A", "a1", "u1"),
                                    uline(T0 + 100, "task B", "u2", "a1"),
                                    aline(T0 + 110, "starting on B", "a2", "u2", stop="tool_use")])
         self._converge()
         own = jd.begin_pass_frame()
         try:
-            jd.parsed_session(SID, [str(path)], NOW)                    # the tick job's first touch, turn open
+            jd.parsed_session(SID, [str(path)], NOW)                    # the index tier's first touch, turn open
             pre = jd._frame["keys"][("parse", SID)]
             self._append(path, aline(T0 + 140, "did B", "a3", "a2"))
             self._states_row(SID, T0 + 141, "idle")
             jd.run_plan(now=NOW)
             jd.run_close(now=NOW)
+            for t in ("plan", "close"):
+                self.assertEqual((self._st(t)["ran"], self._st(t)["skipped"]), (0, 1),
+                                 "%s: the pinned pair matches the stamp, so the mid-pass check skips (a live-key "
+                                 "gate would run and bypass instead)" % t)
         finally:
             jd.end_pass_frame(own)
-        st = self._stamp("close")
-        self.assertIsNotNone(st, "close: the pass completed and stamped")
-        self.assertEqual(st[0][0][1], jd._pair_key(pre), "close: the stamp holds the PRE-append pair")
-        rec = self._stamp("plan")
-        self.assertIsNotNone(rec, "plan: nothing to do under the pinned parse, so the pass recorded")
-        self.assertEqual(rec[1], pre, "plan: upstream's key holds the cache's (fileset, cut) pair of the parse the frame "
-                                      "served, the PRE-append one, so the ended turn is not skipped over")
+        for t in ("plan", "close"):
+            st = self._stamp(t)
+            self.assertIsNotNone(st, "%s: the converged run's stamp stands" % t)
+            self.assertEqual(st[0][0][1], jd._pair_key(pre), "%s: the stamp holds the PRE-append pair" % t)
         self._reset()
         self._pass()
-        self.assertEqual((self._runs("plan"), self._st("close")["ran"]), (1, 1),
-                         "the next pass runs both stages: the live pair differs from the recorded one")
+        self.assertEqual((self._st("plan")["ran"], self._st("close")["ran"]), (1, 1),
+                         "the next pass runs both stages: the live pair differs from the stamped one")
         self.assertIn("did B", " ".join(self.plan_calls), "the planner judged the ended turn's work")
         turns = jd.parsed_session(SID, [str(path)], NOW)["turns"]
         self.assertTrue(turns[-1]["ended"])
@@ -544,39 +543,32 @@ class TheCut(_Gate):
         path = self._session(SID)
         self._converge()
         self._append(path, uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
-        before = self._stamp("close")
+        before = self._stamp("plan")
         own = jd.begin_pass_frame()
         try:
-            pinned, _cut, _fr = jd._frame_parse_key(SID, [str(path)])   # the closer's gate pin (the planner's parse key too)
+            pinned, _cut, _fr = jd._frame_parse_key(SID, [str(path)])   # the gate's pin (also run_plan's)
             self.assertEqual(pinned[1], "")
             jd._PENDING_CUT_FN = lambda fsid: "a2"                       # a bare rollback arms: u3/a3 abandoned
             jd.run_plan(now=NOW)
             jd.run_close(now=NOW)
         finally:
             jd.end_pass_frame(own)
-        # the closer, on the fork's gate: the pin predates the cut and the parse was served under it
-        self.assertEqual(self._st("close")["ran"], 1, "the transcript grew: the closer ran")
-        self.assertEqual(self._st("close")["bypassed"], 1, "but the served cut differs from the pinned one: no stamp")
-        self.assertEqual(self._stamp("close"), before, "the old stamp stands (it describes the last COMPLETE run)")
-        # the planner, on upstream's gate: its key is the served parse's own (fileset, cut) pair, read from the parse
-        # cache AFTER the parse, so there is no pin-to-parse gap to withhold on; the cut world is what it records
-        self.assertEqual(self._runs("plan"), 1, "the transcript grew: the planner ran")
+        self.assertEqual(self._st("plan")["ran"], 1, "the transcript grew: the planner ran")
+        self.assertEqual(self._st("plan")["bypassed"], 1, "but the served cut differs from the pinned one: no stamp")
+        self.assertEqual(self._stamp("plan"), before, "the old stamp stands (it describes the last COMPLETE run)")
         self.assertNotIn("task C", " ".join(self.plan_calls), "the planner judged the cut world: the tail is not planned")
-        self.assertEqual(self._records("plan"), 1, "nothing to do under the cut: recorded")
-        self.assertEqual(self._stamp("plan")[1][1], "a2", "the record holds the cut the parse was served under")
         self._reset()
         self._pass()                                                    # the cut world, pinned and parsed alike
-        self.assertEqual(self._st("close")["stamped"], 1, "a pin and a parse under the same cut stamp")
-        self.assertEqual(self._stamp("close")[0][0][1][1], "a2", "the stamp holds the cut")
-        self.assertEqual(self._skips("plan"), 1, "the planner's key still matches under the cut")
+        self.assertEqual(self._st("plan")["stamped"], 1, "a pin and a parse under the same cut stamp")
+        self.assertEqual(self._stamp("plan")[0][0][1][1], "a2", "the stamp holds the cut")
         self._reset()
         self._pass()
-        self.assertEqual((self._skips("plan"), self._st("close")["skipped"]), (1, 1))
+        self.assertEqual((self._st("plan")["skipped"], self._st("close")["skipped"]), (1, 1))
         jd._PENDING_CUT_FN = None                                        # the rollback dissolves: no file change
         self._reset()
         self._pass()
-        self.assertEqual((self._runs("plan"), self._st("close")["ran"]), (1, 1),
-                         "the cut clearing re-arms both tiers with no file change (the cut rides both keys)")
+        self.assertEqual((self._st("plan")["ran"], self._st("close")["ran"]), (1, 1),
+                         "the cut clearing re-arms both tiers with no file change")
         self.assertIn("task C", " ".join(self.plan_calls), "and the un-cut tail is judged")
 
     def test_a_rewind_pending_defers_without_a_stamp_and_a_durable_rewind_retires(self):
@@ -585,13 +577,12 @@ class TheCut(_Gate):
         self._append(path, uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
         jd._rewound_away = lambda fsid, p, uuid: "pending"
         self._pass()
-        self.assertEqual((self._runs("plan"), self._records("plan")), (1, 0),
-                         "a pending rewind defers the unit with no write: the completeness bit keeps upstream's record rule "
-                         "from recording")
-        self.assertIsNone(self._stamp("plan"), "no record: the sid stays due")
+        self.assertIsNone(self._stamp("plan") if self._st("plan")["stamped"] else None)
+        self.assertEqual(self._st("plan")["incomplete"], 1, "a pending rewind defers the unit: no stamp")
         self._reset()
         self._pass()
-        self.assertEqual((self._runs("plan"), self._records("plan")), (1, 0), "still due")
+        self.assertEqual(self._st("plan")["ran"], 1, "still due")
+        self.assertEqual(self._st("plan")["incomplete"], 1)
         calls = []
 
         def durable_then_live(fsid, p, uuid):
@@ -600,18 +591,54 @@ class TheCut(_Gate):
         jd._rewound_away = durable_then_live
         self._reset()
         self._pass()
-        self.assertEqual(self._runs("plan"), 1)
+        self.assertEqual(self._st("plan")["stamped"], 1, "a durable rewind retires the unit: a complete run")
         store = jd.load_goals(SID)
         retired = [k for k, v in store["placements"].items() if v is None]
         self.assertTrue(retired, "the unit is retired, not planned")
         self.assertNotIn("task C", " ".join(self.plan_calls))
-        self.assertEqual(self._records("plan"), 0, "a retiring pass wrote: planned once more (upstream's record rule)")
+
+    def test_the_unit_loop_pending_leg_alone_leaves_no_stamp(self):
+        # the unit loop's own pending mark, isolated: the latest segment is trigger-less (a compaction
+        # boundary), so the plan-sync stand-down cannot fire, and the deferred unit is the only reason the
+        # run is incomplete. The rewind-pending case above trips both marks at once.
+        path = self._session(SID, TWO_TURNS + [boundary(T0 + 300, "cb1", "a2")])
+        self._converge()
+        store = jd.load_goals(SID)
+        segs = [sg for t in jd.parsed_session(SID, [str(path)], NOW)["turns"] for sg in jd._segs(t, store)]
+        self.assertIsNone(max(segs, key=lambda sg: sg.get("t") or 0).get("trigger"), "fixture: no trigger on the latest segment")
+        seg2 = next(sg for sg in segs if sg.get("trigger") == "u2")
+        del store["placements"][seg2["id"]]                            # turn 2's unit falls due again
+        jd.save_goals(SID, store)
+        jd._rewound_away = lambda fsid, p, uuid: "pending"
+        n_calls = len(self.plan_calls)
         self._reset()
-        self._pass()
-        self.assertEqual((self._runs("plan"), self._records("plan")), (1, 1), "nothing left to do: recorded")
+        self._pass(tiers=("plan",))
+        st = self._st("plan")
+        self.assertEqual((st["ran"], st["incomplete"], st["stamped"]), (1, 1, 0), "the deferred unit alone voids the stamp")
+        self.assertEqual(len(self.plan_calls), n_calls, "deferred before any model call")
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        self.assertEqual([r["err"] for r in rows if "rewind" in str(r.get("err"))], ["rewind-stand-down-pending"],
+                         "the unit loop's own row, and no other stand-down")
+
+    def test_the_plan_sync_stand_down_alone_leaves_no_stamp(self):
+        # the plan-sync stand-down's mark, isolated: a clear re-arms the planner with no new unit, so the unit
+        # loop checks nothing, and the latest segment's trigger reads as rewound away. A clear is the cleared.jsonl
+        # row plus the journal row append_clear writes before the save (2026-09-09): the gate keys cleared.jsonl,
+        # the planner's own change gate inside _plan_session (_plan_key) keys the journal, and both must move
+        # for the run to reach the sync; the row names a node this store does not hold, so the replay skips it
+        self._session(SID)
+        self._converge()
+        with open(jd.STATE / "cleared.jsonl", "a") as f:
+            f.write(json.dumps({"id": SID3 + ":g1", "op": "clear", "t": NOW}) + "\n")
+        jd.append_clear(SID, SID3 + ":g1", "user", "cleared from the feed", NOW)
+        jd._rewound_away = lambda fsid, p, uuid: "pending"
         self._reset()
-        self._pass()
-        self.assertEqual(self._skips("plan"), 1)
+        self._pass(tiers=("plan",))
+        st = self._st("plan")
+        self.assertEqual((st["ran"], st["incomplete"], st["stamped"]), (1, 1, 0), "the skipped sync alone voids the stamp")
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        self.assertEqual([r["err"] for r in rows if "rewind" in str(r.get("err"))], ["rewind-stand-down"],
+                         "the plan-sync's own row, and no unit-loop row")
 
 
 class ARollbackArmingDuringTheCall(_Gate):
@@ -639,9 +666,8 @@ class ARollbackArmingDuringTheCall(_Gate):
         self._reset()
         self._pass(tiers=("plan",))
         jd.plan_llm = real
-        self.assertEqual((self._runs("plan"), self._records("plan")), (1, 0), "deferred at apply time: the completeness bit "
-                                                                              "keeps upstream's record rule from recording")
-        self.assertIsNone(self._stamp("plan"), "no record: the sid stays due")
+        s = self._st("plan")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "deferred at apply time: no stamp")
         rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
         self.assertEqual([r["err"] for r in rows if "rewind" in str(r.get("err"))], ["rewind-stand-down-pending"],
                          "the apply leg's own row, and no other stand-down")
@@ -649,12 +675,9 @@ class ARollbackArmingDuringTheCall(_Gate):
         jd._PENDING_CUT_FN = None                                       # the rollback dissolves: no file change
         self._reset()
         self._pass(tiers=("plan",))
-        self.assertEqual(self._runs("plan"), 1, "still due: the deferred run left no record")
+        self.assertEqual(self._st("plan")["ran"], 1, "still due: the deferred run left no stamp")
         self.assertIn(seg2["id"], jd.load_goals(SID)["placements"], "and the unit is placed")
-        self.assertEqual(self._records("plan"), 0, "a placing pass is never recorded")
-        self._reset()
-        self._pass(tiers=("plan",))
-        self.assertEqual((self._runs("plan"), self._records("plan")), (1, 1), "nothing left to do: recorded")
+        self.assertEqual(self._st("plan")["stamped"], 1)
 
 
 class ReArms(_Gate):
@@ -663,7 +686,7 @@ class ReArms(_Gate):
     def _rearms(self, plan, close, msg):
         self._reset()
         self._pass()
-        self.assertEqual((self._runs("plan"), self._st("close")["ran"]), (plan, close), msg)
+        self.assertEqual((self._st("plan")["ran"], self._st("close")["ran"]), (plan, close), msg)
 
     def test_transcript_and_states_re_arm_both(self):
         path = self._session(SID)
@@ -716,9 +739,7 @@ class ReArms(_Gate):
             f.write(json.dumps({"head": "u1", "fsid": SID, "t": T0}) + "\n")
         self._rearms(1, 0, "an episodes row")
 
-    def test_the_death_marker_and_spawned_at_re_arm_both_and_a_reg_rewrite_re_arms_the_planner_only(self):
-        # (re-aimed at the fold of 2026-09-09, slice 3, ruling 1; formerly ..._and_a_reg_rewrite_re_arms_nothing: the
-        # closer still reads spawnedAt by value, upstream's planner key holds the reg FILE's identity)
+    def test_the_death_marker_and_spawned_at_re_arm_both_and_a_reg_rewrite_re_arms_nothing(self):
         self._session(SID)
         self._converge()
         jd._write_death_marker(SID, {"t": T0 + 500, "by": "probe", "endedAt": T0 + 500})   # finalized: no epilogue
@@ -730,9 +751,7 @@ class ReArms(_Gate):
         self._rearms(1, 1, "a spawnedAt change (a revival)")
         self._converge()
         reg.write_text(json.dumps({"spawnedAt": T0 + 600, "model": "opus", "pushNote": "x"}))
-        self._rearms(1, 0, "a reg rewrite that keeps spawnedAt (a model pick, a push note): the closer reads the value and "
-                           "re-arms nothing; upstream's planner key holds the reg file's identity (_file_key), a superset "
-                           "read that costs one re-plan per rewrite")
+        self._rearms(0, 0, "a reg rewrite that keeps spawnedAt (a model pick, a push note)")
         reg.write_text(json.dumps({"spawnedAt": T0 + 700, "model": "opus"}))
         self._rearms(1, 1, "the next revival")
 
@@ -756,35 +775,34 @@ class ReArms(_Gate):
         path = self._session(SID)
         self._converge()
         d = self.claude / "tasks" / SID                                  # stem == sid here: the plain lane
-        plan0, close0 = self._pkey(SID, path), jd._stage_sig("close", SID, str(path))
+        plan0, close0 = jd._stage_sig("plan", SID, str(path)), jd._stage_sig("close", SID, str(path))
         d.mkdir()
         (d / "1.json").write_text(json.dumps({"id": "1", "subject": "write the api tests", "status": "pending"}))
-        plan1 = self._pkey(SID, path)
-        self.assertNotEqual(plan1, plan0, "a to-do item created moves the planner's key (_task_store_key)")
+        plan1 = jd._stage_sig("plan", SID, str(path))
+        self.assertNotEqual(plan1, plan0, "a to-do item created moves the planner's signature")
         self.assertEqual(jd._stage_sig("close", SID, str(path)), close0, "the closer does not read the task store")
         self._reset()
         self._pass()
-        self.assertEqual(self._runs("plan"), 1, "the planner runs (and mirrors the open item, which re-arms the closer)")
+        self.assertEqual(self._st("plan")["ran"], 1, "the planner runs (and mirrors the open item, which re-arms the closer)")
         self.assertTrue(any(nd.get("agentTask") for nd in jd.load_goals(SID)["nodes"].values()), "the mirror landed")
         self._converge()
-        plan2 = self._pkey(SID, path)
+        plan2 = jd._stage_sig("plan", SID, str(path))
         (d / "1.json").write_text(json.dumps({"id": "1", "subject": "write the api tests", "status": "completed"}))
         os.utime(d / "1.json", ns=(time.time_ns() + 5_000_000, time.time_ns() + 5_000_000))
-        self.assertNotEqual(self._pkey(SID, path), plan2, "an item flipped in place moves it too")
+        self.assertNotEqual(jd._stage_sig("plan", SID, str(path)), plan2, "an item flipped in place moves it too")
         self._reset()
         self._pass()
-        self.assertEqual(self._runs("plan"), 1)
-        # the leaf rule at the key level, on a fork-lane path whose stem is not the sid: upstream's key reads the task
-        # store of the parse's leafFsid (the transcript the session runs as), never the romp sid's
+        self.assertEqual(self._st("plan")["ran"], 1)
+        # the leaf-stem rule at the signature level, on a fork-lane path whose stem is not the sid
         fork = self.pdir / "cccccccc-1111-2222-3333-444444444444.jsonl"
         fork.write_text(json.dumps(uline(T0 + 900, "after the clear", "u9")) + "\n")
-        s1 = self._pkey(SID, fork)
+        s1 = jd._stage_sig("plan", SID, str(fork))
         (self.claude / "tasks" / fork.stem).mkdir()
         (self.claude / "tasks" / fork.stem / "1.json").write_text(json.dumps({"id": "1", "subject": "x", "status": "pending"}))
-        s2 = self._pkey(SID, fork)
-        self.assertNotEqual(s1, s2, "the LEAF's task store is in the planner's key")
+        s2 = jd._stage_sig("plan", SID, str(fork))
+        self.assertNotEqual(s1, s2, "the LEAF stem's task store is in the planner's signature")
         (d / "2.json").write_text(json.dumps({"id": "2", "subject": "y", "status": "pending"}))
-        self.assertEqual(self._pkey(SID, fork), s2, "the romp sid's dir is not read on a fork lane")
+        self.assertEqual(jd._stage_sig("plan", SID, str(fork)), s2, "the romp sid's dir is not read on a fork lane")
 
     def test_cleared_rows_re_arm_both_and_a_second_sid_stays_stamped(self):
         self._session(SID)
@@ -796,8 +814,8 @@ class ReArms(_Gate):
         self._converge()
         self._append(self.pdir / (SID2 + ".jsonl"), uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
         self._rearms(1, 1, "the second sid's append")
-        self.assertIsNotNone(self._stamp("plan", SID), "the first sid's record stands")
-        self.assertEqual(self._skips("plan"), 1, "the first sid skipped")
+        self.assertIsNotNone(self._stamp("plan", SID))
+        self.assertEqual(self._st("plan")["skipped"], 1, "the first sid skipped")
 
     def test_value_inputs_are_read_by_value_not_by_file_identity(self):
         # the reg's spawnedAt and this sid's stall records are VALUE inputs: a rewrite in place that keeps
@@ -836,6 +854,161 @@ class ReArms(_Gate):
         an.write_text(json.dumps({"enabled": False, "deferred": {top["id"]: {"at": NOW, "why": "the closer has not settled the turn", "sid": SID}}}))
         self._rearms(1, 1, "this sid's stall record (rollup_status reads it to retire a stall warn)")
 
+    def test_the_parse_component_names_the_candidate_files(self):
+        # two lanes with byte-identical content and equal (mtime, size) rows have one fileset key; the
+        # signature carries the candidate paths beside it, so a path swap cannot match a stamp
+        x, y = self.pdir / "x-lane.jsonl", self.pdir / "y-lane.jsonl"
+        x.write_text("\n".join(json.dumps(r) for r in TWO_TURNS) + "\n")
+        shutil.copy2(x, y)
+        self.assertEqual(jd._fileset_key([str(x)]), jd._fileset_key([str(y)]), "fixture: one fileset key for both")
+        jd.end_pass_frame(True)                                         # no frame: the live pair
+        self.assertNotEqual(jd._stage_sig("plan", SID3, str(x)), jd._stage_sig("plan", SID3, str(y)),
+                            "the candidate files are named in the signature")
+
+    @unittest.skipIf(os.geteuid() == 0, "root ignores mode bits")
+    def test_an_unlistable_task_dir_bypasses_the_gate(self):
+        # task_store_fp raises on a dir that exists and cannot be listed (as task_store_plan does), so the
+        # gate runs the stage and stamps nothing; a fingerprint that swallowed the error would read as
+        # "no store" and match the stamp of a run that saw none
+        path = self._session(SID)
+        self._converge()
+        d = self.claude / "tasks" / SID
+        d.mkdir()
+        (d / "1.json").write_text(json.dumps({"id": "1", "subject": "write the api tests", "status": "pending"}))
+        os.chmod(d, 0)
+        try:
+            jd.end_pass_frame(True)
+            self.assertEqual(jd._gate_check("plan", SID, str(path), NOW), (False, None),
+                             "run, and stamp nothing: the signature could not be computed")
+        finally:
+            os.chmod(d, 0o700)
+
+
+class PlannerInnerGate(_Gate):
+    """The planner's two gates (ruling J1 of the 2026-09-10 fold, bound to J2; the module docstring): the evidence
+    gate in run_plan around the change gate inside _plan_session. run_plan never pops _PLANNER_SEEN when the outer
+    gate lets a session through, and _plan_session returns 0 on a key match, so every input the outer signature
+    reads must have a twin in _plan_key or an outer re-arm is swallowed by an inner skip and stamped complete. The
+    differential test enumerates the outer inputs at run time (_sig_inputs' identity and value lists, and the value
+    terms _stage_sig derives) and moves each ALONE from a converged state: the pass must reach the store read
+    (memos.plannerSkip's planned +1, skipped unchanged). A term added to _sig_inputs or _stage_sig later without a
+    mover here fails the enumeration; one added without a _plan_key twin fails its own iteration."""
+
+    def _movers(self, path):
+        """One real-world move per outer input: by the absolute path _sig_inputs names, and by the name of each value
+        term _stage_sig derives (the reg's spawnedAt, _sdk_owned, the stall slice, the task store's fingerprint)."""
+        reg = jd.STATE / "sdk" / (SID + ".json")
+        an = jd.STATE / "auto-nudge.json"
+        tasks = self.claude / "tasks" / SID
+
+        def top():
+            return self._tops()[0]["id"]
+
+        def publish():                                                  # a kernel-side writer: a new store identity
+            store = jd.load_goals(SID)
+            store["nodes"][top()]["text"] = "Renamed by a kernel-side writer"
+            jd.save_goals(SID, store)
+
+        def journal():                                                  # the user's gesture: the journal only
+            jd.append_override(SID, top(), "resolve", NOW + 1)
+
+        def archive():
+            jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {}, "status": {}})
+
+        def marker():                                                   # finalized: no epilogue
+            jd._write_death_marker(SID, {"t": T0 + 500, "by": "probe", "endedAt": T0 + 500})
+
+        def cleared():                                                  # another sid's row: the file's identity alone
+            with open(jd.STATE / "cleared.jsonl", "a") as f:
+                f.write(json.dumps({"id": SID3 + ":g1", "op": "clear", "t": NOW}) + "\n")
+
+        def captions():
+            jd.CAPDIR.mkdir(parents=True, exist_ok=True)
+            with open(jd.CAPDIR / (SID + ".jsonl"), "a") as f:
+                f.write(json.dumps({"id": "seg-x#p", "caption": "Ship the notes-api search"}) + "\n")
+
+        def episodes():
+            jd.EPIDIR.mkdir(parents=True, exist_ok=True)
+            with open(jd.EPIDIR / (SID + ".jsonl"), "a") as f:
+                f.write(json.dumps({"head": "u1", "fsid": SID, "t": T0}) + "\n")
+
+        def reg_appears():                                              # a revival's reg: spawnedAt by value
+            reg.parent.mkdir(parents=True, exist_ok=True)
+            reg.write_text(json.dumps({"spawnedAt": T0 + 600, "model": "sonnet"}))
+
+        def spawned_at_moves():                                         # the next revival
+            reg.parent.mkdir(parents=True, exist_ok=True)
+            reg.write_text(json.dumps({"spawnedAt": T0 + 700, "model": "sonnet"}))
+
+        def reg_vanishes():                                             # _sdk_owned: the reg's existence
+            if not reg.exists():
+                reg_appears()
+                self._converge(tiers=("plan",))
+            reg.unlink()
+
+        def stall_record():                                             # this sid's stall slice, by value
+            an.write_text(json.dumps({"enabled": False, "deferred": {top(): {"at": NOW, "why": "the closer has not settled the turn", "sid": SID}}}))
+
+        def stall_record_changes():
+            an.write_text(json.dumps({"enabled": False, "deferred": {top(): {"at": NOW, "why": "waiting on the closer", "sid": SID}}}))
+
+        def task_item():                                                # the LEAF stem's task store: an item created
+            tasks.mkdir(exist_ok=True)
+            (tasks / "1.json").write_text(json.dumps({"id": "1", "subject": "write the api tests", "status": "pending"}))
+
+        def task_flips():                                               # ...and one flipped in place
+            tasks.mkdir(exist_ok=True)
+            (tasks / "1.json").write_text(json.dumps({"id": "1", "subject": "write the api tests", "status": "completed"}))
+            os.utime(tasks / "1.json", ns=(time.time_ns() + 5_000_000, time.time_ns() + 5_000_000))
+        by_path = {jd.GOALDIR / (SID + ".json"): publish, jd._overrides_dir() / (SID + ".jsonl"): journal,
+                   jd.GOALARCHDIR / (SID + ".json"): archive, jd.GONEDIR / (SID + ".json"): marker,
+                   jd.STATE / "cleared.jsonl": cleared, jd.CAPDIR / (SID + ".jsonl"): captions,
+                   jd.EPIDIR / (SID + ".jsonl"): episodes, reg: reg_appears, an: stall_record,
+                   em.task_store_dir(Path(path).stem): task_item}
+        by_term = {"_reg_spawned_at": spawned_at_moves, "_sdk_owned": reg_vanishes, "_stall_slice": stall_record_changes,
+                   "em.task_store_fp": task_flips}
+        return {os.path.abspath(str(p)): fn for p, fn in by_path.items()}, by_term
+
+    def test_every_outer_input_moved_alone_reaches_the_store_read_and_none_is_swallowed_by_the_inner_gate(self):
+        path = self._session(SID)
+        by_path, by_term = self._movers(path)
+        ident, value = jd._sig_inputs("plan", SID, str(path))
+        inputs = [os.path.abspath(str(p)) for p in ident + value]
+        for p in inputs:
+            self.assertIn(p, by_path, "no mover for the signature input %s: add one here, and a _plan_key term for it" % p)
+        jd.end_pass_frame(True)                                         # no frame: the live pair
+        sig = jd._stage_sig("plan", SID, str(path))
+        self.assertEqual(len(sig[2]), len(by_term),
+                         "the outer signature's value terms are the reg's spawnedAt, _sdk_owned, the stall slice and the task "
+                         "store's fingerprint: a new term needs a mover here and a _plan_key twin")
+        moves = [(p, by_path[p]) for p in inputs] + list(by_term.items())
+        for name, move in moves:
+            self._converge(tiers=("plan",))
+            self.assertIn(SID, jd._PLANNER_SEEN, "%s: premise, the inner gate recorded the sid" % name)
+            self.assertIsNotNone(self._stamp("plan"), "%s: premise, the outer gate stamped it" % name)
+            before = jd.planner_skip_stats()
+            move()
+            self._reset()
+            self._pass(tiers=("plan",))
+            after = jd.planner_skip_stats()
+            self.assertEqual(self._st("plan")["ran"], 1, "%s: the outer gate re-armed on the moved input" % name)
+            self.assertEqual((after["planned"] - before["planned"], after["skipped"] - before["skipped"]), (1, 0),
+                             "%s: the store read was reached; the inner gate has a twin for the input and did not swallow "
+                             "the outer re-arm" % name)
+
+    def test_the_inner_gate_sees_only_the_sessions_the_outer_gate_let_through(self):
+        # memos.plannerSkip after the fold: the placing pass and the recording pass are planned (the outer gate let
+        # both through: no stamp yet, then the store moved under the stamp); the third pass stops at the outer gate,
+        # so the inner gate is never consulted and its skipped counter stays at zero while the tier's own row counts
+        # the skip (_TIER_STATS["plan"], the `plan` row of GET /perf's tiers block)
+        self._session(SID)
+        self._pass(tiers=("plan",)); self._pass(tiers=("plan",)); self._pass(tiers=("plan",))
+        self.assertEqual(jd.planner_skip_stats(), {"planned": 2, "skipped": 0, "recorded": 1},
+                         "the placing pass and the recording pass reached the inner gate; the skip never did")
+        s = self._st("plan")
+        self.assertEqual((s["ran"], s["skipped"], s["stamped"]), (2, 1, 2), "the outer gate ran twice, skipped once, stamped both runs")
+        self.assertEqual(set(jd._PLANNER_SEEN), {SID})
+
 
 class ConcurrentWriters(_Gate):
     def test_a_kernel_side_publish_during_the_stage_is_never_skipped_over(self):
@@ -860,12 +1033,10 @@ class ConcurrentWriters(_Gate):
         self.assertIn(SID + ":side", jd.load_goals(SID)["nodes"], "the racing publish survived the planner's save")
         self._reset()
         self._pass()
-        self.assertEqual(self._runs("plan"), 1, "the planner placed and the store moved under its pass: planned again over "
-                                               "the rebased store (upstream's record rule compares the store's key after "
-                                               "the pass to the one taken before the read)")
+        self.assertEqual(self._st("plan")["ran"], 1, "the identity moved under the stamp: the planner runs again")
         self._reset()
         self._pass()
-        self.assertEqual((self._skips("plan"), self._st("close")["skipped"]), (1, 1))
+        self.assertEqual((self._st("plan")["skipped"], self._st("close")["skipped"]), (1, 1))
 
 
 class Completeness(_Gate):
@@ -882,10 +1053,11 @@ class Completeness(_Gate):
             jd._judge_run_impl = lambda *a, **k: reply
             self._reset()
             self._pass(tiers=("plan",))
-            self.assertEqual(self._runs("plan"), 1)
-            self.assertEqual(self._records("plan"), 0, "reply %r: the call failed and set the completeness bit: nothing recorded" % reply)
-            self.assertIsNone(self._stamp("plan"), "reply %r: upstream's rule drops the record, so the sid stays due" % reply)
+            self.assertEqual(self._st("plan")["ran"], 1)
+            self.assertEqual(self._st("plan")["incomplete"], 1, "reply %r: the call failed, the stage is incomplete" % reply)
+            self.assertEqual(self._st("plan")["stamped"], 0)
             self.assertFalse(jd.load_goals(SID).get("parseFails"), "no parse try burned on a failed call")
+        self.assertIsNotNone(self._stamp("plan"), "the earlier complete run's stamp stands")
 
     def test_a_failed_closer_call_and_a_rejected_reply_keep_the_closer_due(self):
         path = self._session(SID)
@@ -926,19 +1098,92 @@ class Completeness(_Gate):
         self._converge()
         self._append(path, uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
         before = self._stamp("plan")
-        self.assertIsNotNone(before, "premise: the converged session is recorded")
 
         def vanished(files):
             raise OSError("a candidate vanished between the exists() and the stat")
         jd._fileset_key = vanished
         self._pass(tiers=("plan",))
-        self.assertEqual((self._runs("plan"), self._records("plan")), (1, 0),
-                         "no parse key: the parse is uncached, _plan_key answers None, the pass runs and records nothing")
-        self.assertEqual(self._stamp("plan"), before, "an unkeyed pass neither records nor drops the earlier record")
+        self.assertEqual((self._st("plan")["ran"], self._st("plan")["bypassed"]), (1, 1))
+        self.assertEqual(self._stamp("plan"), before)
         self.assertIn("task C", " ".join(self.plan_calls), "the stage ran over the live world")
+
+    def test_the_belt_marks_an_empty_reply_incomplete(self):
+        # _judge_run is a belt over _judge_run_impl: an empty, whitespace or None reply marks the running
+        # stage incomplete; a served reply leaves the bit alone. Every stage site also marks its own failed
+        # call, so no pass-level case isolates the belt; this one drives it directly.
+        for reply in ("", "   ", None, "ok"):
+            jd._judge_run_impl = lambda *a, **k: reply
+            jd._judge_ctx.stage_incomplete = False
+            self.assertEqual(jd._judge_run("sonnet", "sys", "user"), reply)
+            self.assertEqual(jd._judge_ctx.stage_incomplete, reply != "ok", "reply %r" % (reply,))
+
+    def test_gated_resets_the_completeness_bit_per_run(self):
+        # the bit is thread state: a run that left it set on a pool thread must not void the NEXT session's
+        # stamp on the same thread, so _gated clears it before each run
+        path = self._session(SID)
+        self._reset()
+        jd._judge_ctx.stage_incomplete = True                           # left by an earlier session's run
+        out = jd._gated("group", lambda f, p, n: 7, SID, str(path), NOW, ("sig",), settle=False, parse=False)
+        self.assertEqual(out, 7)
+        self.assertEqual(jd._STAGE_STAMP[("group", SID)], (("sig",), None), "stamped: the stale bit was reset")
+        self.assertEqual((self._st("group")["stamped"], self._st("group")["incomplete"]), (1, 0))
+
+    def test_the_planners_failed_call_site_alone_marks_the_run(self):
+        # the work-run's failed-call `continue` marks the run on its own: plan_llm is patched ABOVE the
+        # belt (the belt never sees the call), so the site's mark is the only one in play
+        path = self._session(SID)
+        self._converge()
+        self._append(path, uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
+        jd.plan_llm = lambda text, menu, human=False, **kw: ""
         self._reset()
         self._pass(tiers=("plan",))
-        self.assertEqual((self._runs("plan"), self._skips("plan")), (1, 0), "and is never skipped while it cannot be keyed")
+        st = self._st("plan")
+        self.assertEqual((st["ran"], st["incomplete"], st["stamped"]), (1, 1, 0), "the failed call alone voids the stamp")
+        self.assertFalse(jd.load_goals(SID).get("parseFails"), "no parse try burned on a failed call")
+
+    @unittest.skipIf(os.geteuid() == 0, "root ignores mode bits")
+    def test_a_side_file_stat_that_fails_runs_the_stage_without_a_stamp(self):
+        # _ident treats ABSENCE as None and lets every other OSError propagate: a stat that fails for
+        # another reason (here a permission bit on the marker directory) must not read as "absent", or it
+        # would match the stamp of a run that saw no marker and skip the session
+        path = self._session(SID)
+        jd.GONEDIR.mkdir(parents=True, exist_ok=True)
+        self._converge()
+        os.chmod(jd.GONEDIR, 0)
+        try:
+            jd.end_pass_frame(True)
+            self.assertEqual(jd._gate_check("plan", SID, str(path), NOW), (False, None),
+                             "run, and stamp nothing: a failed stat is not an absent file")
+        finally:
+            os.chmod(jd.GONEDIR, 0o700)
+
+    def test_a_stamping_failure_is_not_a_failed_pass(self):
+        # the stamp is written after the stage's work landed; a failure computing it (the clock input
+        # here) counts the run bypassed, logs one gate-stamp row, and is never a pass-crash: pass_done is
+        # stamped and the planner's placements stand
+        path = self._session(SID)
+        self._converge()
+        self._append(path, uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
+        real = jd._settle_not_before
+
+        def boom(fsid, p, now):
+            raise RuntimeError("the clock input could not be read")
+        jd._settle_not_before = boom
+        jd._PASS_DONE.pop(("plan", SID), None)
+        self._reset()
+        try:
+            self._pass(tiers=("plan",))
+        finally:
+            jd._settle_not_before = real
+        st = self._st("plan")
+        self.assertEqual((st["ran"], st["bypassed"], st["stamped"]), (1, 1, 0))
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        self.assertEqual([r["err"] for r in rows if r.get("err") in ("gate-stamp", "pass-crash")], ["gate-stamp"])
+        self.assertEqual([r["judge"] for r in rows if r.get("err") == "gate-stamp"], ["planner"],
+                         "the row wears the judge's name like every other row (review find, 2026-09-08: it carried "
+                         "the tier key, which no reader of the log joins on)")
+        self.assertIsNotNone(jd.pass_watermark("plan", SID), "the pass over the sid completed")
+        self.assertIn("task C", " ".join(self.plan_calls), "and the stage's work landed")
 
 
 class TheClock(_Gate):
@@ -972,30 +1217,19 @@ class TheClock(_Gate):
         self.assertTrue(store["nodes"][g1["id"]]["nodeComplete"], "premise: the closer filed task A done")
         self.assertTrue(store["nodes"][watch["id"]].get("awaitingWhy"), "premise: the closer stamped the wait")
         self.assertIn(g1["id"], store.get("confirming") or [], "the settle is held: the monitor is awaited")
-        self.assertEqual(self._stamp("close")[1], expiry, "the closer's stamp carries the launch's expiry")
-        held = jd._bg_expiry_key(str(path), now0)
-        self.assertEqual([x for _, x in held], [False], "fixture: one running launch, inside its ceiling")
-        self.assertIn(held, self._stamp("plan"), "the planner's record holds the launch as not yet crossed (_bg_expiry_key: "
-                                                 "upstream keys the clock fact as the boolean it resolves to)")
+        self.assertEqual(self._stamp("plan")[1], expiry, "the planner's stamp carries the launch's expiry")
+        self.assertEqual(self._stamp("close")[1], expiry)
         self._reset()
         self._pass(int(expiry))                                         # at the instant: not yet expired
-        self.assertEqual((self._skips("plan"), self._st("close")["skipped"]), (1, 1),
+        self.assertEqual((self._st("plan")["skipped"], self._st("close")["skipped"]), (1, 1),
                          "skipped at the expiry instant (em._bg_expired reads now > expiry)")
         self._reset()
-        skip, sig = jd._gate_check("close", SID, str(path), int(expiry) + 1)   # the fork gate's clock input, read alone
-        self.assertEqual((skip, self._st("close")["due_clock"]), (False, 1), "past the expiry the closer is due on the clock alone")
-        self._reset()
         self._pass(int(expiry) + 1)
-        self.assertEqual(self._st("close")["ran"], 1, "the closer runs (on its clock, and on the store the planner's release moved)")
-        self.assertEqual((self._runs("plan"), self._skips("plan")), (1, 0),
-                         "past the expiry the planner's term flipped: planned on the crossing alone")
+        self.assertEqual(self._st("plan")["due_clock"], 1, "past the expiry the planner runs on the clock alone")
+        self.assertEqual(self._st("plan")["ran"], 1)
         store = jd.load_goals(SID)
         self.assertEqual(store["status"].get(g1["id"]), "completed", "the expired wait released the settle")
-        self.assertIsNone(self._stamp("close")[1], "no future expiry left: the stamp's not-before is None")
-        self._converge(int(expiry) + 2)                                 # the release wrote: one more pass records
-        crossed = jd._bg_expiry_key(str(path), int(expiry) + 2)
-        self.assertEqual([x for _, x in crossed], [True])
-        self.assertIn(crossed, self._stamp("plan"), "the record holds the crossed launch: the term is stable from here on")
+        self.assertIsNone(self._stamp("plan")[1], "no future expiry left: the stamp's not-before is None")
 
     def test_a_complete_run_at_the_expiry_instant_keeps_the_clock(self):
         # the review's boundary case (2026-09-07): run_triage's now is int(time.time()) and transcript
@@ -1011,19 +1245,31 @@ class TheClock(_Gate):
             f.write(json.dumps({"id": "cccccccc-1111-2222-3333-444444444444:g7", "op": "clear", "t": int(expiry)}) + "\n")
         self._reset()
         self._pass(int(expiry))
-        self.assertEqual((self._runs("plan"), self._st("close")["ran"]), (1, 1), "re-armed: both ran at the instant "
-                         "(cleared.jsonl is a term of the planner's key and of the closer's signature)")
-        self.assertEqual((self._records("plan"), self._st("close")["stamped"]), (1, 1), "complete runs")
+        self.assertEqual(self._st("plan")["ran"], 1, "re-armed: the planner ran at the instant")
+        self.assertEqual(self._st("plan")["stamped"], 1, "a complete run")
         self.assertIn(g1["id"], jd.load_goals(SID).get("confirming") or [], "at the instant the wait still holds")
-        self.assertEqual(self._stamp("close")[1], expiry, "the stamp keeps the expiry that equals now")
-        self.assertIn(jd._bg_expiry_key(str(path), int(expiry)), self._stamp("plan"),
-                      "the record keeps the launch as not crossed at the instant, so the crossing still moves the key")
+        self.assertEqual(self._stamp("plan")[1], expiry, "the stamp keeps the expiry that equals now")
+        self.assertEqual(self._stamp("close")[1], expiry)
         self._reset()
         self._pass(int(expiry) + 1)
-        self.assertEqual(self._st("close")["ran"], 1, "past it: the closer runs (its clock, and the store the planner's release moved)")
-        self.assertEqual((self._runs("plan"), self._skips("plan")), (1, 0), "past it: the planner's expiry term flipped")
+        self.assertEqual((self._st("plan")["ran"], self._st("plan")["due_clock"]), (1, 1), "past it: run on the clock")
         self.assertEqual(jd.load_goals(SID)["status"].get(g1["id"]), "completed", "the released settle completes the top")
-        self.assertIsNone(self._stamp("close")[1])
+        self.assertIsNone(self._stamp("plan")[1])
+
+    def test_the_store_tiers_stamps_carry_no_clock_input(self):
+        # settle=False for the four store tiers: they consult the settle on write paths only, so their stamps
+        # hold no not-before and a background launch's expiry makes none of them due on the clock (the
+        # planner's stamp, on the same fixture, does carry it)
+        path, expiry = self._monitor_fixture()
+        self._converge(int(expiry) - 100)
+        self.assertEqual(self._stamp("plan")[1], expiry, "premise: the planner's stamp carries the expiry")
+        for t in STORE_TIERS:
+            self.assertIsNone(self._stamp(t)[1], "%s: no clock input in the stamp" % t)
+        self._reset()
+        self._pass(int(expiry) + 1, tiers=STORE_TIERS)                 # the planner NOT run: no publish re-arms them
+        self.assertEqual(self._st4("due_clock"), (0, 0, 0, 0), "past the expiry no store tier is due on the clock")
+        self.assertEqual(self._st4("ran"), (0, 0, 0, 0))
+        self.assertEqual(self._st4("skipped"), (1, 1, 1, 1))
 
     def test_the_expiry_helper_and_the_predicate_agree(self):
         self.assertEqual(em._bg_expiry_t({"deadline": 1000.0}), 1120.0)
@@ -1068,7 +1314,9 @@ class DeathDrain(_Gate):
         self.assertEqual(self._st("close")["ran"], 1, "the drain's sid runs through the gate")
         m = json.loads((jd.GONEDIR / (SID + ".json")).read_text())
         self.assertIn("endedAt", m, "the settled dead store finalized its marker")
-        self.assertIsNotNone(self._stamp("close"), "a complete drain run stamps")
+        self.assertEqual((self._st("close")["ran"], self._st("close")["stamped"]), (1, 1),
+                         "a complete drain run stamps (the drain's sids carry a signature)")
+        self.assertIsNotNone(self._stamp("close"))
         self._reset()
         self._pass(later + 1, tiers=("close",))
         self.assertEqual((self._st("close")["ran"], self._st("close")["skipped"]), (0, 0),
@@ -1112,13 +1360,13 @@ class Bounds(_Gate):
         self._converge()
         self.assertEqual(len(jd._STAGE_STAMP), len(FORK_GATED_TIERS) * 2, "one stamp per gated tier per sid")
         self.assertEqual((set(jd._PLANNER_SEEN), set(jd._COURIER_SEEN)), ({SID, SID2}, {SID, SID2}),
-                         "one record per sid in each of upstream's two tables")
+                         "one record per sid in each change-gate table (the planner's inner, the courier's)")
         (jd.NAMES / SID2).unlink()                                      # the session leaves discover
         jd._namefp_memo.clear()
         self._pass(tiers=ALL_TIERS)
         self.assertEqual({k for k in jd._STAGE_STAMP}, {(t, SID) for t in FORK_GATED_TIERS}, "the gone sid's stamps evicted")
         self.assertEqual((set(jd._PLANNER_SEEN), set(jd._COURIER_SEEN)), ({SID}, {SID}),
-                         "and its records: both tables are pruned to the pass's discovered sessions")
+                         "and its records: both change-gate tables are pruned to the pass's discovered sessions")
         jd._rebind_state(self.td)
         self.assertEqual((jd._STAGE_STAMP, jd._PLANNER_SEEN, jd._COURIER_SEEN), ({}, {}, {}), "a new root is a new world")
 
@@ -1129,6 +1377,57 @@ class Bounds(_Gate):
         self._pass()
         self.assertEqual(len(jd._STAGE_STAMP), 1, "a wholesale clear at the cap: one full walk next pass")
 
+    def test_an_unframed_runner_never_stamps(self):
+        # no frame, no stamp: the served pair the frame records is what makes a stamp exact, so a runner
+        # outside a pass frame (romp-judge --plan, a bare run_plan) runs every session and counts it
+        # bypassed; the same runner under a frame stamps
+        self._session(SID)
+        jd.end_pass_frame(True)
+        jd._discover_cache.clear()
+        jd.run_plan(now=NOW)
+        st = self._st("plan")
+        self.assertEqual((st["ran"], st["bypassed"], st["stamped"]), (1, 1, 0))
+        self.assertIsNone(self._stamp("plan"), "no frame: nothing stamped")
+        self._reset()
+        self._pass(tiers=("plan",))
+        self.assertEqual(self._st("plan")["stamped"], 1, "under a frame the same work stamps")
+
+    def test_a_muted_sid_leaves_the_parse_tiers_and_an_unmute_costs_one_full_run(self):
+        # session-flags.json is in no signature on purpose (the inventory above GATED_TIERS): _hidden_from_feed
+        # filters run_plan's, run_close's and run_unblock's lists before any stage runs, so a muted sid is not
+        # listed and the post-pool eviction drops its stamps for those three tiers; the other three runners do
+        # not filter on it and keep skipping it, and so does this fork's index tier (run_index walks discover
+        # unfiltered: captions and archives are not task tracking). An unmute lists the sid again with no stamp to match: one
+        # full run (a load, the walk, a stamp), then the skips resume (review find, 2026-09-08: stated, untested)
+        self._session(SID)
+        self._session(SID2, name="api")
+        self._converge()
+        flags = jd.STATE / "session-flags.json"
+        flags.write_text(json.dumps({SID2: {"hideFromFeed": True}}))     # the timeline's mute checkbox
+        self._reset()
+        self._pass(tiers=ALL_TIERS)
+        self.assertEqual({k for k in jd._STAGE_STAMP if k[1] == SID2},
+                         {(t, SID2) for t in ("group", "consolidate", "distill", "index")},
+                         "the muted sid's planner, closer and unblocker stamps are evicted; the store tiers and the index tier keep theirs")
+        for t in ("plan", "close", "unblock"):
+            self.assertEqual((self._st(t)["ran"], self._st(t)["skipped"]), (0, 1), "%s: the muted sid is not listed" % t)
+        for t in ("group", "consolidate", "distill", "index"):
+            self.assertEqual((self._st(t)["ran"], self._st(t)["skipped"]), (0, 2), "%s: both sids skip" % t)
+        flags.write_text(json.dumps({}))                                  # the unmute
+        self._reset()
+        io0 = dict(self.io)
+        self._pass(tiers=ALL_TIERS)
+        for t in ("plan", "close", "unblock"):
+            self.assertEqual((self._st(t)["ran"], self._st(t)["stamped"], self._st(t)["skipped"]), (1, 1, 1),
+                             "%s: the unmuted sid runs once, in full, and stamps; the other sid skips" % t)
+        for t in ("group", "consolidate", "distill", "index"):
+            self.assertEqual((self._st(t)["ran"], self._st(t)["skipped"]), (0, 2), "%s: nothing changed for either sid" % t)
+        self.assertGreater(self.io["loads"] - io0["loads"], 0, "a full run loads the store")
+        self.assertEqual({k for k in jd._STAGE_STAMP if k[1] == SID2}, {(t, SID2) for t in FORK_GATED_TIERS})
+        self._reset()
+        self._pass(tiers=ALL_TIERS)
+        self.assertTrue(all(self._st(t)["ran"] == 0 for t in FORK_GATED_TIERS), "and the skips resume")
+
 
 class FsCompleteness(_Gate):
     """The loud guard for a missing input: wrap the filesystem for one idle run of each stage over a
@@ -1137,7 +1436,11 @@ class FsCompleteness(_Gate):
     the tier's signature file set plus a fixed allowlist. A stage that starts reading a file the signature
     does not carry fails here."""
 
-    ALLOW_NAMES = {"usage.json", "retry-paused.json", "judge-errors.jsonl", "session-flags.json"}
+    # what a stage may touch beyond its signature: the model-call gate's two files (a skip on either is a ""
+    # call, so the belt marks the run incomplete) and the errors log it writes to. session-flags.json is NOT
+    # here: no stage reads it (the runners filter their lists on it before any stage runs; Bounds has the
+    # muted-sid test), so a stage that started to would fail here (review find, 2026-09-08)
+    ALLOW_NAMES = {"usage.json", "retry-paused.json", "judge-errors.jsonl"}
 
     def _touched(self, fn):
         seen = set()
@@ -1180,9 +1483,17 @@ class FsCompleteness(_Gate):
         self._converge()
 
     def _allowed(self, tier, sid, path):
-        ident, value = jd._sig_inputs(tier, sid, str(path))
+        if tier == "courier":
+            # the courier runs on _courier_scan_key / _COURIER_SEEN alone, never on the evidence gate (ruling J8 of the
+            # 2026-09-10 fold), so its allowed set is the files that key covers, the store trio and the episode log
+            # (its docstring holds the inventory), plus the parse tier's set below; _sig_inputs has no courier branch
+            ident = [jd.GOALDIR / (sid + ".json"), jd._overrides_dir() / (sid + ".jsonl"), jd.GOALARCHDIR / (sid + ".json"),
+                     jd.EPIDIR / (sid + ".jsonl")]
+            value = []
+        else:
+            ident, value = jd._sig_inputs(tier, sid, str(path))
         allowed = {os.path.abspath(str(p)) for p in ident + value}
-        if tier in jd.PARSE_TIERS:
+        if tier in jd.PARSE_TIERS or tier == "courier":
             cands, states, key_files = jd._parse_key_files(sid, [str(path)])
             allowed |= {os.path.abspath(str(p)) for p in key_files + [states, jd.MESSAGES]}
         # the grouper, consolidator and distiller carry NO parse pair, so a transcript read on their idle
@@ -1223,16 +1534,17 @@ class FsCompleteness(_Gate):
                     prep=lambda: self._block(SID, self._tops()[0]["id"], T0 + 150))
 
     def test_the_couriers_idle_reads_are_all_in_its_signature(self):
-        # the courier's idle scan: the pinned parse (the key files, the states file and the ledger the postal
-        # index reads, allowed for every parse tier), the store trio and the episode log, nothing else
+        # the courier's idle scan, on its own change gate (_courier_scan_key; ruling J8 of the 2026-09-10 fold): the
+        # pinned parse (the key files, the states file and the ledger the postal index reads, allowed for every parse
+        # tier), the store trio and the episode log, nothing else; _allowed lists the key's files for this tier
         self._check("courier", jd._courier_scan)
 
     def test_the_index_tiers_idle_reads_are_all_in_its_signature(self):
         # the index tier's idle path over a WARM unit cache (the fixture converged, so every session's cache is
         # current and the captioner's body takes the hit path): the pinned parse's key files, the captions file,
-        # the archive record and the unit cache. The signature carries NO goal store (decision 7 of the round-4
-        # plan), so the store is outside the allowed set and a store read on this path is exactly what this
-        # test must catch
+        # the archive record and the unit cache. The signature carries NO goal store (the index tier's design:
+        # its hit path reads none), so the store is outside the allowed set and a store read on this path is
+        # exactly what this test must catch
         self._check("index", lambda sid, path, now: (jd._index_caption_tasks(sid, path, sid, now),
                                                      jd._index_arch_task(sid)))
         for sid in (SID, SID2):
@@ -1247,22 +1559,26 @@ class FsCompleteness(_Gate):
         self._check("consolidate", jd._consolidate_session)
 
     def test_the_distillers_idle_reads_are_all_in_its_signature(self):
-        # the distiller's idle run, as the review defines it: no untitled mirror top and an empty todo; a
-        # transcript or peer-store read here would be a signature hole
+        # the distiller's idle run, as the design review defines it: no untitled mirror top and an empty
+        # todo; a transcript or peer-store read here would be a signature hole
         self._check("distill", jd._distill_session)
 
 
 class StoreTiers(_Gate):
-    """The four store-only tiers on the gate (P2): two idle passes run once, then skip with no store I/O."""
+    """The four store-only tiers on the gate: two idle passes run once, then skip with no store I/O."""
 
     def test_two_idle_passes_run_once_then_skip_with_no_store_io(self):
         self._session(SID)
         self._pass(tiers=("plan", "close"))                            # the planner mints two tops, the closer sweeps
         self._reset()
+        for t in STORE_TIERS:
+            jd._PASS_DONE.pop((t, SID), None)                           # so the run path's own pass_done shows
         self._pass(tiers=STORE_TIERS)
         self.assertEqual(self._st4("ran"), (1, 1, 1, 1), "first pass: every store tier runs")
         self.assertEqual(self._st4("stamped"), (1, 1, 1, 1), "each ran to completion")
         self.assertEqual(self._st4("skipped"), (0, 0, 0, 0))
+        for t in STORE_TIERS:
+            self.assertIsNotNone(jd.pass_watermark(t, SID), "%s: a completed run stamps pass_done" % t)
         # the grouper and the consolidator each recorded their signature on first sight (groupedSig,
         # consolidatedSig: a store-level write, no relink): those publishes moved the store identity after
         # the unblocker's stamp and their own, and before the distiller's, which keyed on the final identity
@@ -1271,17 +1587,17 @@ class StoreTiers(_Gate):
         self.assertEqual(self._st4("ran"), (1, 1, 1, 0), "the publishes re-armed the tiers stamped before them, once")
         self.assertEqual(self._st4("skipped"), (0, 0, 0, 1))
         self._reset()
-        wm = [jd.pass_watermark(t, SID) for t in STORE_TIERS]
-        io0 = jd.goal_io_stats()
-        time.sleep(0.002)
+        for t in STORE_TIERS:                                           # the earlier passes' watermarks go: the skip
+            self.assertIsNotNone(jd._PASS_DONE.pop((t, SID), None), t)  #  must write its own, not inherit one
+        io0 = dict(self.io)
         self._pass(tiers=STORE_TIERS)
-        io1 = jd.goal_io_stats()
+        io1 = dict(self.io)
         self.assertEqual(self._st4("ran"), (0, 0, 0, 0), "the third pass skips every store tier")
         self.assertEqual(self._st4("skipped"), (1, 1, 1, 1))
         self.assertEqual((io1["loads"] - io0["loads"], io1["saves"] - io0["saves"]), (0, 0),
                          "a skipped session costs no store load and no save")
-        for t, w in zip(STORE_TIERS, wm):
-            self.assertGreater(jd.pass_watermark(t, SID), w, "%s: a skip stamps pass_done" % t)
+        for t in STORE_TIERS:
+            self.assertIsNotNone(jd.pass_watermark(t, SID), "%s: a skip stamps pass_done" % t)
         self.assertEqual(self.unblock_calls, [], "no blocked goal, no unblocker call")
 
     def test_counters_add_up_over_the_store_tiers(self):
@@ -1294,6 +1610,41 @@ class StoreTiers(_Gate):
             s = stats[t]
             self.assertEqual(s["ran"], s["stamped"] + s["bypassed"] + s["incomplete"], t)
         self.assertGreaterEqual(stats["stamps"], 6, "one stamp per tier for the sid")
+
+    def test_an_unframed_pass_stamps_the_store_only_tiers_and_bypasses_the_parse_tiers(self):
+        # the rule split (_gated): a parse tier's stamp needs the frame's served pair, so without a frame it
+        # runs and bypasses; a store-only tier has no frame-pinned component (the gate stats every input
+        # itself), so it stamps with or without one, and its next unframed run skips
+        self._session(SID)
+        self._converge()
+        store = jd.load_goals(SID)
+        top = self._tops()[0]
+        store["nodes"][top["id"]]["text"] = "Renamed by a kernel-side writer"
+        jd.save_goals(SID, store)                                       # re-arms all six tiers by identity
+        runners = {"plan": jd.run_plan, "close": jd.run_close, "unblock": jd.run_unblock, "group": jd.run_group,
+                   "consolidate": jd.run_consolidate, "distill": jd.run_distill}
+        jd.end_pass_frame(True)
+        self._reset()
+        jd._discover_cache.clear()
+        for t in GATED_TRIAGE_TIERS:
+            runners[t](now=NOW)                                         # no begin_pass_frame anywhere
+        for t in ("plan", "close", "unblock"):
+            st = self._st(t)
+            self.assertEqual((st["ran"], st["bypassed"], st["stamped"]), (1, 1, 0), "%s: no frame, no stamp" % t)
+        for t in ("group", "consolidate", "distill"):
+            st = self._st(t)
+            self.assertEqual((st["ran"], st["bypassed"], st["stamped"]), (1, 0, 1), "%s: stamps without a frame" % t)
+        for _ in range(3):                                              # the store tiers' own writes re-arm once or twice
+            self._reset()
+            jd._discover_cache.clear()
+            for t in ("group", "consolidate", "distill"):
+                runners[t](now=NOW)
+            if all(self._st(t)["ran"] == 0 for t in ("group", "consolidate", "distill")):
+                break
+            for t in ("group", "consolidate", "distill"):
+                self.assertEqual(self._st(t)["bypassed"], 0, "%s: an unframed run that completes stamps" % t)
+        for t in ("group", "consolidate", "distill"):
+            self.assertEqual((self._st(t)["ran"], self._st(t)["skipped"]), (0, 1), "%s: the unframed stamp is honoured" % t)
 
 
 class StoreReArms(_Gate):
@@ -1381,9 +1732,9 @@ class StoreOwnWrites(_Gate):
         self.assertEqual((self._st("unblock")["ran"], self._st("unblock")["skipped"]), (0, 1))
 
     def test_a_titling_re_arms_the_distiller_once_and_the_third_pass_skips(self):
-        # the review's cross-tier convergence probe: _title_mirror_tops titles a mirror top and the caller
-        # saves, so the distiller's own publish re-arms it once; the follow-on run reads no transcript,
-        # writes nothing and stamps; the third pass skips
+        # the design review's cross-tier convergence probe: _title_mirror_tops titles a mirror top and the
+        # caller saves, so the distiller's own publish re-arms it once; the follow-on run reads no
+        # transcript, writes nothing and stamps; the third pass skips
         self._session(SID)
         self._converge()
         nid = self._mirror_top(SID, "add tests+docs for the search endpoint")
@@ -1398,10 +1749,10 @@ class StoreOwnWrites(_Gate):
         self.assertTrue(nd.get("titledT"))
         self.assertEqual((self._st("distill")["ran"], self._st("distill")["stamped"]), (1, 1), "the titling run completed")
         self._reset()
-        io0 = jd.goal_io_stats()
+        io0 = dict(self.io)
         parses.clear()
         self._pass(tiers=("distill",))
-        io1 = jd.goal_io_stats()
+        io1 = dict(self.io)
         self.assertEqual((self._st("distill")["ran"], self._st("distill")["stamped"]), (1, 1),
                          "the own publish re-armed it once; the follow-on run stamps")
         self.assertEqual(parses, [], "no transcript read on the idle path")
@@ -1431,12 +1782,20 @@ class StoreCompleteness(_Gate):
         for reply in ("", "   "):
             jd._judge_run_impl = lambda *a, **k: reply
             self._reset()
-            io0 = jd.goal_io_stats()
+            io0 = dict(self.io)
             self._pass(tiers=("unblock",))
             s = self._st("unblock")
             self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "reply %r" % reply)
-            self.assertEqual(jd.goal_io_stats()["saves"] - io0["saves"], 0, "no save")
+            self.assertEqual(self.io["saves"] - io0["saves"], 0, "no save")
             self.assertFalse(jd.load_goals(SID).get("unblockFails"), "no strike burned on a failed call")
+        jd.unblock_llm = lambda blocks, since, completed="": ""         # the helper itself returned nothing, above
+        self._reset()                                                    # the belt: the stage's own mark decides
+        io0 = dict(self.io)
+        self._pass(tiers=("unblock",))
+        s = self._st("unblock")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "an empty helper reply")
+        self.assertEqual(self.io["saves"] - io0["saves"], 0, "no save")
+        jd.unblock_llm = self._saved_store[0]
         jd._judge_run_impl = lambda *a, **k: LIFT_ONE
         self._reset()
         self._pass(tiers=("unblock",))
@@ -1453,12 +1812,20 @@ class StoreCompleteness(_Gate):
         for reply in ("", "   "):
             jd._judge_run_impl = lambda *a, **k: reply
             self._reset()
-            io0 = jd.goal_io_stats()
+            io0 = dict(self.io)
             self._pass(tiers=("group",))
             s = self._st("group")
             self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "grouper, reply %r" % reply)
-            self.assertEqual(jd.goal_io_stats()["saves"] - io0["saves"], 0, "no save")
+            self.assertEqual(self.io["saves"] - io0["saves"], 0, "no save")
             self.assertFalse(jd.load_goals(SID).get("groupFails"), "no strike")
+        jd.group_llm = lambda menu, judge="grouper": ""                  # the helper itself returned nothing, above
+        self._reset()                                                    # the belt: the stage's own mark decides
+        io0 = dict(self.io)
+        self._pass(tiers=("group",))
+        s = self._st("group")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "grouper, an empty helper reply")
+        self.assertEqual(self.io["saves"] - io0["saves"], 0, "no save")
+        jd.group_llm = self._saved[3]
         jd._judge_run_impl = lambda *a, **k: '{"ops":[]}'
         self._reset()
         self._pass(tiers=("group",))
@@ -1477,12 +1844,20 @@ class StoreCompleteness(_Gate):
         for reply in ("", "   "):
             jd._judge_run_impl = lambda *a, **k: reply
             self._reset()
-            io0 = jd.goal_io_stats()
+            io0 = dict(self.io)
             self._pass(tiers=("consolidate",))
             s = self._st("consolidate")
             self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "consolidator, reply %r" % reply)
-            self.assertEqual(jd.goal_io_stats()["saves"] - io0["saves"], 0, "no save")
+            self.assertEqual(self.io["saves"] - io0["saves"], 0, "no save")
             self.assertFalse(jd.load_goals(SID).get("consolidateFails"), "no strike")
+        jd.group_llm = lambda menu, judge="grouper": ""
+        self._reset()
+        io0 = dict(self.io)
+        self._pass(tiers=("consolidate",))
+        s = self._st("consolidate")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "consolidator, an empty helper reply")
+        self.assertEqual(self.io["saves"] - io0["saves"], 0, "no save")
+        jd.group_llm = self._saved[3]
         jd._judge_run_impl = lambda *a, **k: '{"ops":[]}'
         self._reset()
         self._pass(tiers=("consolidate",))
@@ -1499,12 +1874,19 @@ class StoreCompleteness(_Gate):
             return ""
         jd._judge_run_impl = paused
         self._reset()
-        io0 = jd.goal_io_stats()
+        io0 = dict(self.io)
         self._pass(tiers=("distill",))
         s = self._st("distill")
         self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "a pause-skipped titling leaves the sid due")
-        self.assertEqual(jd.goal_io_stats()["saves"] - io0["saves"], 0)
+        self.assertEqual(self.io["saves"] - io0["saves"], 0)
         self.assertFalse(jd.load_goals(SID)["nodes"][nid].get("titledT"), "not stamped: the next pass retries")
+        jd.mirror_title_llm = paused                                     # the helper itself pause-skipped, above the
+        self._reset()                                                    # belt: _title_mirror_tops' own mark decides
+        self._pass(tiers=("distill",))
+        s = self._st("distill")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "a pause-skip above the belt")
+        self.assertFalse(jd.load_goals(SID)["nodes"][nid].get("titledT"))
+        jd.mirror_title_llm = self._saved_store[4]
 
         def served(*a, **k):
             jd._judge_ctx.paused = False
@@ -1514,6 +1896,66 @@ class StoreCompleteness(_Gate):
         self._pass(tiers=("distill",))
         self.assertEqual(self._st("distill")["stamped"], 1)
         self.assertEqual(jd.load_goals(SID)["nodes"][nid].get("text"), "Write the api tests")
+
+    def test_a_paused_stall_brief_or_brief_retry_call_keeps_the_distiller_due(self):
+        # the distiller's three other paused continues, each reached with the helper patched ABOVE the belt so
+        # the stage's own mark is the one that decides: the staller (a stall record for this sid), the briefer
+        # (a blocked top owed one decision) and the briefer's shortfall retry (two blocked nodes under one top:
+        # the draft covers one, the corrective retry is pause-skipped)
+        self._session(SID)
+        self._converge()
+        top = self._tops()[0]["id"]
+
+        def paused(*a, **k):
+            jd._judge_ctx.paused = True
+            return ""
+        an = jd.STATE / "auto-nudge.json"
+        an.write_text(json.dumps({"enabled": False, "deferred": {top: {"at": NOW, "why": "the closer has not settled the turn", "sid": SID}}}))
+        jd.stall_llm = paused
+        self._reset()
+        self._pass(tiers=("distill",))
+        s = self._st("distill")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "the staller's paused continue marks the run")
+        nd = jd.load_goals(SID)["nodes"][top]
+        self.assertIsNone(nd.get("stallSummary"))
+        self.assertFalse(nd.get("stallFails"), "a pause-skip is not a strike")
+        jd._judge_ctx.paused = False
+        an.write_text(json.dumps({"enabled": False, "deferred": {}}))    # the stall ends; the top is blocked instead
+        self._block(SID, top, T0 + 150)
+        jd.brief_llm = paused
+        self._reset()
+        self._pass(tiers=("distill",))
+        s = self._st("distill")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "the briefer's paused continue marks the run")
+        nd = jd.load_goals(SID)["nodes"][top]
+        self.assertIsNone(nd.get("blockSummary"))
+        self.assertFalse(nd.get("briefFails"), "a pause-skip is not a strike")
+        jd._judge_ctx.paused = False
+        store = jd.load_goals(SID)                                       # a second owed decision under the same top
+        kid = SID + ":g91"
+        store["nodes"][kid] = {"id": kid, "text": "Choose the api's auth scheme", "parentId": top, "why": "x",
+                               "t": T0 + 300, "mt": T0 + 300, "log": [], "trail": [], "nodeComplete": False, "cleared": False}
+        jd.save_goals(SID, store)
+        self._block(SID, kid, T0 + 160, why="Which auth scheme should the api use?")
+        shortfalls = []
+
+        def draft_then_paused_retry(text, work, owed, **kw):
+            shortfalls.append(kw.get("shortfall"))
+            if kw.get("shortfall") is not None:                          # the corrective retry: pause-skipped
+                jd._judge_ctx.paused = True
+                return ""
+            return "Pick the port the api binds."                        # one paragraph for two owed decisions
+        jd.brief_llm = draft_then_paused_retry
+        self._reset()
+        self._pass(tiers=("distill",))
+        s = self._st("distill")
+        self.assertEqual(shortfalls, [None, (1, 2)], "the draft, then the retry naming the shortfall")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "the retry's paused continue marks the run")
+        self.assertIsNone(jd.load_goals(SID)["nodes"][top].get("blockSummary"), "the brief stays owed")
+        jd._judge_ctx.paused = False
+        jd.brief_llm = lambda text, work, owed, **kw: "Pick the port the api binds.\n\nUse bearer tokens."
+        self._converge(tiers=("distill",))
+        self.assertTrue(jd.load_goals(SID)["nodes"][top].get("blockSummary"), "unpaused, the brief lands and the tier settles")
 
     def test_a_paused_distill_call_keeps_the_sid_due_and_a_failed_one_writes_the_strike(self):
         self._session(SID)
@@ -1548,65 +1990,76 @@ class StoreCompleteness(_Gate):
         self.assertEqual(jd.load_goals(SID)["nodes"][top["id"]].get("summary"), "Shipped the search endpoint.")
         self._converge(tiers=("distill",))
 
-    def test_a_store_read_fault_never_stamps(self):
-        # Upstream #1019 (steer 1 of the 2026-09-08 fold) replaced the fork's fallback store: a goals file that
-        # exists and cannot be READ raises out of load_goals, so every triage tier's run ends there. The pool
-        # tiers raise through _gated, which counts the run incomplete, and their runner files the pass-crash
-        # row (the planner, on upstream's gate since the fold of 2026-09-09, raises out of _plan_session to the
-        # same row with nothing recorded); the courier's scan catches its own load, marks the run and files the
-        # same row with its "store" note. No tier writes (the file is byte-identical), no tier stamps or
-        # records (the sid stays due), and the
-        # boundary's store-unreadable row is not a triage pass's (load_goals_or_fault is the kernel's and the
-        # index tier's miss path; the index skips here on its hit path). Readable again with nothing on disk
-        # moved, every tier runs to completion and stamps. A read fault never moves the file, so the store is
-        # touched once to re-arm the tiers; bytes that do not parse are the next test's case.
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_a_store_that_does_not_read_never_stamps(self):
+        # a goals file that exists and cannot be read RAISES out of load_goals (never an empty fallback): every
+        # tier dies at its load, _gated counts the run incomplete, the runner files its pass-crash row and
+        # nothing is written, so the sid stays due until the file reads. Nothing on disk moves when a
+        # permission bit or a descriptor failure clears, so a stamp here would skip the session for good.
+        # This fork's two other tiers, in the same pass: the courier's scan (on its own change gate) catches its
+        # own load, marks the run and files the same pass-crash row with its "store" note, recording nothing; the
+        # index tier's signature carries no store, so it skips on its hit path (IndexGate holds its miss path).
+        # The boundary's store-unreadable row is the kernel's and the index miss path's (load_goals_or_fault),
+        # never a triage pass's, and a read fault is never mistaken for bytes that do not parse (the next test)
         self._session(SID)
         self._converge()
         gp = jd.GOALDIR / (SID + ".json")
         good = gp.read_bytes()
-        st = gp.stat()
-        os.utime(gp, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))   # re-arm: every triage signature carries the store
-        with _store_read_fault(gp):
+        os.chmod(gp, 0)
+        try:
+            os.utime(gp, ns=(os.stat(gp).st_atime_ns, os.stat(gp).st_mtime_ns + 1_000_000_000))   # re-arm: chmod moves ctime only
             for i in (1, 2):
                 self._reset()
                 self._pass(tiers=ALL_TIERS)
-                for t in TRIAGE_TIERS:                                   # the index tier's signature carries no store:
-                    if t in UPSTREAM_SKIP_TIERS:                         #  it skips (IndexGate holds its miss path)
-                        self.assertEqual((self._runs(t), self._records(t)), (1, 0),
-                                         "%s: a store that does not read ends the pass with nothing recorded, so the sid stays due" % t)
-                        continue
+                for t in GATED_TRIAGE_TIERS:
                     s = self._st(t)
                     self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
-                                     "%s: a store that does not read ends the run incomplete, so the sid stays due" % t)
+                                     "%s: a load that raises counts the run incomplete, so the sid stays due" % t)
+                self.assertEqual((self._runs("courier"), self._records("courier")), (1, 0),
+                                 "courier: a store that does not read ends the scan with nothing recorded, so the sid stays due")
                 self.assertEqual(self._st("index")["skipped"], 1, "the index reads no store on its hit path: it skips")
                 crash = self._rows("pass-crash")
-                self.assertEqual(len(crash), 7 * i, "one pass-crash row per triage tier per pass")
-                self.assertEqual(sorted(r["judge"] for r in crash[-7:]), sorted(TRIAGE_JUDGES))
+                self.assertEqual(len(crash), len(TRIAGE_TIERS) * i, "one pass-crash row per triage tier per pass, as for any raised run")
+                self.assertEqual(sorted(r["judge"] for r in crash[-len(TRIAGE_TIERS):]), sorted(TRIAGE_JUDGES))
                 self.assertTrue(all(r["fsid"] == SID and "Permission denied" in r["note"] for r in crash),
                                 "every row names the session and the fault")
                 self.assertTrue(all(r["note"].startswith("store: ") for r in crash if r["judge"] == "courier"),
                                 "the courier's scan files the store note every pass wrapper uses")
+        finally:
+            os.chmod(gp, 0o644)
         self.assertEqual(gp.read_bytes(), good, "no tier wrote")
         self.assertEqual(len(self._rows("store-unreadable")), 0, "the boundary row is not a triage pass's to file")
         self.assertEqual(len(self._rows("store-quarantined")), 0, "a read fault is never mistaken for bytes that do not parse")
-        self._reset()                                                    # the fault lifted: nothing on disk moved
+        self._reset()
         self._pass(tiers=ALL_TIERS)
-        self.assertEqual(tuple(self._records(t) for t in TRIAGE_TIERS), (1,) * len(TRIAGE_TIERS),
-                         "readable again: every tier runs to completion and stamps (the planner and the courier record)")
-        self.assertEqual(len(self._rows("pass-crash")), 14, "no row for a pass that read")
+        self.assertEqual(tuple(self._st(t)["stamped"] for t in GATED_TRIAGE_TIERS), (1,) * len(GATED_TRIAGE_TIERS),
+                         "readable again: every tier runs to completion and stamps")
+        self.assertEqual(self._records("courier"), 1, "and the courier's scan records")
+        self.assertEqual(len(self._rows("pass-crash")), 2 * len(TRIAGE_TIERS), "no row for a pass that read")
 
-    def test_a_store_that_does_not_parse_is_quarantined_once_and_every_tier_stamps_on_the_fresh_store(self):
-        # Bytes that do not parse are no longer a stand-down (upstream #1019, steer 1 of the 2026-09-08 fold;
-        # the fork's fallback store held every tier back until the file read): load_goals moves the file aside
-        # (one sidecar, one store-quarantined row, one stderr line) and answers the fresh store, every tier runs
-        # to completion on it, and the planner re-mints and republishes, so the fixture converges as a fresh
-        # session does. Bounded: the path reads as absent after the move, so the quarantine fires once, never
-        # once per tier or per pass; no tier crashes and the boundary row is never filed.
+    def test_a_store_that_does_not_parse_is_moved_aside_and_the_fresh_store_is_judged(self):
+        # bytes that do not parse are quarantined aside by load_goals (<file>.corrupt-<stamp>, one
+        # store-quarantined row) and the fresh store is then what the path holds, so the tiers run to
+        # completion over it and stamp: no run is judged from a view the files contradict, and no tier crashes
         self._session(SID)
         self._converge()
         gp = jd.GOALDIR / (SID + ".json")
-        gp.write_text("{ not the store")                                 # exists, and is not a store: re-arms every tier
-        with contextlib.redirect_stderr(io.StringIO()):
+        gp.write_text("{ not the store")
+        self._reset()
+        self._pass(tiers=STORE_TIERS)
+        self.assertEqual(self._st4("ran"), (1, 1, 1, 1))
+        self.assertEqual(self._st4("incomplete"), (0, 0, 0, 0), "the fresh store is the files' content: no mark")
+        aside = sorted(jd.GOALDIR.glob(SID + ".json.corrupt-*"))
+        self.assertEqual(len(aside), 1, "the bad bytes were moved aside once")
+        self.assertEqual(aside[0].read_text(), "{ not the store")
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        self.assertEqual(sum(r.get("err") == "store-quarantined" for r in rows), 1)
+        self.assertEqual(sum(r.get("err") == "pass-crash" for r in rows), 0, "no tier crashed")
+        self._converge(tiers=STORE_TIERS)                                # and the fresh store converges like any other
+        # this fork, over every tier: the planner re-mints and republishes, so the fixture converges as a fresh session
+        # does; the quarantine fired once (the path reads as absent after the move), no tier stood down or crashed, and
+        # every tier holds a stamp (the courier, on its change gate, a record) at the end
+        with contextlib.redirect_stderr(io.StringIO()):                # load_goals' one stderr line per quarantine
             self._converge(tiers=ALL_TIERS)
         self.assertEqual(len(list(jd.GOALDIR.glob(SID + ".json.corrupt-*"))), 1, "the evidence is preserved aside, once")
         rows = self._rows("store-quarantined")
@@ -1676,6 +2129,23 @@ class StoreCompleteness(_Gate):
         s = self._st("distill")
         self.assertEqual((s["ran"], s["stamped"]), (1, 1), "readable again, nothing on disk moved: the run happens and stamps")
         self.assertTrue(self._focus().get("blockSummary"), "the parked session's brief landed")
+        self._states_row(SID, T0 + 400, "picker")                        # a new picker run re-arms the distiller
+        os.chmod(sp, 0)
+        self._reset()
+        self._pass(tiers=("distill",))
+        self.assertEqual(len(self._rows("states-unreadable")), 2, "a second episode opens")
+        sp.unlink()                                                      # removed while the episode is open
+        self._reset()
+        self._pass(tiers=("distill",))
+        self.assertEqual(self._st("distill")["stamped"], 1, "no states file: absent is a real state, the run completes and stamps")
+        self._states_row(SID, T0 + 500, "picker")
+        os.chmod(sp, 0)
+        try:
+            self._reset()
+            self._pass(tiers=("distill",))
+            self.assertEqual(len(self._rows("states-unreadable")), 3, "recreated unreadable: absence ended the episode, a third row")
+        finally:
+            os.chmod(sp, 0o644)
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
     def test_an_unreadable_cleared_file_never_stamps(self):
@@ -1697,6 +2167,25 @@ class StoreCompleteness(_Gate):
         self._reset()
         self._pass(tiers=("group",))
         self.assertEqual((self._st("group")["ran"], self._st("group")["stamped"]), (1, 1), "readable again: the run stamps")
+        with open(cp, "a") as f:                                         # another row re-arms the grouper
+            f.write(json.dumps({"id": SID2 + ":g2", "op": "clear", "t": NOW + 1}) + "\n")
+        os.chmod(cp, 0)
+        self._reset()
+        self._pass(tiers=("group",))
+        self.assertEqual(len(self._rows("cleared-unreadable")), 2, "a second episode opens")
+        cp.unlink()                                                      # removed while the episode is open
+        self._reset()
+        self._pass(tiers=("group",))
+        self.assertEqual(self._st("group")["stamped"], 1, "no cleared.jsonl: absent is a real state, the run completes and stamps")
+        with open(cp, "a") as f:
+            f.write(json.dumps({"id": SID2 + ":g3", "op": "clear", "t": NOW + 2}) + "\n")
+        os.chmod(cp, 0)
+        try:
+            self._reset()
+            self._pass(tiers=("group",))
+            self.assertEqual(len(self._rows("cleared-unreadable")), 3, "recreated unreadable: absence ended the episode, a third row")
+        finally:
+            os.chmod(cp, 0o644)
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
     def test_an_unreadable_stall_file_never_stamps(self):
@@ -1733,17 +2222,147 @@ class StoreCompleteness(_Gate):
         self._reset()
         self._pass(tiers=("distill",))
         self.assertEqual((self._st("distill")["ran"], self._st("distill")["skipped"]), (0, 1), "the stamp survived the episode")
+        an.write_text("{ not a document")              # a third episode opens ...
+        self._reset()
+        self._pass(tiers=("distill",))
+        self.assertEqual(len(self._rows("stall-unreadable")), 3)
+        an.unlink()                                    # ... and the file is removed while it is open: absent is a real state
+        self._reset()
+        self._pass(tiers=("distill",))
+        self.assertEqual(self._st("distill")["stamped"], 1, "no stall file: an empty slice, the run completes and stamps")
+        an.write_text("{ not a document")              # recreated unparseable: absence ended the episode
+        self._reset()
+        self._pass(tiers=("distill",))
+        self.assertEqual(len(self._rows("stall-unreadable")), 4, "a fourth row")
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_a_stall_read_failing_after_a_good_signature_read_marks_the_run(self):
+        # the other half of the strict rule: the signature's read succeeded (the file was readable at gate
+        # time), so the run carries a signature; the stage's own, non-strict stalled_facts read then fails
+        # (the mode flips between the two reads, here under the mirror-top titling that precedes it). That
+        # read marks the run incomplete on its own, so no stamp; a _read_failed that fired only under
+        # strict would let the run stamp over a file it never saw
+        self._session(SID)
+        self._converge()
+        an = jd.STATE / "auto-nudge.json"
+        an.write_text(json.dumps({"enabled": False, "deferred": {}}))  # readable when the gate reads it
+        self._mirror_top(SID, "add tests+docs for the search endpoint")   # titled BEFORE the stage's stall read
+
+        def title_then_flip(subject, frame=None, user_ask=None):
+            os.chmod(an, 0)                                             # the mode flips between the two reads
+            return "Write the api tests"
+        jd.mirror_title_llm = title_then_flip
+        try:
+            self._reset()
+            self._pass(tiers=("distill",))
+            s = self._st("distill")
+            self.assertEqual((s["ran"], s["bypassed"], s["incomplete"], s["stamped"]), (1, 0, 1, 0),
+                             "a signature was computed, and the stage's own failed read voided the stamp")
+            self.assertEqual(len(self._rows("stall-unreadable")), 1, "one loud row")
+        finally:
+            os.chmod(an, 0o644)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_a_rebind_starts_the_failure_episodes_afresh(self):
+        # _rebind_state clears the per-path failure episodes with the rest of the per-root state: the same
+        # path string after a rebind is a new episode and logs again
+        self._session(SID)
+        self._converge()
+        self._states_row(SID, T0 + 300, "picker")
+        sp = jd.STATESDIR / (SID + ".jsonl")
+        os.chmod(sp, 0)
+        try:
+            self._reset()
+            self._pass(tiers=("distill",))
+            self.assertEqual(len(self._rows("states-unreadable")), 1)
+            jd._rebind_state(self.td)                                   # the SAME root: the path string is unchanged
+            self._reset()
+            self._pass(tiers=("distill",))
+            self.assertEqual(len(self._rows("states-unreadable")), 2, "the rebind ended the episode: a new row")
+        finally:
+            os.chmod(sp, 0o644)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_a_cleared_file_vanishing_between_the_stat_and_the_read_ends_the_episode(self):
+        # the race the stat-before-read order admits: the gate stat'd the file and the stage's read finds it
+        # gone. Absent is a real state, so an open episode ends there (as an absent stat ends it), and a file
+        # recreated unreadable logs a new row; a scan failure read as unreadable would keep the episode open
+        # and swallow that row. Fault-injected at the scan seam, since the window is a race
+        self._session(SID)
+        self._converge()
+        cp = jd.STATE / "cleared.jsonl"
+        with open(cp, "a") as f:
+            f.write(json.dumps({"id": SID2 + ":g1", "op": "clear", "t": NOW}) + "\n")
+        os.chmod(cp, 0)
+        self._reset()
+        self._pass(tiers=("group",))
+        self.assertEqual(len(self._rows("cleared-unreadable")), 1, "premise: an episode is open")
+        os.chmod(cp, 0o644)
+        real = jd._view_cleared_scan
+
+        def vanish_then_scan(path_s):
+            os.unlink(path_s)                                           # gone between the stat and the read
+            return real(path_s)                                         # FileNotFoundError, as the read of a vanished file
+        jd._view_cleared_scan = vanish_then_scan
+        try:
+            self._reset()
+            self._pass(tiers=("group",))
+        finally:
+            jd._view_cleared_scan = real
+        self.assertEqual(len(self._rows("cleared-unreadable")), 1, "a vanished file is not a failed read")
+        with open(cp, "a") as f:
+            f.write(json.dumps({"id": SID2 + ":g2", "op": "clear", "t": NOW + 1}) + "\n")
+        os.chmod(cp, 0)
+        try:
+            self._reset()
+            self._pass(tiers=("group",))
+            self.assertEqual(len(self._rows("cleared-unreadable")), 2, "recreated unreadable: the vanish ended the episode")
+        finally:
+            os.chmod(cp, 0o644)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_a_states_file_vanishing_between_the_stat_and_the_read_ends_the_episode(self):
+        # the states twin of the case above, at _live_prompt_since's scan seam
+        self._session(SID)
+        self._converge()
+        self._states_row(SID, T0 + 300, "picker")
+        sp = jd.STATESDIR / (SID + ".jsonl")
+        os.chmod(sp, 0)
+        self._reset()
+        self._pass(tiers=("distill",))
+        self.assertEqual(len(self._rows("states-unreadable")), 1, "premise: an episode is open")
+        os.chmod(sp, 0o644)
+        real = jd._live_prompt_since_scan
+
+        def vanish_then_scan(path_s):
+            os.unlink(path_s)
+            return real(path_s)
+        jd._live_prompt_since_scan = vanish_then_scan
+        try:
+            self._reset()
+            self._pass(tiers=("distill",))
+        finally:
+            jd._live_prompt_since_scan = real
+        self.assertEqual(len(self._rows("states-unreadable")), 1, "a vanished file is not a failed read")
+        self._states_row(SID, T0 + 400, "picker")
+        os.chmod(sp, 0)
+        try:
+            self._reset()
+            self._pass(tiers=("distill",))
+            self.assertEqual(len(self._rows("states-unreadable")), 2, "recreated unreadable: the vanish ended the episode")
+        finally:
+            os.chmod(sp, 0o644)
 
     # ── the stage-site marks, one test per site, each forcing the early return past the _judge_run belt ──
     def test_the_unblockers_failed_call_site_marks_the_run(self):
         self._blocked_with_a_new_turn()
         jd.unblock_llm = lambda blocks, since, completed="": ""        # the helper, not the belt: the site alone marks
         self._reset()
-        io0 = jd.goal_io_stats()
+        io0 = dict(self.io)
         self._pass(tiers=("unblock",))
         s = self._st("unblock")
         self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0))
-        self.assertEqual(jd.goal_io_stats()["saves"] - io0["saves"], 0)
+        self.assertEqual(self.io["saves"] - io0["saves"], 0)
 
     def test_the_groupers_failed_call_site_marks_the_run(self):
         self._session(SID)
@@ -1753,11 +2372,11 @@ class StoreCompleteness(_Gate):
         jd.save_goals(SID, store)
         jd.group_llm = lambda menu, judge="grouper": ""
         self._reset()
-        io0 = jd.goal_io_stats()
+        io0 = dict(self.io)
         self._pass(tiers=("group",))
         s = self._st("group")
         self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0))
-        self.assertEqual(jd.goal_io_stats()["saves"] - io0["saves"], 0)
+        self.assertEqual(self.io["saves"] - io0["saves"], 0)
         self.assertFalse(jd.load_goals(SID).get("groupFails"))
 
     def test_the_consolidators_failed_call_site_marks_the_run(self):
@@ -1770,11 +2389,11 @@ class StoreCompleteness(_Gate):
         jd.save_goals(SID, store)
         jd.group_llm = lambda menu, judge="grouper": ""
         self._reset()
-        io0 = jd.goal_io_stats()
+        io0 = dict(self.io)
         self._pass(tiers=("consolidate",))
         s = self._st("consolidate")
         self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0))
-        self.assertEqual(jd.goal_io_stats()["saves"] - io0["saves"], 0)
+        self.assertEqual(self.io["saves"] - io0["saves"], 0)
         self.assertFalse(jd.load_goals(SID).get("consolidateFails"))
 
     def test_the_titlers_paused_site_marks_the_run(self):
@@ -1787,11 +2406,11 @@ class StoreCompleteness(_Gate):
             return ""
         jd.mirror_title_llm = paused_title
         self._reset()
-        io0 = jd.goal_io_stats()
+        io0 = dict(self.io)
         self._pass(tiers=("distill",))
         s = self._st("distill")
         self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0))
-        self.assertEqual(jd.goal_io_stats()["saves"] - io0["saves"], 0)
+        self.assertEqual(self.io["saves"] - io0["saves"], 0)
         self.assertFalse(jd.load_goals(SID)["nodes"][nid].get("titledT"))
 
     def test_the_stallers_paused_site_marks_the_run(self):
@@ -1806,11 +2425,11 @@ class StoreCompleteness(_Gate):
             return ""
         jd.stall_llm = paused_stall
         self._reset()
-        io0 = jd.goal_io_stats()
+        io0 = dict(self.io)
         self._pass(tiers=("distill",))
         s = self._st("distill")
         self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0))
-        self.assertEqual(jd.goal_io_stats()["saves"] - io0["saves"], 0)
+        self.assertEqual(self.io["saves"] - io0["saves"], 0)
         self.assertIsNone(jd.load_goals(SID)["nodes"][top["id"]].get("stallSummary"))
 
     def test_the_briefers_paused_shortfall_retry_marks_the_run(self):
@@ -1842,12 +2461,162 @@ class StoreCompleteness(_Gate):
         self.assertIsNone(jd.load_goals(SID)["nodes"][top["id"]].get("blockSummary"), "the brief is still owed")
 
 
+class SignatureFileReads(_Gate):
+    """The four signature files whose stage readers answered EMPTY on a read failure and let the run stamp
+    (review find, 2026-09-08): the captions (_prompt_gist), the episode log (_episode_read), the death marker
+    (_death_marker) and the archive (load_goal_archive). Each now goes through _read_failed like the states
+    file, cleared.jsonl and the stall records: the run is marked incomplete, one row per failure episode, and
+    the session stays due until the file reads. A stamp over an answer that never read the file would skip
+    the session until the file moved, which a permission bit, an EMFILE or an EIO never makes it do."""
+
+    def _coerced_top(self, sid, quote, seg, n=80):
+        """A coerce-floor node still wearing its verbatim head as its title: the shape _heal_floor_titles
+        retitles from the persisted prompt caption once one exists, reading captions/<sid>.jsonl every run
+        until it does."""
+        store = jd.load_goals(sid)
+        nid = "%s:g%d" % (sid, n)
+        store["nodes"][nid] = {"id": nid, "text": jd._seg_label(quote), "quote": quote, "parentId": None,
+                               "why": jd._COERCE_WHY, "t": T0 + 300, "mt": T0 + 300, "log": [], "trail": [seg],
+                               "nodeComplete": False, "cleared": False}
+        store["status"][nid] = "working"
+        jd.save_goals(sid, store)
+        return nid
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_an_unreadable_captions_file_never_stamps_the_planner(self):
+        # the caption the heal waits for lands (a new identity: the planner runs), and the read fails after
+        # the gate stat'd it. Before the fix the heal read '' and the run stamped, so the title healed only
+        # when the file moved again; now the run is incomplete and the heal lands as soon as the file reads
+        self._session(SID)
+        quote = "Ship the search endpoint for the notes api"
+        nid = self._coerced_top(SID, quote, "seg-x")
+        self._converge()                                                 # no captions file yet: the heal reads nothing
+        cp = jd.CAPDIR / (SID + ".jsonl")
+        jd.CAPDIR.mkdir(parents=True, exist_ok=True)
+        cp.write_text(json.dumps({"id": "seg-x#p", "caption": "Ship the search"}) + "\n")
+        os.chmod(cp, 0)
+        try:
+            self._reset()
+            self._pass(tiers=("plan",))
+            s = self._st("plan")
+            self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
+                             "the heal's read failed after a good stat: the run is incomplete, no stamp")
+            self.assertEqual(len(self._rows("captions-unreadable")), 1, "one loud row")
+            self.assertEqual(jd.load_goals(SID)["nodes"][nid]["text"], jd._seg_label(quote), "premise: not healed")
+            self._reset()
+            self._pass(tiers=("plan",))
+            self.assertEqual((self._st("plan")["ran"], self._st("plan")["incomplete"]), (1, 1), "still due")
+            self.assertEqual(len(self._rows("captions-unreadable")), 1, "one row per failure episode, not per pass")
+        finally:
+            os.chmod(cp, 0o644)
+        self._converge(tiers=("plan",))                                  # readable, nothing moved: the run happens
+        self.assertEqual(jd.load_goals(SID)["nodes"][nid]["text"], "Ship the search",
+                         "the heal landed once the file read (a stamp over the failed read would have skipped it)")
+        self.assertEqual(len(self._rows("captions-unreadable")), 1)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_an_unreadable_episode_log_never_stamps_the_planner_and_is_not_memoized(self):
+        # a /clear boundary at T0 + 50 makes task A pre-episode: the planner's retire reads the floor for
+        # every new unit. After a restart (empty stamps, empty mtime memo) the read fails: before the fix the
+        # run answered "no floor", stamped, AND memoized the empty read under the file's mtime, so the rows
+        # stayed invisible until the log grew; now the run is incomplete and the next read sees the rows
+        path = self._session(SID)
+        jd.EPIDIR.mkdir(parents=True, exist_ok=True)
+        ep = jd.EPIDIR / (SID + ".jsonl")
+        ep.write_text(json.dumps({"head": "u1", "fsid": SID, "t": T0}) + "\n"
+                      + json.dumps({"head": "u2", "fsid": SID, "t": T0 + 50}) + "\n")
+        self._converge()
+        self.assertEqual(len(self.plan_calls), 1, "premise: task A predates the boundary and was retired; task B placed")
+        self._append(path, uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
+        jd._STAGE_STAMP.clear(); jd._episode_memo.clear()                # what a restart does
+        os.chmod(ep, 0)
+        try:
+            self._reset()
+            self._pass(tiers=("plan",))
+            s = self._st("plan")
+            self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
+                             "the floor read failed after a good stat: the run is incomplete, no stamp")
+            self.assertEqual(len(self._rows("episodes-unreadable")), 1, "one loud row")
+            self.assertEqual(jd.episode_rows(SID), [], "while unreadable the log answers empty")
+        finally:
+            os.chmod(ep, 0o644)
+        self.assertEqual(len(jd.episode_rows(SID)), 2,
+                         "the failed read was not memoized under the file's mtime: the next read sees the rows")
+        self._converge(tiers=("plan",))
+        self.assertIsNotNone(self._stamp("plan"), "readable again: the planner completes and stamps")
+        self.assertEqual(len(self._rows("episodes-unreadable")), 1)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_an_unreadable_death_marker_never_stamps_the_closer(self):
+        # _death_finalize reads the marker at the end of every _close_session (a finalized one is read and
+        # left alone), so the marker is on the closer's idle path; another sid's cleared row re-arms the
+        # closer without giving it anything to write
+        self._session(SID)
+        jd._write_death_marker(SID, {"t": T0 + 1000, "by": "probe", "endedAt": T0 + 1000})
+        self._converge()
+        mp = jd.GONEDIR / (SID + ".json")
+        with open(jd.STATE / "cleared.jsonl", "a") as f:
+            f.write(json.dumps({"id": SID2 + ":g1", "op": "clear", "t": NOW}) + "\n")
+        os.chmod(mp, 0)
+        try:
+            self._reset()
+            self._pass(tiers=("close",))
+            s = self._st("close")
+            self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
+                             "the marker read failed after a good stat: the run is incomplete, no stamp")
+            self.assertEqual(len(self._rows("marker-unreadable")), 1, "one loud row")
+            self._reset()
+            self._pass(tiers=("close",))
+            self.assertEqual((self._st("close")["ran"], self._st("close")["incomplete"]), (1, 1), "still due")
+            self.assertEqual(len(self._rows("marker-unreadable")), 1, "one row per failure episode, not per pass")
+        finally:
+            os.chmod(mp, 0o644)
+        self._reset()
+        self._pass(tiers=("close",))
+        self.assertEqual((self._st("close")["ran"], self._st("close")["stamped"]), (1, 1),
+                         "readable again, nothing on disk moved: the run happens and stamps")
+        self.assertEqual(len(self._rows("marker-unreadable")), 1)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_an_unreadable_archive_never_stamps_any_tier(self):
+        # every tier's signature carries the archive; load_goals reads it for a journaled restore row, so a
+        # restore row puts the read on every tier's load. One failure episode, one row, six incomplete runs (the six
+        # triage tiers on the gate: this fork's index tier reads no store by design, and the courier is not on this gate)
+        self._session(SID)
+        self._converge()
+        top = self._tops()[0]
+        ap = jd.GOALARCHDIR / (SID + ".json")
+        jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {}, "status": {}})
+        jd.append_restore(SID, {top["id"]: dict(jd.load_goals(SID)["nodes"][top["id"]])}, {top["id"]: "working"}, NOW)
+        os.chmod(ap, 0)
+        try:
+            self._reset()
+            self._pass(tiers=GATED_TRIAGE_TIERS)
+            for t in GATED_TRIAGE_TIERS:
+                s = self._st(t)
+                self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
+                                 "%s: the archive read failed after a good stat: incomplete, no stamp" % t)
+            self.assertEqual(len(self._rows("archive-unreadable")), 1, "one row for the episode, not one per tier")
+            self._reset()
+            self._pass(tiers=GATED_TRIAGE_TIERS)
+            for t in GATED_TRIAGE_TIERS:
+                s = self._st(t)
+                self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
+                                 "%s: still due, and the shared archive memo did not serve the failed read" % t)
+            self.assertEqual(len(self._rows("archive-unreadable")), 1)
+        finally:
+            os.chmod(ap, 0o644)
+        self._converge()
+        self.assertEqual(len(self._rows("archive-unreadable")), 1, "readable again: every tier completed and stamped")
+
+
 class UnblockerHazard(_Gate):
     def test_a_turn_ending_after_the_first_touch_is_judged_next_pass_by_the_unblocker(self):
-        # the review's hazard, on the unblocker: a tick job touches the session while its last turn is OPEN
-        # and a top is blocked; the turn's final record and the idle row land; the gated unblocker runs and
-        # finds nothing due under the pinned parse. Its stamp must hold the PRE-append pair, so the next
-        # pass runs it over the ended turn and the lift files. Without P1a's key pin this test fails.
+        # the design review's hazard, on the unblocker: a tick job touches the session while its last turn is
+        # OPEN and a top is blocked; the turn's final record and the idle row land; the gated unblocker runs
+        # and finds nothing due under the pinned parse. Its stamp must hold the PRE-append pair, so the next
+        # pass runs it over the ended turn and the lift files. Without the frame's parse-key pin
+        # (_frame_parse_key) this test fails.
         path = self._session(SID)
         self._converge(tiers=("plan", "close"))
         top = self._tops()[0]
@@ -2479,15 +3248,15 @@ class CourierGate(_Gate):
         self._append(path, uline(T0 + 400, "task D", "u4", "a3"), aline(T0 + 430, "did D", "a4", "u4"))
         self._pass(tiers=("courier",))
         self._pass(tiers=("courier",))
-        self.assertEqual(set(self._st("courier").values()), {0}, "the courier runs on upstream's gate: the fork's counters "
-                                                                 "for it read zero (slice 3, ruling 1)")
+        self.assertNotIn("courier", jd._TIER_STATS, "the courier runs on its own change gate alone: the evidence gate keeps "
+                                                    "no row for it (slice 3, ruling 1; ruling J8 of the 2026-09-10 fold)")
         s = self._cs()
         self.assertEqual(set(s), {"scanned", "skipped", "recorded"})
         self.assertGreaterEqual(s["scanned"], s["recorded"], "a record is one scan's outcome")
         self.assertGreater(s["skipped"], 0)
         self.assertEqual(jd.courier_skip_stats(), s, "memos.courierSkip reads the same counters")
         ts = jd.tier_stats()
-        self.assertIn("courier", ts, "the tier set is unchanged (test_perf_stats pins it)")
+        self.assertNotIn("courier", ts, "no courier row in the tiers block: memos.courierSkip is its counter (test_perf_stats pins the set)")
         self.assertEqual(set(ts), set(jd.GATED_TIERS) | {"stamps"})
 
 
@@ -3238,6 +4007,50 @@ class IndexGate(_Gate):
         ts = jd.tier_stats()
         self.assertIn("index", ts)
         self.assertEqual(set(ts), set(jd.GATED_TIERS) | {"stamps"})
+
+    def test_a_stamping_failure_is_not_a_failed_pass(self):
+        # the index tier's mirror of Completeness.test_a_stamping_failure_is_not_a_failed_pass (ruling J4 of the
+        # 2026-09-10 fold): _run_index stamps at pass end with settle=False, so the clock input is never read there and
+        # the failure is injected where the index stamp reaches it, the _STAGE_STAMP write. It counts the run bypassed,
+        # logs ONE gate-stamp row wearing the captioner's name (_TIER_JUDGE["index"], never the tier key), is never a
+        # pass-crash, and pass_done is stamped: the pass over the sid completed. The old stamp stands, so the next pass
+        # runs the session again and stamps
+        self._session(SID)
+        self._converge(tiers=("index",))
+        self._rearm_hit(SID)                                            # the next run finds no work: the stamp is reached
+        jd._PASS_DONE.pop(("index", SID), None)
+
+        class Refusing(dict):
+            def __setitem__(self, k, v):
+                raise RuntimeError("the stamp table refused the write")
+        real = jd._STAGE_STAMP
+        jd._STAGE_STAMP = Refusing(real)
+        self._reset()
+        try:
+            self._pass(tiers=("index",))
+        finally:
+            jd._STAGE_STAMP = real
+        s = self._st("index")
+        self.assertEqual((s["ran"], s["bypassed"], s["stamped"], s["incomplete"]), (1, 1, 0, 0))
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        self.assertEqual([r["err"] for r in rows if r.get("err") in ("gate-stamp", "pass-crash")], ["gate-stamp"])
+        self.assertEqual([r["judge"] for r in rows if r.get("err") == "gate-stamp"], ["captioner"],
+                         "the row wears the judge's name like every other row, never the tier key")
+        self.assertEqual([r["fsid"] for r in rows if r.get("err") == "gate-stamp"], [SID])
+        self.assertIsNotNone(jd.pass_watermark("index", SID), "the pass over the sid completed")
+        self.assertIsNotNone(self._stamp("index"), "the earlier complete run's stamp stands")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "the stamp table takes writes again: the re-armed run stamps")
+
+    def test_every_gated_tier_wears_a_judge_name_on_its_rows(self):
+        # _log_judge_error's contract (upstream's review find of 2026-09-08): a gate-stamp row wears the judge's name,
+        # never a tier key; this fork's index tier wears the captioner's (ruling J4: an existing judge name, none coined)
+        for t in jd.GATED_TIERS:
+            self.assertIn(t, jd._TIER_JUDGE, "%s: every gated tier has a judge name for its rows" % t)
+            self.assertNotIn(jd._TIER_JUDGE[t], jd.GATED_TIERS, "%s: the name is a judge's, not a tier key" % t)
+        self.assertEqual(set(jd._TIER_JUDGE), set(jd.GATED_TIERS), "an entry per gated tier and no other")
+        self.assertEqual(jd._TIER_JUDGE["index"], "captioner")
 
 
 if __name__ == "__main__":

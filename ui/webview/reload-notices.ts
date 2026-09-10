@@ -1,38 +1,54 @@
-// The notices a reload wipes (the fork's 2026-09-08 fold, the review's F2). Named reload-notices.ts since the 2026-09-09
-// fold (slice 2): upstream's #1134 added its own ui/webview/reload-hold.ts, a different module that answers the pane's
-// hold REASON (reloadHoldReason: 'upload' only for a ship whose ack can still arrive, 'held-send', ''), so that path
-// holds upstream's text and this one kept its exports under the new name. The reload core (kernel.py _RELOAD_CORE_JS,
-// window.__rompReload on every kernel-served page) reloads the page when the kernel serving it restarts, and a kernel
-// restart is also the event T215 heals: a file shipped before the restart keeps its encoded payload in render.ts's
-// pendingShips, re-ships on the socket's reopen, and its ack retires the chip and releases a send held behind the ship
-// gate. The page's HOLD on that reload is upstream's (T272): render.ts wraps the shim's window.__rompPaneBusy and answers
-// 'upload' while any ship awaits its ack and 'held-send' while the ship gate holds a send, and tells the core the
-// ending event through window.__rompReload.ended() (render.ts endReloadHoldIfIdle). This module once published the
-// fork's own word for the same hold (window.__rompReloadHold, read by the core as a 'ships' hold); the 2026-09-09 fold
-// converged the core on upstream's shape and the publisher retired (reload-notices.test.ts names the ruling). The fork's
-// 60 s DEADLINE on that hold stays in the core as the backstop (the fold's ruling): a pane word that has blocked an owed
-// reload for 60 s is released, the console names it, and the core hands the pane a note through
-// window.__rompReload.released() for the fresh page (releasedNotices below reads it into the persisted toasts). What
-// else stays is the other half of that fold: the restart reload FOLLOWS the last pending ship's retirement, and
-// the two user notices raised at that same moment (a dropSaveFailed nack: the attachment was not saved, the held
-// message not sent; the other-tab ack: the held message was not sent) are DOM-only toasts that die with the page, and
-// the fresh page's loss toast reads shipsInFlight, which that retirement already emptied. So render.ts snapshots the
-// texts of the toasts on screen into the persisted state as `pendingNotices` on the CORE's pre-reload hook alone
-// (persistNoticesForReload, called from persistForReload, the function window.__rompPersistForReload names; pagehide
-// keeps upstream's scroll record alone, so a load of the user's own says nothing twice) and shows them again once at
-// load. A toast about the connection itself (the session isn't reachable, the host is disconnected) is left out:
-// render.ts ephemeralWarnToast marks it data-ephemeral, since it was true of the page that raised it and the restart
-// reload follows the reconnect. Pure here so the two readings run in node; the wiring is pinned in reload-notices.test.ts
-// and executed on the served page in tests/test_ship_reship.py.
+// The warning toasts a page is showing when the reload core takes it (kernel.py _RELOAD_CORE_JS, window.__rompReload
+// on every kernel-served page). A warnToast is a DOM element that lives 12 s. The core's restart reload waits for the
+// chat pane's pending ships (T272: __rompPaneBusy answers 'upload' or 'held-send') and fires on the next task after the
+// pane says the hold is over (render.ts endReloadHoldIfIdle, __rompReload.ended()). The last pending ship's retirement
+// is that ending event, and three notices are raised in the same task as it, one task before the owed reload fires:
+// the kernel's nack of the ship (the file was not saved, so it was not attached; a message held on it was NOT sent),
+// raised just after endReloadHoldIfIdle; the dismissal of the last pending chip (the held message was NOT sent) and
+// the ack of the last ship landing on another tab (the held message was not sent), each raised just before it. Nobody
+// read them, and the fresh page's loss toast reads shipsInFlight, which the retirement had already emptied. A failed
+// attachment and an unsent message went unannounced.
+//
+// So render.ts keeps the texts of the toasts on screen in THIS tab's sessionStorage (like the scroll record: the
+// persisted webview state is localStorage on the served page, shared by every dashboard tab of the origin, and one
+// tab's nack must not replay in another) on the core's synchronous pre-reload hook alone (persistNoticesForReload,
+// from persistForReload, the function window.__rompPersistForReload names) and the fresh page shows them once, after
+// the loss toast. pagehide keeps the scroll record alone: a navigation of the user's own replays nothing, the way the
+// loss toast fires once and not on every load. A refusal that reports a state rather than an event is left out (the
+// staged sends' "Can't send yet": the session's host is unreachable, or its tab is still being created): the fresh
+// page shows that state for itself, so a replay would be redundant at best and stale at worst, and render.ts
+// ephemeralWarnToast marks it data-ephemeral for the reading to skip. The record is text only, on purpose: a toast
+// has no action beyond its dismissal today, and a future toast with one would replay as its words alone. Pure and
+// DOM-free so node --test executes both readings (reload-notices.test.ts); the served scenario is
+// tests/test_ship_reship.py NackNoticeSurvivesReload.
+//
+// One divergence from upstream's module: this fork's reload core keeps a 60 s backstop on the pane hold (kernel.py
+// _RELOAD_CORE_JS, the fork's; ledger upstream/2026-09-09-reload-deadline-backstop.md) that hands the pane a release note
+// through window.__rompReload.released(), which releasedNotices below reads and render.ts persistNoticesForReload appends
+// to the kept list, so the fresh page says why it reloaded over the wait.
+
+/** This tab's sessionStorage key for the record (beside the scroll record's romp:reloadScroll). */
+export const RELOAD_NOTICES_KEY = "romp:reloadNotices";
+
 /** The toast container as the reading needs it: anything with querySelectorAll (a DOM element in the page). */
 export interface NoticeBox { querySelectorAll(selectors: string): ArrayLike<{ textContent: string | null }>; }
+
+/** The store as the record needs it: sessionStorage, or a stand-in in tests. */
+export interface NoticeStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
 /** The texts of the warning toasts on screen (#warn-toasts .warn-toast-msg, in DOM order), blanks dropped and the
- *  toasts marked data-ephemeral skipped (a notice about the connection itself; see the note above); none when the
- *  container was never created. */
+ *  toasts marked data-ephemeral skipped (a refusal about a state the fresh page shows for itself; see the note above);
+ *  none when the container was never created. */
 export function liveNotices(box: NoticeBox | null | undefined): string[] {
   if (!box) return [];
-  return Array.from(box.querySelectorAll(".warn-toast:not([data-ephemeral]) .warn-toast-msg"), (n) => (n.textContent || "").trim()).filter((t) => !!t);
+  return Array.from(box.querySelectorAll(".warn-toast:not([data-ephemeral]) .warn-toast-msg"),
+                    (n) => (n.textContent || "").trim()).filter((t) => !!t);
 }
+
 /** The reload core's own notice for the reload it is firing, as the list persistNoticesForReload appends to the live
  *  toasts: the core's 60 s backstop (kernel.py _RELOAD_CORE_JS `clock`) released a pane word that never ended (an upload
  *  with no ack or nack, a send held behind it; the shim's 'sends' has no deadline), and the note says what
@@ -47,13 +63,30 @@ export function releasedNotices(core: unknown): string[] {
     return typeof text === "string" && text ? [text] : [];
   } catch { return []; }
 }
-/** Take the persisted notices out of a state object: the non-empty strings among `pendingNotices` (anything else
- *  reads as none), and the state without the key, for the one-shot write-back. */
-export function takePendingNotices(st: unknown): { notices: string[]; rest: Record<string, unknown> } {
-  const s = (st && typeof st === "object" ? st : {}) as Record<string, unknown>;
-  const raw = s.pendingNotices;
-  const notices = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string" && !!x) : [];
-  const rest = { ...s };
-  delete rest.pendingNotices;
-  return { notices, rest };
+
+/** Keep `notices` for the page that follows. Nothing to say clears any record left behind (a reload the browser
+ *  refused leaves its record in place; the next core reload with nothing on screen clears it rather than replaying it)
+ *  rather than writing an empty one. A store that refuses (no storage in this context, quota) is left alone. */
+export function keepReloadNotices(store: NoticeStore | null | undefined, notices: string[]): void {
+  if (!store) return;
+  try {
+    if (notices.length) store.setItem(RELOAD_NOTICES_KEY, JSON.stringify(notices));
+    else store.removeItem(RELOAD_NOTICES_KEY);
+  } catch { /* ignore */ }
+}
+
+/** Take the kept notices out of the store, once: the non-empty strings of the record (anything else reads as none),
+ *  with the key removed whenever it is present, so a later load says nothing. */
+export function takeReloadNotices(store: NoticeStore | null | undefined): string[] {
+  if (!store) return [];
+  let raw: string | null = null;
+  try {
+    raw = store.getItem(RELOAD_NOTICES_KEY);
+    if (raw != null) store.removeItem(RELOAD_NOTICES_KEY);
+  } catch { return []; }
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string" && !!x) : [];
+  } catch { return []; }
 }

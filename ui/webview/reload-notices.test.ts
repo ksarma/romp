@@ -1,29 +1,161 @@
-// The chat page's hold on the reload core and the notices that ride the reload (reload-notices.ts; this file and its
-// module were reload-hold.test.ts / reload-hold.ts until the 2026-09-09 fold, slice 2, when upstream's #1134 took that
-// name for its hold-reason module: ui/webview/reload-hold.ts, tested by reload-hold.test.ts). The hold is
-// upstream's T272 shape since the 2026-09-09 fold: render.ts answers the core's window.__rompPaneBusy ('upload' while a
-// ship whose ack can still arrive awaits it, #1134; 'held-send' while the ship gate holds a send) and tells it the ending event through
-// window.__rompReload.ended(); the fork's 60 s deadline stays in the core as the backstop behind that event (the fold's
-// ruling; the last test here pins its shape, tests/test_dashboard_auto_reload.py UploadHoldExecuted runs it). The wiring
-// is pinned at the source level the way the other webview tests pin render.ts (no jsdom harness), in render.ts and in
-// the core's busyHere. The core's own deferral runs in node in tests/test_dashboard_auto_reload.py; the served order
-// (the heal, then the reload) is tests/test_ship_reship.py ServedWedge. The notices half is pure here and runs
-// executably. Synthetic only.
+// The notices a page is showing when the reload core takes it (reload-notices.ts). The core's restart reload follows
+// the last pending ship's retirement on the next task (render.ts endReloadHoldIfIdle, __rompReload.ended()), and the
+// nack, the dismissal or the other-tab ack raised in that same task is appended one task before the page goes: the
+// toast was never read, and the fresh page's loss toast reads shipsInFlight, which the retirement already emptied. So
+// render.ts keeps the
+// texts of the toasts on screen in this tab's sessionStorage on the core's synchronous hook and the fresh page shows
+// them once. The readings are pure and execute here; render.ts has import-time DOM side effects, so its wiring is
+// pinned to source the way reload-restore.test.ts pins the scroll record's. The served scenario (a nack on the last
+// ship across a kernel restart; the fresh page says it again, once) is tests/test_ship_reship.py
+// NackNoticeSurvivesReload. Synthetic only.
+//
+// This fork's file also carries the chat page's HOLD on the reload core (the three cases after the notices). The file
+// and its module were reload-hold.test.ts / reload-hold.ts until the 2026-09-09 fold, slice 2, when upstream's #1134
+// took that name for its hold-reason module (ui/webview/reload-hold.ts, tested by reload-hold.test.ts); upstream's
+// #1217 then landed the notices module under this name, and the file follows its text. The hold is upstream's T272
+// shape: render.ts answers the core's window.__rompPaneBusy ('upload' while a ship whose ack can still arrive awaits
+// it, 'held-send' while the ship gate holds a send) and tells it the ending event through window.__rompReload.ended();
+// the fork's 60 s deadline stays in the core as the backstop behind that event (the fold's ruling; the last case here
+// pins its shape, tests/test_dashboard_auto_reload.py UploadHoldExecuted runs it) and hands the pane a release note,
+// which persistNoticesForReload appends to the kept list (reload-notices.ts releasedNotices, the one divergence from
+// upstream's module). The hold's wiring is pinned to source in render.ts and in the core's busyHere; the core's own
+// deferral runs in node in tests/test_dashboard_auto_reload.py; the served order (the heal, then the reload) is
+// tests/test_ship_reship.py ServedWedge.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { liveNotices, releasedNotices, takePendingNotices } from "./reload-notices";
+import { RELOAD_NOTICES_KEY, liveNotices, releasedNotices, keepReloadNotices, takeReloadNotices } from "./reload-notices";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
-// RETIRED at the 2026-09-09 upstream fold (the auto-reload series ruling; the fold's kernel-code log H20-H22 and the
-// chat-code log's flag (a)): "the word is true while any ship awaits its ack and false otherwise, and it exists once
-// published" ran this module's (then reload-hold.ts) publishReloadHold's truth table (window.__rompReloadHold, the fork's fold-4 word). The
-// core (kernel.py _RELOAD_CORE_JS) no longer reads that word: upstream's T272 hold asks the pane's window.__rompPaneBusy
-// instead, so the publisher had no reader and the export went with it. The hold's truth is the test below now.
+const SEL = ".warn-toast:not([data-ephemeral]) .warn-toast-msg";
+const box = (texts: (string | null)[]) => ({
+  querySelectorAll: (sel: string) => { assert.equal(sel, SEL); return texts.map((t) => ({ textContent: t })); },
+});
 
+/** A sessionStorage stand-in: the three calls the module makes over a Map, with a log of them. */
+function fakeStore(init: Record<string, string> = {}) {
+  const m = new Map(Object.entries(init));
+  const calls: string[] = [];
+  return {
+    m, calls,
+    getItem: (k: string) => { calls.push("get " + k); return m.has(k) ? m.get(k)! : null; },
+    setItem: (k: string, v: string) => { calls.push("set " + k); m.set(k, v); },
+    removeItem: (k: string) => { calls.push("remove " + k); m.delete(k); },
+  };
+}
+
+test("the toasts on screen read as their texts, in order, blanks dropped; none without the container", () => {
+  assert.deepEqual(liveNotices(null), [], "the container is created by the first toast; none yet");
+  assert.deepEqual(liveNotices(undefined), []);
+  assert.deepEqual(liveNotices(box([])), []);
+  assert.deepEqual(liveNotices(box(["shot.png couldn't be saved on the kernel, so it was not attached. Your message was NOT sent.",
+                                    "  ", null, "The pending upload was dismissed. Your held message was NOT sent."])),
+    ["shot.png couldn't be saved on the kernel, so it was not attached. Your message was NOT sent.",
+     "The pending upload was dismissed. Your held message was NOT sent."]);
+  assert.deepEqual(liveNotices(box(["  padded  "])), ["padded"], "the text as the toast shows it");
+});
+
+test("the reading asks for the toasts without the ephemeral mark: a refusal about a state the fresh page shows for itself stays behind", () => {
+  // the staged sends' "Can't send yet" reports a state (the host unreachable, the tab still being created), which the
+  // fresh page shows for itself; render.ts marks that toast where it is raised and the selector skips the mark. The
+  // mark's effect on a real DOM is executed by tests/test_ship_reship.py NackNoticeSurvivesReload.
+  const asked: string[] = [];
+  assert.deepEqual(liveNotices({ querySelectorAll: (sel: string) => { asked.push(sel); return [{ textContent: "kept" }]; } }), ["kept"]);
+  assert.deepEqual(asked, [SEL]);
+});
+
+test("the record is kept only when there is something to say; a page with no toast clears a record left behind", () => {
+  const s = fakeStore();
+  keepReloadNotices(s, ["one", "two"]);
+  assert.deepEqual([...s.m.entries()], [[RELOAD_NOTICES_KEY, JSON.stringify(["one", "two"])]]);
+  assert.equal(RELOAD_NOTICES_KEY, "romp:reloadNotices", "this tab's sessionStorage, beside the scroll record's key");
+  // a reload the browser refused leaves the record in place; the next core reload with nothing on screen clears it
+  keepReloadNotices(s, []);
+  assert.equal(s.m.has(RELOAD_NOTICES_KEY), false, "cleared, not written empty");
+  assert.deepEqual(s.calls, ["set " + RELOAD_NOTICES_KEY, "remove " + RELOAD_NOTICES_KEY]);
+  keepReloadNotices(null, ["x"]);
+  keepReloadNotices(undefined, []);
+});
+
+test("the record comes out once: strings only, and the key is gone whatever it held", () => {
+  const s = fakeStore({ [RELOAD_NOTICES_KEY]: JSON.stringify(["one", "", 3, null, "two"]), other: "kept" });
+  assert.deepEqual(takeReloadNotices(s), ["one", "two"]);
+  assert.deepEqual([...s.m.keys()], ["other"], "the key is removed; nothing else is touched");
+  assert.deepEqual(takeReloadNotices(s), [], "a second take finds nothing");
+  assert.deepEqual(s.calls, ["get " + RELOAD_NOTICES_KEY, "remove " + RELOAD_NOTICES_KEY, "get " + RELOAD_NOTICES_KEY],
+    "no record, no removal");
+  for (const junk of ["not json", JSON.stringify("a string"), JSON.stringify({ a: 1 }), JSON.stringify(null), ""]) {
+    const j = fakeStore({ [RELOAD_NOTICES_KEY]: junk });
+    assert.deepEqual(takeReloadNotices(j), [], JSON.stringify(junk) + " reads as none");
+    assert.equal(j.m.has(RELOAD_NOTICES_KEY), false, JSON.stringify(junk) + " is still cleared");
+  }
+  assert.deepEqual(takeReloadNotices(null), []);
+  assert.deepEqual(takeReloadNotices(undefined), []);
+});
+
+test("kept on the page that reloads, taken on the page that follows: the same texts, then nothing", () => {
+  const s = fakeStore();
+  const texts = liveNotices(box(["shot.png couldn't be saved on the kernel, so it was not attached. Your message was NOT sent."]));
+  keepReloadNotices(s, texts);
+  assert.deepEqual(takeReloadNotices(s), texts);
+  assert.deepEqual(takeReloadNotices(s), []);
+});
+
+test("a store that refuses is left alone: nothing thrown from either side", () => {
+  const broken = {
+    getItem: () => { throw new Error("SecurityError"); },
+    setItem: () => { throw new Error("QuotaExceededError"); },
+    removeItem: () => { throw new Error("SecurityError"); },
+  };
+  assert.doesNotThrow(() => keepReloadNotices(broken, ["x"]));
+  assert.doesNotThrow(() => keepReloadNotices(broken, []));
+  assert.deepEqual(takeReloadNotices(broken), []);
+});
+
+// The wiring, pinned to source (render.ts executes nothing under node --test).
+test("render.ts: warnToast hands back its toast, and the send refusal about reachability is marked ephemeral where it is raised", () => {
+  assert.match(RENDER, /^function warnToast\(msg: string\): HTMLElement \{/m);
+  assert.match(RENDER, /setTimeout\(\(\) => t\.remove\(\), 12000\);\n\s*return t;/);
+  assert.match(RENDER, /^function ephemeralWarnToast\(msg: string\): void \{ warnToast\(msg\)\.dataset\.ephemeral = "1"; \}/m);
+  assert.equal((RENDER.match(/dataset\.ephemeral/g) || []).length, 1, "marked in one place");
+  assert.equal((RENDER.match(/ephemeralWarnToast\("Can't send yet — the session isn't reachable\. They stay staged\."\);/g) || []).length, 2,
+    "the staged sends' refusal at both of its sites (the strip's Send now and the empty send)");
+  // this fork marks a third site (the fold of 2026-09-09, offered upstream as their #1270): the refusal on a disconnected
+  // host is true on the page that raised it and false on the page that follows, since the core's restart reload
+  // fires from the reopened socket; the count follows the resolved render.ts (R4)
+  assert.match(RENDER, /ephemeralWarnToast\(host \+ " is disconnected, so this wasn't sent\./, "the disconnected-host refusal, marked on this fork");
+  assert.equal((RENDER.match(/ephemeralWarnToast\(/g) || []).length, 4, "the definition, the two staged-send sites and this fork's disconnected-host site (#1270)");
+  // what the nack, the dismissal and the other-tab ack say stays true after the reload, so they ride it unmarked
+  assert.match(RENDER, /warnToast\(m\.name \+ " couldn't be saved on the kernel, so it was not attached/);
+  assert.match(RENDER, /warnToast\("The pending upload was dismissed — your held message was NOT sent\."\)/);
+  assert.match(RENDER, /warnToast\("attachments finished uploading on another tab — the held message was not sent; review it there\."\)/);
+});
+
+test("render.ts keeps the notices on the core's hook alone, pagehide keeps the scroll record alone, and the fresh page shows them once after the loss toast", () => {
+  assert.match(RENDER, /^import \{ liveNotices, keepReloadNotices, releasedNotices, takeReloadNotices \} from "\.\/reload-notices";/m,
+    "upstream's three readings plus this fork's releasedNotices (the core's release note; R-a)");
+  // the ONE divergence from upstream's call (R-a, the 4d-1 fold): the core's release note (releasedNotices: the 60 s backstop
+  // released a hold that never ended; none when the reload fired on the hold's own event) is appended to the kept list
+  assert.match(RENDER, /^function persistNoticesForReload\(\): void \{\n\s*try \{ keepReloadNotices\(sessionStorage, liveNotices\(document\.getElementById\("warn-toasts"\)\)\.concat\(releasedNotices\(\(window as any\)\.__rompReload\)\)\); \} catch \{ \/\* ignore \*\/ \}\n\}/m);
+  assert.equal((RENDER.match(/releasedNotices\(/g) || []).length, 1, "the release note is read in that one place");
+  // the core's synchronous hook writes both records; a navigation of the user's own (pagehide) writes the scroll record
+  // alone, so a load they asked for does not replay a toast they were already looking at
+  assert.match(RENDER, /^function persistForReload\(\): void \{ persistScrollForReload\(\); persistNoticesForReload\(\); \}[^\n]*\n\(window as any\)\.__rompPersistForReload = persistForReload;\nwindow\.addEventListener\("pagehide", persistScrollForReload\);/m);
+  assert.equal((RENDER.match(/persistNoticesForReload\(\)/g) || []).length, 2, "defined once, called from the core's hook alone");
+  const scroll = RENDER.match(/^function persistScrollForReload\(\): void \{([\s\S]*?)\n\}/m);
+  assert.ok(scroll && !scroll[1].includes("Notices"), "the scroll record is untouched");
+  // the replay follows the loss toast's block directly: the loss first, then what the last page was saying
+  assert.match(RENDER, /shipsInFlight: \[\] \}\);\n\s*\}\n\s*\}\n\} catch \{ \/\* ignore \*\/ \}\n(\/\/[^\n]*\n)*try \{ for \(const text of takeReloadNotices\(sessionStorage\)\) warnToast\(text\); \} catch \{ \/\* ignore \*\/ \}/);
+  assert.equal((RENDER.match(/takeReloadNotices\(/g) || []).length, 1, "consumed once, at load");
+  assert.equal((RENDER.match(/keepReloadNotices\(/g) || []).length, 1, "written from one place");
+});
+
+// The chat page's HOLD on the reload core (this fork's cases; see the header). RETIRED at the 2026-09-09 upstream fold
+// (the auto-reload series ruling): the fork's publishReloadHold truth table (window.__rompReloadHold) had no reader once the
+// core asked the pane's window.__rompPaneBusy instead; the hold's truth is the first case below.
 test("render.ts holds the reload through the core's own question: 'upload' while a ship whose ack can still arrive awaits it, 'held-send' while the ship gate holds a send, and tells the core the ending event", () => {
   // re-aimed from the fork's four publishReloadHold publishes (the same fold ruling as the retirement above): the shim's
   // reasons first, then the pane's two, read by the core at every tryFire instead of published at every change. Re-aimed
@@ -52,70 +184,9 @@ test("render.ts holds the reload through the core's own question: 'upload' while
   assert.ok(!RENDER.includes("__rompReloadHold") && !RENDER.includes("publishReloadHold"), "no second hold word");
 });
 
-// The notices a reload wipes (the fourth fold's review, F2): the ack and nack toasts raised when the LAST pending ship
-// retires die with the reload that follows within the core's re-check, so render.ts snapshots the toasts on screen into
-// the persisted state on the pre-reload hook and shows them again once at load. The served scenario (a nack on the last
-// ship across a restart; the fresh page shows the notice, once) is tests/test_ship_reship.py NackNoticeSurvivesReload.
-test("the toasts on screen read as their texts, in order, blanks dropped; none without the container", () => {
-  const box = (texts: (string | null)[]) => ({ querySelectorAll: (sel: string) => { assert.equal(sel, ".warn-toast:not([data-ephemeral]) .warn-toast-msg"); return texts.map((t) => ({ textContent: t })); } });
-  assert.deepEqual(liveNotices(null), [], "the container is created by the first toast; none yet");
-  assert.deepEqual(liveNotices(undefined), []);
-  assert.deepEqual(liveNotices(box([])), []);
-  assert.deepEqual(liveNotices(box(["shot.png was not saved on the kernel. Your message was NOT sent.", "  ", null, "the held message was not sent"])),
-    ["shot.png was not saved on the kernel. Your message was NOT sent.", "the held message was not sent"]);
-});
-
-test("a toast about the connection itself is not replayed: marked data-ephemeral where it is raised, left out by the reading", () => {
-  // the restart reload fires from the reopened socket, so "the session isn't reachable" or "<host> is disconnected, romp is
-  // re-dialing" shown again on the fresh page would tell a connected page it is disconnected; the nack and the other-tab
-  // ack (F2's two notices) say things that stay true and ride the reload unmarked
-  assert.match(RENDER, /^function warnToast\(msg: string\): HTMLElement \{/m, "the signature upstream's warn-toast.test.ts pins, with the toast handed back");
-  assert.match(RENDER, /setTimeout\(\(\) => t\.remove\(\), 12000\);\n\s*return t;/);
-  assert.match(RENDER, /^function ephemeralWarnToast\(msg: string\): void \{ warnToast\(msg\)\.dataset\.ephemeral = "1"; \}/m);
-  assert.equal((RENDER.match(/dataset\.ephemeral/g) || []).length, 1, "marked in one place");
-  assert.equal((RENDER.match(/ephemeralWarnToast\("Can't send yet \u2014 the session isn't reachable\. They stay staged\."\);/g) || []).length, 2, "the staged sends' two refusals");
-  assert.match(RENDER, /ephemeralWarnToast\(host \+ " is disconnected, so this wasn't sent\./, "the down-host refusal");
-  assert.equal((RENDER.match(/ephemeralWarnToast\(/g) || []).length, 4, "the definition and the three connectivity sites");
-  assert.match(RENDER, /warnToast\(m\.name \+ " couldn't be saved on the kernel, so it was not attached/, "the nack rides the reload");
-  assert.match(RENDER, /else warnToast\("attachments finished uploading on another tab/, "the other-tab ack rides the reload");
-  // the reading asks the DOM for the toasts without the mark: the skip is the selector's
-  const asked: string[] = [];
-  assert.deepEqual(liveNotices({ querySelectorAll: (sel: string) => { asked.push(sel); return [{ textContent: "kept" }]; } }), ["kept"]);
-  assert.deepEqual(asked, [".warn-toast:not([data-ephemeral]) .warn-toast-msg"]);
-});
-
-test("the persisted notices come out once: strings only, and the state handed back has no key left", () => {
-  assert.deepEqual(takePendingNotices(null), { notices: [], rest: {} });
-  assert.deepEqual(takePendingNotices(undefined), { notices: [], rest: {} });
-  assert.deepEqual(takePendingNotices("junk"), { notices: [], rest: {} });
-  assert.deepEqual(takePendingNotices({ drafts: { a: "x" } }), { notices: [], rest: { drafts: { a: "x" } } }, "nothing recorded: the state as it was");
-  assert.deepEqual(takePendingNotices({ drafts: { a: "x" }, pendingNotices: "nope" }), { notices: [], rest: { drafts: { a: "x" } } }, "a wrong-typed record reads as none and still clears");
-  assert.deepEqual(takePendingNotices({ pendingNotices: ["one", "", 3, null, "two"], shipsInFlight: [] }), { notices: ["one", "two"], rest: { shipsInFlight: [] } });
-});
-
-test("render.ts snapshots the toasts on the CORE's pre-reload hook only (not on pagehide: a navigation of the user's own says nothing twice) and shows them again once at load, after the loss toast", () => {
-  assert.match(RENDER, /import \{ liveNotices, releasedNotices, takePendingNotices \} from "\.\/reload-notices";/, "the module's three readings under its 2026-09-09 name; the hold is __rompPaneBusy (the test above)");
-  assert.match(RENDER, /^function persistNoticesForReload\(\): void \{\n\s*try \{ if \(vscodeApi\?\.setState\) vscodeApi\.setState\(\{ \.\.\.\(vscodeApi\.getState\(\) \|\| \{\}\), pendingNotices: liveNotices\(document\.getElementById\("warn-toasts"\)\)\.concat\(releasedNotices\(\(window as any\)\.__rompReload\)\) \}\); \} catch \{ \/\* ignore \*\/ \}\n\}/m,
-    "the texts of the live toasts, then the core's release note if a hold ran past its deadline, into the same state the drafts and shipsInFlight ride");
-  // the core's hook writes both records; pagehide writes the scroll record alone (reload-restore.test.ts pins those two lines
-  // too), so a reload the user asks for does not replay a toast they were already looking at: ReloadLossToast's one warning
-  assert.match(RENDER, /function persistForReload\(\): void \{ persistScrollForReload\(\); persistNoticesForReload\(\); \}[^\n]*\n\(window as any\)\.__rompPersistForReload = persistForReload;\nwindow\.addEventListener\("pagehide", persistScrollForReload\);/);
-  assert.equal((RENDER.match(/persistNoticesForReload\(\)/g) || []).length, 2, "defined once, called from the core's hook alone");
-  const scroll = RENDER.match(/^function persistScrollForReload\(\): void \{([\s\S]*?)\n\}/m);
-  assert.ok(scroll && !scroll[1].includes("persistNoticesForReload"), "upstream's scroll record is untouched");
-  assert.equal((RENDER.match(/pendingNotices:/g) || []).length, 1, "written in one place; the reading goes through takePendingNotices");
-  // the replay follows the loss toast's block directly (the load-time publish that once sat between them retired with
-  // the fork's hold word): the loss first, then what the last page was saying; the record is cleared in the same block,
-  // before the toasts are raised (one reload, one replay). The record is cleared whenever the key is there (an empty
-  // record too, so `pendingNotices: []` from a no-toast reload does not sit in the state), and the toasts are raised
-  // after the write
-  assert.match(RENDER, /shipsInFlight: \[\] \}\);\n\s*\}\n\s*\}\n\} catch \{ \/\* ignore \*\/ \}\n(\/\/.*\n)*try \{\n\s*const st = vscodeApi\?\.getState\?\.\(\);\n\s*const taken = takePendingNotices\(st\);\n\s*if \(st && typeof st === "object" && "pendingNotices" in st\) vscodeApi\?\.setState\?\.\(taken\.rest\);\n\s*for \(const text of taken\.notices\) warnToast\(text\);\n\} catch \{ \/\* ignore \*\/ \}/);
-  assert.equal((RENDER.match(/takePendingNotices\(/g) || []).length, 1, "consumed once, at load");
-});
-
 test("the core's release note reads as one notice, and as none from no core, an older core, a silent one or a throwing one", () => {
   // the fold's deadline backstop: the core hands the pane the reason it reloaded over a hold that never ended, through
-  // window.__rompReload.released(); persistNoticesForReload appends this reading to the live toasts (the pinned wiring below)
+  // window.__rompReload.released(); persistNoticesForReload appends this reading to the live toasts (the .concat pin in the render.ts case above)
   assert.deepEqual(releasedNotices(null), [], "a page without the core (the VS Code webview)");
   assert.deepEqual(releasedNotices(undefined), []);
   assert.deepEqual(releasedNotices({ request() { /* no released() */ } }), [], "an older core without the accessor");

@@ -909,6 +909,16 @@ server, when its own environment carries one of the names (it is what receives
 globals carry `ANTHROPIC_API_KEY`. A key romp holds is a key a session can
 print, so there is no quiet fallback anywhere.
 
+At boot the kernel also names, once and as information rather than a problem,
+the variables in its own environment shaped like credentials (names ending
+`_API_KEY` or `_TOKEN`, and 1Password's own `OP_*` names) that reach every
+session's Claude process and the shells it spawns: the SDK hands each session
+the kernel's environment, and romp takes only the login tokens it claims at
+boot (see [The login](#the-login)) out of it. The line carries names only,
+never values, and a second provider's key placed there on purpose is nothing
+to act on. To keep a variable away from sessions, remove it from `service.env`
+or from the service unit's environment and restart the manager.
+
 #### A key from a secret manager
 
 Claude Code's own credential resolution is the only key path. Point Claude
@@ -1700,13 +1710,32 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   raised, a store that did not read) is recorded, and a session whose parse,
   store, journal, archive and episode log have not moved since such a scan is
   skipped whole; a raise inside one session's scan is that session's
-  `pass-crash` row, not the pass's. `plannerSkip` is the planner's change gate
-  (`skipped`, `planned`, `recorded`): a session whose parse, store, journal,
-  archive, episode log, its leaf's task store, captions file and reg have not
-  moved since a pass that had nothing to do, and none of whose running
-  background launches has crossed its deadline, is not planned again (this
-  fork's key also holds `cleared.jsonl`, the session's death marker and its
-  stall slice, inputs of the same decision path). `backref` is the
+  `pass-crash` row, not the pass's.
+  `plannerSkip` is the planner's inner change gate (`skipped`,
+  `planned`, `recorded`). The planner runs behind two gates. The outer gate is
+  the judge's evidence gate around `_plan_session` (`docs/judges.md`, "Ops and
+  knobs"): a session whose signature equals the one the planner stamped after
+  its last complete run is skipped before it is submitted. It keys on the
+  inner gate's inputs, the reg by its `spawnedAt` and backend values rather
+  than by identity, plus `cleared.jsonl`, the death marker and the session's
+  stall records. The inner gate
+  sits inside `_plan_session` and sees only the sessions the outer gate ran: a
+  session whose parse, store, journal, archive, episode log, its leaf's task
+  store, captions file and reg have not moved since a pass that had nothing to
+  do, and none of whose running background launches has crossed its deadline,
+  is not planned again. The inner key
+  carries `cleared.jsonl`, the death marker and the stall slice too (this
+  fork's three terms beyond upstream's key), so an input only the outer gate
+  would key re-arms both gates and an outer re-arm is never swallowed by an
+  inner skip. The inner gate records a pass only when it placed
+  nothing, left the store's key where it was, and ran to completion; a
+  deferral without a write, or a side file that exists and did not read,
+  marks the run incomplete, and that session is planned again next pass. So
+  `plannerSkip` counts the sessions the outer gate let through, not every
+  planner skip: an idle session stops at the outer gate and appears in neither
+  `skipped` nor `planned`. Outside a pass frame (`romp-judge --plan`) the
+  outer gate stamps nothing, and the inner gate does the skipping.
+  `backref` is the
   sender-board walk behind the courier's link repair, built once per state of
   the sender stores and served while they stand (`served`, `built`; a sender
   store that does not read is skipped, not every recipient). `captions` and
@@ -1717,9 +1746,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   file that fails to read answers nothing to the index bodies (the stage is
   marked incomplete and one `captions-unreadable` row is written per episode)
   and is never cached either. `goalArchive` never holds a record that did not
-  read (the `_unread` shape), so a failed read is read again next time. Their
-  skips are why the `tiers` block's `plan` and `courier` counters read zero
-  since that fold.
+  read (the `_unread` shape): an archive that exists and cannot be read or
+  parsed is answered as that marked empty shape, marks the running judge
+  stage incomplete, and is read again next time. The courier's and the
+  planner's change-gate tables are pruned to the sessions each pass
+  discovers, and the evidence gate's stamps are cleared at a fixed cap.
   The rest are the kernel's own memos, each a flat map of counters. `lift_gate` is
   the awaiting-lift job's per-session identity gate: `skip` and `load`
   (session-cycles that took no store read against the ones that read it, a
@@ -1869,11 +1900,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   is the number of wakes a pass absorbed; the write-moment chain memo's
   counters are under `memos.chain`, not here). `tiers` holds
   the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
-  `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
-  and archiver; since the 2026-09-09 fold the `plan` and `courier` rows read
-  zero, those two passes being skipped by the judge's own change gates,
-  `memos.plannerSkip` and `memos.courierSkip`, while the other six tiers run
-  on this gate unchanged): `ran` (per-session stage
+  `group`, `consolidate`, `distill`, and `index`, the captioner and archiver;
+  there is no `courier` row, the courier running on its own change gate,
+  `memos.courierSkip`; the `plan` row counts the planner's outer gate, and
+  `memos.plannerSkip` its inner one over the sessions the outer gate let
+  through): `ran` (per-session stage
   runs), `skipped` (runs the gate declined because nothing the tier reads had
   changed), `stamped` (runs that ended complete and recorded what they
   judged), `bypassed` (runs with no signature to record, or whose parse ran

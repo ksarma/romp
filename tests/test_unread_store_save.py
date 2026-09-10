@@ -23,7 +23,9 @@ by both loaders; the kernel's undo-clear restore skipping a session whose store 
 owed) and landing into the fresh store after a quarantine; the kernel's once-per-episode warn frame and the
 /perf gauge reading the boundary's episodes; the un-mute fast-forward raising instead of sealing over a store
 it could not read, and the kernel's un-mute standing (the flag written, one stderr line) while it does; the
-user's copy of a refusal naming the file relative to the state root; the archive twin. The stages' stand-down and the courier's are pinned beside their
+user's copy of a refusal naming the file relative to the state root; the archive twin, an archive whose bytes are not
+UTF-8 marked the same way (the 2026-09-10 fold's ruling J3 and its rider), and a failed publish of a journal-marked
+store keeping its mark and its CAS base (ruling J5). The stages' stand-down and the courier's are pinned beside their
 fixtures (tests/test_judge_stage_gate.py, tests/test_courier_kind_demote_only.py). Synthetic fixtures only: a
 sid private to this module, invented goal text."""
 import contextlib
@@ -204,6 +206,62 @@ class Refusal(_Store):
         self.assertNotIn("_unread", raw, "the mark is never written to disk")
         self.assertEqual(self._errs(), ["history-unreadable"], "the journal's own row; no refusal")
         self.assertNotIn("_unread", jd.load_goals(SID), "readable again: the journal replays, nothing was lost")
+
+    def test_a_failed_publish_of_a_marked_store_keeps_its_mark_and_its_base(self):
+        # ruling J5 (the 2026-09-10 fold): save_goals pops `_unread` and `_baseRev` before its CAS loop and restores both in
+        # a finally when the publish did not happen (after a publish the written revision is the base). On the pre-finally
+        # fork a raise after the pop left the object with NO base, so the retry took the unconditional branch and stomped a
+        # concurrent publish, and the journal mark went with it. Pinned at both raise sites inside the loop, the revision
+        # read (_disk_rev) and the rename itself; then the retry meets a concurrent publish and rebases instead
+        self._seed()
+        jd.append_override(SID, NID, "resolve", T0 + 70)
+        with _fault_on(jd._overrides_dir() / (SID + ".jsonl")):
+            s = jd.load_goals(SID)
+        self.assertEqual(s.get("_unread"), "journal", "premise: loaded without its journal")
+        base = s["_baseRev"]
+        self._mint(s, 2)
+        before = self.gp.read_text()
+        real = jd._disk_rev
+
+        def faulting(fsid):
+            raise OSError(errno.EIO, "Input/output error", fsid)
+        jd._disk_rev = faulting
+        try:
+            with self.assertRaises(OSError):
+                jd.save_goals(SID, s)
+        finally:
+            jd._disk_rev = real
+        self.assertEqual((s.get("_unread"), s.get("_baseRev")), ("journal", base),
+                         "a raise at the revision read: the mark and the base are back on the object")
+        self.assertEqual(self.gp.read_text(), before, "nothing was published")
+
+        def no_rename(path, target):
+            raise OSError(errno.EIO, "Input/output error", str(target))
+        with mock.patch.object(Path, "rename", no_rename):
+            with self.assertRaises(OSError):
+                jd.save_goals(SID, s)
+        self.assertEqual((s.get("_unread"), s.get("_baseRev")), ("journal", base), "a raise at the rename: both restored too")
+        self.assertEqual(self.gp.read_text(), before, "nothing was published")
+        other = jd.load_goals(SID)                       # a concurrent writer publishes between the failure and the retry
+        self._mint(other, 3, "Retire the request cap")
+        jd.save_goals(SID, other)
+        calls, real_rebase = [], jd._rebase_onto_disk
+
+        def spy(fsid, store):
+            calls.append(fsid)
+            return real_rebase(fsid, store)
+        jd._rebase_onto_disk = spy
+        try:
+            jd.save_goals(SID, s)                        # the retry
+        finally:
+            jd._rebase_onto_disk = real_rebase
+        self.assertEqual(calls, [SID], "the retry is CAS-protected: it rebased onto the concurrent publish instead of stomping it")
+        raw = json.loads(self.gp.read_text())
+        self.assertEqual(sorted(raw["nodes"]), [NID, SID + ":g2", SID + ":g3"], "both writers' nodes are on disk")
+        self.assertNotIn("_unread", raw, "the mark is never written to disk")
+        self.assertNotIn("_unread", s, "published: the mark leaves the object (the journal replays on the next load)")
+        self.assertEqual(s.get("_baseRev"), raw["rev"], "and the written revision is the object's base")
+        self.assertEqual(self._errs(), ["history-unreadable"], "the journal's own row; no refusal and no other row")
 
     def test_disk_rev_tells_absent_from_unreadable(self):
         # 0 only for an ABSENT file (a create's base); a file that exists and does not read or parse RAISES
@@ -555,6 +613,30 @@ class Archive(_Store):
         self.assertEqual(self._errs(), ["archive-unreadable", "unread-store-save"],
                          "the read's row and the refusal this test asked for; the sweep never reaches the save")
         self.assertNotIn("_unread", jd.load_goal_archive(SID.replace("d", "e")), "an absent archive is not marked")
+
+    def test_an_archive_whose_bytes_are_not_utf8_is_marked_like_an_unreadable_one(self):
+        # the rider of ruling J3 (the 2026-09-10 fold): Path.read_text() decodes inside the read, so bytes that are not
+        # UTF-8 raised UnicodeDecodeError past an OSError-only read handler and the JSON handler both, out of every archive
+        # reader. Written to the file as bytes on purpose (no patch on the read): the same marked empty shape as an
+        # unreadable or unparseable archive, the running stage marked incomplete, one archive-unreadable row for the
+        # episode over two loads, never memoized by the shared twin, and refused by save_goal_archive
+        ap = jd.GOALARCHDIR / (SID + ".json")
+        ap.parent.mkdir(parents=True, exist_ok=True)
+        ap.write_bytes(b"\xff\xfe{")
+        jd._judge_ctx.stage_incomplete = False
+        arch = jd.load_goal_archive(SID)
+        self.assertEqual((arch["nodes"], arch["status"], arch.get("_unread")), ({}, {}, "archive"))
+        self.assertTrue(getattr(jd._judge_ctx, "stage_incomplete", False), "the running stage is marked incomplete")
+        shared = jd.load_goal_archive_shared(SID)
+        self.assertEqual(shared.get("_unread"), "archive", "the shared twin serves the marked shape")
+        self.assertNotIn(SID, jd._GOALARCH_MEMO, "and never memoizes a read that failed")
+        with self.assertRaises(jd.UnreadStoreError):
+            jd.save_goal_archive(SID, arch)
+        self.assertEqual(ap.read_bytes(), b"\xff\xfe{", "the file is left as it is")
+        self.assertEqual(self._errs(), ["archive-unreadable", "unread-store-save"],
+                         "one row for the failure episode over two loads, and the refusal this test asked for")
+        ap.write_text(json.dumps({"rompUuid": SID, "nodes": {}, "status": {}}))
+        self.assertNotIn("_unread", jd.load_goal_archive(SID), "readable again: unmarked, and the episode ends")
 
 
 if __name__ == "__main__":
