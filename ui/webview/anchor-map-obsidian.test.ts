@@ -623,15 +623,23 @@ test("a highlight from the paragraph before an author's html block to the paragr
   // bundle: md-config-paint-whitespace-browser.test.ts leg 2 drives every blank-bearing scene here but the closed details (the
   // figures, the open details, the center, the br pair, the space beside a br) and holds that no whitespace-only mark stands after
   // the paint; the blanks under a closed details are md-config-paint-trim-browser.test.ts test 1's, over
-  // anchor-map-fixtures/blank-scenes.json scene 3 (a closed details with a figure around its image): Chromium lays a closed
-  // details' body out hidden with a box of its own, so each blank measures at zero content width and is unwrapped, none kept (the
-  // round 13 probe, Chromium 151). Leg 2's details-body scenes are `<details open>` where these are shut, and the hgroup and dl
-  // shapes are here alone; none of the five paints a blank in node, so nothing there is deferred to the browser. Each range runs
-  // from the paragraph before the html block to the paragraph after: the endpoints sit in prose the map places, and wrapBetween
-  // wraps every unit between them, the html block's included, so the block's own nodes are painted or skipped by skipBlockWs
-  // alone. `blanks` names, per scene, the whitespace-only marks node paints, in order; the rest of the marks are the blocks'
-  // text. The controls: a space inside an inline element beside an image, mid-line and rendered, is painted with the passage; a
-  // single break leaves no whitespace node to judge.
+  // anchor-map-fixtures/blank-scenes.json scene 3 (a closed details with a figure around its image), which holds that no
+  // padding-only mark stands after the trimmed paint, the details shut. A closed details is no hidden ancestor to the trim:
+  // Chromium lays the shut body out (its `::details-content` pseudo-element is content-visibility: hidden; the body's blocks keep
+  // their boxes at the open width, and checkVisibility() alone says false), so a blank inside it measures at the width it renders
+  // at once opened and meets the same width test as a blank anywhere else: the "\n" beside the image lays out at zero width with a
+  // box of its own and is unwrapped, a space between inline children (scenes 1 and 4 there, a closed fold's body and a closed
+  // details' paragraph) lays out at about 3.9 px in the leg's font and is kept, shut or open the same, and a fold opened later
+  // shows its kept marks as measured, a re-trim over them unwrapping nothing (the round 14 probe, Chromium 151, a measurement no
+  // test pins; the keep for a mark with no box of its own, anchor-map.ts ownRects, is display:none's). Leg 2 lacks five of test
+  // 18's scenes: the closed details with an image, whose two blanks are the trim leg's above, and four that paint no blank in node,
+  // so nothing in them is deferred to the browser: the closed details whose body is a center or a search, which leg 2 drives as
+  // `<details open>`, and the hgroup and dl shapes, which leg 2 has in no form (blank-scenes.json holds a bare dl and a bare
+  // hgroup, the trim leg's). Each range runs from the paragraph before the html block to the paragraph after: the endpoints sit
+  // in prose the map places, and wrapBetween wraps every unit between them, the html block's included, so the block's own nodes
+  // are painted or skipped by skipBlockWs alone. `blanks` names, per scene, the whitespace-only marks node paints, in order; the
+  // rest of the marks are the blocks' text. The controls: a space inside an inline element beside an image, mid-line and rendered,
+  // is painted with the passage; a single break leaves no whitespace node to judge.
   const stripWs = (s: string): string => s.replace(/\s+/g, "");
   const wrap = (block: string): string => "Intro para.\n\n" + block + "\n\nAfter para.\n";
   const IMG = '<img src="a.png" alt="pic">';

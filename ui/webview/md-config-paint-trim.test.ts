@@ -12,10 +12,12 @@
 // 3. The fixpoint: after a pass that unwrapped something the remaining candidates are measured again (a stand-in whose widths
 //    depend on which marks stand shows the second pass unwrapping what the first pass's unwraps collapsed), until a pass unwraps
 //    nothing or no candidate is left: a cascade of five blanks, each collapsing once the marks before it are gone, is unwrapped
-//    whole, one layout per pass and every pass over the marks the last one kept. The test holds the result, never a count of
-//    passes: round 12 capped the loop at three and pinned the cap here, and the cap left 366 padding-only marks on a paragraph of
-//    5,000 links at 700 px (round 13). TRIM_PASSES_MAX is a safety cap above every cascade measured, pinned as a bound and never as
-//    the mechanism in md-config-paint-trim-fixpoint.test.ts, with TRIM_STATS, the count of the calls that reached it.
+//    whole, one layout per pass and every pass over the marks the last one kept. The test holds the result and the passes the
+//    scene takes (five layouts and 5+4+3+2+1 measurements for the cascade alone; six and 7+6+5+4+3+2 with two rendered blanks
+//    after it, the sixth the confirming pass), never the loop's cap: round 12 capped the loop at three and pinned the cap here,
+//    and the cap left 366 padding-only marks on a paragraph of 5,000 links at 700 px (round 13). TRIM_PASSES_MAX is a safety cap
+//    above every cascade measured, pinned as a bound and never as the mechanism in md-config-paint-trim-fixpoint.test.ts, with
+//    TRIM_STATS, the count of the calls that reached it.
 // 4. Batching: paintRendered trims its own marks by default and defers when the caller passes `trim: false`; trimCollapsedMarks over
 //    the marks of several paints measures them in one pass, the Comments panel's call shape (file-comments.ts paintAll).
 // 5. The candidate alphabet picks what is MEASURED and nothing else: a lone bidi mark, soft hyphen, combining mark or hangul filler

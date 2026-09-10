@@ -20,16 +20,19 @@
 // 2. The wrap points: the list item and the paragraph of fourteen links painted at 800, 500, 300, 260, 240, 220, 200 and 180 px:
 //    no padding-only mark at any width after the fixpoint (a mark's 2 px side padding is in the layout, so the paint moves the wrap
 //    points and the trim measures again after a pass that unwrapped something); every blank mark whose text the untrimmed layout
-//    collapsed is among the unwrapped (the first pass measures that layout; a ring around a collapsed mark follows once the mark
-//    inside it is gone), and the sweep unwraps something at some width (which widths break the line at a space between two links
-//    rather than inside a link's text is the font's: 800 px is the widest of the wrap widths, not a wrap-free layout). The
-//    fixpoint's price, recorded and bounded: a blank unwrapped as collapsed can render once a later unwrap on its line moves the
+//    collapsed is among the unwrapped (the first pass measures that layout, and a ring around a collapsed mark reads its text nodes
+//    too, 0 px, so a nest goes in that same pass), and the sweep unwraps something at some width (which widths break the line at a
+//    space between two links rather than inside a link's text is the font's: 800 px is the widest of the wrap widths, not a
+//    wrap-free layout). The fixpoint's price, recorded and bounded: a blank unwrapped as collapsed can render once a later unwrap
+//    on its line moves the
 //    wrap point back, and it is never re-wrapped (a mark at a line's last inch would flip with every pass), so a rendered space may
 //    stand unmarked, a ring gap of the space's width; the price is bimodal by width, none at most widths and a cascade through the
-//    lines below at a width where a line's slack falls inside the marks' padding (on the build box the list item here shows one of
-//    eleven at 240 px and four of ten at 220; a list item of 120 links 80 of 90 at 240 px and none at 25 of 31 widths sampled every
-//    20 px; the paragraph of 5,000 links 341 to 2,095 of about 4,400 at seven of eleven widths and none at four, once the fixpoint
-//    completes; plan item 10 (a) has the figures); never more such blanks than marks unwrapped, and none at all where nothing was
+//    lines below at a width where a line's slack falls inside the marks' padding (on the build box the list item here shows, under
+//    one comment, one of eleven at 240 px and four of ten at 220; a list item of 120 links 80 of 90 at 240 px and none at 25 of 31
+//    widths sampled every 20 px; the paragraph of 5,000 links 341 to 2,095 of about 4,400 at seven of eleven widths and none at
+//    four, once the fixpoint completes; plan item 10 (a) has the figures and, since round 14, the nest figures: overlapping comments
+//    nest one mark per comment, 4 px a level, so the widths at which the flip happens move with the count); never more such blanks
+//    than marks unwrapped, and none at all where nothing was
 //    unwrapped. The layout-neutral mark (`margin: 0 -2px` beside the padding) removes the shape and is the owner's call
 //    (plans/markdown-viewer.md, item 10).
 // 3. The reflow: marks painted at 800 px and the root narrowed to 300 px with no repaint (the panel does not repaint on a reflow)
@@ -47,10 +50,13 @@
 //    mark's contents: a Range over an outer mark's contents reads the inner mark's box, its padding included, so a ring of padding
 //    around a collapsed mark's ring reads 4 px, and a third ring 8 px, and a contents reading lists neither (the review round 13,
 //    which found the legs proving "no padding-only mark" for one comment per passage alone). An outer mark hand-wrapped around a
-//    collapsed blank mark, and a third around that, are listed at every depth. The trim itself reads the contents (anchor-map.ts
-//    contentWidth) and peels a nest one ring per pass, so two comments across one passage (points 1 to 3, painted as the panel's
-//    pass paints them: every paint with `trim: false`, one trimCollapsedMarks over both) leave no ring at any width or after a
-//    reflow within the fixpoint's passes; deeper nests are the fixpoint's own legs' (md-config-paint-trim-fixpoint-browser.test.ts).
+//    collapsed blank mark, and a third around that, are listed at every depth. The trim reads the same way since that round
+//    (anchor-map.ts contentWidth, a Range over each text node under the mark): every ring of a nest over one collapsed blank reads
+//    0 px in the same pass and the nest is dropped whole, never peeled one ring per pass (round 12's contents reading did that, and
+//    stood a nest of four or more at its cap); the loop then measures the remaining candidates again, to a fixpoint under
+//    TRIM_PASSES_MAX. So two comments across one passage (points 1 to 3, painted as the panel's pass paints them: every paint with
+//    `trim: false`, one trimCollapsedMarks over both) leave no ring at any width or after a reflow; deeper nests are the fixpoint's
+//    own legs' (md-config-paint-trim-fixpoint-browser.test.ts).
 // Skips LOUDLY without a playwright browser (CI installs none). Synthetic prose, no paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -95,9 +101,10 @@ let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
 /** The page's own helpers. BLANK is the trim's candidate alphabet (anchor-map.ts TRIM_CANDIDATE): no letter, digit, punctuation
- *  or symbol, or the hangul fillers. `width` is the trim's own reading of a node, a Range over its contents with the rects' widths
- *  summed; `textWidth` sums that reading over the TEXT NODES under an element, the oracle's reading (point 5: over a mark holding
- *  another mark, `width` reads the inner mark's padding as width). `__paint` paints the whole range with or without the trim, once
+ *  or symbol, or the hangul fillers. `width` is a Range over a node's contents with the rects' widths summed, round 12's reading of a
+ *  mark, kept for the messages (over a mark holding another mark it reads the inner mark's padding as width: point 5); `textWidth`
+ *  sums `width` over the TEXT NODES under an element, the trim's own reading since round 13 (anchor-map.ts contentWidth) and the
+ *  oracle's. `__paint` paints the whole range with or without the trim, once
  *  per comment (`k` comments nest, the later inside the earlier; two or more are painted as the panel's pass paints them, every
  *  paint with `trim: false` and one trimCollapsedMarks over all of them), and reads each mark's text, both widths, whether it has a
  *  box of its own, how many marks it holds and whether it is a top-level node; `__bare` lists the blank text nodes below the top
@@ -160,8 +167,9 @@ async function inBrowser(t: any, body: (page: any) => Promise<void>): Promise<vo
     assert.deepEqual(errors, [], "no page errors");
   } finally { await browser.close(); }
 }
-/** A mark as the page reads it: `w` the trim's reading over its contents, `wt` the oracle's over its text nodes, `own` its client
- *  rects, `holds` the marks nested inside it. */
+/** A mark as the page reads it: `w` a Range over its contents (round 12's reading, shown in the messages so a ring is told from a
+ *  single mark), `wt` a Range over each of its text nodes (the trim's reading and the oracle's), `own` its client rects, `holds` the
+ *  marks nested inside it. */
 type Mark = { text: string; blank: boolean; w: number; wt: number; own: number; holds: number; top: boolean };
 type Bare = { parent: string; text: string; w: number };
 /** A mark's text for a message, every character past ASCII spelt as its escape (the blanks are invisible otherwise). */
@@ -231,9 +239,9 @@ test("the wrap points: a list item and a paragraph of fourteen links, one commen
         const what = why + " @" + w + "px, " + across(k);
         const { untrimmed, trimmed, bare, unwrapped } = await drive(page, what, src, w, k);
         const kept = trimmed.filter((m) => m.blank).length, all = untrimmed.filter((m) => m.blank).length;
-        // the first pass measures the untrimmed layout and drops every mark whose contents it collapsed (two-phase: measured, then
-        // dropped, before any layout changed); a ring around one reads that mark's padding and follows once the mark inside it is
-        // gone; so every blank mark whose text that layout collapsed is unwrapped by the fixpoint, and later passes may unwrap more
+        // the first pass measures the untrimmed layout and drops every mark whose text it collapsed (two-phase: measured, then
+        // dropped, before any layout changed); a ring around one reads its text nodes too, 0 px, and goes in that same pass; so
+        // every blank mark whose text that layout collapsed is unwrapped by the fixpoint, and later passes may unwrap more
         const collapsed = untrimmed.filter((m) => m.blank && m.wt === 0 && m.own > 0).length;
         assert.ok(kept <= all && unwrapped >= collapsed, what + ": every blank mark the untrimmed layout collapsed is unwrapped (" + collapsed + " collapsed, " + unwrapped + " unwrapped, " + kept + " of " + all + " blank marks kept)");
         assert.ok(bare.length <= unwrapped, what + ": a rendered blank left unmarked is one the fixpoint unwrapped and a later unwrap brought back onto its line, never more than the unwraps: " + JSON.stringify(bareList(bare)) + " against " + unwrapped + " unwrapped");

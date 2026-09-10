@@ -17,11 +17,16 @@
 // bounds set as well (maxSize on the sizes a formula asks for, maxExpand on its macro expansion, computed per
 // formula; the constants below say why) and this module's own bounds on the TeX it hands over (one formula's
 // length, one message's total). KaTeX
-// renders with output: "html" ONLY, no MathML twin. The KaTeX layout CSS ships via styles.css
-// (@import "katex/dist/katex.min.css"; fonts emitted to dist/fonts/ by esbuild). md-config.ts registers the
-// post-pass with the sanitizer (md-sanitize.ts registerMdPostPass), so every sanitizeMd call in the chat
-// bundle renders math, the file viewer's mdBlock included when it runs in the chat page; the files and feed
-// bundles take the grammar, the fill and KaTeX together in Slice 4 (decision 1).
+// renders with output: "html" ONLY, no MathML twin. The KaTeX layout CSS ships via styles.css AND feed.css,
+// each with @import "katex/dist/katex.min.css" (esbuild inlines the sheet into both and emits the fonts to
+// dist/fonts/ once, the same hashed names): styles.css dresses the chat page and the Files pane's page, feed.css
+// the feed page, which links no styles.css and hosts the viewer too, so it took the import in Slice 4 of
+// plans/markdown-viewer.md (render-math.test.ts and math-bundles.test.ts pin both sheets; a third sheet that hosts
+// the viewer needs the same import). md-config.ts registers the post-pass with the sanitizer at load (md-sanitize.ts
+// registerMdPostPass), and every bundle that hosts the chat or the viewer (render.js, files.js, feed.js) imports
+// md-config.ts, so every sanitizeMd call renders math on every surface: the chat's md() and userMd(), and the
+// viewer's mdBlock in the chat page, the Files pane and the feed (Slice 4, decision 1; before it files.js and
+// feed.js had neither the grammar nor the fill nor KaTeX).
 //
 // The delimiter problem: `$` is everywhere in chat text that is NOT math (shell variables,
 // prices), and a naive $..$ tokenizer strikes a formula through half a sentence the way the

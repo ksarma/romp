@@ -13,7 +13,9 @@
 //    the panel re-places its cards and does NOT repaint), the marks stand as the same nodes, no paint proper is counted, and the
 //    blank marks the new wrap points collapsed are unwrapped in the same hook (trimBlanks), so no padding-only mark stands after
 //    the reflow either. A blank trimmed at the wide width that renders at the narrow one stays bare until the next paint pass, the
-//    recorded stale shape, so the leg holds no "every rendered blank marked" after the reflow, only after a paint.
+//    recorded stale shape, so the leg asserts nothing about bare rendered blanks after the reflow; after the paint it holds point 1's
+//    bound, never an exact "every rendered blank marked" (the pass here unwraps something, an assertion of the leg, so the exact form
+//    cannot apply to its scene; md-config-paint-trim-browser.test.ts holds it where nothing was unwrapped, keyed on the event).
 // 3. A text-size step (A+) is a reflow too: the same holds.
 // 4. Overlapping comments (round 13): four and eight comments over the one list item nest their marks (the later paint wraps the
 //    text node where it stands, inside the earlier comment's mark), and the pass's one trim leaves no padding-only mark at any
@@ -109,7 +111,7 @@ test("in a browser, the real panel: the paint pass trims its marks once (no padd
     await placed(page);
     await frames(page, 2);
     await keepMarks(page);
-    // (1) the pass: both comments painted across their links, every wrap point's blank trimmed, every rendered blank marked
+    // (1) the pass: both comments painted across their links, every wrap point's blank trimmed, a bare rendered blank only where a mark was unwrapped
     const r0 = await read(page);
     assert.ok(r0.marks >= 28, "the two comments paint their fourteen links each and the spaces between: " + r0.marks + " marks");
     assert.ok(r0.blankMarks >= 20, "the spaces between the links carry marks: " + r0.blankMarks);

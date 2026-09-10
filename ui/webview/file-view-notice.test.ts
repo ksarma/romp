@@ -1,6 +1,7 @@
 // The viewer's edit-mode notice (a degraded editor, a refused save), run FOR REAL: openFileView mounts
 // through document.createElement against a copy of the small DOM stand-in fileview-chip.test.ts and
-// github-link.test.ts use, extended with a parent/child tree so WHERE a node lands can be read back.
+// github-link.test.ts use, extended with a parent/child tree so WHERE a node lands can be read back, and
+// a querySelector over that tree for the reads the viewer makes before its mode is known (the fold keeper's).
 // The notice used to be prepended INSIDE .fileview-body, whose editor child is height: 100% of that same
 // body: the body's content was the bar plus the whole body, so the editor's bottom rows were cut off by
 // the bar's height and the body's own scroll carried the bar out of view. It is now a child of the card
@@ -71,6 +72,21 @@ class El {
     this.parentNode = null;
   }
   contains(n: El): boolean { let x: El | null = n; while (x) { if (x === this) return true; x = x.parentNode; } return false; }
+  /** The selector shapes the viewer reads through this stand-in: a tag name or one `.class`; any other shape throws here, not a silent miss. */
+  private fits(sel: string): boolean {
+    if (/^\.[\w-]+$/.test(sel)) return this.classes.has(sel.slice(1));
+    if (/^[a-z][\w-]*$/i.test(sel)) return this.tagName.toLowerCase() === sel.toLowerCase();
+    throw new Error("querySelector: this stand-in reads a tag name or one class, not " + JSON.stringify(sel));
+  }
+  /** Descendants matching sel in tree order. renderBody notes the folds under .fileview-md BEFORE its early return (file-view.ts
+   *  foldKeeper), so every open and every Edit reads body.querySelector on this stand-in; a text/plain body holds no such box. */
+  querySelectorAll(sel: string): El[] {
+    const out: El[] = [];
+    const visit = (n: El) => { for (const c of n.childNodes) if (c instanceof El) { if (c.fits(sel)) out.push(c); visit(c); } };
+    visit(this);
+    return out;
+  }
+  querySelector(sel: string): El | null { return this.querySelectorAll(sel)[0] || null; }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   removeAttribute(k: string): void { this.attrs.delete(k); }
   getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }

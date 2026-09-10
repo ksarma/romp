@@ -296,10 +296,11 @@ test("the paint pass: unpaintChanges before each repaint, the change painters af
   const pos = (s: string) => { const i = paint.indexOf(s); assert.ok(i >= 0, "paintAll has: " + s); return i; };
   assert.ok(pos("unpaintChanges(this.ctx.body());") < pos('this.unpaint(".fc-hl, .fc-presel");'), "unpaint the changes before anything is repainted");
   assert.ok(pos("this.located.set(card.id, { ...loc, painted });") < pos("this.paintChanges(root, src, rendered, true);"), "changes after the comment highlights");
-  assert.ok(pos("this.paintChanges(root, src, rendered, true);") < pos("this.paintPresel(root, src, rendered, true);"), "…and before the composer's target");
-  // every painter of the pass defers its trim of collapsed blanks (the `true`), and the pass trims ONCE after the last of them:
-  // one layout for the pass, not one per comment (anchor-map.ts trimCollapsedMarks; the Slice 4 review, round 12)
-  assert.ok(pos("this.paintPresel(root, src, rendered, true);") < pos("this.trimBlanks();"), "…and the pass trims its blanks once, after every painter");
+  assert.ok(pos("this.paintChanges(root, src, rendered, true);") < pos("this.paintPresel(root, src, rendered);"), "…and before the composer's target");
+  // every painter of the pass defers its trim of collapsed blanks (paintChanges's `true`; paintPresel always does, since its other
+  // caller, repaintPresel, trims after it too since round 14), and the pass trims ONCE after the last of them: one layout for the
+  // pass, not one per comment (anchor-map.ts trimCollapsedMarks; the Slice 4 review, round 12)
+  assert.ok(pos("this.paintPresel(root, src, rendered);") < pos("this.trimBlanks();"), "…and the pass trims its blanks once, after every painter");
   const pc = SRC.split("private paintChanges(")[1].split("\n  }\n")[0];
   assert.match(pc, /return col && col\.color \? \{ "--fc-author": col\.color\.bg \} : \{\};/, "the author's session colour as --fc-author; nothing when unknown (the sheet's neutral)");
   assert.match(pc, /const aid = authorIdOf\(store, c\.id\);/, "the sidecar record's authorId, since toHunks drops it");

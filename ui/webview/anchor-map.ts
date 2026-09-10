@@ -1798,8 +1798,9 @@ const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 // padding around a collapsed blank, so a nest of d marks over one wrap point was peeled one level per pass and stood as ringed
 // boxes inside one another at the cap (the Slice 4 review, round 13; md-config-paint-trim-fixpoint.test.ts and the panel leg's
 // overlapping comments); a mark with no client rect of its own (a display:none ancestor) is kept, since its blank may render
-// when the ancestor shows (the panel measures it again in the first frame after the show: file-comments.ts trimBlanks re-arms the
-// layout frame when the body has no box). Blank, to the trim, is
+// when the ancestor shows (the panel measures it again on the show: through the seam's reflow report when a frame ran while the
+// pane was hidden, Chromium's case, since a display:none frame's requestAnimationFrame runs there, or in the frame file-comments.ts
+// trimBlanks armed on finding the body without a box when none did, the hide and the show in one task). Blank, to the trim, is
 // text with no letter, digit, punctuation or symbol (`\s`, the format and control characters, a combining mark alone) or the
 // hangul fillers alone (letters to Unicode, blank in most fonts); the alphabet picks what is MEASURED and layout decides, so a
 // candidate that renders (U+093F alone draws a dotted circle, U+000B a glyph) keeps its mark.
@@ -1839,14 +1840,24 @@ const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 // Since the Slice 4 review's round 13 the panel re-trims on two layout changes the seam never reports as well, the body's captured
 // `load` (a figure's bytes landing) and the document's FontFaceSet `loadingdone` (a face arriving under font-display: swap), each
 // re-wrapping the lines with no width report, folded into its layout frame (one trim per frame); and a trim that finds the body
-// without a box (a display:none pane, where every blank mark measures nothing and is kept) asks for a frame, which a hidden pane
-// gets only after the show, and measures the marks again there, once per event and never per frame (file-comments.ts trimBlanks
-// and scheduleRetrim; md-config-paint-retrim-events-browser.test.ts). The re-trim's price per reflow: realistic shapes under 10 ms
-// (200 comments over 300 paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to 11 ms); one comment across the paragraph of 5,000 links
-// 1.5 to 4.6 s in the real pane (round 13's measurement at a divider release, a text-size step and a window-resize step: the first
-// measurement of each pass after the one before it unwrapped lays the mutated paragraph out again, 1 to 1.5 s a layout), recorded
-// beside the paint's cost and not optimised. The divider's drag itself fires one reflow, at release (the shell moves a ghost line
-// and lays the pane out once); a window-edge resize reflows every frame and pays the price per frame.
+// without a box (a display:none pane, where every blank mark measures nothing and is kept) asks for a frame and measures the marks
+// again there, once per event and never per frame: when the hide and the show fall in one task that frame is the first after the
+// show and re-trims it; when a frame runs while the pane is hidden (Chromium runs a display:none frame's requestAnimationFrame, so
+// every hide that outlasts a frame) the armed frame runs hidden and keeps every mark, and the seam's width observer reports the
+// hide and the show as reflows, the show's report re-trimming (file-comments.ts trimBlanks and scheduleRetrim;
+// md-config-paint-retrim-events-browser.test.ts legs 4 and 5). Since round 14 the panel's own repaint of the pending target alone
+// (file-comments.ts repaintPresel: a composer opened, closed or moved), whose 2 px side padding moves the wrap points of the lines
+// it shares with a highlight, trims the standing marks at once in the same call, a paint pass like paintAll's
+// (md-config-paint-presel-retrim-browser.test.ts); a highlight blank unwrapped while the target stood stays bare once it is gone,
+// the shape above under one more trigger. The re-trim's price per reflow: realistic shapes under 10 ms (200 comments over 300
+// paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to 11 ms); one comment across the paragraph of 5,000 links 1 to 13 s in the real
+// pane under the convergence loop (round 14's measurements, three runs agreeing on every call count: a window-resize step 1.0 to
+// 1.1 s and 1,457 Range.getClientRects calls, a divider release narrowing 1000 to 700 px 2.1 to 2.4 s and 8,079, widening back 5.1
+// to 5.6 s and 11,514, a text-size step 12.4 to 13.3 s and 14,244, nine passes, each pass after one that unwrapped laying the
+// mutated paragraph out again at 1.0 to 1.3 s a layout; round 13 recorded 1.5 to 4.6 s, measured under the three-pass cap the same
+// round replaced, which left 51 padding-only marks standing on the text-size step where the loop leaves none), recorded beside the
+// paint's cost and not optimised. The divider's drag itself fires one reflow, at release (the shell moves a ghost line and lays the
+// pane out once); a window-edge resize reflows every frame and pays the price per frame.
 // In node the stand-ins offer no layout, so the trim measures nothing and every blank the DOM-side skips leave is a mark; the
 // node tests pin the DOM shape and the two skips, the browser legs the trimmed result (md-config-paint-trim.test.ts and
 // md-config-paint-trim-browser.test.ts, over anchor-map-fixtures/blank-scenes.json, the scenes the review rounds 7 to 13 collected).
@@ -1910,8 +1921,8 @@ function contentWidth(r: DRange, m: DElement): number {
   return w;
 }
 /** The mark's own client rects: none under a display:none ancestor (kept, its blank may render when the ancestor shows, and the
- *  panel measures it again in the first frame after the show, file-comments.ts trimBlanks); a collapsed blank in a rendered line
- *  gives the mark its padding's rect. A stand-in without the method counts as rendered. */
+ *  panel measures it again on the show, by the seam's reflow report or the frame it armed, file-comments.ts trimBlanks); a
+ *  collapsed blank in a rendered line gives the mark its padding's rect. A stand-in without the method counts as rendered. */
 const ownRects = (m: DMeasured): number => typeof m.getClientRects === "function" ? m.getClientRects().length : 1;
 /** Unwrap every mark of `marks` whose text is blank (isBlankMark) and lays out at zero width: the browser collapsed the blank, so
  *  the mark was the sheet's padding around nothing. The mark's children go back before it and it is removed, with no normalize

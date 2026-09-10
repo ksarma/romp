@@ -24,16 +24,24 @@
 // 4. A paint pass made while the pane is hidden (the Files pane in a display:none iframe, the phone shell's every tab switch; a
 //    status landing meanwhile repaints the highlights inside it) keeps every blank mark, since each measures no width and no box
 //    of its own (the trim's hidden-ancestor guard), and shown again the wrap points' marks would be the sheet's padding around
-//    nothing. Whether any observer reports the show is the engine's: measured in headless Chromium over six hides, four ran one
-//    lifecycle update in the hidden frame about 15 ms after the hide (the body's ResizeObserver and an IntersectionObserver over
-//    it reported the hide then, and the show after, so the seam's width observer reported the show as a reflow and the reflow hook
-//    re-trimmed), and two ran none (no observer reported either the hide or the show, the body's size being the one last observed,
-//    and the marks stood). The panel therefore asks for a frame when a trim finds the body without a box (trimBlanks, scheduleRetrim):
-//    a hidden frame renders none, so the frame it gets is the first after the show, and the marks are measured again there; a frame
-//    that still finds no box re-arms nothing. The leg pins the second case, which nothing else covers: the shell hides the pane,
-//    runs the panel's paint pass inside it (the inline toggle: toggleInline runs paintAll) and shows it again in ONE task, so no
-//    lifecycle update can run in the hidden frame between; after the show no padding-only mark stands, the wrap points' blanks are
-//    unwrapped, and the seam reported no reflow (the first case's path, which the other panel legs cover).
+//    nothing. Two paths re-trim the show, by whether a lifecycle update ran in the hidden frame between the hide and the show. One
+//    did (a hide that outlasts a frame): the body's ResizeObserver reports the hide, contentRect 0, and the show after it, so the
+//    seam's width observer reports each as a reflow and the reflow hook re-trims on the show. None did (the hide and the show in
+//    one task): no observer reports either, the body's size stays the one last observed, and the frame the panel asked for when a
+//    trim found the body without a box (trimBlanks, scheduleRetrim) is the first after the show and re-trims there; a frame that
+//    still finds no box re-arms nothing. A hidden frame is not frameless: headless Chromium runs a display:none same-origin frame's
+//    requestAnimationFrame at full rate (round 14's probes: 26 callbacks in 400 ms hidden, and the observer reported every hide that
+//    outlasted a frame, 10 of 10), so in the first case the frame the hide's trim armed runs hidden, keeps every mark and re-arms
+//    nothing, and the reflow report does the show's work; round 13 recorded that frame as the first after the show, which holds in
+//    the second case alone. The leg pins the second case: the shell hides the pane, runs the panel's paint pass inside it (the
+//    inline toggle: toggleInline runs paintAll) and shows it again in ONE task, so no lifecycle update can run in the hidden frame
+//    between; after the show no padding-only mark stands, the wrap points' blanks are unwrapped, and the seam reported no reflow.
+// 5. The first case, and the re-arm's price: the pane hidden until the seam reports the hide (a reflow at no width), frames run in
+//    the hidden pane, the panel's paint pass runs inside it, more frames run, the pane is shown and the seam reports the show. The
+//    trim calls are counted off anchor-map.ts TRIM_STATS (every trimCollapsedMarks call resets its pass count, so the page counts the
+//    resets): while hidden, two per event (the event's own trim, which finds no box and arms a frame, and that frame's, which re-arms
+//    nothing), fewer than the frames that ran, so never per frame; on the show one per reflow report, none from the frame the hidden
+//    trims armed, which was spent hidden; after the show no padding-only mark stands and the wrap points' blanks are unwrapped.
 // The Comments panel polls every 2.5 s and HEADs the sidecar and the config through fetch; the harness's stub answers those paths
 // 404, a move against the status's mtimes, so every tick would refresh and repaint the marks, a repaint the legs must not mistake
 // for their re-trim: the page answers those two HEADs with the status's own mtimes, as the kernel would (quietPoll).
@@ -229,28 +237,39 @@ const COMMENTS4 = [commentOn(1, LINKS, "- ", "\n\nAfter")];
 const HUNKS4 = [hunk("hW", NOTE4.indexOf("words"), "words")];
 const COMMENTED4 = { ...STATUS, store: { ...STATUS.store, comments: COMMENTS4, suggestions: HUNKS4.map((h) => ({ id: h.id, authorId: SID })) }, hunks: HUNKS4, unsent: { ...STATUS.unsent, comments: COMMENTS4.map((c) => c.id) } };
 
+/** The shell page with the pane framed (legs 4 and 5): the report open in the pane, the panel open, its cards placed. */
+async function openShell(browser: any): Promise<{ page: any; frame: any; errors: string[] }> {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+  const errors: string[] = [];
+  page.on("pageerror", (e: Error) => { errors.push(e.message); });
+  const html = pageHtml("pane", { [REPORT]: NOTE4 }, MT);
+  await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
+    const u = new URL(route.request().url());
+    if (u.pathname === "/shell") return route.fulfill({ status: 200, contentType: "text/html", body: SHELL });
+    if (u.pathname === "/media/InterVariable.woff2") return route.fulfill({ status: 200, contentType: "font/woff2", body: INTER });
+    if (u.pathname === "/media/InterVariable-Italic.woff2") return route.fulfill({ status: 200, contentType: "font/woff2", body: INTER_ITALIC });
+    return route.fulfill({ status: 200, contentType: "text/html", body: html });
+  });
+  await page.goto(ORIGIN + "/shell");
+  const frame = page.frames().find((f: any) => f !== page.mainFrame());
+  assert.ok(frame, "the pane's frame");
+  await frame.waitForFunction(() => !!(window as any).FV, null, { timeout: 10000 });
+  await quietPoll(frame, COMMENTED4);
+  await frame.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, COMMENTED4]);
+  await frame.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+  await openPanel(frame);
+  await frames(frame, 4);
+  return { page, frame, errors };
+}
+/** The pane's counters, for leg 5: the panel's trim calls (__trims, the page's count of TRIM_STATS.passes resets), the pane's own
+ *  frames (__ticks) and the seam's reflows and paints. */
+type Counts = { trims: number; ticks: number; reflows: number; paints: number };
+const counts = (frame: any): Promise<Counts> => frame.evaluate(() => { const w = window as any; return { trims: w.__trims, ticks: w.__ticks, reflows: w.__reflows, paints: w.__paints }; });
+/** The pane's reflow count reaching `n`, awaited from the SHELL page, whose frames run whatever the hidden pane's do. */
+const reflowsReach = (page: any, n: number): Promise<unknown> => page.waitForFunction((k: number) => ((document.getElementById("pane") as HTMLIFrameElement).contentWindow as any).__reflows >= k, n, { timeout: 10000 });
 test("in a browser, the real panel in a display:none iframe: a paint pass made while the pane is hidden keeps every blank mark, and the pane shown again (in the same task, so no observer reports either) re-trims them in its first frame: no padding-only mark at the wrap points, no reflow", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
-    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
-    const errors: string[] = [];
-    page.on("pageerror", (e: Error) => { errors.push(e.message); });
-    const html = pageHtml("pane", { [REPORT]: NOTE4 }, MT);
-    await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
-      const u = new URL(route.request().url());
-      if (u.pathname === "/shell") return route.fulfill({ status: 200, contentType: "text/html", body: SHELL });
-      if (u.pathname === "/media/InterVariable.woff2") return route.fulfill({ status: 200, contentType: "font/woff2", body: INTER });
-      if (u.pathname === "/media/InterVariable-Italic.woff2") return route.fulfill({ status: 200, contentType: "font/woff2", body: INTER_ITALIC });
-      return route.fulfill({ status: 200, contentType: "text/html", body: html });
-    });
-    await page.goto(ORIGIN + "/shell");
-    const frame = page.frames().find((f: any) => f !== page.mainFrame());
-    assert.ok(frame, "the pane's frame");
-    await frame.waitForFunction(() => !!(window as any).FV, null, { timeout: 10000 });
-    await quietPoll(frame, COMMENTED4);
-    await frame.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, COMMENTED4]);
-    await frame.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
-    await openPanel(frame);
-    await frames(frame, 4);
+    const { page, frame, errors } = await openShell(browser);
     const r0 = await read(frame);
     assert.ok(r0.blankMarks >= 40, "the spaces between the links carry marks: " + r0.blankMarks);
     assert.deepEqual(r0.paddingOnly, [], "the pass trimmed the wrap points' spaces while the pane showed");
@@ -274,6 +293,58 @@ test("in a browser, the real panel in a display:none iframe: a paint pass made w
     assert.equal(r2.reflows, r0.reflows, "no reflow: no lifecycle update ran in the hidden frame, so the body's width is the one the seam's observer last observed");
     assert.equal(r2.paints, r0.paints, "no paint proper through the seam (the hidden pass was the panel's own)");
     assert.deepEqual(r2.paddingOnly, [], "no blank mark of zero width stands after the show (the hidden pass asked for the frame that re-trims)");
+    assert.ok(r2.blankMarks < mid.kept, "the wrap points' blanks were unwrapped on the show: " + r2.blankMarks + " blank marks against " + mid.kept);
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+test("in a browser, the real panel in a display:none iframe hidden across frames: the seam reports the hide and the show as reflows (Chromium runs the hidden frame's requestAnimationFrame), the trim runs twice per event while hidden and never per frame, and the show's reflow re-trims: no padding-only mark at the wrap points", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, frame, errors } = await openShell(browser);
+    // the trim's call counter (TRIM_STATS.passes is reset at the start of every trimCollapsedMarks call; anchor-map.ts) and the
+    // pane's own frame counter, a requestAnimationFrame loop that runs for as long as the engine gives the pane frames
+    await frame.evaluate(() => {
+      const w = window as any; const stats = w.FV.TRIM_STATS; let passes = stats.passes; w.__trims = 0; w.__ticks = 0;
+      Object.defineProperty(stats, "passes", { configurable: true, get: () => passes, set: (x: number) => { if (x === 0) w.__trims++; passes = x; } });
+      const tick = () => { w.__ticks++; requestAnimationFrame(tick); }; requestAnimationFrame(tick);
+    });
+    const r0 = await read(frame);
+    assert.ok(r0.blankMarks >= 40, "the spaces between the links carry marks: " + r0.blankMarks);
+    assert.deepEqual(r0.paddingOnly, [], "the pass trimmed the wrap points' spaces while the pane showed");
+    const c0 = await counts(frame);
+    // the hide, and the seam's report of it: the body's width observer sees contentRect 0 in the hidden frame's lifecycle update and
+    // the seam fires a reflow (awaited from the shell: its frames run whatever the pane's do); then frames pass with the pane hidden
+    await page.evaluate(() => { (document.getElementById("pane") as HTMLElement).style.display = "none"; });
+    await reflowsReach(page, c0.reflows + 1);
+    await frames(page, 6);
+    // the panel's paint pass while hidden (the inline toggle): a forced layout finds no box, every blank mark kept; more frames pass
+    const mid = await frame.evaluate(() => {
+      const hidden = (document.querySelector(".fileview-body") as HTMLElement).getClientRects().length === 0;
+      (document.querySelector('[data-act="fcinline"]') as HTMLElement).click();
+      const marks = Array.from(document.querySelectorAll(".fileview-body mark.fc-hl"));
+      const kept = marks.filter((k) => /^\s*$/.test(k.textContent || "")).length;
+      return { hidden, kept };
+    });
+    assert.ok(mid.hidden, "the body has no box while the pane is hidden");
+    assert.ok(mid.kept > r0.blankMarks, "the hidden pass kept the wrap points' blanks (no width and no box to measure): " + mid.kept + " blank marks against " + r0.blankMarks);
+    await frames(page, 6);
+    const c1 = await counts(frame);
+    const hid = { trims: c1.trims - c0.trims, ticks: c1.ticks - c0.ticks, reflows: c1.reflows - c0.reflows };
+    assert.equal(hid.reflows, 1, "the seam reported the hide as one reflow (the width observer's contentRect 0) and nothing else while hidden: " + hid.reflows);
+    assert.equal(c1.paints - c1.reflows, c0.paints - c0.reflows, "no paint proper through the seam while hidden (the pass was the panel's own)");
+    assert.ok(hid.ticks >= 6, "the hidden pane's frames ran (Chromium services a display:none frame's requestAnimationFrame): " + hid.ticks + " against the shell's 12");
+    assert.equal(hid.trims, 4, "two trims per event while hidden (the hide's reflow, the paint pass): the event's own, which finds no box and arms a frame, and that frame's, which re-arms nothing: " + hid.trims);
+    assert.ok(hid.trims < hid.ticks, "never a trim per frame: " + hid.trims + " trims across " + hid.ticks + " hidden frames");
+    // the show, and the seam's report of it: the observer sees the width back, the seam fires a reflow and its hook re-trims the marks
+    await page.evaluate(() => { (document.getElementById("pane") as HTMLElement).style.display = ""; });
+    await reflowsReach(page, c1.reflows + 1);
+    await frames(frame, 3);
+    const c2 = await counts(frame); const r2 = await read(frame);
+    const shown = { trims: c2.trims - c1.trims, reflows: c2.reflows - c1.reflows };
+    assert.equal(shown.trims, shown.reflows, "the show's trims are the reflow hook's, one per report; the frame the hidden trims armed was spent hidden and adds none: " + JSON.stringify(shown));
+    assert.equal(c2.paints - c2.reflows, c0.paints - c0.reflows, "no paint proper through the seam");
+    assert.deepEqual(r2.paddingOnly, [], "no blank mark of zero width stands after the show (the reflow hook re-trimmed)");
     assert.ok(r2.blankMarks < mid.kept, "the wrap points' blanks were unwrapped on the show: " + r2.blankMarks + " blank marks against " + mid.kept);
     assert.deepEqual(errors, [], "no script error");
     await page.close();

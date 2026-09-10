@@ -9,7 +9,9 @@
 // modules: md-sanitize-postpass-browser.test.ts measures a fraction, a superscript, a radical
 // and a display sum, md-sanitize-katex-browser.test.ts checks the rendered markup is KaTeX's
 // own byte for byte, and md-sanitize-viewer-math-browser.test.ts opens a note with math in the
-// chat page's viewer. The wiring (math.ts, chat-md.ts, render.ts) is source-pinned below. This
+// chat page's viewer. The wiring (math.ts, md-config.ts, chat-md.ts, render.ts, file-view.ts, anchor-map.ts)
+// is source-pinned below, with md-config.ts as the one module that registers the fill (plans/markdown-viewer.md, The
+// Slice 4 build, item 1). This
 // is the ONE node file for the math contract: review round 2 folded md-sanitize-math.test.ts, a
 // near-copy with three of these pins repeated, into it. The sanitizer's own shape (the registry
 // and the loop that runs the passes) is md-sanitize.test.ts's.
@@ -157,7 +159,7 @@ test("render.ts wires the math extensions into marked, through the one shared gr
   assert.doesNotMatch(UI("chat-md.ts"), /chatMdExtensions|from "\.\/math"/, "chat-md.ts no longer owns a grammar of its own");
 });
 
-test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md.ts registers renderMathPlaceholders once, and no renderer calls it by hand", () => {
+test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: md-config.ts registers renderMathPlaceholders once, chat-md.ts registers nothing, and no renderer calls it by hand", () => {
   // KaTeX's output is inline styles (height, top, vertical-align on struts and vlist rows) plus inline
   // <svg> for stretchy glyphs, and the shared sanitizer keeps only colour declarations in a style
   // attribute (md-sanitize.ts, decision 6), so KaTeX output run through it collapses. The extension
