@@ -24643,7 +24643,16 @@ def _update_remote(host, head=None):
         # answers 202 and restarts nothing, which would have turned this into a silent never-restart
         # (review find). SYNCED:<sha>:MANAGED = the manager bounced it; SYNCED:<sha>:FALLBACK = the kill
         # path below ran (no owning manager reachable — node absent, no manager, or the polled kernel is
-        # bare).
+        # bare); REFUSED:<sha>:<status> = the far manager ANSWERED and refused (the control client's exit
+        # 3: its write gate, 401 or 503), and nothing was killed or started.
+        # THE MANAGER'S REFUSAL IS FINAL (review round 2, 2026-09-10): the client's exit 3 used to fall
+        # through to the last-resort path like exit 1 (no answer), which pkilled the managed kernel out from
+        # under the manager that had just answered for it, wrote a false "no owning manager" row and
+        # reported an immediate restart. A managed kernel is never killed out from under a manager that
+        # answered: on 3 the code is synced, a manager-refused-restart-all row (the kernel's own action for
+        # a refused hop, _MANAGER_REFUSED_ACTION) lands on the far host with the status the client named,
+        # the client's own stderr line (which names the file it read and the way out) is in update.log,
+        # and the apply exits 0 with the REFUSED tag so _verdict says what did not happen and why.
         'arow() { python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
         '\'reason\':\'from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; }; '
         '[ -f "$LOGDIR/down-by-romp" ] || arow; '
@@ -24653,7 +24662,13 @@ def _update_remote(host, head=None):
         'if [ "$OWNED" = 1 ]; then '
         # a manager owning the kernel beside a `romp down` marker (see above): its restart is attributed too
         '[ ! -f "$LOGDIR/down-by-romp" ] || arow; '
-        'if "$R/bin/romp-manager" restart-all >>"$LOGDIR/update.log" 2>&1; then echo "SYNCED:$NEW:MANAGED$K"; exit 0; fi; fi; '
+        '"$R/bin/romp-manager" restart-all >>"$LOGDIR/update.log" 2>&1; MRC=$?; '
+        'if [ "$MRC" = 0 ]; then echo "SYNCED:$NEW:MANAGED$K"; exit 0; fi; '
+        # the status the client named ("answered HTTP <code>"), read back from the lines it just appended
+        'if [ "$MRC" = 3 ]; then MCODE="$(tail -n 5 "$LOGDIR/update.log" | sed -n "s/.*answered HTTP \\([0-9][0-9][0-9]\\).*/\\1/p" | tail -n 1)"; '
+        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'manager-refused-restart-all\',\'door\':\'/restart-all\','
+        '\'status\':int(\'${MCODE:-0}\'),\'reason\':\'p2p-update from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        'echo "REFUSED:$NEW:${MCODE:-?}$K"; exit 0; fi; fi; '
         # stopped on purpose (see above): synced, nothing restarted
         'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN$K"; exit 0; fi; '
         # LAST RESORT (no owning manager answering on this host): the immediate path below — audit row,
@@ -24675,6 +24690,7 @@ def _update_remote(host, head=None):
         'echo "SYNCED:$NEW:FALLBACK$K"'
     ) % (shlex.quote(rdir), lfull, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF,
          _local_machine_label(), lfull[:8], kport,
+         _local_machine_label(), lfull[:8],
          _local_machine_label(), lfull[:8], kport)
     # The apply KILLS the running kernel before booting its replacement, so it must be immune to the
     # ssh dying between the two halves — exactly what a flaky link does (the user 2026-07-11:
@@ -24740,7 +24756,15 @@ def _update_remote(host, head=None):
                 return True, ("synced to %s; %s is stopped by romp down, so nothing was restarted there "
                               "(romp up on it starts the new code)" % (short, host))
             return True, "synced to %s + restarting" % short
-        _unexpect()                       # nothing restarted: REFMISMATCH / DIVERGED / STATERR / DIRTYNOW / RESETFAIL / NOLAUNCH / error
+        _unexpect()                       # nothing restarted: REFUSED / REFMISMATCH / DIVERGED / STATERR / DIRTYNOW / RESETFAIL / NOLAUNCH / error
+        if tag == "REFUSED":
+            # the far manager answered the restart and refused it (its write gate; review round 2,
+            # 2026-09-10): the code is synced and its kernel keeps running the old build, under its manager
+            short, _, code = rest.partition(":")
+            return False, ("synced to %s, but the manager on %s refused the restart (HTTP %s from its write gate), "
+                           "so its kernel keeps running the old code. On %s, run romp refresh from a shell whose "
+                           "state root is the manager's, or repair its serve-token file (a regular 0600 file you own)"
+                           % (short.strip() or lfull[:8], host, code.strip() or "?", host))
         if tag == "REFMISMATCH":
             return False, ("pushed %s, but the scratch ref on %s now holds %s — another push moved it between "
                            "ours and the apply; nothing was reset there. Push again."
