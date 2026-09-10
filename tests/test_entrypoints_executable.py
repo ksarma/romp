@@ -32,8 +32,9 @@ Both tests skip only when git is not installed or git says the tree is not a rep
 list itself comes from the index); any other git failure, dubious ownership included, fails them with
 git's stderr, since a skip there would disarm the check while the run stays green. Loads nothing from
 the kernel; the repo root is derived from this file's location. The ScratchCheckout class pins the
-negative cases against a scratch repository of its own, so nothing here touches this repo's index or
-working tree.
+negative cases against a scratch repository of its own, whose git runs with every GIT_* variable of the
+process scrubbed (GIT_INDEX_FILE above all: git exports it to a hook as an absolute path) and reads none
+of the machine's own git files, so nothing here touches this repo's index or working tree.
 """
 import os
 import shutil
@@ -55,12 +56,14 @@ NOT_A_REPOSITORY = "not a git repository"
 EXECUTABLE = "100755"
 
 
-def _index(root=ROOT):
+def _index(root=ROOT, env=None):
     """Recorded mode by repo-relative path for every entry in git's index at `root`. Skips the caller
     only when git is not installed or says `root` is not in a repository; any other failure is an
-    AssertionError carrying git's stderr, never a skip."""
+    AssertionError carrying git's stderr, never a skip. `env` is the environment git runs under; the
+    real checkout inherits the process's (a hook's GIT_INDEX_FILE is the right index to read there),
+    the scratch class passes its scrubbed one."""
     try:
-        proc = subprocess.run(["git", "ls-files", "-s", "-z"], cwd=root,
+        proc = subprocess.run(["git", "ls-files", "-s", "-z"], cwd=root, env=env,
                               capture_output=True, text=True, timeout=60)
     except FileNotFoundError:
         raise unittest.SkipTest("git is not installed; the recorded modes cannot be read")
@@ -175,7 +178,8 @@ class ScratchCheckout(unittest.TestCase):
     whatever its name, a file without a shebang and a symlink with an extension are not commands, an
     untracked file is not a command, a symlink target without its bit is named through its link, a
     hook under hooks/ or .githooks/ is held to the same rules, and the index reader skips for a
-    missing git or repository only."""
+    missing git or repository only. The scratch git runs under env(): it sees neither the index a
+    run from a hook inherits nor the machine's own git config, hooks or excludes file."""
 
     def setUp(self):
         try:
@@ -184,6 +188,8 @@ class ScratchCheckout(unittest.TestCase):
             self.skipTest("git is not installed")
         self.root = os.path.realpath(tempfile.mkdtemp(prefix="entrypoints-"))
         self.addCleanup(shutil.rmtree, self.root, True)
+        self.xdg = tempfile.mkdtemp(prefix="entrypoints-xdg-")
+        self.addCleanup(shutil.rmtree, self.xdg, True)
         self.git("init", "-q")
         self.write("bin/romp", "#!/bin/sh\n", 0o755)
         self.write("kernel/kernel.py", "#!/usr/bin/env python3\n", 0o755)
@@ -209,17 +215,27 @@ class ScratchCheckout(unittest.TestCase):
             f.write(text)
         os.chmod(self.path(rel), mode)
 
+    def env(self):
+        """The scratch git's environment, built at call time from the process's. Every GIT_* variable
+        is dropped, GIT_INDEX_FILE above all: git exports it, with GIT_DIR, to a hook as an absolute
+        path, so a run from a pre-commit hook would otherwise send the scratch repo's add and
+        update-index into this checkout's index (and a GIT_DIR of its own is not set in its place: an
+        explicit GIT_DIR skips the ownership check the dubious-ownership test provokes). The GIT_TEST_*
+        knobs stay, since that test sets one in os.environ. No global or system config is read, and
+        XDG_CONFIG_HOME is a scratch dir, so a hooksPath, a template dir or a git/ignore of the
+        machine's own does not reach it (a global ignore listing bin/ would fail every git add here;
+        one listing *.sh would drop files silently). HOME is left alone."""
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith("GIT_") or name.startswith("GIT_TEST_")}
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", XDG_CONFIG_HOME=self.xdg)
+        return env
+
     def git(self, *args):
-        # the scratch repo reads no global or system config, so a hooksPath or a template dir of the
-        # machine's own does not reach it
-        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
-        env.pop("GIT_DIR", None)
-        env.pop("GIT_WORK_TREE", None)
-        subprocess.run(["git"] + list(args), cwd=self.root, env=env, check=True,
-                       capture_output=True, text=True, timeout=60)
+        return subprocess.run(["git"] + list(args), cwd=self.root, env=self.env(), check=True,
+                              capture_output=True, text=True, timeout=60).stdout
 
     def walk(self):
-        recorded = _index(self.root)
+        recorded = _index(self.root, self.env())
         commands, unresolved = _commands(self.root, recorded)
         return recorded, commands, unresolved
 
@@ -227,7 +243,7 @@ class ScratchCheckout(unittest.TestCase):
         """The message of the AssertionError _index raises for the scratch root; a skip there is the
         hole this class pins, so it is a failure of the test, never a skip of it."""
         try:
-            _index(self.root)
+            _index(self.root, self.env())
         except unittest.SkipTest as skip:
             self.fail("the index reader skipped instead of failing: %s" % skip)
         except AssertionError as error:
@@ -290,6 +306,43 @@ class ScratchCheckout(unittest.TestCase):
         self.assertEqual(_index_offenders(commands, recorded, self.root),
                          ["bin/romp-x.sh: recorded as 100644", "hooks/romp-hook.sh: recorded as 100644"])
 
+    def test_the_scratch_git_sees_neither_an_inherited_index_nor_the_machines_git_files(self):
+        # a second scratch repo stands in for this checkout: git exports GIT_DIR and GIT_INDEX_FILE to
+        # a hook as absolute paths, so a run from a pre-commit hook inherits another repository's index
+        decoy = os.path.realpath(tempfile.mkdtemp(prefix="entrypoints-decoy-"))
+        self.addCleanup(shutil.rmtree, decoy, True)
+        clean = self.env()
+        subprocess.run(["git", "init", "-q"], cwd=decoy, env=clean, check=True, capture_output=True, timeout=60)
+        with open(os.path.join(decoy, "kept"), "w") as f:
+            f.write("kept\n")
+        subprocess.run(["git", "add", "--", "kept"], cwd=decoy, env=clean, check=True, capture_output=True, timeout=60)
+        index = os.path.join(decoy, ".git", "index")
+        with open(index, "rb") as f:
+            before = f.read()
+        # and a global excludes file of the machine's own, listing the scratch repo's own trees
+        xdg = tempfile.mkdtemp(prefix="entrypoints-hostile-xdg-")
+        self.addCleanup(shutil.rmtree, xdg, True)
+        os.makedirs(os.path.join(xdg, "git"))
+        with open(os.path.join(xdg, "git", "ignore"), "w") as f:
+            f.write("bin/\n*.sh\n")
+        inherited = {"GIT_DIR": os.path.join(decoy, ".git"), "GIT_WORK_TREE": decoy, "GIT_INDEX_FILE": index,
+                     "XDG_CONFIG_HOME": xdg}
+        with patch.dict(os.environ, inherited):
+            self.assertEqual(self.git("rev-parse", "--git-path", "index").strip(), ".git/index")
+            self.write("bin/romp-late", "#!/bin/sh\n", 0o755)
+            self.write("hooks/romp-late.sh", "#!/bin/sh\n", 0o755)
+            self.git("add", "--", "bin/romp-late", "hooks/romp-late.sh")
+            self.git("update-index", "--chmod=-x", "bin/romp")
+            recorded, commands, unresolved = self.walk()
+        self.assertEqual(unresolved, [])
+        self.assertEqual(recorded["bin/romp-late"], EXECUTABLE)
+        self.assertEqual(recorded["hooks/romp-late.sh"], EXECUTABLE)
+        self.assertEqual(recorded["bin/romp"], "100644")
+        self.assertNotIn("kept", recorded)
+        self.assertIn("bin/romp-late", [rel for rel, _ in commands])
+        with open(index, "rb") as f:
+            self.assertEqual(f.read(), before, "the scratch git wrote the index it inherited")
+
     def test_the_index_reader_skips_for_a_missing_git_or_repository_only(self):
         def completed(stderr):
             return subprocess.CompletedProcess(args=["git"], returncode=128, stdout="", stderr=stderr)
@@ -311,7 +364,7 @@ class ScratchCheckout(unittest.TestCase):
         # git honours GIT_TEST_ASSUME_DIFFERENT_OWNER since 2.35.2 and then refuses the repository the
         # way a container or a shared checkout provokes; a git that ignores it cannot pin this case
         with patch.dict(os.environ, {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}):
-            probe = subprocess.run(["git", "ls-files", "-s", "-z"], cwd=self.root,
+            probe = subprocess.run(["git", "ls-files", "-s", "-z"], cwd=self.root, env=self.env(),
                                    capture_output=True, text=True, timeout=60)
             if probe.returncode == 0:
                 self.skipTest("this git ignores GIT_TEST_ASSUME_DIFFERENT_OWNER")
