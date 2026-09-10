@@ -23,9 +23,10 @@ The rule is content, not name shape:
     100644, the links as 120000). A command symlink is followed to its target, which must exist
     inside the repo, be recorded as 100755 and be executable in the checkout, so a dangling or
     escaping link is an offender too.
-Both tests skip when git is not installed or the tree is not a git checkout, since the command list
-itself comes from the index. Loads nothing from the kernel; the repo root is derived from this
-file's location. The ScratchCheckout class pins the negative cases against a scratch repository of
+Both tests skip only when git is not installed or git says the tree is not a repository (the command
+list itself comes from the index); any other git failure, dubious ownership included, fails them with
+git's stderr, since a skip there would disarm the check while the run stays green. Loads nothing from
+the kernel; the repo root is derived from this file's location. The ScratchCheckout class pins the negative cases against a scratch repository of
 its own, so nothing here touches this repo's index or working tree.
 """
 import os
@@ -33,6 +34,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -42,20 +44,27 @@ TREES = ("bin",)
 # and the symlink whose target lost its bit in the incident this module answers.
 MUST_REACH = ("bin/romp", "bin/romp-kernel")
 SYMLINK = "120000"
+# git's own wording for a tree with no repository above it; the one nonzero exit that is a skip
+NOT_A_REPOSITORY = "not a git repository"
 EXECUTABLE = "100755"
 
 
 def _index(root=ROOT):
     """Recorded mode by repo-relative path for every entry in git's index at `root`. Skips the caller
-    when git is not installed or ls-files fails."""
+    only when git is not installed or says `root` is not in a repository; any other failure is an
+    AssertionError carrying git's stderr, never a skip."""
     try:
         proc = subprocess.run(["git", "ls-files", "-s", "-z"], cwd=root,
                               capture_output=True, text=True, timeout=60)
     except FileNotFoundError:
         raise unittest.SkipTest("git is not installed; the recorded modes cannot be read")
     if proc.returncode != 0:
-        raise unittest.SkipTest("not a git checkout (git ls-files exited %d: %s)"
-                                % (proc.returncode, proc.stderr.strip()))
+        if NOT_A_REPOSITORY in proc.stderr:
+            raise unittest.SkipTest("not a git checkout (git ls-files exited %d: %s)"
+                                    % (proc.returncode, proc.stderr.strip()))
+        raise AssertionError("git ls-files exited %d in %s, so the recorded modes cannot be read and the "
+                             "check would be disarmed; fix the checkout rather than skipping:\n%s"
+                             % (proc.returncode, root, proc.stderr.strip()))
     recorded = {}
     for entry in proc.stdout.split("\0"):
         if not entry:
@@ -156,7 +165,8 @@ class ScratchCheckout(unittest.TestCase):
     """The rules against a scratch repository, so the negative cases are pinned without touching this
     repo's index or working tree: a shebang file recorded as 100644 is an offender in both layers
     whatever its name, a file without a shebang and a symlink with an extension are not commands, an
-    untracked file is not a command, and a symlink target without its bit is named through its link."""
+    untracked file is not a command, a symlink target without its bit is named through its link, and
+    the index reader skips for a missing git or repository only."""
 
     def setUp(self):
         try:
@@ -200,6 +210,17 @@ class ScratchCheckout(unittest.TestCase):
         recorded = _index(self.root)
         commands, unresolved = _commands(self.root, recorded)
         return recorded, commands, unresolved
+
+    def index_failure(self):
+        """The message of the AssertionError _index raises for the scratch root; a skip there is the
+        hole this class pins, so it is a failure of the test, never a skip of it."""
+        try:
+            _index(self.root)
+        except unittest.SkipTest as skip:
+            self.fail("the index reader skipped instead of failing: %s" % skip)
+        except AssertionError as error:
+            return str(error)
+        self.fail("the index reader returned a listing instead of failing")
 
     def test_the_walk_is_the_index_and_the_rule_is_the_shebang(self):
         recorded, commands, unresolved = self.walk()
@@ -246,6 +267,34 @@ class ScratchCheckout(unittest.TestCase):
                                       "bin/romp-gone: dangling symlink (target kernel/gone.py does not exist)",
                                       "bin/romp-out: resolves outside the repo"])
         self.assertEqual([rel for rel, _ in commands], ["bin/romp-kernel", "bin/romp-x.sh"])
+
+    def test_the_index_reader_skips_for_a_missing_git_or_repository_only(self):
+        def completed(stderr):
+            return subprocess.CompletedProcess(args=["git"], returncode=128, stdout="", stderr=stderr)
+        with patch.object(subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaises(unittest.SkipTest):
+                _index(self.root)
+        with patch.object(subprocess, "run",
+                          return_value=completed("fatal: not a git repository (or any of the parent directories): .git")):
+            with self.assertRaises(unittest.SkipTest):
+                _index(self.root)
+        # every other nonzero exit is a failure that carries git's words, never a skip
+        with patch.object(subprocess, "run",
+                          return_value=completed("fatal: detected dubious ownership in repository at '/a/checkout'")):
+            message = self.index_failure()
+        self.assertIn("dubious ownership", message)
+        self.assertIn("exited 128", message)
+
+    def test_a_real_dubious_ownership_failure_fails_not_skips(self):
+        # git honours GIT_TEST_ASSUME_DIFFERENT_OWNER since 2.35.2 and then refuses the repository the
+        # way a container or a shared checkout provokes; a git that ignores it cannot pin this case
+        with patch.dict(os.environ, {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}):
+            probe = subprocess.run(["git", "ls-files", "-s", "-z"], cwd=self.root,
+                                   capture_output=True, text=True, timeout=60)
+            if probe.returncode == 0:
+                self.skipTest("this git ignores GIT_TEST_ASSUME_DIFFERENT_OWNER")
+            message = self.index_failure()
+        self.assertIn(probe.stderr.strip().splitlines()[0], message)
 
 
 if __name__ == "__main__":
