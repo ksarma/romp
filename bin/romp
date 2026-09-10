@@ -2918,14 +2918,21 @@ PYEOF
         exit 0 ;;
     refresh)   # restart EVERYTHING (the user 2026-06-29): the postal bus too, not just the kernels — the bus
                # is a separate long-lived singleton the manager doesn't own, so a kernel-only refresh left it
-               # serving stale code. Bounce the bus first (best-effort), then exec the kernel restart.
+               # serving stale code. The kernels first, through the manager's control client, and the bus
+               # (best-effort) only once the manager took the request.
                _romp_restart_audit refresh "" "${2:-}"   # who asked (see the helper), before acting; --quiet rides along
-               "${ROMP_POSTAL_BIN:-romp-postal-service}" restart >/dev/null 2>&1 || true
                # Deploys bounce IMMEDIATELY, cutting in-flight turns (T160 — the parked
                # quiet window cost minutes per push; boot reconcile resumes cut turns with
                # their history). `romp refresh --quiet` defers to the next quiet window
                # explicitly (no SDK turn in flight, drain lease held, backstop-capped).
-               exec "${ROMP_MANAGER_BIN:-romp-manager}" restart-all "${2:-}" ;;
+               # The client's exit is this command's: 3 when the manager ANSWERED and refused (its write
+               # gate, HTTP 401 or 503; the client's stderr line names the file this romp read, or that
+               # it found none, and the way out), 1 when nothing answered. On a refusal nothing restarted,
+               # so the bus is left alone too (review round 2, 2026-09-10: it used to be bounced before the
+               # answer was known, leaving the bus on new code and every kernel on the old).
+               "${ROMP_MANAGER_BIN:-romp-manager}" restart-all "${2:-}" || exit $?
+               "${ROMP_POSTAL_BIN:-romp-postal-service}" restart >/dev/null 2>&1 || true
+               exit 0 ;;
     status)
         _st_marker="$(_romp_state_dir)/down-by-romp"
         [[ -f "$_st_marker" ]] || exec "${ROMP_MANAGER_BIN:-romp-manager}" status

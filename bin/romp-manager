@@ -1127,19 +1127,47 @@ function control(method, pathname, kernel, params) {
   // reason). A token this client cannot read is said once here; the request still goes out, and the
   // manager's own refusal, printed below, names the file.
   const headers = {};
+  const tokenFile = path.join(STATE_ROOT, 'serve-token');
+  const fromEnv = !!(process.env.ROMP_SERVE_TOKEN || '').trim();
+  let sent = null;   // the serveToken() answer for a write: {token} or {token: '', why}
   if (method !== 'GET') {
-    const t = serveToken();
-    if (t.token) headers['X-Romp-Token'] = t.token;
-    else console.error(`romp-manager: the serve token could not be read (${t.why}); the manager refuses ${pathname} without it`);
+    sent = serveToken();
+    if (sent.token) headers['X-Romp-Token'] = sent.token;
+    else console.error(`romp-manager: the serve token could not be read (${sent.why}); the manager refuses ${pathname} without it`);
   }
   // Three exits a caller can tell apart (bin/romp's down step keys on them): 0, the manager took it; 3,
   // the manager ANSWERED and refused (a 4xx or 5xx: its body is on stdout, and one stderr line names the
-  // door and the status); 1, no answer (the timeout and the connection error below). A refusal is not a
-  // manager that will leave if waited for, so the caller should not wait for it.
+  // door, the status and the way out); 1, no answer (the timeout and the connection error below). A
+  // refusal is not a manager that will leave if waited for, so the caller should not wait for it.
+  // The stderr line carries the remedy (review round 2, 2026-09-10): this client is the one place that
+  // knows whether it sent a token and from where, so `romp refresh`, `romp-manager restart-all` and
+  // `romp-manager restart <kernel>` all say it here; bin/romp's down step composes its own line from
+  // the same facts. 401 with a token sent: the manager does not hold it, so it runs under another state
+  // root (or is another romp's), and the fix is a shell whose state root is the manager's; 401 with the
+  // token from ROMP_SERVE_TOKEN: a stale value, so unset or correct it; 401 with none sent: the file
+  // this client found nothing at, and the way to a token; 503: the manager's own file to repair.
+  const remedy = (code) => {
+    if (code === 401 && sent && !sent.token) {
+      return `it needs the serve token, and this romp found none at ${tokenFile} (${sent.why}). Point ROMP_STATE_DIR at the manager's state root, or set ROMP_SERVE_TOKEN.`;
+    }
+    if (code === 401 && fromEnv) {
+      return 'it does not hold the serve token this romp read from ROMP_SERVE_TOKEN. Unset it in this shell, or set it to the manager\'s token, or check ROMP_MANAGER_PORT.';
+    }
+    if (code === 401) {
+      return `it does not hold the serve token this romp read from ${tokenFile}, so it runs under another state root or belongs to another romp. Run this from a shell whose state root (ROMP_STATE_DIR or XDG_STATE_HOME) is the manager's, or check ROMP_MANAGER_PORT.`;
+    }
+    if (code === 503) {
+      return 'it cannot read its own serve-token file. Make that file a regular 0600 file that you own, under the manager\'s state root, then run this again.';
+    }
+    return '';
+  };
   const req = http.request(u, { method, timeout: 4000, headers }, (res) => {
     let b = ''; res.on('data', (d) => (b += d));
     res.on('end', () => {
-      if (res.statusCode >= 400) console.error(`romp-manager: the manager on :${CONTROL_PORT} answered HTTP ${res.statusCode} to ${method} ${pathname}`);
+      if (res.statusCode >= 400) {
+        const fix = remedy(res.statusCode);
+        console.error(`romp-manager: the manager on :${CONTROL_PORT} answered HTTP ${res.statusCode} to ${method} ${pathname}${fix ? ': ' + fix : ''}`);
+      }
       try { process.stdout.write(JSON.stringify(JSON.parse(b), null, 2) + '\n'); } catch (e) { process.stdout.write(b + '\n'); }
       process.exit(res.statusCode < 400 ? 0 : 3);
     });

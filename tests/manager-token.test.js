@@ -391,12 +391,51 @@ test('the control client with no token to send says so once on stderr, still ask
     delete env.ROMP_SERVE_TOKEN;
     const r = await runClient(['restart-all'], env);
     assert.equal(r.status, 3, `a refusal exits 3, distinct from no answer (1): ${r.stderr}`);
-    assert.match(r.stderr, /answered HTTP 401 to POST \/restart-all/, 'the status and the door, for the caller and the human');
+    assert.match(r.stderr, /answered HTTP 401 to POST \/restart-all: it needs the serve token, and this romp found none at /, 'the status, the door and the way out (review round 2, 2026-09-10)');
+    assert.match(r.stderr, new RegExp(`found none at ${path.join(dir, 'serve-token').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(.*ENOENT`), 'the file this client looked at, and why it found nothing');
+    assert.match(r.stderr, /Point ROMP_STATE_DIR at the manager's state root, or set ROMP_SERVE_TOKEN\./);
+    assert.doesNotMatch(r.stderr, /read from/, 'no header went out, so nothing was read from anywhere');
     assert.equal((r.stderr.match(/the serve token could not be read/g) || []).length, 1, r.stderr);
     assert.match(r.stderr, /serve-token/);                      // the file to repair
     assert.match(r.stdout, /serve token required/);            // the manager's own answer, printed
     assert.deepEqual(seen, [['POST', '/restart-all', undefined]]);
   } finally { srv.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the control client with a token to send names the file it read and the way out on a 401, and the manager\'s file on a 503; the env spelling says to unset it', async () => {
+  // review round 2 (2026-09-10): the remedy every other refusal path names is `romp refresh`, which execs
+  // this client, so the actionable text lives here, where whether a token was sent and from where is known
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-cli-refused-'));
+  fs.writeFileSync(path.join(dir, 'serve-token'), 'zq9-client-token-zq9\n', { mode: 0o600 });
+  try {
+    for (const [code, body, tell] of [
+      [401, '{"ok":false,"error":"serve token required"}', /it does not hold the serve token this romp read from .*serve-token, so it runs under another state root or belongs to another romp\. Run this from a shell whose state root \(ROMP_STATE_DIR or XDG_STATE_HOME\) is the manager's, or check ROMP_MANAGER_PORT\./],
+      [503, '{"ok":false,"error":"the manager cannot read the serve token"}', /it cannot read its own serve-token file\. Make that file a regular 0600 file that you own, under the manager's state root, then run this again\./],
+    ]) {
+      const { srv, seen, port } = await recordingStandIn({ code, body });
+      try {
+        const env = Object.assign({}, process.env, { ROMP_MANAGER_PORT: String(port), ROMP_STATE_DIR: dir });
+        delete env.ROMP_SERVE_TOKEN;
+        const r = await runClient(['restart-all'], env);
+        assert.equal(r.status, 3, r.stderr);
+        assert.match(r.stderr, new RegExp(`answered HTTP ${code} to POST /restart-all: `));
+        assert.match(r.stderr, tell, r.stderr);
+        if (code === 401) assert.match(r.stderr, new RegExp(path.join(dir, 'serve-token').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'the file this client read');
+        assert.doesNotMatch(r.stderr, /found none/);
+        assert.deepEqual(seen, [['POST', '/restart-all', 'zq9-client-token-zq9']]);
+      } finally { srv.close(); }
+    }
+    // the env spelling outranks the file: a stale ROMP_SERVE_TOKEN is the likelier cause, and the state root changes nothing
+    const { srv, seen, port } = await recordingStandIn({ code: 401, body: '{"ok":false,"error":"serve token required"}' });
+    try {
+      const env = Object.assign({}, process.env, { ROMP_MANAGER_PORT: String(port), ROMP_STATE_DIR: dir, ROMP_SERVE_TOKEN: 'zq9-env-token-zq9' });
+      const r = await runClient(['restart'], env);
+      assert.equal(r.status, 3, r.stderr);
+      assert.match(r.stderr, /answered HTTP 401 to POST \/restart: it does not hold the serve token this romp read from ROMP_SERVE_TOKEN\. Unset it in this shell, or set it to the manager's token, or check ROMP_MANAGER_PORT\./);
+      assert.doesNotMatch(r.stderr, /state root/);
+      assert.deepEqual(seen, [['POST', '/restart', 'zq9-env-token-zq9']]);
+    } finally { srv.close(); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('the control client exits 1, not 3, when nothing answers: a closed port is no refusal', async () => {

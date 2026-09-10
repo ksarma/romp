@@ -20,7 +20,7 @@ update` starts a session called "update".
 | `romp new -t <name>` | Start it as a terminal (tmux) session and attach; add `--detach` to leave it running |
 | `romp resume` | Resume a past conversation, chosen from a full-screen picker |
 | `romp status` | Manager and kernel status |
-| `romp refresh` | Restart the postal bus and every kernel immediately, picking up new code (cut turns resume with their history) |
+| `romp refresh` | Restart every kernel immediately through the manager, then the postal bus, picking up new code (cut turns resume with their history). Exits 3 when the manager answered and refused the restart (see [The manager's control port](#the-managers-control-port)): nothing restarted, the bus included |
 | `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them at once (every deploy restart is immediate; boot reconcile resumes the cut turns with their history); a remote stopped by `romp down` is synced and left stopped |
 | `romp up` | Start the kernel: through the login service when one is installed, in the foreground otherwise. Clears a `romp down` marker |
 | `romp down` | Stop the kernel and keep it stopped until `romp up`. Turns in flight get 5 seconds to finish first; sessions resume with their history at the next start. See [Stopping the kernel on purpose](#stopping-the-kernel-on-purpose) |
@@ -894,17 +894,30 @@ process restarted every session by posting to the port.
 `romp refresh`, `romp down`, the dashboard's Restart, the release self-update,
 the automatic converge and the VS Code extension all send the header. When the
 manager refuses one of them anyway, the refusal is said where that caller
-reports: the dashboard's Restart answers the page with the refusal instead of
-acking a restart that will not happen, and both it and the converge put a
-notice in the bell naming the status, where the kernel read its token, and the
-way out (`romp refresh` from a terminal, which reads the manager's own file),
-with one line on the kernel's stderr and a `manager-refused-restart-all` row
+reports. The manager's control client (`romp refresh`, `romp down`,
+`romp-manager restart-all` and `romp-manager restart [kernel]`) exits 3 when
+the manager answered and refused, against 1 when nothing answered, prints the
+manager's answer, and puts one line on stderr naming the door, the status and
+the way out: on a 401, whether it sent the token it read from the file under
+its own state root (then the manager runs under another root, and the fix is
+to run the command from a shell whose state root, `ROMP_STATE_DIR` or
+`XDG_STATE_HOME`, is the manager's) or from `ROMP_SERVE_TOKEN` (then unset or
+correct it), or found none to send (then the file and the reason); on a 503,
+the manager's own file to repair. `romp refresh` bounces the postal bus only
+after the manager took the request, so a refused refresh restarts nothing.
+The dashboard's Restart answers the page with the refusal instead of acking a
+restart that will not happen, and both it and the converge put a notice in the
+bell naming the status and the way out (`romp refresh` from a shell whose
+state root is the manager's: the client reads the token file under its own
+root, or `ROMP_SERVE_TOKEN` when set, so a shell under another root sends a
+token the manager does not hold), with one line on the kernel's stderr that
+names where the kernel read its token and a `manager-refused-restart-all` row
 in `restart-audit.jsonl`; `romp down` prints the refusal and the remedy (below,
-under Stopping); the extension's toast says whether this window found a token,
-which file it read, and that the manager runs under another state root. A
-script of your own that posts to the port needs the header too. Read the file
-and hand it to curl on stdin rather than in argv, which every account on the
-machine can read:
+under Stopping); the extension's toast says whether this window found a token
+and where it read it, and, for a token read from the file, that the manager
+runs under another state root. A script of your own that posts to the port
+needs the header too. Read the file and hand it to curl on stdin rather than
+in argv, which every account on the machine can read:
 
     printf 'header = "X-Romp-Token: %s"\n' "$(cat ~/.local/state/romp/serve-token)" \
       | curl -fsS -X POST --config - http://127.0.0.1:7432/restart-all

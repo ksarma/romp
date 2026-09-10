@@ -1914,10 +1914,12 @@ MOCK
     [ "$status" -ne 0 ]
 
     : > "$MOCK_LOG"
-    run run_romp refresh         # restart EVERYTHING: the bus AND all kernels
+    run run_romp refresh         # restart EVERYTHING: all kernels AND the bus
     [ "$status" -eq 0 ]
-    grep -q 'romp-postal-service called: restart' "$MOCK_LOG"   # bus bounced first
-    grep -q 'romp-manager called: restart-all' "$MOCK_LOG"      # then the kernels
+    grep -q 'romp-manager called: restart-all' "$MOCK_LOG"      # the kernels, through the manager
+    grep -q 'romp-postal-service called: restart' "$MOCK_LOG"   # then the bus, once the manager took it
+    # in that order (review round 2, 2026-09-10): the bus is bounced only once the manager took the request
+    [ "$(grep -n 'romp-manager called: restart-all' "$MOCK_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n 'romp-postal-service called: restart' "$MOCK_LOG" | head -1 | cut -d: -f1)" ]
 
     : > "$MOCK_LOG"
     run run_romp status
@@ -3065,6 +3067,72 @@ PY
         [ ! -f "$XDG_STATE_HOME/romp/down-by-romp" ]            # the marker taken back: nothing is down
         [[ "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" == *"\"action\": \"down-failed\""* ]]
         [[ "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" == *"refused the stop (HTTP $code)"* ]]
+        kill "$MGR_PID" 2>/dev/null || true; MGR_PID=""
+    done
+}
+
+@test "romp refresh: a manager that refuses the restart (401, 503) exits 3 with the file this romp read and the remedy; the bus is not bounced" {
+    command -v node >/dev/null 2>&1 || skip "node not available"
+    # Review round 2 (2026-09-10): `romp refresh` is the remedy every other refusal path names, and it had no
+    # refusal handling of its own: the client's bare status line, exit 3 undocumented, and the postal bus
+    # bounced before the answer was known. The remedy now rides the control client's own stderr line (it is
+    # the one place that knows whether a token was sent and from which file), and the bus is bounced only
+    # after a 2xx. The stand-in is the control port, refusing /restart-all with the given status and body.
+    local bin; bin="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)"
+    unset ROMP_SERVE_TOKEN
+    mkdir -p "$XDG_STATE_HOME/romp"; printf 'refused-refresh-token\n' > "$XDG_STATE_HOME/romp/serve-token"
+    cat > "$MOCK_DIR/romp-postal-service" << 'MOCK'
+#!/usr/bin/env bash
+echo "romp-postal-service called: $*" >> "$MOCK_LOG"
+MOCK
+    chmod +x "$MOCK_DIR/romp-postal-service"
+    export ROMP_POSTAL_BIN="$MOCK_DIR/romp-postal-service"
+    local code body mport i
+    for code in 401 503; do
+        rm -f "$TEST_DIR/mgr-seen"; : > "$MOCK_LOG"
+        if [ "$code" = 401 ]; then body="serve token required: send it in X-Romp-Token (the serve-token file under the kernel's state root: /x/state/serve-token for the primary kernel)"
+        else body='the manager cannot read the serve token (/x/state/serve-token: EACCES); state-changing requests are refused until it can'; fi
+        free_port mport
+        python3 - "$mport" "$TEST_DIR/mgr-seen" "$code" "$body" <<'PY' &
+import http.server, json, os, sys
+port, seen, code, body = int(sys.argv[1]), sys.argv[2], int(sys.argv[3]), sys.argv[4]
+class H(http.server.BaseHTTPRequestHandler):
+    def _note(self):
+        with open(seen, "a") as f:
+            f.write("%s %s token=%s\n" % (self.command, self.path.split("?")[0], self.headers.get("X-Romp-Token") or "-"))
+    def _json(self, status, obj):
+        data = json.dumps(obj).encode()
+        self.send_response(status); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(data)
+    def do_GET(self):
+        self._note()
+        if self.path.startswith("/status"):
+            return self._json(200, {"ok": True, "manager": {"pid": os.getpid(), "controlPort": port}, "kernels": [{"id": "main"}]})
+        self.send_response(404); self.end_headers()
+    def do_POST(self):
+        self._note()
+        self._json(code, {"ok": False, "error": body})
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+PY
+        MGR_PID=$!
+        for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
+        export ROMP_MANAGER_PORT=$mport ROMP_MANAGER_BIN="$bin/romp-manager"
+        run run_romp refresh
+        [ "$status" -eq 3 ]                                      # the client's exit: the manager answered and refused
+        [[ "$output" == *"romp-manager: the manager on :$mport answered HTTP $code to POST /restart-all: it "* ]]
+        if [ "$code" = 401 ]; then
+            [[ "$output" == *"it does not hold the serve token this romp read from $XDG_STATE_HOME/romp/serve-token, so it runs under another state root"* ]]
+            [[ "$output" == *"Run this from a shell whose state root (ROMP_STATE_DIR or XDG_STATE_HOME) is the manager's"* ]]
+            [[ "$output" == *"serve token required"* ]]           # the manager's own answer, printed
+        else
+            [[ "$output" == *"it cannot read its own serve-token file. Make that file a regular 0600 file that you own"* ]]
+            [[ "$output" == *"cannot read the serve token"* ]]
+        fi
+        grep -qx 'POST /restart-all token=refused-refresh-token' "$TEST_DIR/mgr-seen"
+        [ "$(grep -c '^POST ' "$TEST_DIR/mgr-seen")" -eq 1 ]     # one ask
+        run grep -q 'romp-postal-service called' "$MOCK_LOG"     # nothing restarted, the bus included
+        [ "$status" -ne 0 ]
+        [[ "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" == *'"action": "refresh"'* ]]   # who asked is still on record
         kill "$MGR_PID" 2>/dev/null || true; MGR_PID=""
     done
 }
