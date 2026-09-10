@@ -1529,6 +1529,19 @@ class UnknownSessionRefused(_RouteServer):
                 code, resp = self._post("/interrupt", {"id": "sid-x"})
                 self.assertEqual((code, resp), (200, {"ok": True}))
                 self.assertEqual(calls, [], "by id the names registry answers and nothing forks")
+            # an ADMITTED /send by name through the real backend_for: the arm reads the resolution's scan for
+            # the dead-pane verdict instead of forking alive_sids (review round 7, 2026-09-09: two forks)
+            server = _tmux_server(["sid-x"])
+            del calls[:]
+            with mock.patch.object(km._TMUX, "available", lambda: True), \
+                 mock.patch.object(km._TMUX, "_run", lambda args, t=3: calls.append(list(args)) or server(args, t)), \
+                 mock.patch.object(km, "_send_or_park", lambda be, sid, text: True), \
+                 mock.patch.object(km, "_route_meta_command", lambda be, sid, text, state=None: False), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                code, resp = self._post("/send", {"name": "web", "text": "hello"})
+                self.assertEqual((code, resp), (200, {"ok": True, "queued": False}))
+                forks = [c for c in calls if c[:1] == ["list-sessions"]]
+                self.assertEqual(len(forks), 1, "the admitted by-name send forked tmux %d times: %r" % (len(forks), calls))
         finally:
             srv.shutdown()
         self.assertEqual(srv.received, [("/interrupt", {"id": FAR_SID})])
@@ -2077,6 +2090,22 @@ class UnknownSessionRefused(_RouteServer):
                     # a sid the registry holds never reaches the store: a local session wins
                     code, resp = self._post("/interrupt", {"id": "sid-x"})
                     self.assertEqual((code, resp), (200, {"ok": True}))
+                    # the store's 503 holds a BARE name only: the roster's host:name spelling is no thread's, so
+                    # the unreadable store is not what fails it and it forwards (review round 7, 2026-09-09: the
+                    # guard was unpinned)
+                    srv = _far_kernel(200, json.dumps({"ok": True}))
+                    try:
+                        with mock.patch.dict(km._remotes, {"TESTHOST": _remote_row(srv, sids=[FAR_SID],
+                                                                                   names={FAR_SID: "far-web"})}, clear=True):
+                            code, resp = self._post("/interrupt", {"name": "TESTHOST:far-web"})
+                            self.assertEqual((code, resp), (200, {"ok": True}))
+                            self.assertEqual(srv.received, [("/interrupt", {"id": FAR_SID})])
+                            code, resp = self._post("/interrupt", {"name": "far-web"})
+                            self.assertEqual(code, 503, resp)
+                            self.assertIn("comment threads' store", resp.get("error", ""))
+                            self.assertEqual(srv.received, [("/interrupt", {"id": FAR_SID})], "the bare name is held")
+                    finally:
+                        srv.shutdown()
                 self.assertNotIn(THREAD_TSID, km._end_on_idle_load())
                 fake.kill.assert_not_called()
                 fake.send.assert_not_called()
@@ -2086,6 +2115,270 @@ class UnknownSessionRefused(_RouteServer):
             _unregister(THREAD_PARENT)
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
+
+
+    def test_a_failed_scan_is_answered_before_a_torn_dormant_record_of_the_name(self):
+        # with the tmux probe down and a torn dormant generation of the name on disk, the 404 arm answered the
+        # torn record's 503 ("repair or remove that file") for a transient probe failure, and the failed-scan
+        # log line was not written; the record's verdict does not depend on the scan, but whether the NAME
+        # routes to that record does. The failed scan comes first (try again, the log line, no record named);
+        # once the probe answers, a pane that carries the name is acted on; the no-server exit is the
+        # authoritative empty board, so the torn record's 503 is then correct (review round 7, 2026-09-09).
+        import subprocess
+        torn_path = km.jd.STATE / "sdk" / ("sid-q" + ".json")
+        torn_path.parent.mkdir(parents=True, exist_ok=True)
+        torn_path.write_bytes(b"{not json")
+        _drop_regs([])
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        fake = mock.Mock()
+        gone = subprocess.CompletedProcess(args=[], returncode=1, stdout="",
+                                           stderr="no server running on /tmp/tmux-1000/default")
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+                 mock.patch.object(km._TMUX, "available", lambda: True):
+                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
+                    for path, body in (("/end", {"name": "web"}), ("/interrupt", {"name": "web"}),
+                                       ("/send", {"name": "web", "text": "hello"})):
+                        err = io.StringIO()
+                        with contextlib.redirect_stderr(err):
+                            code, resp = self._post(path, body)
+                        self.assertEqual(code, 503, (path, resp))
+                        self.assertIn("could not read the live session list", resp.get("error", ""), path)
+                        self.assertIn("try again", resp.get("error", ""), path)
+                        self.assertNotIn("sid-q", resp.get("error", ""), "no file is named for a transient failure")
+                        self.assertNotIn("Repair or remove", resp.get("error", ""), path)
+                        self.assertIn("control %s: tmux probe failed while resolving 'web'; answered 503, nothing done" % path,
+                                      err.getvalue(), path)
+                    fake.interrupt.assert_not_called()
+                    fake.kill.assert_not_called()
+                    fake.send.assert_not_called()
+                with mock.patch.object(km._TMUX, "_run", _tmux_server(["sid-x"])):
+                    code, resp = self._post("/interrupt", {"name": "web"})
+                    self.assertEqual((code, resp), (200, {"ok": True}), "the scan answered: the pane's generation is the name's")
+                    fake.interrupt.assert_called_once_with("sid-x")
+                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: gone):
+                    code, resp = self._post("/interrupt", {"name": "web"})
+                    self.assertEqual(code, 503, resp)
+                    self.assertIn("could not read the record for 'web'", resp.get("error", ""))
+                    self.assertIn(km._tilde(str(torn_path)), resp.get("error", ""))
+                    self.assertNotIn("try again", resp.get("error", "").lower())
+                fake.interrupt.assert_called_once()
+        finally:
+            _drop_regs([torn_path])
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
+    def test_the_ws_by_name_door_reads_a_torn_dormant_record_and_a_failed_scan_as_the_routes_do(self):
+        # the WS compact and sendCommand door resolved its NAME through _sid_of, which drops the scan's failure
+        # and never consults the torn dormant record, so it said "no session with id web" where the HTTP routes
+        # said 503 "could not read" for the same name at both states: a torn dormant names-registered reg the
+        # live map does not list (cold list_regs cache; round 6 regressed the door, 478ccdc0 agreed with HTTP),
+        # and a tmux probe that did not answer (pre-existing at the base). One miss path now (_named_miss), so
+        # the door refuses naming the read, with the typed spelling in the modal, the undelivered.jsonl row and
+        # the stderr cause; the no-server exit and a name nobody holds stay the unknown refusal
+        # (review round 7, 2026-09-09).
+        import subprocess
+        torn_path = km.jd.STATE / "sdk" / ("sid-q" + ".json")
+        torn_path.parent.mkdir(parents=True, exist_ok=True)
+        undelivered = km.jd.STATE / "undelivered.jsonl"
+        frames = []
+        client = {"send": lambda s: frames.append(json.loads(s))}
+        fake = mock.Mock()
+        gone = subprocess.CompletedProcess(args=[], returncode=1, stdout="",
+                                           stderr="no server running on /tmp/tmux-1000/default")
+
+        def rows_since(n):
+            return [json.loads(x) for x in undelivered.read_text().splitlines()][n:] if undelivered.exists() else []
+
+        def drive(op, name, **extra):
+            del frames[:]
+            before = len(undelivered.read_text().splitlines()) if undelivered.exists() else 0
+            err = io.StringIO()
+            msg = dict({"type": op, "name": name}, **extra)
+            with contextlib.redirect_stderr(err):
+                self.assertTrue(km._drive(msg, client))
+            errs = [f for f in frames if f.get("type") == "err"]
+            return errs, rows_since(before), err.getvalue()
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km, "_compact_or_park", lambda be, sid: fake.compact(sid)), \
+                 mock.patch.object(km, "_send_or_park", lambda be, sid, text: fake.send(sid, text)), \
+                 mock.patch.object(km, "_route_meta_command", lambda *a, **k: False), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                # the torn dormant record, at a cold cache (the scan lists nothing) and then warm (round 6's state)
+                torn_path.write_bytes(b"{not json")
+                _drop_regs([])
+                km._thread_reg_memo.clear()
+                km._thread_reg_failed.clear()
+                for label in ("cold", "warm"):
+                    for op, extra in (("compact", {}), ("sendCommand", {"cmd": "/model opus"})):
+                        errs, rows, log = drive(op, "web", **extra)
+                        self.assertEqual(len(errs), 1, (label, op, frames))
+                        self.assertIn("could not read the record for 'web'", errs[0]["text"].lower(), (label, op))
+                        self.assertIn(km._tilde(str(torn_path)), errs[0]["text"], (label, op))
+                        self.assertNotIn("no session with id", errs[0]["text"], (label, op))
+                        self.assertEqual(errs[0]["sid"], "sid-q", "the modal carries the torn generation's sid")
+                        self.assertEqual([(r["op"], r["sid"]) for r in rows], [(op, "sid-q")], (label, op))
+                        self.assertIn("undeliverable %s: the record for session sid-q will not read" % op, log, (label, op))
+                        self.assertNotIn("no session", log, (label, op))
+                self.assertEqual(fake.method_calls, [], "nothing reached a backend")
+                # a name nobody holds stays the unknown refusal
+                errs, rows, log = drive("compact", self.GHOST)
+                self.assertEqual(len(errs), 1, frames)
+                self.assertIn("has no session with id %s" % self.GHOST, errs[0]["text"])
+                # the failed scan: the list could not be read, never a session that does not exist
+                _drop_regs([torn_path])
+                km._thread_reg_memo.clear()
+                km._thread_reg_failed.clear()
+                with mock.patch.object(km._TMUX, "available", lambda: True), \
+                     mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
+                    for op, extra in (("compact", {}), ("sendCommand", {"cmd": "/model opus"})):
+                        errs, rows, log = drive(op, "web", **extra)
+                        self.assertEqual(len(errs), 1, (op, frames))
+                        self.assertIn("could not read the live session list", errs[0]["text"].lower(), op)
+                        self.assertIn("tmux did not answer", errs[0]["text"], op)
+                        self.assertIn("try again", errs[0]["text"], op)
+                        self.assertNotIn("no session with id", errs[0]["text"], op)
+                        self.assertEqual([(r["op"], r["sid"]) for r in rows], [(op, "web")], op)
+                        self.assertIn("undeliverable %s: tmux probe failed while resolving 'web'" % op, log, op)
+                        self.assertNotIn("no session", log, op)
+                    self.assertEqual(fake.method_calls, [], "nothing reached a backend")
+                # the scan answers with the pane: the op reaches the backend for the pane's sid
+                with mock.patch.object(km._TMUX, "available", lambda: True), \
+                     mock.patch.object(km._TMUX, "_run", _tmux_server(["sid-x"])):
+                    errs, rows, log = drive("compact", "web")
+                    self.assertEqual(errs, [], frames)
+                    fake.compact.assert_called_once_with("sid-x")
+                # the no-server exit is the authoritative empty board: a registered name no session runs is unknown
+                with mock.patch.object(km._TMUX, "available", lambda: True), \
+                     mock.patch.object(km._TMUX, "_run", lambda *a, **k: gone):
+                    errs, rows, log = drive("compact", "web")
+                    self.assertEqual(len(errs), 1, frames)
+                    self.assertIn("has no session with id web", errs[0]["text"])
+        finally:
+            _drop_regs([torn_path])
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
+    def test_a_torn_record_under_a_failed_probe_is_the_scans_verdict_not_the_records(self):
+        # for a names-registered sid whose SDK reg is torn and whose pane the probe failed to list,
+        # _session_gate answered the record's 503 ("Repair or remove that file", no "try again") at every door
+        # and flipped to admitted the moment the probe answered: the read that decided the verdict
+        # (live.tmux_failed) was not named and a retry was denied for a verdict a retry changes. The gate scans
+        # once itself when handed no map, reads the map's own failure, and answers the scan-failed verdict:
+        # try again, the control routes' log line, by id and by name and at the WS door; the record's 503
+        # comes back once tmux answers (the no-server exit), and a pane that carries the sid admits it
+        # (review round 7, 2026-09-09).
+        import subprocess
+        sid, name = "abab7777-8888-9999-0000-111111111111", "torn-pane-web"
+        reg_path = km.jd.STATE / "sdk" / (sid + ".json")
+        reg_path.parent.mkdir(parents=True, exist_ok=True)
+        _register(sid, name)
+        reg_path.write_bytes(b"{not json")
+        _drop_regs([])
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        frames = []
+        client = {"send": lambda s: frames.append(json.loads(s))}
+        fake = mock.Mock()
+        gone = subprocess.CompletedProcess(args=[], returncode=1, stdout="",
+                                           stderr="no server running on /tmp/tmux-1000/default")
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda s: fake)), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+                 mock.patch.object(km._TMUX, "available", lambda: True):
+                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
+                    self.assertFalse(km._backend_reports_running(sid))
+                    verdict, text = km._session_gate(sid)
+                    self.assertEqual(verdict, km._GATE_SCAN_FAILED)
+                    self.assertIn("try again", text)
+                    self.assertNotIn(km._tilde(str(reg_path)), text, "no file is named for a transient failure")
+                    for path, body in (("/end", {"id": sid}), ("/end", {"name": name}), ("/interrupt", {"id": sid}),
+                                       ("/interrupt", {"name": name}), ("/send", {"id": sid, "text": "hello"}),
+                                       ("/send", {"name": name, "text": "hello"})):
+                        err = io.StringIO()
+                        with contextlib.redirect_stderr(err):
+                            code, resp = self._post(path, body)
+                        self.assertEqual(code, 503, (path, body, resp))
+                        self.assertIn("could not read the live session list while resolving '%s'"
+                                      % (body.get("id") or body.get("name")), resp.get("error", ""), (path, body))
+                        self.assertIn("try again", resp.get("error", ""), (path, body))
+                        self.assertNotIn("Repair or remove", resp.get("error", ""), (path, body))
+                        self.assertIn("control %s: tmux probe failed while resolving %r; answered 503, nothing done"
+                                      % (path, body.get("id") or body.get("name")), err.getvalue(), (path, body))
+                        self.assertEqual(err.getvalue().count("tmux probe failed"), 1, "logged once")
+                    self.assertNotIn(sid, km._end_on_idle_load(), "a refused deferred end records no wish")
+                    del frames[:]
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        self.assertTrue(km._drive({"type": "sendMessage", "id": sid, "text": "keep this"}, client))
+                    errs = [f for f in frames if f.get("type") == "err"]
+                    self.assertEqual(len(errs), 1, frames)
+                    self.assertIn("could not read the live session list", errs[0]["text"].lower())
+                    self.assertIn("try again", errs[0]["text"])
+                    self.assertNotIn("no session with id", errs[0]["text"])
+                    self.assertEqual(errs[0]["copy"], "keep this")
+                    self.assertIn("undeliverable sendMessage: tmux probe failed while resolving %r; 'keep this'" % sid,
+                                  err.getvalue())
+                    self.assertEqual(fake.method_calls, [], "nothing reached a backend at either door")
+                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: gone):
+                    self.assertEqual(km._session_gate(sid)[0], km._GATE_UNREADABLE, "tmux answered: the record's verdict")
+                    code, resp = self._post("/interrupt", {"id": sid})
+                    self.assertEqual(code, 503, resp)
+                    self.assertIn("could not read the record for '%s'" % sid, resp.get("error", ""))
+                    self.assertIn(km._tilde(str(reg_path)), resp.get("error", ""))
+                    self.assertNotIn("try again", resp.get("error", "").lower())
+                with mock.patch.object(km._TMUX, "_run", _tmux_server([sid])):
+                    self.assertEqual(km._session_gate(sid)[0], km._GATE_ADMITTED, "a pane carries the sid")
+                    code, resp = self._post("/interrupt", {"name": name})
+                    self.assertEqual((code, resp), (200, {"ok": True}))
+                    fake.interrupt.assert_called_once_with(sid)
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {sid})
+            _unregister(sid)
+            _drop_regs([reg_path])
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
+    def test_an_admitted_send_by_name_reads_the_resolutions_scan_and_forks_tmux_once(self):
+        # an admitted /send to a tmux session addressed by name forked tmux twice: the resolution's
+        # list-sessions, then the arm's alive_sids, so the "no pane runs" verdict was a second probe's and a
+        # second probe that failed after the first listed the pane answered 503 for a session the request's
+        # own scan saw running. The arm reads the map the resolution scanned (through the REAL backend_for:
+        # the fork-count test fakes it, which is why it missed this) and falls to alive_sids only when nothing
+        # was scanned (by id). The script answers one fork; a second would raise (review round 7, 2026-09-09).
+        import subprocess
+        ok_sid_x = _tmux_server(["sid-x"])(["list-sessions", "-F", km.TmuxBackend.LANE_FMT])
+        sent = []
+        with mock.patch.object(km, "_send_or_park", lambda be, sid, text: sent.append((sid, text)) or True), \
+             mock.patch.object(km, "_route_meta_command", lambda be, sid, text, state=None: False), \
+             mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+             mock.patch.object(km._TMUX, "available", lambda: True):
+            calls = []
+            with mock.patch.object(km._TMUX, "_run", _scripted_run([ok_sid_x], calls)):
+                code, resp = self._post("/send", {"name": "web", "text": "hello"})
+            self.assertEqual((code, resp), (200, {"ok": True, "queued": False}))
+            self.assertEqual(sent, [("sid-x", "hello")])
+            self.assertEqual(len(calls), 1, "the by-name send forked tmux %d times: %r" % (len(calls), calls))
+            # by id nothing was scanned: the arm's own probe is the request's one fork, and its failure the 503
+            calls = []
+            with mock.patch.object(km._TMUX, "_run", _scripted_run([None], calls)):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    code, resp = self._post("/send", {"id": "sid-x", "text": "hello"})
+            self.assertEqual(code, 503, resp)
+            self.assertIn("tmux isn't answering", resp.get("error", ""))
+            self.assertIn("send sid-x: tmux probe failed; answered 503, nothing delivered", err.getvalue())
+            self.assertEqual(len(calls), 1, calls)
+            # by id, a pane the arm's own probe does not list is the 409, from that one fork
+            calls = []
+            empty = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with mock.patch.object(km._TMUX, "_run", _scripted_run([empty], calls)):
+                code, resp = self._post("/send", {"id": "sid-x", "text": "hello"})
+            self.assertEqual(code, 409, resp)
+            self.assertEqual(sent, [("sid-x", "hello")], "nothing else was delivered")
 
 
 class CodexRuntimeSelection(unittest.TestCase):
