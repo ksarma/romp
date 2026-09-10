@@ -8,7 +8,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { heldMenuMarks, badgeHeldTip, pickHeldLine, pickHeldTitle, reloadingTitle, RUNNING_TAG } from "./pick-held";
+import { heldMenuMarks, badgeHeldTip, pickHeldLine, pickHeldTitle, reloadingTitle, switchingTitle, RUNNING_TAG } from "./pick-held";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
@@ -46,7 +46,7 @@ test("a pick HELD for live work renders a waiting line, not the reloading animat
   // kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the element then
   // says which pick waits and on what, with no loader dots. The words come from pick-held.ts (executed
   // in pick-held.test.ts, per kind and per state); render.ts is pinned to take them from there
-  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
+  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
   assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null;/);
   assert.match(RENDER, /effortPending\?: boolean; pickHeld\?: PickHeld \| null;/);
   assert.match(RENDER, /if \(ev\.held\) \{/);
@@ -116,7 +116,7 @@ test("the badge menus and the Billing flyout mark a held pick the same way: the 
   // toggleMetaMenu never read pickHeld) while the tab menu's Billing flyout check-marked the PICKED side (review
   // round 5, ui-2). One convention now, pick-held.ts's heldMenuMarks (executed in pick-held.test.ts): the check on the
   // pick, the running value tagged. render.ts's rows are pinned here and metaRowMarks is executed below
-  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
+  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
   assert.match(RENDER, /function matchesMeta\(kind: MetaKind, current: string, value: string\): boolean \{/);
   assert.match(RENDER, /function isCurrentMeta\(kind: MetaKind, st: Status, value: string\): boolean \{\n\s+if \(kind === "model"\) return \(st\.model \|\| ""\)\.toLowerCase\(\)\.startsWith\(value\);\n\s+return matchesMeta\(kind, metaCurrent\(kind, st\), value\);\n\}/);
   assert.match(RENDER, /function metaRowMarks\(kind: MetaKind, st: Status, value: string\): \{ current: boolean; running: boolean \} \{\n\s+const held = heldMenuMarks\(kind, st\.pickHeld, metaCurrent\(kind, st\)\);/);
@@ -220,8 +220,8 @@ test("executed: the reloading line's hover title names the change the reload app
   assert.ok(start > 0 && end > start, "the slice anchors moved; re-anchor");
   const js = requireCjs("esbuild").transformSync(RENDER.slice(start, end), { loader: "ts" }).code;
   const mk = (tag: string, cls?: string) => new FakeEl(tag, cls);
-  const render = new Function("el", "dot", "metaDots", "pickHeldLine", "pickHeldTitle", "reloadingTitle", js + "\nreturn renderReconnecting;")(
-    mk, () => mk("span", "dot"), () => mk("span", "meta-dots"), pickHeldLine, pickHeldTitle, reloadingTitle);
+  const render = new Function("el", "dot", "metaDots", "pickHeldLine", "pickHeldTitle", "reloadingTitle", "switchingTitle", js + "\nreturn renderReconnecting;")(
+    mk, () => mk("span", "dot"), () => mk("span", "meta-dots"), pickHeldLine, pickHeldTitle, reloadingTitle, switchingTitle);
   const line = (ev: object) => render(ev).querySelector(".reconnecting-line") as FakeEl & { title?: string };
   const tail = ": reloading the session (it re-reads the transcript); any message you send lands once it's back";
   const effort = line({ kind: "reconnecting", effort: "max", held: null, picks: ["effort"] });
@@ -243,8 +243,21 @@ test("executed: the reloading line's hover title names the change the reload app
   assert.equal(held.title, pickHeldTitle(hold));
   assert.equal(held.textContent, pickHeldLine(hold));
   assert.doesNotMatch(held.title!, /reloading the session/);
+  // the landing's live switch in flight (the event's `switching`; review round 10): the mode change is being applied and
+  // nothing reloads, so the line says so, with the dots, and the title names the reload that follows for the other picks
+  const sw = line({ kind: "reconnecting", effort: "", held: null, picks: ["mode"], switching: true });
+  assert.equal(sw.textContent, "Applying the permission mode change…");
+  assert.equal(sw.title, switchingTitle(["mode"]));
+  assert.doesNotMatch(sw.title!, /reloading the session/, "nothing reloads during the switch alone");
+  assert.ok(sw.querySelector(".meta-dots"), "the dots: romp is working");
+  const sw2 = line({ kind: "reconnecting", effort: "", held: null, picks: ["mode", "fast"], switching: true });
+  assert.equal(sw2.textContent, "Applying the permission mode change…");
+  assert.match(sw2.title!, /then reloading the session for the fast mode change/);
+  assert.equal(line({ kind: "reconnecting", effort: "", held: null, picks: ["mode"], switching: false }).textContent, "Reloading session…",
+    "a mode reload with no switch in flight keeps the reloading line");
   assert.match(RENDER, /line\.title = reloadingTitle\(ev\.picks, ev\.effort\);/);
-  assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null; picks\?: string\[\];/);
+  assert.match(RENDER, /line\.title = switchingTitle\(ev\.picks\);/);
+  assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null; picks\?: string\[\]; switching\?: boolean;/);
   assert.doesNotMatch(RENDER, /applying the effort change \u2014 reloading/, "the round-8 title, one sentence for every kind");
 });
 

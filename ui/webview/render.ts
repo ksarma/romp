@@ -88,7 +88,7 @@ import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle } from "./billing-label";
-import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows and the menus' marks (pick-held.ts)
+import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows and the menus' marks (pick-held.ts)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
 import { setTip, pruneTip } from "./tip";
@@ -242,7 +242,7 @@ type ChatEvent = (
   // LIVE session reconnect in progress (kernel-driven): an /effort switch reconnects the session to apply
   // (--effort is connect-time), so an animated "Reloading session…" element shows while it re-reads the
   // transcript, clearing when the new client connects (the user 2026-07-06). No ts → off the rail (transient).
-  | { kind: "reconnecting"; effort?: string; held?: PickHeld | null; picks?: string[]; ts?: string; uuid?: string }
+  | { kind: "reconnecting"; effort?: string; held?: PickHeld | null; picks?: string[]; switching?: boolean; ts?: string; uuid?: string }
   // LIVE api_retry in progress (kernel-driven, event-based, SDK-only): the API returned a retryable error
   // (rate-limit / overload) and the CLI is backing off + retrying, so the turn stalls. An animated "API
   // retrying…" element (the amber retrying status color) with the live attempt count; clears the instant
@@ -4030,10 +4030,18 @@ function renderReconnecting(ev: Extract<ChatEvent, { kind: "reconnecting" }>): H
     line.title = pickHeldTitle(ev.held);
   } else {
     line.appendChild(metaDots());   // the same pulsing accent-blue dots as the switching-dots badge: "it's romp, working"
-    txt.textContent = ev.effort ? `Reloading session: applying ${ev.effort} effort…` : "Reloading session…";
-    // the title names the change the reload applies (ev.picks: effort, permission mode, fast mode; review round 9),
-    // since the element shows for a fast or mode reload too (round 7's gate) and said "effort" for all of them
-    line.title = reloadingTitle(ev.picks, ev.effort);
+    if (ev.switching) {
+      // the landing's live permission-mode switch is in flight (review round 10): nothing reloads for that round
+      // trip, so the line says the mode change is being applied; the title names any reload that follows for the
+      // other picks riding the same reconnect (pick-held.ts)
+      txt.textContent = "Applying the permission mode change…";
+      line.title = switchingTitle(ev.picks);
+    } else {
+      txt.textContent = ev.effort ? `Reloading session: applying ${ev.effort} effort…` : "Reloading session…";
+      // the title names the change the reload applies (ev.picks: effort, permission mode, fast mode; review round 9),
+      // since the element shows for a fast or mode reload too (round 7's gate) and said "effort" for all of them
+      line.title = reloadingTitle(ev.picks, ev.effort);
+    }
   }
   line.appendChild(txt);
   turn.appendChild(line);

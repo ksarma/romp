@@ -20448,6 +20448,7 @@ class Sessions:
                                 "effortPending": bool(st.get("effortPending")),   # an /effort switch reconnecting → effort-badge dots + "Reloading session…"
                                 "fastPending": bool(st.get("fastPending")),   # a fast pick pending on its reconnect (review round 7, 2026-09-10)
                                 "modePending": bool(st.get("modePending")),   # a mode pick pending on its reconnect or the landing's live switch
+                                "modeSwitching": bool(st.get("modeSwitching")),   # that live switch is in flight: the chat names it, not a reload (review round 10)
                                 # a pick HELD for the session's live work before its reconnect ({surfaces,
                                 # subagents, tasks} or None): the chat's waiting line reads it (2026-09-09)
                                 "pickHeld": st.get("pickHeld") or None,
@@ -49939,6 +49940,7 @@ def _fleet_view_sig(now, tmux):
                          _row_items_sig(t.get("subagents")), _row_ids_sig(t.get("bgTasks")),
                          bool(t.get("modelPending")), bool(t.get("effortPending")), bool(t.get("authPending")),
                          bool(t.get("fastPending")), bool(t.get("modePending")),   # the fast and mode reloads (review round 7)
+                         bool(t.get("modeSwitching")),   # the landing's live switch: the chat's line changes its words (round 10)
                          int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")),
                          _pick_held_sig(t.get("pickHeld")))   # the hold's start, its counts, and its end all repaint
     return tuple(sorted(sig.items()))
@@ -49966,7 +49968,8 @@ def _reconnect_pending(tm0) -> bool:
 
 
 def _reconnecting_event(tm0):
-    """The chat's `reconnecting` element for a live row (build_session): {"kind", "effort", "held"}. Shown
+    """The chat's `reconnecting` element for a live row (build_session): {"kind", "effort", "held", "picks",
+    "switching"}. Shown
     while a reconnect is pending for an effort, fast or mode pick (_reconnect_pending) and, since review round
     2 (2026-09-09), while ANY pick is held for the session's live work (pickHeld: the status's one marker for a
     held effort, mode, fast or billing pick), since a held mode, fast or billing pick reached no chat surface
@@ -49976,13 +49979,16 @@ def _reconnecting_event(tm0):
     the kinds whose reload this is (review round 9, 2026-09-10; "effort", "mode", "fast", from the pending flags,
     in _pick_names' order), so the renderer's hover title can name the change it applies: round 8's gate emitted the
     element for a fast or mode reload with the effort reload's title. Empty while a pick is held (the hold names
-    its own surfaces)."""
+    its own surfaces). `switching` (review round 10, 2026-09-10): the landing's live mode switch is in flight
+    (modeSwitching), so modePending is true with nothing reloading; the renderer says the mode change is being
+    applied instead of "Reloading session", and its title names any reload that follows for the other picks."""
     tm0 = tm0 or {}
     held = tm0.get("pickHeld") or None
     effort = (tm0.get("effort") or "") if (tm0.get("effortPending") and not held) else ""
     picks = [] if held else [k for k, flag in (("effort", "effortPending"), ("mode", "modePending"), ("fast", "fastPending"))
                              if tm0.get(flag)]
-    return {"kind": "reconnecting", "effort": effort, "held": held, "picks": picks}
+    switching = bool(tm0.get("modeSwitching")) and not held
+    return {"kind": "reconnecting", "effort": effort, "held": held, "picks": picks, "switching": switching}
 
 
 def _row_items_sig(rows):

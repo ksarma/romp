@@ -8,7 +8,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { pickHeldLine, pickHeldTitle, pickHeldSubject, badgeHeldTip, workPhrase, pickKindName, heldUntil, heldRowValue, heldMenuMarks, reloadingTitle, RUNNING_TAG } from "./pick-held";
+import { pickHeldLine, pickHeldTitle, pickHeldSubject, badgeHeldTip, workPhrase, pickKindName, heldUntil, heldRowValue, heldMenuMarks, reloadingTitle, switchingTitle, RUNNING_TAG } from "./pick-held";
 
 test("the reloading line's title names the change the reload applies, per kind and for two at once", () => {
   // the chat's reloading element shows for an effort, fast or mode reload (the kernel's pending flags); its title said
@@ -22,6 +22,19 @@ test("the reloading line's title names the change the reload applies, per kind a
   assert.equal(reloadingTitle(undefined, "max"), "applying the effort change" + tail);
   assert.equal(reloadingTitle([], ""), "applying the settings change" + tail);
   assert.doesNotMatch(reloadingTitle(["fast"], ""), /\u2014/, "no em dash in the title");
+});
+
+test("the landing's live switch: the title says the mode change is applied to the running session, and names a reload that follows", () => {
+  // modePending is true while the landing's live switch is in flight and nothing reloads (review round 10); the event's
+  // `switching` bit words the line, and the other picks riding the same reconnect are named as the reload after it
+  assert.equal(switchingTitle(["mode"]),
+    "applying the permission mode change to the running session (no reload); any message you send lands once it's applied");
+  assert.equal(switchingTitle(["mode", "fast"]),
+    "applying the permission mode change to the running session (no reload), then reloading the session for the fast mode change; any message you send lands once it's back");
+  assert.equal(switchingTitle(["effort", "mode", "fast"]),
+    "applying the permission mode change to the running session (no reload), then reloading the session for the effort and fast mode changes; any message you send lands once it's back");
+  assert.equal(switchingTitle(undefined), switchingTitle(["mode"]), "an event naming no picks: the switch alone");
+  assert.doesNotMatch(switchingTitle(["mode", "fast"]), /\u2014/, "no em dash in the title");
 });
 
 const WEBVIEW = path.resolve(process.cwd(), "..", "ui", "webview");

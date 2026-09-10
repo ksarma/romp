@@ -85,10 +85,25 @@ export function pickKindName(kind: string): string {
 // Until round 9 every reloading line, a fast or mode reload's included, said it was applying the effort change.
 export function reloadingTitle(picks: string[] | undefined, effort: string | undefined): string {
   const names = (picks && picks.length ? picks : effort ? ["effort"] : []).map(pickKindName);
-  const what = names.length === 0 ? "the settings change"
+  return `applying ${changesPhrase(names)}: reloading the session (it re-reads the transcript); any message you send lands once it's back`;
+}
+
+// "the settings change" / "the effort change" / "the effort and fast mode changes", from the kind names.
+function changesPhrase(names: string[]): string {
+  return names.length === 0 ? "the settings change"
     : names.length === 1 ? `the ${names[0]} change`
     : `the ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} changes`;
-  return `applying ${what}: reloading the session (it re-reads the transcript); any message you send lands once it's back`;
+}
+
+// The line's hover title while the landing's live permission-mode switch is in flight (review round 10, 2026-09-10):
+// the kernel applies a mode pick made during a reload to the process that just landed, over the control channel, and
+// nothing reloads for that round trip, so the title says the switch is being applied; when other picks ride the same
+// reconnect (the event's picks beyond "mode") their reload follows the switch, and the title says so. Until round 10
+// the line and its title claimed a reload for the whole round trip.
+export function switchingTitle(picks: string[] | undefined): string {
+  const rest = (picks || []).filter((k) => k !== "mode").map(pickKindName);
+  const then = rest.length ? `, then reloading the session for ${changesPhrase(rest)}` : "";
+  return `applying the permission mode change to the running session (no reload)${then}; any message you send lands once it's ${rest.length ? "back" : "applied"}`;
 }
 
 export function workPhrase(n: number, m: number): string {

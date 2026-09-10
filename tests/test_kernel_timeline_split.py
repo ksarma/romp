@@ -492,6 +492,11 @@ class SkeletonFromCache(unittest.TestCase):
             self.assertEqual(sig(1000, {"S": {**row, flag: True}}), sig(1000, {"S": {**row, flag: True}}), "stable on %s" % flag)
         self.assertNotEqual(sig(1000, {"S": {**row, "fastPending": True}}), sig(1000, {"S": {**row, "modePending": True}}),
                             "the two flags are distinct inputs")
+        # the landing's live switch (modeSwitching; review round 10): modePending holds through it, and the chat's line
+        # changes its words when the switch starts and when it confirms, so the bit is a lane fact of its own
+        pend_mode = {**row, "modePending": True}
+        self.assertNotEqual(sig(1000, {"S": pend_mode}), sig(1000, {"S": {**pend_mode, "modeSwitching": True}}),
+                            "modeSwitching must bust the view sig with modePending unchanged")
         # a re-pick DURING the hold changes the picked value the menus check-mark and the tooltip rows name
         # (pickHeld.picked, review round 5, 2026-09-10): same surfaces, same counts, a different pick repaints
         pk1 = {**pend, "pickHeld": {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "picked": {"effort": "max"}}}

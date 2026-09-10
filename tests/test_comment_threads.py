@@ -564,7 +564,7 @@ class ThreadProjection(CommentBase):
         self.assertEqual(th["effortColor"], km._effort_color("high", stops), "the tint follows the running value")
         self.assertEqual(th["effortTone"], km._effort_tone("high"))
         recon = [e for e in th["events"] if e.get("kind") == "reconnecting"]
-        self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": held, "picks": []}],
+        self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": held, "picks": [], "switching": False}],
                          "the chat's waiting line, once, naming no effort while held")
         self.assertEqual(th["events"][-1]["kind"], "reconnecting", "appended after the projection")
         held_last_uuid = th["lastUuid"]
@@ -574,7 +574,7 @@ class ThreadProjection(CommentBase):
         self.assertEqual(th["effort"], "max")
         self.assertIs(th["effortPending"], True)
         self.assertIsNone(th["pickHeld"])
-        self.assertEqual(th["events"][-1], {"kind": "reconnecting", "effort": "max", "held": None, "picks": ["effort"]})
+        self.assertEqual(th["events"][-1], {"kind": "reconnecting", "effort": "max", "held": None, "picks": ["effort"], "switching": False})
         # a live thread with nothing pending: no marker, no element, and the same newest record as during the hold
         _Held.meta = {"mode": "default", "fast": "off", "effort": "high", "effortPending": False, "pickHeld": None}
         th = frame()
@@ -591,7 +591,7 @@ class ThreadProjection(CommentBase):
             th = frame()
             self.assertIs(th[flag], True, flag)
             self.assertEqual(th["events"][-1], {"kind": "reconnecting", "effort": "", "held": None,
-                                                "picks": ["fast" if flag == "fastPending" else "mode"]}, flag)
+                                                "picks": ["fast" if flag == "fastPending" else "mode"], "switching": False}, flag)
             self.assertEqual(len([e for e in th["events"] if e.get("kind") == "reconnecting"]), 1, flag)
         # dormant (session_meta {}): the reg's effort, no hold, no element
         km._sdk = lambda: self._State("")

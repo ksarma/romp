@@ -45,7 +45,7 @@ class EffortReconnect(unittest.TestCase):
     def test_the_reconnecting_event_covers_every_held_kind_and_names_the_effort_only_when_it_is_the_pick(self):
         # behaviour, not a pin: the composed event for the rows the chat can be in
         ev = km._reconnecting_event({"effortPending": True, "effort": "max", "pickHeld": None})
-        self.assertEqual(ev, {"kind": "reconnecting", "effort": "max", "held": None, "picks": ["effort"]}, "the armed effort reload")
+        self.assertEqual(ev, {"kind": "reconnecting", "effort": "max", "held": None, "picks": ["effort"], "switching": False}, "the armed effort reload")
         held = {"surfaces": ["mode"], "subagents": 1, "tasks": 0}
         ev = km._reconnecting_event({"effortPending": False, "effort": "high", "pickHeld": held})
         self.assertEqual(ev["held"], held, "a held mode pick reaches the chat")
@@ -56,10 +56,19 @@ class EffortReconnect(unittest.TestCase):
             self.assertEqual(ev["held"]["surfaces"], [kind], kind)
             self.assertEqual(ev["effort"], "", "held: the waiting line is keyed on the surfaces (%s)" % kind)
         self.assertEqual(km._reconnecting_event({"effortPending": False, "effort": "high", "pickHeld": None})["held"], None)
-        self.assertEqual(km._reconnecting_event(None), {"kind": "reconnecting", "effort": "", "held": None, "picks": []})
+        self.assertEqual(km._reconnecting_event(None), {"kind": "reconnecting", "effort": "", "held": None, "picks": [], "switching": False})
         # the pending kinds the reloading line's title names (review round 9): from the flags, in _pick_names' order, and
         # none while a pick is held (the hold names its own surfaces)
         self.assertEqual(km._reconnecting_event({"fastPending": True, "effort": "high"})["picks"], ["fast"])
+        # the landing's live switch in flight (modeSwitching; review round 10): the event says so, beside the mode pick,
+        # so the renderer names the switch and not a reload; a fast pick riding the arm after it is named too; never
+        # while a pick is held (the hold names its own surfaces and nothing is switching)
+        ev = km._reconnecting_event({"modePending": True, "modeSwitching": True, "effort": "high"})
+        self.assertEqual((ev["switching"], ev["picks"]), (True, ["mode"]))
+        ev = km._reconnecting_event({"modePending": True, "fastPending": True, "modeSwitching": True, "effort": "high"})
+        self.assertEqual((ev["switching"], ev["picks"]), (True, ["mode", "fast"]))
+        self.assertFalse(km._reconnecting_event({"modePending": True, "effort": "high"})["switching"], "a mode reload, no switch")
+        self.assertFalse(km._reconnecting_event({"modeSwitching": True, "pickHeld": held})["switching"], "held: nothing switches")
         self.assertEqual(km._reconnecting_event({"modePending": True, "effort": "high"})["picks"], ["mode"])
         self.assertEqual(km._reconnecting_event({"effortPending": True, "fastPending": True, "modePending": True, "effort": "max"})["picks"],
                          ["effort", "mode", "fast"])
@@ -135,7 +144,7 @@ class EffortReconnect(unittest.TestCase):
             m = km.build_session(SID, now)
             self.assertIsNotNone(m, "the live SDK session builds from its row")
             recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
-            self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": held, "picks": []}],
+            self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": held, "picks": [], "switching": False}],
                              "the chat's element carries the hold, and names no effort while a pick is held")
             self.assertEqual(m["status"]["pickHeld"], held, "the status dict carries the same hold")
             self.assertTrue(m["status"]["effortPending"])
@@ -143,7 +152,7 @@ class EffortReconnect(unittest.TestCase):
             row.update(pickHeld=None)
             m = km.build_session(SID, now)
             recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
-            self.assertEqual(recon, [{"kind": "reconnecting", "effort": "high", "held": None, "picks": ["effort"]}])
+            self.assertEqual(recon, [{"kind": "reconnecting", "effort": "high", "held": None, "picks": ["effort"], "switching": False}])
             self.assertIsNone(m["status"]["pickHeld"])
             # neither flag: no element at all
             row.update(effortPending=False)
@@ -158,7 +167,7 @@ class EffortReconnect(unittest.TestCase):
                 m = km.build_session(SID, now)
                 recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
                 self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": None,
-                                          "picks": ["fast" if flag == "fastPending" else "mode"]}], flag)
+                                          "picks": ["fast" if flag == "fastPending" else "mode"], "switching": False}], flag)
                 self.assertTrue(m["status"][flag], "the status dict carries %s" % flag)
                 row.update({flag: False})
                 m = km.build_session(SID, now)
