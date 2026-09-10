@@ -8,11 +8,13 @@
 // and text-size step seating too. Synthetic fixtures only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked } from "marked";
 import { topVisibleIndex, blockIndexAt, followPlace, readPlace, seatPlace, type Place } from "./reader-place";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRowSpan, rawRowForOffset } from "./anchor-map";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = read("file-view.ts");
@@ -20,14 +22,20 @@ const VIEW = read("file-view.ts");
 // ── a DOM stand-in: the anchor-map suite's minimal tree, plus the members reader-place reads ───────────
 class FakeNode {
   nodeType = 0;
-  parentNode: FakeNode | null = null;
-  childNodes: FakeNode[] = [];
-  constructor(public ownerDocument: FakeDocument) {}
+  parentNode!: FakeNode | null;
+  childNodes!: FakeNode[];
+  constructor(public ownerDocument: FakeDocument) {
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as FakeText).data : this.childNodes.map((c) => c.textContent).join(""); }
 }
 class FakeText extends FakeNode {
   nodeType = 3;
-  constructor(doc: FakeDocument, public data: string) { super(doc); }
+  constructor(doc: FakeDocument, public data: string) { super(doc); hideEdges(this); }
   get length(): number { return this.data.length; }
   splitText(offset: number): FakeText {
     const tail = new FakeText(this.ownerDocument, this.data.slice(offset));
@@ -43,7 +51,7 @@ class FakeElement extends FakeNode {
   scrollTop = 0;
   /** the box a test gives the element (top, bottom); none by default, so getBoundingClientRect answers all zeros */
   box: { top: number; bottom: number } | null = null;
-  constructor(doc: FakeDocument, public tagName: string) { super(doc); }
+  constructor(doc: FakeDocument, public tagName: string) { super(doc); hideEdges(this); }
   getAttribute(n: string): string | null { return this.attrs.has(n) ? (this.attrs.get(n) as string) : null; }
   setAttribute(n: string, v: string): void { this.attrs.set(n, v); }
   removeChild(n: FakeNode): FakeNode { const i = this.childNodes.indexOf(n); if (i >= 0) this.childNodes.splice(i, 1); n.parentNode = null; return n; }
@@ -406,4 +414,18 @@ test("file-view.ts: the place is read before the text swap and seated after the 
     assert.match(css, /\n\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; \}\n/, f + ": the row without container-type");
     assert.match(css, /\n\.fileview > \.fileview-err \{ flex: 0 0 auto; \}\n/, f + ": the note bar's rule");
   }
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names neither parentNode nor childNodes", () => {
+  const doc = new FakeDocument();
+  const root = doc.createElement("div"), p = doc.createElement("p"), t = doc.createTextNode("alpha");
+  root.appendChild(p); p.appendChild(t); p.setAttribute("class", "row");
+  for (const n of [root, p, t]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(p.parentNode === root && root.childNodes[0] === p && t.parentNode === p, "the edges still hold the tree");
+  assert.equal(root.textContent, "alpha"); assert.equal(p.getAttribute("class"), "row");
 });

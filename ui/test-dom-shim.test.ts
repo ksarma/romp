@@ -371,15 +371,7 @@ const needsListing = (s: string) => initsEdge(s) && !switched(s);
 const ALLOWLIST = [
   "timeline-tag-chips.test.ts",   // an object-literal fake the upstream fold added after this branch's base, listed at the final rebase
   "webview/actions.test.ts",
-  "webview/anchor-map-block-edges.test.ts",
-  "webview/anchor-map-boundary-points.test.ts",
-  "webview/anchor-map-change-marks.test.ts",
-  "webview/anchor-map-fallback-markup.test.ts",
-  "webview/anchor-map-rendered-points.test.ts",
-  "webview/anchor-map-wrapped-code.test.ts",
-  "webview/anchor-map.test.ts",
   "webview/card-subgoals.test.ts",
-  "webview/chat-exact-tail-exec.test.ts",
   "webview/codex-meta-choices.test.ts",
   "webview/federation-hidden-hold.test.ts",   // a conditional-valued window parent, read since the sixth review round
   "webview/feed-keynav-click-focus.test.ts",
@@ -401,10 +393,6 @@ const ALLOWLIST = [
   "webview/file-comments-seen-review3.test.ts",
   "webview/file-comments-send-seen.test.ts",
   "webview/file-view-notice.test.ts",
-  "webview/file-view-place-blocks.test.ts",
-  "webview/file-view-place-comment-blocks.test.ts",
-  "webview/file-view-place-source-cache.test.ts",
-  "webview/file-view-place.test.ts",
   "webview/file-view.test.ts",
   "webview/fileview-chip.test.ts",
   "webview/fleet-live-clock.test.ts",
@@ -429,17 +417,12 @@ const ALLOWLIST = [
   "webview/render-todo-file-chip.test.ts",
   "webview/setting-stale-fold.test.ts",
   "webview/shell-perf.test.ts",
-  "webview/strip.test.ts",
   "webview/tab-hide.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/tab-row-keep.test.ts",
   "webview/tab-snapshot-view.test.ts",
-  "webview/tab-strip-skip-exec.test.ts",
   "webview/thread-selection-scope.test.ts",
   "webview/timeline-boot.test.ts",
   "webview/timeline-rehover.test.ts",
-  "webview/track-decorations-guards.test.ts",
   "webview/track-decorations-hover-cost.test.ts",
-  "webview/track-decorations-kept-embed.test.ts",
   "webview/track-decorations.test.ts",
   "webview/url-links.test.ts",
   "webview/user-todo-links.test.ts",
@@ -459,7 +442,7 @@ const ALLOWLIST = [
 // The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
 // alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
 // is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 78;
+const ALLOWLIST_MAX = 61;
 // the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
 // tags-scale test whose shim it grew from
 const SWITCHED = [

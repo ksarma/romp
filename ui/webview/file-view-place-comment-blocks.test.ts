@@ -12,22 +12,30 @@
 // Comment node is never a paired node. Synthetic fixtures only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import { marked } from "marked";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, mapRenderedSelection, type SelLike } from "./anchor-map";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in ─────────────────────────────────────────────────────────────────────────────────
 class FakeNode {
   nodeType = 0;
-  parentNode: FakeNode | null = null;
-  childNodes: FakeNode[] = [];
-  constructor(public ownerDocument: FakeDocument) {}
+  parentNode!: FakeNode | null;
+  childNodes!: FakeNode[];
+  constructor(public ownerDocument: FakeDocument) {
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as FakeText).data : this.childNodes.map((c) => c.textContent).join(""); }
 }
-class FakeText extends FakeNode { nodeType = 3; constructor(doc: FakeDocument, public data: string) { super(doc); } }
+class FakeText extends FakeNode { nodeType = 3; constructor(doc: FakeDocument, public data: string) { super(doc); hideEdges(this); } }
 class FakeElement extends FakeNode {
   nodeType = 1;
   attrs = new Map<string, string>();
-  constructor(doc: FakeDocument, public tagName: string) { super(doc); }
+  constructor(doc: FakeDocument, public tagName: string) { super(doc); hideEdges(this); }
   getAttribute(n: string): string | null { return this.attrs.has(n) ? (this.attrs.get(n) as string) : null; }
   setAttribute(n: string, v: string): void { this.attrs.set(n, v); }
   appendChild(n: FakeNode): FakeNode { this.childNodes.push(n); n.parentNode = this; return n; }
@@ -175,4 +183,18 @@ test("a comment at each end of a line does not vouch for what stands between the
   md = rendered(trailing);
   assert.equal(renderedBlockIndex(El(md), trailing, Nd(wordsNode(md) as FakeText)), 4, "the trailing words are the html block's");
   pairedAfter(md, trailing);
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names neither parentNode nor childNodes", () => {
+  const doc = new FakeDocument();
+  const root = doc.createElement("div"), p = doc.createElement("p"), t = doc.createTextNode("alpha");
+  root.appendChild(p); p.appendChild(t); p.setAttribute("class", "row");
+  for (const n of [root, p, t]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(p.parentNode === root && root.childNodes[0] === p && t.parentNode === p, "the edges still hold the tree");
+  assert.equal(root.textContent, "alpha"); assert.equal(p.getAttribute("class"), "row");
 });

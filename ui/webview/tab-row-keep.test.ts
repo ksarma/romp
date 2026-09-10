@@ -16,9 +16,11 @@
 // lays the lines only. tab-row-keep-browser.test.ts runs the same code in Chromium. Synthetic ids only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -39,6 +41,7 @@ class Item {
       contains: (c) => self.cls.split(/\s+/).includes(c),
       add: (...c) => { for (const x of c) if (!self.classList.contains(x)) self.cls = (self.cls + " " + x).trim(); },
     };
+    hideEdges(this);   // every object the item holds (its parent, records, class list) is non-enumerable: a dump is its primitives
   }
   get isBreak(): boolean { return this.classList.contains("tab-group-break"); }
   get isLine(): boolean { return this.classList.contains("tab-row-line"); }
@@ -56,10 +59,16 @@ class Item {
 
 /** #tabs: children in DOM order, a width, and a flex-wrap layout recomputed lazily after every mutation. */
 class Bar {
-  children: Item[] = []; width: number;
+  children!: Item[]; width: number;
   paints = 0;   // the painter's first read is its sweep of the old lines: one per paint
   private boxes: Map<Item, { top: number; left: number; h: number }> | null = null;
-  constructor(width: number) { this.width = width; }
+  constructor(width: number) {
+    this.width = width;
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   dirty(): void { this.boxes = null; }
   resize(width: number): void { this.width = width; this.dirty(); }
   appendChild(c: Item): Item { c.parent = this; this.children.push(c); this.dirty(); return c; }
@@ -72,7 +81,7 @@ class Bar {
     return c;
   }
   /** the rebuild's replaceChildren: every child out, the sentinel with them */
-  replaceChildren(): void { for (const c of this.children) c.parent = null; this.children = []; this.dirty(); }
+  replaceChildren(): void { for (const c of this.children) c.parent = null; this.children.length = 0; this.dirty(); }
   querySelectorAll(sel: string): Item[] {
     const m = sel.match(/^:scope > \.([\w-]+)$/);
     assert.ok(m, "the painter selects its own children by one class: " + sel);
@@ -411,7 +420,7 @@ test("the observer watches the strip's WIDTH through a zero-height sentinel, not
   assert.ok(s && s.classList.contains("tab-row-sentinel"), "a sentinel of its own class");
   assert.equal(s.parent, bar, "a child of the strip");
   assert.equal(s.attrs["aria-hidden"], "true", "layout only");
-  assert.deepEqual(observer()!.targets, [s], "observe(sentinel): the strip's height, which the pass changes, is not watched");
+  assert.deepEqual(observer()!.targets.map((t) => t === s), [true], "observe(sentinel): the strip's height, which the pass changes, is not watched (by identity: a node inspects as its projection)");
   assert.ok(!s.isBreak && !s.isLine && !s.classList.contains("tab-group-sep") && !s.classList.contains("tab"),
     "none of the classes the pass's previous-sibling read, the painter's line sweep, dragslot's boxes or sectionHeadOf key on");
   assert.deepEqual(bar.rows(), [["web", "a1", "a2"], ["api", "b1", "b2", "tab tab-add"]], "the rows ignore it");
@@ -599,4 +608,16 @@ test("event-keyed only: the pass rides the painter, which the rebuild, the width
   // the drag's caller sits inside the once-per-actual-insert guard, after the insert (the rows are read after the mutation)
   assert.match(RENDER, /if \(ref !== dragged && dragged\.nextElementSibling !== ref\) \{\s*\n\s*flipTabs\(\(\) => tabs\.insertBefore\(dragged, ref\)\);\s*\n\s*paintTabRowLines\(tabs\);/,
     "the dragover handler paints right after its insert, inside the guard");
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in bar and its items enumerate their primitives alone, and a dump of one names neither children nor a parent", () => {
+  const bar = new Bar(300), a = tab("a"), h = head("backend"); bar.appendChild(h); bar.appendChild(a);
+  for (const n of [bar, a, h]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("children") && !dump.includes("parent"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(a.parent === bar && bar.children[1] === a && a.previousElementSibling === h, "the edges still hold the strip");
+  assert.deepEqual(bar.rows(), [["backend", "a"]]); bar.replaceChildren(); assert.equal(bar.children.length, 0); assert.equal(a.parent, null);
 });

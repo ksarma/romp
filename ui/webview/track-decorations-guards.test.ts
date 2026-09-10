@@ -14,12 +14,14 @@
 // and its root's `view` is the editor. Fixtures are synthetic (the notes-api world's `web` session).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EditorState } from "@codemirror/state";
 import { EditorView, type DecorationSet, type WidgetType } from "@codemirror/view";
 import { makeSuggestionField, setSuggestions } from "../../vendor/track-changents/obsidian/src/track-cm.js";
 import { changeHandlers, trackDecorations, CLS, type TrackHost, type TrackRecord } from "./track-decorations";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const DECO = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "track-decorations.ts"), "utf8");
 
@@ -74,12 +76,17 @@ class Node {
   className = "";
   attrs: Record<string, string> = {};
   readonly style = { setProperty: () => {} };
-  children: Node[] = [];
+  children!: Node[];
   listeners = new Map<string, (e: unknown) => void>();
   textContent = "";
   ownerDocument = null;
   cmTile: { root: { view: EditorView } } | undefined;
-  constructor(readonly tag: string) {}
+  constructor(readonly tag: string) {
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   appendChild(c: Node): Node { this.children.push(c); return c; }
   setAttribute(k: string, v: string): void { this.attrs[k] = v; }
   addEventListener(type: string, fn: (e: unknown) => void): void { this.listeners.set(type, fn); }
@@ -218,4 +225,15 @@ test("the substitution's struck half and the whole-paragraph block carry the sam
 test("track-decorations.ts: the click branch's drift guard comes before the swallow, and names where it is driven", () => {
   assert.match(DECO, /if \(!host\.hasResolvableAt\(view, from\)\) return false;[^\n]*\n\s*event\.preventDefault\(\);\n\s*event\.stopPropagation\(\);\n\s*return true;/);
   assert.match(DECO, /track-decorations-guards\.test\.ts/, "the source points at this module");
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names no children", () => {
+  const root = new Node("div"), row = new Node("span"); root.appendChild(row); row.textContent = "alpha"; row.setAttribute("data-hk-from", "4");
+  for (const n of [root, row]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("children") && !dump.includes("parentNode") && !dump.includes("childNodes"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(root.children[0] === row, "the edge still holds the tree"); assert.equal(row.attrs["data-hk-from"], "4");
 });

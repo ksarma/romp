@@ -28,26 +28,34 @@
 // parser, so the trusted pairing reads as it does in a browser. Synthetic fixtures only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import { marked } from "marked";
 import { topVisibleIndex, blockIndexAt, blockHolding, followPlace, seatedTop, readPlace, seatPlace, codeOf, type Place } from "./reader-place";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements } from "./anchor-map";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in ─────────────────────────────────────────────────────────────────────────────────
 class FakeNode {
   nodeType = 0;
-  parentNode: FakeNode | null = null;
-  childNodes: FakeNode[] = [];
-  constructor(public ownerDocument: FakeDocument) {}
+  parentNode!: FakeNode | null;
+  childNodes!: FakeNode[];
+  constructor(public ownerDocument: FakeDocument) {
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as FakeText).data : this.childNodes.map((c) => c.textContent).join(""); }
 }
-class FakeText extends FakeNode { nodeType = 3; constructor(doc: FakeDocument, public data: string) { super(doc); } }
+class FakeText extends FakeNode { nodeType = 3; constructor(doc: FakeDocument, public data: string) { super(doc); hideEdges(this); } }
 class FakeElement extends FakeNode {
   nodeType = 1;
   attrs = new Map<string, string>();
   scrollTop = 0;
   /** the box a test gives the element; none means no layout (every edge 0, no client rects) */
   box: { top: number; bottom: number } | null = null;
-  constructor(doc: FakeDocument, public tagName: string) { super(doc); }
+  constructor(doc: FakeDocument, public tagName: string) { super(doc); hideEdges(this); }
   getAttribute(n: string): string | null { return this.attrs.has(n) ? (this.attrs.get(n) as string) : null; }
   setAttribute(n: string, v: string): void { this.attrs.set(n, v); }
   appendChild(n: FakeNode): FakeNode { this.childNodes.push(n); n.parentNode = this; return n; }
@@ -687,4 +695,18 @@ test("seatPlace: a block deleted under the reader's eye (its neighbours now adja
   assert.equal(u.scrollTop, topOf(u.r, "Rewritten 2 to 4:") + 30, "the same three rewritten as one: the replacement, 30px in");
   const e = seatIn(del, { ...kept, top: 18 });
   assert.equal(e.scrollTop, topOf(e.r, "Paragraph 4:") - 18, "a block that started below the edge and was deleted: the block after keeps its distance");
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names neither parentNode nor childNodes", () => {
+  const doc = new FakeDocument();
+  const root = doc.createElement("div"), p = doc.createElement("p"), t = doc.createTextNode("alpha");
+  root.appendChild(p); p.appendChild(t); p.setAttribute("class", "row");
+  for (const n of [root, p, t]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(p.parentNode === root && root.childNodes[0] === p && t.parentNode === p, "the edges still hold the tree");
+  assert.equal(root.textContent, "alpha"); assert.equal(p.getAttribute("class"), "row");
 });
