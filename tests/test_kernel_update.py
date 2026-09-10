@@ -1365,6 +1365,88 @@ class Routes(Fresh):
             km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
             mgr.shutdown()
 
+    def test_a_converge_that_dies_on_an_exception_latches_a_failed_outcome_and_the_next_click_runs_again(self):
+        # review round 6 of the confirm step (2026-09-10): an exception out of _run_main_update (here the bundle
+        # rebuild raising) left every waiting window polling for good: the decorator's finally cleared the
+        # in-flight flag, but nothing latched an outcome or posted a notice, so /update-check answered state "",
+        # failed "", updated "" to every reader, the wait's neither state. The decorator now latches `failed`
+        # first, then posts the ok=False notice, then re-raises (the thread's traceback still reaches stderr, the
+        # Log's); latch before notice, so a notice helper that raises cannot skip the latch. A manager port is set
+        # and nothing is dialled: the exception comes before the dial. The flag is clear afterwards, so a retry
+        # click starts a fresh converge, which runs through to the manager
+        import http.server
+        from http.server import ThreadingHTTPServer
+        dials, notices, deaths, builds, hits = [], [], [], [], []
+
+        class Manager(http.server.BaseHTTPRequestHandler):
+            def _answer(self, body):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):            # the idle polls' registry read, once the converge has ended
+                hits.append(("GET", self.path))
+                self._answer(json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}]}).encode())
+
+            def do_POST(self):
+                hits.append(("POST", self.path))
+                self._answer(b"{}")
+
+            def log_message(self, *a):
+                pass
+        mgr = ThreadingHTTPServer(("127.0.0.1", 0), Manager)
+        threading.Thread(target=mgr.serve_forever, daemon=True).start()
+        port = mgr.server_address[1]
+        saved_port, saved_tried = os.environ.get("ROMP_MANAGER_PORT"), km._INPLACE_TRIED[0]
+
+        def build():
+            builds.append(1)
+            if len(builds) == 1:
+                raise RuntimeError("esbuild vanished")
+            return True, ""
+
+        def check():
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            return json.loads(body)
+        try:
+            km._INPLACE_TRIED[0] = ""
+            os.environ["ROMP_MANAGER_PORT"] = str(port)
+            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(port, dials, allow={self.port})), \
+                 mock.patch.object(km, "_rebuild_dist", side_effect=build), \
+                 mock.patch.object(km, "_checkout_sha", return_value="abcdef01"), \
+                 mock.patch.object(km, "_sync_notice", side_effect=lambda *a, **kw: notices.append((a[0], kw.get("ok", True)))), \
+                 mock.patch.object(threading, "excepthook", lambda args: deaths.append(args.exc_value)), \
+                 mock.patch.object(km, "_send_to_app"):
+                code, body = self._drift_click_and_wait()
+                self.assertEqual((code, json.loads(body)["state"]), (200, "converging"))
+                self.assertEqual([type(e).__name__ for e in deaths], ["RuntimeError"], "the exception still leaves the thread: re-raised")
+                text = "the converge stopped on an error, RuntimeError: esbuild vanished; the Log has the traceback"
+                for reader in ("the window that clicked", "another window the running push flipped into the wait"):
+                    d = check()
+                    self.assertEqual((d["state"], d["failed"], d["updated"]), ("", text, ""), reader)
+                self.assertEqual([ok for _, ok in notices], [False], "exactly one failure notice on the sync surface")
+                self.assertIn("esbuild vanished", notices[0][0])
+                self.assertEqual([h for h in hits if h[0] == "POST"], [], "no restart request went out: the exception came before the dial")
+                self.assertEqual([x for x in dials if x[1] not in (port, self.port)], [], "nothing but the fake and the route's own server")
+                # the retry: the flag is clear, so the next click starts a fresh converge, which reaches the manager
+                code, body = self._drift_click_and_wait()
+                self.assertEqual((code, json.loads(body)["state"]), (200, "converging"))
+                self.assertEqual(len(builds), 2, "a fresh converge ran")
+                self.assertEqual([h for h in hits if h[0] == "POST"], [("POST", "/restart-all")], "and asked the manager for the restart")
+                d = check()
+                self.assertEqual((d["state"], d["failed"], d["updated"]), ("", "", ""), "a restart the manager took latches no outcome")
+        finally:
+            km._INPLACE_TRIED[0] = saved_tried
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            km._MANAGER_READ_FAULT[0] = ""
+            mgr.shutdown()
+
     def test_the_tag_door_clears_the_drift_doors_latched_outcome_and_none_is_served_while_its_child_runs(self):
         # review round 6 of the confirm step (2026-09-10): the drift door's outcome stayed latched when the TAG
         # door started (only _main_converge_begin and the converge's decorator cleared it), and /update-check

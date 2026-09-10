@@ -10431,15 +10431,26 @@ def _main_converge_guarded(fn):
     """_run_main_update runs under the in-flight flag whatever called it: the click's thread (the route took the
     flag before starting it) or the auto converge (_main_drift_check, which bypasses the route). Set at entry,
     cleared in a finally over every exit: a refusal, the in-place converge, the no-manager return, a restart
-    request the manager did not take, an exception. functools.wraps, so the pins that read the function's
-    source and signature read the converge's own. The auto converge is not gated on the flag (its cool-down
-    spaces it); a converge that starts while another runs is the pre-existing hazard, not widened here."""
+    request the manager did not take, an exception. An exception also latches a `failed` outcome and posts
+    the notice before it leaves (review round 6 of the confirm step, 2026-09-10): before that, the flag
+    cleared and nothing else was written, so every waiting window's poll read the wait's neither state
+    (state "", failed "", updated "") for good. Latch first, then the notice, then the re-raise, so a notice
+    helper that raises cannot skip the latch. functools.wraps, so the pins that read the function's source
+    and signature read the converge's own. The auto converge is not gated on the flag (its cool-down spaces
+    it); a converge that starts while another runs is the pre-existing hazard, not widened here."""
     @functools.wraps(fn)
     def run(*a, **kw):
         _MAIN_CONVERGE_INFLIGHT[0] = True
         _MAIN_CONVERGE_OUTCOME[0] = None
         try:
             return fn(*a, **kw)
+        except Exception as e:
+            # no "failed" in the text: the banner prefixes "The update did not finish: ". The thread's
+            # excepthook still prints the traceback to stderr, which is the Log
+            why = "the converge stopped on an error, %s: %s; the Log has the traceback" % (type(e).__name__, e)
+            _main_converge_outcome(failed=why)
+            _sync_notice("main converge: %s" % why, ok=False)
+            raise
         finally:
             _main_converge_end()
     return run
