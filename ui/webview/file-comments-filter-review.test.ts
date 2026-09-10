@@ -577,7 +577,7 @@ test("under Comments a comment a DETACHED change answered wears the 'answered by
   assert.equal(dt.title, "The session answered this comment with: cold starts were slow → cold starts stay slow (detached: the file no longer holds its text)");
   assert.equal(pt.title, "The session answered this comment with: reduced → cut (pending)");
   assert.equal(d.querySelector(".fc-ref")!.textContent, "cold starts were slow → cold starts stay slow", "no passage: the change's words as the reference, as for a pending one");
-  assert.equal(titleOf(d, ".fc-kind"), "A comment about a change");
+  assert.equal(titleOf(d, ".fc-kind"), "A comment the session answered with a change", "answered, never about: the person named no change (the review, 2026-09-10)");
   assert.equal(p.querySelector(".fc-ref")!.textContent, "“cut p95 latency”", "a legacy passage comment keeps its passage as the reference");
   assert.equal(titleOf(p, ".fc-kind"), "A comment on a passage");
   // All: the comment keeps its own card (before the about follow-on it rode the change card), the pending change's card
@@ -821,6 +821,6 @@ test("pins: replyAway takes the filter into account before the Resolved fold and
   // the about tag's title by the changes' words and states (the about follow-on, 2026-09-10, replacing the "on a change" tag,
   // whose title read the change's state off `hunk`), the cues' by the card's
   assert.match(SRC, /const t = el\("span", "fc-tag fc-about", aboutTagWords\(refs\.length, source\)\);\n\s+t\.dataset\.refs = refs\.map\(\(r\) => r\.id\)\.join\(" "\);\n\s+t\.title = \(source === "about" \? "This comment is about: " : "The session answered this comment with: "\)\n\s+\+ refs\.map\(\(r\) => \(r\.kind === null \? "a change the file no longer records" : changeRef\(\{ kind: r\.kind, oldText: r\.oldText, newText: r\.newText \}\)\) \+ " \(" \+ refStateWords\(r\.state\) \+ "\)"\)\.join\("; "\);/);
-  assert.match(SRC, /kind\.title = c\.kind === "region" \? "A comment on a region of the picture" : c\.kind === "file" && c\.refs\.length \? "A comment about a change"\n\s+: c\.kind === "file" \? "A comment on the file as a whole" : "A comment on a passage";/, "a comment about a change with no passage is the file kind, cued as about a change");
+  assert.match(SRC, /kind\.title = c\.kind === "region" \? "A comment on a region of the picture"\n\s+: c\.kind === "file" && c\.refs\.some\(\(r\) => r\.source === "about"\) \? "A comment about a change"\n\s+: c\.kind === "file" && c\.refs\.length \? "A comment the session answered with a change"\n\s+: c\.kind === "file" \? "A comment on the file as a whole" : "A comment on a passage";/, "a comment with no passage that names changes is the file kind, cued as about a change when the person picked one (source about) and as answered when its only binding is the format's field (the review, 2026-09-10)");
   assert.match(SRC, /kind\.title = c\.detached \? "A change the session made to the file, whose text the file no longer holds; nothing here accepts or rejects it" : "A change the session made to the file, for you to accept or reject";/);
 });

@@ -10,8 +10,9 @@
 //     was asked again for each comment and left one identical row per comment at the list's foot.
 //   • The Reopen all line wears the acknowledgment's dress with the size on the words and the button alone (a .fc-note
 //     inside a .fc-note compounded to 0.74 of the acknowledgment beside it), and borrows nothing from the saved line
-//     (.fc-saved is that line's own, one class string in the panel: feed-css-saved-line-head-dress.test.ts); in the margin
-//     layout it sticks to the Send section's bottom edge, as the saved line does.
+//     (.fc-saved is that line's own, one class string in the panel: feed-css-saved-line-head-dress.test.ts); in the list
+//     layout it stands under the header, and in the margin layout in the Send section, where it sticks to the section's
+//     bottom edge, as the saved line does.
 //   • A wheel while Reopen all holds the keyboard ends the offer and moves the focus to the nearest control, never to the
 //     body (removeLine's rule for the saved line).
 // Synthetic fixtures only: the notes-api world, placeholder ids, the sessions "api" and "web".
@@ -470,7 +471,7 @@ test("the Reopen all line: the acknowledgment's dress with the size on the words
   assert.equal(line.textContent, "Resolved 2 commentsReopen all", "the words, then the button (its gap is a margin, not a space)");
   assert.equal(b.style.marginLeft, "6px");
   assert.equal(line.style.position, undefined, "the list layout: not sticky (the margin layout's, below)");
-  assert.ok(aside.querySelector(".fc-send")!.contains(line), "in the Send section, the acknowledgment's position");
+  assert.ok(aside.querySelector(".fc-head")!.contains(line), "under the header: the list layout's place (the margin layout's is the Send section, the acknowledgment's position: the next test, and file-comments-resolve-answered-review2.test.ts)");
   // the source: one class string in the panel holds the fc-saved token, the saved line's own (feed-css-saved-line-head-dress.test.ts pins the same)
   assert.deepEqual(SRC.match(/"[^"\n]*\bfc-saved(?![\w-])[^"\n]*"/g), ['"fc-note fc-sent fc-saved"']);
 });

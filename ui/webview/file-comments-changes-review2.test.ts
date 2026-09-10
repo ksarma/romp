@@ -485,7 +485,7 @@ test("a detached change's card offers no Accept, Reject, Comment on this change 
   const own = card(aside, onD1.id)!;
   assert.ok(own, "the comment has its own card");
   assert.equal(own.querySelector(".fc-ref")!.textContent, "cold starts were slow → cold starts stay slow", "no passage: the change's words are its reference");
-  assert.equal(own.querySelector(".fc-kind")!.title, "A comment about a change");
+  assert.equal(own.querySelector(".fc-kind")!.title, "A comment the session answered with a change", "the legacy binding, read as answered: the title says so (the review, 2026-09-10)");
   assert.deepEqual(tags(own), ["answered by a change"]);
   assert.equal(own.querySelector(".fc-tag.fc-about")!.title, "The session answered this comment with: cold starts were slow → cold starts stay slow (detached: the file no longer holds its text)");
   own.querySelector(".fc-card-head")!.click();

@@ -493,7 +493,7 @@ test("a whole-file comment saved under Changes, the status answering the save ca
   const tag = own!.querySelector(".fc-card-head .fc-about");
   assert.ok(tag, "wearing the tag that names the change it answered");
   assert.equal(tag!.textContent, "answered by a change"); assert.equal(tag!.dataset.refs, "h2");
-  assert.equal(own!.querySelector(".fc-kind")!.title, "A comment about a change", "no passage: a comment about a change");
+  assert.equal(own!.querySelector(".fc-kind")!.title, "A comment the session answered with a change", "no passage, the session's own binding: the title says answered (the review, 2026-09-10)");
   assert.ok(!savedLine(aside), "and the line is over");
   store.delete(SETTINGS_KEY);
 });

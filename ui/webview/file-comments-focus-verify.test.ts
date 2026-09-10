@@ -537,7 +537,7 @@ test("a comment bound to a change folds on its OWN card (the about follow-on): i
   for (const [c, id] of [[onChange, "h1"], [onShort, "h2"]] as Array<[StoreComment, string]>) {
     const card = w.card(c.id);
     assert.ok(!!card, "the comment bound to " + id + " has a card of its own");
-    assert.equal(card!.querySelector(".fc-kind")!.title, "A comment about a change");
+    assert.equal(card!.querySelector(".fc-kind")!.title, "A comment the session answered with a change", "the legacy binding's title: answered, not about (the review, 2026-09-10)");
     assert.ok(card!.querySelector(".fc-ref")!.textContent.startsWith("added "), "its reference is the change's words");
     const tag = card!.querySelector(".fc-about")!;
     assert.equal(tag.textContent, "answered by a change", "the legacy binding's tag");

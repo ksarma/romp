@@ -405,7 +405,7 @@ test("every comment is its own card in the one list: a comment about a change is
   assert.deepEqual(tagsOf(cl), ["answered by a change", "1"], "the legacy binding, and the turn count");
   assert.equal(cl.querySelector(".fc-tag.fc-about")!.title, "The session answered this comment with: reduced → cut (pending)");
   assert.equal(cl.querySelector(".fc-ref")!.textContent, "reduced → cut", "no passage: the change's words are its reference");
-  assert.equal(cl.querySelector(".fc-kind")!.title, "A comment about a change");
+  assert.equal(cl.querySelector(".fc-kind")!.title, "A comment the session answered with a change", "the legacy binding: the session answered, the person named nothing (the review, 2026-09-10)");
   // hover lights the changes' marks, leave unlights them; a render while lit unlights (the tag under the pointer is rebuilt)
   assert.equal(lit(w, "h1"), false);
   dispatch(tag, new Ev("pointerenter"));
@@ -489,7 +489,7 @@ test("Comment on this change on a deletion: no passage to carry it, so the compo
   const c = composerOf(aside);
   assert.equal(c.hidden, false);
   assert.equal(c.opt, null, "no option: the comment can only be about the change");
-  assert.deepEqual(c.ref, ["fc-note:About the change ", "fc-quote:removed quickly", "fc-note:The removed text is not in the file, so the comment is laid at the change's point."]);
+  assert.deepEqual(c.ref, ["fc-note:About the change ", "fc-quote:removed quickly", "fc-note:The removed text is not in the file, so the comment names the change instead of a passage."], "the list layout's line (this stand-in lays no card at any point; the margin layout's words are pinned by layout in file-comments-about-review2.test.ts)");
   assert.equal(c.presel, "", "nothing to preselect");
   const m = await save(w, aside, "Why drop the word?");
   assert.deepEqual(m.args, { note: "Why drop the word?", changeIds: ["h3"] }, "the change alone, no anchor, never suggestionId");
@@ -581,7 +581,7 @@ test("a selection reaching a deletion's point: across it, the passage comment of
   c = composerOf(aside);
   assert.equal(c.hidden, false, "the composer opens");
   assert.equal(c.opt, null);
-  assert.deepEqual(c.ref, ["fc-note:About the change ", "fc-quote:removed quickly", "fc-note:The removed text is not in the file, so the comment is laid at the change's point."], "the comment about the change by id, the line saying why");
+  assert.deepEqual(c.ref, ["fc-note:About the change ", "fc-quote:removed quickly", "fc-note:The removed text is not in the file, so the comment names the change instead of a passage."], "the comment about the change by id, the line saying why (the list layout's words)");
   m = await save(w, aside, "Why drop the word?");
   assert.deepEqual(m.args, { note: "Why drop the word?", changeIds: ["h3"] });
   // a selection ending exactly at the point does not reach across the removed text: no option

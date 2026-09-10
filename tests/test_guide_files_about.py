@@ -43,9 +43,9 @@ def _paragraph(section, lead):
 COMMENT_ON = ("**Comment on this change** on a change's card opens the comment box over the change's text with **about this "
               "change** checked, so the comment names the change and the message tells the session which change it is about; "
               "a deletion, whose text is no longer in the file, takes a comment about the change alone, laid beside its mark.")
-OWN_CARD = ("A comment is never shown inside a change's card: every comment is its own card, and the two are linked by tags, "
-            "**about a change** on the comment (hover it to ring the change's marks) and **N comments** on the change (click it "
-            "to open the first).")
+OWN_CARD = ("A comment is never shown inside a change's card: every comment is its own card, and the comment and the change "
+            "each carry a tag for the other, **about a change** on the comment (hover it to ring the change's marks) and "
+            "**N comments** on the change (click it to open the first).")
 SELECTION = ("Selecting text inside a change and pressing Comment leaves an ordinary comment on those words, with the same "
              "**about** box checked for the change your selection touches (**about N changes** when it touches several); "
              "uncheck it for a plain comment on the passage.")
@@ -77,7 +77,7 @@ class TheSentences(unittest.TestCase):
 
     def test_the_sentences_keep_the_persons_words(self):
         for s in (COMMENT_ON, OWN_CARD, SELECTION, ANSWERED, SEND, RESOLVE):
-            self.assertNotRegex(s, r"\b(suggestion|thread|bound to|hosted|romp|card model|sidecar)\b", s)
+            self.assertNotRegex(s, r"\b(suggestion|thread|bound to|linked|hosted|romp|card model|sidecar)\b", s)
 
     def test_comment_on_this_change_is_the_change_cards_button_and_writes_the_ids(self):
         self.assertIn('btn("Comment on this change", "fcchangecomment")', self.panel)

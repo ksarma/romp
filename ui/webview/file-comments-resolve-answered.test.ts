@@ -4,10 +4,11 @@
 // assertion). Pinned: the model's pick of the answered comments (unresolved, the person's, with a turn by another author,
 // words or a revision, after the person's last turn on the comment); the header action "Resolve answered (N)" while N > 0
 // and its absence at N = 0; the plain confirm line and Cancel; one resolve request per comment, in order, each answered;
-// a refusal reported under its card, the rest resolved; "Reopen all" in the acknowledgment's position, its click reopening
-// the same comments, and its end at the person's next gesture (a press on the button itself excepted), the sent
-// acknowledgment it displaced back in its place at that end (in place, before any render, and kept by the next); nothing
-// else in the panel resolving a comment. Synthetic fixtures only: the notes-api world, placeholder ids, the sessions "api"
+// a refusal reported under its card, the rest resolved; "Reopen all" under the header (the list layout, this stand-in's;
+// the margin layout's stands in the acknowledgment's position and displaces it, pinned by layout in
+// file-comments-resolve-answered-review2.test.ts), its click reopening the same comments, and its end at the person's next
+// gesture (a press on the button itself excepted), the sent acknowledgment at the foot untouched throughout (in place,
+// before any render, and kept by the next); nothing else in the panel resolving a comment. Synthetic fixtures only: the notes-api world, placeholder ids, the sessions "api"
 // and "web".
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
@@ -431,7 +432,7 @@ test("Resolve: one resolve request per answered comment, in order, each with on 
   assert.equal(headBtn(aside), null, "nothing answered is open now: the action is gone");
   const line = aside.querySelector(".fc-reopen")!;
   assert.ok(line, "the acknowledgment's position carries the line");
-  assert.ok(aside.querySelector(".fc-send")!.contains(line), "…in the Send section, where the sent acknowledgment stands");
+  assert.ok(aside.querySelector(".fc-head")!.contains(line), "…under the header, the list layout's place (this stand-in's layout; the margin layout's offer stands in the Send section, where the sent acknowledgment stands: file-comments-resolve-answered-review2.test.ts)");
   assert.equal(line.querySelector(".fc-note")!.textContent, "Resolved 2 comments");
   assert.equal(reopen(aside)!.textContent, "Reopen all");
   assert.ok(card(aside, answered.id) === null && card(aside, revised.id) === null, "the two cards left the open list");
@@ -481,7 +482,7 @@ test("a refusal on one comment: its row under the card, the rest resolved, the a
   assert.equal(countOf(w, "fileComments", "resolve"), 3);
 });
 
-test("the offer ends at the person's next gesture, a press on the offer itself excepted; the sent acknowledgment it displaced comes back in place, and the next render keeps it", async (t: TestContext) => {
+test("the offer ends at the person's next gesture, a press on the offer itself excepted; the sent acknowledgment at the foot stands throughout (the list layout displaces nothing), once, and the next render keeps it", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   // a send's acknowledgment stands first
@@ -494,24 +495,25 @@ test("the offer ends at the person's next gesture, a press on the offer itself e
   answer(w, resolvedAll([answered.id, revised.id]), lastOf(w, "fileComments", "resolve")); await flush(); await flush();
   const line = aside.querySelector(".fc-reopen")!;
   assert.ok(line);
-  assert.equal(sentAck(aside).length, 0, "the offer stands in the acknowledgment's place: the acknowledgment is displaced, not doubled");
+  assert.ok(aside.querySelector(".fc-head")!.contains(line), "the list layout: the offer under the header");
+  assert.equal(sentAck(aside).length, 1, "the acknowledgment at the foot is not displaced there, and not doubled");
   gesture(reopen(aside)!, "pointerdown");
   assert.ok(aside.querySelector(".fc-reopen"), "a press on the offer itself ends nothing: its click is what it is for");
-  assert.equal(sentAck(aside).length, 0, "…and brings nothing back");
+  assert.equal(sentAck(aside).length, 1, "…and changes nothing at the foot");
   gesture(w.body, "pointerdown");
   assert.equal(aside.querySelector(".fc-reopen"), null, "a press anywhere else ends the offer");
   assert.equal(resolves(w).length, 2, "and reopens nothing");
-  // the end is in place (reflectLines, no render): the foot shows the acknowledgment again, never neither
+  // the end is in place (reflectLines, no render): the foot shows the acknowledgment as before, once, never twice
   const back = sentAck(aside);
-  assert.equal(back.length, 1, "the acknowledgment the offer displaced is back in place, once");
+  assert.equal(back.length, 1, "the acknowledgment stands at the foot, once");
   assert.match(back[0].textContent, /^Sent to api at /, "the same words");
-  assert.ok(aside.querySelector(".fc-send")!.contains(back[0]), "where the offer stood, in the Send section");
+  assert.ok(aside.querySelector(".fc-send")!.contains(back[0]), "in the Send section, where it stood");
   // the next render (a fold toggled: a click, no gesture) puts the same back and no offer
   act(aside, "fcresolved")!.click();
   assert.equal(aside.querySelector(".fc-reopen"), null, "the offer stays ended across the render");
   assert.equal(sentAck(aside).length, 1, "the render shows the acknowledgment, once");
   assert.match(sentAck(aside)[0].textContent, /^Sent to api at /);
-  // a key ends it too, Tab and a modifier alone excepted; a wheel ends it, and the acknowledgment comes back the same way
+  // a key ends it too, Tab and a modifier alone excepted; a wheel ends it, and the acknowledgment at the foot stands the same way
   const w2 = world(); t.after(() => w2.close());
   const { aside: a2 } = await openPanel(w2);
   await sendWords(w2, a2, "Ship it.");
@@ -520,17 +522,17 @@ test("the offer ends at the person's next gesture, a press on the offer itself e
   answer(w2, resolvedAll([answered.id]), lastOf(w2, "fileComments", "resolve")); await flush(); await flush();
   answer(w2, resolvedAll([answered.id, revised.id]), lastOf(w2, "fileComments", "resolve")); await flush(); await flush();
   assert.ok(a2.querySelector(".fc-reopen"));
-  assert.equal(sentAck(a2).length, 0, "displaced");
+  assert.equal(sentAck(a2).length, 1, "the list layout: not displaced");
   dispatch(w2.body, new Ev("keydown", { key: "Tab" }));
   assert.ok(a2.querySelector(".fc-reopen"), "Tab moves the keyboard toward the offer and ends nothing");
   dispatch(w2.body, new Ev("keydown", { key: "Shift" }));
   assert.ok(a2.querySelector(".fc-reopen"), "a modifier alone ends nothing");
-  assert.equal(sentAck(a2).length, 0, "…and neither brings the acknowledgment back early");
+  assert.equal(sentAck(a2).length, 1, "…and neither touches the acknowledgment");
   gesture(w2.body, "wheel");
   assert.equal(a2.querySelector(".fc-reopen"), null, "a wheel ends it");
-  assert.equal(sentAck(a2).length, 1, "the acknowledgment is back in place after the wheel too");
+  assert.equal(sentAck(a2).length, 1, "the acknowledgment stands in place after the wheel too, once");
   assert.match(sentAck(a2)[0].textContent, /^Sent to api at /);
-  // with no send before the offer there is nothing to bring back: the foot is bare, not an empty line
+  // with no send before the offer the foot is bare, not an empty line, before and after the offer
   const w3 = world(); t.after(() => w3.close());
   const { aside: a3 } = await openPanel(w3);
   assert.equal(sentAck(a3).length, 0, "no acknowledgment before");

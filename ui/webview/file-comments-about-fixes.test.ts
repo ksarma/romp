@@ -456,7 +456,7 @@ test("a selection the mapping refuses that holds text of the file and crosses on
   win.getSelection = () => selectFrom(ot, 0, after, 0, [del], "");
   floatOf().click(); await flush();
   c = composerOf(aside);
-  assert.deepEqual(c.ref, ["fc-note:About the change ", "fc-quote:removed quickly", "fc-note:The removed text is not in the file, so the comment is laid at the change's point."], "no text held: the comment about the change by id");
+  assert.deepEqual(c.ref, ["fc-note:About the change ", "fc-quote:removed quickly", "fc-note:The removed text is not in the file, so the comment names the change instead of a passage."], "no text held: the comment about the change by id (the list layout's line)");
 });
 
 // ── a BOM file ────────────────────────────────────────────────────────────────────────────────────
@@ -524,7 +524,7 @@ test("deletionUnder claims one mark alone: a selection over two adjacent deletio
   win.getSelection = () => selectFrom(before, before.data.length, after, 0, [d4], "");
   floatOf().click(); await flush();
   c = composerOf(aside);
-  assert.deepEqual(c.ref, ["fc-note:About the change ", "fc-quote:removed very", "fc-note:The removed text is not in the file, so the comment is laid at the change's point."], "one label: the comment about that change");
+  assert.deepEqual(c.ref, ["fc-note:About the change ", "fc-quote:removed very", "fc-note:The removed text is not in the file, so the comment names the change instead of a passage."], "one label: the comment about that change (the list layout's line)");
 });
 
 // ── the open card's words for the changes it names ────────────────────────────────────────────────
