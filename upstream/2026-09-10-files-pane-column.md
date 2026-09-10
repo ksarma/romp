@@ -5,7 +5,7 @@ where: The pane itself from fork PR #187 (the remainder the 2026-09-03 files-pan
 added: 2026-09-10
 pr: 187
 tier: feature
-offered: their PR #1305
+offered: their PR #1305 + their PR #1310 (browser route)
 closed:
 ---
 Features plan row 32, PR 1 of 2 (the user's 2026-09-09 ruling: file it, stacked; the folder route into the pane follows as PR 2 on this branch). Off by default behind the File links open in setting; request/response viewer, no VS Code mirror; defining __rompMobileTab turns the tip's dangling call live.
