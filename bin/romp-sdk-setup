@@ -138,7 +138,7 @@ pyver() { "$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/nul
 pytag() { "$1" -c 'import sys; print("%d.%d%s" % (sys.version_info[0], sys.version_info[1], "t" if "t" in getattr(sys, "abiflags", "") else ""))' 2>/dev/null || echo "?"; }
 if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
   echo "romp-sdk-setup: best python found is $PY ($(pyver "$PY")) but claude-agent-sdk needs >= 3.10." >&2
-  echo "romp-sdk-setup: install one (e.g. 'uv python install 3.12') and re-run. tmux sessions are unaffected." >&2
+  echo "romp-sdk-setup: install one (e.g. 'uv python install 3.12') and re-run. Claude Code (tmux) sessions are unaffected." >&2
   exit 1
 fi
 

@@ -487,21 +487,28 @@ test("Rendered: the file's own data-act=fcchange markup is neither decorated nor
 
 // ── the cards' links to the body ───────────────────────────────────────────────────────────────────
 
-test("a comment bound to a change that keeps its anchor: its highlight is painted and opens the change card hosting it", async (t: TestContext) => {
+test("a comment the session answered that keeps its anchor: its highlight is painted and opens the comment's own card, tagged answered by a change; the change card counts it and hosts nothing", async (t: TestContext) => {
   // a passage comment the session answered with track-edit --thread keeps its anchor and gains the change's id (the
-  // host test "accept resolves every comment bound by suggestionId, anchor or not"): it has no card of its own
+  // host test "accept resolves every comment bound by suggestionId, anchor or not"). Before the about follow-on
+  // (2026-09-10) it rode the change's card and had no card of its own; now every comment is its own card
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, status({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, hosted] } }));
-  assert.equal(card(aside, hosted.id), null, "hosted on the change's card, no card of its own");
+  const own = card(aside, hosted.id);
+  assert.ok(own, "its own card in the list");
+  assert.deepEqual(own!.querySelectorAll(".fc-card-head .fc-tag").map((x) => x.textContent), ["answered by a change"], "the legacy binding as a tag");
+  assert.equal(own!.querySelector(".fc-ref")!.textContent, "“cut p95 latency”", "a passage comment still: its quote is its reference");
   const hl = w.body.querySelector('.fc-hl[data-act="fcopen"][data-id="' + hosted.id + '"]')!;
   assert.ok(hl, "its passage is highlighted all the same");
   assert.equal(card(aside, "chg:h1")!.classes.includes("open"), false);
+  assert.equal(own!.classes.includes("open"), false);
   hl.click();
-  const c1 = card(aside, "chg:h1")!;
-  assert.ok(c1.classes.includes("open"), "the highlight opens the change card that hosts the comment");
-  assert.ok(scrolledInto.includes(c1), "…and scrolls to it");
-  assert.ok(c1.querySelector('.fc-hosted[data-id="' + hosted.id + '"]'), "where the comment is");
-  assert.equal(aside.querySelectorAll(".fc-card.open").length, 1, "nothing else opened: no dead end on a card that does not exist");
+  const c = card(aside, hosted.id)!;
+  assert.ok(c.classes.includes("open"), "the highlight opens the comment's own card");
+  assert.ok(scrolledInto.includes(c), "…and scrolls to it");
+  assert.equal(card(aside, "chg:h1")!.classes.includes("open"), false, "not the change card: the comment is no longer drawn there");
+  assert.equal(card(aside, "chg:h1")!.querySelector(".fc-about-count")!.textContent, "1 comment", "the change card counts the comment it answered");
+  assert.equal(aside.querySelector(".fc-hosted") === null, true, "no comment is drawn inside a change card");
+  assert.equal(aside.querySelectorAll(".fc-card.open").length, 1, "nothing else opened");
 });
 
 test("a painted change's reference scrolls to its mark and switches no view; by Enter too", async (t: TestContext) => {

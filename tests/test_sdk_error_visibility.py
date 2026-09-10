@@ -201,7 +201,7 @@ class KernelSide(unittest.TestCase):
         js = km._LANDING_ERRS_JS
         self.assertIn("'apierror','sdk'", js)
         self.assertIn("sdk:'sdk'", js)
-        self.assertIn("sdk:\"romp's SDK backend", js)
+        self.assertIn("sdk:\"romp's Claude Code backend", js)
 
 
 if __name__ == "__main__":

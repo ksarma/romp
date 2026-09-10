@@ -60,7 +60,25 @@
 # tool call — and the kernel and the other sessions are untouched.
 #   ROMP_CLI_SCOPE_MEMORY_MAX       -p MemoryMax=      hard limit: over it, the OOM kill above.
 #   ROMP_CLI_SCOPE_MEMORY_HIGH      -p MemoryHigh=     soft limit: over it, the scope is throttled and
-#                                                      reclaimed, never killed.
+#                                                      reclaimed, never killed. Leave it unset or set it
+#                                                      equal to MemoryMax; the two are the same thing
+#                                                      (memory.high defaults to max, and usage cannot pass
+#                                                      an equal soft limit without reaching MemoryMax, where
+#                                                      the OOM kill above fires with MemorySwapMax=0 or no
+#                                                      swap, and with swap allowed the scope swaps first and
+#                                                      is killed when its swap allowance, a finite
+#                                                      MemorySwapMax, or the machine's swap is used up).
+#                                                      Never set it below MemoryMax: with the swap limit at
+#                                                      0 (or no swap), a runaway's anonymous memory has
+#                                                      nothing to reclaim, so a lower value only stalls the
+#                                                      process for minutes while it creeps toward the cap
+#                                                      with the box at high memory pressure (about 50 MiB
+#                                                      per 5 s for a 12G soft limit under a 16G cap with
+#                                                      MemorySwapMax=0, measured 2026-09-10; the throttle's
+#                                                      delay grows with the overage, so the rate holds for
+#                                                      that pair only); with swap allowed, the throttle
+#                                                      pushes the runaway's pages to swap instead, the
+#                                                      slowdown the swap limit below describes.
 #   ROMP_CLI_SCOPE_MEMORY_SWAP_MAX  -p MemorySwapMax=  swap limit. Without one, a scope over MemoryMax
 #                                                      swaps out instead of dying, for as long as the swap
 #                                                      lasts (verified: a 300 MB hog under MemoryMax=64M
@@ -69,11 +87,13 @@
 #   ROMP_CLI_SCOPE_OOM_SCORE_ADJ    written to /proc/self/oom_score_adj before the pre-flight and the
 #                                   exec, on the fallback path too, so the CLI and everything it spawns
 #                                   inherit it and the kernel keeps its own. The box-wide OOM killer and
-#                                   userspace killers such as earlyoom rank by a score this adds to, so a
-#                                   raised session is chosen over the kernel. Raising needs no privilege;
-#                                   lowering below the floor this process inherited (the user manager's
-#                                   own oom_score_adj) does: the write fails, and is reported as the
-#                                   floor. A /proc/self/oom_score_adj this process cannot open for
+#                                   earlyoom rank by a score this adds to, so a raised session is chosen
+#                                   over the kernel. systemd-oomd chooses a whole cgroup by its own rules
+#                                   (reclaim activity on its pressure path, swap use on its swap path; man
+#                                   oomd.conf) and is not steered by oom_score_adj. Raising needs no
+#                                   privilege; lowering below the floor this process inherited (the user
+#                                   manager's own oom_score_adj) does: the write fails, and is reported as
+#                                   the floor. A /proc/self/oom_score_adj this process cannot open for
 #                                   writing (a read-only /proc) is reported as that, not as the floor.
 # Sizes are digits with one optional K, M, G or T suffix (binary, as systemd reads them) or `infinity`;
 # the adjustment is an integer in -1000..1000 with no leading zero (Linux reads `0400` as octal, 256). A

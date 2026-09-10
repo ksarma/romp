@@ -263,19 +263,24 @@ class TimelineViews(unittest.TestCase):
         self.assertIn('**_views_payload(),', src, "the timeline payload carries the RENDERED shape (through the one carrier, which marks "
                       "a blob a read fault left unproved or sends the marker alone, 2026-09-08)")
         self.assertIn('"palette": pal.colors(_palette_name()),', src, "and the palette, for tag colors in every host")
-        self.assertIn('_tab_order_frame(tab_order, tab_meta, tmux)', src, "tabOrder pushes carry it (the one frame builder, T258)")
+        self.assertIn('_send_tab_order(c, tab_order, tab_meta, chat_tmux)', src,
+                      "tabOrder pushes carry it (through the one frame builder, T258; the pusher hands it its guarded map)")
         # every tabOrder frame is built by ONE helper (2026-09-06: the frame also carries selfHost; T258: and the
-        # `live` sids the sender's liveness map affirms; 2026-09-08: the views ride the one carrier, which marks a
-        # blob a read fault left unproved or sends the marker alone)
-        self.assertIn('return {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),\n'
-                      '            **_views_payload(), "live": sorted({str(x) for x in live})}', src, "tabOrder frames carry it")
+        # `live` sids the sender's liveness map affirms; 2026-09-07: it is built per client through _send_tab_order,
+        # so a reconnecting client's skeleton list can ride it; 2026-09-08: the views ride the one carrier, which
+        # marks a blob a read fault left unproved or sends the marker alone)
+        self.assertIn('fr = {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),\n'
+                      '          **_views_payload(), "live": sorted({str(x) for x in live})}', src, "tabOrder frames carry it")
         self.assertIn('**_views_payload(), "live":', src, "…which carries the blob")
-        # the connect-time tabOrder IS the push's (the ready handler's own frame is gone, 2026-09-03; upstream's
-        # T258 spelling of that frame, `_frame = _tab_order_frame(_o, _tabs, _tm)`, has no home here either)
+        # the connect-time tabOrder IS the push's (the ready handler's own frame is gone, 2026-09-03, and stays
+        # gone under #1017's per-client builder by the 2026-09-09 ruling; upstream's T258 spelling of that frame,
+        # `_frame = _tab_order_frame(_o, _tabs, _tm)`, and #1017's hand-off, `_send_tab_order(client, _o, _tabs, _tm)`,
+        # have no home here either)
         self.assertNotIn('"tabs": _tabs, **_views_payload()', src)
         self.assertNotIn('"tabs": _tabs, "views": _views_client()', src)
         self.assertNotIn('_frame = _tab_order_frame(_o, _tabs, _tm)', src)
-        self.assertIn('_send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta, chat_tmux))',
+        self.assertNotIn('_send_tab_order(client, _o, _tabs, _tm)', src)
+        self.assertIn('_send_tab_order(c, tab_order, tab_meta, chat_tmux)',
                       src, "the guarded push carries the views blob to a fresh client too")
 
     def test_web_boot_exposes_the_set_views_hook(self):

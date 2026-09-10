@@ -1,15 +1,15 @@
-// The reply's box changing CARDS while the person types in it (plans/file-review.md, "The composer follow-on (2026-09-07)", its
-// closing sentence; the review of that change). A reply's box stands in the card the list shows for its comment, and the
-// list can show the comment in another card mid-reply: a passage comment the session answers with a track-edit bound to it
-// moves onto the change's card, among the change cards at the top of the list; a hosted comment whose change is accepted —
-// Accept on the card, Send's accept-all, a decision elsewhere — moves to its own card, among the comment cards below. render()
-// used to scroll the box into view only for a move between a card and the slot (a slot-or-card bit, equal on both sides of a
-// card-to-card move), so typing went on into a box that could be off-screen in a long list. Now render() keys the scroll on
-// the node the box stood in: a different node after the rebuild is a move, whatever containers are on its two ends. The move
-// itself still costs a detach — the chain from the section to the box changes depth, and a node cannot change parents without
-// leaving the document (swapCards says why moveBefore would not help) — so the words, the caret, the height and the keyboard
-// are what the test asks to survive, plus the one scroll. Driven through a copy of the reply-keep test's DOM stand-in, which
-// logs every scrollIntoView, detach and focus. Synthetic fixtures only: the notes-api world, placeholder ids.
+// The reply's box under a status that changes what its comment's card wears (plans/file-review.md, "The composer follow-on
+// (2026-09-07)", its closing sentence; the review of that change; the about follow-on, 2026-09-10). A reply's box stands in
+// the card the list shows for its comment, and since the about follow-on that is always the comment's own card: a passage
+// comment the session answers with a track-edit bound to it (suggestionId) keeps its card and gains the "answered by a
+// change" tag, the change's own card counting it; the change accepted, by Accept on its card, Send's accept-all or a decision
+// elsewhere, leaves the comment's card where it is and turns the tag's state, the card gaining the "accepted" tag. Neither
+// status moves the box, so nothing is detached, no scroll runs and the keyboard is never put back. Before the about follow-on
+// a comment bound to a pending change was drawn inside the change's card, and each of those statuses moved the box between
+// the two cards: render() keyed the scroll on the node the box stood in (a different node after the rebuild was a move,
+// whatever containers were on its two ends), and the move cost a detach. That check stands, pinned below; these tests hold
+// that the two statuses no longer trip it. Driven through a copy of the reply-keep test's DOM stand-in, which logs every
+// scrollIntoView, detach and focus. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -262,7 +262,8 @@ const passage: StoreComment = {
   resolved: false,
 };
 const whole: StoreComment = { id: T0 + "-119", author: "you", ts: T0 + 4000, body: "Lead with the numbers.", replies: [], resolved: false };
-// a pending change and the comment bound to it, shown on the change's card
+// a pending change and a comment the change answered (suggestionId, the format's own field): its own card in the list,
+// wearing the "answered by a change" tag (before the about follow-on, 2026-09-10, it was drawn inside the change's card)
 const cut = DOC.indexOf("cut");
 const h1: Hunk = { id: "h1", author: "api", ts: T0 - 90000, kind: "sub", curFrom: cut, curTo: cut + 3, baseFrom: cut, baseTo: cut + 7, oldText: "reduced", newText: "cut", anchor: null };
 const SUGG = [{ id: "h1", author: "api", authorId: SID, ts: T0 - 90000, kind: "sub", from: cut, oldText: "reduced", newText: "cut" }];
@@ -280,9 +281,9 @@ function status(over: Partial<Status> = {}): Status {
     ...over,
   };
 }
-/** The world with the change h1 pending and the comment bound to it on its card. */
+/** The world with the change h1 pending and the comment it answered: the change card first, then the comment's own card. */
 const WITH_CHANGE: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, bound] }, hunks: [h1], unsent: unsent(passage.id, bound.id) };
-/** The same world after the change was accepted: the comment stands on its own card, wearing the decision. */
+/** The same world after the change was accepted: the change card is gone, and the comment's card wears the decision. */
 const ACCEPTED: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage, bound] }, hunks: [], log: [ACCEPT_LOG],
   storeMtimeNs: "1757145600000000006", unsent: { comments: [passage.id, bound.id], replies: [], accepted: 1, rejected: 0, watermark: null } };
 
@@ -327,7 +328,8 @@ async function harness(over: Partial<FileViewActionCtx> = {}) {
     box: (): E => { const b = main.querySelector("textarea.fc-input"); assert.ok(b, "the comment box is a textarea"); return b!; },
     composer: (): E => { const c = main.querySelector(".fc-composer"); assert.ok(c, "the composer box"); return c!; },
     card: (id: string): E | null => main.querySelector('.fc-card[data-id="' + id + '"]'),
-    hosted: (id: string): E | null => main.querySelector('.fc-hosted[data-id="' + id + '"]'),
+    /** The head's tags of a card, in order (a comment's about tag, its decision, resolved, the reply count while collapsed). */
+    tags: (card: E): string[] => card.querySelectorAll(".fc-card-head .fc-tag").map((t) => t.textContent),
     replyBtn: (id: string): E | null => main.querySelectorAll('[data-act="fcreply"]').find((b) => b.dataset.id === id) || null,
     cardBy: (id: string): E | null => main.querySelectorAll('.fc-card').find((c) => c.dataset.id === id) || null,   // by the id as data: it may hold a quote
     /** The slot's reference row, class:text per span. */
@@ -353,83 +355,98 @@ function draft(box: E, text: string, caret: number, scrollHeight: number): void 
   box.scrollHeight = scrollHeight; box.offsetHeight = scrollHeight + 2; box.clientHeight = scrollHeight; box.dispatch("input");
 }
 
-// ── more fixtures: the passage comment bound to the change mid-reply ─────────────────────────────
+// ── more fixtures: the passage comment answered by the change mid-reply ──────────────────────────
 /** The world after the session answered the passage comment with a track-edit bound to it (the plan's `track-edit --thread`):
- *  the comment keeps its anchor, gains the change's id, and the list shows it on the change's card. */
+ *  the comment keeps its anchor and its own card, gains the change's id (suggestionId, the format's own field) and with it
+ *  the "answered by a change" tag; the change's card counts it. */
 const boundPassage: StoreComment = { ...passage, suggestionId: "h1" };
 const BOUND_MID_REPLY: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [boundPassage, whole] }, hunks: [h1], unsent: unsent(passage.id, whole.id), storeMtimeNs: "1757145600000000004" };
 
-// ── the box moved between two cards is brought into view ──────────────────────────────────────────
+// ── neither status moves the box: the card is kept, its tags change ───────────────────────────────
 
-test("own card → the change card hosting it: the session's track-edit binds the comment under the reply; the box moves into the comment's box on the change card and is brought into view, with its words, caret, height and keyboard", async () => {
+test("the session's track-edit answers the comment under the reply: the box stays in the comment's own card, which gains the answered-by tag; the change card counts the comment and holds no box; nothing is detached, scrolled or refocused", async () => {
   const h = await harness();
   await h.open();
   h.startReply(passage.id, passage.id);
-  const box = h.box(), compo = h.composer();
+  const box = h.box(), compo = h.composer(), card = h.card(passage.id)!;
   draft(box, "The response cache, then.", 12, 63);
-  const focusMark = doc.focused.length;
+  const mark = doc.detached.length, focusMark = doc.focused.length;
   doc.scrolled.length = 0;
   await h.repoll(BOUND_MID_REPLY);
-  assert.equal(h.card(passage.id), null, "the comment's own card is gone: the list shows it on the change's card");
-  const hosted = h.hosted(passage.id);
-  assert.ok(hosted && hosted.contains(compo), "the box stands in the comment's box on the change card");
-  assert.deepEqual(h.kids(hosted!), ["fc-reply fc-reply-you", "fc-replies fc-clip", "fc-composer fc-composer-in", "fc-actions"], "below the turns, above the buttons");
-  assert.ok(h.card("chg:h1")!.classList.contains("open"), "the change card is open for it");
-  assert.equal(h.q('.fc-card[data-id="chg:h1"] .fc-card-head')!.getAttribute("aria-disabled"), "true", "…and its head is held");
+  assert.ok(h.card(passage.id) === card, "the comment's own card is kept: the list still shows the comment there");
+  assert.ok(card.contains(compo), "the box stands in it");
+  assert.deepEqual(h.kids(card), ["fc-card-head", "fc-body fc-clip", "fc-replies fc-clip", "fc-clip-row", "fc-composer fc-composer-in", "fc-actions"], "below the turns, above the buttons");
+  assert.deepEqual(h.tags(card), ["answered by a change"], "the card names the change that answered it");
+  const chg = h.card("chg:h1");
+  assert.ok(chg, "the change's card is in the list");
+  assert.equal(chg!.contains(compo), false, "…and holds no box");
+  assert.equal(chg!.querySelector(".fc-about-count")!.textContent, "1 comment", "…and counts the comment");
+  assert.equal(chg!.querySelector(".fc-card-head")!.getAttribute("aria-disabled"), null, "its head is not held");
+  assert.equal(card.querySelector(".fc-card-head")!.getAttribute("aria-disabled"), "true", "the comment's own head is");
   assert.deepEqual(h.sections(), NO_SLOT, "the slot is empty");
-  assert.equal(doc.scrolled.length, 1, "brought into view — once"); assert.ok(doc.scrolled[0] === compo, "the box, where it now stands");
+  assert.equal(h.outOfDoc(mark).length, 0, "nothing holding the textarea was detached");
+  assert.equal(doc.scrolled.length, 0, "no move, no scroll");
+  assert.equal(doc.focused.length, focusMark, "no refocus: the keyboard never left the box");
   assert.ok(h.box() === box, "the same textarea"); assert.equal(box.value, "The response cache, then.");
   assert.deepEqual([box.selectionStart, box.selectionEnd], [12, 12]); assert.equal(box.style.height, "65px");
-  assert.ok(doc.activeElement === box, "the keyboard is back in it");
-  assert.equal(doc.focused.length, focusMark + 1, "…put back by render, once: the move detached the box");
-  // no move, no scroll: the next poll keeps the change card and the box in it
-  doc.scrolled.length = 0;
+  assert.ok(doc.activeElement === box, "the keyboard is in it");
+  // the next poll changes nothing about the card: kept again, no scroll
   await h.repoll({ ...BOUND_MID_REPLY, storeMtimeNs: "1757145600000000005" });
-  assert.ok(h.hosted(passage.id)!.contains(compo), "kept there"); assert.equal(doc.scrolled.length, 0, "no move, no scroll");
+  assert.ok(h.card(passage.id) === card && card.contains(compo), "kept there"); assert.equal(doc.scrolled.length, 0, "no move, no scroll");
   h.dispose();
 });
 
-test("the change card → the comment's own card: the change accepted elsewhere lands by the poll; the box moves into the comment's own card, before its buttons, and is brought into view", async () => {
+test("the change accepted elsewhere lands by the poll under a reply on the comment it answered: the change card goes, the comment's card stays with the box and wears the accepted tag; nothing is detached, scrolled or refocused", async () => {
   const h = await harness();
   await h.open(WITH_CHANGE);
-  h.startReply("chg:h1", bound.id);
-  const box = h.box(), compo = h.composer();
+  h.startReply(bound.id, bound.id);
+  const box = h.box(), compo = h.composer(), own = h.card(bound.id)!;
+  assert.deepEqual(h.tags(own), ["answered by a change"]);
+  assert.match(own.querySelector(".fc-about")!.title, /reduced → cut \(pending\)/, "the tag's title names the change and its state");
   draft(box, "Trimmed is fine.", 8, 63);
-  const focusMark = doc.focused.length;
+  const mark = doc.detached.length, focusMark = doc.focused.length;
   doc.scrolled.length = 0;
   await h.repoll(ACCEPTED);
-  assert.equal(h.card("chg:h1"), null, "the change card is gone");
-  const own = h.card(bound.id);
-  assert.ok(own && own.contains(compo), "the box stands in the comment's own card");
-  const ks = h.kids(own!);
+  assert.ok(h.card("chg:h1") === null, "the change card is gone");
+  assert.ok(h.card(bound.id) === own, "the comment's own card is kept");
+  assert.ok(own.contains(compo), "the box stands in it");
+  const ks = h.kids(own);
   assert.equal(ks[ks.indexOf("fc-composer fc-composer-in") + 1], "fc-actions", "before the card's buttons");
-  assert.equal(own!.querySelector(".fc-card-head")!.getAttribute("aria-disabled"), "true", "the own card's head is held");
+  assert.equal(own.querySelector(".fc-card-head")!.getAttribute("aria-disabled"), "true", "the own card's head is held");
+  assert.deepEqual(h.tags(own), ["answered by a change", "accepted"], "the card wears the decision");
+  assert.match(own.querySelector(".fc-about")!.title, /reduced → cut \(accepted\)/, "the tag's state followed");
   assert.deepEqual(h.sections(), NO_SLOT);
-  assert.equal(doc.scrolled.length, 1, "brought into view — once"); assert.ok(doc.scrolled[0] === compo, "the box");
+  assert.equal(h.outOfDoc(mark).length, 0, "nothing holding the textarea was detached");
+  assert.equal(doc.scrolled.length, 0, "no move, no scroll");
+  assert.equal(doc.focused.length, focusMark, "no refocus");
   assert.equal(box.value, "Trimmed is fine."); assert.deepEqual([box.selectionStart, box.selectionEnd], [8, 8]); assert.equal(box.style.height, "65px");
-  assert.ok(doc.activeElement === box, "the keyboard is back in it"); assert.equal(doc.focused.length, focusMark + 1, "put back once");
+  assert.ok(doc.activeElement === box, "the keyboard never left it");
   h.dispose();
 });
 
-test("the change accepted by the card's own Accept under the box: the busy render moves and scrolls nothing; the reply that lands moves the box into the comment's own card and brings it into view", async () => {
+test("the change accepted by the card's own Accept under the box: the busy render and the landing status both leave the box in the comment's card and scroll nothing", async () => {
   const h = await harness();
   await h.open(WITH_CHANGE);
-  h.startReply("chg:h1", bound.id);
-  const box = h.box(), compo = h.composer();
+  h.startReply(bound.id, bound.id);
+  const box = h.box(), compo = h.composer(), own = h.card(bound.id)!;
   draft(box, "Trimmed is fine.", 16, 63);
+  const mark = doc.detached.length;
   doc.scrolled.length = 0;
   h.click('[data-act="fcaccept"][data-id="h1"]'); await tick();
   assert.equal(h.last().verb, "accept");
-  assert.ok(h.hosted(bound.id)!.contains(compo), "the busy render keeps the box where it is");
+  assert.ok(h.card(bound.id) === own && own.contains(compo), "the busy render keeps the box where it is");
   assert.equal(doc.scrolled.length, 0, "…and scrolls nothing");
   await h.ok(ACCEPTED);
-  assert.ok(h.card(bound.id)!.contains(compo), "the comment's own card took the box");
-  assert.equal(doc.scrolled.length, 1, "brought into view — once"); assert.ok(doc.scrolled[0] === compo, "the box");
-  assert.equal(box.value, "Trimmed is fine."); assert.ok(doc.activeElement === box, "the keyboard is back in it");
+  assert.ok(h.card("chg:h1") === null, "the change card is gone");
+  assert.ok(h.card(bound.id) === own && own.contains(compo), "the comment's card keeps the box");
+  assert.deepEqual(h.tags(own), ["answered by a change", "accepted"]);
+  assert.equal(h.outOfDoc(mark).length, 0, "no detach");
+  assert.equal(doc.scrolled.length, 0, "no move, no scroll");
+  assert.equal(box.value, "Trimmed is fine."); assert.ok(doc.activeElement === box, "the keyboard is in it");
   h.dispose();
 });
 
-test("the same move with the keyboard elsewhere leaves the view where the person put it; the words ride with the box", async () => {
+test("the same statuses with the keyboard elsewhere leave the view where the person put it; the words stay in the box", async () => {
   const h = await harness();
   await h.open();
   h.startReply(passage.id, passage.id);
@@ -437,18 +454,22 @@ test("the same move with the keyboard elsewhere leaves the view where the person
   doc.activeElement = doc.body;                        // the person clicked into the file
   doc.scrolled.length = 0;
   await h.repoll(BOUND_MID_REPLY);
-  assert.ok(h.hosted(passage.id)!.contains(h.composer()), "the box moved onto the change card");
-  assert.equal(doc.scrolled.length, 0, "not typing: no scroll");
-  assert.equal(h.box().value, "Half a thought", "the words rode with it");
+  assert.ok(h.card(passage.id)!.contains(h.composer()), "the box stayed in the comment's card");
+  assert.equal(doc.scrolled.length, 0, "not typing, and no move: no scroll");
+  assert.equal(h.box().value, "Half a thought", "the words stayed");
+  assert.ok(doc.activeElement === doc.body, "the keyboard is left where it was");
   h.dispose();
 });
 
 // ── pinned at source ──────────────────────────────────────────────────────────────────────────────
 
-test("source: render keys the scroll on the node the box stood in, so a card-to-card move scrolls too; the comments claim no more than the code keeps", () => {
+test("source: render keys the scroll on the node the box stood in (a card-to-card move would scroll too); no comment is drawn inside a change card, so the statuses above never make one; the comments claim no more than the code keeps", () => {
   assert.match(SRC, /const home = this\.composerBox\.parentElement;[^\n]*\n\s*const typing = document\.activeElement === this\.input;/, "the box's node, read before the rebuild");
   assert.match(SRC, /const moved = typing && this\.composerBox\.parentElement !== home;\n(?:[^\n]*\n)*?\s*this\.afterRender\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(keep\) this\.refocus\(keep, want, true\);\n\s*if \(moved\) this\.showComposer\(\);/, "between a card and the slot, or between two cards: one check, the node the box stood in against the one it stands in");
   assert.doesNotMatch(SRC, /const inCard = cards\.contains\(this\.composerBox\)/, "no slot-or-card bit beside it: the parent check covers a move to or from the slot too");
   assert.doesNotMatch(SRC, /box leaves a card only when/, "swapCards no longer says the box leaves a card only when its card is gone");
   assert.doesNotMatch(SRC, /a rebuilt list never makes it move/, "placeComposer neither");
+  assert.doesNotMatch(SRC, /renderHosted|fc-hosted/, "no comment is drawn inside a change card (the about follow-on, 2026-09-10)");
+  assert.match(SRC, /cardKey\(commentId: string\): string \{\n\s*return commentId;\n\s*\}/, "a comment's card is its own, whatever changes it names: the box's card never changes key under a reply");
+  assert.match(SRC, /const host = id === null \? null : this\.sections\.cards\.querySelector\('\.fc-card\[data-id="' \+ id \+ '"\]'\) as HTMLElement \| null;/, "placeComposer looks for the comment's own card alone");
 });

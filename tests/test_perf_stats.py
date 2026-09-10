@@ -325,13 +325,19 @@ class Collector(unittest.TestCase):
                 km._img_cache.pop(k, None)
             for k in ("11111111-2222-3333-4444-aaaaaaaaaaaa", "11111111-2222-3333-4444-bbbbbbbbbbbb"):
                 km._built_chat.pop(k, None)
-        # the event model's reader: a file read through it adds exactly its size and record count
+        # the event model's reader: a file read through it adds exactly its size and record count. Its LRU is
+        # one dict for the whole process, so it holds whatever the modules run before this one in the same
+        # worker left behind, and at its cap the insert evicts the oldest entry first and the count stays
+        # flat (a two-worker sweep's half of the suite had filled it, and this read 0 != 1, 2026-09-10). The
+        # delta is measured from an empty cache, which the reader's own eviction tests clear the same way.
         td = tempfile.mkdtemp()
         try:
             p = os.path.join(td, "rows.jsonl")
             with open(p, "w") as fh:
                 for i in range(3):
                     fh.write(json.dumps({"t": i, "state": "idle"}) + "\n")
+            with km.em._JSONL_CACHE_LOCK:
+                km.em._JSONL_CACHE.clear()
             before = km._PERF_STATS.snapshot()["caches"]["jsonl"]
             self.assertEqual(len(km.em._read_jsonl_incremental(p)), 3)
             after = km._PERF_STATS.snapshot()["caches"]["jsonl"]

@@ -47,19 +47,21 @@
 // after the digits, or a leading zero; a PR number has neither). Typographic wrappers (<em>, <strong>,
 // <sup>) are walked: a `#13` in them is still a reference.
 //
-// The boundary is judged over the RENDERED text, not per text node. A pass that ran before this one may
-// have cut a run of text into several nodes (the path pass, path-links.ts, turns `docs/a.md#12` into a
-// path link followed by a text node that begins `#12`), and the start of such a node is no boundary: the
-// walk carries the last character of the text before it (a skipped element's included) into the node, so
-// `#12` right after `docs/a.md`, or after `<code>x</code>`, stays the fragment it is, while `#12` after
-// a space, or at the start of the root, links as before (the 2026-09-07 review: the split case linked
-// `#12` in a todo titled `Read docs/a.md#12 before merging` to an unrelated PR). The carry crosses
-// INLINE elements only (an <img>, an empty <span>, an unknown element renders no boundary, so the text
-// before it decides) and resets at a line or block edge (BLOCK_TAGS: <br>, <p>, <li>, a heading, a
-// table cell, ...): a reference that begins a line or a block follows a boundary whether or not a
-// whitespace node separates them. marked renders a GFM hard break (two trailing spaces, then `#12` on
-// the next line) as `<p>done<br>#12</p>` with no text between the <br> and the `#`, and the first fix of
-// the carry read that as glued (the 2026-09-07 round-2 review).
+// The boundary is judged over the RENDERED text, not per text node. The markdown renderer, or a pass that
+// ran before this one, may cut one run of text into several nodes: inline code followed by a number
+// (`docs/a.md`#12 in a message) renders as <code>docs/a.md</code> and then a text node that begins `#12`,
+// and **docs/a.md**#12, [text](url)#12 and a path link (.file-uri-link) followed by its fragment have the
+// same shape. The start of such a node is no boundary. So the walk carries the last character of the text
+// before each node into it (a skipped element's text included), and a `#` at a node's head links only when
+// that character is one of the boundary characters above, or when nothing precedes it in the run. The
+// carry crosses INLINE elements only: an <img>, an empty <span>, an element with no text renders no
+// boundary, so the text before it decides. It resets at a line or block edge (BLOCK_TAGS below: <br>,
+// <hr>, <p>, <li>, a heading, a table cell, ...), where the rendered text has a boundary whether or not a
+// whitespace node sits there: marked renders a GFM hard break (`done` with two trailing spaces, then `#12`
+// on the next line) as `<p>done<br>#12</p>`, with no text between the <br> and the `#`, and `#12` links.
+// An element the list does not name is treated as inline, the safe default: a missed edge costs a link,
+// an invented one makes a wrong link.
+//
 // A session with no GitHub repository (`githubRepo` null: no repo, no origin, or an origin elsewhere)
 // links NOTHING, the cross-repo form included — the honest rendering is the plain text, never a
 // guessed host.
@@ -120,10 +122,13 @@ export function prUrl(repo: string, n: string): string {
 
 /** Split `text` into plain runs and PR-reference links against `repo`. Pure: no DOM. With no valid
  *  repo, or no reference in the text, the whole text comes back as one plain segment. `before` is the
- *  character that precedes `text` in the run it was cut from, "" (the default) when `text` starts the
- *  run: a `^` match then counts as a boundary only if that character is one (see the header; the DOM
- *  applier passes the last character of the preceding node). A refused match at the start is skipped
- *  whole, the way a refused cross-repo form is, so `#12/#13` glued to a path links nothing. */
+ *  one character (a UTF-16 code unit, the DOM walk's `text.slice(-1)`) that precedes `text` in the run
+ *  it was cut from, "" (the default) when `text` starts the run: a match at the start of `text` counts
+ *  only when that character is a boundary (the header); a longer string never is one, and neither is
+ *  the lone surrogate an emoji ends in, which the one-node regex refuses too. A refused match is scanned
+ *  again from its second character, so a boundary inside it still counts (`d` then `PR #12` links the
+ *  `#12`, as the one-node reading of `dPR #12` does) while a glued run (`d` then `#12/#13`) links
+ *  nothing, `/` being no boundary. */
 export function prRefSegments(text: string, repo: string | null | undefined, before = ""): PrRefSegment[] {
   const r = validPrRepo(repo);
   if (!r || !text || text.indexOf("#") < 0) return [{ text }];
@@ -133,7 +138,7 @@ export function prRefSegments(text: string, repo: string | null | undefined, bef
   while ((m = re.exec(text))) {
     const start = m.index + m[1].length;          // the boundary character stays plain text
     const end = m.index + m[0].length;
-    if (start === 0 && before && !BOUNDARY_RE.test(before)) continue;   // glued to the text before this node: no boundary
+    if (start === 0 && before && !BOUNDARY_RE.test(before)) { re.lastIndex = 1; continue; }   // glued to the text before this node: no boundary
     let target: string, n: string;
     if (m[4]) {
       // `a/..#12` and `a/repo.#12` are no repo; `docs/x.html#12` is a path's fragment — the scan resumes after either
@@ -162,18 +167,18 @@ export function prRefSegments(text: string, repo: string | null | undefined, bef
 const CODE_LIKE = "a, code, pre, kbd, samp, var, tt";
 const SKIP_TAGS = new Set(["A", "CODE", "PRE", "KBD", "SAMP", "VAR", "TT", "SCRIPT", "STYLE", "TEXTAREA", "INPUT", "BUTTON", "SELECT", "OPTION", "SVG"]);
 const SKIP_CLASSES = ["file-uri-link", "url-code-link"];
-// Elements whose edges are line or block boundaries in the rendered text: the run of text the walk
-// carries ends at one and starts fresh after it (the header). Everything not listed is inline, and an
-// inline element with no text passes the run through unchanged, the safe default, since a missed
-// boundary costs a link and an invented one makes a wrong link. The list is the block-level and
-// line-breaking tags the chat's sanitizer lets through (marked emits the first two rows; the rest arrive
-// as raw HTML in a message).
+// Elements whose edges are line or block boundaries in the rendered text: the run of text the walk carries
+// ends at one and starts fresh after it (the header). These are HTML's block-level and line-breaking
+// elements, listed by how they render rather than by what the chat's sanitizer admits (md-sanitize.ts
+// strips form, fieldset, legend and dialog today and keeps their text), so the two lists move
+// independently. Everything not listed is inline, and an inline element with no text passes the run
+// through unchanged: the safe default, since a missed boundary costs a link and an invented one makes a
+// wrong link.
 const BLOCK_TAGS = new Set([
   "BR", "HR", "P", "PRE", "BLOCKQUOTE", "UL", "OL", "LI", "H1", "H2", "H3", "H4", "H5", "H6",
   "TABLE", "CAPTION", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH",
   "DIV", "DL", "DT", "DD", "SECTION", "ARTICLE", "HEADER", "FOOTER", "NAV", "ASIDE", "MAIN",
   "FIGURE", "FIGCAPTION", "DETAILS", "SUMMARY", "FORM", "FIELDSET", "ADDRESS",
-  // block-display tags the sanitizer also passes (review round 3, 2026-09-07)
   "CENTER", "LEGEND", "DIALOG", "DIR", "MENU", "HGROUP", "SEARCH",
 ]);
 
@@ -191,10 +196,10 @@ function skipElement(e: Element): boolean {
  *  is left alone. Returns the number of links made. A root whose whole text has no `#` — the common
  *  case — costs one native textContent read and no walk. Walks childNodes and edits through
  *  insertBefore/removeChild only, so a test's plain-object DOM stand-in runs it as the browser does.
- *  The walk carries the last character of the text before each node (a skipped element's text
- *  counts, an inline element with no text does not, and a line or block edge, BLOCK_TAGS, resets
- *  the run), so a node's start is a boundary only when the rendered text has one there (the header:
- *  `docs/a.md` + `#12` split across two nodes is still one path; `done<br>#12` is two lines). */
+ *  The walk carries the last character of the text before each node (a skipped element's text counts,
+ *  an inline element with no text does not, and a line or block edge, BLOCK_TAGS, resets the run), so a
+ *  node's start is a boundary only when the rendered text has one there (the header: `docs/a.md` and
+ *  `#12` split across two nodes is still one path; `done<br>#12` is two lines). */
 export function linkifyPrRefs(root: Node | null | undefined, repo: string | null | undefined): number {
   const r = validPrRepo(repo);
   if (!r || !root) return 0;
@@ -213,7 +218,7 @@ export function linkifyPrRefs(root: Node | null | undefined, repo: string | null
         if (text) before = text.slice(-1);
         continue;
       }
-      if (c.nodeType !== 1) continue;                  // a comment or the like renders nothing: the run is unbroken
+      if (c.nodeType !== 1) continue;                  // a comment renders nothing: the run is unbroken
       const e = c as Element;
       const edge = BLOCK_TAGS.has(tagOf(e));
       if (skipElement(e)) {

@@ -38,6 +38,10 @@ the look is at a web page (a pull request, an issue, a document online), give
 its address as the `link` argument the same way. If you don't have the tool,
 ask for the look in your reply and name the file or the address.
 
+When you commit work in a project that has a `.trackchanges/` folder and does not
+ignore it, include that folder in the commit: it holds my comments on your files and
+the record of your tracked changes.
+
 # Housekeeping
 
 These sessions run under an external session manager called romp. Anything it

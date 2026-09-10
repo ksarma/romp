@@ -5,10 +5,11 @@
 // card opened — lands level with its mark, not where the push-down rule left it, a viewport below its mark (the other save
 // tests open the card by its head first, which sets the focus before the save, so they held with the save's own setter
 // removed); since decision 43 the save scrolls nothing, and the line at the panel's foot brings the card into view on a
-// click (scrollCard). A change card's HOSTED comments fold with the card: clipCards reads every fc-clip under
-// the card, so a hosted run of turns is marked cut, scrolled to its end and lifted by the card's one Show more — on a
-// change whose own text is long, and on a short change where the hosted run is the only part cut (a pass that read the
-// card's own parts alone left the run capped by the sheet with no fade and no row: a compact view with no way in). And
+// click (scrollCard). A comment bound to a change folds on its OWN card (the about follow-on, 2026-09-10; before it the
+// change card hosted the comment, and this module drove the hosted run's fold through the change card's one row): its run
+// of turns is marked cut, scrolled to its end and lifted by its own Show more, while the change card folds its own text
+// alone and counts the comment in a tag, on a change whose own text is long and on a short change, whose card offers no
+// toggle while the comment's does. And
 // the fold's choice survives a re-render a STATUS drives (an ask answered with the store), not only the viewer's repaint
 // the earlier modules used. The stand-in and the notes-api world are file-comments-focus.test.ts's, copied as the other
 // focus modules copy them. Synthetic fixtures only: invented prose, placeholder ids.
@@ -278,7 +279,7 @@ const QUOTE = "shipping the cache in v1.2";
 // one logical line per row of the Raw view, each ROW px tall in the measurement table. Row 3 is a long paragraph the
 // session inserted whole (the change whose card is TALL open: its text is a long part, folded in the margin layout); row
 // 5 holds the passage comment under it; blank rows between the later lines make each its own paragraph, and row 11 is the
-// short change when the hosted-fold tests put it in the store (withHosted)
+// short change when the bound-comment fold tests put it in the store (withBound)
 const LONG = "The api session rewrote the findings as one long paragraph about the cache, the latency budget, the plan for the next release and the reasons the team settled on it, going on for several sentences more than the one line it replaced, so that its card shows far more text than fits beside the passage.";
 const LINES = ["# Report", "", "## Findings", LONG, "", "We recommend " + QUOTE + ".", "", "More text here."];
 for (let i = 8; i < 33; i++) LINES.push(i % 2 ? "Line " + i + " of the report." : "");
@@ -298,9 +299,10 @@ const closing: StoreComment = {   // row 33, the last line
   id: (T0 + 5000) + "-9", author: "you", ts: T0 + 5000, body: "End on the recommendation, not on this.",
   anchor: { quote: "The closing line of the report", prefix: "", suffix: "." }, replies: [], resolved: false,
 };
-// a comment bound to the change (suggestionId "h1"), so the change card HOSTS it (renderHosted): a short body and a run of
-// three turns, the run a long part of its own. Only the hosted-fold tests put it in the store (withHosted), so the other
-// tests' numbers stand
+// a comment bound to the change by the legacy field (suggestionId "h1"): its own card, tagged "answered by a change", and
+// the change card counts it (the about follow-on, 2026-09-10; before it the change card hosted the comment). A short body
+// and a run of three turns, the run a long part of its own. Only the bound-comment fold tests put it in the store
+// (withBound), so the other tests' numbers stand
 const onChange: StoreComment = {
   id: (T0 + 2000) + "-3", author: "you", ts: T0 + 2000, body: "Cut this to the finding itself.", suggestionId: "h1", resolved: false,
   replies: [
@@ -309,8 +311,8 @@ const onChange: StoreComment = {
     { author: "api", ts: T0 + 2300, body: "Done in the next revision: the finding in one sentence, the reasons in a footnote under it." },
   ],
 };
-// a second change, a SHORT one: row 11's line, inserted whole by the session. Its card's own text fits the cap, so the run of
-// turns of the comment bound to it is the one part the fold cuts — Show more must show for a hosted part alone
+// a second change, a SHORT one: row 11's line, inserted whole by the session. Its card's own text fits the cap, so its card
+// offers no toggle, while the comment bound to it folds its run of turns on its own card and offers one
 const SHORT_LINE = "Line 11 of the report.";
 const SHORT_AT = DOC.indexOf(SHORT_LINE);
 const onShort: StoreComment = { ...onChange, id: (T0 + 3000) + "-11", ts: T0 + 3000, suggestionId: "h2", body: "Is this line needed at all?" };
@@ -329,15 +331,15 @@ function status(over: Partial<Status> = {}): Status {
     ...over,
   };
 }
-/** The status with the two bound comments and the short change in the store too (the hosted-fold tests). */
-const withHosted = (storeMtimeNs: string, comments: StoreComment[] = [whole, findings, passage, closing, onChange, onShort], verb = "status"): Status =>
+/** The status with the two bound comments and the short change in the store too (the bound-comment fold tests). */
+const withBound = (storeMtimeNs: string, comments: StoreComment[] = [whole, findings, passage, closing, onChange, onShort], verb = "status"): Status =>
   status({ verb, store: { v: 3, path: "docs/report.md", suggestions: [], comments }, hunks: [hunk, hunk2], storeMtimeNs });
 
 // ── the viewer stand-in: the body row, the seam as closures, a measurement table ───────────────────
 // Geometry: the body's box is at viewport y=100, BODY_VIEW tall; the header stands OFFSET tall above the track and the
 // footer FOOTER tall below it, so the track's box is TRACK tall; row i's text sits at 100 + ROW·i − scrollTop; a card is
-// CARD tall closed and OPEN tall open — except a card with a long part (the change card's old and new text; a hosted
-// comment's run of turns, in the hosted-fold tests), which is TALL open and folded (eight lines of the part)
+// CARD tall closed and OPEN tall open, except a card with a long part (the change card's old and new text; a bound
+// comment's run of turns, in the bound-comment fold tests), which is TALL open and folded (eight lines of the part)
 // and WHOLE once Show more is pressed. A long part (LONG_PART: more than 200 characters) measures PART_ALL of content in
 // a box of PART_CAP until its card wears fc-more — the table's reading of the sheet's cap; a short part fits its box.
 const ROW = 60, OFFSET = 60, FOOTER = 40, CARD = 40, OPEN = 120, TALL = 200, WHOLE = 400, BODY_VIEW = 260, TRACK = BODY_VIEW - OFFSET - FOOTER;   // TRACK 160
@@ -524,90 +526,145 @@ test("a reply saved on an open card that is NOT the focus makes that card the fo
   w.close();
 });
 
-// ── the hosted comment's fold ──────────────────────────────────────────────────────────────────────
+// ── the bound comment's fold: on its own card ──────────────────────────────────────────────────────
 
-test("a change card's hosted comment folds with the card: its run of turns is marked cut and scrolled to its end, and the card's one Show more lifts it with the change's text — on a change whose own text is long, and on a short change where the hosted run is the only part the cap cuts, so the row shows for it alone", async (t) => {
-  const { w } = await open(t, textWorld(), withHosted("1757145600000000002"));
+test("a comment bound to a change folds on its OWN card (the about follow-on): its run of turns is marked cut and scrolled to its end, and the card's own Show more lifts it; the change card folds its own text alone, counts the comment in a '1 comment' tag and hosts nothing: on a change whose own text is long, and on a short change, whose card offers no toggle while the comment's card does", async (t) => {
+  const { w } = await open(t, textWorld(), withBound("1757145600000000002"));
   const runText = onChange.replies!.map((r) => r.body!).join("");
-  assert.ok(runText.length > LONG_PART && onChange.body.length <= LONG_PART && LONG.length > LONG_PART && SHORT_LINE.length <= LONG_PART, "the fixture: the hosted run is a long part and the hosted body is not; the first change's text is long, the second's short");
-  assert.equal(w.card(onChange.id), null, "a bound comment has no card of its own: it is on the change's card");
-  assert.equal(w.card(onShort.id), null);
+  assert.ok(runText.length > LONG_PART && onChange.body.length <= LONG_PART && LONG.length > LONG_PART && SHORT_LINE.length <= LONG_PART, "the fixture: the bound comment's run is a long part and its body is not; the first change's text is long, the second's short");
+  // every comment is its own card: the bound comment keeps one, tagged as answered by the change, and the change card counts
+  // it (before the about follow-on, 2026-09-10, the change card hosted the comment and no card of its own stood in the list)
+  for (const [c, id] of [[onChange, "h1"], [onShort, "h2"]] as Array<[StoreComment, string]>) {
+    const card = w.card(c.id);
+    assert.ok(!!card, "the comment bound to " + id + " has a card of its own");
+    assert.equal(card!.querySelector(".fc-kind")!.title, "A comment the session answered with a change", "the legacy binding's title: answered, not about (the review, 2026-09-10)");
+    assert.ok(card!.querySelector(".fc-ref")!.textContent.startsWith("added "), "its reference is the change's words");
+    const tag = card!.querySelector(".fc-about")!;
+    assert.equal(tag.textContent, "answered by a change", "the legacy binding's tag");
+    assert.equal(tag.dataset.refs, id);
+    assert.ok(tag.title.startsWith("The session answered this comment with: added ") && tag.title.endsWith("(pending)"), tag.title);
+    const count = w.card("chg:" + id)!.querySelector(".fc-about-count")!;
+    assert.equal(count.textContent, "1 comment", "the change card counts the comment about it");
+    assert.equal(count.dataset.act, "fcaboutfirst"); assert.equal(count.dataset.id, id);
+    assert.equal(count.title, "Show the comment about this change");
+  }
+  assert.equal(w.aside().querySelectorAll(".fc-hosted").length, 0, "no comment is drawn inside a change card");
   const partsOf = (key: string): El[] => w.card(key)!.querySelectorAll(".fc-clip");
-  const hostedRun = (key: string): El => w.card(key)!.querySelector(".fc-hosted .fc-replies")!;
-  // the long change: its own text and the hosted run are cut; the hosted body fits
+  const runOf = (key: string): El => w.card(key)!.querySelector(".fc-replies")!;
+  const toggle = (key: string): void => { foldOf(w, key).row!.querySelector("button")!.click(); };
+  // the long change: its own text is the one part its card folds; nothing of the comment's is among its parts
   markOf(w, CHG).click(); await tick();
   let f = foldOf(w, CHG);
-  assert.equal(f.parts, 3, "the change's text, the hosted comment's body, its run of turns");
-  assert.deepEqual(partsOf(CHG).map((x) => x.className), ["fc-body fc-diff fc-clip", "fc-body fc-clip", "fc-replies fc-clip"]);
-  assert.ok(partsOf(CHG)[1].closest(".fc-hosted") && partsOf(CHG)[2].closest(".fc-hosted"), "the hosted parts stand in the comment's box on the card, not among the card's own children");
-  assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip", "fc-replies fc-clip"], "the pass found the cap cut the change's text and the hosted run");
+  assert.equal(f.parts, 1, "the change's text alone: the comment's body and run are on the comment's own card");
+  assert.deepEqual(partsOf(CHG).map((x) => x.className), ["fc-body fc-diff fc-clip"]);
+  assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip"], "the pass found the cap cut the change's text");
   assert.equal(f.hidden, false, "Show more shows"); assert.equal(f.label, "Show more"); assert.equal(f.more, false);
-  assert.equal(hostedRun(CHG).clientHeight, PART_CAP, "the hosted run's box is the cap");
-  assert.equal(hostedRun(CHG).scrollTop, PART_ALL - PART_CAP, "the hosted run shows its end: the newest turn");
   assert.equal(w.card(CHG)!.getBoundingClientRect().height, TALL);
-  // Show more: the one row lifts every part, the hosted ones with the change's text
-  f.row!.querySelector("button")!.click(); await tick();
+  // Show more on the change card lifts the change's text, and nothing else
+  toggle(CHG); await tick();
   f = foldOf(w, CHG);
-  assert.equal(f.more, true, "the card wears fc-more"); assert.deepEqual(f.clipped, [], "no fade on any part"); assert.equal(f.label, "Show less");
-  assert.equal(hostedRun(CHG).clientHeight, hostedRun(CHG).scrollHeight, "the hosted run's box is its content");
-  assert.equal(hostedRun(CHG).scrollTop, 0, "the run whole stands at its start");
+  assert.equal(f.more, true, "the card wears fc-more"); assert.deepEqual(f.clipped, [], "no fade on the part"); assert.equal(f.label, "Show less");
   assert.equal(w.card(CHG)!.getBoundingClientRect().height, WHOLE);
-  // Show less: folded again, the run at its end again
-  f.row!.querySelector("button")!.click(); await tick();
+  // the comment's own card, opened by its head: its run of turns is cut, its body fits, and its own row shows
+  headOf(w, onChange.id).click(); await tick();
+  let g = foldOf(w, onChange.id);
+  assert.equal(g.parts, 2, "the comment's body and its run of turns");
+  assert.deepEqual(partsOf(onChange.id).map((x) => x.className), ["fc-body fc-clip", "fc-replies fc-clip"]);
+  assert.deepEqual(g.clipped, ["fc-replies fc-clip"], "the pass found the cap cut the run; the body fits");
+  assert.equal(g.hidden, false, "Show more shows on the comment's card"); assert.equal(g.label, "Show more"); assert.equal(g.more, false);
+  assert.equal(runOf(onChange.id).clientHeight, PART_CAP, "the run's box is the cap");
+  assert.equal(runOf(onChange.id).scrollTop, PART_ALL - PART_CAP, "the run shows its end: the newest turn");
+  assert.equal(w.card(onChange.id)!.getBoundingClientRect().height, TALL);
+  assert.equal(foldOf(w, CHG).more, true, "the change card's choice is its own: still whole");
+  // the comment's Show more lifts its run; the change card is not touched
+  toggle(onChange.id); await tick();
+  g = foldOf(w, onChange.id);
+  assert.equal(g.more, true); assert.deepEqual(g.clipped, []); assert.equal(g.label, "Show less");
+  assert.equal(runOf(onChange.id).clientHeight, runOf(onChange.id).scrollHeight, "the run's box is its content");
+  assert.equal(runOf(onChange.id).scrollTop, 0, "the run whole stands at its start");
+  assert.equal(w.card(onChange.id)!.getBoundingClientRect().height, WHOLE);
+  // Show less on the comment's card: folded again, the run at its end again
+  toggle(onChange.id); await tick();
+  g = foldOf(w, onChange.id);
+  assert.equal(g.more, false); assert.deepEqual(g.clipped, ["fc-replies fc-clip"]); assert.equal(g.label, "Show more");
+  assert.equal(runOf(onChange.id).scrollTop, PART_ALL - PART_CAP);
+  assert.equal(foldOf(w, CHG).more, true, "the comment's fold left the change card whole");
+  // Show less on the change card folds its text again
+  toggle(CHG); await tick();
   f = foldOf(w, CHG);
-  assert.equal(f.more, false); assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip", "fc-replies fc-clip"]); assert.equal(f.label, "Show more");
-  assert.equal(hostedRun(CHG).scrollTop, PART_ALL - PART_CAP);
-  // the short change: the hosted run is the ONE part cut, and the row shows for it. A pass that read the card's own parts
-  // alone would leave this run capped by the sheet with no fade and no Show more: the turns above the cut unreachable
+  assert.equal(f.more, false); assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip"]); assert.equal(f.label, "Show more");
+  assert.equal(w.card(CHG)!.getBoundingClientRect().height, TALL);
+  // the short change: its text fits, and nothing of the comment's is on its card, so it offers no toggle. Before the about
+  // follow-on the bound comment's run was the one part cut on this card and the row showed for it alone; the run now folds
+  // on the comment's own card, which offers the row
   markOf(w, CHG2).click(); await tick();
   f = foldOf(w, CHG2);
-  assert.equal(f.parts, 3);
-  assert.deepEqual(partsOf(CHG2).map((x) => x.className), ["fc-body fc-diff fc-clip", "fc-body fc-clip", "fc-replies fc-clip"]);
-  assert.deepEqual(f.clipped, ["fc-replies fc-clip"], "the hosted run alone is cut: the change's own text and the hosted body fit");
-  assert.equal(f.hidden, false, "Show more shows for the hosted part alone");
-  assert.equal(f.label, "Show more"); assert.equal(f.more, false);
-  assert.equal(hostedRun(CHG2).scrollTop, PART_ALL - PART_CAP, "scrolled to its end");
-  assert.equal(w.card(CHG2)!.getBoundingClientRect().height, TALL, "the card is folded at the hosted run's cap");
-  f.row!.querySelector("button")!.click(); await tick();
-  f = foldOf(w, CHG2);
-  assert.equal(f.more, true); assert.deepEqual(f.clipped, []); assert.equal(f.label, "Show less");
-  assert.equal(hostedRun(CHG2).scrollTop, 0);
-  assert.equal(w.card(CHG2)!.getBoundingClientRect().height, WHOLE);
+  assert.equal(f.parts, 1); assert.deepEqual(f.clipped, [], "the change's own text fits");
+  assert.equal(f.hidden, true, "no Show more on a card with nothing cut"); assert.equal(f.more, false);
+  assert.equal(w.card(CHG2)!.getBoundingClientRect().height, OPEN);
+  headOf(w, onShort.id).click(); await tick();
+  g = foldOf(w, onShort.id);
+  assert.equal(g.parts, 2);
+  assert.deepEqual(g.clipped, ["fc-replies fc-clip"], "the run alone is cut: the body fits");
+  assert.equal(g.hidden, false, "Show more shows for the run"); assert.equal(g.label, "Show more"); assert.equal(g.more, false);
+  assert.equal(runOf(onShort.id).scrollTop, PART_ALL - PART_CAP, "scrolled to its end");
+  assert.equal(w.card(onShort.id)!.getBoundingClientRect().height, TALL, "the card is folded at the run's cap");
+  toggle(onShort.id); await tick();
+  g = foldOf(w, onShort.id);
+  assert.equal(g.more, true); assert.deepEqual(g.clipped, []); assert.equal(g.label, "Show less");
+  assert.equal(runOf(onShort.id).scrollTop, 0);
+  assert.equal(w.card(onShort.id)!.getBoundingClientRect().height, WHOLE);
+  assert.equal(foldOf(w, CHG2).hidden, true, "the short change's card still offers no toggle");
   w.close();
 });
 
 // ── a status's re-render ──────────────────────────────────────────────────────────────────────────
 
-test("the fold's choice survives a re-render a STATUS drives: after Show more, an ask answered with the store (Resolve on another card) rebuilds the cards and the change card still wears fc-more and reads Show less; after Show less, the next status leaves it folded, its hosted run scrolled to its end again", async (t) => {
-  const { w, ok } = await open(t, textWorld(), withHosted("1757145600000000002"));
-  const hostedRun = (): El => w.card(CHG)!.querySelector(".fc-hosted .fc-replies")!;
+test("the fold's choice survives a re-render a STATUS drives: after Show more, an ask answered with the store (Resolve on another card) rebuilds the cards and the change card still wears fc-more and reads Show less, the bound comment's own card too; after Show less, the next status leaves both folded, the comment's run scrolled to its end again", async (t) => {
+  const { w, ok } = await open(t, textWorld(), withBound("1757145600000000002"));
+  const run = (): El => w.card(onChange.id)!.querySelector(".fc-replies")!;   // the bound comment's run of turns, on its own card (the about follow-on)
   headOf(w, closing.id).click(); await tick();          // the two cards the asks below go through, opened for their Resolve (a closed card has no buttons)
   headOf(w, passage.id).click(); await tick();
   markOf(w, CHG).click(); await tick();                // the change card open, the focus
   foldOf(w, CHG).row!.querySelector("button")!.click(); await tick();   // Show more
   assert.equal(foldOf(w, CHG).more, true);
-  const before = w.card(CHG)!;
-  // an ask answered with a status: Resolve on the closing line's card, the store holding it resolved — the render a status runs
+  headOf(w, onChange.id).click(); await tick();        // the comment's own card open: its run cut, at its end
+  assert.deepEqual(foldOf(w, onChange.id).clipped, ["fc-replies fc-clip"]);
+  assert.equal(run().scrollTop, PART_ALL - PART_CAP);
+  foldOf(w, onChange.id).row!.querySelector("button")!.click(); await tick();   // Show more there too
+  assert.equal(foldOf(w, onChange.id).more, true);
+  const before = w.card(CHG)!; const beforeC = w.card(onChange.id)!;
+  // an ask answered with a status: Resolve on the closing line's card, the store holding it resolved, the render a status runs
   actIn(w.card(closing.id)!, "fcresolve")!.click(); await tick();
-  await ok(withHosted("1757145600000000005", [whole, findings, passage, { ...closing, resolved: true }, onChange, onShort], "resolve"));
-  assert.notEqual(w.card(CHG), before, "the fixture: the status rebuilt the cards");
+  await ok(withBound("1757145600000000005", [whole, findings, passage, { ...closing, resolved: true }, onChange, onShort], "resolve"));
+  assert.ok(w.card(CHG) !== before && w.card(onChange.id) !== beforeC, "the fixture: the status rebuilt the cards");
   let f = foldOf(w, CHG);
   assert.equal(f.more, true, "the choice survives the status's render: keyed by the card (openBodies)");
   assert.equal(f.label, "Show less"); assert.deepEqual(f.clipped, []);
   assert.equal(w.card(CHG)!.getBoundingClientRect().height, WHOLE);
-  assert.equal(hostedRun().scrollTop, 0, "the run whole, at its start");
-  // Show less, then another status: folded stays folded, and the fresh render's run — its box starts at 0 — is at its end again
-  f.row!.querySelector("button")!.click(); await tick();
-  assert.equal(foldOf(w, CHG).more, false);
-  const folded = w.card(CHG)!;
+  let g = foldOf(w, onChange.id);
+  assert.equal(g.more, true, "the comment card's choice survives it too, under its own key");
+  assert.equal(g.label, "Show less"); assert.deepEqual(g.clipped, []);
+  assert.equal(w.card(onChange.id)!.getBoundingClientRect().height, WHOLE);
+  assert.equal(run().scrollTop, 0, "the run whole, at its start");
+  // Show less on both, then another status: folded stays folded, and the fresh render's run (its box starts at 0) is at its
+  // end again
+  foldOf(w, CHG).row!.querySelector("button")!.click(); await tick();
+  foldOf(w, onChange.id).row!.querySelector("button")!.click(); await tick();
+  assert.equal(foldOf(w, CHG).more, false); assert.equal(foldOf(w, onChange.id).more, false);
+  const folded = w.card(CHG)!; const foldedC = w.card(onChange.id)!;
   actIn(w.card(passage.id)!, "fcresolve")!.click(); await tick();
-  await ok(withHosted("1757145600000000006", [whole, findings, { ...passage, resolved: true }, { ...closing, resolved: true }, onChange, onShort], "resolve"));
-  assert.notEqual(w.card(CHG), folded, "the fixture: rebuilt again");
+  await ok(withBound("1757145600000000006", [whole, findings, { ...passage, resolved: true }, { ...closing, resolved: true }, onChange, onShort], "resolve"));
+  assert.ok(w.card(CHG) !== folded && w.card(onChange.id) !== foldedC, "the fixture: rebuilt again");
   f = foldOf(w, CHG);
   assert.equal(f.more, false); assert.equal(f.label, "Show more");
-  assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip", "fc-replies fc-clip"], "the pass marked the fresh parts cut");
-  assert.equal(hostedRun().scrollTop, PART_ALL - PART_CAP, "the fresh render's run is scrolled to its end");
+  assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip"], "the pass marked the fresh part cut");
   assert.equal(w.card(CHG)!.getBoundingClientRect().height, TALL);
+  g = foldOf(w, onChange.id);
+  assert.equal(g.more, false); assert.equal(g.label, "Show more");
+  assert.deepEqual(g.clipped, ["fc-replies fc-clip"], "the comment card's fresh run is marked cut");
+  assert.equal(run().scrollTop, PART_ALL - PART_CAP, "the fresh render's run is scrolled to its end");
+  assert.equal(w.card(onChange.id)!.getBoundingClientRect().height, TALL);
   w.close();
 });
 

@@ -489,7 +489,8 @@ test("format prefs: rendered is the markdown default, and a corrupt entry reads 
 
 // B: the toggle itself — markdown only, and the rendered path is sanitized. These are arbitrary bytes
 // off a disk and marked emits raw HTML verbatim, so DOMPurify sits between it and the DOM, through the
-// ONE sanitizer the chat's md() uses too (sanitizeMd, md-sanitize.ts; plans/markdown-viewer.md Slice 1).
+// ONE sanitizer the chat's md() uses too (sanitizeMd, md-sanitize.ts); what it does to a file's own HTML
+// is executed in headless Chromium by md-sanitize-browser.test.ts.
 test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML unsanitized", () => {
   assert.match(VIEW, /const isMd = langFor\(path\) === "markdown";/);
   // the two buttons are built inside the isMd gate — a .py file shows no Rendered/Raw toggle

@@ -1,12 +1,11 @@
 // esbuild.js's write step: each output reaches dist/ by rename, so the kernel, which serves /dist/ from that
 // directory on other threads while it rebuilds, never sends a truncated bundle.
 //
-// The in-place write (truncate, then fill) gave a concurrent GET an empty or partial file for the length of
-// the write. For pdf-worker.js, the largest output, the failure lasted past the write: pdf.js answers a
-// module Worker whose script fails to parse by disabling its Worker path with a flag it never resets, so
-// every PDF opened afterwards failed until the page was reloaded (the review, 2026-09-06). These
-// tests interpose on fs.writeFileSync, the one call buildAll writes through, to read the served names in the
-// middle of each write; the staging names, the fs-error path and the leftover sweep are pinned beside it.
+// An in-place write (truncate, then fill) gives a concurrent GET an empty or partial file for the length of
+// the write, longest for the largest output (render.js, over a megabyte); a page loaded in that window runs
+// a bundle cut mid-statement and stays broken until it is reloaded. These tests interpose on
+// fs.writeFileSync, the one call buildAll writes through, to read the served names in the middle of each
+// write; the staging names, the fs-error path and the removal of leftovers are pinned beside it.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as os from "node:os";
@@ -98,9 +97,9 @@ test("a reader of dist/ in the middle of a write sees the old file whole or the 
       assert.equal(path.dirname(t), dist, "staged in the destination's own directory, so the rename cannot cross a filesystem: " + t);
       assert.ok(t !== one && t !== two, "the write never targets a served name: " + name);
       assert.ok(name.startsWith("."), "a hidden name: " + name);
-      assert.ok(!/\.(js|css|map)$/.test(name),
+      assert.ok(!/\.(js|css|map|svg|ttf|woff2?|png)$/.test(name),
                 "ends in none of the suffixes the kernel's newest-mtime token globs (dist/*.js) or its /dist route types: " + name);
-      assert.ok(name.includes(".tmp-" + process.pid + "-"), "carries this process's pid, which the leftover sweep reads: " + name);
+      assert.ok(name.includes(".tmp-" + process.pid + "-"), "carries this process's pid, which the removal of leftovers reads: " + name);
     }
     assert.deepEqual(fs.readdirSync(dist).sort(), ["one.js", "two.js"], "no staging file is left behind");
   } finally {

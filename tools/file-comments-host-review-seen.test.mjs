@@ -1,5 +1,5 @@
 // Seen-slice review pin for tools/file-comments-host.mjs (plans/file-review.md, decision 42 and the
-// contract paragraph): the host's own account of `suggestionId` matches its code. Decision 42 took the
+// contract paragraph): the host's own account of `changeIds` and the legacy `suggestionId` matches its code. Decision 42 took the
 // resolve pass out of accept and save — a decision never touches a comment, and requireCommentsUntouched
 // refuses one that would — but two comments written before it (buildComment's header, requireDecisions'
 // account of `taken`) kept describing the pass as if it still ran, and the review found them twice; no
@@ -26,9 +26,9 @@ test('the only write to a comment\'s resolved is the person\'s own resolve verb'
 
 test('the host\'s account names no resolve pass: the comments describe the code decision 42 left', () => {
   assert.ok(!/resolve pass/.test(host), 'the accept\'s resolve pass is gone (decision 42); no comment may describe it as running');
-  assert.ok(host.includes('here the panel\'s card and\n// decidedFor read it, and a decision leaves the comment as it was, open or resolved (decision 42,'),
-    'buildComment\'s header says who reads suggestionId and that a decision leaves the comment as it was');
-  assert.ok(host.includes('requireCommentsUntouched now\n// refuses a decision that changes one).'), 'and names the check that holds it');
+  assert.ok(host.includes('the panel\'s card and decidedFor read a stored one as the change that ANSWERED\n// the comment, the legacy meaning, and a decision leaves such a comment as it was, open or resolved'),
+    'buildComment\'s header says who reads a stored suggestionId and that a decision leaves the comment as it was');
+  assert.ok(host.includes('requireCommentsUntouched\n// now refuses a decision that changes one).'), 'and names the check that holds it');
   assert.ok(host.includes('(decisionRoots, in doSave), and for nothing else: a decision touches\n// no comment (decision 42).'),
     'requireDecisions\' account of `taken`: the root check alone, no resolve pass');
 });

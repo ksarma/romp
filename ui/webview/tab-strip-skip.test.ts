@@ -60,15 +60,24 @@ test("every input the strip renders is in the signature", () => {
   // the state class the paint adds is the signature's own reading of the state: one rule for both — and for
   // the dot slot every tab carries (tabDotClass) and its hover title (tabDotTitle), which derive from st.state,
   // already in the signature (tab-state.ts, the shared module; the folded header's pip reads the same module)
-  assert.match(fn, /const stateCls = tabStateClass\(s\.status\);\s*\n\s*if \(stateCls\) tab\.classList\.add\(stateCls\);/);
+  // …applied in applyTabStatus, the chip helper renderTabs shares with the skeleton tab (2026-09-07)
+  const chip = RENDER.slice(RENDER.indexOf("function applyTabStatus("), RENDER.indexOf("function wireTabDrag("));
+  assert.match(fn, /const st = applyTabStatus\(tab, s\);/);
+  assert.match(chip, /const stateCls = tabStateClass\(s\.status\);\s*\n\s*if \(stateCls\) tab\.classList\.add\(stateCls\);/);
+  // the fork's hover title rides the same helper (2026-09-10 fold), so a skeleton tab's pip explains itself too
+  assert.match(chip, /const dotTip = dotCls \? tabDotTitle\(st\) : null;\s*\n\s*if \(dotTip\) \(tab\.lastElementChild as HTMLElement\)\.title = dotTip;/,
+    "tabDotTitle is applied inside applyTabStatus, right after the dot slot");
   const tabStateImport = RENDER.match(/^import \{([^}]*)\} from "\.\/tab-state";/m);
   assert.ok(tabStateImport, "render.ts imports from tab-state");
   for (const name of ["tabStateClass", "tabDotClass", "tabDotTitle"]) assert.ok(tabStateImport![1].split(",").map((s) => s.trim()).includes(name), "the tab-state import carries " + name);
 });
 
 test("a tab drag resets the signature (its live reorder changes the strip's DOM outside renderTabs), and the tooltip reads the session fresh", () => {
+  // the listeners live in wireTabDrag, shared with the skeleton tab (2026-09-07); renderTabs wires every loaded tab through it.
   // T264b (upstream) records the dragged node too (draggedEl); the signature reset follows it on the next line
-  assert.match(fn, /tab\.addEventListener\("dragstart", \(e\) => \{\s*\n\s*draggedId = id; draggedEl = tab; tabDragCommitted = false;\s*\n\s*tabStripSig = "";/);
+  assert.match(fn, /wireTabDrag\(tab, id\);/);
+  const wire = RENDER.slice(RENDER.indexOf("function wireTabDrag("), RENDER.indexOf("function makeSkeletonTab("));
+  assert.match(wire, /tab\.addEventListener\("dragstart", \(e\) => \{\s*\n\s*draggedId = id; draggedEl = tab; tabDragCommitted = false;\s*\n\s*tabStripSig = "";/);
   assert.match(fn, /showTabTip\(tab, sessions\.get\(id\) \?\? s\)/, "a tab node now outlives a frame that replaced the session object");
   assert.match(RENDER, /^let tabStripSig = "";/m);
   // a GROUP drag needs no reset: its dragover only marks the drop target (no live reorder of headers — the
@@ -92,3 +101,14 @@ test("what follows a render runs on both paths: the placeholder, the section sna
   // …and the plan it reads is set before the skip returns
   assert.ok(fn.indexOf("lastStripItems = plan.items;") < fn.indexOf("const stripSig"), "lastStripItems is updated ahead of the skip");
 });
+
+test("a skeleton tab is an input of its own: the kind, the strip meta and the stored status frame, never the stale session's status", () => {
+  // the reconnect regime (2026-09-09): a skeleton id may still hold its pre-outage session in memory, so a
+  // signature that read only `sessions` was equal before and after the kernel's skeleton list landed — and the
+  // strip never repainted into skeletons. The skeleton's own reads join the list ahead of the session's.
+  assert.match(sig, /if \(renderKind\(skeletonTabs, id, !!s\) === "skeleton"\) \{/, "the kind is decided inside the signature");
+  assert.match(sig, /skeletonTabs\.status\.get\(id\)/, "the stored status frame is an input");
+  assert.match(sig, /return \["k", m\?\.name \|\| s\?\.name,/, "a skeleton row is keyed apart from a placeholder's and a session's");
+  assert.ok(sig.indexOf('=== "skeleton"') < sig.indexOf('return ["p", m?.name'), "the skeleton branch precedes the placeholder branch, as in the render loop");
+});
+

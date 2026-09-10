@@ -820,7 +820,7 @@ test("at source: every long part wears fc-clip, the row is rendered hidden, the 
   assert.match(SRC, /card\.appendChild\(el\("div", "fc-body fc-clip", c\.body\)\);/, "a comment's body");
   assert.match(SRC, /const rs = el\("div", "fc-replies fc-clip"\);/, "a run of turns");
   assert.match(SRC, /diff\.classList\.add\("fc-clip"\);/, "a change's old and new text");
-  assert.match(SRC, /row\.appendChild\(el\("div", "fc-body fc-clip", c\.body\)\);/, "a hosted comment's body");
+  assert.match(SRC, /for \(const part of Array\.from\(card\.querySelectorAll\("\.fc-clip"\)\) as HTMLElement\[\]\)/, "the pass reads every part under the card (before the about follow-on, 2026-09-10, a hosted comment's body and run stood there too)");
   assert.match(SRC, /this\.moveRows\(kids\(\)\);\n\s*this\.clipCards\(kids\(\)\);/, "the fold read before the cards are measured");
   assert.match(SRC, /const out = layoutCards\(items, CARD_GAP, this\.focusCard\);/, "the focus reaches the pure rule");
   assert.match(SRC, /if \(this\.focusCard !== null && !nodes\.has\(this\.focusCard\)\) this\.focusCard = null;/, "cleared when the list has no card for it");

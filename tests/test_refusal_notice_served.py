@@ -12,6 +12,7 @@ the notice placed before the fallback model's reply; and the notice text in NO u
 when T279_SHOTS names a directory. Skips LOUDLY without the extension deps or a Playwright browser (CI
 installs none). SYNTHETIC fixtures only."""
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -144,11 +145,8 @@ class ServedRefusalNotice(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="refusal-notice-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            raise unittest.SkipTest("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
         dist = os.path.join(cls.lab, "dist")
-        shutil.copytree(os.path.join(EXT, "dist"), dist)
+        lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state = os.path.join(cls.lab, "xdg", "romp")
         cwd = os.path.join(cls.lab, "proj")
         for d in ("names", "sdk", "states"):

@@ -109,14 +109,14 @@ _romp_record() {   # <sid> <name> <dir> [bg] [fg] [emoji] — write/replace the 
     # users from reading anything beneath it (the traverse bit is enough).
     # Idempotent; best-effort.
     chmod 700 "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}" 2>/dev/null || true
-    # ATOMIC (review round 3, 2026-09-06): the line goes to a temp file in the same directory and is
-    # moved into place — one rename(2), so no reader ever sees the file empty or half-written. The old
-    # `printf > file` truncated first and wrote second, and the kernel's names writers (a rename from
-    # the tab, a recolor, set_emoji — the first one an agent drives) read the file between the two: a
-    # read in that window published a record with no name and no cwd, and the kernel's own atomic write
-    # then won over this one. This is the ONE shell writer of a names record (_romp_rename_record and
-    # _romp_free_title both come through here). The temp is dot-prefixed: bash globs skip it
-    # (_romp_free_title's loop) and the resume picker's listing does too, so it never shows as a session.
+    # Atomic: the line is written to a temp in the same directory and moved into place, one rename(2),
+    # so no reader ever sees the record empty or half-written. The kernel's names writers read the
+    # record while this hook rewrites it (its rename writer runs right after a live tmux rename; its
+    # color, emoji and palette writers touch any session's record) and publish their edit over what they
+    # read, so a truncate-then-write here cost the session its name and cwd. This is the one shell
+    # writer of a record (_romp_rename_record and _romp_free_title come through here). The temp is
+    # dot-prefixed, so _romp_free_title's glob and the resume picker's listing skip it; a failed write
+    # or move removes it.
     local tmp="$ROMP_NAMES_DIR/.$sid.tmp.$$"
     if [[ -n "$emoji" ]]; then
         printf '%s\t%s\t%s\t%s\t%s\n' "$nm" "$dir" "$bg" "$fg" "$emoji" > "$tmp" || { rm -f "$tmp"; return 1; }
@@ -676,7 +676,7 @@ EOF
     _romp_cmd "romp new --effort <level> <name>" -      "Reasoning effort for the SDK session (e.g. high, ultracode); re-asserted if <name> already runs"
     _romp_cmd "romp new --env NAME=VALUE <name>" -      "Per-session env var for the SDK session (repeatable; toggles, never secrets); a re-run on a running <name> replaces the whole set"
     _romp_cmd "romp new --no-env <name>"   -            "Clear a running SDK session's per-session env (declares the empty set)"
-    _romp_cmd "romp new --in <tag> <name>" -            "Put the new SDK or Codex session in a tag (repeatable; a new name creates the tag) — its tab lands in that group"
+    _romp_cmd "romp new --in <tag> <name>" -            "Put the new Claude Code or Codex session in a tag (repeatable; a new name creates the tag) — its tab lands in that group"
     _romp_cmd "romp new --no-inherit <name>" -          "Run from inside a session, a new session joins that session's tags by default; this starts it outside them"
     _romp_cmd "romp resume [<id>]"         -            "Resume a past conversation (full-screen picker; or an exact UUID)"
     _romp_cmd "romp status"                romp-manager "Show manager + kernel status (a kernel stopped by romp down says so)"
@@ -2998,7 +2998,7 @@ case "${1:-}" in
             # session runs on the shared app-server and takes none. The kernel refuses too, but with a
             # raw JSON body — this is the same one-line refusal as --model/--effort's, naming the door.
             _why="--codex"; $use_codex || _why="this machine's \`romp engine codex\` default"
-            echo "romp new: --env/--no-env need an SDK session, and $_why makes this a Codex one — a Codex session takes no per-session environment" >&2; exit 2
+            echo "romp new: --env/--no-env need a Claude Code session, and $_why makes this a Codex one — a Codex session takes no per-session environment" >&2; exit 2
         fi
         if [[ -n "$tag_arg" && -z "$msg_arg" ]]; then
             # a tag labels the -m text; without -m there is nothing to label
@@ -3010,18 +3010,18 @@ case "${1:-}" in
         if [[ -n "$msg_arg" ]] && $use_tmux; then
             # the tmux variant attaches a terminal you type into yourself; delivering a first
             # prompt is the SDK path's job. Refuse loudly rather than dropping the text.
-            echo "romp new: -m needs the default (SDK) session — with -t you type into the terminal yourself" >&2; exit 2
+            echo "romp new: -m needs the default (Claude Code) session — with -t you type into the terminal yourself" >&2; exit 2
         fi
         if [[ -n "$model_arg$effort_arg" || ${#env_args[@]} -gt 0 ]] || $no_env && $use_tmux; then
             # per-spawn model/effort/env ride the kernel's /new (SDK); a terminal session picks
             # model/effort inside Claude itself and takes env from the tmux server's environment.
             # Refuse loudly rather than dropping the flags (no silent divergence).
-            echo "romp new: --model/--effort/--env need the default (SDK) session — with -t, pick model/effort inside Claude itself (env comes from the tmux environment)" >&2; exit 2
+            echo "romp new: --model/--effort/--env need the default (Claude Code) session — with -t, pick model/effort inside Claude itself (env comes from the tmux environment)" >&2; exit 2
         fi
         if [[ ${#in_args[@]} -gt 0 ]] && $use_tmux; then
             # a terminal session's id is not known until it starts, so nothing could tag it at
             # spawn; say so rather than drop the flag (tag it afterwards with `romp tag`)
-            echo "romp new: --in needs an SDK or Codex session; a terminal session cannot join a group — tag it after it starts: romp tag ${in_args[0]} --add $session_arg" >&2; exit 2
+            echo "romp new: --in needs a Claude Code or Codex session; a terminal session cannot join a group — tag it after it starts: romp tag ${in_args[0]} --add $session_arg" >&2; exit 2
         fi
         ;;
     resume|--resume)

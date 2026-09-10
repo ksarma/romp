@@ -3,12 +3,12 @@
 // what is unchanged) rather than the end of its last clause.
 //
 // esbuild-build.test.ts pins the line's content and asserts `length <= 300`, but every input it feeds keeps
-// the line under 300 before the cut (the longest is 249), so the cut itself was untested: a script without it
-// passed the whole suite (the review, 2026-09-06). The line is sized so a plausible one fits whole; what
-// reaches the cut is a long error text over a long location path — the text is cut at 120, the path never is
-// — and a non-esbuild error's message, which the script does not compose. Both are driven here: the boundary
-// (300 fits whole, 301 is cut) over a synthetic esbuild error, a REAL syntax error under a deep synthetic
-// directory tree, and a non-esbuild error with a long message.
+// the line under 300 before the cut (the longest is 248), so the cut itself needs its own cases: a script
+// without it passes that file. The line is sized so a plausible one fits whole; what reaches the cut is a
+// long error text over a long location path (the text is cut at 120, the path never is) and a non-esbuild
+// error's message, which the script does not compose. Both are driven here: the boundary (300 fits whole,
+// 301 is cut) over a synthetic esbuild error, the text's own cut at 120 over a short path, a REAL syntax error
+// under a deep synthetic directory tree, and a non-esbuild error with a long message.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -34,7 +34,7 @@ function syntaxFailure(text: string, file: string) {
 
 test("failureSummary's cut sits at 300: a line of 300 goes out whole, one of 301 is cut to 300 with an ellipsis and its head intact", () => {
   // A 100-character text stays under the text's own 120 cut, so the line's length moves one for one with the
-  // path's: measure the line over a one-character path, then size the path to land on 300 exactly.
+  // path's: measure the line over a short path, then size the path to land on 300 exactly.
   const text = "Expected a token here but found something else instead, which is not what this syntax allows ".padEnd(100, "x");
   assert.equal(text.length, 100);
   const lineFor = (pathLen: number): string =>
@@ -59,6 +59,21 @@ test("failureSummary's cut sits at 300: a line of 300 goes out whole, one of 301
   assert.equal(far.length, 300);
   assert.ok(far.startsWith(HEAD), far);
   assert.equal(kernelShows(far), far, "the kernel's tail carries the whole line");
+});
+
+test("failureSummary: an error text over 120 characters is cut to 117 and an ellipsis, and its location still closes the line", () => {
+  // The text is the one part of an esbuild error the line shortens (a location path is never cut: a cut path
+  // names no file), so a long text over a short path stays well under 300 and the text's own cut is what shows.
+  const text = "Unexpected token in an expression that goes on for long enough to pass the cut the text gets ".padEnd(200, "y");
+  assert.equal(text.length, 200);
+  const file = "../ui/webview/render.ts";
+  const line: string = failureSummary(syntaxFailure(text, file), "dist/");
+  assert.equal(line, HEAD + " " + text.slice(0, 117) + "... (" + file + ":1)");
+  assert.ok(!line.includes(text.slice(0, 118)), "the 118th character is gone: " + line);
+  assert.ok(line.length < 300, "well under the 300 cut, so this is the text's own: " + line.length);
+  // a text of exactly 120 goes out whole
+  const exact = text.slice(0, 120);
+  assert.equal(failureSummary(syntaxFailure(exact, file), "dist/"), HEAD + " " + exact + " (" + file + ":1)");
 });
 
 test("failureSummary: a real syntax error under a deep path is cut to 300 with its head intact; uncut, the kernel would drop the head", async () => {
@@ -106,15 +121,4 @@ test("failureSummary: a non-esbuild error's message is cut the same way, so an f
   const exact = "x".repeat(300 - "esbuild.js: build failed: ".length);
   assert.equal(failureSummary(new Error(exact)), "esbuild.js: build failed: " + exact);
   assert.equal(failureSummary(new Error(exact + "y")).length, 300);
-});
-
-test("the cut is the one exit of failureSummary: both return paths go through it", () => {
-  // Pinned at the source, since a branch that returns around the cut is exactly how the non-esbuild path
-  // escaped it before: the function's returns are `return fit(...)`, nothing else.
-  const src = fs.readFileSync(ESBUILD_JS, "utf8");
-  const fn = src.slice(src.indexOf("function failureSummary("), src.indexOf("\nasync function main("));
-  const returns = fn.match(/\breturn\b[^;]*;/g) || [];
-  assert.ok(returns.length >= 2, "both branches return: " + returns.join(" | "));
-  for (const r of returns) assert.match(r, /^return fit\(/, r);
-  assert.ok(fn.includes('const fit = (s) => s.length > 300 ? s.slice(0, 297) + "..." : s;'), "the cut is 300 from the end, marked");
 });

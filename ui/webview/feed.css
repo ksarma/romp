@@ -379,6 +379,10 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 #freeze-selfnote { position: fixed; z-index: 6; pointer-events: none; color: var(--accent);
   font-size: 10.5px; font-weight: 600; background: rgba(30, 30, 30, 0.85);
   border-radius: 4px; padding: 1px 6px; }
+/* the HOVERED session header's churn badge (T285): the self-note's body-mounted, pointer-inert dress, so the
+   row the pointer rests on keeps its shape — an in-row badge slid Clear all out from under the pointer */
+#freeze-headnote { position: fixed; z-index: 6; pointer-events: none; background: rgba(30, 30, 30, 0.85);
+  border-radius: 4px; padding: 1px 6px; margin-left: 0; }
 /* margin-top, NOT header padding: the liveness rings are outlines drawn ~2.5px
    OUTSIDE the first card's top edge, and the sticky header paints its padding as
    opaque background over them — only unpainted margin space lets them show */
@@ -1989,16 +1993,21 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-chip-you { background: var(--accent-wash); color: var(--accent); }
 .fc-tag { flex: 0 0 auto; font-size: 0.66em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: var(--radius-pill); color: var(--dim); background: var(--overlay-05); white-space: nowrap; }
+/* the about follow-on (2026-09-10; file-comments.ts renderCard, renderChangeCard, lightChanges): a comment's tag names the
+   changes it is about, or the change that answered it, in the accent (the tag is the link between the two cards), and the
+   pointer over it rings those changes' marks in the text (.fc-lit on the panel's own .fc-ins and .fc-del marks; a
+   deletion's ring goes on its struck label, the generated text). The change card's count tag is a control (a click shows
+   the first comment about the change) and reads as one: a pointer, the accent on hover. Tokens only, no new size. */
+.fc-tag.fc-about { color: var(--accent); background: var(--accent-wash); }
+.fc-about-count { cursor: pointer; }
+.fc-about-count:hover, .fc-about-count:focus-visible { color: var(--accent); }
+.fc-ins.fc-lit, .fc-del.fc-lit::before { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
 .fc-time { flex: 0 0 auto; margin-left: auto; color: var(--text-faint); font-size: 0.72em; font-variant-numeric: tabular-nums; }
 .fc-preview { color: var(--dim); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fc-body { font-size: 0.86em; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
 .fc-replies { display: flex; flex-direction: column; gap: 5px; }
 .fc-reply { border-radius: 6px; padding: 5px 8px; background: var(--overlay-05); }
 .fc-reply-you { background: var(--accent-wash); border-left: 3px solid var(--accent); }
-/* a comment on a change card (.fc-hosted; renderHosted) is a column at the turns' own 5px (.fc-replies): its row, its
-   turns, a reply's box (placeComposer) and its buttons. As a plain block it stood the box against the turn above and the
-   buttons below at 0px, and after a turn of yours the two accent washes ran together as one (the 2026-09-07 review). */
-.fc-hosted { display: flex; flex-direction: column; gap: 5px; }
 /* a reply's box stands in the card it answers (the 2026-09-07 follow-on; placeComposer in file-comments.ts), below the
    turns and above the buttons, in the dress of a reply of yours (.fc-reply-you): the wash and the accent edge, so the
    reply being written reads as the next turn. In the panel's own slot (every other kind) the box wears no dress of its own. */
@@ -2388,6 +2397,9 @@ a.fileview-gh-note { border-style: dashed; }
 .ctx-item-toggle .ctx-icon.off { color: var(--dim); }
 .ctx-item-body { display: flex; flex-direction: column; line-height: 1.25; }
 .ctx-item-sub { font-size: 0.82em; opacity: 0.6; }
+/* a tag chip standing for an UNSELECTED toggle (the tag-lens menu, T283): faded, its colour kept —
+   the state class; tag-menu.ts paints the same opacity inline for a sheet-less host (TAG_CHIP_OFF_OPACITY) */
+.tag-chip-off { opacity: 0.45; }
 /* the bell BUTTON (the user 2026-07-28, round 4): inline in row1's metadata cluster, right after the
    timestamp — shown only once the card is hovered or it's armed. Off = slashed dim bell; armed (.on) =
    accent bell, always visible. Accent = mechanics chrome, never a status colour.

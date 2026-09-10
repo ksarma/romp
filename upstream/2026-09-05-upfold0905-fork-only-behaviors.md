@@ -11,3 +11,5 @@ closed:
 Fast judging was never offered (a per-install cost toggle). The seam rides the user-todos slices (candidate rows above). The Codex tagging follows from the tab-groups row and would ride that offer. None of the three changes upstream's behaviour while the fork-only feature is off.
 
 Status detail (migrated from the table): divergence
+
+2026-09-10: the fast-judging clause below is superseded: the setting is offered as their PR #1292 (fast-judging-gear-setting).

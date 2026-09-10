@@ -781,9 +781,11 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
         def bad_spend(*a, **k):
             raise OSError(28, "No space left on device")
         be._record_spend = bad_spend
+        # the map is on the double so the ring holds the containment's line alone: a paid result WITHOUT
+        # modelUsage is itself reported once (SdkSession._note_usage_fallback), which is not this test
         out = self._settle(be, s, ok_expected=False,
                            msg=_result(total_cost_usd=0.5, usage={"input_tokens": 10},
-                                       model_usage={"claude-test-model": {"inputTokens": 10, "outputTokens": 5}}))
+                                       model_usage={"claude-x": {"inputTokens": 10}}))
         self._assert_settled(s, out)
         probs = _problems(be)
         self.assertEqual(len(probs), 1)
@@ -822,19 +824,18 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
                 resolved = []
                 be.rewind_resolved_cb = lambda sid, outcome: resolved.append(outcome)
                 be._stash_live(SID, "w1", _work("w1", 1))    # a work atom of the turn, never landed
-                fields = {"total_cost_usd": 0.5}
+                fields = {}
                 if trigger == "a NaN usage field":
-                    fields["usage"] = json.loads('{"input_tokens": NaN, "output_tokens": 5}')
+                    usage = json.loads('{"input_tokens": NaN, "output_tokens": 5}')
                 else:
-                    # a `modelUsage` map, as test_a_raising_spend_write_still_settles_the_turn: a paid result
-                    # WITHOUT one files the fold's usage-fallback line first, and this test wants the
-                    # containment's line alone in the ring
-                    fields["usage"] = {"input_tokens": 10}
-                    fields["model_usage"] = {"claude-test-model": {"inputTokens": 10, "outputTokens": 5}}
+                    usage = {"input_tokens": 10}
+                    # with the map the token count succeeds silently and the stubbed write is the one report: a
+                    # paid result WITHOUT modelUsage is itself reported once (_note_usage_fallback)
+                    fields["model_usage"] = {"claude-x": {"inputTokens": 10}}
                     def bad_spend(*a, **k):
                         raise OSError(28, "No space left on device")
                     be._record_spend = bad_spend
-                out = self._settle(be, s, ok_expected=False, msg=_result(**fields))
+                out = self._settle(be, s, ok_expected=False, msg=_result(total_cost_usd=0.5, usage=usage, **fields))
                 self._assert_settled(s, out)
                 self.assertEqual(s._rewind_to, "", "the rewind flag was consumed before the spend step failed")
                 self.assertFalse(s._rewind_armed)
@@ -916,8 +917,7 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
                         "the settle step's own report landed before the callback raised: %r" % probs)
         filed = [p for p in probs if "while handling a ResultMessage" in p]
         self.assertEqual(len(filed), 1, probs)
-        # the fold's raise is in result_token_totals here (this backend's split of upstream's _turn_usage)
-        self.assertRegex(filed[0], r"ValueError at \S+:\d+ result_token_totals while handling a ResultMessage",
+        self.assertRegex(filed[0], r"ValueError at \S+:\d+ _turn_usage while handling a ResultMessage",
                          "the bookkeeping's exception is the one the containment files, not the callback's")
         self.assertIn("the turn still settled", filed[0])
         self.assertIn("_on_message", filed[0], "…with the fold's frame")

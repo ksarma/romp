@@ -45,6 +45,7 @@ All fixtures synthetic.
 """
 import base64
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -271,11 +272,8 @@ class _ShipLab(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served wedge needs them")
         cls.lab = tempfile.mkdtemp(prefix="ship-reship-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            raise unittest.SkipTest("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
         dist = os.path.join(cls.lab, "dist")
-        shutil.copytree(os.path.join(EXT, "dist"), dist)
+        lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state = os.path.join(cls.lab, "xdg", "romp")
         cwd = os.path.join(cls.lab, "proj")
         os.makedirs(os.path.join(cls.state, "names"), exist_ok=True)

@@ -2712,9 +2712,10 @@ function gateKeys(body: HTMLElement): void {
 type MdDocLoc = { kind: "url"; href: string } | { kind: "file"; path: string; sid: string | null };
 
 // Markdown rendered as the prose it means (the user 2026-08-09: Rendered is the default, Raw one click
-// away). The file is arbitrary bytes off a disk and marked emits raw HTML verbatim, so — exactly like the
-// chat's md() in render.ts — the output goes through DOMPurify before it ever reaches .innerHTML: an
-// <img onerror> or a javascript: href in a README must never run in the dashboard.
+// away). The file is arbitrary bytes off a disk and marked emits raw HTML verbatim, so, exactly like the
+// chat's md() in render.ts, the output goes through the shared sanitizer (sanitizeMd, md-sanitize.ts)
+// before it ever reaches the DOM: an <img onerror> or a javascript: href in a README must never run in
+// the dashboard, and a README's <style>, form or fixed-positioned div must never reach the viewer's chrome.
 function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const box = el("div", "fileview-md");
   let rendered = true;                                 // false on the fallback: the bare text, with nothing added to it
@@ -2736,17 +2737,17 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     } }) as string;
     // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (a note's own inline SVG), no data-*
     // (a document's `<span data-act="stopRetrying">` would otherwise bubble to render.ts's document-level delegate
-    // and interrupt the active session; review find on #958, 2026-09-07), and GitHub's rules for a note's own
-    // HTML: no <style>, no form controls, ids and names prefixed user-content-, inline style reduced to its
-    // colours (plans/markdown-viewer.md, Slice 1). The sanitized <body>'s children are adopted as they are, no
-    // re-parse. The viewer's own stamps (the file kind's path and section links, the URL kind's fv-anchor stamp)
-    // are set AFTER this sanitize, so they are unaffected and never prefixed; a section link finds an author's id
-    // or name under the prefix (file-view-links.ts fragmentTarget). The heading ids are the one stamp set INSIDE
-    // the call, as sanitizeMd's own pass (mintHeadingIds, below): after DOMPurify, so they are never prefixed
-    // either, and ahead of the registered passes, since the math fill replaces a formula's placeholder with KaTeX's
-    // glyphs and a slug read after it slugged those (`# Ratio $\frac{a}{b}$` minted md-ratio-ba); read before it,
-    // the heading's text is the text as written, the TeX included, which is GitHub's slug and the id the note's
-    // own links spell.
+    // and interrupt the active session; review find on #958, 2026-09-07), and rules modelled on GitHub's for a
+    // note's own HTML: no <style>, no form controls, ids and names prefixed user-content-, inline style reduced to
+    // its colours, no background attribute (plans/markdown-viewer.md, Slice 1). The sanitized <body>'s children
+    // are adopted as they are, no re-parse. The viewer's own stamps (the file kind's path and section links, the
+    // URL kind's fv-anchor stamp) are set AFTER this sanitize, so they are unaffected and never prefixed; a section
+    // link finds an author's id or name under the prefix (file-view-links.ts fragmentTarget). The heading ids are
+    // the one stamp set INSIDE the call, as sanitizeMd's own pass (mintHeadingIds, below): after DOMPurify, so they
+    // are never prefixed either, and ahead of the registered passes, since the math fill replaces a formula's
+    // placeholder with KaTeX's glyphs and a slug read after it slugged those (`# Ratio $\frac{a}{b}$` minted
+    // md-ratio-ba); read before it, the heading's text is the text as written, the TeX included, which is GitHub's
+    // slug and the id the note's own links spell.
     box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content

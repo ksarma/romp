@@ -93,11 +93,14 @@ JSON
     run "$ROMP_DIR/install.sh"
     [ "$status" -eq 0 ]
     [[ "$output" != *"PreToolUse:track-guard.mjs"* ]]
-    [ "$(event_cmds PreToolUse)" = "node $HOME/.claude/hooks/track-guard.mjs" ]
+    # the node form is left as it was, in its own group; romp's Bash-side guard lands in a group of its own
+    [ "$(event_cmds PreToolUse | head -1)" = "node $HOME/.claude/hooks/track-guard.mjs" ]
+    [ "$(event_cmds PreToolUse | tail -1)" = "~/.claude/hooks/romp-track-bash-guard.mjs" ]
     python3 - "$HOME/.claude/settings.json" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
-assert len(s["hooks"]["PreToolUse"]) == 1, s["hooks"]["PreToolUse"]
+assert [g.get("matcher") for g in s["hooks"]["PreToolUse"]] == ["Write|Edit|MultiEdit", "Bash"], s["hooks"]["PreToolUse"]
+assert len(s["hooks"]["PreToolUse"][0]["hooks"]) == 1, s["hooks"]["PreToolUse"]
 PY
 }
 

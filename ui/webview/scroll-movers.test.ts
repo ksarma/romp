@@ -40,13 +40,16 @@ test("render.ts: every mover of #content is a writeScroll — scrollBy and scrol
   assert.match(RENDER, /scrollContentBy\(content, e\.key === "ArrowDown" \? NAV_SCROLL_STEP : -NAV_SCROLL_STEP, "key-nav"\);/, "the arrow keys");
   assert.match(RENDER, /scrollElInto\(content0, el0, "center", "land-on"\);/, "the sentence land");
   assert.match(RENDER, /const land = \(writer: string\) => \{ const c = document\.getElementById\("content"\); if \(c\) scrollElInto\(c, target, "start", writer\); \};\s*\n\s*const realign = \(\) => land\("land-realign"\);\s*\n\s*land\("land-on"\);/, "the deep-link land and its re-alignments");
+  // a message's own `#` link (the click delegate): inside the transcript the move is a writeScroll; a target that stands
+  // outside #content (a comment popover's reply, found through userContentTarget's document fallback) scrolls its own
+  // container the browser's way, and the #content arm is taken first
+  assert.match(RENDER, /if \(cont && cont\.contains\(target\)\) scrollElInto\(cont, target, "start", "section-link"\);\s*\n\s*else target\.scrollIntoView\(\{ block: "start" \}\);/, "the section link");
   // the scrollIntoView calls that remain are on OTHER scrollers: the tab strip, picker rows, the slash popup, the awaiting
-  // box, plus two the fork carries (the 2026-09-09 fold): the composer mention popup's own list (.mention-row.sel) and the
-  // section-link land's fallback for a target OUTSIDE #content (a target inside it goes through scrollElInto, below)
+  // box, the composer mention popup's own list (.mention-row.sel, the fork's), and the section link's else arm above, which
+  // the #content test keeps off the transcript
   const rest = RENDER.split("\n").filter((l) => /scrollIntoView\(/.test(l));
   assert.equal(rest.length, 6, "six scrollIntoView calls remain, none on a #content child: " + rest.map((l) => l.trim().slice(0, 60)).join(" | "));
-  const fallback = 'else target.scrollIntoView({ block: "start" });';
-  for (const l of rest) if (l.trim() !== fallback) assert.doesNotMatch(l, /target|el0|realign/, l);
+  for (const l of rest) if (!/else target\.scrollIntoView/.test(l)) assert.doesNotMatch(l, /target|el0|realign/, l);
   assert.ok(rest.some((l) => /\.mention-row\.sel/.test(l)), "the mention popup scrolls its own list");
   assert.match(RENDER, /const cont = document\.getElementById\("content"\);\n\s*if \(cont && cont\.contains\(target\)\) scrollElInto\(cont, target, "start", "section-link"\);\n\s*else target\.scrollIntoView\(\{ block: "start" \}\);/,
     "the section-link land: a target inside #content is the pane's own write; the bare call is the fallback for a target elsewhere on the page");

@@ -1,50 +1,48 @@
 // ONE sanitizer for every piece of markdown the dashboard renders as HTML: the chat's md() and userMd()
 // (render.ts) and the file viewer's mdBlock (file-view.ts). The two used to spell the same DOMPurify
-// profile in two places; the rules a note's own HTML lives under now sit here, once, and both call
-// sanitizeMd (plans/markdown-viewer.md, Slice 1: sanitize as GitHub does, 2026-09-07).
+// profile in two places, and that profile was DOMPurify's default html list, which keeps <style>, <form>,
+// <button>, <dialog>, inline `style`, `id`, `name` and the `background` attribute. A markdown file is
+// arbitrary bytes off a disk and a chat message is untrusted text, so the rules their HTML lives under sit
+// here, once, and both call sanitizeMd (plans/markdown-viewer.md, Slice 1: sanitize as GitHub does, 2026-09-07).
 //
-// What a note's HTML may do, GitHub's rules:
-//   • no <style> block, no <dialog>, and no form-associated element: a <style> blanked the page and a
-//     <form action=…><button> navigated the Files document away (the audit's two High defects). style's
-//     text goes with it (DOMPurify's default FORBID_CONTENTS); a form's or a button's TEXT stays as prose
-//     (KEEP_CONTENT), so a note reads the same minus the control.
-//   • <input> survives ONLY as marked's task-list checkbox, `- [x] done` → <input checked disabled
+// What a note's or a message's HTML may do, modelled on GitHub's rules for a README (GitHub strips an inline
+// `style` whole and allows no inline SVG; both survive here in the narrowed form described below):
+//   • no <style> block, no <dialog>, and no form-associated element: a <style> blanked the whole viewer
+//     (`.fileview { display: none }`), and a `<form action=...><button>` navigated the pane's document to
+//     the action URL. style's text goes with it (DOMPurify's default FORBID_CONTENTS); a form's or a
+//     button's TEXT stays as prose (KEEP_CONTENT), so a note reads the same minus the control.
+//   • <input> survives ONLY as marked's task-list checkbox, `- [x] done` becomes <input checked disabled
 //     type=checkbox>: every other input goes, and a checkbox that lacks `disabled` gets it, so nothing in
 //     a note is a live control.
 //   • an author's id and name are PREFIXED `user-content-` (SANITIZE_NAMED_PROPS, the rule GitHub applies):
 //     a `<p id="tabs">` can no longer dress itself in the page's #tabs CSS or shadow getElementById for the
 //     page's own controls, and `<a name="install">` still exists under its prefixed name. An `href="#install"`
-//     is NOT rewritten to match: the two click handlers compare the prefixed form instead, through one lookup
-//     (userContentTarget below: the viewer's fragmentTarget in file-view-links.ts, and the chat's delegate in
-//     render.ts, which resolves a message's `#` click the way GitHub's page script does, since the browser's
-//     default lookup reads the bare name and finds nothing). Rewriting hrefs here would break the viewer's
-//     section link to a plain heading: `[results](#results)` over `## Results` with no `<a name>` above it lands
-//     on the heading id `md-results` (fragmentTarget's slug arm), and the viewer's heading ids (`md-<slug>`,
-//     mdBlock) are minted AFTER the sanitize and never gain the prefix, so a rewritten `#user-content-results`
-//     would name nothing; the viewer's `Go to <fragment>` title would show the prefix too. With an
-//     `<a name="results">` above the heading the link lands on that anchor under its prefixed name, through
-//     userContentTarget, whichever spelling the href carries (the bare arm reads an ask that already holds the
-//     prefix).
+//     is NOT rewritten to match: the chat's click delegate (render.ts) resolves a message's `#` click through
+//     userContentTarget below, since the browser's default lookup reads the bare name and finds nothing, and
+//     the viewer's fragmentTarget (file-view-links.ts) reads a section link inside a note through the same
+//     lookup, adding its heading-slug arm. Rewriting hrefs here would break the viewer's section links: its
+//     heading ids (`md-<slug>`, minted by mdBlock AFTER the sanitize) never gain the prefix, so a rewritten
+//     `#user-content-results` would name nothing, where `[results](#results)` over `## Results` with no
+//     `<a name>` above it lands on the heading id `md-results` (fragmentTarget's slug arm); with an
+//     `<a name="results">` above the heading the link lands on that anchor under its prefixed name, whichever
+//     spelling the href carries.
 //   • an inline `style` keeps only `color` and `background-color` declarations whose value is a literal
-//     colour (the user 2026-09-07, decision 6: coloured spans in existing notes survive; positioning and
-//     layout never reach the page). Everything else in the attribute is dropped, and the attribute goes
-//     when nothing is left: colourOnlyStyle below is the whole grammar, applied by a DOMPurify
-//     uponSanitizeAttribute hook on every element, inline SVG included.
+//     colour: coloured spans in existing notes and transcripts survive; positioning, sizing and layout never
+//     reach the page. Everything else in the attribute is dropped, and the attribute goes when nothing is
+//     left: colorOnlyStyle below is the whole grammar, applied by a DOMPurify uponSanitizeAttribute hook on
+//     every element, inline SVG included.
 //   • data-* never rides in (ALLOW_DATA_ATTR: false): both pages key their delegated actions off data-act.
-//   • the `background` attribute is forbidden outright (FORBID_ATTR): `<td background=URL>` makes the browser fetch
-//     the URL the moment the note renders, a tracking pixel with no click and no gate, on both pages; DOMPurify's
-//     html list keeps it, GitHub's allowlist does not, and it has no safe value here. `bgcolor` fetches nothing and
+//   • the `background` attribute is forbidden outright (FORBID_ATTR): `<td background=URL>` makes the browser
+//     fetch the URL the moment the note renders, a tracking pixel with no click and no gate; DOMPurify's html
+//     list keeps it, GitHub's allowlist does not, and it has no safe value here. `bgcolor` fetches nothing and
 //     stays, as a colour-only inline style does. Remote figures (`<img src>`, video, audio, source) are decision
-//     8's: gated in Slice 4, where their src is rewritten.
-//   • no image map: `<map>`, `<area>` and `usemap` go (FORBID_TAGS, FORBID_ATTR), as GitHub drops them. The prefix
-//     rule above renames `<map name="nav">` to user-content-nav and leaves `usemap="#nav"` as written, so no map an
-//     author writes can bind to its picture (review round 1, found in the tests' own fixtures, which had spelled the
-//     prefix by hand); an <area> that did bind was a link element neither page's link passes reached until round 1
-//     (md-links.ts LINK_SEL), and in a file document it is a shape the module that dresses the file's links
-//     (file-view-links.ts linkMarkdownAnchors, an `a` walk) does not see. Dropped, the picture is inert prose.
-//   • html + svg profiles (the user 2026-08-19, when KaTeX's stretchy glyphs came through here as inline <svg>;
-//     a note's own inline SVG still does), data: URIs on <img> (the CSP allows them; inline transcript images
-//     rely on them).
+//     8's (plans/markdown-viewer.md): gated in Slice 4, where their src is rewritten.
+//   • no image map: `<map>`, `<area>` and `usemap` go (FORBID_TAGS, FORBID_ATTR), as GitHub drops them. The
+//     prefix rule renames `<map name="nav">` to user-content-nav and leaves `usemap="#nav"` as written, so no
+//     map an author writes could bind to its picture anyway, and an <area> is a link element neither page's
+//     link handling reaches. Dropped, the picture is inert prose.
+//   • html + svg profiles (KaTeX's stretchy glyphs used to come through here as inline <svg>; a note's own
+//     inline SVG still does), data: URIs on <img> (the CSP allows them; inline transcript images rely on them).
 //
 // What does NOT pass through here: KaTeX. Its layout is all inline style, which the colour-only rule would
 // strip, so the math extensions emit an inert placeholder and KaTeX is rendered into it on the sanitized
@@ -108,30 +106,30 @@ export const MD_PURIFY: Config = {
 // no comments.
 const KEYWORD = /^[a-z]+$/i;
 const HEX = /^#[0-9a-f]{3,8}$/i;
-const COLOUR_FN = /^(rgba?|hsla?)\(([^()]*)\)$/i;
-const COLOUR_ARG = /^(?:[+-]?(?:\d+\.?\d*|\.\d+)(?:%|deg|grad|rad|turn)?|none)$/i;
+const COLOR_FN = /^(rgba?|hsla?)\(([^()]*)\)$/i;
+const COLOR_ARG = /^(?:[+-]?(?:\d+\.?\d*|\.\d+)(?:%|deg|grad|rad|turn)?|none)$/i;
 const KEPT_PROPERTIES = new Set(["color", "background-color"]);
 
 /** Whether `v` (already trimmed) is a literal colour under the grammar above. */
-export function isLiteralColour(v: string): boolean {
+export function isLiteralColor(v: string): boolean {
   if (KEYWORD.test(v) || HEX.test(v)) return true;
-  const m = COLOUR_FN.exec(v);
+  const m = COLOR_FN.exec(v);
   if (!m) return false;
   const args = m[2].trim().split(/\s*[,/]\s*|\s+/).filter((a) => a.length > 0);
-  return args.length >= 3 && args.length <= 4 && args.every((a) => COLOUR_ARG.test(a));
+  return args.length >= 3 && args.length <= 4 && args.every((a) => COLOR_ARG.test(a));
 }
 
 /** The declarations of a `style` attribute that survive: `color` and `background-color` with a literal
  *  colour, in their order, as `name: value` joined by `; `. Empty when nothing survives (the caller drops
  *  the attribute). Splitting on `;` is safe because no surviving value can contain one. */
-export function colourOnlyStyle(style: string): string {
+export function colorOnlyStyle(style: string): string {
   const kept: string[] = [];
   for (const decl of style.split(";")) {
     const at = decl.indexOf(":");
     if (at < 0) continue;
     const name = decl.slice(0, at).trim().toLowerCase();
     const value = decl.slice(at + 1).trim();
-    if (!KEPT_PROPERTIES.has(name) || !value || !isLiteralColour(value)) continue;
+    if (!KEPT_PROPERTIES.has(name) || !value || !isLiteralColor(value)) continue;
     kept.push(name + ": " + value);
   }
   return kept.join("; ");
@@ -141,7 +139,7 @@ export function colourOnlyStyle(style: string): string {
  *  declarations, drops it when none survive, and leaves every other attribute to DOMPurify. */
 export function styleAttributeHook(ev: Pick<UponSanitizeAttributeHookEvent, "attrName" | "attrValue" | "keepAttr">): void {
   if (ev.attrName !== "style") return;
-  const kept = colourOnlyStyle(ev.attrValue);
+  const kept = colorOnlyStyle(ev.attrValue);
   if (kept) ev.attrValue = kept;
   else ev.keepAttr = false;
 }

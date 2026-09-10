@@ -102,14 +102,14 @@ caret move away and back, do not reopen it. In the sent message, a name that mat
 session is shown as a chip in that session's color.
 
 **Sending while the session is working.** The session takes your message at its next
-step. In an SDK session the message stays where you sent it: it sits below everything that
-had already happened, the steps the session runs in the meantime appear below it, and when
+step. In a Claude Code session the message stays where you sent it: it sits below everything
+that had already happened, the steps the session runs in the meantime appear below it, and when
 the session takes it, it lands in that same place. Send several messages during one turn (a
 composer message, then a todo reply) and each reaches the session as its own message, in
 the order you sent them: the next one waits, shown as queued, until the session has taken
-the one before it, so two messages are never joined into one. A tmux session takes a
-message only while it is idle, so messages sent during its turn wait, shown as queued, and
-arrive together when the turn ends, as one message.
+the one before it, so two messages are never joined into one. A Claude Code (tmux) session
+takes a message only while it is idle, so messages sent during its turn wait, shown as queued,
+and arrive together when the turn ends, as one message.
 
 **While a message is on its way.** A message you have sent shows as a dashed bubble
 marked "sending…" until the session records it, however long that takes; the bubble
@@ -140,8 +140,18 @@ again to fold the tab with the rest. A tab set to show when folded keeps that se
 group is renamed. The `archived` section starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
-adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. The row's
-**+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
+adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. A
+change from another pane or another dashboard can take the tab out of that group just before you click,
+or remove the group's tag and make it again under the same name: the click then moves nothing, the row
+flashes, and its tooltip says to click again. If the change moved the tab into the group you picked, that
+row is gone instead (the tag is one of the tab's own now, with a **✕** beside it); if it only added that
+group, the row is still there and the click drops the group you right-clicked it in, the move you asked
+for. **Show when folded** refuses the same way while the tab is still in that group or has left it for
+exactly one other group whose tag already exists. When the tab has left for no group, for two or more (the
+menu cannot tell which copy you mean), or for a tag that is still being created, there is nothing to pin:
+its row leaves the flyout and the menu stays open. **Hide tab** refuses
+the same way on a re-created tag, while the **✕** beside a tag and the row's **+** act on the re-created
+tag at once. The row's **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser. The groups follow one another across the
 strip and wrap as they need (a header left at a row's end with its first tab on the next row moves
 down to join it, when the two fit on one row); the gear's **One tag group per row in the tab strip**
@@ -173,8 +183,43 @@ the desktop layout; the phone layout keeps its flat list.
 **Hiding a session inside its group.** Each row in this view has a **Hide** button, or **Show**
 once the session is hidden. Hiding a session takes its tab off the strip while its group is open
 and moves its row under a **Hidden (N)** fold at the foot of the view, one click away; the row's
-**Show** button puts the tab back at once. Hiding is separate from folding: fold the group and
-open it again, and the hidden sessions stay hidden while the rest come back. Nothing is lost by
+**Show** button puts the tab back at once. You can also hide a session from its tab: right-click
+the tab and pick **Hide tab**. The line under the label names the group the session hides in and
+where to show it again: the group's view, where its row has the **Show** button. Which click opens
+that view depends on the fold: an open group's count opens the view and leaves the group open; a
+folded group's header opens the group and the view together. While the menu is open, the row
+follows the copy you right-clicked, through your edits in the **Tags** flyout and through changes
+that arrive from elsewhere (another pane, another dashboard). The menu knows the group by its
+tag's id, and by its name when no tag has that id: a tag renamed meanwhile keeps the row under its
+new name, and a tag removed and made again under the same name keeps it too. A group the menu
+knows by its name alone is lost to a rename while the session is under two or more groups: the row
+leaves, and a click writes nothing. Three kinds of group are known that way: a group that only
+another machine's tags make, a tag that was still being created when the menu started following
+the tab under it (you typed its name into the **Tags** flyout while the tab had no group, or you
+right-clicked the tab while the tag's row under **Tags** said creating), and a tag removed and made
+again under the same name, which the menu knows by its name from then on. Moving it to another group
+changes the group the line names. Removing that group's tag takes the row away, unless the session is left under
+exactly one other tag, whose group the line then names: under two or more, the menu cannot tell
+which copy you mean. If the removed tag comes back (a removal the kernel refused, or the tag added
+again from another pane), the line names your group again, unless you added a tag from the flyout
+while the line named the one remaining group: that add keeps the line on that group, and the tag
+coming back does not move it. While the row is away, adding a tag brings it back for that group, unless
+the copy's tag is still being created: an add then keeps the copy under the pending tag, and the
+row stays away until that tag exists. A removal that leaves one tag brings it back for that one.
+Removing one of the session's other tags leaves the line alone. If the group changes under the menu
+just before you click, the click hides nothing. While the tab is still in the group the line named,
+or has left it for exactly one other group, the line redraws for the group the tab is in now, the
+menu stays open, and a second click acts on what it says; when the words would not change (the
+same group under a new tag), the line flashes instead and its tooltip says to click again. If the
+tab has left that group and is under none, or under two or more (the menu cannot tell which copy
+you mean), or the tabs were ungrouped from another pane, the menu closes and nothing is hidden.
+The menu has **Hide tab** only while
+the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip,
+on a phone, or for the untagged sessions after the divider. A tag that is still being created (its
+row under **Tags** says creating) has no **Hide tab** yet; the row appears once the tag exists. A hidden
+session has no tab to right-click, so this view's **Show** button puts it back. Hiding is separate
+from folding: fold the group and open it again, and the hidden sessions stay hidden while the rest
+come back. Nothing is lost by
 hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red
 when one of them needs you), and its count shows two numbers, **6+2** for six on the strip and two
 hidden (the tooltip spells it out). When a hidden session needs you, the fold's head says so in
@@ -197,6 +242,20 @@ about four rows that scroll; the cap lifts while a row's details are open. Where
 showing (a desktop-width screen, or a tablet wide enough for it) it also shrinks the tabs and group
 headers; on a phone the session picker stands in for the strip, so there the setting tightens the
 box. Like the other chat settings, it is per browser.
+
+**Coming back after a dropped connection.** When the dashboard's link to the kernel
+drops and comes back (a laptop lid closed and opened, a network change, a phone that
+slept), the page does not fetch every session again. The kernel sends the session you
+were reading in full and lists the others as skeleton tabs: the strip is complete at
+once, each tab with its name, color and status, and a transcript arrives only when it
+is wanted. Click a skeleton tab and the romp loader stands in until its transcript
+lands; the tabs you do not click fill in one at a time while the page is idle, never
+while the browser tab is hidden. Until then a skeleton tab's hover tooltip says it is
+not loaded yet.
+
+![After a reconnect, the tab you were reading is back in full while the other tabs wait as skeletons](assets/guide/reconnect-skeleton-tabs.png){ width="32%" }
+![Clicking a skeleton tab puts up the loader until its transcript arrives](assets/guide/reconnect-skeleton-click.png){ width="32%" }
+![The clicked tab, loaded](assets/guide/reconnect-skeleton-loaded.png){ width="32%" }
 
 ### The feed
 
@@ -396,21 +455,22 @@ you open the editor. A notice raised while you edit (a save that failed) goes wh
 leave the editor; a warning about the comments log stays when the save that raised it
 closes the editor.
 
-**A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under the
-rules GitHub applies to a README, so nothing in a file can move, hide or cover the viewer's
-own controls. A `<style>` block is dropped whole. A form, its controls and a `<dialog>` are
-dropped but their text stays as prose. A task-list checkbox stays but cannot be ticked. An
-inline `style` keeps only its `color` and `background-color`, and only when the value is a
-color name, a hex code, or `rgb()`, `rgba()`, `hsl()` or `hsla()`. A span colored that way
-keeps its color; one colored with any other function, such as `oklch()` or `var()`, loses it.
-A `background=` attribute is dropped, since it would load a remote image the moment the file
-opens. An inline `svg`, a `canvas` or a `video` shrinks to the column, as a picture does. An
-element's `id` or `name` is prefixed `user-content-`, as on GitHub; the viewer's own
-heading ids are not, so a link to a heading in the file still lands on it, and a link to an
-element's own `id` or `<a name>` lands on it under the prefix. A link in the file is handled
-by its target, not by the element that carries it, a link drawn inside an inline SVG
-included: a web address opens a tab, a file target opens the file in the viewer, and a
-section link scrolls to it. An image map (`<map>`, `usemap`) is dropped, as on GitHub.
+**A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under rules
+modelled on those GitHub applies to a README, so nothing in a file can move, hide or cover the
+viewer's own controls. A `<style>` block is dropped whole. A form, its controls and a
+`<dialog>` are dropped but their text stays as prose. A task-list checkbox stays but cannot be
+ticked. An inline `style` keeps only its `color` and `background-color`, and only when the
+value is a color name, a hex code, or `rgb()`, `rgba()`, `hsl()` or `hsla()`; a span colored
+with any other function, such as `var()`, loses its color. A `background=` attribute is
+dropped, since it would load a remote image the moment the file opens. An inline `svg`, a
+`canvas` or a `video` shrinks to the column, as a picture does. An element's `id` or `name` is
+prefixed `user-content-`, as on GitHub; the viewer's own heading ids are not, so a link to a
+heading in the file still lands on it, and a link to an element's own `id` or `<a name>` lands
+on it under the prefix. A link in the file is handled by its target, not by the element that
+carries it, a link drawn inside an inline SVG included: a web address opens a tab, a file
+target opens the file in the viewer, and a section link scrolls to it. An image map (`<map>`,
+`usemap`) is dropped. The same rules apply to the HTML in a chat message, where a link to an
+element's own `id` or `<a name>` lands on it under the prefix.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file, where each card sits level with the passage it is about and scrolls with the text;
@@ -491,9 +551,9 @@ inline**, beside Track changes, hides the marks and shows them again; with the m
 the file reads as it is and the cards alone show the changes. The setting is kept for every
 file you open. Once a file has a comment or a change, **All**, **Comments**, and **Changes**
 appear under those two toggles and choose what the panel lists; Comments and Changes show
-their counts. **Comments** lists only the comments, including comments on changes, and hides
-the change marks in the file; **Changes** lists only the changes, each with the comments made
-on it, and hides the comment highlights and the rectangles on figures; **All** lists both. The
+their counts. **Comments** lists only the comments, comments about changes among them, and hides
+the change marks in the file; **Changes** lists only the changes, each counting the comments
+about it, and hides the comment highlights and the rectangles on figures; **All** lists both. The
 choice is kept like the marks setting and changes only what is shown: **Send to session**
 still sends everything unsent. Every card names its kind, **Comment**, **Change**, or
 **Region**, before the author's chip, and its left edge is colored by kind, the accent for a
@@ -501,11 +561,23 @@ comment and a muted tone for a change, so the two are told apart at a glance. **
 text back in the file. **Accept all** and **Reject all** decide every change at once; Reject
 all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
 deletion, since a point is easy to miss; a change the current view does not mark, because it
-cannot or because the marks are hidden, offers it too. Reply on a change's card leaves a
-comment on the change itself, and the session's answer comes back to that card. You can also
-comment inside a change without replying to it: a click on a change mark or a comment highlight
-opens its card, and a selection made by dragging inside one leaves a comment on those words. A session's
-tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures.
+cannot or because the marks are hidden, offers it too. **Comment on this change** on a change's
+card opens the comment box over the change's text with **about this change** checked, so the
+comment names the change and the message tells the session which change it is about; a deletion,
+whose text is no longer in the file, takes a comment about the change alone, laid beside its mark (in the list
+under a narrow column, listed like any other card).
+A comment is never shown inside a change's card: every comment is its own card, and the comment
+and the change each carry a tag for the other, **about a change** on the comment (hover it to ring
+the change's marks) and **N comments** on the change (click it to open the first). Selecting text
+inside a change and pressing Comment leaves an ordinary comment on those words, with the same
+**about** box checked for the change your selection touches (**about N changes** when it touches
+several); uncheck it for a plain comment on the passage. A click on a change mark or a comment
+highlight opens its card, and a selection made by dragging inside one leaves a comment on those
+words. A comment an older session's edit answered wears **answered by a change** instead. A session's
+tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures. A session
+that tries to write a tracked file any other way, with its editing tools or a shell command such
+as `cp`, `tee`, `sed -i` or a `>` redirection, is refused and pointed at its track-edit command,
+so its edits still come to you as changes.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
 and a deletion struck, and typing around them moves them with the text. Click a change to
@@ -521,7 +593,7 @@ the editor rewrites its line endings, which would move them; accept or reject th
 
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with
-what it refers to and the commands the session needs to answer it. The number on the button
+what it refers to, the changes it is about, and the commands the session needs to answer it. The number on the button
 is what will go, and the confirm lists it, with a box for anything you want to add in your own
 words, which go first in the message; words alone send too. When a
 todo under Waiting on you names this file, or you opened the file from a todo, a checkbox
@@ -542,7 +614,12 @@ it when the session has gone quiet, in which case the message goes when it wakes
 While the panel is open it checks the file, its comments, and the project's tracking list
 every few seconds, so a reply the session writes appears without a reload and a file the
 session rewrote is shown as it is now.
-A line under the panel's header counts the changes, comments, and replies the session added since you last looked, and each of their cards wears a dot until you scroll or click with it in view; click the line to open the first of them. The first comment, like the first save, asks once
+A line under the panel's header counts the changes, comments, and replies the session added since you last looked, and each of their cards wears a dot until you scroll or click with it in view; click the line to open the first of them.
+Nothing resolves a comment but you: **Resolve** on its card, or **Resolve answered (N)** in the panel's header, shown once
+the session has replied to N of your open comments since you last wrote on them (a revision counts as a reply), which
+resolves those N after a plain confirm and offers **Reopen all** where the sent acknowledgment stands (in the list under
+a narrow column, under the panel's header) until your next scroll, click, tap, or key. The first comment, like the first
+save, asks once
 whether the dashboard may write files on that machine; the same switch, **File editing** in
 the gear, turns it off again, and while it is off a send is refused too (it writes the log)
 and asks for the consent back. The **Log** at the foot of the panel is the comments log: what
@@ -550,7 +627,9 @@ was sent and when, the changes you accepted or rejected, tracking turned on or o
 direct edits to the file, kept beside the comments in the same folder so git keeps it when the
 project does. Once a change is decided, its card is gone and the Log keeps the decision: the row
 gives the count, and clicking it shows the old and new text of each change. Whether
-`.trackchanges/` is committed is the project's call; a `.gitignore` line keeps it out.
+`.trackchanges/` is committed is the project's call; a `.gitignore` line keeps it out. Sessions are
+asked to include the folder when they commit their own work, so the comments and the changes are
+kept with it; your commits are yours, and nothing here stages or commits anything.
 
 If the **Comments** action is missing on a file, the gear's **File comments** row says why:
 the kernel that owns the file has no node on its PATH, or it predates the feature. The same
@@ -676,21 +755,25 @@ did, so searching for the work finds the session that did it, months later.
 
 ### Session backends
 
-Sessions run on one of two backends, chosen per session:
+Sessions run on one of these backends, chosen per session:
 
-- **SDK (the default, strongly recommended).** The kernel manages the Claude
-  Code session through the Claude Agent SDK.
-- **tmux.** A Claude Code session running in a terminal inside tmux. Run
-  `romp new -t <name>` and that terminal session joins the interface like any other, so
-  you can work in the terminal directly and still see it in Romp. The cost is
-  that Romp has no direct connection to it: it reads what appears in the
-  terminal and on disk, and sends messages and nudges by injecting keystrokes.
-  That makes it less reliable and less responsive than the SDK, since scraping a
-  terminal has edge cases a real API does not, and updates wait on the
-  transcript reaching disk.
+- **Claude Code (the default, strongly recommended).** The kernel runs the
+  Claude Code session itself, through the Claude Agent SDK.
+- **Claude Code (tmux).** A Claude Code session running in a terminal inside
+  tmux. Run `romp new -t <name>` and that terminal session joins the interface
+  like any other, so you can work in the terminal directly and still see it in
+  Romp. The cost is that Romp has no direct connection to it: it reads what
+  appears in the terminal and on disk, and sends messages and nudges by
+  injecting keystrokes. That makes it less reliable and less responsive than
+  Claude Code itself, since scraping a terminal has edge cases a real API does
+  not, and updates wait on the transcript reaching disk. The new-session picker
+  and the gear's Default backend list offer it only while **Enable Claude Code
+  tmux backend** is on in the gear's Updates & debug section (off by default);
+  sessions already running on it keep working either way.
+- **Codex.** An OpenAI Codex agent; see [docs/codex.md](codex.md).
 
-The two backends interleave freely, so terminal sessions and SDK sessions sit
-side by side in the interface and message each other like any other pair.
+The backends interleave freely, so terminal sessions and Claude Code sessions
+sit side by side in the interface and message each other like any other pair.
 
 ## The Romp kernel (the back end)
 
@@ -860,7 +943,7 @@ own a direct path; the dashboard is then a plain URL on your tailnet.
     Tunnels the extension still relays each whole view payload to the local
     window as it changes. It does not yet take the deltas the browser panes do.
     A pane that falls 16 MB behind is dropped and reconnects on its own; the
-    drop is logged in the kernel log and shows in the dashboard's bell, so a
+    drop is logged in the kernel log and shows in the Log (the settings panel's "Open log" button carries the unread count on the desktop; the phone's bottom bar reddens its bell), so a
     link that cannot keep up reads as what it is rather than as a flaky network.
 
 ### From your phone

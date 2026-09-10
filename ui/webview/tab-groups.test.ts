@@ -177,9 +177,11 @@ test("executed: the PHONE layout renders the flat strip — every visible id, no
   // crossing the boundary (an iPad rotation) re-plans the strip: the CSS side of the same rule flips
   // the instant the media query does, so a plan sampled per render only went stale under the phone
   // list (folded tabs absent from the scrape) until the next push. The flip IS the event — one
-  // listener on the same MediaQueryList, beside the fold-state listeners; no resize polling.
-  assert.match(RENDER, /try \{ window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => renderTabs\(\)\); \} catch \{/);
-  assert.ok(RENDER.indexOf("window.addEventListener(TABGROUPS_EVENT, () => renderTabs());") < RENDER.indexOf('matchMedia(PHONE_LAYOUT_MEDIA).addEventListener("change"'),
+  // listener on the same MediaQueryList, beside the fold-state listeners; no resize polling. The
+  // open tab menu reads the flip through the same listener (viewsChanged, round 6 of the tab menu
+  // review: its Hide tab row is gated on the rule), the store listeners' shape
+  assert.match(RENDER, /try \{ window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\); \} catch \{/);
+  assert.ok(RENDER.indexOf("window.addEventListener(TABGROUPS_EVENT, () => { renderTabs(); viewsChanged(); });") < RENDER.indexOf('matchMedia(PHONE_LAYOUT_MEDIA).addEventListener("change"'),
     "installed once at module scope with the other strip listeners, never inside a render");
 });
 
@@ -295,7 +297,7 @@ test("a folded section renders its header alone with the folded-away count and o
   assert.match(head, /const stand = standInPip\(hidden\.map\(\(id\) => \(\{ session: sessions\.get\(id\), ledger: ledgers\.get\(id\) \}\)\)\);/,
     "one summary pip, classified by tab-state.ts's rule, the same the tab itself wears (tab-state.test), with the feed's verdict folded in (tab-snapshot.ts standInPip; tab-hide.test)");
   assert.match(head, /const said = sectionPipTitle\(stand\.kind, stand\.names\);\s*\n\s*pip\.title = door \? `\$\{said\}; \$\{doorClick\(shown\)\}` : said;/, "the tooltip names the sessions");
-  assert.ok(head.indexOf('el("span", "tab-group-count")') < head.indexOf("standInPip("), "after the count");
+  assert.ok(head.indexOf('el("span", "tab-group-count")') < head.indexOf("standInPip("), "after the count (the row's last child when folded, T284; this fork's user-todo flag, when one shows, follows it)");
   assert.ok(!head.includes("tabStateClass("), "the header itself wears no state class");
   assert.ok(!head.includes('"tab-dot"'), "never a .tab-dot — the kernel's mobile scrape keys on the tab pips' vocabulary");
   // the user 2026-09-08: the fork flows inline by default, so the trail stands behind the pre-T264 divider unless
@@ -337,7 +339,7 @@ test("the picker's Tags row is for SDK and Codex sessions: disabled behind a not
   assert.match(sync, /wrap\.classList\.toggle\("disabled", !takes\);/);
   assert.match(sync, /\.forEach\(\(b\) => \{ b\.disabled = !takes; \}\);/);
   assert.match(sync, /note\.style\.display = takes \? "none" : "";/);
-  assert.match(RENDER, /tgNote\.textContent = "Tags apply to SDK and Codex sessions";/);
+  assert.match(RENDER, /tgNote\.textContent = `Tags apply to \$\{backendLabel\("sdk"\)\} and \$\{backendLabel\("codex"\)\} sessions`;/, "the shared names (T288)");
   assert.match(RENDER, /beWrap\.addEventListener\("click", \(\) => \{ syncPickerAuth\(\); syncPickerTags\(\); \}\);/, "re-decided on every backend toggle");
   assert.match(RENDER, /syncPickerTags\(\);\s+\/\/ the backend toggle was just reset/, "…and on every open, after the backend reset");
   assert.match(RENDER, /const tags = backendTakesTags\(backend\)\s*\n\s*\? Array\.from\(tgWrap\.querySelectorAll<HTMLElement>\("\.picker-be-opt\.sel"\)\)/,
@@ -351,8 +353,8 @@ test("headers are click-safe: data-act on the node, the action on the stable #ta
   assert.match(RENDER, /head\.dataset\.act = "toggle-group";/);
   assert.match(RENDER, /"toggle-group": \(el\) => \{\s*\n\s*const name = el\.dataset\.group;\s*\n\s*if \(!name\) return;\s*\n\s*snapView = name;\s*\n\s*writeTabGroups\(setSectionCollapsed\(tabGroups\(\), name, el\.dataset\.folded !== "1"\)\);\s*\n\s*showActive\(\);/,
     "the fold from the rendered state, and the pane shows the section (tab-snapshot.test.ts)");
-  assert.match(RENDER, /window\.addEventListener\(TABGROUPS_EVENT, \(\) => renderTabs\(\)\);/, "the same-window delivery");
-  assert.match(RENDER, /window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === TABGROUPS_KEY\) renderTabs\(\); \}\);/, "…and a sibling pane's");
+  assert.match(RENDER, /window\.addEventListener\(TABGROUPS_EVENT, \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\);/, "the same-window delivery (and the open tab menu's notifier beside the render, round 5 of the tab menu review)");
+  assert.match(RENDER, /window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === TABGROUPS_KEY\) \{ renderTabs\(\); viewsChanged\(\); \} \}\);/, "…and a sibling pane's (the notifier beside the render there too)");
   assert.match(RENDER, /if \(name\) writeTabGroups\(setSectionCollapsed/);
   assert.doesNotMatch(RENDER.slice(RENDER.indexOf('"toggle-group": (el) => {'), RENDER.indexOf('"toggle-group": (el) => {') + 300), /renderTabs\(\)/,
     "the toggle does not render itself — the event does, so a local toggle and a sibling pane's take one path");
@@ -373,7 +375,7 @@ test("dragging a header reorders tagOrder through the views path — the store t
 
 test("the switch lives at the foot of the chat tag-lens menu beside Configure tags…, desktop mount only", () => {
   assert.match(MENU, /groupToggle\?: \{ label: string; on: \(\) => boolean; toggle: \(\) => void \};/);
-  assert.match(MENU, /if \(opts\.groupToggle\)\s*\n\s*row\(opts\.groupToggle\.label, opts\.groupToggle\.on\(\), null, true\)\.addEventListener\("click", \(\) => \{ opts\.groupToggle!\.toggle\(\); build\(\); \}\);/,
+  assert.match(MENU, /if \(opts\.groupToggle\)\s*\n\s*row\(opts\.groupToggle\.label, opts\.groupToggle\.on\(\), true\)\.addEventListener\("click", \(\) => \{ opts\.groupToggle!\.toggle\(\); build\(\); \}\);/,
     "✓-marked when on; flips and repaints in place like the tag rows");
   assert.ok(MENU.indexOf("if (opts.groupToggle)") < MENU.indexOf('row("Configure tags…"'), "beside — above — Configure tags…");
   assert.match(RENDER, /groupToggle: \{ label: "Group tabs by tag", on: \(\) => readTabGroups\(\)\.on,/);
@@ -511,11 +513,24 @@ test("executed: a session under two tags is placed under BOTH — the user's rul
 });
 
 
-test("the header's structure and gestures read as a label: chevron (flips with the fold) → color bar → name → count; a keyboard button; hover/focus say fold, never open; tokens only (the user 2026-09-06)", () => {
+test("the header's structure and gestures read as a label: the tag's chip, then the chevron (flips with the fold) and the count at the right; a keyboard button; hover/focus say fold, never open; tokens only (the user 2026-09-06)", () => {
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   const at = (t: string) => { const i = head.indexOf(t); assert.ok(i >= 0, "present: " + t); return i; };
-  assert.ok(at('el("span", "tab-group-caret")') < at('tagChip(name, sec.color, { inheritSize: true })')
-    && at('tagChip(name, sec.color, { inheritSize: true })') < at('el("span", "tab-group-count")'), "chevron, the tag's CHIP, count");
+  assert.ok(at('tagChip(name, sec.color, { inheritSize: true })') < at('el("span", "tab-group-caret")')
+    && at('el("span", "tab-group-caret")') < at('el("span", "tab-group-count")'), "the tag's CHIP, then chevron and count at the right (T284)");
+  // T284 (the user 2026-09-09): the chip, then the caret and the count right after it, the feed's grouped
+  // headers' order (name at the left, caret and count together at the right); the folded gist's pip comes
+  // last, so the folded and the open row share one shape and the caret is always the chip's neighbour.
+  // Read from the builder's appends (the only way a child joins the head).
+  // On this fork the header carries one more child after the pip: the user-todo flag (b, tab-group-flags.test), a
+  // standing fork mechanism (R8); the pin reads the resolved makeGroupHead (R4, the 2026-09-10 fold).
+  const appends = [...head.matchAll(/head\.appendChild\((\w+)\)/g)].map((m) => m[1]);
+  assert.deepEqual(appends, ["chip", "caret", "n", "pip", "b"], "chip, caret, count, the folded pip, then the fork's user-todo flag: " + appends.join(","));
+  // the pin reads named appendChild calls, so every other way a child could join the head is ruled out (the
+  // review's find: an inline appendChild(el(...)), a prepend or an insertBefore would have slipped past it)
+  assert.equal((head.match(/head\.appendChild\(/g) || []).length, appends.length, "every appendChild passes one of the named children");
+  assert.ok(!/head\.(append|prepend|insertBefore|insertAdjacentElement|insertAdjacentHTML|replaceChildren)\(/.test(head),
+    "children join one at a time through appendChild, which the pin above reads");
   assert.match(head, /caret\.textContent = "▸";/);
   assert.match(CSS, /\.tab-group-head:not\(\.collapsed\) \.tab-group-caret \{ transform: rotate\(90deg\); \}/,
     "the fold state flips it — the sheet's fold-caret idiom, a CSS transition, no timer");
@@ -1526,8 +1541,8 @@ test("executed: prunePinned drops the pins of tags and sessions that no longer e
   // on a transient frame (a views blob mid-write, a host's tags not yet arrived) and put a tab away
   assert.equal(RENDER.split("prunePinned(").length - 1, 1, "one call site: writeTabGroupsPruned, which the pin row and the snapshot's Hide and Show share (tab-hide.test)");
   assert.match(RENDER, /function writeTabGroupsPruned\(st: TabGroupsState\): void \{\s*\n\s*writeTabGroups\(prunePinned\(st, viewTagUnion\(effViews\(\)\), knownTabIds\(\), reachableHosts\(\)\)\);\s*\n\}/);
-  assert.match(RENDER, /writeTabGroupsPruned\(setPinned\(tabGroups\(\), sec, id, !on\)\); build\(\);/,
-    "the row SETS the state it rendered (!on) through the one prune site: a toggle would flip whatever a re-render stored between the render and the click");
+  assert.match(RENDER, /const h = homeNow\(\); if \(!h \|\| !sameSection\(sectionRef\(h\), sec\)\) \{ refuse\("pin", sec\); return; \} writeTabGroupsPruned\(setPinned\(tabGroups\(\), sectionRef\(h\), id, !on\)\); build\(\);/,
+    "the row SETS the state it rendered (!on) through the one prune site: a toggle would flip whatever a re-render stored between the render and the click; the section is the copy's home as it stands at the click, and it must be the section the row was built for, Move to's rule (round 9 of the tab menu review; round 7 asked only that the row's union exist, so a copy moved out of its home under the press while the home's tag stood wrote a pin the prune dropped, with no cue), else the click refuses with the cue");
   assert.match(RENDER, /function knownTabIds\(\): Set<string> \{ return new Set<string>\(\[\.\.\.order, \.\.\.tabMeta\.keys\(\)\]\); \}/);
   const TG = ui("webview", "tab-groups.ts");
   const plan = TG.slice(TG.indexOf("export function planStrip("), TG.indexOf("export function reorderTagOrder("));
@@ -1651,20 +1666,20 @@ test("executed: the pin persists with the fold state under romp:tabgroups, survi
 });
 
 test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows: the home tag's chip, ✓ when on, per-section copy, the fold's own write and render path; the views adoption carries the pins across a rename (source pins)", () => {
-  const fly = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), RENDER.indexOf("// New tag… — an inline input"));
+  const fly = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), RENDER.indexOf("// Configure tags… at the foot, behind the divider"));   // the New tag… input is built before the rows since round 5 of the tab menu review, so the block runs to the foot
   const pin = fly.slice(fly.indexOf("// SHOW WHEN FOLDED"));
   assert.ok(fly.indexOf('lb.textContent = "Move to " + g.name') < fly.indexOf("// SHOW WHEN FOLDED"), "after the Move-to rows, before New tag…");
   assert.match(pin, /if \(home\) \{\s*\n\s*const sec = sectionRef\(home\);\s*\n\s*const on = isPinned\(tabGroups\(\), sec, id\);/,
     "only with a home tag (there is no fold to show through otherwise); the section as the plan keys it (sectionRef: name and local id); the store read with the unions (the migration)");
   assert.doesNotMatch(pin, /isPinned\(tabGroups\(\), home\.name|togglePinned\(tabGroups\(\), home\.name|home\.localId, id\)|readTabGroups\(\)/,
     "never the bare name or the bare id, and never a store read without the unions on a path that writes");
-  assert.match(pin, /const row = el\("div", "ctx-item ctx-item-toggle ctx-item-pin" \+ \(on \? " current" : ""\)\);/, "the menus' ✓ mark when on");
+  assert.match(pin, /const row = el\("div", "ctx-item ctx-item-toggle ctx-item-pin" \+ \(on \? " current" : ""\)\);/, "the menus' ✓ mark when on (and no width modifier: a flyout row keeps its natural width up to the sheet's per-row cap, round 5 of the tab menu review; tab-hide.test pins the wearers)");
   assert.match(pin, /chip\.style\.background = home\.color \|\| "var\(--dim\)"; row\.appendChild\(chip\);/, "the home tag's chip, like its neighbors");
   assert.match(pin, /lb\.textContent = "Show when folded";/);
   assert.match(pin, /sb2\.textContent = on \? `stays on the strip while \$\{home\.name\} is folded` : `keep this tab on the strip while \$\{home\.name\} is folded`;/,
     "the copy speaks of the home section alone — and the write is per section, so it is the whole truth");
-  assert.match(pin, /writeTabGroupsPruned\(setPinned\(tabGroups\(\), sec, id, !on\)\); build\(\);/,
-    "the write prunes (writeTabGroupsPruned, the one prune site), notifies (TABGROUPS_EVENT → renderTabs) and the flyout repaints its ✓ — no renderTabs() call of its own");
+  assert.match(pin, /writeTabGroupsPruned\(setPinned\(tabGroups\(\), sectionRef\(h\), id, !on\)\); build\(\);/,
+    "the write prunes (writeTabGroupsPruned, the one prune site), notifies (TABGROUPS_EVENT → renderTabs) and the flyout repaints its ✓, with no renderTabs() call of its own; the section is the copy's home as it stands at the click, guarded to be the row's own (round 9 of the tab menu review: homeNow and sameSection, Move to's rule)");
   assert.doesNotMatch(pin, /renderTabs\(\)|setTimeout/);
   // every store read on a path that WRITES passes the unions, so an entry in the earlier shape is migrated
   // faithfully before it is written back; the plan reads with the unions it plans by
@@ -1806,7 +1821,7 @@ test("executed: the words of the way back: the open header whose snapshot the pa
 
 test("the group header wears the SHARED tag chip — one vocabulary with the tags bar and the feed (T251)", () => {
   const MENU = ui("webview", "tag-menu.ts");
-  assert.match(MENU, /export function tagChip\(label: string, color\?: string \| null, opts\?: \{ inheritSize\?: boolean \}\): HTMLElement \{/,
+  assert.match(MENU, /export function tagChip\(label: string, color\?: string \| null, opts\?: \{ inheritSize\?: boolean; off\?: boolean \}\): HTMLElement \{/,
     "the chip is a named builder, not a lookalike");
   assert.match(MENU, /const chip = tagChip\(c\.label, c\.color\);/, "the tags bar builds its chips through it");
   assert.match(MENU, /\("var\(--dim, " \+ TAG_BTN_GRAY \+ "\)"\)/, "the uncoloured fallback is a THEME TOKEN — the light theme is never handed a dark gray");
@@ -1829,7 +1844,7 @@ test("the section snapshot holds the reader's place in the hidden transcript (th
   const HIDE = RENDER.slice(RENDER.indexOf("function hideSnapshot(): void {"), RENDER.indexOf("function snapshotHoldsFocus("));
   assert.match(HIDE, /if \(snapKeep\) \{ snapKeep\.v\.scrollTop = snapKeep\.scrollTop; snapKeep\.v\.stick = snapKeep\.stick; snapKeep = null; \}/,
     "written back when the snapshot hides, which every exit takes (leaveSnapshot, a row pick, the section gone from the strip) before landActive reads the spot");
-  assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? sessions\.get\(activeId\) : null;/, "the hide, and so the write-back, precedes the transcript path's land");
+  assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? liveSession\(activeId\) : null;/, "the hide, and so the write-back, precedes the transcript path's land (read through liveSession since upstream #1017: a skeleton active shows no stale transcript)");
   assert.match(RENDER, /followReader\(activeId \? views\.get\(activeId\) : null, c\.scrollTop, atBottom\(c\), pendingBuildRaf != null\);/, "the listener itself is upstream's, untouched (T261 reads the true bottom: atBottom)");
 });
 
@@ -1898,8 +1913,19 @@ test("↑/↓ measure from the focused copy and never land on the session's own 
 test("the tab menu speaks for the right-clicked copy's group: Move to drops THAT tag, Show when folded pins THAT section, Rename edits THAT copy (T264b review)", () => {
   assert.match(RENDER, /showTabMenu\(e, id, tab\.dataset\.copy\); \}\);/, "the copy's group rides the contextmenu call");
   assert.match(RENDER, /function showTabMenu\(e: MouseEvent, id: string, copy\?: string\)/);
-  assert.match(RENDER, /const home0 = readTabGroups\(\)\.on \? \(\(copy !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copy\) : undefined\) \?\? holding\(\)\[0\]\) : undefined;/,
-    "the copy's own group, else the first holder (the flat strip names no copy)");
+  assert.match(RENDER, /let copyNow: SectionRef \| undefined = copy \? refOf\(copy\) : undefined;\s*\n\s*const sameSection = \(a: SectionRef, b: SectionRef\) => \(a\.localId !== null && b\.localId !== null \? a\.localId === b\.localId : a\.name === b\.name\);[^\n]*\n\s*const heldCopy = \(held: TagUnion\[\]\): TagUnion \| undefined => \{\s*\n\s*const c = copyNow;\s*\n\s*if \(!c\) return undefined;\s*\n\s*return \(c\.localId !== null \? held\.find\(\(g\) => g\.localId === c\.localId\) : undefined\) \?\? held\.find\(\(g\) => g\.name === c\.name\);[^\n]*\n\s*\};\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;\s*\n\s*const held = holding\(\);\s*\n\s*const home0 = heldCopy\(held\) \?\? \(held\.length === 1 && !held\[0\]\.pending \? held\[0\] : undefined\);[^\n]*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};/,
+    "the copy's own group, tracked through the flyout's move and its adds (copyNow, a section ref since round 4 of the tab menu review: matched by its tag's local id over every held union first, and by its name only when no held union carries that id, round 6, so a pushed rename keeps the copy whatever the drag order and a tag made again under the same name holds it); else the session's one remaining holder; else nothing (round 3: with two or more holders and no copy of its own the menu names no group, and the untagged trail's copy, \"\", names none); a pure function of the ref and the views since round 5, nothing latched");
+  // the computation sits in showTabMenu's scope since the menu's Hide tab row (the user 2026-09-09; tab-hide.test executes it): one
+  // function, homeNow, read by that row's refresh and click and by the Tags flyout on every build of its own, so the Move-to and
+  // Show-when-folded rows still speak for the copy's group after a move or a remove inside the flyout (the tab menu review's
+  // round 2 made it the MOVED copy's group: moveUnion writes copyNow, and a named copy never falls to the first holder)
+  const menuAt = RENDER.indexOf("function showTabMenu(");
+  const menu = RENDER.slice(menuAt, RENDER.indexOf("document.body.appendChild(menu);", menuAt));
+  assert.match(menu, /const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;/);
+  assert.equal(menu.split("homeNow()").length - 1, 5, "the Hide tab row's gate (rowHome, shared by its refresh and its click; round 6 of the tab menu review), the flyout's per-build read, the flyout's signature, Move to's source at the click (round 8) and the pin row's home at the click (round 9)");
+  assert.ok(menu.indexOf("const homeNow = ") < menu.indexOf('"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"') && menu.indexOf('"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"') < menu.indexOf("const home = homeNow();   // read per build"));
+  assert.match(menu, /copyNow = sectionRef\(to\);/, "the move writes the tracked section");
+  assert.match(menu, /const home = homeNow\(\);   \/\/ read per build[^\n]*\n\s*for \(const g of others\) \{/, "the flyout's read, where its own copy of the two lines stood");
   assert.match(RENDER, /startTabRename\(id, copy\)/);
   assert.match(RENDER, /function startTabRename\(id: string, copy\?: string\)/);
   assert.match(RENDER, /t\.dataset\.id === id && \(copy === undefined \|\| t\.dataset\.copy === copy\)\)\s*\n\s*\?\? Array\.from\(bar\.children\)\.find\(\(t\): t is HTMLElement => t instanceof HTMLElement && t\.dataset\.id === id\)\);/,

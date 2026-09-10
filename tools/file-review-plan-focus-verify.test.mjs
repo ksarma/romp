@@ -81,12 +81,13 @@ test('the save\'s setter is recorded on scrollCard\'s path as the verification r
 
 // ── the hosted comment's fold ──────────────────────────────────────────────────────────────────────────────────────
 
-test('the hosted parts are recorded under the fold, as the pass reads them: every fc-clip under the card, a change card\'s hosted comments\' among them, lifted by the card\'s one Show more', () => {
-  assert.ok(note.includes('the parts are every `fc-clip` under the card, a change card\'s hosted comments\' body and run of turns among them (`renderHosted`, `.fc-hosted`), so the card\'s one Show more lifts them with the change\'s text (the verification review, 2026-09-09'));
-  assert.ok(note.includes('a pass that read the card\'s own children alone would leave a hosted run capped with no fade and, where the change\'s own text is short, no Show more at all'));
-  assert.ok(panel.includes('for (const part of Array.from(card.querySelectorAll(".fc-clip")) as HTMLElement[]) {   // the card\'s own parts and its hosted comments\''), 'clipCards reads the parts under the card, and says so');
+test('the parts under the fold are recorded as the pass reads them: every fc-clip under the card (the hosted comments\' among them until the about follow-on), lifted by the card\'s one Show more', () => {
+  assert.ok(note.includes('the parts are every `fc-clip` under the card (until the about follow-on, 2026-09-10, a change card\'s hosted comments\' body and run of turns among them, so the card\'s one Show more lifted them with the change\'s text: the verification review, 2026-09-09'));
+  assert.ok(note.includes('a pass reading the card\'s own children alone left a hosted run capped with no fade and, where the change\'s own text was short, no Show more at all'));
+  assert.ok(note.includes('no comment is drawn inside a change card now'));
+  assert.ok(panel.includes('for (const part of Array.from(card.querySelectorAll(".fc-clip")) as HTMLElement[]) {   // every part under the card'), 'clipCards reads the parts under the card, and says so');
   assert.ok(panel.includes('The parts are every `.fc-clip` UNDER the card, not the card\'s own children alone'), 'its docstring records the choice');
-  assert.ok(/private renderHosted\(c: Card\): HTMLElement \{\n\s*const box = el\("div", "fc-hosted"\);/.test(panel), 'a hosted comment is rendered in an fc-hosted box on the change card');
+  assert.ok(!/renderHosted|fc-hosted/.test(panel), 'no hosted comment is rendered on a change card (the about follow-on)');
   for (const [name, css] of [['styles.css', read('ui', 'webview', 'styles.css')], ['feed.css', read('ui', 'webview', 'feed.css')]]) {
     assert.ok(css.includes('.fc-margin .fc-card:not(.fc-more) .fc-clip { max-height: 8lh; overflow: hidden; }'), name + ': one cap rule for every fc-clip under a card, hosted or the card\'s own');
   }
@@ -112,7 +113,7 @@ const ROUND = [
   ] },
   { file: 'ui/webview/file-comments-focus-verify.test.ts', holds: [
     'test("a reply saved on an open card that is NOT the focus makes that card the focus: level with its mark, the tall change card above moved up',
-    'test("a change card\'s hosted comment folds with the card: its run of turns is marked cut and scrolled to its end, and the card\'s one Show more lifts it with the change\'s text',
+    'test("a comment bound to a change folds on its OWN card (the about follow-on): its run of turns is marked cut and scrolled to its end, and the card\'s own Show more lifts it;',
     'test("the fold\'s choice survives a re-render a STATUS drives:',
     'test("vocabulary: this module\'s own prose says file comment and run of turns;',
   ] },
@@ -170,10 +171,10 @@ test('the keyboard\'s memory is recorded as refocus has it: re-armed for a contr
   assert.ok(panel.includes('The composer\'s controls keep the one render'), 'its docstring says why the composer is left out');
 });
 
-test('the Show more row\'s place is recorded as the renderers and placeComposer have it: at the card\'s foot above the action row, a reply\'s box between the row and the buttons, a hosted comment\'s buttons above the change card\'s row', () => {
-  assert.ok(note.includes('The row stands at the card\'s foot above the action row — on a comment\'s card under the run of turns, on a change card after its hosted comments, above Accept and Reject — and a reply\'s box opened on the card stands between the row and the buttons (`placeComposer` puts it before `.fc-actions`)'));
+test('the Show more row\'s place is recorded as the renderers and placeComposer have it: at the card\'s foot above the action row, a reply\'s box between the row and the buttons', () => {
+  assert.ok(note.includes('The row stands at the card\'s foot above the action row — on a comment\'s card under the run of turns, on a change card after its old and new text, above Accept and Reject — and a reply\'s box opened on the card stands between the row and the buttons (`placeComposer` puts it before `.fc-actions`)'));
   assert.ok(/card\.appendChild\(this\.clipRow\(c\.id\)\);[^\n]*\n\s*card\.appendChild\(acts\);/.test(panel), 'renderCard: the row, then the action row');
-  assert.ok(/for \(const cm of c\.comments\) card\.appendChild\(this\.renderHosted\(cm\)\);\n\s*card\.appendChild\(this\.clipRow\(c\.key\)\);/.test(panel), 'renderChangeCard: the hosted comments, then the row');
+  assert.ok(/card\.appendChild\(diff\);\n\s*card\.appendChild\(this\.clipRow\(c\.key\)\);/.test(panel), 'renderChangeCard: the change\'s text, then the row');
   assert.ok(panel.includes('before(host, (Array.from(host.childNodes) as HTMLElement[]).find((n) => n.nodeType === 1 && n.classList.contains("fc-actions")) || null);'), 'placeComposer: the box before the action row, so after the row');
   const place = read('ui', 'webview', 'file-comments-reply-place.test.ts');
   assert.ok(place.includes('["fc-card-head", "fc-body fc-clip", "fc-replies fc-clip", "fc-clip-row", "fc-composer fc-composer-in", "fc-actions"]'), 'the reply-place stand-in asserts the order');

@@ -610,7 +610,7 @@ class RejectTellsTheSession(_TraceWorld):
         self.verb("accept", {"ids": self.IDS}, reply={"accepted": self.IDS})
         self.verb("accept-all", {}, reply={"accepted": self.IDS + ["1781100000000-3"], "store": None, "hunks": []})
         self.verb("comment", {"anchor": "shipping the cache in v1.2", "note": "Which cache? Say which."})
-        self.verb("comment", {"suggestionId": self.IDS[0], "note": "Keep the old word."})
+        self.verb("comment", {"changeIds": [self.IDS[0]], "note": "Keep the old word."})
         self.assertEqual(self.reject_traced, [])
         self.assertEqual(self.reached, [])
         self.assertEqual(self.parked, [])
@@ -907,6 +907,26 @@ class TheMessage(unittest.TestCase):
         self.assertNotIn("To respond:", body)
         for a, r in ((0, 0), (None, None), (0, None)):
             self.assertNotIn("I accepted", km._file_comments_message(REPORT, ONE, a, r, True, True), (a, r))
+
+    def test_a_comment_about_a_change_names_the_passage_then_the_change(self):
+        # the about follow-on (2026-09-10): the client composes `on "<passage>", about your change "<old>" to "<new>"`
+        # for a passage comment that names the change inside its passage (describeComment, aboutClause), and the
+        # kernel prints it verbatim; ui/webview/file-comments-model-about.test.ts pins the webview's builder to this
+        # SAME literal, so the two builders cannot drift on the form
+        about = [{"id": "1781100000000-40", "desc": 'on "shipping the cache in v1.3", about your change "v1.2" to "v1.3"',
+                  "body": "Which version ships it?"}]
+        want = ("[obsidian-diff] I left 1 comment on %s.\n"
+                "\n"
+                "Comment 1781100000000-40 (on \"shipping the cache in v1.3\", about your change \"v1.2\" to \"v1.3\"):\n"
+                "Which version ships it?\n"
+                "\n" % REPORT) + TAIL_TRACKED % (REPORT, REPORT)
+        self.assertEqual(km._file_comments_message(REPORT, about, 0, 0, True, True), want)
+        # …and a comment about a change with no passage (a deletion's) carries the clause alone
+        alone = [{"id": "1781100000001-31", "desc": 'about the text you removed "quickly " and your change "v1.2" to "v1.3"',
+                  "body": "Why drop the word, and why the version bump?"}]
+        body = km._file_comments_message(REPORT, alone, 0, 0, True, True)
+        self.assertIn("Comment 1781100000001-31 (about the text you removed \"quickly \" and your change \"v1.2\" to \"v1.3\"):\n"
+                      "Why drop the word, and why the version bump?\n", body)
 
     def test_a_body_with_a_line_break_keeps_it(self):
         # The panel's box takes several lines (Enter adds one; Cmd+Enter or Ctrl+Enter saves, 2026-09-07): the body

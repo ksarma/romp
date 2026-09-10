@@ -238,8 +238,8 @@ test("applyTabOrder re-asks for a re-listed id whose session this client lost �
   // tabs-first boot — where the order deliberately lands before any session frame — never asks. It must
   // run before this push's ids are recorded, or every first listing would read as a repeat.
   assert.match(RENDER,
-    /for \(const id of kernelOrder\) \{\s*\n\s*if \(kernelListed\.has\(id\) && !sessions\.has\(id\)\) requestFullSession\(id\);\s*\n\s*\}\s*\n\s*for \(const id of kernelOrder\) kernelListed\.add\(id\);/,
-    "the re-ask sits between the order rebuild and the add-only kernelListed record");
+    /for \(const id of kernelOrder\) \{\s*\n\s*if \(kernelListed\.has\(id\) && !sessions\.has\(id\)\) requestFullSession\(id, \"nobase\"\);[^\n]*\n\s*\}\s*\n\s*for \(const id of kernelOrder\) kernelListed\.add\(id\);/,
+    "the re-ask sits between the order rebuild and the add-only kernelListed record (its reason is nobase, from upstream's NeedFullWhy vocabulary, since the 2026-09-10 fold)");
 });
 
 test("the host-drop prune is wired: closeRemote stamps its frames, the closed HANDLER prunes, dismissSession stays clean", () => {

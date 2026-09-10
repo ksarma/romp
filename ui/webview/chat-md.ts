@@ -13,8 +13,8 @@
 // plans/markdown-viewer.md; the list lived in this module under its own name before), so a user message with math or
 // strikethrough renders exactly as it did before; only its newlines are kept. Pure (no DOM): the executed tests
 // import it directly. Sanitizing is the caller's job: render.ts's userMd() runs the output through the same
-// DOMPurify profile md() uses before it ever reaches innerHTML; the math fill rides that sanitize as a post-pass
-// md-config.ts registers, so no caller renders it by hand.
+// sanitizer md() uses (sanitizeMd, md-sanitize.ts) before it ever reaches innerHTML; the math fill rides that
+// sanitize as a post-pass md-config.ts registers, so no caller renders it by hand.
 import { Marked } from "marked";
 import { mdExtensions } from "./md-config";
 

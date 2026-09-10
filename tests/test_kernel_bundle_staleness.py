@@ -13,11 +13,17 @@ enough — rebuilt everything, so the trigger looked like it worked.
 
 These tests assert the check's inputs against esbuild.js's ACTUAL entry points, so a new entry point
 added there without a matching watch root fails here rather than silently never shipping."""
+import fnmatch
 import os
+import shutil
 import tempfile
 import re
 import unittest
+from pathlib import Path
 from romp_load import load_source
+
+import lab_dist   # the served labs' build harness (tests/lab_dist.py); the parity and token pins at the end read it
+import lab_dist_stub   # the node preload standing in for missing bare packages, so the parity pin runs without node_modules
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -79,6 +85,85 @@ class BundleInputs(unittest.TestCase):
             self.assertIn(resolved, watched,
                           "esbuild builds %s but the staleness check never looks at it, so editing "
                           "it would not trigger a rebuild" % e)
+
+
+class ServedLabsKeyTheSameInputs(unittest.TestCase):
+    """tests/lab_dist.py keys the served labs' one build of dist on the sources it derives from esbuild.js's
+    exported configs (read through node; then the trees their relative imports reach), not on this list. The
+    two must agree at the file level: an input the kernel would rebuild for that the labs' key does not cover
+    leaves them asserting against stale bundles with nothing saying so. Here, where the kernel is already
+    loaded under isolation, every path _bundle_inputs reads is checked against the harness's keyed set.
+
+    What this catches, exactly: drift inside the trees the kernel's hand-maintained list names
+    (vscode-extension/src, ui/webview, ui/romp-timeline-view.js, vendor/) and nothing else. A tree reached
+    only through code in esbuild.js (a plugin body resolving into tools/ or docs/) is not exported data, so
+    the harness does not key it, and this pin does not see it either until someone adds the tree to the
+    kernel's list by hand (none today: esbuild.js has no plugins).
+
+    The derivation requires esbuild.js under node, and esbuild.js requires esbuild on its first line, a
+    dependency of the BUILD and not of the exported data (nothing the config exports comes from that module,
+    and nothing reads it at require time). CI's Python job runs no `npm ci`, so the pin ran only where a
+    developer had installed the extension's dependencies until round 7 of the harness review; it now runs on
+    both kinds of checkout through tests/lab_dist_stub.py, a node preload that stands in for a bare package
+    esbuild.js itself requires and node cannot find, on a checkout with no node_modules beside it, and loads
+    the real module wherever one resolves, so the run with node_modules present reads the real package (round
+    7 stood in for the one name esbuild, and a second bare require in esbuild.js would have put this pin back
+    to skipping on CI in silence; round 8 covered every bare specifier; round 9 narrowed the stand-in to the
+    config's own requires, so a miss inside an installed package or a subpath into one stays node's error).
+    A config that read a stood-in package at load fails loudly (every read of the stand-in throws), and the
+    failure names the stand-in. On a checkout whose node_modules predate a newly added dependency the preload
+    declines (a node_modules that exists and lacks the package is a stale install, not the environment) and
+    throws naming tests/lab_dist_stub.py, the package and the directory, so this pin goes red there instead of
+    skipping, while the served labs themselves still skip there (the harness stays strict: nothing in
+    tests/lab_dist.py knows the stand-in exists). A skip raised inside the stand-in's block is a FAILURE naming
+    tests/lab_dist_stub.py: it means the preload did not take effect (a node wrapper or a policy dropping
+    NODE_OPTIONS), the reader filed as the environment a request the preload declined, or the config resolved the
+    package with require.resolve, which the stand-in does not cover (only Module._load is wrapped). The one skip
+    left is node itself missing from PATH."""
+
+    def test_every_kernel_bundle_input_is_keyed_by_the_served_labs_build(self):
+        cv = km.ROOT / "vscode-extension"
+        with lab_dist_stub.bare_package_stub():
+            keyed = {os.path.realpath(p) for p in lab_dist.default()._input_files()}
+        self.assertGreater(len(keyed), 100, "the harness keyed a real tree")
+        missing = sorted(str(p) for p in km._bundle_inputs(cv) if os.path.realpath(str(p)) not in keyed)
+        self.assertEqual(missing, [], "bundle inputs the kernel rebuilds for that tests/lab_dist.py does not key")
+
+
+class HarnessFilesDoNotMoveTheCacheBustToken(unittest.TestCase):
+    """tests/lab_dist.py keeps its lock and marker INSIDE dist, and writes the marker through a staging name
+    there too. The kernel's _dist_ver token is the newest mtime over dist's bundles (`*.js` in its code; its
+    docstring names `*.css` too), appended to every script and link url, so a harness file the glob counted
+    would make every served lab run change the token the dashboard's clients see. Pinned by RUNNING the
+    kernel's token over a temp dist: the three harness names, rewritten after the bundle, leave it where
+    the bundle put it, and the control (a newer bundle) moves it, so a token that ignored dist entirely
+    (the function returns 0 on a missing dir) cannot pass by accident."""
+
+    def setUp(self):
+        self.td = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.td, True)
+        self._saved = km.DIST
+        km.DIST = Path(self.td)
+        self.addCleanup(setattr, km, "DIST", self._saved)
+        self.bundle = os.path.join(self.td, "render.js")
+        with open(self.bundle, "w") as f:
+            f.write("(()=>{})();")
+        self.t0 = 1_700_000_000
+        os.utime(self.bundle, (self.t0, self.t0))
+
+    def test_the_lock_the_marker_and_the_markers_staging_name_leave_the_token_alone(self):
+        self.assertEqual(km._dist_ver(), self.t0, "the token is the bundle's mtime (nonzero: dist is read)")
+        names = [lab_dist.LOCK_NAME, lab_dist.MARKER_NAME, ".%s.tmp-%d-0" % (lab_dist.MARKER_NAME.lstrip("."), os.getpid())]
+        for name in names:
+            for suffix in ("*.js", "*.css"):
+                self.assertFalse(fnmatch.fnmatchcase(name, suffix), "%s matches the token's glob %s" % (name, suffix))
+            path = os.path.join(self.td, name)
+            with open(path, "w") as f:
+                f.write("x\n")
+            os.utime(path, (self.t0 + 600, self.t0 + 600))    # newer than the bundle, as a real run leaves them
+        self.assertEqual(km._dist_ver(), self.t0, "a harness file newer than the bundle does not move the token")
+        os.utime(self.bundle, (self.t0 + 60, self.t0 + 60))     # the control: a rebuilt bundle moves it
+        self.assertEqual(km._dist_ver(), self.t0 + 60)
 
 
 if __name__ == "__main__":

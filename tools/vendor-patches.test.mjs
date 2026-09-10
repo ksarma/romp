@@ -197,3 +197,34 @@ test('P2 track-edit still edits text, and keeps a UTF-8 BOM and non-ASCII text i
   assert.equal(store.suggestions.length, 1);
   assert.equal(store.suggestions[0].newText, 'reopened');
 });
+
+// ── P7: the skill forbids a Bash write to a tracked file and asks for the comments folder in the commit ──
+//
+// Prose, so the pin is the text (patch 0007; plans/file-review.md decisions 47 and 48). Each
+// phrase is absent from the pristine skill and present with the patch.
+
+const SKILL = fs.readFileSync(path.join(VENDOR, 'skill', 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+
+test('P7 the skill says a tracked file is never written through Bash either, naming the shell forms, and that every write goes through track-edit', () => {
+  const section = SKILL.slice(SKILL.indexOf('## When tracking is ON'), SKILL.indexOf('## Messages from the editor'));
+  assert.ok(section.includes('Nor through Bash'), 'the rule opens the section, before the CLI bullets');
+  for (const form of ['`cp`', '`mv`', '`tee`', '`>`', '`>>`', 'heredoc', '`sed -i`', '`perl -i`', 'python', 'node']) {
+    assert.ok(section.includes(form), `the rule names ${form}`);
+  }
+  assert.ok(section.includes('Every write to a tracked file goes through `track-edit`'));
+});
+
+test('P7 the skill says to check track-config\'s exit code as a step of its own, never in a compound command with the write', () => {
+  const section = SKILL.slice(SKILL.indexOf('## When tracking is ON'), SKILL.indexOf('## Messages from the editor'));
+  assert.ok(section.includes('as a step of its own, never in a compound command with the write'));
+  // why: its exit status is 0 for ON, so `track-config ... && cp ...` copies exactly when it must not
+  assert.ok(section.includes('`track-config ... && cp ...`'), 'the shape the dry run saw, with the reason');
+  assert.ok(section.includes('exactly the file it must not touch'));
+});
+
+test('P7 the skill asks the agent to include the .trackchanges/ folder in a commit of its work when the project has one and does not ignore it', () => {
+  const notes = SKILL.slice(SKILL.indexOf('## Notes'));
+  assert.ok(notes.includes('When you commit work in a project that has a `.trackchanges/` folder and does not ignore it, include that folder in the commit'));
+  assert.ok(notes.includes('it holds the user\'s comments on your files and the record of your tracked changes'));
+});
+

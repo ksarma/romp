@@ -231,9 +231,12 @@ class FakeEl {
   querySelector(sel: string): FakeEl | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
 
-// The menu's world: the loader, `el`, `metaDots`, `metaButton`, `metaAnchor`, `closeMetaMenu` and
-// `toggleMetaMenu` lifted from render.ts, over the stand-in and stubs for what they read of the rest of
-// the module (the session map, the thread helpers, the pick memory, the vscode bridge, the tints).
+// The menu's world: the loader, `el`, `metaDots`, `metaButton`, `metaAnchor`, `closeMetaMenu`,
+// `toggleMetaMenu` and `liveSession` lifted from render.ts, over the stand-in and stubs for what they read
+// of the rest of the module (the session map, the skeleton set, the thread helpers, the pick memory, the
+// vscode bridge, the tints). The chat's status read goes through render.ts's own `liveSession` (upstream's
+// skeleton tabs), so the session map alone does not make a tab live: a sid in `skeleton` (skeletonTabs.ids,
+// the tabs the kernel listed but withheld after a redial) reads as no session, its stale entry hidden.
 // `thread`: an open comment thread's popover, as openCommentThread and threadMetaStatus report it; absent,
 // no popover is open and a thread status read throws, as in render.ts.
 function liftMenu(opts: { thread?: { th: unknown; status: any } } = {}) {
@@ -253,6 +256,7 @@ function liftMenu(opts: { thread?: { th: unknown; status: any } } = {}) {
     "let activeId = null;",
     // metaChoices, as render.ts routes a Codex session: its own lists (the SDK lists are not lifted)
     "const metaChoices = (kind, st) => st.backend === 'codex' ? (kind === 'model' ? CODEX_MODEL_CHOICES : kind === 'effort' ? CODEX_EFFORT_CHOICES : []) : [];",
+    slice("function liveSession(id: string | null | undefined): Session | undefined {"),
     slice("function el(tag: string, cls?: string): HTMLElement {"),
     slice("function metaDots(): HTMLElement {"),
     slice("const MODEL_CHOICES: {", "function loadModelChoices(): void {"),
@@ -263,14 +267,15 @@ function liftMenu(opts: { thread?: { th: unknown; status: any } } = {}) {
   ].join("\n"));
   const stub = fetchStub();
   const sessions = new Map<string, any>();
-  const fn = new Function("document", "window", "kernelUrl", "fetch", "adoptCommentDefaults", "sessions",
+  const skeletonTabs = { ids: new Set<string>() };   // what liveSession reads of skeleton-tabs.ts's state
+  const fn = new Function("document", "window", "kernelUrl", "fetch", "adoptCommentDefaults", "sessions", "skeletonTabs",
     "openCommentThread", "threadMetaStatus", "metaCurrent", "metaPending", "vscodeApi", "isCurrentMeta",
     "modeIconSvg", "riskyMode", "nonClassicChoiceTone", "setTip", js);
-  const api = fn(doc, win, (p: string) => p, stub.fetch, () => {}, sessions,
+  const api = fn(doc, win, (p: string) => p, stub.fetch, () => {}, sessions, skeletonTabs,
     () => (opts.thread ? { th: opts.thread.th } : null),
     () => { if (!opts.thread) throw new Error("no thread here"); return opts.thread.status; },
     () => "", new Map(), null, () => false, () => "", () => false, () => undefined, () => {});
-  return { api, sessions, body: BODY, win, pending: stub.pending, rectReads };
+  return { api, sessions, skeleton: skeletonTabs.ids, body: BODY, win, pending: stub.pending, rectReads };
 }
 const SID = "11111111-2222-4333-8444-555555555555";
 const CODEX_READY = { state: "ready", sinceEpoch: null, backend: "codex", model: "gpt-5-test", effort: "medium" };
@@ -469,5 +474,35 @@ test("executed: a thread popover's waiting menu still rebuilds on the landing wh
   assert.equal(rebuilt.style.right, (win.innerWidth - 410) + "px", "anchored to the thread's replacement badge");
   assert.equal(rebuilt.style.bottom, (win.innerHeight - 510 + 6) + "px");
   assert.equal(body.querySelectorAll(".meta-menu").length, 1);
+  assert.deepEqual(detachedRectReads, []);
+});
+
+// Upstream's skeleton tabs (skeleton-tabs.ts): after a redial the kernel lists a tab but withholds its
+// transcript, and the page keeps the pre-outage `sessions` entry underneath so the DOM survives. Every
+// active-tab display path reads through liveSession, which hides that stale entry, and toggleMetaMenu is one
+// of them: a menu is never built from a skeleton's pre-outage status, not by the landing's rebuild when the
+// tab turned skeleton under a waiting menu, and not on a click of a badge that outlived its tab's liveness
+// (the statusline over a skeleton shows the loading line and no badge, so the click is the rebuild's case).
+test("executed: a skeleton tab's stale session builds no menu, on the landing's rebuild or on a click", async () => {
+  const { api, sessions, body, pending, skeleton } = liftMenu();
+  sessions.set(SID, { status: CODEX_READY }); api.active = SID;
+  const first = statusline(api, 700, 760);
+  body.appendChild(first.sl);
+  api.toggleMetaMenu("model", first.btn, null);
+  assert.ok((api.menu as FakeEl).querySelector(".meta-empty"), "the live tab's menu waits on the read");
+  assert.equal(pending.length, 1);
+  skeleton.add(SID);                                       // a redial's strip names the tab a skeleton; its entry stays in the map
+  assert.ok(sessions.has(SID), "the stale entry is kept underneath, as render.ts keeps it");
+  pending[0](LIST);
+  await tick(); await tick(); await tick();
+  assert.equal(api.menu, null, "the list landed and the badge is still in the document, yet no menu is built from the stale status");
+  assert.equal(body.querySelectorAll(".meta-menu").length, 0);
+  assert.equal(pending.length, 1, "and nothing more was asked");
+  api.toggleMetaMenu("model", first.btn, null);
+  assert.equal(api.menu, null, "a click on a badge whose tab is a skeleton opens nothing");
+  assert.equal(pending.length, 1, "and asks for no list: the open's re-read is a live tab's");
+  skeleton.delete(SID);                                    // the full landed: the tab is live again
+  api.toggleMetaMenu("model", first.btn, null);
+  assert.deepEqual(rows(api.menu as FakeEl), ["GPT-5 Test"], "released, the same badge opens the landed list");
   assert.deepEqual(detachedRectReads, []);
 });

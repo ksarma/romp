@@ -4,9 +4,11 @@
 //   • the status that answers a save can carry more than one comment the list did not hold before it — a session's,
 //     written inside the poll window (track-comment, or track-edit --thread minting a comment on its change), lands in the
 //     same sidecar re-read, and cardModel sorts by ts, so an older one is FIRST among the fresh. The line must track the
-//     comment in the person's words, whatever landed beside it: a session's comment on a pending change taken for the saved
-//     one ends the line before it starts (hunk !== null), and a session's comment on no change puts the wrong id and the
-//     wrong mark word on it. Both suites answered every save with exactly one fresh comment, so the selection was untested;
+//     comment in the person's words, whatever landed beside it: a session's comment taken for the saved one puts the wrong
+//     id, and the wrong mark word, on the line (before the about follow-on, 2026-09-10, a session's comment on a pending
+//     change taken for the saved one ended the line before it started, the comment being drawn inside the change card;
+//     now every comment is its own card, hidden under Changes alike, and the change card counts it). Both suites answered
+//     every save with exactly one fresh comment, so the selection was untested;
 //   • the row's shape: .fc-note (0.86em) on the words alone, the ✕ a .fileview-btn (0.82em) directly under the unsized
 //     .fc-row — on the row, the class compounded the button to 0.705em, smaller than every other panel button and than the
 //     ✕ of the err row the same list can show a line below (ui/CLAUDE.md, font sizes: nested em compounds). The confirm
@@ -43,7 +45,8 @@ const passage: StoreComment = {
   id: T0 + "-118", author: "you", ts: T0, body: "Which cache? Say which.",
   anchor: { quote: "shipping the cache in v1.2", prefix: "We recommend ", suffix: "." }, replies: [], resolved: false,
 };
-// a passage comment the session answered with a revision: it keeps its anchor and gains the change's id
+// a passage comment the session answered with a revision: it keeps its anchor and gains the change's id; its own card,
+// wearing an "answered by a change" tag (before the about follow-on, 2026-09-10, it was drawn inside h1's card)
 const hosted: StoreComment = {
   id: T0 + 5000 + "-7", author: "you", ts: T0 + 5000, body: "Cut is the right word.",
   anchor: { quote: "cut p95 latency", prefix: "The api session ", suffix: " by 40%" }, suggestionId: "h1", replies: [], resolved: false,
@@ -452,7 +455,7 @@ const onFile: StoreComment = { id: T0 + 8600 + "-8", author: "api", authorId: SI
 
 // ── several comments landing with the save ─────────────────────────────────────────────────────────
 
-test("a whole-file comment saved under Changes, the status answering the save carrying a session's comment on a pending change too, older and so first among the fresh: the line is the saved comment's, and the session's rides its change card", async (t: TestContext) => {
+test("a whole-file comment saved under Changes, the status answering the save carrying a session's comment on a pending change too, older and so first among the fresh: the line is the saved comment's; the session's is its own card, hidden by the choice as well, and counted on its change card", async (t: TestContext) => {
   store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "changes" }));
   const w = world(); t.after(() => w.close());
   const { aside, button } = await openPanel(w, full());
@@ -464,18 +467,34 @@ test("a whole-file comment saved under Changes, the status answering the save ca
   // the host answers with the sidecar re-read after its write: the session's comment on h2 is in it, and older
   answer(w, withComments([...ALL_COMMENTS, onH2, mine], { storeMtimeNs: "1757145600000000006" }), m); await flush(); await flush();
   assert.equal(aside.querySelector(".fc-composer")!.hidden, true, "saved: the box closed");
-  assert.equal(card(aside, mine.id), null, "the saved comment's card is hidden: Changes is chosen");
+  assert.ok(!card(aside, mine.id), "the saved comment's card is hidden: Changes is chosen");
+  assert.ok(!card(aside, onH2.id), "the session's comment is its own card (the about follow-on, 2026-09-10), hidden by the choice too");
   assert.equal(button.textContent, "Comments · 6 · 5 changes", "both comments counted");
   const line = savedLine(aside);
-  assert.ok(line, "the line for the hidden card — the session's comment, first among the fresh, is on a change and is not the one saved");
+  assert.ok(line, "the line for the hidden card: the session's comment, first among the fresh, is not the one saved");
   assert.equal(line!.dataset.id, mine.id, "the line tracks the comment in the person's words");
   assert.equal(line!.textContent, "Your comment is saved; its card is hidden while Changes is chosen above (All or Comments shows it).✕", "a whole-file comment: the card alone, no mark");
+  assert.equal(aside.querySelectorAll(".fc-saved-hidden").length, 1, "one line: the save's, none for the session's comment");
+  // the session's comment on h2 is counted on h2's card, collapsed or open, never drawn inside it (before the about
+  // follow-on it was, as a comment on a change under Changes)
+  assert.equal(aside.querySelectorAll(".fc-hosted").length, 0, "no comment is drawn inside a change card");
+  const count = card(aside, "chg:h2")!.querySelector(".fc-about-count");
+  assert.ok(count, "h2's card counts the session's comment");
+  assert.equal(count!.textContent, "1 comment"); assert.equal(count!.dataset.act, "fcaboutfirst"); assert.equal(count!.dataset.id, "h2");
   card(aside, "chg:h2")!.querySelector(".fc-card-head")!.click();
-  assert.ok(card(aside, "chg:h2")!.querySelector('.fc-hosted[data-id="' + onH2.id + '"]'), "the session's comment rides h2's card, as a comment on a change does under Changes");
+  assert.equal(card(aside, "chg:h2")!.querySelector(".fc-about-count")!.textContent, "1 comment", "open, the count stands in the head");
+  assert.equal(aside.querySelectorAll(".fc-hosted").length, 0);
+  assert.ok(!card(aside, onH2.id), "the session's comment stays hidden under Changes with the card open");
   assert.deepEqual(chosen(aside), ["changes"], "the kept choice stands");
   await pick(aside, "all");
   assert.ok(card(aside, mine.id), "All shows the card");
-  assert.equal(savedLine(aside), null, "and the line is over");
+  const own = card(aside, onH2.id);
+  assert.ok(own, "and the session's own card");
+  const tag = own!.querySelector(".fc-card-head .fc-about");
+  assert.ok(tag, "wearing the tag that names the change it answered");
+  assert.equal(tag!.textContent, "answered by a change"); assert.equal(tag!.dataset.refs, "h2");
+  assert.equal(own!.querySelector(".fc-kind")!.title, "A comment the session answered with a change", "no passage, the session's own binding: the title says answered (the review, 2026-09-10)");
+  assert.ok(!savedLine(aside), "and the line is over");
   store.delete(SETTINGS_KEY);
 });
 

@@ -6,35 +6,16 @@
 // path the tooltip and click holds use; the tab coming back (visibilitychange) or the pane coming into view
 // (IntersectionObserver) paints ONE catch-up and re-arms the live tick, which stops while hidden instead of
 // waking every 2 s into a forced layout. A bars frame that outruns its skeleton is parked, not dropped.
-// Headless over the render test's DOM shim, with a recording document and a fake IntersectionObserver.
+// Headless over the shared fake DOM, ui/test-dom-shim.ts, with a recording document and a fake IntersectionObserver.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { nodeFactory } from "./test-dom-shim";
 
-// ---- minimal DOM shim (the timeline-render.test.ts shim: only what the view touches) ----
-function makeNode(tag: string): any {
-  const n: any = {
-    tag, _attrs: {}, children: [] as any[], style: {}, dataset: {}, textContent: "", parentNode: null,
-    classList: { _s: new Set<string>(), add(...a: string[]) { a.forEach((c) => this._s.add(c)); },
-      remove(...a: string[]) { a.forEach((c) => this._s.delete(c)); },
-      toggle(c: string, f?: boolean) { f ? this._s.add(c) : this._s.delete(c); }, contains(c: string) { return this._s.has(c); } },
-    setAttribute(k: string, v: any) { this._attrs[k] = v; }, getAttribute(k: string) { return this._attrs[k]; },
-    setAttributeNS(_n: any, k: string, v: any) { this._attrs[k] = v; }, removeAttribute(k: string) { delete this._attrs[k]; },
-    appendChild(c: any) { c.parentNode = n; this.children.push(c); return c; },
-    insertBefore(c: any, ref: any) { c.parentNode = n; const i = this.children.indexOf(ref); i < 0 ? this.children.push(c) : this.children.splice(i, 0, c); return c; },
-    removeChild(c: any) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); return c; },
-    remove() { if (this.parentNode) this.parentNode.removeChild(this); },
-    get firstChild() { return this.children[0] || null; },
-    addEventListener() {}, removeEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; },
-    getBoundingClientRect() { return { width: 1400, height: 420, left: 0, top: 0, right: 1400, bottom: 420 }; },
-    closest() { return null; }, focus() {},
-    createEl(t: string, o: any) { const e = makeNode(t); if (o && o.cls) e.classList.add(o.cls); if (o && o.text) e.textContent = o.text; this.appendChild(e); return e; },
-    createDiv(o: any) { return this.createEl("div", o); }, createSpan(o: any) { return this.createEl("span", o); },
-  };
-  return n;
-}
+// ---- the fake DOM: ui/test-dom-shim.ts, the host measuring 1400x420 ----
+const makeNode = nodeFactory({ rect: { width: 1400, height: 420, left: 0, top: 0, right: 1400, bottom: 420 } });
 // The document RECORDS its listeners so a test can raise visibilitychange the way the browser does — every
 // panel's handler runs, in order — and its visibilityState is a plain settable field.
 const docListeners: Record<string, Array<(e: any) => void>> = {};

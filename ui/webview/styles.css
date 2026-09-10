@@ -574,7 +574,8 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-group-head.dragging { opacity: 0.45; }
 .tab-group-head.drop-target { box-shadow: inset 2px 0 0 var(--accent); }
 /* the disclosure chevron: ▸ folded, turned down while open — the fold-caret idiom (a CSS transition on
-   the flip, no timer) */
+   the flip, no timer). Right after the chip with the count after it (T284), the feed's grouped headers'
+   order; the header is content-sized, so the DOM order alone places them. */
 .tab-group-caret { display: inline-block; flex: 0 0 auto; width: 0.9em; text-align: center; transition: transform 0.12s ease; }
 .tab-group-head:not(.collapsed) .tab-group-caret { transform: rotate(90deg); }
 /* the tag's color as a short bar, not a dot: a dot beside a name is a session pip */
@@ -683,6 +684,13 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab.tab-placeholder.colored .tab-label { opacity: 0.75; }   /* keep the identity color but a touch muted while loading */
 /* the pane-local wait while a clicked loading tab's payload is still on its way (showActive) */
 .tab-loading-wait { display: flex; align-items: center; justify-content: center; min-height: 60vh; }
+/* SKELETON tab (2026-09-07): a tab the kernel LISTS but this page holds no current copy of — after a redial the
+   kernel sends only the active tab in full and withholds the rest (skeleton-tabs.ts), each resting here until a
+   click or the idle prefetch loads it. Distinct from the placeholder by construction: NO swirl (that means "romp is
+   generating this", a transient — this is a running session at rest), the identity color kept, the label a touch
+   muted at the placeholder's own 0.75 (no new opacity vocabulary), and an honest chip — the kernel's status dot, or
+   the gray unknown ring until the first status frame lands (render.ts makeSkeletonTab / applyTabStatus). */
+.tab.tab-skeleton .tab-label { opacity: 0.75; }
 .tab-ph-swirl { width: 12px; height: 12px; border-radius: 2px; flex: none;
   animation: tab-ph-swirl-spin 7s linear infinite; }   /* .tab is flex with its own gap, so no margin needed */
 @keyframes tab-ph-swirl-spin { to { transform: rotate(-360deg); } }
@@ -783,6 +791,9 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 /* the tab menu's Tags flyout (the user 2026-08-24): identity dot per union tag, ✕ = remove-
    everywhere, an inline New tag… input — all in the menu vocabulary, no new font sizes */
 .ctx-tag-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; }
+/* a tag chip standing for an UNSELECTED toggle (the tag-lens menu, T283): faded, its colour kept —
+   the state class; tag-menu.ts paints the same opacity inline for a sheet-less host (TAG_CHIP_OFF_OPACITY) */
+.tag-chip-off { opacity: 0.45; }
 .ctx-tag-x { flex: 0 0 auto; background: none; border: none; color: var(--dim); cursor: pointer; font: inherit; padding: 0 2px; }
 .ctx-tag-x:hover { color: var(--fg); }
 .ctx-item-newtag { cursor: default; }
@@ -790,6 +801,47 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 .ctx-tag-input:focus { outline: none; border-color: var(--accent); }
 .ctx-item-body { display: flex; flex-direction: column; line-height: 1.25; }
 .ctx-item-sub { font-size: 0.82em; opacity: 0.6; }
+/* A row whose sub-line or label carries a tag name wears a modifier, .ctx-sub-capped (tab menu review rounds 2 to 4,
+   2026-09-09): the menu's rows are nowrap (.ctx-item above) and the menu is sized by its widest row, so a tag name in a
+   row widened the menu with the name past a narrow pane's edge at the 40-character maximum. Rounds 2 and 3 capped the
+   sub-line at 36em of its own font, a constant that still widened the dark theme's menu by 28px (Inter's widest fixed
+   sub-line, Emoji's, is 33.1em; the light theme's Space Grotesk puts it at 36.1em), so a 400px pane overflowed. Round 4
+   makes the rule structural, with no per-face constant: in a capped row the body takes the row's spare width and no
+   more (flex-basis 0 and min-width 0 inside the row's flex), and its label and sub-line contribute nothing to the
+   menu's intrinsic width (width 0, then min-width 100% of the body once laid out), so the menu is as wide as its fixed
+   rows alone and the tag-bearing text elides with an ellipsis at whatever width they set, in every face. The wearers:
+   the Hide tab row and the Tags row, the two rows of the MAIN menu whose sub-line carries a tag name; no row of the
+   Tags flyout (the rule after this one). Never .ctx-item-sub's or .ctx-item-label's own rule: the fixed rows stay whole
+   in every face (round 3: a cap on the class cut the Emoji row's sub-line). tab-hide.test pins the rule;
+   tab-hide-browser.test measures it in Chromium with Inter and Space Grotesk loaded, with and without the tag-bearing
+   rows, at 450px, 400px and 383px panes. */
+.ctx-sub-capped .ctx-item-body { flex: 1 1 0; min-width: 0; }
+.ctx-sub-capped .ctx-item-label, .ctx-sub-capped .ctx-item-sub { width: 0; min-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The Tags flyout's rows wear no modifier (round 5): the flyout has no wide fixed row to hold it open, so the structural
+   rule worn there collapsed it to the New tag input's width and cut a five-character tag's Show when folded line and a
+   sixteen-character Move to label, both whole at the base. A flyout row keeps its natural width up to a per-row cap with an
+   ellipsis (round 2's shape, in the flyout alone): 22em for a label, so a 19-character destination is whole (14.5em) and a
+   40-character one elides (23.8em to 25.5em by face and engine); 36em of its own font for a sub-line, so the Show when
+   folded line is whole for a 19-character name (30.3em) and elides for a 40-character one (38.7em to 41.5em). The ✕ and
+   the + sit beside their labels as at the base, and the flyout is as wide as its widest row up to the cap.
+   tab-hide-browser.test measures the flyout nested in a menu, in both faces. */
+.ctx-sub-tags .ctx-item-label { max-width: 22em; overflow: hidden; text-overflow: ellipsis; }
+.ctx-sub-tags .ctx-item-sub { max-width: 36em; overflow: hidden; text-overflow: ellipsis; }
+/* The flyout scrolls within itself past the pane's height (tab menu review round 7; the many-tags rule in ui/CLAUDE.md): at
+   thirty tags its rows ran to 902px in a 700px pane, the top clamped to 0 by place() and nothing scrolling (a fixed element adds
+   no scroll extent), so the New tag input and Configure tags at its foot were off the page and unreachable, from 23 tags on.
+   The cap is the visible height less the 4px place() keeps at each edge (dvh, the picker's unit at the keyboard cap: vh runs past
+   the visible bottom by the browser chrome on the phone page); overflow-y auto is the pop-ups' idiom (.slash-pop, .mention-pop,
+   .cite-preview) and overscroll-behavior contain the staged list's, so a wheel at the end does not scroll the page behind. The
+   foot scrolls with the rows (the flat structure the rows' insertBefore(nrow) scheme relies on); place() reads the flyout's height
+   after layout, so the capped box is what it seats. The capped box is usable because the window's scroll listener that dismisses
+   the menu when the page moves under it ignores a scroll whose target the menu contains (render.ts, beside dismissTabMenu's other
+   listeners; round 8): without that exemption the flyout's own scroll closed the menu on the first wheel tick and on a click's
+   scroll into view. The click that opens the flyout focuses the New tag input without scrolling the box (round 9), so the flyout
+   opens at its top with the session's own rows in view. tab-hide-browser.test measures the thirty-tag flyout inside the pane,
+   reaches Configure tags by scrolling, and drives the scroll through render.ts's own listeners in both engines. No structural rule
+   (nothing holds the box open; the rows size its width, as before). */
+.ctx-sub-tags { max-height: calc(100dvh - 8px); overflow-y: auto; overscroll-behavior: contain; }
 /* identity-color swatches (the user 2026-06-29): the romp palette as circles, the current one ringed. A grid
    so 9 colors wrap to a tidy block instead of one long row. */
 /* Billing submenu (the user 2026-08-09: the login/API-key switch lives here now, not the statusline).
@@ -4559,16 +4611,21 @@ body.filebrowse-open { overflow: hidden; }
 .fc-chip-you { background: var(--accent-wash); color: var(--accent); }
 .fc-tag { flex: 0 0 auto; font-size: 0.66em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: var(--radius-pill); color: var(--dim); background: var(--overlay-05); white-space: nowrap; }
+/* the about follow-on (2026-09-10; file-comments.ts renderCard, renderChangeCard, lightChanges): a comment's tag names the
+   changes it is about, or the change that answered it, in the accent (the tag is the link between the two cards), and the
+   pointer over it rings those changes' marks in the text (.fc-lit on the panel's own .fc-ins and .fc-del marks; a
+   deletion's ring goes on its struck label, the generated text). The change card's count tag is a control (a click shows
+   the first comment about the change) and reads as one: a pointer, the accent on hover. Tokens only, no new size. */
+.fc-tag.fc-about { color: var(--accent); background: var(--accent-wash); }
+.fc-about-count { cursor: pointer; }
+.fc-about-count:hover, .fc-about-count:focus-visible { color: var(--accent); }
+.fc-ins.fc-lit, .fc-del.fc-lit::before { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
 .fc-time { flex: 0 0 auto; margin-left: auto; color: var(--text-faint); font-size: 0.72em; font-variant-numeric: tabular-nums; }
 .fc-preview { color: var(--dim); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fc-body { font-size: 0.86em; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
 .fc-replies { display: flex; flex-direction: column; gap: 5px; }
 .fc-reply { border-radius: 6px; padding: 5px 8px; background: var(--overlay-05); }
 .fc-reply-you { background: var(--accent-wash); border-left: 3px solid var(--accent); }
-/* a comment on a change card (.fc-hosted; renderHosted) is a column at the turns' own 5px (.fc-replies): its row, its
-   turns, a reply's box (placeComposer) and its buttons. As a plain block it stood the box against the turn above and the
-   buttons below at 0px, and after a turn of yours the two accent washes ran together as one (the 2026-09-07 review). */
-.fc-hosted { display: flex; flex-direction: column; gap: 5px; }
 /* a reply's box stands in the card it answers (the 2026-09-07 follow-on; placeComposer in file-comments.ts), below the
    turns and above the buttons, in the dress of a reply of yours (.fc-reply-you): the wash and the accent edge, so the
    reply being written reads as the next turn. In the panel's own slot (every other kind) the box wears no dress of its own. */

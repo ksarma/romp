@@ -7,7 +7,10 @@
 // alone, and .fileview-btn's rule sits outside it; the sheets' ladder tests read declared literals. This resolves the
 // cascade over the WHOLE sheet along the real ancestry, the way styles-fileview-err-sizes.test.ts does (its resolver,
 // copied), for the saved row's ✕ and words beside the buttons and words they must match. Both sheets — the feed page loads
-// only feed.css. Synthetic: only the repo's own text.
+// only feed.css. The about follow-on (plans/file-review.md decision 46, 2026-09-10) put Resolve answered in the head's
+// action row after Comment on this file, a default-class button, with its confirm a .fc-row.fc-choice under the toggles
+// like the Track choice: both are on the chains below, and the DOM pin reads the row with that block between the last
+// button and the row's append. Synthetic: only the repo's own text.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -169,13 +172,15 @@ const BUTTONS: Record<string, string> = {
   "saved line ✕": SAVED + " > button.fileview-btn.fc-x",
   "panel Track changes": HEAD + " > div.fc-row > button.fileview-btn.fc-toggle",
   "panel Comment on this file": HEAD + " > div.fc-row > button.fileview-btn",
-  "Track scope / Stop confirm buttons": HEAD + " > div.fc-row.fc-choice > button.fileview-btn",
+  "panel Resolve answered (N)": HEAD + " > div.fc-row > button.fileview-btn",
+  "Track scope / Stop / Resolve answered confirm buttons": HEAD + " > div.fc-row.fc-choice > button.fileview-btn",
   "list error ✕ (Nothing decided, under the Changes empty line)": LIST + " > div.fileview-err.fc-err > button.fileview-btn.fc-x",
 };
 // the words beside the words they must match: every .fc-note in the panel is the one size
 const WORDS: Record<string, string> = {
   "saved line words": SAVED + " > span.fc-note",
   "Stop confirm words": HEAD + " > div.fc-row.fc-choice > span.fc-note",
+  "Resolve answered confirm words": HEAD + " > div.fc-row.fc-choice > span.fc-note",
   "Changes empty line": LIST + " > div.fc-empty",
 };
 // the shape the slice first built, which no test resolved: the class on the row, the ✕ under it
@@ -189,7 +194,10 @@ test("the chains above are the real DOM: hiddenSavedRow, renderCards, the head's
   assert.match(PANEL, /list\.appendChild\(el\("div", "fc-empty", "No changes are pending\. All or Comments above shows the comments\."\)\);\n\s*for \(const n of this\.strayRows\(list, \["change:", "changes", "card:"\]\)\) list\.appendChild\(n\);/, "the empty line and the stray err rows are the list's children too");
   assert.match(PANEL, /const row = el\("div", "fileview-err fc-err" \+ \(e\.warn \? " fc-err-warn" : ""\)\);[\s\S]*?const x = btn\("✕", "fcerrx", "fileview-btn fc-x"\);[^\n]*row\.appendChild\(x\);/, "an err row's ✕");
   assert.match(PANEL, /const head = el\("div", "fc-head"\);\n\s*const row = el\("div", "fc-row"\);\n\s*const t = btn\("Track changes", "fctrack", "fileview-btn fc-toggle"\);/);
-  assert.match(PANEL, /row\.appendChild\(btn\("Comment on this file", "fcfile"\)\);\n\s*head\.appendChild\(row\);/);
+  // the action row's tail: Comment on this file, then the Resolve answered block (decision 46), its button default-class and
+  // appended to the SAME row inside the block's braces, and then the row goes to the head; nothing else stands between
+  assert.match(PANEL, /row\.appendChild\(btn\("Comment on this file", "fcfile"\)\);\n(?:\s*\/\/[^\n]*\n)*\s*const answered = s \? answeredComments\(this\.cards\(\)\) : \[\];\n\s*if \(answered\.length \|\| this\.resolvingAnswered\) \{\n\s*const ra = btn\([^\n]*, "fcresolveanswered"\);\n(?:\s*ra\.[^\n]*\n)*\s*row\.appendChild\(ra\);\n\s*\}\n\s*head\.appendChild\(row\);/, "Comment on this file and Resolve answered are the action row's children, and the row is the head's");
+  assert.match(PANEL, /const ask = el\("div", "fc-row fc-choice"\);\n\s*ask\.appendChild\(el\("span", "fc-note", resolveAnsweredAsk\(answered\.length\)\)\);\n\s*ask\.appendChild\(btn\("Resolve", "fcresolveanswereddo"\)\);\n\s*ask\.appendChild\(btn\("Cancel", "fcresolveansweredcancel"\)\);\n\s*underToggles\(ask\);/, "the Resolve answered confirm: the class on its span, its buttons the row's children, the row the head's");
   assert.match(PANEL, /const stop = el\("div", "fc-row fc-choice"\);\n\s*const ask = el\("span", "fc-note", "Stop tracking everything under "\);/, "the Stop confirm: the class on its span");
   assert.match(PANEL, /stop\.appendChild\(btn\("Stop", "fctrackstop"\)\);\n\s*stop\.appendChild\(btn\("Cancel", "fctrackcancel"\)\);\n\s*underToggles\(stop\);/, "…its buttons the row's children, the row the head's");
   assert.match(PANEL, /function btn\(label: string, act: string, cls = "fileview-btn"\)/);

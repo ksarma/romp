@@ -88,11 +88,10 @@ test("the singleton stays breaks:false — assistant rendering is unchanged", ()
 });
 
 test("userMd() renders through the breaks:true instance and the SAME sanitizer as md()", () => {
-  // both renderers take the sanitized DOM back to link PR references before serializing (pr-links.ts, 2026-09-06);
-  // since Slice 1 of plans/markdown-viewer.md the sanitizer is sanitizeMd (md-sanitize.ts), one call shared with the
-  // file viewer, which returns the sanitized <body>; the profile (MD_PURIFY, upstream's ALLOW_DATA_ATTR: false and
-  // GitHub's rules on top) is spelled there and nowhere in render.ts; both signatures carry an optional repo
-  // parameter for the PR links (the 2026-09-08 fold of upstream's converged userMd), so the match on them is loose
+  // both renderers take the sanitized DOM back to link PR references before serializing (pr-links.ts); the
+  // sanitizer is sanitizeMd (md-sanitize.ts, since Slice 1 of plans/markdown-viewer.md), one call shared with the
+  // file viewer, which returns the sanitized <body>; the profile is spelled there and nowhere in render.ts. Both
+  // signatures carry an optional repo parameter for the PR links, so the match on them is loose.
   const fn = RENDER.match(/function userMd\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(fn, "userMd() must exist");
   assert.match(fn, /const clean = sanitizeMd\(userMdHtml\(src\)\);/);

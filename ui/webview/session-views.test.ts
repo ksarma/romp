@@ -61,8 +61,9 @@ test("executed: the canonical key ignores list order AND which key the kernel us
 test("the tabOrder frame carries the blob and the strip filters on it, composing with #only", () => {
   // the frame's provenance rides along since T233 (captureViews still runs before the strip is applied; the
   // kernel's own name, selfHost, is adopted first of all, pr-links.test.ts pins that line) and the frame's
-  // live set reaches applyTabOrder beside it (T258)
-  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}, m\.live\);\s*\n\s*\}/,
+  // live set reaches applyTabOrder beside it (T258); the open tab menu's views hook runs LAST, once the blob is
+  // held and the strip applied (round 4 of the tab menu review, 2026-09-09; tab-hide.test.ts pins both callers)
+  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}, m\.live\);\s*\n\s*viewsChanged\(\);[^\n]*\n\s*\}/,
     "echo-less frames still reach captureViews — an older kernel must age out a pending edit");
   assert.match(RENDER, /const inViewIds = ids\.filter\(tabInView\);/);
   assert.match(RENDER, /const visibleIds = only \? inViewIds\.filter\(\(id\) => matchesOnly\(nameOf\(id\), only\)\) : inViewIds;/);

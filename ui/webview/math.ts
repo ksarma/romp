@@ -5,8 +5,8 @@
 // Rendering happens AFTER the sanitizer, not inside marked (plans/markdown-viewer.md Slice 1 review,
 // 2026-09-07). KaTeX carries every piece of vertical layout in inline `style` (a strut's height and
 // vertical-align, a vlist row's top, a fraction line's border width, a radical's padding), and the
-// shared sanitizer keeps only colour declarations in a `style` attribute (decision 6), so KaTeX's
-// output passed through sanitizeMd came back flat: numerator and denominator on one line, a
+// shared sanitizer (md-sanitize.ts) keeps only colour declarations in a `style` attribute, so KaTeX's
+// output passed through sanitizeMd would come back flat: numerator and denominator on one line, a
 // superscript at the baseline, the radical drawn over its radicand. The extensions therefore emit an
 // INERT placeholder (class md-math-inline or md-math-display, a span inside a paragraph or a div for a
 // display paragraph of its own, the TeX as its text, HTML-escaped) that the sanitizer treats as any
@@ -14,19 +14,19 @@
 // sanitized DOM, so its styles never meet DOMPurify. Nothing an author writes gains by hand-writing the
 // placeholder markup: KaTeX renders only what TeX says, under `trust: false` (no \href, \url,
 // \includegraphics, \htmlClass, \htmlStyle, \htmlData), which is KaTeX's own safety model, with its two
-// bounds set as well (maxSize on the sizes a formula asks for, maxExpand on its macro expansion, computed per
-// formula; the constants below say why) and this module's own bounds on the TeX it hands over (one formula's
-// length, one message's total). KaTeX
-// renders with output: "html" ONLY, no MathML twin. The KaTeX layout CSS ships via styles.css AND feed.css,
-// each with @import "katex/dist/katex.min.css" (esbuild inlines the sheet into both and emits the fonts to
-// dist/fonts/ once, the same hashed names): styles.css dresses the chat page and the Files pane's page, feed.css
-// the feed page, which links no styles.css and hosts the viewer too, so it took the import in Slice 4 of
-// plans/markdown-viewer.md (render-math.test.ts and math-bundles.test.ts pin both sheets; a third sheet that hosts
-// the viewer needs the same import). md-config.ts registers the post-pass with the sanitizer at load (md-sanitize.ts
-// registerMdPostPass), and every bundle that hosts the chat or the viewer (render.js, files.js, feed.js) imports
-// md-config.ts, so every sanitizeMd call renders math on every surface: the chat's md() and userMd(), and the
-// viewer's mdBlock in the chat page, the Files pane and the feed (Slice 4, decision 1; before it files.js and
-// feed.js had neither the grammar nor the fill nor KaTeX).
+// bounds set as well (maxSize on the sizes a formula asks for, maxExpand on its macro expansion, computed
+// per formula; the constants below say why) and this module's own bounds on the TeX it hands over (one
+// formula's length, one message's total). KaTeX renders with output: "html" ONLY, no MathML twin. The
+// KaTeX layout CSS ships via styles.css AND feed.css, each with @import "katex/dist/katex.min.css" (esbuild
+// inlines the sheet into both and emits the fonts to dist/fonts/ once, the same hashed names): styles.css
+// dresses the chat page and the Files pane's page, feed.css the feed page, which links no styles.css and hosts
+// the viewer too, so it took the import in Slice 4 of plans/markdown-viewer.md (render-math.test.ts and
+// math-bundles.test.ts pin both sheets; a third sheet that hosts the viewer needs the same import). md-config.ts
+// registers the post-pass with the sanitizer at load (md-sanitize.ts registerMdPostPass), and every bundle that
+// hosts the chat or the viewer (render.js, files.js, feed.js) imports md-config.ts, so every sanitizeMd call
+// renders math on every surface: the chat's md() and userMd(), and the viewer's mdBlock in the chat page, the
+// Files pane and the feed (Slice 4, decision 1; before it files.js and feed.js had neither the grammar nor the
+// fill nor KaTeX).
 //
 // The delimiter problem: `$` is everywhere in chat text that is NOT math (shell variables,
 // prices), and a naive $..$ tokenizer strikes a formula through half a sentence the way the
@@ -294,7 +294,8 @@ export const MATH_ERROR_COLOR = "var(--math-err)";
 
 /** What every katex.render call here passes: KaTeX's html output only (no MathML twin), no trusted command (KaTeX's own
  *  safety model), the size cap and the error ink; the mode, the per-formula expansion count and whether to throw are the
- *  call's. */
+ *  call's. trust: false is KaTeX's own default, spelled out so that enabling trust is a visible edit (render-math.test.ts
+ *  pins the option): under it no TeX command mints a link, an image or an HTML attribute of the author's choosing. */
 const KATEX_OPTIONS = { output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, errorColor: MATH_ERROR_COLOR } as const;
 
 // Closing punctuation allowed right after the closing $ (plus whitespace / end-of-text).
@@ -486,10 +487,11 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
  *  text is the same, and nothing reads the bytes (the highlights pair on the .katex root, the anchor map
  *  on text; md-sanitize-katex-browser.test.ts takes the DOM path as the reference and says why). The
  *  selector reaches a placeholder an author typed by hand as well (no class name is special-cased; plan
- *  item 7), so in a bundle that carries the grammar such a paragraph's rendered text no longer equals
- *  its source and the anchor map refuses it with the Raw view offered, as it refuses a paragraph with
- *  `$x^2$` there today (Slice 5's math holes are where math meets the map); a bundle without the grammar
- *  has no fill and maps it as main did. Four bounds stand ahead of the one katex.render
+ *  item 7): it renders under the same options, so it gains nothing, and in a bundle that carries the
+ *  grammar such a paragraph's rendered text no longer equals its source and the anchor map refuses it
+ *  with the Raw view offered, as it refuses a paragraph with `$x^2$` there today (Slice 5's math holes
+ *  are where math meets the map); a bundle without the grammar has no fill and maps it as main did.
+ *  Four bounds stand ahead of the one katex.render
  *  call, each shown as the source with its reason (showSource): a formula longer than MATH_TEX_MAX_CHARS;
  *  a formula that would take the call's rendered total past MATH_TEX_BUDGET_CHARS (the running total is
  *  this call's, so it is one message's or one note's; a shorter formula after it still renders while it

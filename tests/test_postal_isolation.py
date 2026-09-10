@@ -8,6 +8,7 @@ Synthetic only — placeholder UUIDs, hermetic temp state dir, no real session d
 """
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from romp_load import load_source
@@ -20,6 +21,16 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 pm = load_source("romp_postal", os.path.join(BIN, "romp-postal-service"))
 
 SID = "11111111-2222-3333-4444-555555555555"
+# The mailbox case drains a box of its OWN (2026-09-10). Every postal test module loads
+# bin/romp-postal-service under the one name `romp_postal`, and load_source re-executes into the same
+# module object, so under pytest they all share one MAILROOT, and most of them address the placeholder
+# sid above. A sibling's case that leaves mail in that sid's new/ on purpose (the restore cases in
+# tests/test_postal_deferred_push_identity.py put a message back) is drained by the sibling's later
+# cases in serial order, but xdist hands cases to workers one at a time, so this case ran right after
+# the leftover on one worker and read two bodies. Same rule as the goal-store fixtures (CLAUDE.md,
+# Testing): a case that asserts the exact contents of a shared store uses a private synthetic sid. The
+# flag cases keep SID: they read the flags file only, and clear it in tearDown.
+BOX_SID = "12121212-3434-5656-7878-9a9a9a9a9a9a"
 
 
 def _set_flag(sid, postal_off):
@@ -63,16 +74,18 @@ class PostalOff(unittest.TestCase):
         self.assertFalse(pm._postal_off(SID), "a corrupt flags file must NOT wedge messaging (fail open)")
 
     def test_read_box_holds_mail_while_isolated(self):
-        box = pm.MAILROOT / SID / "new"
+        box = pm.MAILROOT / BOX_SID / "new"
+        shutil.rmtree(box.parent, ignore_errors=True)               # nothing of an earlier run in it
+        self.addCleanup(shutil.rmtree, box.parent, ignore_errors=True)
         box.mkdir(parents=True, exist_ok=True)
         (box / "msg1").write_text("From: peer\nFrom-Id: x\nDate: now\n\nhello\n")
-        _set_flag(SID, True)
-        self.assertEqual(pm.read_box(SID, consume=True), [],
+        _set_flag(BOX_SID, True)
+        self.assertEqual(pm.read_box(BOX_SID, consume=True), [],
                          "isolated → a drain delivers nothing")
         self.assertTrue((box / "msg1").exists(),
                         "the message stays in new/ (not consumed) until the session reconnects")
-        _set_flag(SID, False)
-        got = pm.read_box(SID, consume=True)
+        _set_flag(BOX_SID, False)
+        got = pm.read_box(BOX_SID, consume=True)
         self.assertEqual([m["body"] for m in got], ["hello"],
                          "reconnecting delivers the held mail")
 
