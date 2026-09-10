@@ -56174,8 +56174,12 @@ _UPD_JS = (
     # and unload, so only the load can wire it without a timer (no shipped path navigates a pane in
     # place; a pane reload reloads the top document). The pane WINDOW's focus, capture phase, is the
     # disarm Firefox needs when Tab leaves the banner into a frame (no focusout fires in the shell).
+    # The pane document's pointerup ends a press that began in the shell (`press` below): a primary
+    # press on the banner released over a pane delivers its pointerup to the pane's document alone, in
+    # both engines measured, and no click follows anywhere in the shell.
     "function wireFrame(f){try{var d=f.contentDocument;if(!d||d.__rompUpdWired)return;"
     "d.__rompUpdWired=true;d.addEventListener('pointerdown',function(){if(armed)disarm();},true);"
+    "d.addEventListener('pointerup',function(){press=false;},true);"
     "var w=d.defaultView;if(w)w.addEventListener('focus',function(){if(armed)disarm();},true);}catch(e){}}"
     "function wireFrames(){var fs=document.getElementsByTagName('iframe');for(var i=0;i<fs.length;i++){(function(f){"
     "if(!f.__rompUpdLoad){f.__rompUpdLoad=true;f.addEventListener('load',function(){wireFrame(f);});}wireFrame(f);})(fs[i]);}}"
@@ -56243,17 +56247,41 @@ _UPD_JS = (
     # the disarms for attention moving off the banner, each covering a case the others miss (the comment
     # above says which): a press elsewhere in this document, a press or focus in a pane (wireFrames
     # above), focus leaving the banner for anything outside it, the window losing focus. `press` is a
-    # press that began inside the box and has not ended: set by the document's capture-phase pointerdown
-    # (the same listener that disarms on a press outside, which also clears it), cleared by the click
-    # that ends the gesture, a pointercancel or the window's blur, and NOT by pointerup, because on a
-    # touch tap pointerup comes before the compatibility mousedown that moves focus (a flag cleared at
-    # pointerup left a tap on the confirm posting nothing where the engine does not focus buttons). While
-    # it is set, a focusout with no relatedTarget is that press blurring the label (WebKit does not focus a
-    # button on a press, so the label loses focus to nothing at the mousedown on the confirm or Cancel; a
-    # press on the message text does the same in every engine) and disarms nothing: the click that
-    # follows decides. Without it, the same focusout is focus leaving for nothing (a script's blur, an
-    # engine's window switch) and disarms
-    "document.addEventListener('pointerdown',function(e){var inside=!!(e&&e.target&&box.contains(e.target));press=inside;if(armed&&!inside)disarm();},true);"
+    # PRIMARY press (button 0, the primary pointer) that began inside the box and has not ended: set by
+    # the document's capture-phase pointerdown (the same listener that disarms on a press outside; any
+    # other pointerdown, a secondary button or a second finger included, clears it, since no click of
+    # ours can follow such a press), and cleared by the event that ends the gesture: the click, a
+    # pointercancel (a touch that became a scroll), a pointerup delivered OUTSIDE the box in this
+    # document (a press dragged off the banner and released on the page; no click inside the box can
+    # follow), a pointerup in a pane document (wireFrame above: a press released over a pane, whose
+    # pointerup the shell never sees), a mouse pointer's pointerleave on an element outside the box (the
+    # mouse leaving the document while pressed, where the engine delivers it), or the window's blur. NOT
+    # by a pointerup inside the box, nor by lostpointercapture or a touch pointer's pointerleave: on a
+    # touch tap all three come before the compatibility mousedown that moves focus (a flag cleared at
+    # pointerup left a tap on the confirm posting nothing where the engine does not focus buttons; the
+    # implicit capture is released, and the touch pointer leaves every element up to the root, in the
+    # same window), and the pointerup inside the box is the tap on the confirm or Cancel itself, whose
+    # click follows. While it is set, a focusout with no relatedTarget is that press blurring the label
+    # (WebKit does not focus a button on a press, so the label loses focus to nothing at the mousedown on
+    # the confirm or Cancel; a press on the message text does the same in every engine) and disarms
+    # nothing: the click that follows decides. Without it, the same focusout is focus leaving for nothing
+    # (a script's blur, an engine's window switch) and disarms. Measured in Chromium and Firefox over the
+    # module's scratch page (review round 4, 2026-09-10): a right or middle click inside the banner ends
+    # in auxclick with no click, so it never sets the flag now; a primary press released over a pane
+    # delivers pointerup to the pane document alone and the pane's listener ends it; a primary press
+    # released outside the viewport ends in Chromium with pointerup and click on the root element (the
+    # click ends it), and in Firefox, under Playwright's synthetic mouse, with the pointerleave chain
+    # alone: a release past the top edge leaves the body on the way (the body's pointerleave ends it),
+    # a release past the right edge, level with the banner, leaves the box and then nothing else (no
+    # pointerup, no click, no leave on the body or the root). That last shape stays open: a Firefox
+    # press released outside the window whose exit delivers no leave beyond the box leaves the flag set
+    # until the next pointerdown, click or blur (measured only under the synthetic mouse; a real pointing
+    # device's exit from the window is expected to deliver the leave, unmeasured), and until then a
+    # focusout to nothing (a script's blur) disarms nothing; every user gesture that leaves the banner
+    # still disarms it (a press anywhere, the window's blur, focus moving)
+    "document.addEventListener('pointerdown',function(e){var inside=!!(e&&e.target&&box.contains(e.target));press=inside&&e.button===0&&e.isPrimary!==false;if(armed&&!inside)disarm();},true);"
+    "document.addEventListener('pointerup',function(e){if(!(e&&e.target&&box.contains(e.target)))press=false;},true);"
+    "document.addEventListener('pointerleave',function(e){if(e&&e.pointerType==='mouse'&&!(e.target&&box.contains(e.target)))press=false;},true);"
     "document.addEventListener('click',function(){press=false;},true);"
     "document.addEventListener('pointercancel',function(){press=false;},true);"
     "box.addEventListener('focusout',function(e){if(!armed)return;var t=e&&e.relatedTarget;if(t&&box.contains(t))return;if(!t&&press)return;disarm();});"

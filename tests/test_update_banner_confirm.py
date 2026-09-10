@@ -16,11 +16,21 @@ the buttons ignore a repeated keydown (KeyboardEvent.repeat) for Enter and Space
 dropped by exact events, never a timer: Cancel (a click, Enter or Space on it), Escape through the
 shell's Escape chain, a press outside the banner in the shell document, a press or a focus in a pane
 iframe, focus leaving the banner (a move between the label, the confirm and Cancel keeps it, and so does
-a focusout to nothing under a press that began inside the box: WebKit does not focus a button on a
-press), the window losing focus, a hidden tab, and every re-render of the banner. The click that focuses
-the window therefore never counts: the blur that took focus away disarmed the banner first. An answer
-without counts drops the counts the banner held, so the label never shows a previous kernel life's
-numbers; an answer without a registry count says the other kernels may restart too.
+a focusout to nothing under a PRIMARY press that began inside the box and has not ended: WebKit does not
+focus a button on a press), the window losing focus, a hidden tab, and every re-render of the banner. The
+click that focuses the window therefore never counts: the blur that took focus away disarmed the banner
+first. The press ends with the click, a pointercancel, a pointerup outside the box or in a pane document,
+a mouse pointer's pointerleave outside the box, or the window's blur; a secondary button or a second
+finger never begins one. One ending is missing: a Firefox press released outside the window whose exit
+delivers no leave beyond the box (seen under Playwright's synthetic mouse for a release past the right
+edge, level with the banner) leaves the flag set until the next press, click or blur, and until then a
+focusout to nothing disarms nothing; every gesture that leaves the banner still disarms it. An answer without counts drops the counts the banner held, so the label never
+shows a previous kernel life's numbers; an answer without a registry count says the other kernels may
+restart too, and a registry count without a session count says the other kernels restart too without
+naming this kernel's sessions. The armed row is laid over the plain row it replaced, measured: the label
+covers Update's footprint, Restart stands to its right on Update's row at every width from 640px up
+whatever the label says (its text wraps inside it where the row is short of room), and Cancel never
+shares a pixel with Not now; a resize while armed and the re-read's new text re-fit it.
 
 EXECUTED, not pinned: node runs the kernel's _UPD_JS (the served banner script, as the browser receives
 it) and the shell's Escape chain against fakes for document, window, location and fetch, one process per
@@ -119,7 +129,12 @@ function fetch(u, o) {
     json: function () { return Promise.resolve({ ok: UPDATE_OK }); }, text: function () { return Promise.resolve(UPDATE_TEXT); } });
   return Promise.reject(new Error("unexpected fetch " + u));
 }
-function emit(t, ev) { (LISTENERS[t] || []).forEach(function (l) { l.f(ev || {}); }); }
+// a pointer event is a primary mouse press unless the scenario says otherwise (button, isPrimary, pointerType)
+function emit(t, ev) {
+  ev = ev || {};
+  if (t.indexOf("pointer") === 0) { if (ev.button === undefined) ev.button = 0; if (ev.isPrimary === undefined) ev.isPrimary = true; if (ev.pointerType === undefined) ev.pointerType = "mouse"; }
+  (LISTENERS[t] || []).forEach(function (l) { l.f(ev); });
+}
 function wemit(t, ev) { (WLISTENERS[t] || []).forEach(function (l) { l.f(ev || {}); }); }
 function eemit(e, t, ev) { (e.listeners[t] || []).forEach(function (l) { l.f(ev || {}); }); }
 function key(k, repeat) { return { key: k, repeat: !!repeat, preventDefault: function () { PREVENTED++; }, stopPropagation: function () { STOPPED++; } }; }
@@ -134,6 +149,8 @@ function state() {
            pointerdownCapture: caps(LISTENERS.pointerdown),
            boxFocusout: (BOX.listeners.focusout || []).length, goFocusout: (GO.listeners.focusout || []).length,
            paneWired: FRAMES.map(function (f) { return caps(f.contentDocument.listeners.pointerdown); }),
+           paneUp: FRAMES.map(function (f) { return caps(f.contentDocument.listeners.pointerup); }),
+           resizeListeners: (WLISTENERS.resize || []).length,
            paneFocus: FRAMES.map(function (f) { return caps(f.contentDocument.defaultView.listeners.focus); }),
            paneLoad: FRAMES.map(function (f) { return (f.listeners.load || []).length; }),
            focus: FOCUS.slice(), active: document.activeElement ? document.activeElement.id : "",
@@ -510,9 +527,11 @@ out({ afterText: afterText, afterLeave: afterLeave });""")
 
     def test_a_focusout_to_nothing_without_a_press_inside_disarms(self):
         # the control for the rule above: a window blur, a script's blur or an engine's window switch reach
-        # the box as a focusout with no relatedTarget and no press inside, and disarm. The flag never
-        # lingers: a press inside that ended in a click (here a swallowed multi-click), a pointercancel (a
-        # touch that became a scroll) or the window's blur is over, and the next focusout to nothing disarms
+        # the box as a focusout with no relatedTarget and no press inside, and disarm. The flag does not
+        # outlive the gesture that set it: a press inside that ended in a click (here a swallowed
+        # multi-click), a pointercancel (a touch that became a scroll) or the window's blur is over, and
+        # the next focusout to nothing disarms (the other endings, and the one shape that has none, are
+        # the next two tests)
         s = run_banner("""
 GO.onclick(); await tick(); await tick(); eemit(BOX, 'focusout', { relatedTarget: null }); var noPress = state();
 GO.onclick(); emit('pointerdown', { target: CF }); emit('click', { target: CF }); CF.onclick({ detail: 2 }); var swallowed = state();
@@ -524,6 +543,49 @@ out({ noPress: noPress, swallowed: swallowed, afterClick: afterClick, afterCance
         self.assertEqual((s["swallowed"]["armed"], s["swallowed"]["posts"]), (True, []), "a multi-click on the confirm is swallowed, still armed")
         for k in ("noPress", "afterClick", "afterCancel", "blurred", "afterBlur"):
             self.assertEqual((s[k]["armed"], s[k]["posts"]), (False, []), k)
+
+    def test_a_secondary_button_or_a_second_finger_never_begins_a_press(self):
+        # a right or middle click inside the banner ends in auxclick and no click, so a flag it set would
+        # outlive it: only a primary press (button 0, the primary pointer) sets the flag, and the focusout
+        # to nothing after such a click disarms as it would without it. A right press on the message text
+        # blurs the label to nothing at the mousedown, and with no press recorded that disarms at once
+        # (before, the flag kept the banner armed until the next click or blur)
+        s = run_banner("""
+GO.onclick(); await tick(); await tick();
+emit('pointerdown', { target: LBL, button: 2 }); emit('contextmenu', { target: LBL }); emit('pointerup', { target: LBL, button: 2 }); emit('auxclick', { target: LBL }); var afterRight = state();
+eemit(BOX, 'focusout', { relatedTarget: null }); var rightBlur = state();
+GO.onclick(); emit('pointerdown', { target: CF, button: 1 }); emit('pointerup', { target: CF, button: 1 }); emit('auxclick', { target: CF }); eemit(BOX, 'focusout', { relatedTarget: null }); var middleBlur = state();
+GO.onclick(); emit('pointerdown', { target: CF, isPrimary: false }); eemit(BOX, 'focusout', { relatedTarget: null }); var secondFinger = state();
+GO.onclick(); emit('pointerdown', { target: MSG, button: 2 }); eemit(BOX, 'focusout', { relatedTarget: null }); var rightText = state();
+GO.onclick(); emit('pointerdown', { target: CF, button: 0 }); eemit(BOX, 'focusout', { relatedTarget: null }); var primary = state();
+out({ afterRight: afterRight, rightBlur: rightBlur, middleBlur: middleBlur, secondFinger: secondFinger, rightText: rightText, primary: primary });""")
+        self.assertTrue(s["afterRight"]["armed"], "the right click itself disarms nothing")
+        for k in ("rightBlur", "middleBlur", "secondFinger", "rightText"):
+            self.assertEqual((s[k]["armed"], s[k]["posts"]), (False, []), k + ": no press was recorded, so the focusout to nothing disarmed")
+        self.assertTrue(s["primary"]["armed"], "the control: a primary press keeps the armed state under the same focusout")
+
+    def test_a_press_released_outside_the_banner_or_in_a_pane_ends_and_a_taps_leave_chain_does_not(self):
+        # a primary press that began inside the box and was released elsewhere ends without a click inside
+        # the box: a pointerup outside the box in this document, a pointerup in a pane document (the shell
+        # never sees it), or a mouse pointer's pointerleave on an element outside the box (the mouse left the
+        # document while pressed). A touch tap's pointerup inside the box and its pointerleave chain (the
+        # touch pointer leaves every element up to the root before the compatibility mousedown) end
+        # nothing: the tap on the confirm still posts where the engine does not focus buttons
+        s = run_banner("""
+GO.onclick(); await tick(); await tick();
+emit('pointerdown', { target: LBL }); emit('pointerup', { target: ELSEWHERE }); eemit(BOX, 'focusout', { relatedTarget: null }); var releasedOutside = state();
+GO.onclick(); emit('pointerdown', { target: LBL }); eemit(PANE.contentDocument, 'pointerup'); eemit(BOX, 'focusout', { relatedTarget: null }); var releasedInPane = state();
+GO.onclick(); emit('pointerdown', { target: LBL }); emit('pointerleave', { target: ELSEWHERE, pointerType: 'mouse' }); eemit(BOX, 'focusout', { relatedTarget: null }); var mouseLeft = state();
+GO.onclick(); emit('pointerdown', { target: CF, pointerType: 'touch' }); emit('pointerup', { target: CF, pointerType: 'touch' });
+emit('pointerleave', { target: CF, pointerType: 'touch' }); emit('pointerleave', { target: BOX, pointerType: 'touch' }); emit('pointerleave', { target: ELSEWHERE, pointerType: 'touch' });
+eemit(BOX, 'focusout', { relatedTarget: null }); var tapChain = state();
+emit('click', { target: CF }); CF.onclick({ detail: 1 }); var tapped = state();
+out({ releasedOutside: releasedOutside, releasedInPane: releasedInPane, mouseLeft: mouseLeft, tapChain: tapChain, tapped: tapped, paneUp: tapped.paneUp });""")
+        for k in ("releasedOutside", "releasedInPane", "mouseLeft"):
+            self.assertEqual((s[k]["armed"], s[k]["posts"]), (False, []), k + ": the press ended, so the focusout to nothing disarmed")
+        self.assertTrue(s["tapChain"]["armed"], "a tap's pointerup inside the box and its leave chain end nothing")
+        self.assertEqual(len(s["tapped"]["posts"]), 1, "the tap posted")
+        self.assertEqual(s["paneUp"], [[True]], "each pane document's pointerup, capture phase, ends the press")
 
     def test_the_escape_chain_asks_the_banner_before_the_shortcuts_dialog(self):
         # executed, not read: the shortcuts dialog's close is stubbed to claim every Escape, so the order
@@ -660,10 +722,14 @@ class Wiring(unittest.TestCase):
         for ev in ("cx.onclick=function(){disarm(true,true);};",
                    "window.__rompUpdDisarm=function(){if(!armed)return false;disarm(true);return true;};",
                    "d.addEventListener('pointerdown',function(){if(armed)disarm();},true);",
+                   "d.addEventListener('pointerup',function(){press=false;},true);",
                    "var w=d.defaultView;if(w)w.addEventListener('focus',function(){if(armed)disarm();},true);}catch(e){}}",
                    "box.classList.add('rup-arm');fit(g);wireFrames();",
                    "function disarm(back,always){if(!armed)return;var a=document.activeElement,inside=back&&(always||(a&&box.contains(a)));",
-                   "document.addEventListener('pointerdown',function(e){var inside=!!(e&&e.target&&box.contains(e.target));press=inside;if(armed&&!inside)disarm();},true);",
+                   "armed=false;window.removeEventListener('resize',refit);",
+                   "document.addEventListener('pointerdown',function(e){var inside=!!(e&&e.target&&box.contains(e.target));press=inside&&e.button===0&&e.isPrimary!==false;if(armed&&!inside)disarm();},true);",
+                   "document.addEventListener('pointerup',function(e){if(!(e&&e.target&&box.contains(e.target)))press=false;},true);",
+                   "document.addEventListener('pointerleave',function(e){if(e&&e.pointerType==='mouse'&&!(e.target&&box.contains(e.target)))press=false;},true);",
                    "document.addEventListener('click',function(){press=false;},true);",
                    "document.addEventListener('pointercancel',function(){press=false;},true);",
                    "box.addEventListener('focusout',function(e){if(!armed)return;var t=e&&e.relatedTarget;if(t&&box.contains(t))return;if(!t&&press)return;disarm();});",
@@ -672,7 +738,12 @@ class Wiring(unittest.TestCase):
                    "function show(m){disarm();"):
             self.assertIn(ev, js)
         self.assertNotIn("readyState", js, "a parsing pane document is wired like any other, never skipped")
-        self.assertNotIn("'pointerup'", js, "the press is not cleared at pointerup: a tap's focus move comes after it")
+        # the press ends at a pointerup OUTSIDE the box only, and at a MOUSE pointer's leave outside it: a
+        # tap's pointerup inside the box, its lostpointercapture and its leave chain up to the root all come
+        # before the compatibility mousedown that moves focus (the executed cases above play that order)
+        self.assertEqual(js.count("'pointerup'"), 2, "the shell document's guarded clear and the pane document's")
+        self.assertNotIn("lostpointercapture", js, "released between a tap's pointerup and its compat mousedown, so never an ending")
+        self.assertNotIn("'mouseup'", js)
         # the only timers in the WHOLE served script are the in-flight poll's two setTimeout(poll,3000)
         # calls, and no other clock: a new listener that disarmed on a timer, or a setInterval, adds a call
         # and fails this
@@ -844,6 +915,71 @@ await step("geometry", async () => {
   await page.setViewportSize({ width: 1280, height: 800 });
   return out;
 });
+// 1e. the re-read shrinks the label: the page holds the standard label, the kernel now answers the
+// shortest; the answer is held until the fitted standard label is measured, then released, and the
+// shortest label must still cover Update's footprint with Restart 24 px past its right edge; a spread
+// two-tap (2 px inside Update's right edge, then 8 px further right) then posts nothing
+await step("reread", async () => {
+  const out = {};
+  for (const w of [1280, 700]) {
+    await load();
+    await page.setViewportSize({ width: w, height: 800 });
+    const plain = await st();
+    let release; hold = new Promise((r) => { release = r; });
+    check = cfg.checks.shortest;
+    await page.click("#rupd-go");
+    const held = await st();
+    release(); hold = null;
+    await page.waitForFunction((t) => document.getElementById("rupd-armed").textContent === t, cfg.labels.shortest, { timeout: 15000 });
+    const after = await st();
+    held.plain = after.plain = plainOf(plain);
+    const before = posts;
+    await page.evaluate(() => { window.__clicks = []; });
+    const g = plain.goRect, y = g.top + g.height / 2;
+    await page.touchscreen.tap(g.right - 2, y);
+    await page.touchscreen.tap(g.right + 6, y);
+    const p = await settle(before + 1);
+    out[w] = { held, after, posts: p - before, clicks: (await st()).clicks };
+    await page.keyboard.press("Escape");
+    check = cfg.checks.std;
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  return out;
+});
+// 1f. how a press that began inside the banner ends: a primary press on the label released over the pane
+// iframe, one released outside the viewport, a right click on the label, a middle click on Restart and a
+// right click on the message text. After each, a script blur of whatever is focused: a focusout to
+// nothing, which disarms unless a press is still recorded
+await step("pressEnds", async () => {
+  const out = {};
+  const probe = async (name, fn) => {
+    await load();
+    await page.click("#rupd-go");
+    await fn();
+    const mid = await st();
+    const blurred = await page.evaluate(() => { const a = document.activeElement; if (a && a.blur) a.blur(); return a ? (a.id || a.tagName) : ""; });
+    const after = await st();
+    await page.mouse.click(5, 790);                    // a press elsewhere: the recovery from a flag that outlived its gesture
+    out[name] = { mid, blurred, after, recovered: await st(), posts };
+  };
+  const lblCenter = () => center("#rupd-armed");
+  await probe("intoPane", async () => {
+    const p = await lblCenter(); const pb = await page.frameLocator("#pane").locator("#pane-body").boundingBox();
+    await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(pb.x + 30, pb.y + 30, { steps: 6 }); await page.mouse.up();
+  });
+  await probe("outsideRight", async () => {          // past the right edge, level with the banner: the pointer leaves the box and then the window
+    const p = await lblCenter();
+    await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(1350, p.y, { steps: 6 }); await page.mouse.up();
+  });
+  await probe("outsideTop", async () => {            // past the top edge: the pointer crosses the body above the banner and leaves it
+    const p = await lblCenter();
+    await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x, -40, { steps: 6 }); await page.mouse.up();
+  });
+  await probe("rightLabel", async () => { await page.click("#rupd-armed", { button: "right" }); });
+  await probe("middleRestart", async () => { await page.click("#rupd-confirm", { button: "middle" }); });
+  await probe("rightMessage", async () => { await page.click("#rupd .rup-msg", { button: "right" }); });
+  return out;
+});
 // 1c. a spread double-tap with the shortest label: a tap 2 px inside Update's right edge, then one 8 px
 // further right; the second must land on the label or the gap, never on the confirm
 await step("spreadTaps", async () => {
@@ -997,6 +1133,7 @@ def _scratch_page():
     #                                                                   the confirm's var() fallback paints
     return ("<!DOCTYPE html><html><head><meta charset=utf-8><style>" + (tok.group(0) if tok else "") + km._UPD_CSS
             + "iframe#pane{position:fixed;top:220px;left:20px;width:300px;height:300px;border:1px solid #888}"
+            + "body{margin:0;min-height:100vh}"        # the shell's body spans the viewport: a pointer leaving it has left the window
             + "</style></head><body>" + km._UPD_HTML
             + "<iframe id=pane src=/pane></iframe><script>" + km._LANDING_ESC_JS + "</script><script>" + km._UPD_JS
             + "</script></body></html>")
@@ -1234,6 +1371,110 @@ class Browser(unittest.TestCase):
                     self.assertFalse(s["goVisible"], (engine, vw, "Update is not shown while armed"))
                     if vw in ("1000", "1280"):
                         self.assertTrue(_contains(s["lblRect"], s["goPt"]), (engine, vw, "the label took Update's place", s["lblRect"], s["goPt"]))
+
+    def _armed_row_holds(self, where, s):
+        """The desktop geometry: the label covers Update's plain rect; Restart stands on the label's row to its
+        right, 24 px past both the label's right edge and Update's; Cancel shares no pixel with Not now's plain
+        rect; the row is one row (the label beside the message) and the box is inside the viewport."""
+        go, dm = s["plain"]["go"], s["plain"]["dm"]
+        self.assertTrue(s["armed"], where)
+        self.assertTrue(go["width"] and dm["width"], where + ("the plain row was measured",))
+        self.assertTrue(_covers(s["lblRect"], go), where + ("the label covers Update's plain rect", s["lblRect"], go))
+        self.assertLess(s["lblRect"]["top"], s["msg"]["bottom"], where + ("the label is beside the message: one row", s["lblRect"], s["msg"]))
+        cf, lbl = s["cf"], s["lblRect"]
+        self.assertGreaterEqual(cf["left"], lbl["right"] + 24 - 0.5, where + ("Restart 24 px past the label", cf, lbl))
+        self.assertGreaterEqual(cf["left"], go["right"] + 24 - 0.5, where + ("Restart 24 px past Update's right edge", cf, go))
+        self.assertTrue(cf["top"] >= lbl["top"] - 0.5 and cf["bottom"] <= lbl["bottom"] + 0.5, where + ("Restart on the label's row", cf, lbl))
+        self.assertTrue(_disjoint(s["cx"], dm), where + ("Cancel over Not now's plain rect", s["cx"], dm))
+        self.assertTrue(_disjoint(s["cf"], go) and _disjoint(s["cf"], dm) and _disjoint(s["cx"], go), where + ("an armed control over a plain one", s))
+        self.assertGreaterEqual(s["box"]["left"], 0, where + ("the box starts inside the viewport", s["box"]))
+        self.assertLessEqual(s["box"]["right"], s["vw"], where + ("the box ends inside the viewport", s["box"], s["vw"]))
+        self.assertLessEqual(s["docWidth"], s["vw"], where + ("no sideways scroll",))
+        self.assertLessEqual(s["scrollWidth"], s["clientWidth"], where + ("the box does not overflow itself", s))
+
+    def test_the_label_covers_update_and_restart_is_on_its_row_at_every_desktop_width_for_every_label(self):
+        # ruling B (round 3) as the standing design (round 4): at 640, 660, 680, 700, 740, 800, 840, 1000,
+        # 1280 and 1366 px, with the standard label, the shortest, the longest (two-digit counts, the
+        # manager not answering) and the count-less form, the label covers Update's plain rect, Restart
+        # stands to its right on Update's row and Cancel never shares a pixel with Not now: where the row
+        # is short of room the label's text wraps inside it, never the row. Red before round 4 at 640 to
+        # 680 (Cancel over Not now), at 740 to 840 (Restart on a row of its own) and for the longest label
+        # at 1280 to 1366 (the same)
+        for engine, r in self.R.items():
+            with self.subTest(engine=engine):
+                for variant in ("std", "shortest", "longest", "unknown"):
+                    for vw in GEOM_WIDTHS:
+                        s = r["geometry"][variant]["widths"][str(vw)]
+                        self.assertEqual(s["label"], LABELS[variant], (engine, variant, vw))
+                        self._armed_row_holds((engine, variant, vw), s)
+
+    def test_a_resize_while_armed_re_fits_the_row(self):
+        # armed at 1280 and resized to 700, then the phone width, then 1000, then 660: the geometry above
+        # holds at each desktop width against the plain row the page has at that width (the arm's
+        # measurement is stale after a resize: the plain row is re-measured from a hidden clone), and at
+        # the phone width the label and the buttons take their rows with the desktop fit cleared
+        for engine, r in self.R.items():
+            with self.subTest(engine=engine):
+                for variant in ("std", "shortest", "longest", "unknown"):
+                    rz = r["geometry"][variant]["resize"]
+                    for vw in ("700", "1000", "660"):
+                        self.assertTrue(rz[vw]["armed"], (engine, variant, vw, "still armed after the resize"))
+                        self._armed_row_holds((engine, variant, vw, "after a resize"), rz[vw])
+                    s = rz["360"]
+                    self.assertTrue(s["armed"], (engine, variant))
+                    self.assertGreaterEqual(s["lblRect"]["top"], s["msg"]["bottom"], (engine, variant, "the phone rows after a resize", s))
+                    self.assertGreaterEqual(s["cf"]["top"], s["lblRect"]["bottom"], (engine, variant, s))
+                    self.assertEqual((s["boxTransform"], s["boxMaxWidth"], s["lblMinWidth"]), ("", "", ""), (engine, variant, "the desktop fit is cleared on the phone"))
+                    self.assertLessEqual(s["docWidth"], s["vw"], (engine, variant))
+
+    def test_the_re_read_re_fits_a_shorter_label(self):
+        # the arm fitted the standard label; the re-read replaced it with the shortest. Before round 4 the
+        # label shrank, stopped covering Update's footprint and Restart landed under a pixel past Update's
+        # right edge, so a spread second tap posted. Now the shorter label is fitted again: it covers, Restart
+        # is 24 px past, and the two taps post nothing
+        for engine, r in self.R.items():
+            with self.subTest(engine=engine):
+                for vw, s in r["reread"].items():
+                    self.assertEqual((s["held"]["label"], s["after"]["label"]), (LABELS["std"], LABELS["shortest"]), (engine, vw))
+                    self._armed_row_holds((engine, vw, "the held label"), s["held"])
+                    self._armed_row_holds((engine, vw, "after the re-read"), s["after"])
+                    self.assertEqual((s["posts"], s["after"]["armed"]), (0, True), (engine, vw, s["clicks"]))
+                    self.assertNotIn("rupd-confirm", [c[0] for c in s["clicks"]], (engine, vw, s["clicks"]))
+
+    def test_how_a_press_that_began_inside_the_banner_ends(self):
+        # the press flag must not outlive the gesture that set it. After each gesture a script blur of the
+        # focused control is a focusout to nothing: it disarms when no press is recorded. A primary press
+        # released over the pane (its pointerup reaches the pane document alone) ends through the pane's
+        # listener; a right click on the label or a middle click on Restart never records a press; a right
+        # press on the message text blurs the label to nothing at the mousedown and, with no press recorded,
+        # disarms there. A primary press released outside the viewport ends in Chromium with the click the
+        # engine fires on the root element, past the top edge or the right; in Firefox under Playwright's
+        # synthetic mouse a release past the top edge ends with the pointerleave the body fires as the
+        # pointer crosses it, and a release past the right edge, level with the banner, ends with NOTHING
+        # after the box's own pointerleave: the one open shape (the script's comment names it), pinned here
+        # as it stands so a change in what the engine delivers shows up. Its consequence is bounded: the
+        # next press anywhere, click or blur ends the flag, and a press elsewhere disarms outright. Where a
+        # press does not focus a button (the Gecko switch leg, Safari) the middle press on Restart blurs the
+        # label to nothing at its mousedown and, with no primary press recorded, disarms there, as the right
+        # press on the message text does everywhere: a secondary click is not a gesture the banner completes
+        for engine, r in self.R.items():
+            with self.subTest(engine=engine):
+                p = r["pressEnds"]
+                for name in ("intoPane", "outsideRight", "outsideTop", "rightLabel", "middleRestart"):
+                    if name == "middleRestart" and engine == "firefox-mousefocus0":
+                        self.assertFalse(p[name]["mid"]["armed"], (engine, name, "the middle mousedown blurred the label to nothing: disarmed there"))
+                        self.assertFalse(p[name]["recovered"]["armed"], (engine, name))
+                        continue
+                    self.assertTrue(p[name]["mid"]["armed"], (engine, name, "the gesture itself disarmed", p[name]["mid"]))
+                    self.assertIn(p[name]["blurred"], ("rupd-armed", "rupd-confirm"), (engine, name, "focus was still inside the banner"))
+                    self.assertFalse(p[name]["recovered"]["armed"], (engine, name, "a press elsewhere disarms whatever the flag holds"))
+                    if name == "outsideRight" and engine.startswith("firefox"):
+                        self.assertTrue(p[name]["after"]["armed"], (engine, name, "the open shape: no event ends this press under the synthetic mouse; "
+                                                                    "if the engine now delivers one, retire the residual from the script's comment and the PR"))
+                        continue
+                    self.assertFalse(p[name]["after"]["armed"], (engine, name, "the blur after the gesture did not disarm: the press outlived it", p[name]["after"]))
+                self.assertFalse(p["rightMessage"]["mid"]["armed"], (engine, "a right press on the message text disarms at its mousedown", p["rightMessage"]["mid"]))
+                self.assertEqual(p["rightMessage"]["posts"], p["intoPane"]["posts"], (engine, "nothing posted along the way"))
 
     def test_the_armed_controls_never_share_a_pixel_with_a_plain_row_control(self):
         # measured at 360, 390, 700, 1000 and 1280 with the standard label, the shortest and the longest:
