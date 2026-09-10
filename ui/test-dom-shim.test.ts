@@ -391,29 +391,11 @@ const ALLOWLIST = [
   "webview/file-comments-about-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-arrivals-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-margin-fixes.test.ts",
-  "webview/file-comments-margin-image-pad.test.ts",
-  "webview/file-comments-margin-review.test.ts",
-  "webview/file-comments-margin.test.ts",
   "webview/file-comments-markclick-controls.test.ts",
   "webview/file-comments-markclick.test.ts",
   "webview/file-comments-page-states.test.ts",
   "webview/file-comments-pages.test.ts",
   "webview/file-comments-panel.test.ts",
-  "webview/file-comments-pdf-pictures.test.ts",
-  "webview/file-comments-region-tied.test.ts",
-  "webview/file-comments-regions-click.test.ts",
-  "webview/file-comments-regions-guards.test.ts",
-  "webview/file-comments-regions-press-scroll.test.ts",
-  "webview/file-comments-regions-press.test.ts",
-  "webview/file-comments-regions-repaint.test.ts",
-  "webview/file-comments-regions-review-2.test.ts",
-  "webview/file-comments-regions-review-3.test.ts",
-  "webview/file-comments-regions-review-4.test.ts",
-  "webview/file-comments-regions-review.test.ts",
-  "webview/file-comments-regions-sizer.test.ts",
-  "webview/file-comments-regions-stacking.test.ts",
-  "webview/file-comments-regions.test.ts",
   "webview/file-comments-reply-keep.test.ts",
   "webview/file-comments-reply-move.test.ts",
   "webview/file-comments-reply-place.test.ts",
@@ -512,7 +494,7 @@ const ALLOWLIST = [
 // The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
 // alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
 // is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 131;
+const ALLOWLIST_MAX = 113;
 // the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
 // tags-scale test whose shim it grew from
 const SWITCHED = [

@@ -13,8 +13,10 @@
 // Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── the DOM stand-in ───────────────────────────────────────────────────────────────────────────────
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
@@ -36,9 +38,13 @@ class Doc {
 }
 class N {
   nodeType = 0;
-  parentNode: N | null = null;
-  childNodes: N[] = [];
-  constructor(public ownerDocument: Doc) {}
+  parentNode!: N | null;
+  childNodes!: N[];
+  constructor(public ownerDocument: Doc) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get parentElement(): E | null { return this.parentNode instanceof E ? this.parentNode : null; }
   get firstChild(): N | null { return this.childNodes[0] || null; }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as T).data : this.childNodes.map((c) => c.textContent).join(""); }
@@ -52,7 +58,7 @@ class N {
 }
 class T extends N {
   nodeType = 3;
-  constructor(doc: Doc, public data: string) { super(doc); }
+  constructor(doc: Doc, public data: string) { super(doc); hideEdges(this); }
   get length(): number { return this.data.length; }
   splitText(offset: number): T {
     const tail = new T(this.ownerDocument, this.data.slice(offset));
@@ -108,6 +114,7 @@ class E extends N {
       deleteProperty: (_t, k) => { this.attrs.delete("data-" + kebab(k)); return true; },
       has: (_t, k) => this.attrs.has("data-" + kebab(k)),
     });
+    hideEdges(this);
   }
   /** As the browser has it: a tabindex attribute, else 0 for a button or input, else -1 (not focusable). */
   get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" || this.tagName === "TEXTAREA" ? 0 : -1); }
@@ -508,4 +515,16 @@ test("an image-kind region on a PDF (another host wrote it: no page) is on no pa
   h.click('.fc-card[data-id="' + ID3 + '"] .fc-card-head');
   assert.ok(h.q('.fc-card.open[data-id="' + ID3 + '"] canvas.fc-crop'), "the page region beside it: cropped from page 1");
   h.dispose();
+});
+
+// ── the projection: a node's edges are own, non-enumerable properties (ui/test-dom-shim.ts), so a failing
+// assertion's dump of a node stops at the node instead of walking the tree ────────────────────────────
+test("a node of the stand-in enumerates its primitives alone, and its dump names neither its parent nor its children", () => {
+  const root = doc.createElement("div"), row = root.appendChild(doc.createElement("p")), text = row.appendChild(doc.createTextNode("alpha"));
+  row.appendChild(doc.createElement("span")).setAttribute("data-id", "x");
+  for (const n of [root, row, text] as any[]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable(n[k])), "every enumerable own property is a primitive: " + Object.keys(n).join(", "));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
 });

@@ -8,10 +8,12 @@
 // ResizeObserver whose callbacks the test fires. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
 import type { Status, StoreComment, Hunk } from "./file-comments-model";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -33,8 +35,11 @@ type Reg = { type: string; cb: Listener; capture: boolean };
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public data: string) {}
+  parentNode!: El | null;
+  constructor(public data: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.data; }
   get length(): number { return this.data.length; }
   get parentElement(): El | null { return this.parentNode; }
@@ -70,15 +75,20 @@ class Style {
 class El {
   nodeType = 1;
   tagName: string;
-  parentNode: El | null = null;
-  childNodes: Array<El | Txt> = [];
+  parentNode!: El | null;
+  childNodes!: Array<El | Txt>;
   attrs = new Map<string, string>();
   listeners: Reg[] = [];
   hidden = false; disabled = false; readOnly = false; title = ""; type = ""; value = ""; checked = false; placeholder = "";
   innerHTML = "";
   style = new Style();
   scrollTop = 0; scrollHeight = 0; clientHeight = 0;
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get ownerDocument(): typeof doc { return doc; }
   get parentElement(): El | null { return this.parentNode; }
   get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
@@ -100,7 +110,7 @@ class El {
     deleteProperty: (_, k) => { this.attrs.delete("data-" + kebab(String(k))); return true; },
   });
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; if (v !== "") this.appendChild(new Txt(v)); }
+  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; if (v !== "") this.appendChild(new Txt(v)); }
   private detach(n: El | Txt): void { const p = n.parentNode; if (p) { const i = p.childNodes.indexOf(n); if (i >= 0) p.childNodes.splice(i, 1); n.parentNode = null; } }
   appendChild<T extends El | Txt>(n: T): T { this.detach(n); this.childNodes.push(n); n.parentNode = this; return n; }
   insertBefore<T extends El | Txt>(n: T, ref: El | Txt | null): T {
@@ -110,7 +120,7 @@ class El {
     this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, n); n.parentNode = this; return n;
   }
   removeChild<T extends El | Txt>(n: T): T { this.detach(n); return n; }
-  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes = []; for (const x of c) this.appendChild(x); }
+  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
   remove(): void { this.detach(this); }
   normalize(): void {
     const out: Array<El | Txt> = [];
@@ -533,4 +543,16 @@ test("at source: the pass runs from render (before the click's centering) and fr
   assert.match(SRC, /getComputedStyle\(row\)\.flexDirection !== "column"/, "the sheet's fold verdict, read off the row");
   assert.match(SRC, /body\.addEventListener\("load", \(\) => this\.scheduleLayout\(\), true\);/, "a figure's load, captured");
   assert.match(SRC, /const out = layoutCards\(items, CARD_GAP, this\.focusCard\);/, "the pure rule, given the focus (the focus follow-on, 2026-09-08)");
+});
+
+// ── the projection: a node's edges are own, non-enumerable properties (ui/test-dom-shim.ts), so a failing
+// assertion's dump of a node stops at the node instead of walking the tree ────────────────────────────
+test("a node of the stand-in enumerates its primitives alone, and its dump names neither its parent nor its children", () => {
+  const root = new El("div"), row = root.appendChild(new El("p")), text = row.appendChild(new Txt("alpha"));
+  row.appendChild(new El("span")).setAttribute("data-id", "x");
+  for (const n of [root, row, text] as any[]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable(n[k])), "every enumerable own property is a primitive: " + Object.keys(n).join(", "));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
 });
