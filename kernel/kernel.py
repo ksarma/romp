@@ -30090,10 +30090,11 @@ def _ask_poll_once():
 # (every row grows st_size), and _seed_fork_stores publishes the forked child's file through a temp +
 # os.replace (a new inode). No writer rewrites a captions file in place, so there is no equal-size rewrite
 # inside one mtime tick for the three components to miss (the round-3 review's hazard; a source-text test
-# pins both writers). An absent file is an empty _Caps and its entry is popped; a stat that fails otherwise
-# is a sentinel key that matches nothing (read, not memoized); a read that fails after a successful stat is
-# not memoized (the `fail` counter, one stderr line per episode), since a permission or descriptor failure
-# is not a file version. Dict order is LRU (a hit reinserts), one eviction per insert past the cap, and
+# pins both writers). An absent file is an empty _Caps and its entry is popped (a name too long for the
+# filesystem is absent too); a stat that fails otherwise (EACCES, ELOOP) is a sentinel key carrying the error
+# that matches nothing (read, not memoized); a read that fails is not memoized (the `fail` counter, one
+# stderr line per episode naming the read's error and the stat's when it failed too), since a permission or
+# descriptor failure is not a file version. Dict order is LRU (a hit reinserts), one eviction per insert past the cap, and
 # build_timeline's full builds release the entries of lanes outside the timeline's lane set (_caps_forget).
 # The feed's held-card path reads live sessions, a subset of the lanes; the postal join (_msg_summaries)
 # reads _sessions(now), discover's 48 h window, a superset of the 12 h lane set, so an entry it made for a
@@ -30107,7 +30108,7 @@ def _ask_poll_once():
 _caps_memo = {}
 _CAPS_MEMO_MAX = 512
 _caps_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
-_caps_failed = set()            # paths whose last read after a good stat failed: one stderr line per episode
+_caps_failed = set()            # paths whose last read failed: one stderr line per episode
 _CAPS_LOCK = threading.Lock()
 
 
@@ -30204,8 +30205,12 @@ def _captions(fsid):
             first = p not in _caps_failed
             _caps_failed.add(p)
         if first:
-            sys.stderr.write("captions: %s unreadable after a successful stat (%r); answered empty and not memoized\n"
-                             % (os.path.basename(p), e))
+            # the read's error, and the stat's when the stat failed too (jd._file_key's _StatFailed carries it:
+            # EACCES, ELOOP), as the thread-reg line says it; round 12 of the unknown-name PR: this line claimed a
+            # successful stat for every failed read, false for any failed stat other than no-such-file
+            stat_err = getattr(key, "error", None)
+            sys.stderr.write("captions: %s did not read (%r)%s; answered empty and not memoized\n"
+                             % (os.path.basename(p), e, "" if stat_err is None else "; its stat failed (%r)" % (stat_err,)))
         return out
     if _caps_failed:
         with _CAPS_LOCK:
