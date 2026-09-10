@@ -669,11 +669,14 @@ class Routes(Fresh):
     def tearDownClass(cls):
         cls.srv.shutdown()
 
-    def _post(self, path, token=True):
+    def _post(self, path, token=True, body=None):
+        """A POST as the banner's ARMED click sends it (2026-09-10): {"confirmed": true} unless the
+        test says otherwise. `body` is the JSON object to send; {} is the unconfirmed click."""
         import urllib.request, urllib.error
         headers = {"X-Romp-Token": km.TOKEN} if token else {}
+        data = json.dumps({"confirmed": True} if body is None else body).encode()
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), method="POST",
-                                     data=b"{}", headers=headers)
+                                     data=data, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=5) as r:
                 return r.status, r.read().decode()
@@ -721,6 +724,85 @@ class Routes(Fresh):
         with mock.patch.object(km, "_run_update", side_effect=lambda tag: ran.append(tag) or True):
             code, body = self._post("/update")
         self.assertEqual((code, ran), (200, ["v0.7.0"]))
+
+    def _audit_rows(self):
+        p = jd.STATE / "restart-audit.jsonl"
+        return [json.loads(l) for l in p.read_text().splitlines() if l.strip()] if p.exists() else []
+
+    def test_post_update_refuses_an_unconfirmed_click_and_runs_nothing(self):
+        # 2026-09-10: one click on the banner POSTed /update, and a click that only meant to focus the
+        # dashboard window landed on it; every session on the box restarted mid-turn. The banner now
+        # arms on the first click and posts {"confirmed": true} on the second, and the kernel holds
+        # the same line: a body without the confirmation is refused before any check is read, so a
+        # page that predates the confirm step (or a stray POST) cannot restart the box on one click.
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+        ran = []
+        with mock.patch.object(km, "_run_update", side_effect=lambda tag: ran.append(tag) or True), \
+             mock.patch.object(km, "_run_main_update", side_effect=lambda *a, **kw: ran.append(a)):
+            for body in ({}, {"confirmed": False}, {"confirmed": "yes"}, {"confirmed": 1}):
+                code, text = self._post("/update", body=body)
+                self.assertEqual(code, 400, (body, text))
+                self.assertIn("confirmed click", text, body)
+            km._UPDATE_AVAIL[0] = ""
+            km._MAIN_DRIFT[0] = "aaaa1111"
+            code, text = self._post("/update", body={})
+            self.assertEqual(code, 400, "the drift door is the same door: " + text)
+        self.assertEqual(ran, [], "nothing launched, nothing converged")
+        self.assertEqual(self._audit_rows(), [], "a refused click is not a restart request; no row")
+        self.assertEqual(km._UPDATE_STATE[0], "", "not latched")
+        km._MAIN_DRIFT[0] = ""
+        # a body that is not JSON, or not an object, is a 400 too, never a traceback
+        code, text = self._post("/update", body=[1, 2])
+        self.assertEqual(code, 400, text)
+
+    def test_a_confirmed_click_writes_its_audit_row_tagged_update_confirmed(self):
+        # the ledger tells a confirmed banner click from every other door: `via: update-confirmed`
+        # rides on the row of both doors the click can take (a pending release, main drift)
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+        with mock.patch.object(km, "_run_update", side_effect=lambda tag: True):
+            code, _ = self._post("/update")
+        self.assertEqual(code, 200)
+        rows = self._audit_rows()
+        self.assertEqual([(r["action"], r["tag"], r.get("via")) for r in rows],
+                         [("self-update", "v0.7.0", "update-confirmed")])
+        self.assertEqual(rows[0]["addr"], "127.0.0.1")
+        km._UPDATE_AVAIL[0] = ""
+        km._UPDATE_STATE[0] = ""
+        km._MAIN_DRIFT[0] = "aaaa1111"
+        ran = []
+        with mock.patch.object(km, "_run_main_update", side_effect=lambda *a, **kw: ran.append(a)):
+            code, _ = self._post("/update")
+            self.assertEqual(code, 200)
+            for _ in range(200):
+                if ran:
+                    break
+                time.sleep(0.01)
+        rows = self._audit_rows()
+        self.assertEqual([(r["action"], r["tag"], r.get("via")) for r in rows][-1],
+                         ("main-converge", "aaaa1111", "update-confirmed"))
+        km._MAIN_DRIFT[0] = ""
+
+    def test_update_check_carries_what_a_restart_would_cut(self):
+        # the banner's confirm step names these under the first click: how many sessions the restart
+        # stops and how many are mid-turn, read from the backend's own counters (restart_impact), never
+        # a guess from the page. No backend built: nothing to cut, and the route says 0/0.
+        class FakeBackend:
+            def restart_impact(self):
+                return (3, 1)
+        saved = km._sdk_backend
+        try:
+            km._sdk_backend = FakeBackend()
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            d = json.loads(body)
+            self.assertEqual((d["sessions"], d["midTurn"]), (3, 1))
+            km._sdk_backend = None
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            d = json.loads(body)
+            self.assertEqual((d["sessions"], d["midTurn"]), (0, 0))
+        finally:
+            km._sdk_backend = saved
 
     def test_post_update_converges_main_drift_when_no_release_is_pending(self):
         # the drift click is a REAL restart, so the converge is stubbed: a live manager must never hear

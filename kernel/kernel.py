@@ -9224,6 +9224,19 @@ _UPDATE_REPORT_FAULT = [""]   # the move-aside fault of a junk report still on d
 _UPDATE_MODES = ("ask", "auto", "off")
 
 
+def _restart_impact():
+    """(sessions, midTurn): how many SDK sessions a restart-all would stop right now, and how many of
+    them have a turn in flight it would cut. The update banner's confirm step shows these (2026-09-10:
+    a click that only meant to focus the dashboard window landed on Update, and one click was the whole
+    gesture; the restart cut every turn in flight on the box). Reads the backend already built, never
+    builds one: (0, 0) with no backend, which is also what the restart would cut."""
+    be = _sdk_backend or None
+    if be is None or not hasattr(be, "restart_impact"):
+        return 0, 0
+    live, inflight = be.restart_impact()
+    return int(live), int(inflight)
+
+
 def _update_mode():
     try:
         m = json.loads((jd.STATE / "update-mode.json").read_text()).get("mode")
@@ -55893,22 +55906,49 @@ _UPD_CSS = (
     "#rupd button:disabled{opacity:.55;cursor:default}"
     "#rupd .rup-go{background:#54B204;color:#0c1a00;font-weight:600;border-color:#3f8a00}"
     "#rupd .rup-go:hover:not(:disabled){background:#62c80a}"
-    "#rupd .rup-dismiss{background:none;color:#9aa0a6;border-color:#4a4d51}"
-    "#rupd .rup-dismiss:hover{color:#e6e6e6}"
+    "#rupd .rup-dismiss,#rupd .rup-cancel{background:none;color:#9aa0a6;border-color:#4a4d51}"
+    "#rupd .rup-dismiss:hover,#rupd .rup-cancel:hover{color:#e6e6e6}"
+    # the ARMED state (the confirm step, 2026-09-10): the button restates itself as the restart it is
+    # about to run; a shift off the accent so the eye sees the button changed under the first click
+    "#rupd .rup-go.rup-arm{background:#c0392b;color:#fff;border-color:#962d22}"
+    "#rupd .rup-go.rup-arm:hover:not(:disabled){background:#d3453a}"
     # light theme (body.theme-light): white card, hairline border, warm dark text
     "body.theme-light #rupd{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
     "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
-    "body.theme-light #rupd .rup-dismiss{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
-    "body.theme-light #rupd .rup-dismiss:hover{color:#1F1E1D}")
+    "body.theme-light #rupd .rup-dismiss,body.theme-light #rupd .rup-cancel{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
+    "body.theme-light #rupd .rup-dismiss:hover,body.theme-light #rupd .rup-cancel:hover{color:#1F1E1D}")
 _UPD_HTML = (
     "<div id=rupd role=alert><span class=rup-msg></span>"
     "<button class=rup-go id=rupd-go>Update</button>"
+    "<button class=rup-cancel id=rupd-cancel hidden>Cancel</button>"
     "<button class=rup-dismiss id=rupd-dismiss>Not now</button></div>")
 _UPD_JS = (
     "(function(){var box=document.getElementById('rupd');if(!box)return;"
-    "var msg=box.querySelector('.rup-msg'),go=document.getElementById('rupd-go'),dm=document.getElementById('rupd-dismiss');"
-    "var dismissedTag='',curTag='',waiting=false,bootNow='';"
-    "function show(m){msg.textContent=m;box.classList.add('show');}"
+    "var msg=box.querySelector('.rup-msg'),go=document.getElementById('rupd-go'),dm=document.getElementById('rupd-dismiss'),"
+    "cx=document.getElementById('rupd-cancel');"
+    "var dismissedTag='',curTag='',waiting=false,bootNow='',armed=false,impact=null;"
+    # Two clicks, never one (2026-09-10): a single click POSTed /update, and a click that only meant to
+    # focus the dashboard window landed on the button and restarted every session on the box, cutting
+    # every turn in flight. The first click ARMS the button: it restates itself as the consequence, in
+    # counts (how many sessions the restart stops, how many of them are mid-turn), with a Cancel beside
+    # it; only a click on the ARMED button posts. The armed state is dropped by exact events, never a
+    # timer: Cancel, a press anywhere outside the box (document pointerdown, capture phase, so a pane
+    # that stops propagation cannot hide it), the window losing focus (blur; a tab hidden), and every
+    # re-render of the banner (show(): a new offer, the running flip, a poll's verdict, the boot
+    # retire). So the click that focuses the window never counts: focus left the window on a blur that
+    # already disarmed the button, and a focusing click finds a plain Update it can at most arm.
+    # The counts are /update-check's sessions and midTurn: the arm shows the freshest answer held and
+    # re-reads the route at once, so the label names the box as it stands at the click. The kernel
+    # holds the same line: /update refuses a body without confirmed:true.
+    "function label(){if(!impact)return 'Restart every session now';var n=impact.sessions,m=impact.midTurn;"
+    "if(!n)return 'Restart now, no sessions live';"
+    "return 'Restart '+n+' session'+(n===1?'':'s')+' now'+(m?', '+m+' mid-turn':'');}"
+    "function note(d){if(d&&typeof d.sessions==='number')impact={sessions:d.sessions,midTurn:d.midTurn||0};}"
+    "function disarm(){if(!armed)return;armed=false;go.textContent='Update';go.classList.remove('rup-arm');cx.hidden=true;dm.hidden=waiting;}"
+    "function arm(){armed=true;go.textContent=label();go.classList.add('rup-arm');cx.hidden=false;dm.hidden=true;"
+    "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){note(d);if(armed)go.textContent=label();})"
+    "['catch'](function(e){});}"
+    "function show(m){disarm();msg.textContent=m;box.classList.add('show');}"
     # Not-now is PER RELEASE (the periodic re-check re-finds versions for weeks): the dismissed tag
     # stays quiet, a strictly newer one is new information and re-offers.
     # drift (the user 2026-08-14): the same banner also carries new MAIN commits — origin ahead of the
@@ -55934,7 +55974,7 @@ _UPD_JS = (
     # 30s /version poll — an existing beat, not a new timer.
     "window.__rompUpdBoot=function(b){if(!b)return;if(!bootNow){bootNow=b;return;}"
     "if(b!==bootNow){bootNow=b;if(waiting){location.reload();return;}"
-    "if(!go.hidden){box.classList.remove('show');curTag='';}}};"
+    "if(!go.hidden){disarm();box.classList.remove('show');curTag='';}}};"
     "function poll(){fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){"
     "if(!waiting)return;"
     "if(d.boot&&bootNow&&d.boot!==bootNow){location.reload();return;}"
@@ -55944,9 +55984,10 @@ _UPD_JS = (
     "if(d.updated){waiting=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
     "+' \\u2014 '+(d.hint||'restart romp yourself (romp refresh) to run it')+'.');return;}"
     "setTimeout(poll,3000);}).catch(function(){if(waiting)setTimeout(poll,3000);});}"
-    "go.onclick=function(){go.disabled=true;dm.hidden=true;waiting=true;"
+    "go.onclick=function(){if(!armed){arm();return;}"    # the first click arms; the armed click posts
+    "waiting=true;disarm();go.disabled=true;dm.hidden=true;"
     "show('Updating romp \\u2014 this can take a minute; the dashboard reloads when it restarts\\u2026');"
-    "fetch('/update',{method:'POST'}).then(function(r){"
+    "fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true})}).then(function(r){"
     "if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});poll();})"
     "['catch'](function(e){waiting=false;var em=String((e&&e.message)||e);"
     # 'nothing known' is not an error — it means the update this prompt offered already ran (another
@@ -55956,12 +55997,16 @@ _UPD_JS = (
     "if(window.__rompNotify)window.__rompNotify('sync','the update this prompt offered already ran \\u2014 nothing left to do');return;}"
     "go.disabled=false;dm.hidden=false;"
     "show('Could not start the update: '+em);});};"
+    "cx.onclick=function(){disarm();};"
+    "document.addEventListener('pointerdown',function(e){if(armed&&!(e&&e.target&&box.contains(e.target)))disarm();},true);"
+    "window.addEventListener('blur',function(){disarm();});"
+    "document.addEventListener('visibilitychange',function(){if(document.hidden)disarm();});"
     "dm.onclick=function(){dismissedTag=curTag;box.classList.remove('show');"
     # persist the Not-now (the user 2026-08-31): page loads and kernel restarts stop re-offering
     "try{fetch('/update-dismiss',{method:'POST',headers:{'Content-Type':'application/json'},"
     "body:JSON.stringify({tag:curTag})}).catch(function(){});}catch(e){}};"
     "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){"
-    "bootNow=(d&&d.boot)||'';"
+    "bootNow=(d&&d.boot)||'';note(d);"
     "if(d&&d.state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
     "show('romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
     # a page loaded AFTER the push re-derives the pending offer — release or main drift alike
@@ -58284,6 +58329,7 @@ class Handler(BaseHTTPRequestHandler):
                 dsha = _MAIN_DRIFT[0] or _MAIN_DRIFT[1]
                 if dsha in dis:
                     dsha = ""
+                imp = _restart_impact()
                 return self._send(200, json.dumps({
                     "cur": _kernel_ver() or "",
                     "tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]),
@@ -58293,7 +58339,10 @@ class Handler(BaseHTTPRequestHandler):
                     # re-derive it, and a stale page can revalidate before acting
                     "drift": (("pull" if _MAIN_DRIFT[0] else "restart") if dsha else ""),
                     "driftSha": dsha,
-                    "boot": _BOOT_ID}), "application/json", cache="no-cache")
+                    "boot": _BOOT_ID,
+                    # what a restart-all would cut right now: the banner's confirm step names these
+                    # counts under the first click (2026-09-10)
+                    "sessions": imp[0], "midTurn": imp[1]}), "application/json", cache="no-cache")
             if p == "/notify-all":
                 # the master bell's state (the user 2026-08-09): on = every task notifies when it
                 # blocks on you or completes, unless its session/card bell mutes it. The shell
@@ -58558,10 +58607,23 @@ class Handler(BaseHTTPRequestHandler):
                 # found is ever acted on — the route takes no version from the client. A pending
                 # RELEASE outranks main drift (rarer and strictly bigger); the drift click converges
                 # the mesh immediately: the user's own deliberate cut (the user 2026-08-14).
+                # A CONFIRMED click only (2026-09-10): the banner's button arms on its first click and
+                # posts {"confirmed": true} on the second; a body without it is refused before any
+                # check is read, so a page that predates the confirm step (or a stray POST) cannot
+                # restart the box on one click. The audit row of an accepted click carries
+                # via: update-confirmed, so the ledger tells a confirmed click from every other door.
+                b, berr = _json_object_body(raw_body)
+                if berr:
+                    return self._send(400, berr, "text/plain")
+                if b.get("confirmed") is not True:
+                    return self._send(400, "the update starts only from a confirmed click on the banner "
+                                      "(click Update, then the restart it turns into); reload the dashboard "
+                                      "and try again", "text/plain")
                 tag = _UPDATE_AVAIL[0]
                 if tag:
                     if _UPDATE_STATE[0] != "running":
-                        _audit_restart_request("self-update", tag=tag, addr=str(self.client_address[0]))
+                        _audit_restart_request("self-update", tag=tag, addr=str(self.client_address[0]),
+                                               via="update-confirmed")
                         if not _run_update(tag) and _UPDATE_STATE[0] != "running":
                             # nothing launched (the spawn failed; the Log has the reason) and nothing
                             # else is in flight: a 200 and a "running" push here would leave every
@@ -58579,7 +58641,7 @@ class Handler(BaseHTTPRequestHandler):
                 kind = "pull" if d0 else ("restart" if d1 else "")
                 if kind:
                     _audit_restart_request("main-converge", tag=d0 or d1,
-                                           addr=str(self.client_address[0]))
+                                           addr=str(self.client_address[0]), via="update-confirmed")
                     # same ack-time port resolution as /restart: the daemon thread's env read could
                     # otherwise land after this response, on a value the caller has already restored
                     threading.Thread(target=_run_main_update, args=(kind, True),

@@ -10723,6 +10723,17 @@ class SdkBackend:
         inflight, background = self.busy_breakdown()
         return inflight + background
 
+    def restart_impact(self) -> tuple:
+        """(live, inflight): how many SDK sessions a restart-all would stop right now, and how many of
+        them have a turn in flight the stop would cut. The update banner's confirm step shows both under
+        its first click (2026-09-10: a click that only meant to focus the dashboard window landed on
+        Update, and one click was the whole gesture). The same per-session counters busy_breakdown and
+        drain read; a session already flagged ended is not stopped again, so it is not counted."""
+        with self._lock:
+            sessions = list(self.sessions.values())
+        live = [s for s in sessions if not s.ended]
+        return len(live), sum(1 for s in live if s.inflight)
+
     # ── deploy-drain hold (T121 part 1) ─────────────────────────────────────
     # While a quiet deploy restart is PARKED at the manager, this kernel holds NEW turn starts so
     # /busy genuinely drains to 0 on its own turn-end events (before this, kernels kept starting

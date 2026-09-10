@@ -29,7 +29,9 @@ update` starts a session called "update".
 | `romp help` | The same list, from the terminal |
 
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
-`main`, for new commits, and offers each one once as a banner with an Update button. The gear's
+`main`, for new commits, and offers each one once as a banner with an Update button. Update takes
+two clicks: the first turns the button into the restart it is about to run, naming how many sessions
+it stops and how many are mid-turn, with a Cancel beside it; the second runs it. The gear's
 **Automatic updates** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
 checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it
