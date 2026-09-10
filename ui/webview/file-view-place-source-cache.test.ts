@@ -13,7 +13,7 @@ import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { marked, Lexer } from "marked";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, mapRenderedSelection, type SelLike } from "./anchor-map";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in: the anchor-map suite's minimal tree ─────────────────────────────────────────────
 class FakeNode {
@@ -111,7 +111,7 @@ test("the source is lexed and walked once across the block table and every Rende
     for (const root of [A, B, C]) {
       for (let i = 0; i < root.blocks.length; i++) {
         assert.equal(renderedBlockIndex(El(root.md), DOC, El(root.blocks[i])), i, `block ${i} of a root`);
-        assert.deepEqual(renderedBlockElements(El(root.md), DOC, i), [El(root.blocks[i])], `block ${i}'s element is the root's own`);
+        sameNodes(renderedBlockElements(El(root.md), DOC, i), [El(root.blocks[i])], `block ${i}'s element is the root's own`);   // by identity (ui/test-dom-shim.ts sameNodes)
       }
     }
     assert.equal(calls, 1, "one lex: the block table's; the three roots read the source half from the table");

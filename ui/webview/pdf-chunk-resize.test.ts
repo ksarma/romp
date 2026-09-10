@@ -19,7 +19,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { makeRender, type PdfLib, type PageInfo } from "./pdf-chunk";
 import { inspect } from "node:util";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 // ── a fake DOM: what the chunk touches of an element, and nothing else ──────────────────────────
 
@@ -152,7 +152,7 @@ test("a width change redraws the pages on screen at the new width — the same c
   const wraps = root.children;
   assert.equal(FakeRO.instances.length, 1, "one ResizeObserver for the document");
   const ro = FakeRO.instances[0];
-  assert.deepEqual(ro.targets.map((t) => t === root), [true], "it watches the root the pages are fit to (by identity: a node inspects as its projection)");
+  sameNodes(ro.targets, [root], "it watches the root the pages are fit to");   // by identity (ui/test-dom-shim.ts sameNodes)
   const io = FakeIO.instances[0];
   // an unlaid-out root (0 wide) draws page 1 at the page's natural width
   assert.deepEqual(brief(drawn), [[1, 612]]);

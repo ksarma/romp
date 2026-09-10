@@ -15,7 +15,7 @@
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
@@ -480,9 +480,9 @@ test("click-safe: the three buttons are built once per open, never rebuilt by a 
   const nodes = [o.down, o.reset, o.up];
   o.btn("Raw").click();
   assert.equal(o.ctx.mode(), "raw");
-  assert.deepEqual([o.btn("A−"), o.wrap.querySelector(".fileview-size-reset"), o.btn("A+")], nodes, "the same elements after the Raw paint");
+  sameNodes([o.btn("A−"), o.wrap.querySelector(".fileview-size-reset"), o.btn("A+")], nodes, "the same elements after the Raw paint");   // by identity (ui/test-dom-shim.ts sameNodes)
   o.up.click();
-  assert.deepEqual([o.btn("A−"), o.wrap.querySelector(".fileview-size-reset"), o.btn("A+")], nodes, "…and after a step");
+  sameNodes([o.btn("A−"), o.wrap.querySelector(".fileview-size-reset"), o.btn("A+")], nodes, "…and after a step");
   assert.equal(size(o), "115", "the Raw view is scaled by the same property (.fileview-pre reads it)");
   o.btn("Rendered").click();
   assert.equal(size(o), "115", "the flip back keeps the size");

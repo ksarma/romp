@@ -13,7 +13,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 // ── the DOM stand-in ───────────────────────────────────────────────────────────────────────────────
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
@@ -145,11 +145,6 @@ const MARK: Mark = { id: ID, region: REGION, label: "you", state: "current" };
 const PAGE_RECT = rectOf(100, 200, 306, 396);                   // a US-letter page at 306×396 CSS px, its canvas 612×792
 const IMG_RECT = rectOf(100, 200, 300, 200);                    // a 600×400 figure at half size
 
-/** The same nodes, in the same order — by identity (a node holds its parent, so a deep comparison is not the question). */
-function sameNodes(actual: E[], expected: E[], msg: string): void {
-  assert.equal(actual.length, expected.length, msg + " (count)");
-  for (let i = 0; i < expected.length; i++) assert.equal(actual[i], expected[i], msg + " (node " + i + ")");
-}
 
 /** The viewer's body row (the panel's delegate root) with a PDF page or a standalone image, a layer over it, and the
  *  row's delegate routing fcopen — the panel's wiring, without the panel. */

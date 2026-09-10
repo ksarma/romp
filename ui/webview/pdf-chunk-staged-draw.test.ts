@@ -30,7 +30,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { makeRender, type PdfLib, type PageInfo, type PageError } from "./pdf-chunk";
 import { inspect } from "node:util";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 const PKG = process.cwd();                                   // vscode-extension, where npm test runs
 const ROOT = path.resolve(PKG, "..");
@@ -214,9 +214,9 @@ test("a first draw: pdf.js is handed a staging canvas that is not the page's and
   assert.deepEqual(ops.slice(from).map((o) => (o.op === "drawImage" ? "drawImage" : o.op + ":" + o.value)),
     ["width:800", "height:" + H(800), "drawImage", "width:0", "height:0"],
     "when the draw lands: the page's canvas sized then filled, nothing between, and the stage zeroed after");
-  assert.deepEqual(ops.slice(from, from + 3).map((o) => o.el === c1), [true, true, true], "the three steps are the page canvas's (by identity: a node inspects as its projection)");
+  sameNodes(ops.slice(from, from + 3).map((o) => o.el), [c1, c1, c1], "the three steps are the page canvas's");   // by identity (ui/test-dom-shim.ts sameNodes)
   assert.equal(ops[from + 2].src, stage, "filled from the stage pdf.js drew into");
-  assert.deepEqual(ops.slice(from + 3).map((o) => o.el === stage), [true, true], "the zeroing is the stage's: its store is released, not left for the collector (by identity)");
+  sameNodes(ops.slice(from + 3).map((o) => o.el), [stage, stage], "the zeroing is the stage's: its store is released, not left for the collector");
   assert.deepEqual([c1.width, c1.height], [800, H(800)]);
   assert.equal(drawn.length, 1); assert.equal(drawn[0].canvas, c1 as unknown as HTMLCanvasElement); assert.equal(drawn[0].width, 800);
   h.dispose();

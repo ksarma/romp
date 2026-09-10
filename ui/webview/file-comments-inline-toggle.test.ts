@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, Hunk, StoreComment } from "./file-comments-model";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -408,8 +408,6 @@ const card = (aside: El, key: string): El | null => aside.querySelector('.fc-car
 const act = (root: El, a: string, id?: string): El | null => root.querySelector('[data-act="' + a + '"]' + (id ? '[data-id="' + id + '"]' : ""));
 const texts = (els: El[]) => els.map((e) => e.textContent);
 const marksOf = (w: World, id?: string): El[] => w.body.querySelectorAll('[data-act="fcchange"]' + (id ? '[data-id="' + id + '"]' : ""));
-/** The same nodes in the same order: identity, since a deepEqual of two nodes compares their projections (the edges are hidden), not the trees. */
-const sameNodes = (a: El[], b: El[]): boolean => a.length === b.length && a.every((n, i) => n === b[i]);
 const tags = (c: El): string[] => texts(c.querySelectorAll(".fc-card-head .fc-tag"));
 const isLink = (c: El): boolean => c.querySelector(".fc-ref")!.classes.includes("fc-link");
 
@@ -580,7 +578,7 @@ test("a flip elsewhere — the settings signal another pane or the gear raises, 
   const before = marksOf(w);
   win.dispatchEvent(new Event("romp:settings"));
   await flush();
-  assert.ok(sameNodes(marksOf(w), before), "no new information, no repaint");
+  sameNodes(marksOf(w), before, "no new information, no repaint");   // by identity (ui/test-dom-shim.ts sameNodes)
   store.delete(SETTINGS_KEY);
 });
 

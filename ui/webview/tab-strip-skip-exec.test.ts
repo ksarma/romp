@@ -16,7 +16,7 @@ import { planStrip, parseTabGroups, headWords } from "./tab-groups";
 import { tabStateClass, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle } from "./tab-state";
 import { newSkeletonState, renderKind } from "./skeleton-tabs";
 import type { TagUnion } from "./session-views";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -196,8 +196,6 @@ function repaintsOnce(H: Hooks, api: Api, what: string, change: () => void): voi
   assert.equal(H.bar.wipes, before + 1, what + " unchanged since: no repaint");
 }
 
-/** The same nodes in the same order, by identity: a node inspects as its projection (the edges are hidden), so a deepEqual of two node lists would compare projections, not the nodes. */
-const sameNodes = (a: FakeEl[], b: FakeEl[]): boolean => a.length === b.length && a.every((n, i) => n === b[i]);
 
 test("an unchanged strip is not rebuilt, and the aftermath runs on both paths", () => {
   const { H, api } = world();
@@ -213,7 +211,7 @@ test("an unchanged strip is not rebuilt, and the aftermath runs on both paths", 
   assert.equal(H.bar.wipes, 1, "the second and third render found nothing changed: no wipe");
   assert.equal(H.rowPaints, 1, "no layout read either");
   assert.equal(H.placeholders, 1, "no node minted");
-  assert.ok(sameNodes(H.bar.children, nodes), "the same DOM nodes");
+  sameNodes(H.bar.children, nodes, "the same DOM nodes");   // by identity (ui/test-dom-shim.ts sameNodes)
   assert.equal(H.aftermaths.length, 3, "the no-sessions placeholder reconciles on the skip path too");
 });
 
@@ -262,7 +260,7 @@ test("the sectioned strip: every input a group header paints repaints it, once, 
   assert.equal(headNodes.length, 2);
   api.renderTabs();
   assert.equal(H.bar.wipes, 1, "equal plan, equal tabs: skipped");
-  assert.ok(sameNodes(H.bar.heads(), headNodes), "the header nodes were kept");
+  sameNodes(H.bar.heads(), headNodes, "the header nodes were kept");
   const changes: [string, () => void][] = [
     ["a section folds", () => { H.groupsRaw = groups({ collapsed: ["backend"] }); }],
     ["a hidden member's state (the folded header's pip)", () => { sessions.get("a").status.state = "blocked"; }],

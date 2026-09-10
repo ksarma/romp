@@ -14,7 +14,7 @@ import * as path from "node:path";
 import { marked } from "marked";
 import { topVisibleIndex, blockIndexAt, followPlace, readPlace, seatPlace, type Place } from "./reader-place";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRowSpan, rawRowForOffset } from "./anchor-map";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = read("file-view.ts");
@@ -227,7 +227,7 @@ test("sourceBlockSpans / renderedBlockIndex / renderedBlockElements: element k o
   assert.deepEqual(spans[2], { start: src.indexOf("| a |"), end: src.indexOf("| 1 | 2 |") + "| 1 | 2 |".length }, "the table, a refused block, still spans its rows");
   assert.deepEqual(spans[3], { start: src.indexOf("```"), end: src.lastIndexOf("```") + 3 }, "the code block too");
   assert.deepEqual(spans[4], { start: src.indexOf("Last"), end: src.length - 1 });
-  for (let b = 0; b < 5; b++) assert.deepEqual(renderedBlockElements(El(md), src, b), [El(blocks[b])], "block " + b + " renders as element " + b + ", refused or not");
+  for (let b = 0; b < 5; b++) sameNodes(renderedBlockElements(El(md), src, b), [El(blocks[b])], "block " + b + " renders as element " + b + ", refused or not");   // by identity (ui/test-dom-shim.ts sameNodes)
   // whitespace text between blocks is no block
   const ws = md.childNodes.find((n) => n instanceof FakeText);
   assert.ok(ws, "marked leaves newlines between the blocks");
@@ -249,7 +249,8 @@ test("sourceBlockSpans / renderedBlockIndex / renderedBlockElements: element k o
   assert.equal(cs.length, 3, "and is a block of the table");
   assert.equal(blockIndexAt(cs, withComment.indexOf("<!--") + 3), 1, "an offset in the comment: the comment's block");
   assert.deepEqual(renderedBlockElements(El(r2.md), withComment, 1), [], "which has no element");
-  assert.deepEqual([0, 2].map((b) => renderedBlockElements(El(r2.md), withComment, b)), [[El(r2.blocks[0])], [El(r2.blocks[1])]], "the paragraphs before and after it keep their elements");
+  sameNodes(renderedBlockElements(El(r2.md), withComment, 0), [El(r2.blocks[0])], "the paragraph before it keeps its element");
+  sameNodes(renderedBlockElements(El(r2.md), withComment, 2), [El(r2.blocks[1])], "the paragraph after it keeps its element");
 });
 
 test("rawRowSpan: a row answers its line's span in the file (CRLF included), a row not of the view null; rawRowForOffset pairs with it", () => {

@@ -32,7 +32,7 @@ import { inspect } from "node:util";
 import { marked } from "marked";
 import { topVisibleIndex, blockIndexAt, blockHolding, followPlace, seatedTop, readPlace, seatPlace, codeOf, type Place } from "./reader-place";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements } from "./anchor-map";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in ─────────────────────────────────────────────────────────────────────────────────
 class FakeNode {
@@ -517,7 +517,7 @@ test("readPlace / seatPlace: a wrapper whose closing tag is the document's last 
     assert.equal(r.blocks.length, 6, what + ": the heading, four paragraphs and the div at the top level");
     assert.equal(r.blocks[5].tagName, "DIV", what);
     assert.equal(r.blocks[5].childNodes.filter((n) => n instanceof FakeElement).length, 8, what + ": the eight paragraphs after the wrapper are nested in it");
-    assert.deepEqual(renderedBlockElements(El(r.md), doc, wb), [r.blocks[5]], what + ": the wrapper's block is paired to the one element");
+    sameNodes(renderedBlockElements(El(r.md), doc, wb), [r.blocks[5]], what + ": the wrapper's block is paired to the one element");   // by identity (ui/test-dom-shim.ts sameNodes)
     const b8 = blockIndexAt(spans, doc.indexOf("Paragraph 8:"));
     assert.equal(renderedBlockElements(El(r.md), doc, b8).length, 0, what + ": a nested paragraph's block has no element of its own");
     // the div straddles the edge (its box 80..120, the edge at 100): the one element's text is the nested paragraphs', not the block's own, so no place

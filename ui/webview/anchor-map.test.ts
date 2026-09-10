@@ -26,7 +26,7 @@ import {
 } from "./anchor-map";
 // @ts-ignore -- untyped CommonJS module (see anchor-map.ts)
 import engine from "../../vendor/track-changents/engine.js";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 const FIX = (f: string) => path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map-fixtures", f);
 const fixture = (f: string) => fs.readFileSync(FIX(f), "utf8");
@@ -901,7 +901,7 @@ test("Rendered paint reads the top-level blocks a range touches and no other: a 
   const one = paintRendered(El(box), source, { start: s1, end: s1 + q.length }, "fc-hl") as unknown as FakeElement[];
   assert.equal(one.map((m) => m.textContent).join(""), q);
   const oneTouched = blocks.filter((b) => reads.has(b));
-  assert.deepEqual(oneTouched, [holder(one[0])], "only the block holding the passage was read; read: " + oneTouched.length + " of " + blocks.length);
+  sameNodes(oneTouched, [holder(one[0])], "only the block holding the passage was read; read: " + oneTouched.length + " of " + blocks.length + ", blocks " + oneTouched.map((b) => blocks.indexOf(b)).join(",") + " where " + blocks.indexOf(holder(one[0])!) + " was expected");   // by identity (ui/test-dom-shim.ts sameNodes)
   // several blocks: the run from the first mark's block to the last mark's block, none before or after
   reads.clear();
   const start = source.indexOf("Key points"), end = source.indexOf("minutes.") + "minutes.".length;
@@ -912,7 +912,7 @@ test("Rendered paint reads the top-level blocks a range touches and no other: a 
   const run = blocks.slice(i0, i1 + 1);
   assert.ok(run.length < blocks.length, "blocks outside the range exist");
   const manyTouched = blocks.filter((b) => reads.has(b));
-  assert.deepEqual(manyTouched, run, "the blocks between the two ends were read and no other; read: " + manyTouched.length + " of " + blocks.length);
+  sameNodes(manyTouched, run, "the blocks between the two ends were read and no other; read: " + manyTouched.length + " of " + blocks.length + ", blocks " + manyTouched.map((b) => blocks.indexOf(b)).join(",") + " where " + i0 + ".." + i1 + " were expected");
 });
 
 // ── Rendered: holes, html resync, inline html, autolinks, cache validity ───────────────────────────
@@ -1173,11 +1173,11 @@ test("Raw change marks over the CRLF fixture: the walks stay exact, no text node
   const marksOf = (id: string) => painted.filter((m) => m.getAttribute("class") === "fc-ins" && m.getAttribute("data-id") === id);
   const insMarks = marksOf("c-ins");
   assert.equal(new Set(insMarks.map(rowOf)).size, 2);
-  assert.deepEqual([...new Set(insMarks.map(rowOf))], [rows[1], rows[2]]);
+  sameNodes([...new Set(insMarks.map(rowOf))], [rows[1], rows[2]], "the insertion's marks sit in rows 1 and 2, in order");   // by identity (ui/test-dom-shim.ts sameNodes)
   assert.equal(noEol(insMarks.map((m) => m.textContent).join("")), noEol(byId["c-ins"].newText!));
   const subMarks = marksOf("c-sub");
   // the blank CRLF rows in between show their CR as an LF, which the range covers, so each holds one mark over it
-  assert.deepEqual([...new Set(subMarks.map(rowOf))], [rows[4], rows[5], rows[6], rows[7]]);
+  sameNodes([...new Set(subMarks.map(rowOf))], [rows[4], rows[5], rows[6], rows[7]], "the substitution's marks sit in rows 4 to 7, in order");
   assert.deepEqual(subMarks.filter((m) => rowOf(m) === rows[5] || rowOf(m) === rows[6]).map((m) => m.textContent), ["\n", "\n"]);
   assert.equal(noEol(subMarks.map((m) => m.textContent).join("")), noEol(byId["c-sub"].newText!));
   // the substitution's point comes first, right before its first mark

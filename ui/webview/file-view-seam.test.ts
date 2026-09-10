@@ -12,7 +12,7 @@
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
@@ -713,7 +713,7 @@ test("mediaElement() is null for a text body even when the rendered markdown car
   const f2 = new El("img"); f2.setAttribute("src", "https://example.test/x.png");
   const p3 = new El("p"); const span = new El("span"); const f3 = new El("img"); f3.className = "fileview-img"; f3.setAttribute("src", "data:image/png;base64,iVBORw0KGgo="); span.appendChild(f3); p3.appendChild(span);
   md.appendChild(p1); md.appendChild(f2); md.appendChild(p3);
-  assert.deepEqual(ctx.renderedImages(), [f1, f2, f3], "every figure, document order, whatever its src or class");
+  sameNodes(ctx.renderedImages(), [f1, f2, f3], "every figure, document order, whatever its src or class");   // by identity (ui/test-dom-shim.ts sameNodes)
   assert.equal(ctx.mediaElement(), null, "a rendered body's own <img class=fileview-img> never answers as the media element (the mode gate)");
   o.b.raw.click();
   assert.equal(ctx.mode(), "raw");

@@ -15,7 +15,7 @@ import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { marked } from "marked";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, mapRenderedSelection, type SelLike } from "./anchor-map";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in ─────────────────────────────────────────────────────────────────────────────────
 class FakeNode {
@@ -108,7 +108,7 @@ function pairedAfter(md: FakeElement, src: string): void {
   for (const i of [4, 5, 6]) {
     const p = elementStarting(md, `Paragraph ${i}:`);
     assert.equal(renderedBlockIndex(El(md), src, Nd(p)), i + 1, `Paragraph ${i} stands for block ${i + 1}`);
-    assert.deepEqual(renderedBlockElements(El(md), src, i + 1), [El(p)], `block ${i + 1} renders as Paragraph ${i}`);
+    sameNodes(renderedBlockElements(El(md), src, i + 1), [El(p)], `block ${i + 1} renders as Paragraph ${i}`);   // by identity (ui/test-dom-shim.ts sameNodes)
   }
   assert.equal(renderedBlockIndex(El(md), src, Nd(elementStarting(md, "Paragraph 3:"))), 3);
   assert.equal(mapRenderedSelection(selectStart(elementStarting(md, "Paragraph 4:"), 9), El(md), src).ok, true,

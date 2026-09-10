@@ -20,7 +20,7 @@ import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -420,7 +420,7 @@ test("the observer watches the strip's WIDTH through a zero-height sentinel, not
   assert.ok(s && s.classList.contains("tab-row-sentinel"), "a sentinel of its own class");
   assert.equal(s.parent, bar, "a child of the strip");
   assert.equal(s.attrs["aria-hidden"], "true", "layout only");
-  assert.deepEqual(observer()!.targets.map((t) => t === s), [true], "observe(sentinel): the strip's height, which the pass changes, is not watched (by identity: a node inspects as its projection)");
+  sameNodes(observer()!.targets, [s], "observe(sentinel): the strip's height, which the pass changes, is not watched");   // by identity (ui/test-dom-shim.ts sameNodes)
   assert.ok(!s.isBreak && !s.isLine && !s.classList.contains("tab-group-sep") && !s.classList.contains("tab"),
     "none of the classes the pass's previous-sibling read, the painter's line sweep, dragslot's boxes or sectionHeadOf key on");
   assert.deepEqual(bar.rows(), [["web", "a1", "a2"], ["api", "b1", "b2", "tab tab-add"]], "the rows ignore it");

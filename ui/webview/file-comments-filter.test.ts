@@ -28,7 +28,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
 import { type Status, type Hunk, type StoreComment, cardCounts, filterOffered, actionLabel } from "./file-comments-model";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -431,8 +431,6 @@ const changeCards = (aside: El): El[] => aside.querySelectorAll(".fc-card.fc-cha
 const commentCards = (aside: El): El[] => aside.querySelectorAll(".fc-card").filter((c) => !c.classes.includes("fc-change"));
 const highlights = (w: World): El[] => w.body.querySelectorAll(".fc-hl");
 const pick = async (aside: El, key: string): Promise<void> => { option(aside, key).click(); await flush(); };
-/** The same nodes, in the same order: identity, never a structural compare of two node lists. */
-const same = (a: El[], b: El[]): boolean => a.length === b.length && a.every((n, i) => n === b[i]);
 const kindOf = (c: El): string => { const k = c.querySelector(".fc-card-head .fc-kind"); return k ? k.textContent : ""; };   // the head's own cue
 // a whole-file comment, a region comment on the picture (no anchor: kind "region"), and a resolved passage comment
 const whole: StoreComment = { id: T0 + 1000 + "-3", author: "you", ts: T0 + 1000, body: "Tighten the summary throughout.", anchor: null, replies: [], resolved: false };
@@ -614,7 +612,7 @@ test("All brings today's list and both kinds of mark back; the keyed expand stat
   // the option already chosen changes nothing
   const before = marksOf(w);
   await pick(aside, "all");
-  assert.ok(same(marksOf(w), before), "no new information, no repaint");
+  sameNodes(marksOf(w), before, "no new information, no repaint");   // by identity (ui/test-dom-shim.ts sameNodes)
   store.delete(SETTINGS_KEY);
 });
 
@@ -751,7 +749,7 @@ test("a pick elsewhere — the settings signal another pane or the gear raises, 
   const before = highlights(w);
   win.dispatchEvent(new Event("romp:settings"));
   await flush();
-  assert.ok(same(highlights(w), before), "no new information, no repaint");
+  sameNodes(highlights(w), before, "no new information, no repaint");
   store.delete(SETTINGS_KEY);
 });
 

@@ -17,7 +17,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { makeRender, scrollRootFor, type PdfLib, type PageInfo, type PageError } from "./pdf-chunk";
 import { inspect } from "node:util";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 // ── a fake DOM: what the chunk touches of an element, and nothing else ──────────────────────────
 
@@ -187,7 +187,7 @@ test("the observer's root is the viewer's scroller; a page draws when it interse
   assert.equal(io.opts.rootMargin, "100% 0px", "one scroller height of margin");
   const wraps = pagesOf(container);
   assert.equal(wraps.length, 6);
-  assert.deepEqual(io.targets.map((t) => wraps.indexOf(t)), wraps.map((_, i) => i), "every page's wrapper is watched, in page order (by identity: a node inspects as its projection)");
+  sameNodes(io.targets, wraps, "every page's wrapper is watched, in page order");   // by identity (ui/test-dom-shim.ts sameNodes)
   // the first page is drawn before resolve; the rest are shells with NO bitmap (0×0, never the 300×150 element
   // default an overlay would read as the page's size) whose canvas box still has the page's aspect
   assert.deepEqual(drawn.map((p) => p.index), [1]);
