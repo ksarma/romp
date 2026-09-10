@@ -131,18 +131,38 @@ test('copy verbs: the last operand, a directory destination, -t, mv, install, ln
   assert.deepEqual(targets('install -d docs/new'), [], 'a directory made is no file written');
 });
 
-test('redirections: >, >>, >|, &>, 2>, a fd prefix; not <, <<<, 2>&1 or >&2', () => {
+test('redirections: >, >>, >|, &>, &>>, >&, <>, 2>, a fd prefix; not <, <<<, <&0, 2>&1 or >&2', () => {
   assert.deepEqual(targets('echo x > docs/report.md'), [report]);
   assert.deepEqual(targets('echo x >> docs/report.md'), [report]);
   assert.deepEqual(targets('echo x >| docs/report.md'), [report]);
   assert.deepEqual(targets('cmd &> docs/report.md'), [report]);
+  assert.deepEqual(targets('cmd &>> docs/report.md'), [report], '&>> appends both streams to the file');
+  assert.deepEqual(targets('cmd >& docs/report.md'), [report], '>& before a word, not a descriptor, writes that file');
+  assert.deepEqual(targets('cmd 2>&1 >& docs/report.md'), [report], 'a dup earlier in the command does not hide it');
+  assert.deepEqual(targets('cmd <> docs/report.md'), [report], '<> opens the file for reading and writing');
   assert.deepEqual(targets('cmd 2> docs/report.md'), [report]);
   assert.deepEqual(targets('cmd 2>docs/report.md'), [report]);
   assert.deepEqual(targets('cmd >docs/report.md 2>&1'), [report]);
   assert.deepEqual(targets('cmd < docs/report.md'), []);
   assert.deepEqual(targets('cmd <<< docs/report.md'), []);
-  assert.deepEqual(targets('cmd >&2; cmd 2>&1'), []);
+  assert.deepEqual(targets('cmd >&2; cmd 2>&1; cmd >&-'), []);
+  assert.deepEqual(targets('cmd <&0 docs/report.md; cmd <&- docs/report.md'), [], 'a descriptor after <& is a dup; the word after it is an operand');
   assert.deepEqual(targets('echo 2 > docs/other.md'), [other], 'a 2 that is a word, not a descriptor');
+});
+
+test('each write redirection is lexed under its own operator and the refusal names it, so none can quietly fall back to a bare >', () => {
+  // A mutation that stops reading &>>, >& or <> as itself would still see the trailing > and record a
+  // > redirection, so the target alone does not pin the operator: the recorded op and the refusal's wording do.
+  for (const op of ['>', '>>', '>|', '&>', '&>>', '>&', '<>']) {
+    const { segments } = lex(`cmd ${op} docs/report.md`);
+    assert.equal(segments.length, 1, `${op}: one segment`);
+    assert.deepEqual(segments[0].words.map((w) => w.text), ['cmd'], `${op}: the target is not a word of the command`);
+    assert.deepEqual(segments[0].redirects.map((r) => [r.op, r.target.text]), [[op, 'docs/report.md']], `${op}: one redirection, under its own operator`);
+    const reason = evaluate(payload(`cmd ${op} docs/report.md`));
+    assert.ok(reason && reason.includes(report), `${op} onto the tracked file is refused`);
+    assert.ok(reason.includes(`its ${op} redirection would write the file`), `${op}: the refusal names the operator, in: ${reason}`);
+    assert.equal(evaluate(payload(`cmd ${op} docs/other.md`)), null, `${op} onto an untracked file passes`);
+  }
 });
 
 test('tee, dd, sort -o, sponge and truncate name their files', () => {

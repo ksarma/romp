@@ -2610,7 +2610,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   with it); `tests/install-sh.bats` the Bash-side guard's registration on its own `Bash` group, once, with the
   vendored guard's group beside it and a user's own Bash group kept; `tests/romp-uninstall.bats` its removal;
   `tools/file-review-plan-bash-guard.test.mjs` holds decision 47, the Vendoring paragraph and this bullet to the
-  hook, the installer and the uninstaller. Sessions commit the folder (decision 48): `tests/test_session_prompt.py`
+  hook, the installer and the uninstaller; `tools/file-review-plan-dry-run-record.test.mjs` holds decision 47's
+  record of the dry run to the form every other record of it takes, a dry run and its date, with no project
+  named. Sessions commit the folder (decision 48): `tests/test_session_prompt.py`
   pins the prompt's sentence; `tools/vendor-patches.test.mjs` (P7) pins patch 0007's two rules in the skill;
   `tests/test_guide_files_commit_folder.py` holds the prompt, the skill, the guide's Files sentence and decision 25
   to one another; `tests/test_guide_files_bash_guard.py` holds the guide's Track changes sentence on the refusal
@@ -2884,10 +2886,10 @@ document stands on its own, each with the reasoning it was given.
     kernel change.
 47. **A guard on the Bash tool too** (2026-09-10). The vendored guard denies a raw Write, Edit or MultiEdit on a
     tracked file and sees nothing else, and a session in auto mode is told to write files through Bash: cp and mv
-    over the file, tee, a heredoc redirected into it, sed -i, a python or node one-liner. The dry run of the
-    pipeline skills (2026-09-09) saw one do exactly that: it ran track-config and cp in a single compound command on
-    a tracked file, the flag printed on, and the copy landed raw, with no change recorded for the user to accept or
-    reject; the session recovered from its own base copy, whose hash matched the sidecar's fingerprint, and
+    over the file, tee, a heredoc redirected into it, sed -i, a python or node one-liner. A dry run (2026-09-09)
+    saw one do exactly that: it ran track-config and cp in a single compound command on a tracked file, the flag
+    printed on, and the copy landed raw, with no change recorded for the user to accept or reject; the session
+    recovered from its own base copy, whose hash matched the sidecar's fingerprint, and
     re-applied its edits through track-edit. The remedy is in two places. The skill (patch 0007) says a tracked
     file is never written through Bash either, and that track-config's exit code is checked as a step of its own,
     since its 0 means ON and a `&&` after it runs the write on exactly the tracked file. And romp's own PreToolUse

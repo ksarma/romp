@@ -12,7 +12,8 @@
 //
 // It reads the command, extracts the paths the command would write (extractWriteTargets below
 // states the grammar), resolves them against the session's working directory (the payload's cwd;
-// a `cd` earlier in the command moves it), and refuses (exit 2, the reason on stderr) when one of
+// a `cd` earlier in the command moves it, and a `cd` inside a subshell moves it only up to the
+// closing parenthesis, as in the shell), and refuses (exit 2, the reason on stderr) when one of
 // them is a tracked text file of its project, per that project's .trackchanges/config.json, read
 // through the same store-io the CLIs and the vendored guard use. A read-only command (cat, grep,
 // diff, git) names no write target and passes. A command the extraction cannot see through (paths
@@ -21,24 +22,36 @@
 // the raw write is the only way to regenerate a figure), and it exits 0 at once, before stdin is
 // read, when ROMP_SID is absent from its environment (decision 24: registered machine-wide, inert
 // in every session romp did not launch).
+//
+// Cost: a couple of small reads of config.json per target and, when the project's tracked list is non-empty and a target
+// is not on it by name, ONE walk of the project's markdown tree per call (store-io's link closure,
+// the same walk the vendored guard pays once per Write), however many files the command lands: a
+// directory copy of hundreds of files must not pay the walk once per file, or the call outruns the
+// installer's 10 s hook timeout and the harness runs the command unjudged.
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findVaultRoot, isTrackedFile, isNonTextPath, hasNulBytes } from '../vendor/track-changents/store-io.mjs';
+import { relPathFor, trackedPaths, untrackedPaths, trackedClosure } from '../vendor/track-changents/store-io.mjs';
+import engine from '../vendor/track-changents/engine.js';
 
 // ── lexer ───────────────────────────────────────────────────────────
 //
 // A command is cut into simple commands ("segments") at |, ||, &&, ;, &, newline, ( and ). Each
-// segment is a list of words and a list of redirections. A word keeps the text the shell would
-// see after quote removal and a `literal` flag: false once the word carries anything the shell
-// would expand ($VAR, ${...}, $(...), backticks, a glob, ~user), since such a word names no path
-// the hook can resolve. A leading ~/ is expanded to the home directory, as the shell would. A
-// heredoc body (<<EOF ... EOF) is data, not commands: it is kept on the segment for the python
-// and node scan and never lexed as shell. `opaque` is set when the command is more than the
-// lexer can follow: an unterminated quote, or eval, xargs or a shell -c with a script it cannot
-// read.
+// segment is a list of words and a list of redirections, and `op` names the operator that ended
+// it, so a later pass can tell a pipeline from a list. A `(` or `)` is also emitted as a marker
+// segment (`paren`) so the scope of a subshell is known: a `cd` inside one moves nothing after the
+// `)`. A word keeps the text the shell would see after quote removal and a `literal` flag: false
+// once the word carries anything the shell would expand ($VAR, ${...}, $(...), backticks, a glob,
+// ~user), since such a word names no path the hook can resolve. A leading ~/ is expanded to the
+// home directory, as the shell would. A heredoc body (<<EOF ... EOF) is data, not commands: it is
+// kept on the segment whose command opened it (not the one current when the line ends, which
+// after `python3 - <<EOF && echo done` is the echo) for the python, node and shell stdin scans,
+// and never lexed as shell. Inside `[[ ... ]]` and `(( ... ))` a `>` or `<` compares and redirects
+// nothing. `opaque` is set when the command is more than the lexer can follow: an unterminated
+// quote, or eval, xargs or a shell -c with a script it cannot read.
 
 const WRITE_REDIRECTS = new Set(['>', '>>', '>|', '&>', '&>>', '>&', '<>']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
@@ -49,15 +62,18 @@ function word(text, literal, raw) {
   return { text, literal, raw };
 }
 
+const newSegment = () => ({ words: [], redirects: [], heredocs: [], subs: [], op: '' });
+
 export function lex(command) {
   const src = String(command);
   const segments = [];
-  let seg = { words: [], redirects: [], heredocs: [], subs: [] };
+  let seg = newSegment();
   let buf = '';
   let raw = '';
   let literal = true;
   let inWord = false;
   let opaque = false;
+  let inTest = false;   // inside [[ ... ]], where > and < compare strings
   // what the next word is: a redirect target, a heredoc delimiter, or data (<<<, <)
   let expect = null;
   const pendingHeredocs = [];
@@ -68,23 +84,28 @@ export function lex(command) {
     const w = word(buf, literal, raw);
     if (expect) {
       if (expect.kind === 'target') seg.redirects.push({ op: expect.op, target: w });
-      else if (expect.kind === 'heredoc') pendingHeredocs.push({ delim: buf, stripTabs: expect.stripTabs });
+      else if (expect.kind === 'heredoc') pendingHeredocs.push({ delim: buf, stripTabs: expect.stripTabs, owner: seg });
       expect = null;
     } else {
+      if (buf === '[[') inTest = true;
+      else if (buf === ']]') inTest = false;
       seg.words.push(w);
     }
     buf = ''; raw = ''; literal = true; inWord = false;
   };
-  const endSegment = () => {
+  const endSegment = (op) => {
     endWord();
     if (expect) expect = null;   // a redirect with no target: leave it
+    inTest = false;
+    seg.op = op;
     if (seg.words.length || seg.redirects.length || seg.heredocs.length || seg.subs.length) segments.push(seg);
-    seg = { words: [], redirects: [], heredocs: [], subs: [] };
+    seg = newSegment();
   };
-  // After a newline, the bodies of every heredoc opened on the line just ended.
+  // After a newline, the bodies of every heredoc opened on the line just ended, each on the
+  // segment that opened it (already pushed by reference when an operator ended it on that line).
   const readHeredocBodies = () => {
     while (pendingHeredocs.length) {
-      const { delim, stripTabs } = pendingHeredocs.shift();
+      const { delim, stripTabs, owner } = pendingHeredocs.shift();
       const lines = [];
       for (;;) {
         if (i >= src.length) break;
@@ -96,8 +117,18 @@ export function lex(command) {
         if (cmp === delim) break;
         lines.push(line);
       }
-      seg.heredocs.push(lines.join('\n'));
+      owner.heredocs.push(lines.join('\n'));
     }
+  };
+  // (( ... )): arithmetic, no command and no redirection in it; skip to the matching )).
+  const skipArithmetic = () => {
+    let depth = 2;
+    while (i < src.length && depth > 0) {
+      if (src[i] === '(') depth++;
+      else if (src[i] === ')') depth--;
+      i++;
+    }
+    if (depth > 0) opaque = true;
   };
   // Skip a $( ... ) or ${ ... } from just after its opener to its closer, quotes honoured;
   // returns the inner text. The word carrying it is not literal.
@@ -129,7 +160,7 @@ export function lex(command) {
       endWord();
       i++;
       readHeredocBodies();   // the bodies belong to the line just ended
-      endSegment();
+      endSegment('\n');
       continue;
     }
     if (c === '#' && !inWord) {   // comment to the end of the line
@@ -190,9 +221,12 @@ export function lex(command) {
     if (c === '*' || c === '?' || c === '[') { inWord = true; literal = false; buf += c; raw += c; i++; continue; }
     // operators
     if (c === '<' || c === '>' || c === '&' || c === '|' || c === ';' || c === '(' || c === ')') {
+      // inside [[ ... ]] a > or < is a string comparison, not a redirection: a word of its own
+      if (inTest && (c === '<' || c === '>')) { endWord(); inWord = true; buf = c; raw = c; i++; endWord(); continue; }
       // a digits-only word glued to < or > is the descriptor (2>file still writes file): drop it
       if (inWord && /^[0-9]+$/.test(buf) && (c === '<' || c === '>')) { buf = ''; raw = ''; inWord = false; }
       else endWord();
+      if (c === '(' && src[i + 1] === '(') { i += 2; skipArithmetic(); continue; }   // (( ... )) compares or counts
       if (c === '>') {
         if (src[i + 1] === '>') { i += 2; expect = { kind: 'target', op: '>>' }; continue; }
         if (src[i + 1] === '|') { i += 2; expect = { kind: 'target', op: '>|' }; continue; }
@@ -213,16 +247,19 @@ export function lex(command) {
       }
       if (c === '&') {
         if (src[i + 1] === '>') { const app = src[i + 2] === '>'; i += app ? 3 : 2; expect = { kind: 'target', op: app ? '&>>' : '&>' }; continue; }
-        if (src[i + 1] === '&') { i += 2; endSegment(); continue; }
-        i++; endSegment(); continue;
+        if (src[i + 1] === '&') { i += 2; endSegment('&&'); continue; }
+        i++; endSegment('&'); continue;
       }
-      if (c === '|') { i += src[i + 1] === '|' ? 2 : 1; endSegment(); continue; }
-      if (c === ';') { i += src[i + 1] === ';' ? 2 : 1; endSegment(); continue; }
-      i++; endSegment(); continue;   // ( or )
+      if (c === '|') { const or = src[i + 1] === '|'; i += or ? 2 : 1; endSegment(or ? '||' : '|'); continue; }
+      if (c === ';') { i += src[i + 1] === ';' ? 2 : 1; endSegment(';'); continue; }
+      // ( or ): a segment break and a scope marker
+      i++; endSegment(c);
+      segments.push({ ...newSegment(), paren: c });
+      continue;
     }
     inWord = true; buf += c; raw += c; i++;
   }
-  endSegment();
+  endSegment('');
   readHeredocBodies();
   if (pendingHeredocs.length) opaque = true;
   return { segments, opaque };
@@ -230,8 +267,23 @@ export function lex(command) {
 
 // ── the grammar: which words a segment would write ─────────────────
 
-// Words of a segment after the command's prefixes (sudo, env with its K=V arguments, nice, ...),
-// leading assignments and reserved words. Returns { name, args } or null for an empty segment.
+// The options of each prefix that take the next word as their operand (`sudo -u USER`, `env -u
+// VAR`, `timeout -s KILL 5`, `exec -a NAME`); every other -option is skipped on its own.
+const PREFIX_OPERANDS = {
+  sudo: new Set(['-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt', '-C', '--close-from', '-D', '--chdir', '-r', '--role', '-t', '--type', '-T', '--command-timeout', '-U', '--other-user']),
+  env: new Set(['-u', '--unset', '-S', '--split-string']),
+  exec: new Set(['-a']),
+  timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
+  nice: new Set(['-n', '--adjustment']),
+  ionice: new Set(['-c', '--class', '-n', '--classdata', '-p', '--pid', '-P', '--pgid', '-u', '--uid']),
+  stdbuf: new Set(['-i', '--input', '-o', '--output', '-e', '--error']),
+};
+const NO_OPERANDS = new Set();
+
+// Words of a segment after the command's prefixes (sudo and its options, env with its options and
+// K=V arguments, nice, ...), leading assignments and reserved words. Returns { name, args }, or
+// null for an empty segment or one the prefix runs somewhere the hook cannot follow (`env -C DIR`,
+// `sudo -D DIR`: the command's relative paths resolve against that directory, not the cwd).
 function commandOf(words) {
   let k = 0;
   for (;;) {
@@ -241,11 +293,16 @@ function commandOf(words) {
     const name = path.basename(words[k].text);
     if (!PREFIXES.has(name)) return { name, args: words.slice(k + 1) };
     k++;
-    if (name === 'timeout' || name === 'nice' || name === 'ionice' || name === 'stdbuf') {
-      // their own options and a value: `timeout 5`, `nice -n 19`, `stdbuf -o0`
-      while (k < words.length && (/^-/.test(words[k].text) || /^[0-9.]+[smhd]?$/.test(words[k].text))) k++;
-    } else if (name === 'env') {
-      while (k < words.length && (/^-/.test(words[k].text))) k++;
+    const operands = PREFIX_OPERANDS[name] || NO_OPERANDS;
+    while (k < words.length) {
+      const t = words[k].text;
+      if (t === '--') { k++; break; }
+      if ((name === 'env' && (t === '-C' || t === '--chdir' || t.startsWith('--chdir=')))
+        || (name === 'sudo' && (t === '-D' || t === '--chdir' || t.startsWith('--chdir=')))) return null;
+      if (operands.has(t)) { k += 2; continue; }
+      if (t.startsWith('-') && t.length > 1) { k++; continue; }
+      if (name === 'timeout' && /^[0-9.]+[smhd]?$/.test(t)) { k++; continue; }   // the duration
+      break;
     }
   }
 }
@@ -373,25 +430,68 @@ function perlTargets(args) {
 }
 
 // Paths a python or node script opens for writing, read off its text. Only a literal path with a
-// write mode counts: open('x', 'w'), open('x', mode='a'), Path('x').write_text(...),
-// shutil.copy(src, 'x'); fs.writeFileSync('x', ...), appendFile, createWriteStream,
-// copyFile(src, 'x'), rename(src, 'x'). A path that is a template or an f-string with an
-// expression is not literal and is skipped.
-const PY_OPEN = /\bopen\(\s*(?:file\s*=\s*)?(['"])([^'"\n]+)\1\s*,\s*(?:mode\s*=\s*)?(['"])([rwaxbt+]*)\3/g;
+// write mode counts: open('x', 'w'), open('x', mode='a'), open('x', encoding='utf8', mode='w'),
+// open(mode='w', file='x'), Path('x').open('w'), Path('x').write_text(...), shutil.copy(src, 'x');
+// fs.writeFileSync('x', ...), appendFile, createWriteStream, openSync('x', 'w'), copyFile(src, 'x'),
+// rename(src, 'x'). A path that is a template or an f-string with an expression is not literal
+// and is skipped, as is a call whose arguments the scan cannot read (a nested call).
+const PY_OPEN = /\b(?:io\.)?open\(([^()\n]*)\)/g;
+const PY_PATH_OPEN = /\bPath\(\s*(['"])([^'"\n]+)\1\s*\)\s*\.open\(([^()\n]*)\)/g;
 const PY_PATH_WRITE = /\bPath\(\s*(['"])([^'"\n]+)\1\s*\)\s*\.write_(?:text|bytes)\(/g;
 const PY_SHUTIL = /\bshutil\.(?:copy|copyfile|copy2|move)\(\s*[^,()\n]+,\s*(['"])([^'"\n]+)\1/g;
 const NODE_WRITE = /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|truncate|truncateSync)\(\s*(['"`])([^'"`\n$]+)\1/g;
+const NODE_OPEN = /\b(?:open|openSync)\(\s*(['"`])([^'"`\n$]+)\1\s*,\s*(['"`])([rwaxs+]*)\3/g;
 const NODE_COPY = /\b(?:copyFile|copyFileSync|rename|renameSync|cp|cpSync)\(\s*(['"`])[^'"`\n]*\1\s*,\s*(['"`])([^'"`\n$]+)\2/g;
+
+// A python call's argument list, as { positional: [...], keyword: { name: text } }, each value
+// the source text; commas inside quotes do not split.
+function pyArgs(list) {
+  const parts = [];
+  let cur = '';
+  let q = null;
+  for (const ch of list) {
+    if (q) { cur += ch; if (ch === q) q = null; continue; }
+    if (ch === "'" || ch === '"') { q = ch; cur += ch; continue; }
+    if (ch === ',') { parts.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) parts.push(cur);
+  const positional = [];
+  const keyword = {};
+  for (const p of parts) {
+    const m = p.match(/^\s*([A-Za-z_]\w*)\s*=(?!=)\s*([\s\S]*)$/);
+    if (m) keyword[m[1]] = m[2];
+    else positional.push(p);
+  }
+  return { positional, keyword };
+}
+// The text of a plain string literal ('x' or "x"), or null for anything else (an f-string, a name).
+function pyString(text) {
+  const m = String(text == null ? '' : text).match(/^\s*(['"])([^'"\n]*)\1\s*$/);
+  return m ? m[2] : null;
+}
+const PY_WRITE_MODE = /[wax+]/;
 
 export function scriptWriteTargets(kind, text) {
   const out = [];
   const t = String(text);
   if (kind === 'python') {
-    for (const m of t.matchAll(PY_OPEN)) if (/[wax+]/.test(m[4])) out.push(m[2]);
+    for (const m of t.matchAll(PY_OPEN)) {
+      const { positional, keyword } = pyArgs(m[1]);
+      const file = pyString(keyword.file != null ? keyword.file : positional[0]);
+      const mode = pyString(keyword.mode != null ? keyword.mode : (keyword.file != null ? positional[0] : positional[1]));
+      if (file && mode != null && PY_WRITE_MODE.test(mode)) out.push(file);
+    }
+    for (const m of t.matchAll(PY_PATH_OPEN)) {
+      const { positional, keyword } = pyArgs(m[3]);
+      const mode = pyString(keyword.mode != null ? keyword.mode : positional[0]);
+      if (mode != null && PY_WRITE_MODE.test(mode)) out.push(m[2]);
+    }
     for (const m of t.matchAll(PY_PATH_WRITE)) out.push(m[2]);
     for (const m of t.matchAll(PY_SHUTIL)) out.push(m[2]);
   } else if (kind === 'node') {
     for (const m of t.matchAll(NODE_WRITE)) out.push(m[2]);
+    for (const m of t.matchAll(NODE_OPEN)) if (/[wa+]/.test(m[4])) out.push(m[2]);
     for (const m of t.matchAll(NODE_COPY)) out.push(m[3]);
   }
   return out.filter((p) => !/[{}$]/.test(p));
@@ -403,10 +503,45 @@ function resolveAgainst(text, cwd) {
   return path.resolve(cwd, text);
 }
 
+// Interpreter options that take the next word as their operand; anything else starting with - is
+// an option on its own, and the first other word is the script file.
+const INTERPRETER_OPERANDS = {
+  python: new Set(['-W', '-X', '--check-hash-based-pycs']),
+  node: new Set(['-r', '--require', '--import', '--input-type', '-C', '--conditions', '--loader', '--experimental-loader', '--env-file', '--title']),
+};
+
+// What a shell (sh, bash, ...) runs, from its arguments: { script } for -c, alone or in a cluster
+// (-lc, -ec; null when no operand follows), { stdin: true } when no -c and no script file is
+// given (bash <<EOF, bash -s <<EOF, bash - <<EOF, a pipe), and {} for a script file, whose
+// contents are not in the command.
+function shellScript(args) {
+  let c = false;
+  let s = false;
+  let operand;
+  for (let k = 0; k < args.length; k++) {
+    const t = args[k].text;
+    if (t === '--' || t === '-') { operand = args[k + 1]; break; }
+    if (t === '-o' || t === '+o' || t === '--rcfile' || t === '--init-file') { k++; continue; }
+    if (/^[-+][A-Za-z]+$/.test(t)) {
+      if (t[0] === '-' && t.includes('c')) c = true;
+      if (t[0] === '-' && t.includes('s')) s = true;
+      if (t.endsWith('o')) k++;   // -euo pipefail: the cluster's o takes the next word
+      continue;
+    }
+    if (t.startsWith('--')) continue;
+    operand = args[k];
+    break;
+  }
+  if (c) return { script: operand || null };
+  if (s || !operand) return { stdin: true };
+  return {};
+}
+
 // The paths a command would write, each as { path, how }, resolved against `cwd` (the session's
-// working directory; a `cd` earlier in the command moves it, and one the lexer cannot read makes
-// every later relative path unresolvable). `how` names the writing construct for the refusal.
-// Returns { targets, opaque }.
+// working directory; a `cd` earlier in the command moves it, a `cd` inside `( ... )` only up to
+// the `)`, a `cd` inside an if, loop or case body leaves it unknown once the body closes, since
+// the body may not run, and one the lexer cannot read makes every later relative path
+// unresolvable). `how` names the writing construct for the refusal. Returns { targets, opaque }.
 export function extractWriteTargets(command, cwd) {
   const { segments, opaque } = lex(command);
   const targets = [];
@@ -418,13 +553,73 @@ export function extractWriteTargets(command, cwd) {
     if (p) targets.push({ path: p, how });
   };
   let sawOpaqueCommand = false;
-  for (const seg of segments) {
-    for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`);
-    for (const inner of seg.subs) {
-      const sub = extractWriteTargets(inner, unknownDir ? null : dir);
-      targets.push(...sub.targets);
-      if (sub.opaque) sawOpaqueCommand = true;
+  const recurse = (text) => {
+    const sub = extractWriteTargets(text, unknownDir ? null : dir);
+    targets.push(...sub.targets);
+    if (sub.opaque) sawOpaqueCommand = true;
+  };
+  // What a command at segment `idx` reads on stdin, as text the hook holds: its own heredocs and
+  // those of the commands piped into it (cat <<EOF | python3 -).
+  const stdinBodies = (idx) => {
+    const out = [...segments[idx].heredocs];
+    for (let j = idx - 1; j >= 0 && segments[j].op === '|'; j--) out.push(...segments[j].heredocs);
+    return out;
+  };
+  // Open scopes, innermost last: a subshell frame holds the dir to restore at its `)`; a function
+  // frame (`f() { ... }`, a body defined, not run) holds the dir to restore at its closing brace;
+  // a compound frame (if, while, until, for, case) records whether a cd ran in its body.
+  const frames = [];
+  const CLOSERS = { fi: ['if'], done: ['while', 'until', 'for'], esac: ['case'] };
+  const isScope = (f) => f.kind === 'subshell' || f.kind === 'function';
+  const closeSubshell = () => {
+    for (let j = frames.length - 1; j >= 0; j--) {
+      if (frames[j].kind === 'case' || frames[j].kind === 'function') return;   // in a case body a ) ends a pattern
+      if (frames[j].kind === 'subshell') { ({ dir, unknownDir } = frames[j]); frames.length = j; return; }
     }
+  };
+  const closeCompound = (kinds) => {
+    for (let j = frames.length - 1; j >= 0 && !isScope(frames[j]); j--) {
+      if (!kinds.includes(frames[j].kind)) continue;
+      if (frames.slice(j).some((f) => f.moved)) unknownDir = true;
+      frames.length = j;
+      return;
+    }
+  };
+  const movedHere = () => {
+    for (let j = frames.length - 1; j >= 0 && !isScope(frames[j]); j--) frames[j].moved = true;
+  };
+  // The braces of a function body: the frame closes, restoring the dir, when its depth returns to 0.
+  const braces = (seg) => {
+    const f = frames[frames.length - 1];
+    if (!f || f.kind !== 'function') return;
+    if (f.depth === 0 && !(seg.words.length && seg.words[0].text === '{')) { frames.pop(); return; }   // a body without braces: not followed
+    for (const w of seg.words) {
+      if (w.text === '{') f.depth++;
+      else if (w.text === '}') f.depth--;
+    }
+    if (f.depth <= 0) { ({ dir, unknownDir } = f); frames.pop(); }
+  };
+  for (let idx = 0; idx < segments.length; idx++) {
+    const seg = segments[idx];
+    if (seg.paren === '(') {
+      const next = segments[idx + 1];
+      const prev = segments[idx - 1];
+      const named = prev && prev.op === '(' && (prev.words.length === 1 || (prev.words.length === 2 && prev.words[0].text === 'function'));
+      if (next && next.paren === ')' && named) {
+        frames.push({ kind: 'function', dir, unknownDir, depth: 0 });   // name() ... : a definition, not a run
+        idx++;
+        continue;
+      }
+      frames.push({ kind: 'subshell', dir, unknownDir });
+      continue;
+    }
+    if (seg.paren === ')') { closeSubshell(); continue; }
+    braces(seg);
+    for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`);
+    for (const inner of seg.subs) recurse(inner);
+    const head = seg.words.length ? seg.words[0].text : '';
+    if (head in CLOSERS) closeCompound(CLOSERS[head]);
+    else if (head === 'if' || head === 'while' || head === 'until' || head === 'for' || head === 'case') frames.push({ kind: head, moved: false });
     const cmd = commandOf(seg.words);
     if (!cmd) continue;
     const { args } = cmd;
@@ -437,9 +632,10 @@ export function extractWriteTargets(command, cwd) {
         if (!a) { dir = os.homedir(); unknownDir = false; }
         else if (a.text === '-' || !a.literal) { unknownDir = true; }
         else { dir = resolveAgainst(a.text, unknownDir ? null : dir); unknownDir = dir == null; }
+        movedHere();
         break;
       }
-      case 'popd': unknownDir = true; break;
+      case 'popd': unknownDir = true; movedHere(); break;
       case 'cp': case 'mv': case 'install': case 'ln':
         for (const w of copyTargets(args, unknownDir ? null : dir)) add(w, name);
         break;
@@ -472,34 +668,36 @@ export function extractWriteTargets(command, cwd) {
       case 'python': case 'node': {
         const kind = name;
         let inline = null;
-        let stdin = args.length === 0;
+        let stdin = true;   // no script operand: the script is on stdin (python3 <<EOF, python3 -u <<EOF)
         for (let k = 0; k < args.length; k++) {
           const a = args[k];
-          if (kind === 'python' && a.text === '-c') { inline = args[k + 1]; break; }
-          if (kind === 'node' && (a.text === '-e' || a.text === '--eval' || a.text === '-p' || a.text === '--print')) { inline = args[k + 1]; break; }
-          if (a.text === '-') { stdin = true; break; }
+          if (kind === 'python' && /^-[WX]./.test(a.text)) continue;   // -Xutf8, -Wignore: an option with its value glued on
+          if (kind === 'python' && /^-[A-Za-z]*c$/.test(a.text)) { inline = args[k + 1] || null; stdin = false; break; }
+          if (kind === 'node' && (a.text === '-e' || a.text === '--eval' || a.text === '-p' || a.text === '--print')) { inline = args[k + 1] || null; stdin = false; break; }
+          if (a.text === '-') break;   // stdin, said so
+          if (kind === 'python' && a.text === '-m') { stdin = false; break; }   // a module
+          if (INTERPRETER_OPERANDS[kind].has(a.text)) { k++; continue; }
           if (a.text.startsWith('-')) continue;
-          break;   // a script file: its contents are not in the command
+          stdin = false;   // a script file: its contents are not in the command
+          break;
         }
         if (inline) {
           if (inline.literal) for (const p of scriptWriteTargets(kind, inline.text)) add(word(p, true, p), `${kind} script`);
           else sawOpaqueCommand = true;
         } else if (stdin) {
-          for (const body of seg.heredocs) for (const p of scriptWriteTargets(kind, body)) add(word(p, true, p), `${kind} script`);
+          for (const body of stdinBodies(idx)) for (const p of scriptWriteTargets(kind, body)) add(word(p, true, p), `${kind} script`);
         }
         break;
       }
       case 'eval': case 'xargs': sawOpaqueCommand = true; break;
       default:
         if (SHELLS.has(name)) {
-          const k = args.findIndex((a) => a.text === '-c');
-          if (k >= 0) {
-            const script = args[k + 1];
-            if (script && script.literal) {
-              const sub = extractWriteTargets(script.text, unknownDir ? null : dir);
-              targets.push(...sub.targets);
-              if (sub.opaque) sawOpaqueCommand = true;
-            } else sawOpaqueCommand = true;
+          const sh = shellScript(args);
+          if ('script' in sh) {
+            if (sh.script && sh.script.literal) recurse(sh.script.text);
+            else if (sh.script) sawOpaqueCommand = true;
+          } else if (sh.stdin) {
+            for (const body of stdinBodies(idx)) recurse(body);   // bash <<'EOF' ... EOF: the body is the script
           }
         }
     }
@@ -509,17 +707,35 @@ export function extractWriteTargets(command, cwd) {
 
 // ── the verdict ─────────────────────────────────────────────────────
 
+// store-io's isTrackedFile, with the link closure (its one costly step: a walk of every .md
+// under the root and a read of every tracked note) built once per root per call and kept in
+// `closures`, a Map the caller holds for the call. The three steps and their order are
+// isTrackedFile's own: the veto list wins, then the explicit list by name (an exact entry or a
+// `dir/` prefix, which also covers a file that does not exist yet), then the closure.
+function trackedIn(root, file, closures) {
+  const rel = relPathFor(root, file);
+  if (engine.isTracked(untrackedPaths(root), rel)) return false;
+  const list = trackedPaths(root);
+  if (engine.isTracked(list, rel)) return true;
+  if (!list.length) return false;
+  let closure = closures.get(root);
+  if (!closure) { closure = trackedClosure(root); closures.set(root, closure); }
+  return closure.has(rel);
+}
+
 // Whether `file`, an absolute path, is a tracked TEXT file of its project. A directory, a
 // non-text file by name, a file outside any project, an untracked file, and a tracked binary
 // under a text-looking name all answer false; so does any error (the vendored guard's posture:
-// a guard that cannot read the config denies nothing).
-export function isGuardedPath(file) {
+// a guard that cannot read the config denies nothing). `closures` (optional) is the per-call Map
+// evaluate passes so that one command's targets share one closure per root; without it the
+// answer comes from store-io's isTrackedFile directly.
+export function isGuardedPath(file, closures) {
   try {
     if (isNonTextPath(file)) return false;
     try { if (fs.statSync(file).isDirectory()) return false; } catch { /* absent: may still be tracked by folder */ }
     const root = process.env.TRACKCHANGES_ROOT || findVaultRoot(file);
     if (!root) return false;
-    if (!isTrackedFile(root, file)) return false;
+    if (!(closures ? trackedIn(root, file, closures) : isTrackedFile(root, file))) return false;
     if (hasNulBytes(file)) return false;
     return true;
   } catch { return false; }
@@ -536,13 +752,14 @@ export function evaluate(raw) {
   let targets;
   try { ({ targets } = extractWriteTargets(command, cwd)); } catch { return null; }
   const seen = new Set();
+  const closures = new Map();
   for (const t of targets) {
     if (seen.has(t.path)) continue;
     seen.add(t.path);
-    if (!isGuardedPath(t.path)) continue;
+    if (!isGuardedPath(t.path, closures)) continue;
     return `Track-changes is ON for ${t.path}, so this command is blocked here `
       + `(its ${t.how} would write the file silently, with no change for me to accept or reject). `
-      + `Make the change with track-edit so it lands as a reviewable tracked suggestion:\n`
+      + `Make the change with track-edit instead, which records it for me to accept or reject:\n`
       + `  node ~/.claude/hooks/track-edit.mjs --file "${t.path}" --old "<exact unique text>" --new "<replacement>"`;
   }
   return null;
