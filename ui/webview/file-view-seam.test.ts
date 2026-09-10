@@ -12,7 +12,7 @@
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
-import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
+import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
@@ -1318,4 +1318,6 @@ test("a stand-in node enumerates its primitives alone, so a failing assertion's 
     assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump holds no edge: " + dump);
   }
   assert.ok(child.parentNode === root && root.childNodes[0] === child && root.textContent === "alphabeta", "the tree is reachable as before");
+  // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
+  assertHiddenEvent(new Ev("click"), root, child);
 });

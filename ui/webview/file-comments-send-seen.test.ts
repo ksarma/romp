@@ -12,7 +12,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
@@ -732,4 +732,6 @@ test("stand-in: a node enumerates its primitives alone and inspects without its 
     assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump of " + n.constructor.name);
   }
   assert.equal(kid.parentNode, root); assert.equal(root.childNodes.length, 1); assert.equal(kid.textContent, "leaf");
+  // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
+  assertHiddenEvent(new Ev("click"), root, kid);
 });

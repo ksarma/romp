@@ -52,6 +52,7 @@
 // projections, which the serial makes unequal for distinct nodes, but its failure is a diff of two projections;
 // sameNodes names the index and both tags and serials instead.
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 
 export type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 
@@ -99,6 +100,28 @@ export function sameNodes(actual: ArrayLike<unknown> | null | undefined, expecte
   for (let i = 0; i < expected.length; i++) {
     if (actual[i] !== expected[i]) assert.fail(message + ": index " + i + " is another node: got " + describeNode(actual[i]) + ", expected " + describeNode(expected[i]));
   }
+}
+
+// node's assert inspects the two sides of a failed strict assertion with these options (lib/internal/assert/
+// assertion_error.js, inspectValue) before it diffs them line by line; assertHiddenEvent dumps with the same ones
+const ASSERT_INSPECT = { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true };
+
+/** Asserts that an event-shaped object hides its `target` and `currentTarget` the way a node hides its edges: assigns
+ *  `target` and `currentTarget` (two nodes from the calling test's own tree), then requires each to be an own
+ *  NON-ENUMERABLE property and the event's assert-style dump to name neither key. This is the executed check on an Ev
+ *  class whose constructor ends in hideEdges(this): with the call removed, the two null-initialised fields enumerate,
+ *  dispatch's later writes fill them with nodes, and a failing assertion over the event dumps the tree through them.
+ *  Every assertion here carries a primitive-valued message, so the pin itself never dumps a node. */
+export function assertHiddenEvent(ev: object, target: unknown, currentTarget: unknown): void {
+  const e = ev as any;
+  e.target = target; e.currentTarget = currentTarget;
+  for (const k of ["target", "currentTarget"]) {
+    const d = Object.getOwnPropertyDescriptor(e, k);
+    assert.ok(d !== undefined && d.enumerable === false, k + " is an own, non-enumerable property of the event (hideEdges(this) at the end of the Ev constructor); enumerable: " + String(d ? d.enumerable : "no own property"));
+  }
+  const dump = inspect(e, ASSERT_INSPECT);
+  assert.ok(!dump.includes("target"), "the event's dump names no target or currentTarget: " + dump.split("\n").length + " lines");
+  assert.ok(e.target === target && e.currentTarget === currentTarget, "the two nodes are still reachable through the hidden properties");
 }
 
 /** Defines `k` on `n` as a non-enumerable own property, writable and configurable (so a later write or define still

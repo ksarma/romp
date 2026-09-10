@@ -15,7 +15,7 @@ import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
 const SID = "11111111-2222-3333-4444-555555555555";
@@ -413,4 +413,6 @@ test("the stand-in's nodes inspect as their projection: no enumerable edge, so a
     const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
     assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump: " + dump);
   }
+  // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
+  assertHiddenEvent(new Ev("click"), root, kid);
 });

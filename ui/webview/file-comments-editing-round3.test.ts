@@ -21,7 +21,7 @@ import * as path from "node:path";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
 import type { Status, StoreComment, Hunk } from "./file-comments-model";
 import { MOVED_UNDER_EDIT } from "./file-comments-model";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -229,6 +229,8 @@ test("stand-in: a node enumerates and inspects as its own projection, never the 
     const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
     assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump is the node's own projection:\n" + dump);
   }
+  // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
+  assertHiddenEvent(new Ev("click"), root, kid);
 });
 const store = new Map<string, string>();
 (globalThis as any).localStorage = {
