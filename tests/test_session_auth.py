@@ -218,7 +218,7 @@ class OptionsInjection(_OptionsHarness):
         self.assertIsNone(s._launching)
         self.assertIsNone(s._launched_effort); self.assertIsNone(s._launched_mode); self.assertIsNone(s._launched_auth)
         kw = self._options_kw(s)
-        self.assertEqual(s._launching, {"effort": sb.effort_launch_shape("ultracode"), "mode": "plan", "auth": "key"})
+        self.assertEqual(s._launching, {"effort": sb.effort_launch_shape("ultracode"), "mode": "plan", "auth": "key", "env": {}})
         self.assertEqual(s._launching["effort"], (kw["effort"], True), "the value handed to the CLI plus the ultracode key")
         self.assertIsNone(s._launched_effort, "nothing is stamped until the connect lands")
         s._connect_landed()

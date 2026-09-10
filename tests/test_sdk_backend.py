@@ -6833,6 +6833,73 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(s._reconnect_surfaces, set())
         self.assertTrue(any(str(m).endswith("fast (web): set to on; applied live") for m in self.logs), self.logs)
 
+    def test_r_set_env_withdraws_a_pending_env_pick_reverted_to_the_running_env(self):
+        # set_env compared only against the reg, stamped no launched env and never withdrew: a revert to the env
+        # the process runs while a different env pick was held kept the hold, and the settle relaunched the
+        # identical env; the deferred form relaunched too (review round 4; not a regression against the base,
+        # whose set_env reconnected at once, but a breach of the one-withdraw-routine contract). It compares
+        # against the launched and the launching env now, like set_effort, and withdraws through the one routine
+        s = self._sess(env={"A": "1"})
+        s._launched_env = {"A": "1"}
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_env(self.SID, {"A": "2"}))
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["env"])
+        self.assertTrue(s.backend.set_env(self.SID, {"A": "1"}))              # the revert
+        self.assertIsNone(s.snapshot()["pickHeld"]); self.assertFalse(s._reconnect_when_idle)
+        self.assertEqual(s.env_vars, {"A": "1"}); self.assertEqual(sb.read_reg(s.backend.state_dir, self.SID).get("env"), {"A": "1"})
+        self.assertTrue(any("env (web): per-session env set (A); the pending env pick is withdrawn" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(any("the withdrawn env pick was the only one pending; no reconnect" in str(m) for m in self.logs), self.logs)
+        self._stop(s, "a1")
+        out = self._settle(s)
+        self.assertFalse(out["reconnect"], "nothing relaunches the env the process already runs")
+        self.assertEqual(self._armed(), [])
+        # the deferred form: a turn open, no live work
+        s = self._sess(env={"A": "1"})
+        s._launched_env = {"A": "1"}
+        s.inflight = 1
+        self.assertTrue(s.backend.set_env(self.SID, {"A": "2"}))
+        self.assertTrue(s._reconnect_when_idle and not s._reconnect)
+        self.assertTrue(any("env (web): per-session env set (A); reconnect deferred to the end of the open turn" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(s.backend.set_env(self.SID, {"A": "1"}))
+        self.assertFalse(s._reconnect_when_idle)
+        out = self._settle(s)
+        self.assertFalse(out["reconnect"]); self.assertFalse(out["deferred"])
+        # the spawn window: the running env picked during another env's spawn is recorded and reconnects after
+        # the landing (never a withdrawal, never unchanged); the env being launched, picked again, is already
+        # applying. The arm stamps the env the relaunch runs, minus nothing here (no reserved names)
+        s = self._sess(env={"A": "1"})
+        s._launched_env = {"A": "1"}
+        self.assertTrue(s.backend.set_env(self.SID, {"A": "2"}))
+        self.assertTrue(s._reconnect); self.assertEqual(s._launching["env"], {"A": "2"})
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        self.assertTrue(s.backend.set_env(self.SID, {"A": "1"}))
+        self.assertEqual(asked, [1], "a reconnect is requested for after the launch lands")
+        self.assertEqual(s.env_vars, {"A": "1"})
+        self.assertFalse(any("withdrawn" in str(m) or "unchanged" in str(m) for m in self.logs if "env (web)" in str(m)), self.logs)
+        self.assertTrue(s.backend.set_env(self.SID, {"A": "2"}))
+        self.assertEqual(asked, [1], "already applying: no new request")
+        self.assertTrue(any("env (web): per-session env set (A); already applying, no new request" in str(m) for m in self.logs), self.logs)
+        self.assertEqual(s.env_vars, {"A": "2"})
+        s._reset_reconnect_state()
+        s._launching = s.backend._launch_shape(s)                          # _options composes from the session
+        s._connect_landed()
+        self.assertEqual(s._launched_env, {"A": "2"}, "the landing stamps the launched env")
+        self.assertIsNone(s._launching)
+        # a launch with no env stamps {}, and a fresh session has no stamp at all
+        s = self._sess()
+        self.assertIsNone(s._launched_env)
+        s._launching = s.backend._launch_shape(s)
+        self.assertEqual(s._launching["env"], {})
+        s._connect_landed()
+        self.assertEqual(s._launched_env, {})
+        # an unchanged re-assert of the reg's env is a no-op before any compare, as before
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        self.assertTrue(s.backend.set_env(self.SID, {}))
+        self.assertEqual(asked, [])
+
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
         # RUNS: the effort it launched with, the mode it runs, the fast state the init reported, the CLI's

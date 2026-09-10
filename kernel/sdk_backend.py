@@ -5053,7 +5053,7 @@ class SdkSession:
         # again is nothing to apply, so set_effort and set_auth request no reconnect for it, and a pick
         # equal to a pending one is already applying. A session that has not launched has no shape yet and
         # takes every pick, since its first connect reads the reg.
-        self._launching = None        # {"effort", "mode", "auth"}: the shape the connect in progress will run, stamped
+        self._launching = None        # {"effort", "mode", "auth", "env"}: the shape the connect in progress will run, stamped
         #   at the ARM (the spawn window opens there; review round 4) and again by _options as it composes; None
         #   once _connect_landed stamps it (the window ENDS at the landing, so the already-applying guards read a
         #   cleared value after it; review round 3)
@@ -5061,6 +5061,10 @@ class SdkSession:
         self._launched_mode = None    # the permission mode the running process RUNS: its launch mode, or the last
         #   live switch the CLI confirmed (_do_set_mode). snapshot reports it while a bypass pick is held (the
         #   process still runs it); _can_use_tool and set_mode's revert target read it the same way
+        self._launched_env = None     # the per-session env the running process launched with, minus the reserved
+        #   names (_launch_shape); {} for a launch with none. set_env's unchanged and already-applying guards read
+        #   it, so a revert to the running env withdraws a pending env pick instead of relaunching the identical
+        #   env (review round 4, 2026-09-10)
         self._launched_auth = None    # the side that LAUNCHED: "key" only when the box's apiKeyHelper bills the
         #   launch (launch_keyed), else "login" (an explicit key pick on a box with no helper launches plain and
         #   bills Claude Code's own credential, so it is not "key": once a helper exists a key re-pick reconnects
@@ -5707,9 +5711,10 @@ class SdkSession:
     def _withdraw_held_pick(self, surface: str) -> None:
         """A newer pick made `surface`'s pending reconnect moot: the ONE withdraw routine for every surface
         (review round 3, 2026-09-09). set_mode calls it for a live pick of a non-bypass mode while a pick
-        INTO bypass waits (review round 2); set_effort, set_auth and set_fast call it when the pick returns
-        to the value the process runs while a different pick is pending (held for live work, or deferred to
-        the turn's end). Two halves, one per thread (review round 4, 2026-09-10):
+        INTO bypass waits (review round 2); set_effort, set_auth, set_fast and set_env call it when the pick
+        returns to the value the process runs while a different pick is pending (held for live work, or
+        deferred to the turn's end; set_env since review round 4). Two halves, one per thread (review round 4,
+        2026-09-10):
 
         The KERNEL thread, here, forgets the surface at once. The surface set is written on the thread the
         picks arrive on, in the order the user made them: _note_reconnect_ask adds, this discards, and the
@@ -5839,6 +5844,7 @@ class SdkSession:
             self._launched_effort = launching.get("effort")
             self._launched_mode = launching.get("mode")
             self._launched_auth = launching.get("auth")
+            self._launched_env = launching.get("env")
         # the spawn window ENDS here (review round 3, 2026-09-09): _launching described the connect in
         # progress, and it is the running process now. Left standing, the already-applying guards in
         # set_effort, set_auth and set_mode kept reading it as a connect still in progress: a process
@@ -10812,10 +10818,12 @@ class SdkBackend:
     # ---- SDK option assembly (mirrors the tmux launch flags) ----
     def _launch_shape(self, sess: SdkSession) -> dict:
         """The shape a connect composed NOW hands the CLI, the fields the setters' guards compare against: the
-        effort launch shape, the permission mode, and the billing side that launches ("key" only when the
+        effort launch shape, the permission mode, the billing side that launches ("key" only when the
         box's apiKeyHelper bills it; an explicit key pick with no helper launches plain and bills Claude
         Code's own credential resolution, so it is "login" here, and once a helper exists a key re-pick
-        reconnects, review round 1). ONE computation for the two stamps of _launching (review round 4,
+        reconnects, review round 1), and the per-session env as launched: the stored env minus the reserved
+        names _options skips (set_env compares a pick, which the door already refuses those names to,
+        against this same shape). ONE computation for the two stamps of _launching (review round 4,
         2026-09-10): the ARM stamps it the moment a reconnect is scheduled, so the spawn window the guards
         read opens there, not at _options a teardown later (a pick made between the arm and the connect
         used to compare against the process being replaced: a fast off after an idle opt-in's arm logged
@@ -10829,8 +10837,10 @@ class SdkBackend:
         says the fall once, in its log."""
         side = self.pick_fall(sess.auth) or sess.auth
         login = side == "login"
+        reserved = ENV_RESERVED_NAMES + AUTH_ENV_NAMES
         return {"effort": effort_launch_shape(sess.effort), "mode": sess.mode,
-                "auth": "key" if (not login and self.key_available) else "login"}
+                "auth": "key" if (not login and self.key_available) else "login",
+                "env": {k: v for k, v in sess.env_vars.items() if k not in reserved}}
 
     def _options(self, sess: SdkSession, ClaudeAgentOptions):
         from claude_agent_sdk import HookMatcher
@@ -11019,14 +11029,13 @@ class SdkBackend:
         # a long-running session over a var accepted under older rules. Skip the var, keep the
         # rest, launch the session — and say so (fail-loudly: the line lands on stderr via the
         # kernel's log wire and in the problem ring the dashboard's error center reads).
-        env_vars = sess.env_vars
         # A credential name in the stored session env is always a competing credential (2026-09-08: romp
         # holds no key, and a session's credential is Claude Code's own), so the reserved set is the
-        # identity names plus the three credential names, at every door and here.
-        reserved = ENV_RESERVED_NAMES + AUTH_ENV_NAMES
-        legacy = [k for k in reserved if k in env_vars]
+        # identity names plus the three credential names, at every door and here. The stripped env is the
+        # shape's (_launch_shape), so the stamp and the launch agree by construction.
+        env_vars = shape["env"]
+        legacy = [k for k in ENV_RESERVED_NAMES + AUTH_ENV_NAMES if k in sess.env_vars]
         if legacy:
-            env_vars = {k: v for k, v in env_vars.items() if k not in reserved}
             self._log("env (%s): ignoring reserved %s from the stored session env: romp sets the identity "
                       "env itself, and a session's credential is Claude Code's own"
                       % (sess.name, ", ".join(legacy)), problem=True)
@@ -13245,7 +13254,16 @@ class SdkBackend:
         the reconnect rather than churning the CLI process on no new information. Never a remembered
         default (write_sdk_default): a var one session needed is not a seed for the next. No pending
         badge or chat chip yet — that surface ships with the env UI slice; the Log records the
-        change (spawn-time slice, the user 2026-08-17)."""
+        change (spawn-time slice, the user 2026-08-17).
+
+        Against a LIVE session the pick is then compared the way set_effort compares an effort pick
+        (review round 4, 2026-09-10): against the env the running process launched with (_launched_env, the
+        stamp _connect_landed wrote) and, while a connect is in progress, the env it is launching
+        (_launching). The env being launched, picked again, is already applying (no new request); the
+        running env picked while a different env pick is pending is a revert, and withdraws that pick
+        through the one withdraw routine (_withdraw_held_pick) with no reconnect, since the reconnect would
+        relaunch the very env the process runs (until round 4 set_env compared only against the reg, so a
+        revert kept the hold and the settle relaunched the identical env); anything else reconnects."""
         reg = read_reg(self.state_dir, sid)
         if env_request_error(env, (reg or {}).get("auth") or ""):
             return False
@@ -13258,10 +13276,25 @@ class SdkBackend:
         s = self.sessions.get(sid)
         if s:
             s.env_vars = dict(env)
-            outcome = s._note_reconnect_ask("env")
-            s.request_reconnect()
-            self._log("env (%s): per-session env set (%s); %s"
-                      % (s.name, ", ".join(sorted(env)) or "cleared", outcome))
+            names = ", ".join(sorted(env)) or "cleared"
+            launching = (s._launching or {}).get("env")
+            if s._launched_env != env and launching == env:
+                # ALREADY APPLYING: the connect in progress launches this very env (the reg carries it to
+                # the landing; _options composes from the session, which reads it now)
+                outcome = "already applying, no new request"
+            elif s._launched_env == env and (launching is None or launching == env):
+                # UNCHANGED: the process runs this env and no connect in progress is about to change it. A
+                # pending env pick (held for live work, or deferred to the turn's end) is reverted by it and
+                # withdrawn; with none pending the reg drifted from the launch and reads it again
+                if "env" in s._reconnect_surfaces:
+                    s._withdraw_held_pick("env")
+                    outcome = "the pending env pick is withdrawn"
+                else:
+                    outcome = "unchanged, no reconnect"
+            else:
+                outcome = s._note_reconnect_ask("env")
+                s.request_reconnect()
+            self._log("env (%s): per-session env set (%s); %s" % (s.name, names, outcome))
             self._wake_push()
         return True
 
