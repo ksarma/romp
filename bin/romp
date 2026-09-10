@@ -2756,14 +2756,18 @@ PYEOF
         if "${ROMP_MANAGER_BIN:-romp-manager}" status >/dev/null 2>&1; then
             _dn_mgr=1
             # The stop, with its answer kept. The control client exits 3 when the manager ANSWERED and
-            # refused (its write gate: HTTP 401, the serve token this romp read is not one the manager
-            # holds, so it runs under another state root or is another romp's; HTTP 503, the manager cannot
-            # read its own token file), and 1 for no answer at all (a timeout, a connection error), which
-            # the poll below handles as before. A refusal is final: seven seconds of polling would not
-            # change it, and a manager that refused this romp's token is not this romp's to stop, so the
-            # hold is released, the marker taken back, and the answer said with the status, the manager's
-            # own words and the remedy (review round 1, 2026-09-10: the answer used to be discarded and
-            # the refusal reported as a manager that would not leave, with "stop it by hand").
+            # refused (its write gate: HTTP 401, the manager does not hold the serve token this romp sent,
+            # so it runs under another state root or is another romp's, or this romp SENT NONE because it
+            # found no token to send; HTTP 503, the manager cannot read its own token file), and 1 for no
+            # answer at all (a timeout, a connection error), which the poll below handles as before. A
+            # refusal is final: seven seconds of polling would not change it, and a manager that refused
+            # this romp's token is not this romp's to stop, so the hold is released, the marker taken back,
+            # and the answer said with the status, the manager's own words and the remedy (review round 1,
+            # 2026-09-10: the answer used to be discarded and the refusal reported as a manager that would
+            # not leave, with "stop it by hand"). Whether a token was sent is read from the client's own
+            # stderr, captured below: it says "the serve token could not be read (<file>: <why>)" before it
+            # asks without one (review round 2, 2026-09-10: the 401 line used to claim a token was read from
+            # the file when the file was missing or empty and no header went out).
             _dn_mout="$("${ROMP_MANAGER_BIN:-romp-manager}" down 2>&1)" && _dn_mrc=0 || _dn_mrc=$?
             if [[ "$_dn_mrc" -eq 3 ]]; then
                 _dn_mref="$(DN_OUT="$_dn_mout" DN_TOK="$(_romp_state_dir)/serve-token" DN_ENV="${ROMP_SERVE_TOKEN:+1}" python3 - <<'PYEOF'
@@ -2772,11 +2776,19 @@ out = os.environ.get("DN_OUT") or ""
 m = re.search(r"answered HTTP (\d{3})", out)
 code = m.group(1) if m else "?"
 try:
-    err = str((json.loads(out[out.index("{"):]) or {}).get("error") or "").strip()
+    err = " ".join(str((json.loads(out[out.index("{"):]) or {}).get("error") or "").split())
 except Exception:
     err = ""
-src = "ROMP_SERVE_TOKEN" if os.environ.get("DN_ENV") else os.environ.get("DN_TOK") or "its token file"
-if code == "401":
+tok = os.environ.get("DN_TOK") or "its token file"
+src = "ROMP_SERVE_TOKEN" if os.environ.get("DN_ENV") else tok
+none = re.search(r"the serve token could not be read \((.*?)\); the manager refuses", out)
+if code == "401" and none:
+    why = none.group(1)
+    if why.startswith(tok + ": "):
+        why = why[len(tok) + 2:]
+    fix = ("It needs the serve token, and this romp found none at %s (%s). Point ROMP_STATE_DIR at the manager's "
+           "state root, or set ROMP_SERVE_TOKEN." % (tok, why))
+elif code == "401":
     fix = ("It does not hold the serve token this romp read from %s, so it runs under another state root or "
            "belongs to another romp. Check ROMP_STATE_DIR and ROMP_MANAGER_PORT, or stop it from the shell that "
            "started it." % src)
@@ -2786,12 +2798,18 @@ elif code == "503":
 else:
     fix = "See the manager's log."
 print(code)
-print("HTTP %s%s. %s" % (code, (": " + err) if err else "", fix))
+print("HTTP %s%s" % (code, (": " + err) if err else ""))
+print(fix)
 PYEOF
 )"
                 _dn_mcode="${_dn_mref%%$'\n'*}"
+                _dn_mrest="${_dn_mref#*$'\n'}"
+                _dn_mhttp="${_dn_mrest%%$'\n'*}"
+                _dn_mfix="${_dn_mrest#*$'\n'}"
                 _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_nocancel" "the manager on :$_dn_mport refused the stop (HTTP $_dn_mcode)"
-                echo "romp down: the manager on :$_dn_mport refused the stop (${_dn_mref#*$'\n'}) The kernel keeps running." >&2
+                # the documented shape (docs/reference.md, Stopping): the manager's words close the parenthesis,
+                # the remedy follows it as its own sentence (review round 2, 2026-09-10)
+                echo "romp down: the manager on :$_dn_mport refused the stop ($_dn_mhttp). $_dn_mfix The kernel keeps running." >&2
                 exit 1
             fi
             for _ in $(seq 1 28); do

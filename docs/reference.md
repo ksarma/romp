@@ -1231,14 +1231,19 @@ it run every time:
   default). A manager that answers is stopped through its own control endpoint
   (`romp-manager down`, a `POST /stop` carrying the serve token; see [The
   manager's control port](#the-managers-control-port)). Two outcomes:
-  - The manager answers and refuses (HTTP 401: the token this romp read is not
-    one the manager holds, so it runs under another state root or belongs to
-    another romp; HTTP 503: the manager cannot read its own token file). Said
-    at once, with no poll: `romp down` releases the hold, removes the marker,
-    writes a `down-failed` row naming the status, prints `romp down: the manager
-    on :<port> refused the stop (HTTP <status>: <the manager's words>)` followed
-    by the remedy (where this romp read its token and to check `ROMP_STATE_DIR`
-    and `ROMP_MANAGER_PORT`, or to repair the manager's file), and exits 1.
+  - The manager answers and refuses (HTTP 401: the manager does not hold the
+    token this romp sent, so it runs under another state root or belongs to
+    another romp, or this romp found no token to send, at its token file or in
+    `ROMP_SERVE_TOKEN`, and sent none; HTTP 503: the manager cannot read its
+    own token file). Said at once, with no poll: `romp down` releases the hold,
+    removes the marker, writes a `down-failed` row naming the status, prints
+    `romp down: the manager on :<port> refused the stop (HTTP <status>: <the
+    manager's words>). <the remedy> The kernel keeps running.` and exits 1. The
+    remedy names where this romp read its token and says to check
+    `ROMP_STATE_DIR` and `ROMP_MANAGER_PORT`; when this romp found no token, it
+    names the file and the reason and says to point `ROMP_STATE_DIR` at the
+    manager's state root or set `ROMP_SERVE_TOKEN`; on a 503 it says to repair
+    the manager's file.
   - The manager takes the stop and is given up to seven seconds to leave (the
     manager itself waits five for its kernels, then sends SIGKILL). One still
     answering after that: `romp down` releases the hold, removes the marker,
