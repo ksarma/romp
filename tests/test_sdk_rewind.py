@@ -18,6 +18,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -317,6 +318,94 @@ class RollbackAndPendingCut(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RewindArmRefusal(unittest.TestCase):
+    """_arm_rewind's refusal branch EXECUTED (round 7, tests-3; the branch itself is round 7, kernel-3): a session
+    whose queue the crash heal sealed, or whose enqueue answers False (the fold closed it), refuses the edit with
+    the rewind fields cleared and asks no reconnect; the control case (a queued edit) arms and reconnects. The
+    session is a double handed back by a patched _ensure, so the arm's busy and queued gates read nothing live."""
+
+    SID = "11111111-2222-3333-4444-000000000078"
+
+    def setUp(self):
+        import pathlib
+        self._home = os.environ.get("HOME")
+        self.tmp = tempfile.mkdtemp()
+        os.environ["HOME"] = self.tmp
+        self.cwd = os.path.join(self.tmp, "proj")
+        os.makedirs(self.cwd)
+        self.be = sb.SdkBackend(os.path.join(self.tmp, "sdk"), "/bin/true", lambda *a, **k: None,
+                                log=lambda *a, **k: None)
+        self.state = pathlib.Path(self.be.state_dir)
+        sb.write_reg(self.state, self.SID, {"sid": self.SID, "name": "web", "cwd": self.cwd, "alive": True})
+        tp = sb.transcript_path(self.cwd, self.SID)
+        os.makedirs(os.path.dirname(tp), exist_ok=True)
+        with open(tp, "w") as f:
+            f.write(json.dumps({"type": "user", "uuid": "t1"}) + "\n")
+            f.write(json.dumps({"type": "user", "uuid": "u2"}) + "\n")
+
+    def tearDown(self):
+        if self._home is not None:
+            os.environ["HOME"] = self._home
+
+    def _double(self, sealed=False, enqueue_answer=True):
+        """The attributes the arm reads and writes on the session _ensure returns, with enqueue and
+        request_reconnect as recorders; `enqueue_answer` False is a closed queue's answer."""
+        import threading
+
+        class _Double:
+            pass
+        d = _Double()
+        d.sid, d.ended, d.inflight, d._pending = self.SID, False, 0, []
+        d._lock = threading.Lock()
+        d._compacting = False
+        d._queue_sealed = sealed
+        d._rewind_to = d._rewind_leaf = ""
+        d._rewind_bare = False
+        d.enqueued, d.reconnects = [], 0
+
+        def enqueue(text, todo="", send_id=""):
+            d.enqueued.append(text)
+            return enqueue_answer
+        d.enqueue = enqueue
+        d.request_reconnect = lambda *a, **k: setattr(d, "reconnects", d.reconnects + 1)
+        return d
+
+    def _fields(self):
+        reg = sb.read_reg(self.state, self.SID)
+        return (reg.get("rewindTo"), reg.get("rewindLeaf"), reg.get("rewindBare"), reg.get("rewindWait"))
+
+    def test_a_closed_queue_refuses_the_edit_with_the_fields_cleared_and_no_reconnect(self):
+        d = self._double(enqueue_answer=False)
+        with mock.patch.object(self.be, "_ensure", return_value=d):
+            ok, err = self.be.rewind(self.SID, "t1", "the edited text")
+        self.assertFalse(ok)
+        self.assertIn("not queued", err)
+        self.assertEqual(d.enqueued, ["the edited text"], "the enqueue was attempted, and refused")
+        self.assertEqual(self._fields(), ("", "", False, False), "the rewind fields are cleared in the reg")
+        self.assertEqual(d.reconnects, 0, "no reconnect is asked of a session that took no edit")
+
+    def test_a_sealed_queue_refuses_the_edit_before_the_enqueue(self):
+        d = self._double(sealed=True)
+        with mock.patch.object(self.be, "_ensure", return_value=d):
+            ok, err = self.be.rewind(self.SID, "t1", "the edited text")
+        self.assertFalse(ok)
+        self.assertIn("not queued", err)
+        self.assertEqual(d.enqueued, [], "nothing is enqueued on a sealed session")
+        self.assertEqual(self._fields(), ("", "", False, False))
+        self.assertEqual(d.reconnects, 0)
+
+    def test_a_queued_edit_arms_and_reconnects(self):
+        # the control: an idle session takes the edit, the fields stand in the reg and on the session, one reconnect
+        d = self._double()
+        with mock.patch.object(self.be, "_ensure", return_value=d):
+            ok, err = self.be.rewind(self.SID, "t1", "the edited text")
+        self.assertTrue(ok, err)
+        self.assertEqual(d.enqueued, ["the edited text"])
+        self.assertEqual(self._fields(), ("t1", "u2", False, False))
+        self.assertEqual((d._rewind_to, d._rewind_leaf, d._rewind_bare), ("t1", "u2", False))
+        self.assertEqual(d.reconnects, 1)
 
 
 class _BusySession:
