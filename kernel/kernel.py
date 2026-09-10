@@ -18405,8 +18405,9 @@ def _unreadable_record_text(sid, who=None, named=False):
     row it claimed list_regs omitted). `named` says the caller addressed the session by NAME (`who` is the
     name, not the sid): the text then adds that IF a live session of that name runs, it is reachable by the
     name once no torn record bears it, since the doors' resolution reads the names registry first and a torn
-    record of the name is refused ahead of any live namesake bearing it, a tmux pane or a dormant SDK
-    generation (round 10: resolved through the live map, the by-name verdict was the cache's, the namesake
+    record of the name is refused ahead of any live namesake bearing it, a tmux pane, a dormant SDK
+    generation or a session an attached host lists under the name, the roster by name being asked on a
+    would-be 404 alone (round 10: resolved through the live map, the by-name verdict was the cache's, the namesake
     cold and the record warm; a live generation of the name, one the gate admits by id and its backend
     lists live, is reached by the name ahead of the torn record, rounds 11 and 12). Said whether or not a
     namesake runs, since that is the live map's answer and this text
@@ -22884,8 +22885,11 @@ def _remote_session_named(who):
     picks one; a name several sessions on ONE host answer to names each as host:name [sid8] and says the
     bare full far sid routes by id (_host_for_sid), since no host:name spelling can tell them apart (round
     5: the refusal offered one spelling twice, and that spelling then picked whichever session the roster
-    iterated first). Asked by the control routes (_control_target) only after every LOCAL door missed, so a
-    local session wins: `romp end far-web` from the hub answered 404 "no live session named 'far-web'"
+    iterated first). Asked by the control routes (_control_target) only after every LOCAL door missed and
+    the gate would answer 404, so a local session wins, and so does a local torn record of the name: its 503
+    stands, and an attached host's namesake is reached by its far sid or as host:name until that record is
+    repaired or removed (review round 13, 2026-09-10). A local session wins: `romp end far-web` from the hub
+    answered 404 "no live session named 'far-web'"
     while the roster listed the name and the far session ran on, though the same requests by id forwarded
     (review round 4). Read-only under _remotes_lock; the match takes the remote arm with the far sid
     exactly as the sid path does."""
@@ -27139,11 +27143,30 @@ def _unreadable_dormant_named(name):
     and reads it from the backends' own state (a thread set, a registry entry, an in-memory session), never
     from the live map, whose row for a torn reg is the list_regs cache's (round 9) and whose tmux half is a
     fork. A tmux-backed generation is therefore not ranked here: a live tmux namesake of a name no torn record
-    bears is reached through the live map when this walk answers None, as it always was, and beside a torn
-    record of the name it is the refused class (round 10; the pane can carry the torn sid itself, `romp
-    resume <id>` sets a pane's @romp-session-id, and a fork per by-name request would put the torn verdict
-    behind the probe again). The sorted order decides only between two generations of one rank, the lower sid
-    first (pinned; an unsorted walk would answer by os.scandir order). The gate never scans for a generation
+    bears is reached through the live map when this walk answers None, as it always was. What a name answers
+    when generations of different kinds share it, stated as a list (review round 13, 2026-09-10): a live tmux
+    namesake beside a torn SDK record of the name, in either sid order, is the record's 503 by name and 200 by
+    id, the deliberate deviation from "whatever by-id admits" that keeps this walk fork-free (round 10; the
+    pane can carry the torn sid itself, `romp resume <id>` sets a pane's @romp-session-id, and a fork per
+    by-name request would put the torn verdict behind the probe again); a session an attached host lists
+    under the name beside a local torn record is the record's 503 by name too, the far sid and the host:name
+    spelling forwarding, since _control_target asks the roster by name only on a would-be 404 and the record's
+    503 is none (an order older than round 10); a live tmux generation beside a live SDK or Codex generation
+    of the name is answered by the SDK or Codex generation whatever the sids, the pane being unranked, which
+    is the pick the live map's merge already made (Sessions.live() lists the tmux rows first and the SDK and
+    Codex rows after them, and _live_names keeps the last sid for a name), so that outcome is the base's and
+    not this walk's. The sorted order decides only between two generations of one rank, the lower sid first
+    (pinned; an unsorted walk would answer by os.scandir order): a conserved SDK generation (its reg alive, no
+    thread) and a running one are of one rank, so the conserved one answers when its sid is lower, by
+    construction (a shape no kernel door mints, since _claim_session_name refuses a name the live map lists as
+    running; a hand-repaired reg or a claim race can). A readable dormant generation (alive false) on either
+    side of a torn one is passed over, so the torn record answers by name and the dormant generation stays
+    reachable by id (pinned). Degenerate, stated: with no SDK backend at all (_sdk() None: sdk_backend.py
+    failing to load, or SdkBackend() raising; a broken sdkvenv is not that, the module imports without
+    claude_agent_sdk) an alive SDK registry entry on disk still ranks live here and the gate admits its sid,
+    and Sessions.backend_for then falls through to the tmux backend by name, as the base did for the same
+    request; the coherent refusal belongs at backend_for or the gate's admitted arm, for both doors and both
+    address forms, not to this walk. The gate never scans for a generation
     ranked here: every entry is names-registered, so _kernel_knows answers through its names door before any
     map read (an entry unregistered between the snapshot and the gate's read is the one exception, and it no
     longer bears the name). The client doors' by-name resolution reads this FIRST (_resolve_sid's door read,
@@ -27207,7 +27230,8 @@ def _resolve_sid(who, door=False):
     read, is that sid with no map read: a live SDK or Codex session is reached by its name whether its own
     record is torn or a dead generation's is (rounds 11 and 12), and a torn
     dormant record is the gate's verdict in every list_regs cache state and every tmux state, ahead of a live
-    tmux namesake bearing the name that the live map would have resolved (review round 10, 2026-09-09:
+    tmux namesake bearing the name that the live map would have resolved, and ahead of a session an attached
+    host lists under it, since the roster by name is asked on a would-be 404 alone (review round 10, 2026-09-09:
     resolved through the map, a torn generation's verdict by name was the cache's, the namesake cold and the
     record warm, and with the probe down the scan's verdict cold and the record's warm; round 10 also
     answered a torn generation ahead of a running one, reversed in round 11; round 11 ranked a running SDK
@@ -27341,12 +27365,15 @@ def _control_target(who, route=""):
     nothing forwards, and no file is named for a transient failure; a name with a torn record never gets
     here, the resolution having answered it), then the store's 503; then the roster by NAME
     (_remote_session_named): a session an attached host runs is reached by the name that host lists, with the
-    far sid, as it is by id. A spelling that carries a colon (the roster's host:name, the very spelling the
-    409 tells the caller to type) is no local name (NAME_RE forbids the colon at every name door, and tmux
-    rewrites one) and no thread's, so no local read is made for it at all (_local_spelling, round 10; round 6
-    kept the scan and skipped the two 503s): it goes to the roster, where a hit forwards and a miss is the
-    accurate 404, while the local probe is down (round 6: `romp end TESTHOST:far-web` was refused 503 by a
-    failed LOCAL scan, though the same session by far sid forwarded at the same moment)."""
+    far sid, as it is by id. The roster by name is asked on a would-be 404 alone, so a name with a torn LOCAL
+    record is that record's 503 while the same far session forwards by its far sid and as host:name, until the
+    record is repaired or removed (an order older than round 10, stated in round 13). A spelling that carries
+    a colon (the roster's host:name, the very spelling the 409 tells the caller to type) is no local name
+    (NAME_RE forbids the colon at every name door, and tmux rewrites one) and no thread's, so no local read is
+    made for it at all (_local_spelling, round 10; round 6 kept the scan and skipped the two 503s): it goes to
+    the roster, where a hit forwards and a miss is the accurate 404, while the local probe is down (round 6:
+    `romp end TESTHOST:far-web` was refused 503 by a failed LOCAL scan, though the same session by far sid
+    forwarded at the same moment)."""
     sid, live, store_unreadable, scan_failed = _resolve_sid(who, door=True)
     r = _host_for_sid(sid)
     if r is not None:
