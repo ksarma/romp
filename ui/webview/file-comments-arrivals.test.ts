@@ -6,10 +6,13 @@
 // that are not in it as arrivals, and while any stand shows one line under the header naming them — a button that shows the
 // first of them — with a dot on each arrival's card and marks; seen is a gesture of the person's (a pointer press, a key, a
 // wheel, a touch move, a save, a send) finding the card on screen, never a timer; the person's own writes and the panel's
-// first status are never arrivals; the Send confirm's accept option names the pending changes that arrived. The SAVE'S
-// SCROLL: the save used to scroll the text to the saved card whatever the person had done meanwhile; it now stands down
-// when a gesture of theirs came between Save and the reply, or when the card is already whole in view, and the saved card
-// is the focus for the layout either way. The numbers a real engine measures are file-comments-arrivals-browser.test.ts.
+// first status are never arrivals; the Send confirm's accept option accepts the pending changes the person has seen and
+// counts the arrived ones as unseen, left pending (the seen follow-on's words, decision 41). THE SAVE: the save used to
+// scroll the text to the saved card whatever the person had done meanwhile, then stood down when a gesture of theirs came
+// between Save and the reply; since decision 43 (the seen follow-on) it never scrolls — the saved card is the focus for the
+// layout, and when it lands out of view the acknowledgment's position at the panel's foot says which side it is on, a button
+// whose click brings the card into view; the line ends at the person's next gesture or when the card comes into view.
+// The numbers a real engine measures are file-comments-arrivals-browser.test.ts.
 // Synthetic fixtures only: the notes-api world, placeholder ids, the session names "api" and "web".
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -28,7 +31,8 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string; ctrlKey: boolean; metaKey: boolean;   // the save is Ctrl+Enter or Cmd+Enter since the composer follow-on (composerKeyAction)
-  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
+  button: number | undefined;                          // a press's button when a test gives one: pressHold arms on the primary (0) alone, so the row's hold engages only where a test asks for it
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean; button?: number } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; this.button = init.button; }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -614,21 +618,22 @@ test("the line's click shows the first arrival in the list's order as the focus 
   w.close();
 });
 
-test("the Send confirm's accept option names the pending changes that arrived, and its default is untouched; the words follow the arrivals as they are seen", async (t) => {
+test("the Send confirm's accept option counts an arrived pending change as unseen, left pending, and its default is untouched; the words follow the arrivals as they are seen", async (t) => {
   const { w, ok } = await open(t, textWorld());
   actIn(w.aside(), "fcsend")!.click();
   let cb = w.aside().querySelector('input[data-opt="accept"]')!;
-  assert.equal(cb.parentNode!.textContent, "accept the 1 pending change", "no arrivals: the option as before");
+  assert.equal(cb.parentNode!.textContent, "accept the 1 pending change you have seen", "no arrivals: the first status's change is seen, and nothing is unseen");
   assert.equal(cb.checked, true, "checked by default (decision 8)");
   actIn(w.aside(), "fcsendcancel")!.click();
   await land(w, ok, arrived());
   actIn(w.aside(), "fcsend")!.click();
   cb = w.aside().querySelector('input[data-opt="accept"]')!;
-  assert.equal(cb.parentNode!.textContent, "accept the 2 pending changes (1 arrived since you last looked)");
+  assert.equal(cb.parentNode!.textContent, "accept the 1 pending change you have seen (1 unseen stays pending)", "the arrived change is the unseen one");
   assert.equal(cb.checked, true, "the words changed, the default did not");
+  assert.equal(cb.disabled, false, "a change is seen, so the box can be checked");
   // the change seen: the option says so without a render
   scrollBody(w, 340); gesture(w.body, "wheel");
-  assert.equal(w.aside().querySelector('input[data-opt="accept"]')!.parentNode!.textContent, "accept the 2 pending changes");
+  assert.equal(w.aside().querySelector('input[data-opt="accept"]')!.parentNode!.textContent, "accept the 2 pending changes you have seen");
   w.close();
 });
 
@@ -650,7 +655,7 @@ test("the seen set lives with the panel: closed and reopened on the same file, t
   w.close();
 });
 
-// ── the save's scroll stands down ─────────────────────────────────────────────────────────────────
+// ── a save never moves the view (decision 43): the line at the foot says where the card is ───────
 /** The focus-verify module's scene: the change card open as the focus with the passage's card pushed under it, a reply
  *  typed in the passage's card, the text at its top; `during` runs between Save and the reply. */
 async function saveReply(t: Ctx, during: (w: World) => void): Promise<{ w: World; body: El; track: El }> {
@@ -672,39 +677,121 @@ async function saveReply(t: Ctx, during: (w: World) => void): Promise<{ w: World
   await ok(status({ verb: "reply", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, replied, closing] }, storeMtimeNs: "1757145600000000005" }));
   return { w, body, track };
 }
-const SHOW_CARD = desired(5) + OPEN + 8 - TRACK;        // 208: the least scroll that shows the saved card's end (centerOn's choice here)
+const SHOW_CARD = desired(5) + OPEN + 8 - TRACK;        // 208: the least scroll that shows the saved card's end (centerOn's choice here: what the line's click scrolls to; before decision 43, what the save scrolled to)
+const savedOf = (w: World): El | null => actIn(w.aside(), "fcsavedgo");
+/** The press released: the window's pointerup, then the hold's zero timer (pressHold runs the parked change after the click). */
+const release = async (): Promise<void> => { win.dispatchEvent(new Event("pointerup")); await new Promise<void>((r) => setTimeout(r, 0)); await tick(); };
 
-test("nothing happened between Save and the reply, and the saved card is out of view: the save scrolls to it as before, the card the focus", async (t) => {
+test("nothing happened between Save and the reply, and the saved card is out of view below the track's box: the save scrolls nothing (before decision 43: to the card), the card is the focus, level with its mark where it is, and the acknowledgment's position says the card is below — a button in the Send section, in the acknowledgment's dress", async (t) => {
   const { w, body, track } = await saveReply(t, () => { /* the person waited */ });
+  assert.equal(body.scrollTop, 0, "the text stayed at its top (before: " + SHOW_CARD + ")");
+  assert.equal(track.scrollTop, 0);
   assert.equal(w.top(passage.id), desired(5), "the saved card is the focus: level");
-  assert.equal(w.top(CHG), LIFTED);
-  assert.equal(body.scrollTop, SHOW_CARD, "the text brought to the card");
-  assert.equal(track.scrollTop, SHOW_CARD);
+  assert.equal(w.top(CHG), LIFTED, "the change card moved up out of its way");
   assert.deepEqual(scrolledInto, []);
+  const line = savedOf(w);
+  assert.ok(line, "the line is in the panel");
+  assert.equal(line!.textContent, "Saved · the card is below");
+  assert.equal(line!.tagName, "BUTTON", "a button, through the delegate");
+  assert.deepEqual(line!.classes, ["fc-note", "fc-sent", "fc-saved"], "in the acknowledgment's dress, .fc-note on it as on the acknowledgment (the Send section's tiers count it as the acknowledgment, not as growth)");
+  assert.equal(line!.title, "Show the card");
+  assert.ok(w.aside().querySelector(".fc-sec-send")!.contains(line!), "in the Send section, where the acknowledgment stands");
+  assert.equal(w.aside().querySelectorAll(".fc-sent").length, 1, "the one line in that position");
+  assert.equal(w.aside().querySelector(".fc-composer")!.hidden, true, "the composer closed as before");
   w.close();
 });
 
 for (const [kind, on] of [["wheel", "body"], ["pointerdown", "body"], ["keydown", "input"], ["touchmove", "body"]] as Array<[string, "body" | "input"]>) {
-  test(`a ${kind} ${on === "body" ? "in the text" : "in the composer"} between Save and the reply: the save scrolls nothing, and the saved card is still the focus for the layout — level with its mark where it is`, async (t) => {
+  test(`a ${kind} ${on === "body" ? "in the text" : "in the composer"} between Save and the reply: the save scrolls nothing, the saved card is the focus for the layout — level with its mark where it is — and the line says where it is all the same, the gesture having come before the save landed`, async (t) => {
     const { w, body, track } = await saveReply(t, (w) => { gesture(on === "body" ? w.body : w.aside().querySelector(".fc-composer .fc-input")!, kind); });
-    assert.equal(body.scrollTop, 0, "the text stayed where the person had it (before: " + SHOW_CARD + ")");
+    assert.equal(body.scrollTop, 0, "the text stayed where the person had it");
     assert.equal(track.scrollTop, 0);
     assert.equal(w.top(passage.id), desired(5), "the saved card is the focus all the same: level with its mark");
     assert.equal(w.card(passage.id)!.dataset.pushed, undefined);
     assert.equal(w.top(CHG), LIFTED, "the change card moved up out of its way");
     assert.deepEqual(scrolledInto, []);
+    assert.equal(savedOf(w)!.textContent, "Saved · the card is below", "the line stands: the gesture was before the landing, not after it");
     assert.equal(w.aside().querySelector(".fc-composer")!.hidden, true, "the composer closed as before");
     w.close();
   });
 }
 
-test("a scroll event with no gesture behind it (the lock's write, a centering) does not stand the save down; a gesture before Save does not either", async (t) => {
-  const { w, body } = await saveReply(t, (w) => { w.track().scrollTop = 0; w.track().dispatchEvent(new Ev("scroll")); });
-  assert.equal(body.scrollTop, SHOW_CARD, "a scroll event alone is not the person's");
+test("the line's click: its own press ends nothing (the click is what it is for), and the click scrolls the card into view through the focus rule — the mark toward the center, the card's end in the box, on both scrollers — and the line is over", async (t) => {
+  const { w, body, track } = await saveReply(t, () => { /* the person waited */ });
+  const line = savedOf(w)!;
+  gesture(line, "pointerdown");                         // the press on the line itself
+  assert.ok(savedOf(w), "the line's own press keeps it");
+  assert.equal(savedOf(w)!.textContent, "Saved · the card is below");
+  line.click(); await tick();
+  assert.equal(body.scrollTop, SHOW_CARD, "the click scrolled the text to the card: the least scroll that shows its end (centerOn)");
+  assert.equal(track.scrollTop, SHOW_CARD, "the track with it");
+  assert.ok(inBox(cardBox(w, passage.id), TRACK_BOX), "the card is whole in the track's box: " + JSON.stringify(cardBox(w, passage.id)));
+  assert.equal(w.top(passage.id), desired(5), "the focus still: level");
+  assert.deepEqual(scrolledInto, [], "the margin layout: both scrollers, never scrollIntoView");
+  assert.equal(savedOf(w), null, "the line is over");
   w.close();
 });
 
-test("the saved card already whole in the track's box: no scroll even with nothing happened; the card is the focus", async (t) => {
+test("the line is over at the person's next gesture — a wheel: in place, with no render and no scroll — and under a held press only at the release, through the row's hold: a line leaving the Send section moves the Send button under the pointer", async (t) => {
+  let { w, body } = await saveReply(t, () => { /* the person waited */ });
+  const send = w.aside().querySelector(".fc-send")!;
+  assert.ok(savedOf(w));
+  gesture(body, "wheel");
+  assert.equal(savedOf(w), null, "gone in place");
+  assert.equal(w.aside().querySelector(".fc-send"), send, "no render: the same Send box");
+  assert.equal(body.scrollTop, 0, "and the line's end moved nothing");
+  w.close();
+  ({ w, body } = await saveReply(t, () => { /* the person waited */ }));
+  assert.ok(savedOf(w));
+  actIn(w.aside(), "fcsend")!.dispatchEvent(new Ev("pointerdown", { button: 0 }));   // a primary press on the Send button above the line: the hold engages
+  assert.ok(savedOf(w), "held: the line stays through the press");
+  await release();
+  assert.equal(savedOf(w), null, "at the release, it is over");
+  w.close();
+});
+
+test("the line follows the card between renders and ends when the card comes into view with no gesture behind it (the lock's write, a centering): the words turn to above once the text is past the card, and the line goes once the box holds the card", async (t) => {
+  const { w, body } = await saveReply(t, () => { /* the person waited */ });
+  assert.ok(savedOf(w));
+  scrollBody(w, 100);                                   // [100, 260): the card at 240..360 is still past the box's end
+  assert.equal(savedOf(w)!.textContent, "Saved · the card is below", "not in the box yet: the line stands");
+  scrollBody(w, 600);                                   // [600, 760): the card is above the box now
+  assert.equal(savedOf(w)!.textContent, "Saved · the card is above", "the words follow the card's side, in place");
+  scrollBody(w, SHOW_CARD);                             // [208, 368) holds the card whole
+  assert.equal(savedOf(w), null, "the card came into view: the line is over");
+  assert.equal(body.scrollTop, SHOW_CARD, "and the line's end moved nothing");
+  w.close();
+});
+
+test("a whole-file comment saved with the text scrolled down: the card is loose at the top of the track, above the box — nothing scrolls (before: the text came to the card), the line says above, and its click brings the card into the box by the least scroll that shows it, on both scrollers", async (t) => {
+  const { w, ok, last } = await open(t, textWorld());
+  const body = w.body, track = w.track();
+  scrollBody(w, 600);
+  assert.equal(track.scrollTop, 600, "the reader is well down the text");
+  actIn(w.aside(), "fcfile")!.click(); await tick();
+  const input = w.aside().querySelector(".fc-composer .fc-input")!;
+  input.value = "Add a summary at the top.";
+  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true })); await tick();
+  assert.equal(last().verb, "comment");
+  assert.equal(last().args.anchor, undefined, "a whole-file comment: no anchor");
+  const fresh: StoreComment = { id: (T0 + 5000) + "-0", author: "you", ts: T0 + 5000, body: "Add a summary at the top.", replies: [], resolved: false };
+  await ok(status({ verb: "comment", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, fresh] }, storeMtimeNs: "1757145600000000005" }));
+  const top = 8 + (CARD + 8);                           // 56: under the one loose card at the top of the track
+  assert.equal(w.top(fresh.id), top, "loose: under the whole-file card at the top of the track, in the list's order");
+  assert.equal(body.scrollTop, 600, "nothing scrolled (before: " + (top - 8) + ", the least scroll that showed the card)");
+  assert.equal(track.scrollTop, 600);
+  assert.equal(w.aside().querySelector(".fc-composer")!.hidden, true, "the composer closed");
+  assert.equal(savedOf(w)!.textContent, "Saved · the card is above", "a comment's save renders the line itself: the composer's close re-renders the composer alone");
+  savedOf(w)!.click(); await tick();
+  assert.equal(body.scrollTop, top - 8, "the click: the least scroll that shows the card (showLoose), on the body");
+  assert.equal(track.scrollTop, top - 8, "and on the track, at once");
+  assert.ok(inBox(cardBox(w, fresh.id), TRACK_BOX), "the card is in the track's box: " + JSON.stringify(cardBox(w, fresh.id)));
+  assert.deepEqual(scrolledInto, []);
+  assert.equal(savedOf(w), null, "the line is over");
+  w.close();
+});
+
+test("the saved card already whole in the track's box: no scroll and no line; the card is the focus", async (t) => {
   const { w, ok, last } = await open(t, textWorld());
   const body = w.body;
   headOf(w, passage.id).click(); await tick();          // the passage's card open, the focus, level at 240
@@ -717,22 +804,33 @@ test("the saved card already whole in the track's box: no scroll even with nothi
   assert.equal(last().verb, "reply");
   const replied: StoreComment = { ...passage, replies: [{ author: "you", ts: T0 + 6000, body: "The write-through one." }] };
   await ok(status({ verb: "reply", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, replied, closing] }, storeMtimeNs: "1757145600000000005" }));
-  assert.equal(body.scrollTop, 220, "a card whole in view needs no scroll (before: " + SHOW_CARD + ", the centering's choice)");
+  assert.equal(body.scrollTop, 220, "a card whole in view: nothing to scroll to, nothing to say");
   assert.equal(w.top(passage.id), desired(5), "still the focus, level");
+  assert.equal(savedOf(w), null, "no line for a card in view");
   w.close();
 });
 
 // ── at source ─────────────────────────────────────────────────────────────────────────────────────
-test("at source: the gestures are the constructor's capture listeners on the body row (pointerdown, keydown, wheel, touchmove), the save and the send; the seen set and the arrivals are read in applyStatus and seeded in render; scrollToSaved takes whether the count stood and scrolls only then and only for a card not whole in the box", () => {
+test("at source: the gestures are the constructor's capture listeners on the body row (pointerdown, keydown, wheel, touchmove), the save and the send; the seen set and the arrivals are read in applyStatus and seeded in render; the save never scrolls — landSaved sets the focus and raises the line, with no scroll call in it and no timer in the line's code", () => {
   assert.match(SRC, /for \(const ev of \["pointerdown", "keydown"\]\) row\.addEventListener\(ev, \(e\) => this\.gesture\(e\), true\);/);
   assert.match(SRC, /for \(const ev of \["wheel", "touchmove"\]\) row\.addEventListener\(ev, \(e\) => this\.gesture\(e\), \{ capture: true, passive: true \}\);/);
   assert.match(SRC, /this\.gesture\(\);\s*\/\/ a send is a gesture/);
   assert.match(SRC, /this\.status = s;\n\s*this\.noteArrivals\(s\);/, "every status lands through applyStatus, and the arrivals are read there");
   assert.match(SRC, /if \(this\.seenKeys === null && s\) this\.seenKeys = new Set\(statusEntries\(s\)\.map\(\(e\) => e\.key\)\);/, "the first render with a status seeds the set");
   assert.doesNotMatch(SRC.slice(SRC.indexOf("gesture(ev?: Event): void {"), SRC.indexOf("private entryShown(")), /setTimeout|setInterval|Date\.now/, "no timer in the gesture");
-  assert.match(SRC, /this\.gesture\(\);\n\s*const pressed = this\.gestures;/, "the save samples the count after its own gesture");
-  assert.match(SRC, /if \(r\) this\.scrollToSaved\(c, had, r, note, pressed === this\.gestures\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/, "judged when the reply lands, before the composer closes");
-  assert.match(SRC, /private scrollToSaved\(c: Composer, had: Set<string>, r: Status, note: string, still: boolean\): void \{\n\s*const saved = [^\n]*\n\s*if \(saved === null\) return;\n\s*const key = this\.cardKey\(saved\);\n\s*if \(still && !this\.cardWhole\(key\)\) \{ this\.scrollCard\(key\); return; \}\n\s*if \(this\.margin\) this\.focusOn\(key\);/);
+  assert.match(SRC, /this\.gesture\(\);\n\s*let r: Status \| null;/, "the save counts itself as a gesture and samples no count: nothing stands down, since nothing scrolls (decision 43)");
+  assert.doesNotMatch(SRC, /this\.gestures/, "the count went with the scroll it judged");
+  assert.match(SRC, /const lined = r !== null && this\.landSaved\(c, had, r, note\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);[^\n]*\n\s*if \(hid \|\| \(lined && c\.kind !== "reply"\)\) this\.render\(\);/, "the landing when the reply lands, before the composer closes; a comment's save renders the line itself");
+  const land = SRC.slice(SRC.indexOf("private landSaved("), SRC.indexOf("private cardWhere("));
+  assert.match(land, /const saved = c\.kind === "reply" \? c\.commentId : savedCommentId\(had, r, note\);\n\s*if \(saved === null\) return false;\n\s*const key = this\.cardKey\(saved\);\n\s*if \(this\.margin\) this\.focusOn\(key\);\n\s*const side = this\.cardWhere\(key\);\n\s*if \(side === null\) return false;[^\n]*\n\s*this\.savedOut = \{ key, side \};\n(?:\s*\/\/[^\n]*\n)*\s*if \(this\.margin\) this\.sentNote = null;/, "the side is read once the status has landed and LATCHED: a render swaps in a list the pass has not sized, so the track's scroll reads 0 mid-render; the acknowledgment gives way in the margin layout alone, where the line takes its position (the list layout's stands under the header)");
+  assert.doesNotMatch(land, /scrollCard|scrollBoth|scrollIntoView|scrollTop|centerOn|showLoose/, "a save never scrolls (decision 43)");
+  const lines = SRC.slice(SRC.indexOf("private reflect(): void {"), SRC.indexOf("private markNew(): void {")) + SRC.slice(SRC.indexOf("private savedLine(): HTMLElement | null {"), SRC.indexOf("private syncSendGo("));
+  assert.doesNotMatch(lines, /setTimeout|setInterval|Date\.now/, "no timer in the line's code: it ends on a gesture, a pass or a scroll that finds the card in view");
+  assert.doesNotMatch(SRC.slice(SRC.indexOf("private savedLine(): HTMLElement | null {"), SRC.indexOf("private syncSendGo(")), /cardWhere|scrollTop|getBoundingClientRect/, "the render draws the latched side and reads no geometry (the field's comment says why)");
+  assert.match(SRC, /if \(this\.savedOut\) this\.reflect\(\);\s*\/\/ the saved line follows the placement/, "the pass re-reads the side where the geometry is settled");
+  assert.match(SRC, /else this\.writeScroll\(this\.ctx\.body\(\), this\.sections\.cards\.scrollTop, "track"\);\n\s*if \(this\.savedOut\) this\.reflect\(\);/, "and so does a scroll, after the mirror's write");
+  assert.match(SRC, /fcsavedgo: \(\) => \{ const out = this\.savedOut; this\.savedOut = null; if \(out\) this\.scrollCard\(out\.key\); this\.reflect\(\); \},/, "the line's click: scrollCard, and the line is over");
+  assert.match(SRC, /if \(this\.hold\) void this\.hold\.defer\(\(\) => this\.reflectLines\(\)\); else this\.reflectLines\(\);/, "the lines change through the hold");
 });
 
 test("vocabulary: this module's own prose says a change's old and new text, file comment and run of turns; the words CONTEXT.md sets aside appear nowhere in it, nor the banned sessions-pane word, nor a home path", () => {

@@ -333,9 +333,9 @@ export function sendParts(s: Status): SendParts {
   return { comments: out, accepted: u.accepted || 0, rejected: u.rejected || 0, watermark };
 }
 
-/** The counts the send carries and the preview prints (D5): what the log says is unsent plus, when the
- *  confirm's "accept the N pending changes" is checked, the N the send is about to accept — the same A and R
- *  in both places, so the preview is the sent text. */
+/** The counts the send carries and the confirm lists (D5): what the log says is unsent plus, when the confirm's
+ *  "accept the N pending changes you have seen" is checked, the N the send is about to accept — the seen pending
+ *  changes (decision 41), never the unseen ones — the same A and R in both places, so the list shows the sent text. */
 export function sendCounts(parts: SendParts, acceptPending: boolean, pending: number): { accepted: number; rejected: number } {
   return { accepted: parts.accepted + (acceptPending && pending > 0 ? pending : 0), rejected: parts.rejected };
 }
@@ -440,8 +440,8 @@ export function buildSendMessage(o: MessageOpts): string {
   const nt = neutralizeRompMarkers(o.note || "");
   if (!o.comments.length) {
     // Decisions only (Slice 2: a manual Accept or Reject is unsent until a send carries it): the kernel's
-    // second shape. The comments shape would say "I left 0 comments", print two `--thread <id>` command lines
-    // with no id to put in them, and ask the session to address a list that is not there. No shell word: the
+    // second shape. The comments shape would say "I left 0 comments", print a reply command line with no id to
+    // put in it, and ask the session to address a list that is not there. No shell word: the
     // shape has no command line, so the path reads as written.
     const lines: string[] = ["[obsidian-diff] I went over " + ap + ".", ""];
     if (nt) lines.push(nt, "");
@@ -462,7 +462,7 @@ export function buildSendMessage(o: MessageOpts): string {
   if (o.accepted + o.rejected > 0) lines.push("I accepted " + o.accepted + " of your changes and rejected " + o.rejected + ".", "");
   let second: string;
   if (!isTextPath(o.absPath)) second = "  • to revise it:       regenerate the file with normal writes; never run track-edit on it";
-  else if (o.tracked) second = "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + word + ' --thread <id> --old "<exact text>" --new "<replacement>"';
+  else if (o.tracked) second = "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + word + ' --old "<exact text>" --new "<replacement>"';   // plain track-edit, no --thread (decision 42)
   else second = "  • to revise the text: edit the file normally, then say what you changed with the reply command above";
   lines.push(
     "To respond:",
@@ -1086,32 +1086,38 @@ export function arrivalWords(arrivals: Entry[], nameOf: (author: string, authorI
   return listWords(names) + " made " + listWords(parts) + " since you last looked";
 }
 
-/** The unresolved comments bound to a pending change: what a Send's accept-all resolves along with the changes (the host
- *  resolves a comment when its change is accepted). The confirm says so before the send and the acknowledgment line after it (sentNoteWords; the
- *  lost-update probe, 2026-09-09: seven comments the session's edits had answered folded under a collapsed Resolved with
- *  nothing said). */
-export function resolvedByAccept(store: Store | null, hunks: Hunk[]): number {
-  if (!store) return 0;
-  const pending = new Set(hunks.map((h) => h.id));
-  return store.comments.filter((c) => !c.resolved && typeof c.suggestionId === "string" && pending.has(c.suggestionId)).length;
+/** The pending changes split by whether the person has seen them (decision 41: the Send's accept takes the seen ones only).
+ *  Seen is the panel's set of entry keys (statusEntries' "chg:" + id for a change): a change whose card was on screen at
+ *  one of the person's gestures (the card alone, as the panel's entryShown reads it: a mark in the text with its card out of
+ *  the box marks nothing seen), or that the panel's first status held, or that the person wrote. A null set is
+ *  a panel that has not rendered a status yet, and then nothing counts as seen: the accept would take changes nobody has
+ *  looked at, the thing the rule exists to stop. The order within each side is the hunks' own. */
+export function partitionPending(hunks: Hunk[], seen: ReadonlySet<string> | null): { seen: Hunk[]; unseen: Hunk[] } {
+  const out = { seen: [] as Hunk[], unseen: [] as Hunk[] };
+  for (const h of hunks) (seen && seen.has("chg:" + h.id) ? out.seen : out.unseen).push(h);
+  return out;
 }
 
-/** The Send confirm's accept option: "accept the N pending changes", and in one parenthesis after it what else the accept
- *  does: "resolves M comments" when `resolves` unresolved comments are bound to those changes, and "K arrived since you
- *  last looked" when `arrived` of the changes landed since the person last looked, joined with "; ". The default is
- *  decision 8's and is not this function's. */
-export function acceptOptionLabel(pending: number, arrived: number, resolves = 0): string {
-  const base = "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes");
-  const parts: string[] = [];
-  if (resolves > 0) parts.push("resolves " + plural(resolves, "comment", "comments"));
-  if (arrived > 0) parts.push(arrived + " arrived since you last looked");
-  return parts.length ? base + " (" + parts.join("; ") + ")" : base;
+/** The saved line's words (file-comments.ts savedLine; decision 43, 2026-09-09): a save never moves the view, and when the
+ *  card it landed in is out of view the line at the panel's foot says which side of the box it is on — the side the
+ *  panel read from the card's place (cardWhere). */
+export function savedWhereWords(side: "above" | "below"): string {
+  return "Saved · the card is " + side;
 }
-
-/** The acknowledgment line after a send whose accept-all resolved comments (the panel's `sentNote`; the words under Send, not a
- *  note in CONTEXT.md's sense, which is the Send box's): the base ("Sent to api at 10:32", "Queued for api") and
- *  what moved to Resolved, so nothing leaves the visible list without a visible word; the base alone when nothing moved. */
-export function sentNoteWords(base: string, accepted: number, moved: number): string {
-  if (moved <= 0) return base;
-  return base + " · accepted " + plural(accepted, "change", "changes") + "; " + plural(moved, "comment", "comments") + " with the session's replies moved to Resolved";
+/** The Send confirm's accept option (decision 41): "accept the N pending changes you have seen", and in one parenthesis
+ *  after it "K unseen stay pending" when `unseen` pending changes have not been on screen at a gesture of the person's yet
+ *  (every unseen pending change is among the arrivals the line under the header counts, so that count is not said again
+ *  here; a detached arrival is in the line's count and never in the split, so the two numbers agree only while no detached
+ *  change has arrived). With NO seen
+ *  change the option has nothing to accept: "accept the pending changes you have seen (all K pending changes are unseen;
+ *  nothing is accepted until you look)" — the panel shows that box unchecked and disabled. The default of a box that can
+ *  be checked is decision 8's and is not this function's. An accept resolves no comment (decision 42; before it, the
+ *  option named the comments the host's accept resolved), so there is nothing else to say. */
+export function acceptOptionLabel(seen: number, unseen: number): string {
+  if (seen <= 0) {
+    const all = unseen === 1 ? "the 1 pending change is unseen" : "all " + unseen + " pending changes are unseen";
+    return "accept the pending changes you have seen (" + all + "; nothing is accepted until you look)";
+  }
+  const base = "accept the " + seen + " pending " + (seen === 1 ? "change" : "changes") + " you have seen";
+  return unseen > 0 ? base + " (" + unseen + " unseen " + (unseen === 1 ? "stays" : "stay") + " pending)" : base;
 }

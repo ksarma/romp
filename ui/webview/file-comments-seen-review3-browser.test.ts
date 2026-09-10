@@ -1,19 +1,14 @@
-// The margin layout's second review round in a REAL engine (plans/file-review.md, "The margin-layout follow-on
-// (2026-09-07)"): the worktree's file-comments.ts bundled the way the webview is built, mounted over a rendered
-// markdown body under feed.css's own rules, as file-comments-margin-browser.test.ts mounts it. What only an engine
-// can show: that an opened card whose height the browser laid out — a few replies' turns — lands WHOLE in the track's
-// box when its head or its reference link is clicked (the scroll that shows the card's end is track content, with no
-// header term; one added on top put the card's head under the panel's header for every card taller than the track
-// less the header), that a card taller than the track is clipped at its head by the excess alone, and that a comment
-// saved with the text scrolled far down moves nothing (decision 43; before it, the save brought the card into view) while
-// the line at the panel's foot says the card is above, and that the line's click brings the card into view: a whole-file
-// comment's card loose at the top of the track (the track to it, the body with it through the lock), a reply's card to its
-// mark — the reply's card the focus,
-// level with its mark though the loose group (the whole-file cards) reaches past it, so the group's end is laid below the
-// focused card and its head keeps its place (the focus follow-on's review, 2026-09-08; the one real-engine exercise of
-// card-layout.ts's spill, its fixture pinned so it cannot retire silently). Runs in Chromium and Firefox; skips LOUDLY
-// without a playwright browser (CI installs none), as the other browser legs do. Synthetic values only: invented prose,
-// placeholder ids.
+// The seen follow-on's third review round in a REAL engine (plans/file-review.md, decision 43, "The seen follow-on (2026-09-09)"
+// under Slice 2; the review of 2026-09-09, round 3): the worktree's file-comments.ts bundled the way the webview is built,
+// mounted over a rendered markdown body under feed.css's own rules, as file-comments-margin-fixes-browser.test.ts mounts it
+// (its harness, copied). What only an engine can show: a reply's box stands INSIDE its card (placeComposer), and the pass
+// measures the card taller by it — so a reply saved on a card whose head is in the track's box and whose end, with the box,
+// is past it, is read at the landing as below the box, and the composer's close re-lays the card whole in view, where the
+// re-read at the end of that pass ends the line with no gesture of the person's (before: that re-read was held by a source
+// pin alone; in Chromium nothing else ends the line, since the track's scroll does not move); and the acknowledgment of the
+// send before it, which the line displaced at the foot, is back there (before: gone with the line, and the foot showed
+// neither). Runs in Chromium and Firefox; skips LOUDLY without a playwright browser (CI installs none), as the other browser
+// legs do. Synthetic values only: invented prose, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -31,7 +26,7 @@ function bundle(): string {
   const r = esbuild.buildSync({
     stdin: {
       contents: 'import { fileCommentsAction } from "./file-comments";\nimport { marked } from "marked";\n(window as any).__romp = { fileCommentsAction, marked };\n',
-      resolveDir: UI, loader: "ts", sourcefile: "margin-fixes-probe.ts",
+      resolveDir: UI, loader: "ts", sourcefile: "seen-review3-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], logLevel: "silent",
@@ -59,7 +54,7 @@ function sheet(): string {
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>
 body { margin: 0; padding: 0; font: 14px/1.5 sans-serif; background: #1e1e1e; color: #ccc; --card-border: #444; --fg: #ccc; --dim: #999; --text-faint: #777; --accent: #9cd2ff; --accent-fg: #0c1a2e; --accent-wash: rgba(156,210,255,0.15); --warn: #e0a030; --green: #7c7; --bg: #1e1e1e; --overlay-05: rgba(255,255,255,0.05); --radius-pill: 999px; --surface-raised: #252526; --shadow-menu: none; }
 ${sheet()}
-#wrap { width: 1000px; height: 530px; }</style></head><body><div class="fileview" id="wrap"><div class="fileview-main" id="main"><div class="fileview-body" id="body"><div class="fileview-md" id="md"></div></div></div></div><script src="/dist/margin-fixes.js"></script></body></html>`;
+#wrap { width: 1000px; height: 530px; }</style></head><body><div class="fileview" id="wrap"><div class="fileview-main" id="main"><div class="fileview-body" id="body"><div class="fileview-md" id="md"></div></div></div></div><script src="/dist/seen-review3.js"></script></body></html>`;
 
 // ── the document and its comments (synthetic prose) ────────────────────────────────────────────────
 const SID = "11111111-2222-3333-4444-555555555555";
@@ -106,6 +101,8 @@ type Scene = {
   bodyBox: Box; trackBox: Box;                                    // the two scrollers' boxes in the viewport (the track's ends above the footer)
   trackHeight: number; composerHidden: boolean;                   // the track's box height; whether the composer is closed
   saved: string | null;                                           // the line at the foot for a saved card out of view (decision 43), its words
+  ack: string | null;                                             // the send's acknowledgment at the foot ("Sent to api at …"), when one stands
+  sentLines: number;                                              // how many lines wear the acknowledgment's dress (.fc-sent): the line, the acknowledgment
 };
 
 /** Mount the panel over the rendered document, answer its status asks, open it, and let the paint and the pass run. */
@@ -159,6 +156,8 @@ const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.
     bodyRange: body.scrollHeight - body.clientHeight, trackRange: track.scrollHeight - track.clientHeight, bodyBox: box(body), trackBox: box(track),
     trackHeight: track.clientHeight, composerHidden: (aside.querySelector(".fc-composer") as HTMLElement).hidden,
     saved: (aside.querySelector('[data-act="fcsavedgo"]') as HTMLElement | null)?.textContent ?? null,
+    ack: (aside.querySelector(".fc-sec-send .fc-sent:not(.fc-saved)") as HTMLElement | null)?.textContent ?? null,
+    sentLines: aside.querySelectorAll(".fc-sent").length,
   };
 }, keys);
 const frames = (page: any, n = 2): Promise<void> => page.evaluate((n: number) => new Promise<void>((r) => { const step = (k: number) => (k ? requestAnimationFrame(() => step(k - 1)) : r()); step(n); }), n);
@@ -180,7 +179,7 @@ async function inBrowser(t: any, name: string, body: (page: any) => Promise<void
     await page.route("http://romp.test/**", (route: any) => {
       const u = new URL(route.request().url());
       if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE });
-      if (u.pathname === "/dist/margin-fixes.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
+      if (u.pathname === "/dist/seen-review3.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
       return route.fulfill({ status: 404, body: "" });
     });
     await page.goto("http://romp.test/page");
@@ -208,168 +207,73 @@ const unfold = (page: any, key: string): Promise<boolean> => page.evaluate((key:
 const cardSel = (key: string, inner: string): string => '.fileview-aside .fc-card[data-id="' + key + '"] ' + inner;
 const wholeIn = (c: Box, of: Box): boolean => c.top >= of.top - 1 && c.bottom <= of.bottom + 1;
 const NS9 = "1757145600000000009", NS10 = "1757145600000000010";
-const FRESH = { id: (T0 + 5000) + "-0", author: "you", ts: T0 + 5000, body: "Add a summary at the top.", replies: [], resolved: false };
+// no change in the file: the Send confirm offers no accept box, so the send that puts up the acknowledgment carries the
+// comments alone (an accept's round trip is the send-seen legs' business)
+const STATUS0 = { ...STATUS, hunks: [] as unknown[] };
+const lastPosted = (page: any): Promise<any> => page.evaluate(() => { const p = (window as any).__posted; return p[p.length - 1]; });
+const awaitType = (page: any, type: string): Promise<void> => page.waitForFunction((type: string) => { const p = (window as any).__posted; return p.length > 0 && p[p.length - 1].type === type; }, type, { timeout: 5000 });
+/** The kernel's acknowledgment of the last send. */
+const answerSent = (page: any): Promise<void> => page.evaluate(() => {
+  const p = (window as any).__posted; const last = p[p.length - 1];
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSent", reqId: last.reqId, queued: false } }));
+});
+const settle = (page: any): Promise<void> => page.evaluate(() => new Promise<void>((r) => setTimeout(r, 0)));
 
 for (const name of ["chromium", "firefox"]) {
-  test(`in ${name}: an opened card that fits the track lands whole in the track's box — its head under the header no more — after its head is clicked and after its reference link; a card taller than the track is clipped at its head by the excess alone`, async (t) => {
+  test(`in ${name}: a reply saved on a card whose end, with the reply's box in it, is past the track's box: the landing reads the card below, the composer's close re-lays it whole in view and the pass's re-read ends the line with no gesture; nothing scrolls; the acknowledgment of the send before it, which the line displaced, is back at the foot`, async (t) => {
     await inBrowser(t, name, async (page) => {
-      await mount(page);
+      await mount(page, STATUS0);
       let s = await scene(page, KEYS);
-      assert.equal(s.margin, true, "the margin layout is on");
-      const T = s.trackHeight, offset = s.offset;
-      assert.ok(offset > 40, "the header the track begins under: " + offset);
-      const band = { lo: T - offset - 8, hi: T - 8 };       // open heights a header-term scroll clipped, that fit the track
-      let inBand: string | null = null, tall: string | null = null;
-      for (const c of CANDIDATES) {
-        const k = "p" + c.para;
-        await click(page, cardSel(KEYS[k], ".fc-card-head"));   // opens the card; the click centers it
-        await frames(page, 3);
-        // the margin layout folds a run of turns past eight lines (the focus follow-on, 2026-09-08): the candidates' heights
-        // here are their WHOLE heights, so a card offering Show more is shown whole first (which centers it again, as the
-        // opening did); the choice is keyed, so the card's later openings below are whole too
-        if (await unfold(page, KEYS[k])) await frames(page, 3);
-        s = await scene(page, KEYS);
-        const card = s.cards[k], mark = s.marks[k]!;
-        assert.ok(mark, k + "'s mark is painted");
-        assert.ok(mark.top >= s.bodyBox.top - 1 && mark.bottom <= s.bodyBox.bottom + 1, k + "'s mark is in the body's box: " + JSON.stringify(mark) + " in " + JSON.stringify(s.bodyBox));
-        near(s.trackScroll, s.bodyScroll, k + ": the track came along", 1);
-        if (card.height + 8 <= T) {
-          assert.ok(wholeIn(card, s.trackBox), k + " (" + card.height + "px, fits the " + T + "px track) is WHOLE in the track's box, head included: " + JSON.stringify(card) + " in " + JSON.stringify(s.trackBox));
-          near(card.top, mark.top, k + " is level with its mark");
-          if (inBand === null && card.height > band.lo) inBand = k;
-        } else {
-          // brought in as far as its end, the clipping at its head the excess over the track's box — or, where that would
-          // take the mark's top out of the body's box, the header less the gap, the mark's top kept a gap under the body's top
-          const excess = card.height + 8 - T;
-          near(s.trackBox.top - card.top, Math.min(excess, offset - 8), k + " (" + card.height + "px, taller than the track) is clipped at its head by the excess alone, or by the header less the gap", 1.5);
-          if (excess <= offset - 8) assert.ok(card.bottom <= s.trackBox.bottom + 1, k + ": its end is in the track's box: " + card.bottom + " vs " + s.trackBox.bottom);
-          else near(mark.top, s.bodyBox.top + 8, k + ": the mark's top stays in view, a gap under the body's top", 1.5);
-          if (tall === null) tall = k;
-        }
-        await click(page, cardSel(KEYS[k], ".fc-card-head"));   // fold: nothing moves, and the next candidate stands alone
-        await frames(page, 2);
-      }
-      assert.ok(inBand, "the fixture: some candidate's open height is in the band a header-term scroll clipped (" + band.lo.toFixed(1) + ", " + band.hi + "]");
-      assert.ok(tall, "the fixture: some candidate is taller than the track");
-      // the reference link on an open card in the band, from the top of the text: the same whole card
-      const k = inBand as string;
-      await click(page, cardSel(KEYS[k], ".fc-card-head"));
-      await frames(page, 3);
-      await page.evaluate(() => { document.getElementById("body")!.scrollTop = 0; });
-      await frames(page, 2);
-      await click(page, cardSel(KEYS[k], '[data-act="fcgoto"]'));
+      assert.equal(s.margin, true, "the fixture: the margin layout is on");
+      // a send first: the acknowledgment at the foot
+      await click(page, '.fileview-aside [data-act="fcsend"]');
+      await frames(page, 1);
+      await click(page, '.fileview-aside [data-act="fcsendgo"]');
+      await awaitType(page, "fileCommentsSend");
+      await answerSent(page);
+      await settle(page); await settle(page);
+      await awaitVerb(page, "status");                     // the send re-asks status
+      await answer(page, STATUS0);
       await frames(page, 3);
       s = await scene(page, KEYS);
-      assert.ok(wholeIn(s.cards[k], s.trackBox), k + " is whole in the track's box after its reference link: " + JSON.stringify(s.cards[k]) + " in " + JSON.stringify(s.trackBox));
-      near(s.cards[k].top, s.marks[k]!.top, "and level with its mark");
-      near(s.trackScroll, s.bodyScroll, "the track came along", 1);
-    });
-  });
-
-  test(`in ${name}: a whole-file comment saved with the text scrolled far down moves nothing, and the line at the foot says the card is above; its click brings the card into view (the track to the loose card at its top, the body with it); a reply saved the same way, and its click brings the card to its mark; the composer closes after each`, async (t) => {
-    await inBrowser(t, name, async (page) => {
-      await mount(page);
-      await page.evaluate(() => { document.getElementById("body")!.scrollTop = 1400; });
-      await frames(page, 2);
-      let s = await scene(page, KEYS);
-      assert.equal(s.bodyScroll, 1400); near(s.trackScroll, 1400, "the track follows", 1);
-      assert.ok(s.cards.whole.bottom < s.trackBox.top, "the loose card is above the track's box, out of view");
-      await click(page, '.fileview-aside [data-act="fcfile"]');
-      await page.focus(".fileview-aside .fc-composer .fc-input");
-      await page.keyboard.type(FRESH.body);
-      await page.keyboard.press("Control+Enter");   // the save chord (the composer follow-on: Enter alone adds a line)
-      await awaitVerb(page, "comment");
-      const req = await page.evaluate(() => (window as any).__posted.slice(-1)[0]);
-      assert.equal(req.args.anchor, undefined, "a whole-file comment: no anchor");
-      const withFresh = [...COMMENTS, FRESH];
-      await answer(page, { ...STATUS, verb: "comment", storeMtimeNs: NS9, store: { ...STATUS.store, comments: withFresh } });
-      await frames(page, 4);
-      const keys = { ...KEYS, fresh: FRESH.id };
-      s = await scene(page, keys);
-      assert.ok(s.cards.fresh, "the new card is rendered");
-      assert.equal(s.composerHidden, true, "the composer closed");
-      assert.equal(s.bodyScroll, 1400, "nothing moved: a save never moves the view (decision 43; before it, the text came to the card)");
-      near(s.trackScroll, 1400, "the track neither", 1);
-      assert.ok(s.cards.fresh.bottom <= s.trackBox.top, "the new card is above the track's box: " + JSON.stringify(s.cards.fresh) + " over " + JSON.stringify(s.trackBox));
-      assert.equal(s.saved, "Saved · the card is above", "the line at the foot says so");
-      await click(page, '.fileview-aside [data-act="fcsavedgo"]');
-      await frames(page, 4);
-      s = await scene(page, keys);
-      assert.equal(s.saved, null, "the click ended the line");
-      assert.ok(wholeIn(s.cards.fresh, s.trackBox), "and brought the new card into the track's box: " + JSON.stringify(s.cards.fresh) + " in " + JSON.stringify(s.trackBox));
-      near(s.trackScroll, s.bodyScroll, "the lock: the body came along with the track", 1);
-      assert.ok(s.bodyScroll < 400, "the text is near its top, where the loose card is: " + s.bodyScroll);
-      // a reply on paragraph 3's card: the card opened (its head; Reply stands in the open card), Reply, the text scrolled far
-      // down meanwhile, the reply saved — nothing moves, the line says the card is above, and its click brings the card back
-      // to its mark, whole in the track's box
+      assert.match(s.ack || "", /^Sent to api at /, "the fixture: the acknowledgment stands");
+      assert.equal(s.saved, null);
+      // paragraph 3's card opened by its head (the focus, level with its mark), Reply pressed: the box stands in the card
       await click(page, cardSel(KEYS.c3, ".fc-card-head"));
       await frames(page, 3);
       await click(page, cardSel(KEYS.c3, '[data-act="fcreply"]'));
       await frames(page, 2);
-      // the words first, then the text scrolled far down, then the chord: a person types with the box in view and scrolls on
-      // while the words wait (a focus AFTER the scroll is the browser's own scroll of the track to the box, page.focus being a
-      // native focus with no preventScroll, and the lock carries it onto the body: the save's scroll masked that order here)
       await page.focus(".fileview-aside .fc-composer .fc-input");
       await page.keyboard.type("Which cache do you mean?");
-      await page.evaluate(() => { document.getElementById("body")!.scrollTop = 1400; });
       await frames(page, 2);
-      s = await scene(page, keys);
-      assert.equal(s.bodyScroll, 1400);
-      assert.equal(s.composerHidden, false, "the composer is up for the reply");
-      await page.keyboard.press("Control+Enter");   // the save chord
+      s = await scene(page, KEYS);
+      assert.equal(s.composerHidden, false, "the fixture: the composer is up for the reply");
+      const withBox = s.cards.c3.height;
+      // the text scrolled so the card's end, with the box, is 20px past the track's box: a scroll of the body by d moves the
+      // card up by d (the lock carries it onto the track)
+      const d = s.cards.c3.bottom - (s.trackBox.bottom + 20);
+      const want = Math.max(0, s.bodyScroll + d);
+      await page.evaluate((y: number) => { document.getElementById("body")!.scrollTop = y; }, want);
+      await frames(page, 3);
+      s = await scene(page, KEYS);
+      assert.equal(s.bodyScroll, want, "the fixture: the body is where it was put");
+      near(s.trackScroll, want, "the fixture: the track follows", 1);
+      assert.ok(s.cards.c3.top >= s.trackBox.top - 1 && s.cards.c3.top < s.trackBox.bottom, "the fixture: the card's head is in the track's box: " + JSON.stringify(s.cards.c3) + " against " + JSON.stringify(s.trackBox));
+      assert.ok(s.cards.c3.bottom > s.trackBox.bottom + 1, "the fixture: its end, with the box in it, is past the track's box: " + s.cards.c3.bottom + " vs " + s.trackBox.bottom);
+      await page.keyboard.press("Control+Enter");           // the save chord
       await awaitVerb(page, "reply");
-      assert.equal(await lastVerb(page), "reply");
       const c3r = { ...COMMENTS[1], replies: [{ author: "you", ts: T0 + 9000, body: "Which cache do you mean?" }] };
-      await answer(page, { ...STATUS, verb: "reply", storeMtimeNs: NS10, store: { ...STATUS.store, comments: withFresh.map((c) => (c.id === KEYS.c3 ? c3r : c)) } });
+      await answer(page, { ...STATUS0, verb: "reply", storeMtimeNs: NS10, store: { ...STATUS0.store, comments: COMMENTS.map((c) => (c.id === KEYS.c3 ? c3r : c)) } });
       await frames(page, 4);
-      s = await scene(page, keys);
+      s = await scene(page, { ...KEYS });
       assert.equal(s.composerHidden, true, "the composer closed");
-      assert.equal(s.bodyScroll, 1400, "nothing moved (decision 43; before it, the card came back to its mark)");
-      near(s.trackScroll, 1400, "the track neither", 1);
-      assert.ok(s.cards.c3.bottom <= s.trackBox.top, "the fixture: the card is above the track's box, level with its mark far up the text: " + JSON.stringify(s.cards.c3));
-      assert.equal(s.saved, "Saved · the card is above");
-      await click(page, '.fileview-aside [data-act="fcsavedgo"]');
-      await frames(page, 4);
-      s = await scene(page, keys);
-      assert.equal(s.saved, null, "the click ended the line");
-      assert.ok(s.cards.c3.height + 8 <= s.trackHeight, "the fixture: the card with its reply fits the track: " + s.cards.c3.height);
-      assert.ok(s.marks.c3!.top >= s.bodyBox.top - 1 && s.marks.c3!.bottom <= s.bodyBox.bottom + 1, "the mark is in the body's box: " + JSON.stringify(s.marks.c3) + " in " + JSON.stringify(s.bodyBox));
-      assert.ok(wholeIn(s.cards.c3, s.trackBox), "the card is whole in the track's box: " + JSON.stringify(s.cards.c3) + " in " + JSON.stringify(s.trackBox));
-      // level with its mark: the card the save landed in is the focus (the focus follow-on, 2026-09-08), held at its mark
-      // whatever stands above it. The head click that opened it two steps up set the focus (installLayout); the save's own
-      // setter (landSaved → focusOn) and the line's click (scrollCard → focusOn) find it set, so they change nothing in
-      // this scene — file-comments-focus-verify.test.ts drives the save whose setter does the work. The loose group (the whole-file cards, at the top
-      // of the track) reaches past the mark here — the head is a row taller since Show changes inline joined its button row
-      // (the file has a change, and three buttons wrap at 340px), so the track begins that much lower and the card's
-      // desired top falls inside the group — and the group is never moved past the track's start: the cards at its end
-      // that do not fit above the focused card are laid below it, in the list's order (card-layout.ts; the follow-on's
-      // review, 2026-09-08; before it the card was pushed to the group's end and wore the leader)
-      near(s.cards.c3.top, s.marks.c3!.top, "and level with its mark: the focus");
-      assert.equal(s.cards.c3.pushed, null, "the focused card is not pushed");
-      const start = s.trackBox.top - s.trackScroll;   // the track's content start, in the viewport
-      const room = s.cards.c3.top - start;            // the focused card's top in the track's content: what stands above it fits in this or spills
-      const { whole, fresh } = s.cards;
-      // the fixture, pinned so the spill below RUNS: this leg is the one real-engine exercise of card-layout.ts's spill
-      // (the focus browser leg only moves a change card up), and a conditional on the placement let it retire silently
-      // with a change to the head's height or the cards' metrics (the verification round, 2026-09-09). The rule moves the
-      // group up as one by the least the chain needs, as far as the start — its top inset given up — so the room is
-      // measured from the start: the head fits with a gap under it; the head and the end, with the gap between them and a
-      // gap under the end, do not
-      assert.ok(whole.height + 8 <= room, "the fixture: the group's head fits above the focused card: " + whole.height + " + 8 in " + room);
-      assert.ok(whole.height + 8 + fresh.height + 8 > room, "the fixture: the group's end does not fit above the focused card, even with the group moved to the start: " + whole.height + " + 8 + " + fresh.height + " + 8 over " + room);
-      for (const k of ["whole", "fresh"]) {
-        const loose = s.cards[k]!;
-        assert.ok(loose.top >= start - 1, k + " stands at or below the track's start (" + start + "): " + JSON.stringify(loose));
-        assert.ok(loose.bottom + 8 <= s.cards.c3.top + 1 || loose.top + 1 >= s.cards.c3.bottom + 8, k + " is clear of the focused card: " + JSON.stringify(loose) + " vs " + JSON.stringify(s.cards.c3));
-      }
-      // the group's head keeps its place: at the inset, moved up only by what the focused card's gap takes from it (nothing,
-      // where it fits with its inset), never past the start
-      near(whole.top, start + 8 - Math.max(0, whole.height + 16 - room), "the group's head keeps its place at the top of the track");
-      // the group's end is laid below the focused card by the push-down rule from its end — in the real engine, not by
-      // chance of the fixture — and wears no leader: a loose card has no mark
-      near(fresh.top, s.cards.c3.bottom + 8, "the group's end, with no room above the focused card, follows it");
-      assert.equal(fresh.pushed, null, "a loose card below the focus wears no leader");
-      near(s.trackScroll, s.bodyScroll, "the track came along", 1);
+      assert.equal(s.bodyScroll, want, "nothing moved: a save never moves the view (decision 43)");
+      near(s.trackScroll, want, "the track neither", 1);
+      assert.ok(s.cards.c3.height < withBox - 20, "the fixture: the card measures shorter without the box: " + s.cards.c3.height + " vs " + withBox);
+      assert.ok(wholeIn(s.cards.c3, s.trackBox), "the card, without the box, is whole in the track's box: " + JSON.stringify(s.cards.c3) + " in " + JSON.stringify(s.trackBox));
+      assert.equal(s.saved, null, "the line ended at the pass's re-read after the close, with no gesture (before: 'Saved · the card is below' stood over a card in view)");
+      assert.match(s.ack || "", /^Sent to api at /, "the acknowledgment the line displaced is back at the foot (before: gone)");
+      assert.equal(s.sentLines, 1, "one line in the acknowledgment's dress: the acknowledgment");
     });
   });
 }

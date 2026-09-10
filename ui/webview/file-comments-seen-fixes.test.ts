@@ -1,21 +1,21 @@
-// The arrivals follow-on's second review round (plans/file-review.md, "The arrivals follow-on (2026-09-09)" under Slice 2;
-// the review of 2026-09-09, round 2), driven over the stand-in file-comments-arrivals-fixes.test.ts drives (copied here, as
-// the sibling modules copy it), with two rules the round found the stand-in lacked: focus lands only on an element in the
-// document (the note box leaves it while a send is out), and GET /sessions answers with the rows a test lends (the colour
-// map). What the round pins: a panel opened for the first time after the probe shows no arrivals — the open's own first
-// status is all seen, whatever the session added between the probe and the open, and so is the first status after an open
-// closed before its answer; the Send confirm's accept option keeps naming the comments the accept resolves when a gesture
-// rewrites it in place; the arrivals line names an author as the chips do, by the session's current name from the colour
-// map; a save and a send are gestures of the person's (the Save and Send buttons, whose click carries no press in this
-// stand-in); a gesture builds the card model at most once, however many arrivals stand; a refused send puts the keyboard
-// back in the note box, and the chord sends again; the bound refusal's row goes with the words it named. Synthetic
-// fixtures only: the notes-api world, placeholder ids, the session names "api" and "notes-api".
+// The seen follow-on's review fixes (plans/file-review.md, decisions 41 and 43, "The seen follow-on (2026-09-09)" under
+// Slice 2; the review of 2026-09-09), driven over the stand-in file-comments-arrivals-fixes.test.ts drives (copied here, as
+// the sibling modules copy it: a press carries a button, so the row's hold arms; the panel's own box and the cards in flow
+// are measured for the list layout), with one more thing measured: the composer's box in the list layout's flow, above the
+// cards while it is up. What the fixes pin: the send accepts what the confirm SHOWED — the press that sends is a gesture
+// that marks the card the last wheel scrolled in seen, and before this the send read the live set after that mark, so it
+// accepted a change while the box read disabled and unchecked with "nothing is accepted until you look"; the confirm's count
+// row follows a gesture with the option's words; a wheel over the saved line ends it, a press or a touch move on it does not;
+// the list layout re-reads the line's side at the aside's scroll, at a render, and once more after the composer's close
+// lifted the cards; the line stands under the header in the list layout, where the person who saved is looking, and in the
+// Send section in the margin layout; the panel's close ends the line; doSend's contract names no accept-all. Synthetic
+// fixtures only: the notes-api world, placeholder ids, the session names "api" and "web".
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
-import { SEND_NOTE_MAX, type Status, type StoreComment, type Hunk } from "./file-comments-model";
+import type { Status, StoreComment, Hunk } from "./file-comments-model";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -174,9 +174,7 @@ class El {
   dispatchEvent(ev: Ev): boolean { return dispatch(this, ev); }
   click(): void { this.dispatchEvent(new Ev("click")); }
   /** Focus lands only on a focusable, enabled element — a div with no tabindex ignores focus(), as the browser does. */
-  /** …and only on an element in the document: a node the rebuild detached takes no focus, as in the browser (the note box
-   *  during a send: file-comments-arrivals-fixes.test.ts's focus() has no such rule, and read the detached box as focused). */
-  focus(): void { if (this.tabIndex >= 0 && !this.disabled && doc.body.contains(this)) doc.activeElement = this; }
+  focus(): void { if (this.tabIndex >= 0 && !this.disabled) doc.activeElement = this; }
   blur(): void { if (doc.activeElement === this) doc.activeElement = doc.body; }
   scrollIntoView(): void { scrolledInto.push(this); }
   getBoundingClientRect(): Rect { return this.rect || (cur ? cur.measure(this) : ZERO); }
@@ -236,8 +234,7 @@ win.getSelection = () => null;
 win.confirm = () => true;
 (globalThis as any).window = win;
 (globalThis as any).document = doc;
-let sessions: unknown[] = [];                              // GET /sessions's rows (loadColors): the session names and colours a test lends the panel
-(globalThis as any).fetch = async (url: unknown) => ({ status: String(url).includes("/sessions") ? 200 : 404, headers: { get: () => null }, json: async () => (String(url).includes("/sessions") ? sessions : []) });
+(globalThis as any).fetch = async () => ({ status: 404, headers: { get: () => null }, json: async () => [] });
 // the layout's environment: the sheet's verdict on the fold, the frame queue, the observers
 let narrow = false;
 (globalThis as any).getComputedStyle = (el: El) => ({ flexDirection: el.classList.contains("fileview-main") && narrow ? "column" : "row" });
@@ -357,6 +354,11 @@ const PART_ALL = 400, PART_CAP = 100, LONG_PART = 200;
 // how far the person scrolled it (the table moves the cards up by it); `noteContent` is the note box's scroll height
 const LIST_TOP = 360, LIST_VIEW = 120;
 let listScroll = 0;
+// the composer's box in the list layout's flow: in the panel's slot before the cards (placeComposer) while it is up, BOX tall,
+// so the cards stand that much lower until it closes (a hidden box takes no room: .fc-composer[hidden] is display none). A
+// reply's box stands inside its card and is not counted, as the sibling's table does not count it.
+const BOX = 100;
+const boxAbove = (w: World): number => { const box = w.aside().querySelector(".fc-composer"); return box && !box.hidden && box.parentNode === w.aside() ? BOX : 0; };
 let noteContent = 0;
 type World = {
   ctx: FileViewActionCtx; posted: any[]; main: El; body: El; code: El;
@@ -418,8 +420,8 @@ function textWorld(): World {
     if (el.classList.contains("fc-panel")) return R(0, LIST_TOP, 400, LIST_VIEW);   // the aside: under the body in the narrow column (the list layout reads its box)
     if (el.classList.contains("fc-sec-cards")) return R(400, 100 + OFFSET, 340, TRACK);
     if (el.classList.contains("fc-card")) {
-      if (narrow) {   // the list layout: the cards in flow, one under the other from the aside's top, less the aside's scroll
-        let y = 0;
+      if (narrow) {   // the list layout: the cards in flow, one under the other from the aside's top, less the aside's scroll — under the composer's box while it stands in the slot (boxAbove)
+        let y = boxAbove(w);
         for (const c of w.aside().querySelectorAll(".fc-card")) { if (c === el) break; y += cardHeight(c); }
         return R(0, LIST_TOP + y - listScroll, 400, cardHeight(el));
       }
@@ -455,9 +457,8 @@ function textWorld(): World {
 }
 type Posted = Record<string, any>;
 type Ctx = { after(fn: () => void): void };
-/** Mount, and answer the probe with `s`; the panel stays closed (a test opens it, and answers the open's own re-ask). */
-async function probed(t: Ctx, w: World, s: Status = status()) {
-  t.after(() => { w.close(); sessions = []; });        // a failing assertion must not leave the panel alive (its deadline timers would hold the process)
+async function open(t: Ctx, w: World, s: Status = status()) {
+  t.after(() => w.close());                            // a failing assertion must not leave the panel alive (its deadline timers would hold the process)
   frames.length = 0; RO.all.length = 0; IO.all.length = 0; scrolledInto.length = 0; doc.activeElement = doc.body; listScroll = 0; noteContent = 0;   // `narrow` is the test's: set before open
   const fc = await import("./file-comments");
   const unit = fc.fileCommentsAction.mount(w.ctx) as unknown as El;
@@ -466,15 +467,9 @@ async function probed(t: Ctx, w: World, s: Status = status()) {
   const reply = async (data: Record<string, unknown>) => { win.dispatchEvent(new MessageEvent("message", { data })); await tick(); await tick(); };
   const ok = (o: Status = s) => reply({ type: "fileCommentsResult", reqId: last().reqId, ...o });
   await ok();                                          // the probe's status
+  button.click();                                      // open: the aside mounts, the panel re-asks
+  await ok();
   return { w, fc, button, ok, last };
-}
-/** The probe answered with `s`, the panel opened, and the open's own re-ask answered with `first` — the same status unless a
- *  test says what the session did between the probe and the open. */
-async function open(t: Ctx, w: World, s: Status = status(), first: Status = s) {
-  const h = await probed(t, w, s);
-  h.button.click();                                    // open: the aside mounts, the panel re-asks
-  await h.ok(first);
-  return h;
 }
 // the desired top of a mark on row i in the track's content: the row's top in the body's content, less the header's height
 const desired = (i: number): number => ROW * i - OFFSET;
@@ -544,203 +539,405 @@ const typeNote = (w: World, text: string, content = 0): void => { const b = note
 const NO_UNSENT = { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null };
 const lastOf = (w: World, type: string): Posted | undefined => w.posted.slice().reverse().find((m) => m.type === type);
 const filterButton = (w: World, key: string): El => w.aside().querySelectorAll('[data-act="fcfilter"]').find((b) => b.dataset.key === key)!;
-
-// ── the first open ────────────────────────────────────────────────────────────────────────────────
-
-test("a panel opened for the first time after the probe shows no arrivals: the open's own first status is all seen, whatever the session added between the probe and the open; the status after it brings arrivals as usual", async (t) => {
-  // the probe saw the person's comments alone; while the panel stayed closed the session replied twice, commented and edited
-  const { w, ok } = await open(t, textWorld(), status(), arrived({ verb: "status" }));
-  assert.equal(lineOf(w), null, "no line on a first open (before: the entries added since the probe were named as arrivals)");
-  assert.ok(!w.aside().querySelectorAll(".fc-card").some(isNew), "no dot on any card");
-  assert.ok(w.card(CHG2) && w.card(line9.id), "the fixture: the session's change and comment are in the list");
-  actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 2 pending changes you have seen", "the first status's changes are seen: the accept option counts nothing unseen");
-  actIn(w.aside(), "fcsendcancel")!.click();
-  // the session's next answer, landing while the person looks: an arrival as before
-  const later = arrived({ storeMtimeNs: "1757145600000000005", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findingsR, passageR, apiReply(closing, T0 + 40000, "Ended on the recommendation."), line9, mine2] } });
-  await land(w, ok, later);
-  assert.equal(lineOf(w)!.textContent, "api made 1 reply since you last looked");
-  assert.ok(isNew(w.card(closing.id)), "the reply that landed after the first open");
-  assert.ok(!isNew(w.card(CHG2)) && !isNew(w.card(line9.id)), "what the first open showed stays seen");
-  w.close();
-});
-
-test("an open closed before its own status answered: that answer lands on a closed panel and is nobody's first look; the reopen's own first status is all seen", async (t) => {
-  const { w, ok, button } = await probed(t, textWorld());
-  button.click();                                       // open: the re-ask goes out
-  button.click();                                       // …and the panel is closed before it is answered
-  assert.equal(w.main.querySelector(".fileview-aside"), null);
-  await ok(arrived({ verb: "status" }));               // the answer lands closed
-  button.click();                                       // reopen: another re-ask
-  await ok(arrived({ verb: "status", storeMtimeNs: "1757145600000000005" }));
-  assert.equal(lineOf(w), null, "the first status the person sees is all seen");
-  assert.ok(!w.aside().querySelectorAll(".fc-card").some(isNew));
-  w.close();
-});
-
-// ── the accept option rewritten in place ──────────────────────────────────────────────────────────
-// the person's comment bound to the first change (suggestionId): the accept leaves it as it is (decision 42), so the option
-// says nothing about it
-const bound: StoreComment = { id: (T0 + 2000) + "-8", author: "you", ts: T0 + 2000, body: "Shorter, and say which cache.", suggestionId: "h1", replies: [], resolved: false };
-const storeWith = (comments: StoreComment[]): Status["store"] => ({ v: 3, path: "docs/report.md", suggestions: [], comments });
-
-test("the Send confirm's accept option, rewritten in place when a gesture marks an arrived change seen, moves the change to the seen side and never names a resolve, bound comment or not", async (t) => {
-  const { w, ok } = await open(t, textWorld(), status({ store: storeWith([whole, findings, passage, closing, bound]) }));
-  await land(w, ok, arrived({ store: storeWith([whole, findingsR, passageR, closing, bound, line9, mine2]) }));
-  actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)", "renderSend's words: the unseen clause alone — the bound comment is not the accept's to resolve (decision 42)");
-  const confirm = w.aside().querySelector(".fc-confirm");
-  scrollBody(w, 340); gesture(w.body, "wheel");        // the arrived change's card (360) is in the box [340, 500): seen
-  assert.equal(acceptLabel(w), "accept the 2 pending changes you have seen", "the unseen clause goes with the look");
-  assert.equal(w.aside().querySelector(".fc-confirm"), confirm, "rewritten in place: no render rebuilt the confirm");
-  assert.ok(!isNew(w.card(CHG2)));
-  w.close();
-});
-
-// ── the line's names ──────────────────────────────────────────────────────────────────────────────
-
-test("the arrivals line names an author the way the cards' chips do: by the session's current name from the colour map when the panel knows the id, else by the sidecar's label", async (t) => {
-  sessions = [{ id: SID, name: "notes-api", bg: "#123456", fg: "#ffffff" }];   // the session was renamed since the sidecar labelled its entries "api"
-  const { w, ok } = await open(t, textWorld());
-  await land(w, ok, arrived());
-  // the change comes first in the entries' order and carries no id (no suggestion record), so it keeps the label; the replies
-  // and the session's comment carry the session's id and wear its current name
-  assert.equal(lineOf(w)!.textContent, "api and notes-api made 1 change, 1 comment and 2 replies since you last looked", "the label for the entry without an id, the current name for the ones with it (with a regression to the label alone: one name, api)");
-  headOf(w, findings.id).click(); await tick();        // the card open: its run of turns shows, the reply's chip among them
-  const chips = w.card(findings.id)!.querySelectorAll(".fc-chip").map((c) => c.textContent);
-  assert.ok(chips.includes("notes-api"), "the same name the reply's chip wears: " + chips.join(", "));
-  assert.equal(lineOf(w)!.textContent, "api and notes-api made 1 change, 1 comment and 2 replies since you last looked", "the click is no gesture: the line stands");
-  w.close();
-});
-
-// ── a save and a send are gestures ────────────────────────────────────────────────────────────────
-// a click carries no press in this stand-in (El.click dispatches the click alone), so the button's own gesture is what marks
-
-test("the Save button is a gesture of the person's: the arrivals whose cards are in the box when it is pressed are seen", async (t) => {
-  const { w, ok, last } = await open(t, textWorld());
-  await land(w, ok, arrived());
-  actIn(w.aside(), "fcfile")!.click();                  // Comment on this file: the composer opens in the slot
-  assert.equal(lineOf(w)!.textContent, ARRIVED, "opening the composer marked nothing");
-  const input = w.aside().querySelector(".fc-composer .fc-input")!;
-  input.value = "Add the run's date.";
-  actIn(w.aside(), "fcsave")!.click(); await tick();
-  assert.equal(last().verb, "comment", "the save went");
-  assert.equal(lineOf(w)!.textContent, "api made 1 change, 1 comment and 1 reply since you last looked", "the findings' reply, in the box, is seen by the save (before a regression: the line stood)");
-  assert.ok(!isNew(w.card(findings.id)) && !isNew(markOf(w, findings.id)));
-  assert.ok(isNew(w.card(passage.id)), "the card below the box keeps its dot");
-  w.close();
-});
-
-test("the confirm's Send button is a gesture of the person's too", async (t) => {
-  const { w, ok, last } = await open(t, textWorld());
-  await land(w, ok, arrived());
-  actIn(w.aside(), "fcsend")!.click();
-  assert.equal(lineOf(w)!.textContent, ARRIVED, "opening the confirm marked nothing");
-  actIn(w.aside(), "fcsendgo")!.click(); await tick();
-  assert.equal(last().verb, "accept", "the send is under way (the accept of the seen changes first)");
-  assert.deepEqual(last().args, { ids: ["h1"] }, "the first status's change alone: the arrived change's card is below the box at the press, so it is unseen and stays pending");
-  assert.equal(lineOf(w)!.textContent, "api made 1 change, 1 comment and 1 reply since you last looked", "the findings' reply is seen by the send");
-  assert.ok(!isNew(w.card(findings.id)));
-  w.close();
-});
-
-// ── one card model per gesture ────────────────────────────────────────────────────────────────────
-/** A store whose comments count their reads: the card model reads them once per build (cardModel: [...store.comments]), and
- *  nothing else reads them during a gesture, so the count is the number of builds. */
-function countingStore(comments: StoreComment[]): { store: Status["store"]; reads: () => number; reset: () => void } {
-  let n = 0;
-  const store = { v: 3, path: "docs/report.md", suggestions: [] as never[], get comments(): StoreComment[] { n++; return comments; } };
-  return { store, reads: () => n, reset: () => { n = 0; } };
+// ── the fixtures of the seen-only accept (file-comments-send-seen.test.ts, copied) ─────────────────
+// A second change the first status holds (row 11), seen with everything in it; the row-7 change (hunk2) lands later as an
+// arrival whose card stands below the track's box while the text is at its top — unseen until a gesture finds it in view
+const L11 = "Line 11 of the report.";
+const L11_AT = DOC.indexOf(L11);
+const hunkB: Hunk = { id: "hb", author: "api", ts: T0 - 25000, kind: "ins", curFrom: L11_AT, curTo: L11_AT + L11.length, baseFrom: L11_AT, baseTo: L11_AT, oldText: "", newText: L11, anchor: null };
+const L13 = "Line 13 of the report.";
+const L13_AT = DOC.indexOf(L13);
+const hunkC: Hunk = { id: "hc", author: "api", ts: T0 + 33000, kind: "ins", curFrom: L13_AT, curTo: L13_AT + L13.length, baseFrom: L13_AT, baseTo: L13_AT, oldText: "", newText: L13, anchor: null };
+const sug = (...hs: Hunk[]) => hs.map((h) => ({ id: h.id, authorId: SID }));
+const COMMENTS = [whole, findings, passage, closing];
+/** The panel's first status: two pending changes, both seen with it. */
+const twoSeen = (over: Partial<Status> = {}): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: sug(hunk, hunkB), comments: COMMENTS }, hunks: [hunk, hunkB], ...over });
+/** The session's third change landing while the person reads: an arrival, its card below the box. */
+const oneUnseen = (over: Partial<Status> = {}): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: sug(hunk, hunkB, hunk2), comments: COMMENTS }, hunks: [hunk, hunkB, hunk2], storeMtimeNs: "1757145600000000004", ...over });
+/** After the accept of the two seen changes: the third still pending, the decisions unsent. */
+const afterAccept = (): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: sug(hunk2), comments: COMMENTS }, hunks: [hunk2], storeMtimeNs: "1757145600000000005",
+  unsent: { comments: [passage.id], replies: [], accepted: 2, rejected: 0, watermark: null } });
+/** A first status with nothing pending, and the session's two changes landing after it: all unseen. */
+const nonePending = (): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: COMMENTS }, hunks: [] });
+const twoUnseen = (): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: sug(hunk2, hunkC), comments: COMMENTS }, hunks: [hunk2, hunkC], storeMtimeNs: "1757145600000000004" });
+const acceptBox = (w: World): El => w.aside().querySelector('input[data-opt="accept"]')!;
+const acceptWords = (w: World): string => acceptBox(w).parentNode!.textContent;
+const verbs = (w: World): string[] => w.posted.filter((m) => m.type === "fileComments").map((m) => m.verb);
+const sentOk = async (w: World): Promise<void> => {
+  const m = w.posted[w.posted.length - 1];
+  assert.equal(m.type, "fileCommentsSend", "a send is outstanding");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSent", reqId: m.reqId, queued: false } }));
+  await tick(); await tick();
+};
+const sendButton = (w: World): El => actIn(w.aside(), "fcsendgo")!;
+/** The confirm's count row, as the list shows it: the "A accepted, R rejected" items (one at most). */
+const countRows = (w: World): string[] => w.aside().querySelectorAll(".fc-confirm li").map((li) => li.textContent).filter((x) => /accepted/.test(x));
+const ALL_UNSEEN = "accept the pending changes you have seen (all 2 pending changes are unseen; nothing is accepted until you look)";
+/** The Send pressed as a pointer presses it: a primary pointerdown on the button (the row's hold arms first, then the
+ *  gesture marks what is on screen seen and parks the option's rewrite under the hold), the pointerup at the window, then the
+ *  click — which the browser dispatches with the release, BEFORE the hold's zero timer runs the parked change. */
+async function pressSend(w: World): Promise<void> {
+  const b = sendButton(w);
+  b.dispatchEvent(new Ev("pointerdown", { button: 0 }));
+  win.dispatchEvent(new Event("pointerup"));
+  b.click(); await tick();
+  await new Promise<void>((r) => setTimeout(r, 0)); await tick();   // the hold's parked change runs now, against whatever the send left
 }
-const many: StoreComment[] = Array.from({ length: 40 }, (_, i) => ({
-  id: (T0 + 40000 + i) + "-" + i, author: "api", authorId: SID, ts: T0 + 40000 + i, body: "Note " + i + " from the session on the whole file.",
-  replies: [{ author: "api", authorId: SID, ts: T0 + 41000 + i, body: "And a word more on it." }], resolved: false,
-}));
+/** Every pending change unseen, the confirm up with its box off, and the card of the row-7 change scrolled into the track's box
+ *  by the last wheel: on screen, seen by no gesture yet — the state the press finds. */
+async function unseenInView(t: Ctx): Promise<{ w: World; ok: (s?: Status) => Promise<void>; last: () => Posted }> {
+  const { w, ok, last } = await open(t, textWorld(), nonePending());
+  await land(w, ok, twoUnseen());
+  actIn(w.aside(), "fcsend")!.click();
+  assert.equal(acceptBox(w).disabled, true, "the fixture: nothing seen, the box is off");
+  gesture(w.body, "wheel"); scrollBody(w, 340);          // the wheel, then the scroll it starts: row 7's card is in the box [340, 500) now, seen by no gesture
+  assert.equal(acceptWords(w), ALL_UNSEEN, "the fixture: the words at the press");
+  assert.equal(acceptBox(w).disabled, true); assert.equal(acceptBox(w).checked, false);
+  assert.deepEqual(countRows(w), [], "and no count row");
+  assert.ok(isNew(w.card(CHG2)), "the fixture: the card on screen is an arrival still");
+  return { w, ok, last };
+}
 
-test("a gesture builds the card model at most once, however many arrivals stand: eighty arrivals, one wheel, no rebuild per arrival", async (t) => {
-  const { w, ok } = await open(t, textWorld());
-  const counted = countingStore([whole, findings, passage, closing, ...many]);
-  await land(w, ok, status({ verb: "resolve", store: counted.store, storeMtimeNs: "1757145600000000004" }));
-  assert.equal(lineOf(w)!.textContent, "api made 40 comments and 40 replies since you last looked");
-  counted.reset();
-  gesture(w.body, "wheel");
-  assert.ok(counted.reads() <= 1, "one build at most for the gesture (before: one per arrival — " + counted.reads() + " here)");
-  gesture(w.body, "pointerdown");
-  gesture(w.aside(), "keydown");
-  assert.ok(counted.reads() <= 1, "and across the gestures that follow on the same status: " + counted.reads());
-  // a status landing is new information: the model is built again, from the new status
-  const again = countingStore([whole, findings, passage, closing, ...many]);
-  await land(w, ok, status({ verb: "resolve", store: again.store, storeMtimeNs: "1757145600000000005" }));
-  assert.ok(again.reads() >= 1, "the fresh status's model is built: " + again.reads());
+// ── the send accepts what the confirm showed ──────────────────────────────────────────────────────
+
+test("the disabled box binds the send: the card the last wheel scrolled in is on screen at the Send press — the press marks it seen, the option keeps its words through the hold, and the send accepts nothing, as the box said (before: the send read the seen set after the press's own mark and accepted the change while the box read disabled and unchecked); the next confirm counts it seen", async (t) => {
+  const { w, ok, last } = await unseenInView(t);
+  const before = verbs(w).length;
+  const b = sendButton(w);
+  b.dispatchEvent(new Ev("pointerdown", { button: 0 }));   // the press: a gesture — the card on screen is seen, the option's rewrite parked under the hold
+  assert.ok(!isNew(w.card(CHG2)), "seen by the press");
+  assert.equal(acceptWords(w), ALL_UNSEEN, "the words the person read stand through the press");
+  assert.equal(acceptBox(w).disabled, true);
+  win.dispatchEvent(new Event("pointerup"));
+  b.click(); await tick();
+  assert.equal(verbs(w).length, before, "no accept: the box said nothing is accepted");
+  assert.equal(last().type, "fileCommentsSend");
+  assert.equal(last().accepted, 0);
+  await new Promise<void>((r) => setTimeout(r, 0)); await tick();   // the hold's parked change: the confirm is down, nothing to write
+  await sentOk(w);
+  await ok(twoUnseen());
+  assert.ok(w.card(CHG2) && w.card("chg:hc"), "both changes still pending");
+  assert.ok(!isNew(w.card(CHG2)) && isNew(w.card("chg:hc")), "the one the press saw is seen; the other is not");
+  actIn(w.aside(), "fcsend")!.click();
+  assert.equal(acceptWords(w), "accept the 1 pending change you have seen (1 unseen stays pending)", "the next confirm counts it");
+  assert.equal(acceptBox(w).checked, true, "checked: the default was kept while the box was off");
+  assert.deepEqual(countRows(w), ["1 accepted, 0 rejected"]);
   w.close();
 });
 
-// ── the note box through a refused send ───────────────────────────────────────────────────────────
-
-test("a refused send puts the keyboard back in the note box, with the words: the chord sends again from where the person was", async (t) => {
-  const { w } = await open(t, textWorld(), status({ hunks: [] }));   // no pending change: the send posts at once
-  actIn(w.aside(), "fcsend")!.click();
-  const box = noteBox(w);
-  box.focus();
-  assert.equal(doc.activeElement, box, "the fixture: the box in the document takes focus");
-  typeNote(w, "Keep the tone.");
-  box.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true })); await tick();   // the chord, at the box
-  const m = lastOf(w, "fileCommentsSend")!;
-  assert.equal(m.note, "Keep the tone.");
-  assert.equal(w.aside().querySelector(".fc-confirm"), null, "the confirm is down while the send is out, as before");
-  assert.equal(doc.activeElement, doc.body, "the fixture: the box left the document with it, and the keyboard fell to the body");
-  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSendFailed", reqId: m.reqId, error: "the session is gone" } })); await tick(); await tick();
-  assert.equal(noteBox(w), box, "refused: the same box is back");
-  assert.equal(box.value, "Keep the tone.", "with the words");
-  assert.equal(doc.activeElement, box, "and the keyboard is back in it (before: on the body)");
-  doc.activeElement!.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true })); await tick();   // the chord again, where the keyboard is
-  const m2 = lastOf(w, "fileCommentsSend")!;
-  assert.notEqual(m2.reqId, m.reqId, "the chord sends again (before: it reached the body, and nothing was sent)");
-  assert.equal(m2.note, "Keep the tone.");
+test("the chord in the note box: the key that sends is the send's own press — it marks the card on screen seen and leaves the option as read, and the send accepts nothing, as the box said", async (t) => {
+  const { w, last } = await unseenInView(t);
+  const before = verbs(w).length;
+  noteBox(w).dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true })); await tick();
+  assert.ok(!isNew(w.card(CHG2)), "seen by the key");
+  assert.equal(verbs(w).length, before, "no accept");
+  assert.equal(last().type, "fileCommentsSend");
+  assert.equal(last().accepted, 0);
+  await sentOk(w);
   w.close();
 });
 
-// ── the bound refusal's row ───────────────────────────────────────────────────────────────────────
-
-test("the bound refusal's row lives with the words it names: Cancel takes it with the note, the next confirm opens without it, a note shortened under the bound drops it in place; a refusal of the send itself stands as before", async (t) => {
-  const { w } = await open(t, textWorld(), status({ hunks: [] }));
-  const rowText = (): string | null => { const r = w.aside().querySelector(".fc-send .fc-err"); return r ? r.querySelector("span")!.textContent : null; };
-  actIn(w.aside(), "fcsend")!.click();
-  typeNote(w, "x".repeat(SEND_NOTE_MAX + 1));
-  actIn(w.aside(), "fcsendgo")!.click(); await tick();
-  assert.equal(rowText(), "Nothing sent: the note is 4001 characters, and a send carries at most 4000. Shorten it.");
-  assert.equal(lastOf(w, "fileCommentsSend"), undefined, "nothing posted");
-  actIn(w.aside(), "fcsendcancel")!.click();
-  assert.equal(w.aside().querySelector(".fc-confirm"), null);
-  assert.equal(rowText(), null, "Cancel took the words and the row about them (before: it stood under the Send button)");
-  actIn(w.aside(), "fcsend")!.click();
-  assert.equal(noteBox(w).value, "");
-  assert.equal(rowText(), null, "the next confirm opens with no row about words it does not hold (before: the row under an empty box)");
-  // shortened under the bound: the row goes in place, with no render
-  typeNote(w, "x".repeat(SEND_NOTE_MAX + 1));
-  actIn(w.aside(), "fcsendgo")!.click(); await tick();
-  assert.ok(rowText(), "refused again");
-  const confirm = w.aside().querySelector(".fc-confirm");
-  typeNote(w, "x".repeat(SEND_NOTE_MAX + 2));
-  assert.ok(rowText(), "still over the bound: the row stands");
-  typeNote(w, "Short enough.");
-  assert.equal(rowText(), null, "under the bound: the row goes with the words it named");
-  assert.equal(w.aside().querySelector(".fc-confirm"), confirm, "in place: no render rebuilt the confirm around the box");
-  // a refusal of the send itself is not about the words: it stands through Cancel until its ✕, as before
-  actIn(w.aside(), "fcsendgo")!.click(); await tick();
-  const m = lastOf(w, "fileCommentsSend")!;
-  assert.equal(m.note, "Short enough.");
-  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSendFailed", reqId: m.reqId, error: "the session is gone" } })); await tick(); await tick();
-  assert.equal(rowText(), "the session is gone");
-  actIn(w.aside(), "fcsendcancel")!.click();
-  assert.equal(rowText(), "the session is gone", "a refusal of the send stands through Cancel, as before");
-  actIn(w.aside(), "fcerrx")!.click();
-  assert.equal(rowText(), null, "its ✕ removes it");
+test("a click with no press before it (a synthesized activation): the send's own gesture leaves the option as read too, and the send accepts nothing", async (t) => {
+  const { w, last } = await unseenInView(t);
+  const before = verbs(w).length;
+  sendButton(w).click(); await tick();
+  assert.ok(!isNew(w.card(CHG2)), "seen by the send's gesture");
+  assert.equal(verbs(w).length, before, "no accept");
+  assert.equal(last().type, "fileCommentsSend");
+  assert.equal(last().accepted, 0);
+  await sentOk(w);
   w.close();
+});
+
+test("the checked box binds the send the same way: two seen and a third the last wheel scrolled in — the confirm lists two, the press marks the third seen, and the send accepts the two the list named (before: all three)", async (t) => {
+  const { w, ok, last } = await open(t, textWorld(), twoSeen());
+  await land(w, ok, oneUnseen());
+  actIn(w.aside(), "fcsend")!.click();
+  gesture(w.body, "wheel"); scrollBody(w, 340);          // row 7's card in the box, seen by no gesture yet
+  assert.equal(acceptWords(w), "accept the 2 pending changes you have seen (1 unseen stays pending)", "the fixture: the words at the press");
+  assert.deepEqual(countRows(w), ["2 accepted, 0 rejected"], "the list at the press");
+  await pressSend(w);
+  const acc = w.posted.filter((m) => m.type === "fileComments" && m.verb === "accept").pop()!;
+  assert.deepEqual(acc.args, { ids: ["h1", "hb"] }, "the two the list named, not the one the press marked seen");
+  await ok({ ...afterAccept(), accepted: ["h1", "hb"] } as unknown as Status);
+  assert.equal(last().type, "fileCommentsSend");
+  assert.equal(last().accepted, 2, "the message says what the confirm said");
+  await sentOk(w);
+  await ok(afterAccept());
+  assert.ok(w.card(CHG2), "the third is still pending");
+  assert.ok(!isNew(w.card(CHG2)), "and seen: the press found it on screen");
+  w.close();
+});
+
+test("a gesture the person could read lands: a wheel while the confirm is up moves the change to the seen side in the words, the count row and the send alike — three listed, three accepted", async (t) => {
+  const { w, ok } = await open(t, textWorld(), twoSeen());
+  await land(w, ok, oneUnseen());
+  actIn(w.aside(), "fcsend")!.click();
+  scrollBody(w, 340); gesture(w.body, "wheel");          // the card in the box, then the gesture that sees it
+  assert.equal(acceptWords(w), "accept the 3 pending changes you have seen");
+  assert.deepEqual(countRows(w), ["3 accepted, 0 rejected"], "the row follows in place (before: still 2 accepted)");
+  await pressSend(w);
+  const acc = w.posted.filter((m) => m.type === "fileComments" && m.verb === "accept").pop()!;
+  assert.deepEqual(acc.args, { ids: ["h1", "hb", "h2"] });
+  w.close();
+});
+
+// ── the confirm's count row follows a gesture ─────────────────────────────────────────────────────
+
+test("from nothing seen: the first change a gesture brings into view turns the box on AND writes the count row that was not there; under a press the row waits for the release with the words", async (t) => {
+  const { w, ok } = await open(t, textWorld(), nonePending());
+  await land(w, ok, twoUnseen());
+  actIn(w.aside(), "fcsend")!.click();
+  assert.deepEqual(countRows(w), [], "nothing to state: no row");
+  scrollBody(w, 340);                                   // row 7's card in the box [340, 500); row 13's is not
+  w.body.dispatchEvent(new Ev("pointerdown", { button: 0 }));   // a press in the text: seen, the lines parked
+  assert.ok(!isNew(w.card(CHG2)), "seen at the press");
+  assert.equal(acceptWords(w), ALL_UNSEEN, "the words wait for the release (the hold)");
+  assert.deepEqual(countRows(w), [], "and so does the row");
+  await release();
+  assert.equal(acceptWords(w), "accept the 1 pending change you have seen (1 unseen stays pending)");
+  assert.equal(acceptBox(w).disabled, false);
+  assert.deepEqual(countRows(w), ["1 accepted, 0 rejected"], "the row appeared with the words");
+  assert.equal(w.aside().querySelectorAll(".fc-confirm li.fc-counts").length, 1, "one row");
+  actIn(w.aside(), "fcsendcancel")!.click();
+  actIn(w.aside(), "fcsend")!.click();
+  assert.deepEqual(countRows(w), ["1 accepted, 0 rejected"], "the re-render agrees");
+  w.close();
+});
+
+test("the row goes with the box: unchecked, the re-render drops it; the in-place path writes none while the box is unchecked", async (t) => {
+  const { w, ok } = await open(t, textWorld(), twoSeen());
+  await land(w, ok, oneUnseen());
+  actIn(w.aside(), "fcsend")!.click();
+  const cb = acceptBox(w);
+  cb.checked = false; dispatch(cb, new Ev("change"));
+  assert.deepEqual(countRows(w), [], "unchecked: no decisions to state");
+  scrollBody(w, 340); gesture(w.body, "wheel");
+  assert.equal(acceptWords(w), "accept the 3 pending changes you have seen", "the words follow");
+  assert.equal(acceptBox(w).checked, false, "their choice stands");
+  assert.deepEqual(countRows(w), [], "no row: the box is off");
+  w.close();
+});
+
+// ── the saved line (decision 43): the gestures that end it, and the list layout ───────────────────
+/** The focus-verify module's scene (file-comments-arrivals.test.ts saveReply): the change card open as the focus with the
+ *  passage's card pushed under it, a reply typed in the passage's card, the text at its top. */
+async function saveReply(t: Ctx): Promise<{ w: World; body: El; track: El; ok: (s?: Status) => Promise<void>; button: El }> {
+  const { w, ok, last, button } = await open(t, textWorld());
+  const body = w.body, track = w.track();
+  markOf(w, CHG).click(); await tick();
+  headOf(w, passage.id).click(); await tick();
+  markOf(w, CHG).click(); await tick();
+  assert.equal(w.top(passage.id), PUSHED, "the fixture: the passage's card is open, not the focus, pushed under the tall card");
+  actIn(w.card(passage.id)!, "fcreply")!.click(); await tick();
+  scrollBody(w, 0);
+  const input = w.aside().querySelector(".fc-composer .fc-input")!;
+  input.value = "The write-through one.";
+  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true }));
+  await tick();
+  assert.equal(last().verb, "reply");
+  await ok(status({ verb: "reply", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, replied, closing] }, storeMtimeNs: "1757145600000000005" }));
+  return { w, body, track, ok, button };
+}
+const replied: StoreComment = { ...passage, replies: [{ author: "you", ts: T0 + 6000, body: "The write-through one." }] };
+const SHOW_CARD = desired(5) + OPEN + 8 - TRACK;        // 208: the least scroll that shows the saved card's end (what the line's click scrolls to)
+const savedOf = (w: World): El | null => actIn(w.aside(), "fcsavedgo");
+
+test("a wheel over the saved line ends it: a wheel is the scroll the line says it goes with, not a press; a press or a touch move on the line keeps it, and the click after a touch move still shows the card", async (t) => {
+  let { w, body } = await saveReply(t);
+  assert.equal(savedOf(w)!.textContent, "Saved · the card is below");
+  gesture(savedOf(w)!, "pointerdown");                  // a primary press on the line: the row's hold arms
+  assert.equal(savedOf(w)!.textContent, "Saved · the card is below", "a press on the line keeps it");
+  await release();                                      // the release: the parked re-read finds the card below still
+  assert.equal(savedOf(w)!.textContent, "Saved · the card is below", "and it stands after the release");
+  gesture(savedOf(w)!, "touchmove");
+  assert.equal(savedOf(w)!.textContent, "Saved · the card is below", "a touch move on it too: a jittery tap moves");
+  savedOf(w)!.click(); await tick();
+  assert.equal(body.scrollTop, SHOW_CARD, "the click after the touch move: the card into view");
+  assert.equal(savedOf(w), null, "and the line is over");
+  w.close();
+  ({ w, body } = await saveReply(t));
+  assert.equal(savedOf(w)!.textContent, "Saved · the card is below");
+  gesture(savedOf(w)!, "wheel");
+  assert.equal(savedOf(w), null, "a wheel over the line ends it (before: the line stood, as at a press)");
+  assert.equal(body.scrollTop, 0, "the line's end scrolls nothing");
+  w.close();
+});
+
+test("the panel's close ends the line: closed and reopened, a status landing shows the list afresh, with no line about the save made before the close", async (t) => {
+  const { w, ok, button } = await saveReply(t);
+  assert.equal(savedOf(w)!.textContent, "Saved · the card is below");
+  button.click();                                       // close: the aside goes
+  assert.equal(w.main.querySelector(".fileview-aside"), null);
+  button.click();                                       // reopen: the panel re-asks status
+  await ok(status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, replied, closing] }, storeMtimeNs: "1757145600000000005" }));
+  assert.ok(w.card(passage.id), "the fixture: the card is in the reopened list");
+  assert.equal(savedOf(w), null, "no line: the save was before the close (closePanel clears the latch)");
+  w.close();
+});
+
+const storeWith = (comments: StoreComment[], detached: unknown[] = []) => ({ v: 3, path: "docs/report.md", suggestions: [], comments, ...(detached.length ? { detached } : {}) });
+async function saveReplyInList(t: Ctx, scrolled: number): Promise<{ w: World; ok: (s?: Status) => Promise<void> }> {
+  narrow = true;
+  const w = textWorld();
+  const { ok, last } = await open(t, w);
+  headOf(w, passage.id).click(); await tick();          // the passage's card open: the fourth card, 120 tall
+  actIn(w.card(passage.id)!, "fcreply")!.click(); await tick();
+  listScroll = scrolled;
+  const input = w.aside().querySelector(".fc-composer .fc-input")!;
+  input.value = "The write-through one.";
+  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true })); await tick();
+  assert.equal(last().verb, "reply");
+  scrolledInto.length = 0;                              // the composer's opening scrolled its box and the mark into view: what follows is the save's
+  await ok(status({ verb: "reply", store: storeWith([whole, findings, replied, closing]), storeMtimeNs: "1757145600000000005" }));
+  return { w, ok };
+}
+const cardsScrolledInto = (): string[] => scrolledInto.filter((c) => c.classList.contains("fc-card")).map((c) => c.dataset.id);
+const asideScroll = (w: World, to: number): void => { listScroll = to; w.aside().dispatchEvent(new Ev("scroll")); };
+
+test("the list layout: the aside's scroll re-reads the line's side — the words follow the card against the aside's box, and the line ends when the card comes whole into it (before: nothing re-read a scroll there, and the words stood stale until the next gesture)", async (t) => {
+  try {
+    const { w } = await saveReplyInList(t, 0);          // three closed cards fill the box [360, 480): the open passage card is 480..600
+    assert.equal(savedOf(w)!.textContent, "Saved · the card is below");
+    asideScroll(w, 60);                                   // 420..540: its top in the box, its end past it
+    assert.equal(savedOf(w)!.textContent, "Saved · the card is below", "not whole in the box yet");
+    asideScroll(w, 200);                                  // 280..400: past the box's top
+    assert.equal(savedOf(w)!.textContent, "Saved · the card is above", "the words follow the side, in place");
+    asideScroll(w, 120);                                  // 360..480: whole in the box
+    assert.equal(savedOf(w), null, "the card came into view through the scroll: the line is over");
+    assert.deepEqual(cardsScrolledInto(), [], "nothing scrolled by the panel");
+    w.close();
+  } finally { narrow = false; }
+});
+
+test("the list layout: a render that brings the saved card whole into the aside's box ends the line — the session's answer lands with no gesture and the cards above it are gone (afterRender's re-read; before: untested)", async (t) => {
+  try {
+    const { w, ok } = await saveReplyInList(t, 0);
+    assert.equal(savedOf(w)!.textContent, "Saved · the card is below");
+    w.viewMtime = "1757145600000000009";                  // a save of the file's own since: the viewer's onSaved re-asks (a mtime the panel's reply did not carry)
+    await land(w, ok, status({ hunks: [], store: storeWith([replied]), storeMtimeNs: "1757145600000000006" }));
+    const r = w.card(passage.id)!.getBoundingClientRect();
+    assert.deepEqual([r.top, r.bottom], [LIST_TOP, LIST_TOP + LIST_VIEW], "the fixture: the card alone, open, fills the box");
+    assert.equal(savedOf(w), null, "the card came into view through the render: the line is over");
+    w.close();
+  } finally { narrow = false; }
+});
+
+/** A whole-file comment saved in the list layout with the aside scrolled by `scrolled`: the composer's box in the slot above the
+ *  cards while it is up (boxAbove), the fresh card the last in the list (the comments in the order of their timestamps). */
+async function saveFileCommentInList(t: Ctx, scrolled: number): Promise<{ w: World; fresh: StoreComment; composer: El }> {
+  narrow = true;
+  const w = textWorld();
+  const { ok, last } = await open(t, w);
+  actIn(w.aside(), "fcfile")!.click();
+  const composer = w.aside().querySelector(".fc-composer")!;
+  assert.equal(composer.hidden, false, "the composer is up");
+  assert.equal(composer.parentNode, w.aside(), "in the panel's slot, above the cards");
+  listScroll = scrolled;
+  const input = composer.querySelector(".fc-input")!;
+  input.value = "Add the run's date.";
+  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true })); await tick();
+  assert.equal(last().verb, "comment");
+  scrolledInto.length = 0;
+  const fresh: StoreComment = { id: (T0 + 50000) + "-0", author: "you", ts: T0 + 50000, body: "Add the run's date.", replies: [], resolved: false };
+  await ok(status({ verb: "comment", store: storeWith([whole, findings, passage, closing, fresh]), storeMtimeNs: "1757145600000000005" }));
+  return { w, fresh, composer };
+}
+
+test("the list layout: the fresh card lands in the aside's box while the composer's box still stands above the cards, and the box's close lifts it above the box — the side is read once more after the close, and the line says the card is above (before: no line, and nothing re-read after the close)", async (t) => {
+  try {
+    const { w, fresh, composer } = await saveFileCommentInList(t, 250);
+    assert.equal(composer.hidden, true, "the composer closed");
+    const r = w.card(fresh.id)!.getBoundingClientRect();
+    assert.deepEqual([r.top, r.bottom], [LIST_TOP - 50, LIST_TOP - 10], "the fixture: the sixth card in flow (200 down), lifted by the box's " + BOX + " at the close, stands above the box: with the box it read " + (LIST_TOP + 50) + ".." + (LIST_TOP + 90) + ", whole in it");
+    const line = savedOf(w);
+    assert.ok(line, "the line is in the panel");
+    assert.equal(line!.textContent, "Saved · the card is above");
+    assert.deepEqual(cardsScrolledInto(), [], "nothing scrolled (decision 43)");
+    line!.click(); await tick();
+    assert.deepEqual(cardsScrolledInto(), [fresh.id], "the click: the card into view");
+    assert.equal(savedOf(w), null);
+    w.close();
+  } finally { narrow = false; }
+});
+
+test("the list layout: the line stands under the header, where the composer was, not in the Send section at the scroller's foot below the very card it points at; its click works from there", async (t) => {
+  try {
+    const { w, fresh } = await saveFileCommentInList(t, 0);
+    const r = w.card(fresh.id)!.getBoundingClientRect();
+    assert.ok(r.top >= LIST_TOP + LIST_VIEW, "the fixture: the fresh card is below the box: " + r.top);
+    const line = savedOf(w);
+    assert.ok(line, "the line is in the panel");
+    assert.equal(line!.textContent, "Saved · the card is below");
+    assert.ok(w.aside().querySelector(".fc-sec-head")!.contains(line!), "under the header");
+    assert.ok(!w.aside().querySelector(".fc-sec-send")!.contains(line!), "not at the foot (before: there, below every card)");
+    const order = w.aside().querySelectorAll("div, button");   // the scroller's flow, in document order
+    assert.ok(order.indexOf(line!) >= 0 && order.indexOf(line!) < order.indexOf(w.aside().querySelector(".fc-card")!), "before the first card in the scroller's flow");
+    assert.deepEqual(line!.classes, ["fc-note", "fc-sent", "fc-saved"], "in the same dress");
+    assert.equal(w.aside().querySelectorAll('[data-act="fcsavedgo"]').length, 1, "the one line");
+    line!.click(); await tick();
+    assert.deepEqual(cardsScrolledInto(), [fresh.id]);
+    assert.equal(savedOf(w), null, "and the line is over");
+    w.close();
+  } finally { narrow = false; }
+});
+
+test("the margin layout keeps the line in the Send section, the acknowledgment's position at the panel's foot", async (t) => {
+  const { w } = await saveReply(t);
+  const line = savedOf(w)!;
+  assert.ok(w.aside().querySelector(".fc-sec-send")!.contains(line), "in the Send section");
+  assert.ok(!w.aside().querySelector(".fc-sec-head")!.contains(line));
+  w.close();
+});
+
+// ── at source ─────────────────────────────────────────────────────────────────────────────────────
+test("at source: the send reads the split over the seen set the confirm showed (confirmSeen), written by the render and by syncAcceptOption, and left alone by the send's own press (sendPress: doSend's gesture, the key that sends); the count row is written by both paths through countsRow", () => {
+  const send = SRC.slice(SRC.indexOf("async doSend(): Promise<void> {"), SRC.indexOf("private async sendOnce("));
+  assert.match(send, /this\.sendPress = true;\n\s*this\.gesture\(\);[^\n]*\n\s*this\.sendPress = false;/, "the send's gesture is the send's own press");
+  assert.ok(send.includes("const acceptIds = this.sendOpts.accept ? this.pendingSplit(s).seen.map((h) => String(h.id)) : [];"));
+  const split = SRC.slice(SRC.indexOf("private pendingSplit("), SRC.indexOf("private acceptOption("));
+  assert.ok(split.includes("return partitionPending(s.hunks || [], this.confirmSeen || this.seenKeys);"), "the split over the confirm's set while one is up");
+  const sync = SRC.slice(SRC.indexOf("private syncAcceptOption("), SRC.indexOf("private countsRow("));
+  assert.match(sync, /if \(this\.sendPress\) return;\n\s*this\.confirmSeen = new Set\(this\.seenKeys \|\| \[\]\);\n\s*const split = this\.pendingSplit\(s\);/, "the in-place write refreshes the set first, and the send's press writes nothing");
+  assert.ok(sync.includes("if (ul) this.countsRow(ul, sendCounts(sendParts(s), this.sendOpts.accept, split.seen.length));"), "the count row with the option, from the same split");
+  assert.ok(SRC.includes("this.confirmSeen = this.sendConfirm && s && !this.sending ? new Set(this.seenKeys || []) : null;"), "the render's set, none with no confirm");
+  assert.match(SRC, /const counts = sendCounts\(parts, this\.sendOpts\.accept, split\.seen\.length\);[\s\S]*?this\.countsRow\(ul, counts\);/, "the render's row through the same writer, from the render's split");
+  const counts = SRC.slice(SRC.indexOf("private countsRow("), SRC.indexOf("private todoOpts("));
+  assert.ok(counts.includes('li.textContent = counts.accepted + " accepted, " + counts.rejected + " rejected";'));
+  assert.ok(counts.includes("if (!counts.accepted && !counts.rejected) { if (li) li.remove(); return; }"), "no row with nothing to state");
+  const gesture = SRC.slice(SRC.indexOf("gesture(ev?: Event): void {"), SRC.indexOf("private entryShown("));
+  assert.ok(gesture.includes('const press = !!kb && ((on("fcsendgo") && (kb.key === "Enter" || kb.key === " ")) || (t === this.noteBox && composerKeyAction(kb) === "save"));'), "the key that sends");
+  assert.ok(gesture.includes('&& (!ev || ev.type !== "wheel");'), "a wheel presses nothing: it ends the saved line");
+  assert.ok(gesture.includes('const over = this.savedOut !== null && !on("fcsavedgo");'), "the latch's exemption stands for a press");
+  assert.doesNotMatch(gesture, /setTimeout|setInterval|Date\.now/, "no timer");
+});
+
+test("at source: the list layout's re-reads — the aside's scroll, the render (afterRender) and the composer's close (landClosed) — and the line's place: the head in the list layout, the Send section in the margin layout; the close of the panel clears the latch", () => {
+  assert.ok(SRC.includes('this.root.addEventListener("scroll", () => { if (this.savedOut && !this.margin) this.reflect(); }, { passive: true });'), "the aside's scroll");
+  assert.ok(SRC.includes("if (this.savedOut && !this.margin) this.reflect();   // the list layout: the saved line follows the cards as this render laid them"), "afterRender's re-read");
+  assert.match(SRC, /if \(hid \|\| \(lined && c\.kind !== "reply"\)\) this\.render\(\);[^\n]*\n\s*if \(r && !lined && !hid && !this\.margin\) this\.landClosed\(c, had, r, note\);/, "after the close, the list layout reads once more");
+  const closed = SRC.slice(SRC.indexOf("private landClosed("), SRC.indexOf("// ── the arrivals (the arrivals follow-on"));
+  assert.ok(closed.length > 0 && closed.length < 3000, "the slice is landClosed alone");
+  assert.doesNotMatch(closed, /scrollCard|scrollBoth|scrollIntoView|scrollTop|centerOn|showLoose|setTimeout/, "no scroll, no timer: the side and the line only");
+  assert.ok(closed.includes("this.savedOut = { key, side };"), "latched the way landSaved latches");
+  assert.ok(!closed.includes("sentNote"), "the acknowledgment keeps its place in the list layout, whose line stands under the header and not in its position (the review, 2026-09-09)");
+  assert.match(SRC, /const saved = this\.savedLineHead\(\);\n\s*if \(saved\) head\.appendChild\(saved\);\n\s*return head;/, "renderHead: the list layout's line, last in the head");
+  assert.match(SRC, /private savedLine\(\): HTMLElement \| null \{\n\s*return this\.margin \? this\.savedButton\(\) : null;/, "renderSend's savedLine: the margin layout's");
+  assert.match(SRC, /private savedLineHead\(\): HTMLElement \| null \{\n\s*return this\.margin \? null : this\.savedButton\(\);/, "the head's: the list layout's");
+  assert.match(SRC, /const saved = this\.savedLine\(\);[^\n]*\n\s*if \(saved\) box\.appendChild\(saved\);/, "renderSend appends what savedLine gives");
+  const close = SRC.slice(SRC.indexOf("  closePanel(): void {"), SRC.indexOf("this.stopPoll();", SRC.indexOf("  closePanel(): void {")));
+  assert.ok(close.includes("this.savedOut = null;"), "the latch goes with the panel's close");
+});
+
+test("at source: doSend's contract and the comments around it name the by-id accept, never an accept-all from the send", () => {
+  const doc = SRC.slice(SRC.indexOf("// ── Send to session"), SRC.indexOf("async doSend(): Promise<void> {"));
+  assert.ok(doc.includes("never an accept-all"), "the docblock says what the send does not do");
+  assert.doesNotMatch(doc, /then accept-all when asked|the accept-all just decided|which accept-all removes/, "the old sequence is gone from the contract");
+  assert.ok(!SRC.includes("Send's accept-all"), "no comment names the send's decision by the retired verb");
 });
 
 test("vocabulary: this module's own prose says a change's old and new text, file comment and run of turns; the words CONTEXT.md sets aside appear nowhere in it, nor the banned sessions-pane word, nor a home path", () => {
-  const SELF = web("file-comments-arrivals-review2.test.ts").split("\n").filter((l) => !l.includes("assert.doesNotMatch(SELF")).join("\n");
+  const SELF = web("file-comments-seen-fixes.test.ts").split("\n").filter((l) => !l.includes("assert.doesNotMatch(SELF")).join("\n");
   assert.doesNotMatch(SELF, /\bdiffs?\b/i, "the folded part of a change card is the change's old and new text (CONTEXT.md, Change: Avoid)");
   assert.doesNotMatch(SELF, /\bthreads?\b/i, "a comment with replies is a file comment with a run of turns (CONTEXT.md, File comment: Avoid)");
   assert.doesNotMatch(SELF, /fleet/i, "no new identifiers or prose in the old word for the sessions pane");

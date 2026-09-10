@@ -1,10 +1,11 @@
 // The focus follow-on's verification review (2026-09-09; plans/file-review.md, "The focus follow-on (2026-09-08)" under the
 // margin-layout note), driven over the review stand-in file-comments-focus.test.ts uses: three gaps in the follow-on's
-// coverage, each closed with the behavior it pins. The card a save landed in becomes the FOCUS (scrollToSaved, scrollCard,
-// focusOn): a reply saved on an OPEN card that is not the focus — pushed under the tall change card whose mark was clicked
-// after the card opened — lands level with its mark and centered, not where the push-down rule left it, a viewport below
-// its mark (the other save tests open the card by its head first, which sets the focus before the save, so they held with
-// the save's own setter removed). A change card's HOSTED comments fold with the card: clipCards reads every fc-clip under
+// coverage, each closed with the behavior it pins. The card a save landed in becomes the FOCUS (landSaved, focusOn): a
+// reply saved on an OPEN card that is not the focus — pushed under the tall change card whose mark was clicked after the
+// card opened — lands level with its mark, not where the push-down rule left it, a viewport below its mark (the other save
+// tests open the card by its head first, which sets the focus before the save, so they held with the save's own setter
+// removed); since decision 43 the save scrolls nothing, and the line at the panel's foot brings the card into view on a
+// click (scrollCard). A change card's HOSTED comments fold with the card: clipCards reads every fc-clip under
 // the card, so a hosted run of turns is marked cut, scrolled to its end and lifted by the card's one Show more — on a
 // change whose own text is long, and on a short change where the hosted run is the only part cut (a pass that read the
 // card's own parts alone left the run capped by the sheet with no fade and no row: a compact view with no way in). And
@@ -469,7 +470,7 @@ const LIFTED = desired(5) - TALL - 8;                            // 32: where th
 
 // ── the save's focus ──────────────────────────────────────────────────────────────────────────────
 
-test("a reply saved on an open card that is NOT the focus makes that card the focus: level with its mark and centered, the tall change card above moved up — not left where the push-down rule had it, a viewport below its mark (the save's scrollCard sets the focus; no earlier gesture on this path does)", async (t) => {
+test("a reply saved on an open card that is NOT the focus makes that card the focus: level with its mark, the tall change card above moved up — not left where the push-down rule had it, a viewport below its mark — and nothing scrolled (decision 43); the line at the foot says below, and its click centers the card (the save's landSaved sets the focus; no earlier gesture on this path does)", async (t) => {
   const { w, ok, last } = await open(t, textWorld());
   const body = w.body, track = w.track();
   markOf(w, CHG).click(); await tick();                // the change card open, the focus; the passage's card pushed under it
@@ -502,15 +503,24 @@ test("a reply saved on an open card that is NOT the focus makes that card the fo
   assert.equal(w.top(passage.id), desired(5), "the saved card is the focus: level with its mark (the push-down rule alone left it at " + PUSHED + ")");
   assert.equal(w.card(passage.id)!.dataset.pushed, undefined, "not pushed");
   assert.equal(w.top(CHG), LIFTED, "the change card moved up: its end a gap above the focused card");
+  assert.equal(body.scrollTop, 0, "and nothing scrolled: a save never moves the view (decision 43; before it, the save brought the text to the card's mark)");
+  assert.equal(track.scrollTop, 0);
+  let box = cardBox(w, passage.id), mark = markOf(w, passage.id).getBoundingClientRect();
+  assert.equal(box.top, mark.top, "the card and its highlight are level, past the boxes together");
+  assert.ok(!inBox(box, TRACK_BOX), "the card is out of the track's box: " + JSON.stringify(box));
+  assert.equal(composer.hidden, true, "the composer closed after");
+  const line = actIn(w.aside(), "fcsavedgo")!;
+  assert.equal(line.textContent, "Saved · the card is below", "the line at the foot says where it is");
+  line.click(); await tick();
   const showCard = desired(5) + OPEN + 8 - TRACK;
-  assert.equal(body.scrollTop, showCard, "the save brought the text to the card's mark: the least scroll that shows the card's end");
+  assert.equal(body.scrollTop, showCard, "the line's click brings the text to the card's mark: the least scroll that shows the card's end (scrollCard, the card the focus already)");
   assert.equal(track.scrollTop, showCard, "the track came along");
-  const box = cardBox(w, passage.id), mark = markOf(w, passage.id).getBoundingClientRect();
+  box = cardBox(w, passage.id); mark = markOf(w, passage.id).getBoundingClientRect();
   assert.ok(inBox(box, TRACK_BOX), "the whole card is in the track's box: " + JSON.stringify(box));
   assert.ok(inBox(mark, BODY_BOX), "the highlight is in the body's box: " + JSON.stringify(mark));
   assert.equal(box.top, mark.top, "and the two are level");
   assert.deepEqual(scrolledInto, [], "a marked card is centered, not scrollIntoView'd");
-  assert.equal(composer.hidden, true, "the composer closed after");
+  assert.equal(actIn(w.aside(), "fcsavedgo"), null, "the line is over");
   w.close();
 });
 

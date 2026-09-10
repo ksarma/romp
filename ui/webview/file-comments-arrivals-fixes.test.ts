@@ -3,7 +3,7 @@
 // copy it), with what the review found the stand-in could not see: a press carries a BUTTON (pressHold arms on the primary
 // one alone; the original's events had none, so the row's hold never engaged there), a textarea takes focus (the note box's
 // focus restore), the panel's own box and the cards in flow are measured (the list layout's branches of entryShown and
-// cardWhole), and the note box has a content height (its cap). What the fixes pin: the arrivals line changes through the
+// cardWhere), and the note box has a content height (its cap). What the fixes pin: the arrivals line changes through the
 // row's press hold — the hold is installed BEFORE the gesture listeners, so a press on an arrival's card keeps the line and
 // the list under the pointer until the release; an arrival's entry follows the status (a change detached since it arrived is
 // no longer a pending one on the accept option, and one re-attached is); the line's click reaches an arrival the filter or the
@@ -542,8 +542,8 @@ const filterButton = (w: World, key: string): El => w.aside().querySelectorAll('
 test("a primary press on an arrival's card marks it seen but the line and the accept option keep their words until the release: the dot comes off in place, the words change after the pointerup; the last arrivals' press keeps the line standing until the release too", async (t) => {
   const { w, ok } = await open(t, textWorld());
   await land(w, ok, arrived());
-  actIn(w.aside(), "fcsend")!.click();                  // the confirm up: its accept option names the arrived change
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (1 arrived since you last looked)");
+  actIn(w.aside(), "fcsend")!.click();                  // the confirm up: its accept option counts the arrived change as unseen
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)");
   gesture(w.body, "wheel");                             // the findings' reply, in the box, is seen: a wheel is no press, the words change at once
   assert.equal(lineOf(w)!.textContent, "api made 1 change, 1 comment and 1 reply since you last looked");
   scrollBody(w, 200);                                   // the passage's card (240) is in the box [200, 360)
@@ -561,10 +561,10 @@ test("a primary press on an arrival's card marks it seen but the line and the ac
   assert.ok(!isNew(w.card(CHG2)) && !isNew(w.card(line9.id)), "seen at the press");
   assert.ok(lineOf(w), "the line stands through the press (before: removed at the pointerdown, the list moved up by its height under the pointer)");
   assert.equal(lineOf(w)!.textContent, "api made 1 change and 1 comment since you last looked", "with the words it had");
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (1 arrived since you last looked)", "the accept option waits too");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)", "the accept option waits too");
   await release();
   assert.equal(lineOf(w), null, "released: every arrival seen, the line is gone");
-  assert.equal(acceptLabel(w), "accept the 2 pending changes", "and the option says so");
+  assert.equal(acceptLabel(w), "accept the 2 pending changes you have seen", "and the option says so: the arrived change is seen, and the accept takes it");
   w.close();
 });
 
@@ -580,42 +580,42 @@ test("at source: the hold is installed before the gesture listeners on the same 
   assert.match(SRC, /this\.hold = pressHold\(row\);[^\n]*\n\s*for \(const ev of \["pointerdown", "keydown"\]\) row\.addEventListener\(ev, \(e\) => this\.gesture\(e\), true\);/);
   const ctor = SRC.slice(SRC.indexOf("constructor(readonly ctx: FileViewActionCtx"), SRC.indexOf("// ── provenance"));
   assert.ok(ctor.indexOf("this.hold = pressHold(row)") < ctor.indexOf('for (const ev of ["pointerdown", "keydown"])'), "the hold first");
-  assert.match(SRC, /if \(this\.hold\) void this\.hold\.defer\(words\); else words\(\);/, "the line's change goes through the hold");
+  assert.match(SRC, /if \(this\.hold\) void this\.hold\.defer\(\(\) => this\.reflectLines\(\)\); else this\.reflectLines\(\);/, "the lines' changes go through the hold (reflect: the arrivals line, the accept option, the saved line, in one run)");
 });
 
 // ── an arrival's entry follows the status ─────────────────────────────────────────────────────────
 const detachedH2 = { id: "h2", author: "api", authorId: SID, ts: T0 + 31000, kind: "ins", from: MORE_AT, oldText: "", newText: MORE };
 const storeWith = (comments: StoreComment[], detached: unknown[] = []) => ({ v: 3, path: "docs/report.md", suggestions: [], comments, ...(detached.length ? { detached } : {}) });
 
-test("a change that arrived pending and was detached since is still an arrival on the line but no longer a pending one on the accept option; one that arrived detached and re-attached as a hunk is", async (t) => {
+test("a change that arrived pending and was detached since is still an arrival on the line but no longer an unseen pending one on the accept option (detached, it is not a hunk: neither seen nor unseen); one that arrived detached and re-attached as a hunk is counted unseen again", async (t) => {
   const { w, ok } = await open(t, textWorld());
   await land(w, ok, arrived());                          // h2 arrives pending
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (1 arrived since you last looked)");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)");
   actIn(w.aside(), "fcsendcancel")!.click();
   // the sidecar's rebase could not place h2 after a write: the same id under store.detached, no longer a hunk
   await land(w, ok, arrived({ hunks: [hunk], store: storeWith([whole, findingsR, passageR, closing, line9, mine2], [detachedH2]), storeMtimeNs: "1757145600000000005" }));
   assert.equal(lineOf(w)!.textContent, ARRIVED, "the change is still an arrival: the person has not seen it");
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 1 pending change", "the one pending change was in the first status; the arrived one is detached, and the accept does not touch it (before: '(1 arrived since you last looked)')");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen", "the one pending change was in the first status and is seen; the arrived one is detached, and the accept neither takes it nor counts it unseen (before the fix the option went on counting it)");
   actIn(w.aside(), "fcsendcancel")!.click();
   // re-attached: the same id is a hunk again
   await land(w, ok, arrived({ storeMtimeNs: "1757145600000000006" }));
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (1 arrived since you last looked)", "pending again: named on the option");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)", "pending again: counted unseen on the option");
   w.close();
 });
 
-test("the reverse: a change that arrived detached is named on the accept option once a status re-attaches it", async (t) => {
+test("the reverse: a change that arrived detached is counted unseen on the accept option once a status re-attaches it", async (t) => {
   const { w, ok } = await open(t, textWorld());
   await land(w, ok, arrived({ hunks: [hunk], store: storeWith([whole, findingsR, passageR, closing, line9, mine2], [detachedH2]) }));
   assert.equal(lineOf(w)!.textContent, ARRIVED, "a detached change of the session's is an arrival");
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 1 pending change", "not pending: not on the option");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen", "not pending: not on the option");
   actIn(w.aside(), "fcsendcancel")!.click();
   await land(w, ok, arrived({ storeMtimeNs: "1757145600000000005" }));
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (1 arrived since you last looked)", "the entry followed the status (before: 'accept the 2 pending changes', the arrival uncounted)");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)", "the entry followed the status (before the fix: no unseen count, the arrival uncounted)");
   w.close();
 });
 
@@ -706,17 +706,24 @@ async function saveReplyInList(t: Ctx, scrolled: number): Promise<World> {
 }
 const cardsScrolledInto = (): string[] => scrolledInto.filter((c) => c.classList.contains("fc-card")).map((c) => c.dataset.id);
 
-test("the list layout: the saved card below the aside's box is scrolled into view; whole in the box already, it is not", async (t) => {
+test("the list layout: the saved card below the aside's box is not scrolled to (decision 43; before: scrollIntoView), and the line at the panel's foot says it is below, by the card's rect against the aside's — its click scrolls the card into view as a list item and ends the line; whole in the box already, no line", async (t) => {
   try {
     let w = await saveReplyInList(t, 0);                // three closed cards fill the box [360, 480): the open passage card starts at 480
     const r = w.card(passage.id)!.getBoundingClientRect();
     assert.ok(r.top >= LIST_TOP + LIST_VIEW, "the fixture: the saved card is below the box: " + r.top);
-    assert.deepEqual(cardsScrolledInto(), [passage.id], "scrolled into view (the list layout's scrollCard)");
+    assert.deepEqual(cardsScrolledInto(), [], "nothing scrolled (before: the list layout's scrollCard brought the card into view)");
+    const line = actIn(w.aside(), "fcsavedgo");
+    assert.ok(line, "the line is in the panel");
+    assert.equal(line!.textContent, "Saved · the card is below", "by the card's rect against the aside's box");
+    line!.click(); await tick();
+    assert.deepEqual(cardsScrolledInto(), [passage.id], "the click: scrolled into view (the list layout's scrollCard)");
+    assert.equal(actIn(w.aside(), "fcsavedgo"), null, "and the line is over");
     w.close();
     w = await saveReplyInList(t, 120);                  // scrolled three cards: the passage's card fills the box [360, 480) exactly
     const r2 = w.card(passage.id)!.getBoundingClientRect();
     assert.ok(r2.top >= LIST_TOP && r2.bottom <= LIST_TOP + LIST_VIEW, "the fixture: whole in the box: " + r2.top + ".." + r2.bottom);
     assert.deepEqual(cardsScrolledInto(), [], "a card whole in view needs no scroll");
+    assert.equal(actIn(w.aside(), "fcsavedgo"), null, "and no line");
     w.close();
   } finally { narrow = false; }
 });
@@ -752,7 +759,7 @@ test("the note box grows with its content to SEND_NOTE_ROWS rows, then scrolls; 
 });
 
 test("a height the person dragged the box to stands through typing (the composer's rule), before the first keystroke and after; Cancel clears it; a successful send clears the words and the height; a refused send keeps both", async (t) => {
-  const { w, ok } = await open(t, textWorld(), status({ hunks: [] }));   // no pending change: the send posts at once, with no accept-all to answer first
+  const { w, ok } = await open(t, textWorld(), status({ hunks: [] }));   // no pending change: the send posts at once, with no accept to answer first
   actIn(w.aside(), "fcsend")!.click();
   const box = noteBox(w);
   lendRows(box);

@@ -588,7 +588,7 @@ def expected_message(path, comments, tracked, media=False):
     if media:
         out.append("  • to revise it:       regenerate the file with normal writes; never run track-edit on it")
     elif tracked:
-        out.append("  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file %s --thread <id> --old \"<exact text>\" --new \"<replacement>\"" % path)
+        out.append("  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file %s --old \"<exact text>\" --new \"<replacement>\"" % path)
     else:
         out.append("  • to revise the text: edit the file normally, then say what you changed with the reply command above")
     out += ["", "When you have addressed these, ask me for another look the same way you asked for this one,", "naming the file."]
@@ -776,7 +776,7 @@ def test_the_guard_denies_a_tracked_write_in_a_romp_session_and_stands_aside_oth
 EDITED_TWICE = EDITED.replace("shipping the cache", "shipping the response cache")
 
 
-def test_track_edit_records_a_change_a_change_comment_binds_to_it_and_accept_resolves_the_comment_without_dropping_it(world):
+def test_track_edit_records_a_change_a_change_comment_binds_to_it_and_accept_keeps_the_comment_open_without_dropping_it(world):
     s0 = world.ok("status", world.fp)
     on = world.ok("set-tracked", world.fp, {"on": True, "scope": "file"}, world.fence_of(s0))
     assert on["trackedBy"] == {"kind": "file", "entry": "docs/report.md"}
@@ -818,10 +818,12 @@ def test_track_edit_records_a_change_a_change_comment_binds_to_it_and_accept_res
     assert a["accepted"] == [h["id"]] and "rejected" not in a
     assert a["hunks"] == []
     kept = a["store"]["comments"][0]
-    assert (kept["id"], kept["suggestionId"], kept["resolved"]) == (cm["id"], h["id"], True), "resolved and kept, never dropped"
+    # kept as it was, open: a decision never resolves a comment (decision 42, 2026-09-09; before it, accept marked
+    # the bound comment resolved), and never drops one
+    assert (kept["id"], kept["suggestionId"], kept["resolved"]) == (cm["id"], h["id"], False), "open and kept, never dropped"
     assert [r["body"] for r in kept["replies"]] == ["The retry budget."]
     disk = json.loads(Path(a["storePath"]).read_text())
-    assert disk["suggestions"] == [] and disk["comments"][0]["resolved"] is True and disk["v"] == 3
+    assert disk["suggestions"] == [] and disk["comments"][0]["resolved"] is False and disk["v"] == 3
     assert world.fp.read_bytes() == text_before and world.fp.stat().st_mtime_ns == ns_before
     assert a["fileMtimeNs"] == str(ns_before)
     assert a["storeMtimeNs"] == str(Path(a["storePath"]).stat().st_mtime_ns) and a["storeMtimeNs"] != s2["storeMtimeNs"]
@@ -833,13 +835,13 @@ def test_track_edit_records_a_change_a_change_comment_binds_to_it_and_accept_res
     # the same id again: no longer pending
     again = world.op("accept", world.fp, {"ids": [h["id"]]}, world.fence_of(a))
     assert (again["type"], again["code"]) == ("fileCommentsFailed", "no-change")
-    # the CLI still answers the resolved, bound comment the sent message would name
+    # the CLI still answers the bound comment the sent message would name, and the accept left it open
     rep2 = _node([TRACK_REPLY, "--file", str(world.fp), "--thread", cm["id"], "--note", "Noted."],
                  env=_env(ROMP_SESSION_NAME="web", ROMP_SID=SID))
     assert rep2.returncode == 0, rep2.stderr
     s3 = world.ok("status", world.fp)
     assert [r["body"] for r in s3["store"]["comments"][0]["replies"]] == ["The retry budget.", "Noted."]
-    assert s3["store"]["comments"][0]["resolved"] is True
+    assert s3["store"]["comments"][0]["resolved"] is False
 
 
 def test_reject_reverts_the_file_tells_the_owning_session_once_and_a_stale_file_fence_writes_nothing(world):

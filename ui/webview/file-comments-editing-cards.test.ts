@@ -3,7 +3,7 @@
 // sidecar they came from, so while it is up a decision from a card would move that sidecar under the editor and every
 // later Save could only refuse, with the typed text stranded. Driven as a panel over the behavior suite's DOM stand-in:
 // Accept, Reject, Accept all and Reject all answer in place with where to decide and ask the kernel nothing; the foot
-// says it without a click; the send confirm offers no accept-all; the seed-fenced Save still goes through; the cards
+// says it without a click; the send confirm offers no accept box; the seed-fenced Save still goes through; the cards
 // are live again once the edit ends. Also: routesSave holds while records are in the editor (a sidecar pruned under the
 // edit refuses the save, never re-routes it to saveFile), the moved-under-edit row's ✕ dismisses the words and not the
 // re-read Cancel owes, and Reveal and the card links (which act on a read view the editor has replaced) are not
@@ -336,7 +336,7 @@ const settle = (p: Promise<unknown>) => { const box: { ok?: unknown; err?: unkno
 
 // ── decisions from a card while the editor is up ───────────────────────────────────────────────────
 
-test("while the editor is up, a card's Accept or Reject, Accept all and Reject all answer in place with where to decide and ask the kernel nothing; the foot says it without a click; the send confirm offers no accept-all; the seed-fenced Save goes through; the cards are live again when the edit ends", async (t: TestContext) => {
+test("while the editor is up, a card's Accept or Reject, Accept all and Reject all answer in place with where to decide and ask the kernel nothing; the foot says it without a click; the send confirm offers no accept box; the seed-fenced Save goes through; the cards are live again when the edit ends", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside, button, DECIDE } = await openPanel(w, pending());
   assert.equal(button.textContent, "Comments · 1 · 2 changes");
@@ -378,13 +378,13 @@ test("while the editor is up, a card's Accept or Reject, Accept all and Reject a
   assert.equal(countOf(w, "fileComments", "reject-all"), 0);
   assert.equal(w.posted.length, frames, "four decisions, no frames");
   assert.equal(button.textContent, "Comments · 1 · 2 changes", "the status never moved");
-  // the send confirm: no accept-all checkbox, and the send runs no accept-all on the way
+  // the send confirm: no accept checkbox, and the send runs no accept on the way (pendingSplit yields nothing under an editor)
   act(aside, "fcsend")!.click();
   assert.ok(aside.querySelector(".fc-confirm"), "Send itself is fine: it appends to the log, not the sidecar");
   assert.equal(aside.querySelector('input[data-opt="accept"]'), null, "no box to accept the pending changes under the editor");
   assert.equal(aside.querySelector(".fc-list")!.textContent.includes("accepted"), false, "the list claims no decisions");
   act(aside, "fcsendgo")!.click(); await flush();
-  assert.equal(countOf(w, "fileComments", "accept-all"), 0);
+  assert.equal(countOf(w, "fileComments", "accept"), 0, "no accept went with the send");
   const sent = lastOf(w, "fileCommentsSend");
   assert.ok(sent, "the send went straight out");
   assert.equal(sent.accepted, 0);
@@ -421,11 +421,14 @@ test("source: the decision gate runs before anything is asked of the kernel, and
   assert.match(SRC, /const DECIDES = new Set\(\["accept", "reject", "accept-all", "reject-all"\]\);/, "the four verbs that move records out of the sidecar");
   assert.match(SRC, /fcrejectall: \(\) => \{[^\n]*\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.refuseDecision\("changes"\); return; \}/, "Reject all answers at the first click, not after its confirm");
   const send = SRC.split("async doSend(): Promise<void> {")[1].split("\n  }\n")[0];
-  assert.match(send, /let pending = this\.ctx\.editing\(\) \? 0 : \(s\.hunks \|\| \[\]\)\.length;\n\s*const acceptAll = this\.sendOpts\.accept && pending > 0;/,
-    "the send has no changes to accept on the way under an editor: acceptAll derives from that count");
+  assert.match(send, /const acceptIds = this\.sendOpts\.accept \? this\.pendingSplit\(s\)\.seen\.map\(\(h\) => String\(h\.id\)\) : \[\];/,
+    "the send's accept takes the ids pendingSplit puts on the seen side…");
+  const split = SRC.split("private pendingSplit(s: Status): { seen: Hunk[]; unseen: Hunk[] } {")[1].split("\n  }\n")[0];
+  assert.match(split, /if \(this\.ctx\.editing\(\)\) return \{ seen: \[\], unseen: \[\] \};/, "…and under an editor pendingSplit puts nothing on either side: no accept goes with the send");
   const conf = SRC.split("private renderSend(s: Status | null): HTMLElement {")[1].split("\n  }\n")[0];
-  assert.match(conf, /const pending = this\.ctx\.editing\(\) \? 0 : \(s\.hunks \|\| \[\]\)\.length;\n(?:\s*\/\/[^\n]*\n)*\s*const counts = sendCounts\(parts, this\.sendOpts\.accept, pending\);/,
-    "…and the confirm's box and counts derive from the same count");
+  assert.match(conf, /const split = this\.pendingSplit\(s\);\n(?:\s*\/\/[^\n]*\n)*\s*const counts = sendCounts\(parts, this\.sendOpts\.accept, split\.seen\.length\);/,
+    "…and the confirm's box and counts derive from the same split");
+  assert.match(conf, /if \(split\.seen\.length \+ split\.unseen\.length\) opts\.appendChild\(this\.acceptOption\(s\)\);/, "no side, no box");
 });
 
 // ── routesSave holds while records are in the editor ───────────────────────────────────────────────

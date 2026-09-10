@@ -28,6 +28,9 @@ function message(absPath: string, tracked = true, media = false): string {
 function commandLines(body: string): string[] {
   return body.split("\n").filter((l) => l.includes("track-reply.mjs") || l.includes("track-edit.mjs"));
 }
+/** What follows the path on a command line: the comment id on the reply line, the old text on the edit line — plain
+ *  track-edit, with no --thread, since decision 42 (2026-09-09) took the edit-to-comment link out of the loop. */
+const afterFile = (l: string): string => (l.includes("track-reply.mjs") ? " --thread <id>" : " --old ");
 /** A POSIX shell's word split of `s`: single quotes literal to the next single quote, double quotes with the
  *  four backslash escapes, a backslash outside quotes escaping the next character, blanks separating. */
 function shellWords(s: string): string[] {
@@ -79,7 +82,7 @@ test("an ordinary path reads as the plan's template — no quotes anywhere", () 
   const cmd = commandLines(body);
   assert.equal(cmd.length, 2);
   for (const l of cmd) {
-    assert.ok(l.includes("--file " + REPORT + " --thread <id>"), "no quotes on a path that needs none: " + l);
+    assert.ok(l.includes("--file " + REPORT + afterFile(l)), "no quotes on a path that needs none: " + l);
     assert.equal(fileArg(l), REPORT);
   }
   assert.ok(!body.includes("'"));
@@ -92,7 +95,7 @@ test("a space in the name stays one word: the prose keeps the plain path, both c
   const cmd = commandLines(body);
   assert.equal(cmd.length, 2);
   for (const l of cmd) {
-    assert.ok(l.includes("--file '/TESTDIR/vault/Meeting notes.md' --thread <id>"), l);
+    assert.ok(l.includes("--file '/TESTDIR/vault/Meeting notes.md'" + afterFile(l)), l);
     assert.equal(fileArg(l), p, "the CLI sees the whole name, not …/Meeting plus a stray word");
   }
 });
@@ -106,7 +109,7 @@ test("metacharacters are inert: every such name rides inside single quotes and c
     const cmd = commandLines(message(p));
     assert.equal(cmd.length, 2, name);
     for (const l of cmd) {
-      assert.ok(l.includes("--file " + shWord(p) + " --thread <id>"), name);
+      assert.ok(l.includes("--file " + shWord(p) + afterFile(l)), name);
       assert.ok(shWord(p).startsWith("'"), name + " is quoted");
       assert.equal(fileArg(l), p, name);
     }
@@ -142,7 +145,7 @@ test("neutralization comes first, then the quoting", () => {
   assert.ok(!body.includes("<!-- romp-"));
   assert.ok(body.includes("I left 1 comment on /TESTDIR/<!- - romp-x -->/a.md."));
   for (const l of commandLines(body)) {
-    assert.ok(l.includes("--file '/TESTDIR/<!- - romp-x -->/a.md' --thread <id>"), l);
+    assert.ok(l.includes("--file '/TESTDIR/<!- - romp-x -->/a.md'" + afterFile(l)), l);
     assert.equal(fileArg(l), "/TESTDIR/<!- - romp-x -->/a.md");
   }
 });
@@ -176,7 +179,7 @@ test("the marker-parity literal, in the quoted form both suites pin", () => {
     "\n" +
     "To respond:\n" +
     "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread <id> --note \"<your reply>\"\n" +
-    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
+    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --old \"<exact text>\" --new \"<replacement>\"\n" +
     "\n" +
     "When you have addressed these, ask me for another look the same way you asked for this one,\n" +
     "naming the file.\n");
@@ -224,9 +227,9 @@ test("the second bullet is the path's verdict, as the kernel's, whatever the pan
   assert.ok(message("/repo/notes-api/data/latency.dat", true, false).includes(REGEN + "\n"));
   assert.ok(message("/repo/notes-api/data/report.ipynb", true, false).includes(REGEN + "\n"));
   // a text file with the flag set anyway: track-edit, the kernel's verdict
-  assert.ok(message("/repo/notes-api/docs/report.md", true, true).includes(EDIT + "/repo/notes-api/docs/report.md --thread <id>"));
+  assert.ok(message("/repo/notes-api/docs/report.md", true, true).includes(EDIT + "/repo/notes-api/docs/report.md --old "));
   // svg: an image to the viewer, text to the kernel and to the port
-  assert.ok(message("/repo/notes-api/docs/flow.svg", true, false).includes(EDIT + "/repo/notes-api/docs/flow.svg --thread <id>"));
+  assert.ok(message("/repo/notes-api/docs/flow.svg", true, false).includes(EDIT + "/repo/notes-api/docs/flow.svg --old "));
   // image and PDF: regenerate whatever tracked says, and the reply line still carries the path
   for (const p of ["/repo/notes-api/docs/latency.png", "/repo/notes-api/docs/paper.pdf"]) {
     for (const tracked of [true, false]) {

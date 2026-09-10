@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """The guide's Files section says a line under the panel's header counts what the session added since you last looked, and
-that a save brings the new card into view unless you scrolled, clicked, tapped, or pressed a key meanwhile; the panel does both.
+that a save leaves the text where it is, a line at the foot of the panel (under its header in the list under a narrow column)
+saying whether the new card is above or below; the panel does both.
 
 The arrivals follow-on (2026-09-09): the user sent comments, the session answered with eleven changes and seven replies while
 they kept commenting, and nothing in the panel said so until the next Send accepted the changes by default; and a reply they
 saved pulled the text back to its card after they had scrolled on. The panel now keeps the set of entries the person has seen,
-names the rest in a line under the header with a dot on each card until a gesture finds it on screen, and stands the save's
-scroll down once the person has moved on. The guide's Files section gained one sentence for each; each clause is
-cross-checked against the panel, the model and the sheets, so a reworded sentence, a renamed control or a dropped rule
-fails here. Synthetic: only the repo's own text.
+names the rest in a line under the header with a dot on each card until a gesture finds it on screen, and never scrolls on a
+save (decision 43, the same day: at first the scroll stood down once the person had moved on; the user then preferred no
+scroll at all, and a line at the panel's foot, or under its header in the list, says where the card is). The guide's Files section gained a sentence for the
+first and two for the second; each clause is cross-checked against the panel, the model and the sheets, so a reworded
+sentence, a renamed control or a dropped rule fails here. Synthetic: only the repo's own text.
 """
 import os
 import re
@@ -39,8 +41,10 @@ BEFORE_NOTICE = "a file the session rewrote is shown as it is now."
 NOTICE = ("A line under the panel's header counts the changes, comments, and replies the session added since you last looked, "
           "and each of their cards wears a dot until you scroll or click with it in view; click the line to open the first of them.")
 BEFORE_SAVE = "on a phone or a tablet the button is the way, and the line under the box says so."
-SAVE = ("Saving brings the new card into view, unless you scrolled, clicked, tapped, or pressed a key while the save was under way; "
-        "then the text stays where you left it.")
+SAVE = ("Saving leaves the text where it is. When the new card lands out of view, a line at the foot of the panel, "
+        "**Saved · the card is above** (or **below**), says where it went; click the line to bring the card into view, or leave it: "
+        "it goes with your next scroll, click, tap, or key, except Tab or a modifier key pressed on its own, so you can reach it "
+        "from the keyboard.")
 
 
 class TheTwoSentences(unittest.TestCase):
@@ -50,22 +54,22 @@ class TheTwoSentences(unittest.TestCase):
     def test_the_notice_sentence_follows_the_poll_sentence(self):
         self.assertIn(BEFORE_NOTICE + " " + NOTICE, self.section)
 
-    def test_the_save_sentence_follows_the_composer_sentence(self):
+    def test_the_save_sentences_follow_the_composer_sentence(self):
         self.assertIn(BEFORE_SAVE + " " + SAVE, self.section)
 
     def test_no_panel_vocabulary(self):
         # the guide speaks in the reader's terms: no gesture, seen set, entry key or attribute name
-        for word in ("gesture", "seenKeys", "data-new", "fcarrivals", "entryShown", "cardWhole"):
+        for word in ("gesture", "seenKeys", "data-new", "fcarrivals", "entryShown", "cardWhere", "savedOut", "landSaved", "fcsavedgo"):
             self.assertNotIn(word, self.section)
 
-    def test_the_save_pin_agrees_with_the_stand_down_module(self):
-        # tests/test_guide_files_save_standdown.py requires words of the same sentence and forbids others; the exact text pinned
+    def test_the_save_pin_agrees_with_the_save_line_module(self):
+        # tests/test_guide_files_save_line.py requires words of the same sentences and forbids others; the exact text pinned
         # here must satisfy both, or the two modules contradict and no guide wording is green (the arrivals review round 1
         # rewrote the sentence and this pin alone, 2026-09-09)
-        sibling = _read("tests", "test_guide_files_save_standdown.py")
+        sibling = _read("tests", "test_guide_files_save_line.py")
         required = re.findall(r'self\.assertIn\("([^"]+)", self\.sentence\)', sibling)
         forbidden = re.findall(r'self\.assertNotIn\("([^"]+)", self\.sentence\)', sibling)
-        self.assertTrue(required and forbidden, "the stand-down module's literal pins on the save sentence")
+        self.assertTrue(required and forbidden, "the save-line module's literal pins on the save sentences")
         for phrase in required:
             self.assertIn(phrase, SAVE)
         for phrase in forbidden:
@@ -91,7 +95,7 @@ class TheSentencesMatchThePanel(unittest.TestCase):
 
     def test_each_card_wears_a_dot_until_a_gesture_finds_it_in_view(self):
         self.assertIn('card.dataset.new = "1"', self.panel)
-        self.assertIn("for (const [k, e] of this.arrivals) if (this.entryShown(e)) seen.push(k);", self.panel)
+        self.assertIn("for (const [k, e] of Array.from(this.arrivals)) {\n        if (!this.entryShown(e)) continue;", self.panel)
         for css in (self.styles, self.feed):
             self.assertIn(".fc-card[data-new] > .fc-card-head::before", css)
             self.assertIn(".fc-arrivals::before", css)
@@ -105,9 +109,13 @@ class TheSentencesMatchThePanel(unittest.TestCase):
         self.assertIn("fcarrivals: () => this.goToArrival(),", self.panel)
         self.assertIn("this.showCard(first);", self.panel)
 
-    def test_saving_brings_the_card_into_view_unless_you_moved_on(self):
-        self.assertIn("if (still && !this.cardWhole(key)) { this.scrollCard(key); return; }", self.panel)
-        self.assertIn("if (r) this.scrollToSaved(c, had, r, note, pressed === this.gestures);", self.panel)
+    def test_saving_leaves_the_text_and_the_line_says_where_the_card_is(self):
+        land = self.panel[self.panel.index("private landSaved("):self.panel.index("private cardWhere(")]
+        for call in ("scrollCard", "scrollBoth", "scrollIntoView", "centerOn", "showLoose", "scrollTop"):
+            self.assertNotIn(call, land, "a save never scrolls (decision 43): %s" % call)
+        self.assertIn("const lined = r !== null && this.landSaved(c, had, r, note);", self.panel)
+        self.assertIn('return "Saved · the card is " + side;', self.model)
+        self.assertIn("fcsavedgo: () => { const out = this.savedOut; this.savedOut = null; if (out) this.scrollCard(out.key); this.reflect(); },", self.panel)
 
 
 if __name__ == "__main__":

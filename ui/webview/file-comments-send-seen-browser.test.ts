@@ -1,13 +1,11 @@
-// The arrivals follow-on (plans/file-review.md, "The arrivals follow-on (2026-09-09)" under Slice 2) in a REAL engine: the
-// worktree's file-comments.ts, bundled the way the webview is built, mounted over a rendered markdown body laid out under
-// feed.css's own rules, in Chromium and Firefox. Two scenes. THE NOTICE: a status landing with a reply and a change of the
-// session's shows one line under the header in the accent with a dot before it, and a dot on the arrival cards' heads and
-// on their marks in the text; a real wheel over the body marks the arrival whose card is in the track's box seen — its dot
-// off, the line's count down — and leaves the one below the box. THE SAVE: a whole-file comment saved while the text is
-// scrolled down moves nothing (decision 43; before it, the text was brought to the card, and then not after a wheel), and
-// the line at the panel's foot says the card is above, a button in the acknowledgment's green; a real wheel ends the line, and
-// its click brings the text to the card. Skips LOUDLY without a playwright browser (CI installs none), as the other browser
-// legs do. Synthetic values only: invented prose, placeholder ids, the session name "api".
+// The seen-only accept (plans/file-review.md, decision 41 and "The seen follow-on (2026-09-09)" under Slice 2) in a REAL
+// engine: the worktree's file-comments.ts, bundled the way the webview is built, mounted over a rendered markdown body laid
+// out under feed.css's own rules, in Chromium and Firefox. One scene: two pending changes the panel's first status held
+// (seen) and a third the session adds while the person reads, its card below the track's box (unseen). The Send confirm's
+// accept option names the two it accepts and the one it leaves, checked; the send's accept goes by id for the two, never an
+// accept-all; the message counts what the reply accepted; the third change's card is still in the list after the send.
+// Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values only:
+// invented prose, placeholder ids, the session name "api".
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -61,7 +59,6 @@ const WORD = "Paragraph 25 of the report";
 const WORD_AT = SRC.indexOf(WORD);
 // the session's answer: a reply on the comment (its card near the top of the track) and a change far down the text (its card
 // below the track's box while the text is at its top)
-const REPLIED = { ...COMMENT, replies: [{ author: "api", authorId: SID, ts: T0 + 20000, body: "The query cache; the sentence says so now." }] };
 const HUNK2 = { id: "h2", author: "api", ts: T0 + 21000, kind: "ins", curFrom: WORD_AT, curTo: WORD_AT + WORD.length, baseFrom: WORD_AT, baseTo: WORD_AT, oldText: "", newText: WORD, anchor: null };
 const base = {
   verb: "status", root: "/repo/notes-api", storePath: "/repo/notes-api/.trackchanges/docs%2Freport.md.json",
@@ -71,13 +68,11 @@ const base = {
   hunks: [], log: [],
   unsent: { comments: [COMMENT.id], replies: [], accepted: 0, rejected: 0, watermark: null },
 };
-const ARRIVED = { ...base, store: { v: 3, path: "docs/report.md", suggestions: [{ id: "h2", authorId: SID }], comments: [REPLIED] }, hunks: [HUNK2], storeMtimeNs: "1757145600000000004" };
-const NOTE = "Add a summary at the top.";
-const withSaved = (id: string, storeMtimeNs: string): Record<string, unknown> => ({ ...base, verb: "comment", storeMtimeNs, store: { v: 3, path: "docs/report.md", suggestions: [], comments: [COMMENT, { id, author: "you", ts: T0 + 50000, body: NOTE, replies: [], resolved: false }] } });
 
-/** Mount the panel over the rendered document, answer its status asks, open it, and let the paint and the pass run. The
- *  viewer's onSaved hooks are kept (w.__saved) so a test can make the panel re-ask status the way the viewer's save does. */
-function mount(page: any): Promise<void> {
+/** Mount the panel over the rendered document, answer its status asks with `status` (the scene's first status), open it, and
+ *  let the paint and the pass run. The viewer's onSaved hooks are kept (w.__saved) so a test can make the panel re-ask status
+ *  the way the viewer's save does. */
+function mount(page: any, status: Record<string, unknown> = base): Promise<void> {
   return page.evaluate(async ([src, status, abs, sid]: [string, Record<string, unknown>, string, string]) => {
     const w = window as any;
     const body = document.getElementById("body")!, md = document.getElementById("md")!;
@@ -104,7 +99,7 @@ function mount(page: any): Promise<void> {
     for (const cb of rendered) cb();                              // the viewer's onRendered: the paint pass over the body
     await settle();
     await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));   // the observers' frame
-  }, [SRC, base, ABS, SID]);
+  }, [SRC, status, ABS, SID]);
 }
 /** Answer the panel's LAST posted request with `status` (a fileCommentsResult), and let the render and the pass run. */
 const answer = (page: any, status: Record<string, unknown>): Promise<void> => page.evaluate(async (status: Record<string, unknown>) => {
@@ -122,11 +117,10 @@ const land = async (page: any, status: Record<string, unknown>): Promise<void> =
 };
 type Scene = {
   line: { text: string; color: string; dot: string; inHead: boolean } | null;
-  cards: Record<string, { top: number; bottom: number; isNew: boolean; dot: string } | null>;
+  cards: Record<string, { top: number; isNew: boolean; dot: string } | null>;
   marks: Record<string, { isNew: boolean; image: string } | null>;
   bodyScroll: number; trackScroll: number; trackBox: { top: number; bottom: number }; posted: number; lastVerb: string | null;
   composerHidden: boolean;
-  saved: { text: string; tag: string; inSend: boolean; color: string; display: string } | null;   // the line at the foot for a saved card out of view (decision 43)
 };
 const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.evaluate((keys: Record<string, string>) => {
   const w = window as any;
@@ -138,7 +132,7 @@ const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.
   for (const [name, key] of Object.entries(keys)) {
     const card = aside.querySelector('.fc-card[data-id="' + key + '"]') as HTMLElement | null;
     const head = card ? (card.querySelector(".fc-card-head") as HTMLElement) : null;
-    cards[name] = card ? { top: card.getBoundingClientRect().top, bottom: card.getBoundingClientRect().bottom, isNew: card.dataset.new === "1", dot: head ? getComputedStyle(head, "::before").width : "" } : null;
+    cards[name] = card ? { top: card.getBoundingClientRect().top, isNew: card.dataset.new === "1", dot: head ? getComputedStyle(head, "::before").width : "" } : null;
     const act = key.startsWith("chg:") ? "fcchange" : "fcopen", id = key.startsWith("chg:") ? key.slice(4) : key;
     const m = body.querySelector('[data-act="' + act + '"][data-id="' + id + '"]') as HTMLElement | null;
     marks[name] = m ? { isNew: m.dataset.new === "1", image: getComputedStyle(m).backgroundImage } : null;
@@ -146,26 +140,14 @@ const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.
   const tb = track.getBoundingClientRect();
   const composer = aside.querySelector(".fc-composer") as HTMLElement | null;
   const last = w.__posted[w.__posted.length - 1];
-  const savedEl = aside.querySelector('[data-act="fcsavedgo"]') as HTMLElement | null;
   return {
     line: line ? { text: line.textContent || "", color: getComputedStyle(line).color, dot: getComputedStyle(line, "::before").width, inHead: !!line.closest(".fc-head") } : null,
     cards, marks, bodyScroll: body.scrollTop, trackScroll: track.scrollTop, trackBox: { top: tb.top, bottom: tb.bottom },
     posted: w.__posted.length, lastVerb: last ? last.verb || null : null, composerHidden: composer ? composer.hidden : true,
-    saved: savedEl ? { text: savedEl.textContent || "", tag: savedEl.tagName, inSend: !!savedEl.closest(".fc-sec-send"), color: getComputedStyle(savedEl).color, display: getComputedStyle(savedEl).display } : null,
   };
 }, keys);
 const frames = (page: any, n = 2): Promise<void> => page.evaluate((n: number) => new Promise<void>((r) => { const step = (k: number) => (k ? requestAnimationFrame(() => step(k - 1)) : r()); step(n); }), n);
 const click = (page: any, sel: string): Promise<void> => page.evaluate((sel: string) => { (document.querySelector(sel) as HTMLElement).click(); }, sel);
-/** A real wheel over the body's middle: the person's scroll. */
-async function wheel(page: any, dy: number): Promise<void> {
-  const box = await page.evaluate(() => { const r = document.getElementById("body")!.getBoundingClientRect(); return { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 }; });
-  await page.mouse.move(box.x, box.y);
-  await page.mouse.wheel(0, dy);
-  await frames(page, 3);
-}
-const KEYS = { c: COMMENT.id, chg: "chg:h2" };
-const ACCENT = "rgb(156, 210, 255)";
-const GREEN = "rgb(119, 204, 119)";                              // the page's --green (#7c7), the acknowledgment's colour
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
@@ -193,112 +175,82 @@ async function inBrowser(t: any, name: string, body: (page: any) => Promise<void
   } finally { await browser.close(); }
 }
 
-for (const name of ["chromium", "firefox"]) {
-  test(`in ${name}: a status landing with the session's reply and change shows the line under the header, in the accent with its dot, and dots on the arrival cards and marks; a real wheel marks the arrival in the track's box seen and leaves the one below it`, async (t) => {
-    await inBrowser(t, name, async (page) => {
-      await mount(page);
-      let s = await scene(page, KEYS);
-      assert.equal(s.line, null, "the first status: no line");
-      assert.equal(s.cards.c!.isNew, false, "no dot on the person's own comment");
-      await land(page, ARRIVED);
-      s = await scene(page, KEYS);
-      assert.ok(s.line, "the line is under the header");
-      assert.equal(s.line!.text, "api made 1 change and 1 reply since you last looked");
-      assert.equal(s.line!.inHead, true);
-      assert.equal(s.line!.color, ACCENT, "in the accent");
-      assert.equal(s.line!.dot, "7px", "with a dot before it");
-      assert.ok(s.cards.c && s.cards.chg, "both arrival cards are rendered");
-      assert.equal(s.cards.c!.isNew, true, "the replied-to comment's card wears the dot");
-      assert.equal(s.cards.c!.dot, "6px", "the head's dot has a box");
-      assert.equal(s.cards.chg!.isNew, true, "and the change's");
-      assert.equal(s.marks.c!.isNew, true, "the highlight too");
-      assert.match(s.marks.c!.image, /radial-gradient/, "as a background layer");
-      assert.match(s.marks.chg!.image, /radial-gradient/, "and the change's mark");
-      // the fixture: the comment's card is in the track's box, the change's card far below it
-      assert.ok(s.cards.c!.top >= s.trackBox.top && s.cards.c!.top < s.trackBox.bottom, "the comment's card is in the box: " + s.cards.c!.top + " in " + JSON.stringify(s.trackBox));
-      assert.ok(s.cards.chg!.top >= s.trackBox.bottom, "the change's card is below it: " + s.cards.chg!.top);
-      await wheel(page, 40);
-      s = await scene(page, KEYS);
-      assert.ok(s.bodyScroll > 0, "the wheel scrolled the text: " + s.bodyScroll);
-      assert.ok(s.line, "the line stays while an arrival stands");
-      assert.equal(s.line!.text, "api made 1 change since you last looked", "the reply on the card in the box is seen");
-      assert.equal(s.cards.c!.isNew, false, "its dot came off");
-      assert.equal(s.cards.c!.dot, "auto", "and the head's pseudo-element with it");
-      assert.equal(s.marks.c!.isNew, false);
-      assert.doesNotMatch(s.marks.c!.image, /radial-gradient/, "the highlight's layer is gone");
-      assert.equal(s.cards.chg!.isNew, true, "the change below the box keeps its dot");
-      assert.match(s.marks.chg!.image, /radial-gradient/);
-    });
-  });
 
-  test(`in ${name}: a whole-file comment saved while the text is scrolled down moves nothing, and the line at the panel's foot says the card is above — a button in the Send section, in the acknowledgment's green; a real wheel ends the line; saved again, the line's click brings the text to the card and the line is over`, async (t) => {
+// ── the scene ────────────────────────────────────────────────────────────────────────────────────
+const W3 = "Paragraph 3 of the report", W3_AT = SRC.indexOf(W3);
+const W4 = "Paragraph 4 of the report", W4_AT = SRC.indexOf(W4);
+const H1 = { id: "h1", author: "api", ts: T0 + 100, kind: "ins", curFrom: W3_AT, curTo: W3_AT + W3.length, baseFrom: W3_AT, baseTo: W3_AT, oldText: "", newText: W3, anchor: null };
+const H3 = { id: "h3", author: "api", ts: T0 + 200, kind: "ins", curFrom: W4_AT, curTo: W4_AT + W4.length, baseFrom: W4_AT, baseTo: W4_AT, oldText: "", newText: W4, anchor: null };
+const sug = (...ids: string[]) => ids.map((id) => ({ id, authorId: SID }));
+/** The first status: two pending changes, seen with it. */
+const TWO_SEEN = { ...base, store: { v: 3, path: "docs/report.md", suggestions: sug("h1", "h3"), comments: [COMMENT] }, hunks: [H1, H3] };
+/** The session's third change landing: an arrival far down the text. */
+const THIRD = { ...TWO_SEEN, store: { v: 3, path: "docs/report.md", suggestions: sug("h1", "h3", "h2"), comments: [COMMENT] }, hunks: [H1, H3, HUNK2], storeMtimeNs: "1757145600000000004" };
+/** After the accept of the two: the third still pending, the decisions unsent. */
+const AFTER = { ...base, store: { v: 3, path: "docs/report.md", suggestions: sug("h2"), comments: [COMMENT] }, hunks: [HUNK2], storeMtimeNs: "1757145600000000005", unsent: { comments: [COMMENT.id], replies: [], accepted: 2, rejected: 0, watermark: null } };
+type Option = { words: string; checked: boolean; disabled: boolean; rows: string[] } | null;
+const option = (page: any): Promise<Option> => page.evaluate(() => {
+  const cb = document.querySelector('.fileview-aside input[data-opt="accept"]') as HTMLInputElement | null;
+  if (!cb) return null;
+  return { words: cb.parentElement!.textContent || "", checked: cb.checked, disabled: cb.disabled, rows: Array.from(document.querySelectorAll(".fileview-aside .fc-confirm li")).map((li) => li.textContent || "") };
+});
+const lastPosted = (page: any): Promise<any> => page.evaluate(() => { const p = (window as any).__posted; return p[p.length - 1]; });
+const postedVerbs = (page: any): Promise<string[]> => page.evaluate(() => (window as any).__posted.filter((m: any) => m.type === "fileComments").map((m: any) => m.verb));
+const sentOk = (page: any): Promise<void> => page.evaluate(async () => {
+  const p = (window as any).__posted, last = p[p.length - 1];
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSent", reqId: last.reqId, queued: false } }));
+  await new Promise<void>((r) => setTimeout(r, 0)); await new Promise<void>((r) => setTimeout(r, 0));
+});
+const cardsShown = (page: any): Promise<string[]> => page.evaluate(() => Array.from(document.querySelectorAll(".fileview-aside .fc-card")).map((c) => (c as HTMLElement).dataset.id || ""));
+
+for (const name of ["chromium", "firefox"]) {
+  test(`in ${name}: two seen and one unseen — the confirm's option names the two it accepts and the one it leaves, checked; the send accepts the two by id and never all; the message counts the reply's two; the third change's card is still in the list after`, async (t) => {
     await inBrowser(t, name, async (page) => {
-      await mount(page);
-      // scrolled down: the loose card at the top of the track is out of view, the 2026-09-07 case
-      await wheel(page, 1200);
-      let s = await scene(page, KEYS);
-      const down = s.bodyScroll;
-      assert.ok(down > 400, "the fixture: the text is scrolled well down: " + down);
-      await click(page, '[data-act="fcfile"]');
+      await mount(page, TWO_SEEN);
+      let s = await scene(page, { c: COMMENT.id, h1: "chg:h1", h3: "chg:h3", h2: "chg:h2" });
+      assert.equal(s.line, null, "the first status: no arrival");
+      assert.ok(s.cards.h1 && s.cards.h3, "both changes' cards are rendered");
+      await land(page, THIRD);
+      s = await scene(page, { c: COMMENT.id, h1: "chg:h1", h3: "chg:h3", h2: "chg:h2" });
+      assert.ok(s.line && s.line.text === "api made 1 change since you last looked", "the third change is an arrival: " + JSON.stringify(s.line));
+      assert.ok(s.cards.h2, "its card is rendered");
+      assert.ok(s.cards.h2!.top >= s.trackBox.bottom, "below the track's box (unseen): " + s.cards.h2!.top + " vs " + JSON.stringify(s.trackBox));
+      assert.equal(s.cards.h2!.isNew, true);
+      assert.equal(s.cards.h1!.isNew, false);
+      await click(page, '.fileview-aside [data-act="fcsend"]');
       await frames(page);
-      await page.focus(".fileview-aside .fc-composer .fc-input");
-      await page.keyboard.type(NOTE);
-      await click(page, '[data-act="fcsave"]');
+      const opt = await option(page);
+      assert.ok(opt, "the confirm's accept option is up");
+      assert.equal(opt!.words, "accept the 2 pending changes you have seen (1 unseen stays pending)");
+      assert.equal(opt!.checked, true, "checked by default");
+      assert.equal(opt!.disabled, false);
+      assert.ok(opt!.rows.includes("2 accepted, 0 rejected"), "the list counts the two: " + JSON.stringify(opt!.rows));
+      await click(page, '.fileview-aside [data-act="fcsendgo"]');
       await frames(page);
-      s = await scene(page, KEYS);
-      assert.equal(s.lastVerb, "comment", "the save's request went");
-      assert.equal(s.saved, null, "no line before the save's status lands");
-      const id1 = (T0 + 50000) + "-1";
-      await answer(page, withSaved(id1, "1757145600000000005"));
-      s = await scene(page, { saved: id1 });
-      assert.ok(s.cards.saved, "the saved card is in the list");
-      assert.equal(s.bodyScroll, down, "nothing moved: the text stays where it was (before decision 43: brought to the card)");
-      assert.equal(s.trackScroll, down, "the track neither");
-      assert.ok(s.cards.saved!.bottom <= s.trackBox.top, "the fixture: the loose card is above the track's box: " + JSON.stringify(s.cards.saved) + " over " + JSON.stringify(s.trackBox));
-      assert.equal(s.composerHidden, true, "the composer closed");
-      assert.ok(s.saved, "the line is in the panel");
-      assert.equal(s.saved!.text, "Saved · the card is above");
-      assert.equal(s.saved!.tag, "BUTTON", "a button");
-      assert.equal(s.saved!.inSend, true, "in the Send section, at the acknowledgment's place");
-      assert.equal(s.saved!.color, GREEN, "in the acknowledgment's green");
-      assert.equal(s.saved!.display, "block", "a line of its own");
-      // the person's next gesture: a real wheel ends the line, in place
-      await wheel(page, -60);
-      s = await scene(page, { saved: id1 });
-      assert.equal(s.saved, null, "the wheel ended the line");
-      assert.ok(s.bodyScroll < down && s.bodyScroll > 300, "the wheel moved the text a little, and nothing else did: " + down + " → " + s.bodyScroll);
-      const moved = s.bodyScroll;
-      // again: the line's click brings the text to the card
-      await click(page, '[data-act="fcfile"]');
+      let m = await lastPosted(page);
+      assert.equal(m.type, "fileComments");
+      assert.equal(m.verb, "accept", "by id (before: accept-all)");
+      assert.deepEqual(m.args, { ids: ["h1", "h3"] });
+      assert.ok(!(await postedVerbs(page)).includes("accept-all"), "no accept-all");
+      await answer(page, { ...AFTER, verb: "accept", accepted: ["h1", "h3"] });
+      m = await lastPosted(page);
+      assert.equal(m.type, "fileCommentsSend", "then the send");
+      assert.equal(m.accepted, 2, "the reply's count");
+      assert.equal(m.rejected, 0);
+      await sentOk(page);
       await frames(page);
-      await page.focus(".fileview-aside .fc-composer .fc-input");
-      await page.keyboard.type(NOTE + " Twice.");
-      await click(page, '[data-act="fcsave"]');
-      await frames(page);
-      const id2 = (T0 + 60000) + "-2";
-      const twice = withSaved(id2, "1757145600000000006") as any;
-      twice.store.comments[twice.store.comments.length - 1].body = NOTE + " Twice.";
-      await answer(page, twice);
-      s = await scene(page, { saved: id2 });
-      assert.ok(s.cards.saved, "the second saved card is in the list");
-      assert.equal(s.bodyScroll, moved, "the save scrolled nothing: the text stays where the wheel left it");
-      assert.equal(s.saved!.text, "Saved · the card is above");
-      await click(page, '[data-act="fcsavedgo"]');
-      await frames(page, 3);
-      s = await scene(page, { saved: id2 });
-      assert.equal(s.saved, null, "the click ended the line");
-      assert.ok(s.cards.saved!.top >= s.trackBox.top && s.cards.saved!.bottom <= s.trackBox.bottom, "and brought the card into the track's box: " + JSON.stringify(s.cards.saved) + " in " + JSON.stringify(s.trackBox));
-      assert.ok(s.bodyScroll < 400, "the text near its top, where the loose card is: " + s.bodyScroll);
-      assert.ok(Math.abs(s.trackScroll - s.bodyScroll) <= 1, "the lock: the body came along with the track");
-      assert.equal(s.composerHidden, true, "the composer closed as before");
+      await answer(page, AFTER);
+      const cards = await cardsShown(page);
+      assert.ok(cards.includes("chg:h2"), "the unseen change is still pending, its card in the list: " + JSON.stringify(cards));
+      assert.ok(!cards.includes("chg:h1") && !cards.includes("chg:h3"), "the two seen ones are gone");
     });
   });
 }
 
 test("vocabulary: this module's own prose says a change's old and new text, file comment and run of turns; the words CONTEXT.md sets aside appear nowhere in it, nor the banned sessions-pane word, nor a home path", () => {
-  const SELF = fs.readFileSync(path.join(UI, "file-comments-arrivals-browser.test.ts"), "utf8").split("\n").filter((l) => !l.includes("assert.doesNotMatch(SELF")).join("\n");
-  assert.doesNotMatch(SELF, /\bdiffs?\b/i, "the folded part of a change card is the change's old and new text (CONTEXT.md, Change: Avoid)");
-  assert.doesNotMatch(SELF, /\bthreads?\b/i, "a comment with replies is a file comment with a run of turns (CONTEXT.md, File comment: Avoid)");
-  assert.doesNotMatch(SELF, /fleet/i, "no new identifiers or prose in the old word for the sessions pane");
-  assert.doesNotMatch(SELF, /\/home\/[a-z]/, "no absolute home paths");
+  const own = fs.readFileSync(path.join(UI, "file-comments-send-seen-browser.test.ts"), "utf8");
+  const prose = own.split("\n").filter((l) => l.trim().startsWith("//") || /^\s*test\(/.test(l)).join("\n");
+  assert.doesNotMatch(prose, /\bfleet\b/i);
+  assert.doesNotMatch(prose, /\b(suggestion|diff|annotation)\b/i);
+  assert.doesNotMatch(own, /\/home\/[a-z]/, "no home path");
 });
