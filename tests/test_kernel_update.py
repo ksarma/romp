@@ -69,23 +69,49 @@ def _serve_get(path, headers=None):
     return captured.get("status"), h.wfile.getvalue()
 
 
-def _dials_only(port, dials=None):
-    """An http.client.HTTPConnection that refuses every port but `port` at construction (an OSError, which a
-    reader sees as a failed read) and records each (host, port) asked for in `dials`. The safety rail of
-    the manager-port tests, which run with ROMP_MANAGER_PORT absent or empty on purpose: whatever the code
-    under test does with the absence, nothing here reaches a manager the test did not start. On 2026-09-10
-    a review probe with the variable absent reached a development box's live manager through the drift
-    door, which mapped the absence to the manager's default port, and every session on the box restarted."""
+def _dials_only(port, dials=None, allow=()):
+    """An http.client.HTTPConnection that refuses every port but `port` (and the ports in `allow`) at
+    construction (an OSError, which a reader sees as a failed read) and records each (host, port) asked for in
+    `dials`. The safety rail of the manager-port tests, which run with ROMP_MANAGER_PORT absent or empty on
+    purpose: whatever the code under test does with the absence, nothing here reaches a manager the test did
+    not start. On 2026-09-10 a review probe with the variable absent reached a development box's live manager
+    through the drift door, which mapped the absence to the manager's default port, and every session on the
+    box restarted. The patch lands on the http.client module itself, so the test's own urllib request to the
+    Routes server goes through it too, as HTTPConnection("127.0.0.1:PORT") with port None: the port is read off
+    the host then, and a test that drives the route passes its server's port in `allow`."""
     Real = km.http.client.HTTPConnection
 
     class Only(Real):
         def __init__(self, host, p=None, *a, **kw):
+            eff = p
+            if eff is None and ":" in str(host):
+                eff = int(str(host).rpartition(":")[2])
             if dials is not None:
-                dials.append((host, p))
-            if p != port:
-                raise OSError("the test refuses a connection to port %r: only its fake manager on %d may be dialled" % (p, port))
+                dials.append((host, eff))
+            if eff != port and eff not in allow:
+                raise OSError("the test refuses a connection to port %r: only its fake manager on %r may be dialled" % (eff, port))
             super().__init__(host, p, *a, **kw)
     return Only
+
+
+class _PeerWritesOnCompare(str):
+    """A reason string whose ONE comparison against the fault latch runs the staged concurrent writer (the
+    deterministic staging of tests/test_free_threaded_caches.py): the peer thread's call lands inside the
+    compare-and-set window that the GIL never opens by itself. Armed once; the writer runs on the first
+    compare only."""
+
+    def __new__(cls, s, writer):
+        o = str.__new__(cls, s)
+        o._writer, o.armed = writer, False
+        return o
+
+    def __eq__(self, other):
+        if self.armed:
+            self.armed = False
+            self._writer()
+        return str.__eq__(self, other)
+
+    __hash__ = str.__hash__
 
 
 class Fresh(unittest.TestCase):
@@ -97,6 +123,11 @@ class Fresh(unittest.TestCase):
         jd.STATE = Path(self.td.name)
         km._UPDATE_AVAIL[0] = ""
         km._UPDATE_STATE[0] = ""
+        # the drift door's in-flight flag and latched outcome (review round 5 of the confirm step): a test that
+        # mocks _run_main_update and clicks the drift door takes the flag in the route and never runs the
+        # converge's finally that clears it, so every later read would say running and skip the counts
+        km._MAIN_CONVERGE_INFLIGHT[0] = False
+        km._MAIN_CONVERGE_OUTCOME[0] = None
         with km._SYNC_LOCK:
             del km._SYNC_NOTICES[:]
 
@@ -917,7 +948,11 @@ class Routes(Fresh):
 
         def check():
             _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
-            return json.loads(body)["otherKernels"]
+            d = json.loads(body)
+            self.assertEqual("manager" in d, km._manager_port(os.environ.get("ROMP_MANAGER_PORT")) is None,
+                             "`manager: false` rides the answer exactly when no manager started this kernel (a port set: absent, "
+                             "whatever the registry answered; absent or empty: present)")
+            return d["otherKernels"]
         try:
             os.environ["ROMP_MANAGER_PORT"] = str(mgr.server_address[1])
             answer["body"] = registry(km.PORT, 31111)
@@ -972,9 +1007,13 @@ class Routes(Fresh):
 
     def test_with_no_manager_port_neither_door_dials_a_manager_and_with_one_both_dial_it(self):
         # No manager started this kernel when ROMP_MANAGER_PORT is absent or empty, so the banner's registry
-        # read asks nothing (0 other kernels: the label is the plain form) and the drift door's restart
-        # dials nothing: the new code is on disk and the sync surface says so, naming `romp up`, the tag
-        # door's wording for the same case (`romp refresh` exits 1 without a manager). Review round 4 had
+        # read asks nothing (0 other kernels) and the drift door's restart dials nothing: the new code is on
+        # disk and the sync surface says so, naming `romp up`, the tag door's wording for the same case
+        # (`romp refresh` exits 1 without a manager). /update-check carries `manager: false` then, so the
+        # banner words the click as the update on disk it is (its fifth label form, "Update romp on disk
+        # now; restart it yourself to run it", over a confirm that reads Update), never the plain restart
+        # form: 0 other kernels alone is also a manager running this kernel by itself (review round 5).
+        # With a port set the field is absent, as an older kernel's answer is. Review round 4 had
         # both doors map the absence to the manager's DEFAULT port so the label and the restart would agree,
         # and the drift door had done so since before the confirm step; the guess is another operator's
         # live manager on a development box, and on 2026-09-10 a review probe with the variable absent
@@ -1024,7 +1063,9 @@ class Routes(Fresh):
                     self.assertEqual(km._manager_kernels(), [], "no manager: an empty registry (%r)" % (value,))
                     self.assertEqual(km._other_kernels(), 0)
                     _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
-                    self.assertEqual(json.loads(body)["otherKernels"], 0, "the label's plain form: nothing about other kernels")
+                    d = json.loads(body)
+                    self.assertEqual((d["otherKernels"], d["manager"]), (0, False),
+                                     "no other kernels, and no manager: the banner's on-disk form, not the plain restart form (%r)" % (value,))
                     km._run_main_update("restart", True, manager_port=value)     # the /update handler's ack-time value
                     km._run_main_update("restart", True)                         # the daemon's default: the env, read here
                     km._restart_this_kernel("test", manager_port=value)          # the rule the other doors now share
@@ -1043,10 +1084,12 @@ class Routes(Fresh):
                 os.environ["ROMP_MANAGER_PORT"] = str(port)
                 self.assertEqual(len(km._manager_kernels()), 2, "the registry as the fake lists it")
                 self.assertEqual(km._other_kernels(), 1)
+                _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+                self.assertNotIn("manager", json.loads(body), "with a port set the field is absent: the label names the restart")
                 km._run_main_update("restart", True, manager_port=str(port))
                 km._run_main_update("restart", True)
             self.assertEqual([h for h in hits if h[0] == "POST"], [("POST", "/restart-all")] * 2, "both restart requests reached the fake")
-            self.assertEqual(len([h for h in hits if h[0] == "GET"]), 2, "both registry reads reached the fake")
+            self.assertEqual(len([h for h in hits if h[0] == "GET"]), 3, "the two direct registry reads and the route's reached the fake")
             self.assertEqual(set(dials), {("127.0.0.1", port)}, "every dial went to the port the environment named")
             self.assertEqual(len(notices), 4, "the answered restart requests posted no failure notice")
             self.assertEqual(audits[-2:], ["main-converge"] * 2, "a request that went out was audited")
@@ -1111,6 +1154,268 @@ class Routes(Fresh):
             for c in accepted:
                 c.close()
             srv.close()
+
+    def _drift_click_and_wait(self, sha="abcdef01", kind="restart", timeout=10.0):
+        """Click the drift door as the armed banner does, then wait for the converge thread to end (the
+        in-flight flag clears in its finally). Returns the POST's (status, body)."""
+        km._UPDATE_AVAIL[0] = ""
+        km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = (sha, "") if kind == "pull" else ("", sha)
+        res = self._post("/update")
+        t0 = time.monotonic()
+        while km._MAIN_CONVERGE_INFLIGHT[0] and time.monotonic() - t0 < timeout:
+            time.sleep(0.01)
+        self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the converge thread did not end within %ss" % timeout)
+        return res
+
+    def test_the_drift_converge_is_running_to_every_poll_and_a_second_click_starts_no_second_one(self):
+        # review round 5 of the confirm step (2026-09-10): the drift converge never set _UPDATE_STATE, so while
+        # it ran every window's 3 s poll dialled the manager's registry (up to 1 s each on a silent manager, a
+        # stderr line per episode) and a page loaded mid-converge read state "" with the drift still offered,
+        # so a second confirmed click started a second converge thread and wrote a second audit row. Now a
+        # dedicated in-flight flag (_MAIN_CONVERGE_INFLIGHT) is taken in the route before the thread starts and
+        # cleared in the converge's finally: /update-check answers state "running" and every count null with no
+        # dial while it is set, the second click hears converging and starts nothing, and the latched outcome of
+        # the previous converge is cleared at the click. The converge is the real one, blocked on an Event inside
+        # its bundle rebuild (the step before the manager dial), so the flag's set and clear are the code's own;
+        # the fake manager on an ephemeral port answers the registry read and the restart request, and the
+        # connection class refuses every other port but the Routes server's own
+        import contextlib
+        import http.server
+        from http.server import ThreadingHTTPServer
+        hits, dials, gate, builds = [], [], threading.Event(), []
+
+        class FakeManager(http.server.BaseHTTPRequestHandler):
+            def _answer(self, body):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                hits.append(("GET", self.path))
+                self._answer(json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}, {"id": "k2", "port": 31111}]}).encode())
+
+            def do_POST(self):
+                hits.append(("POST", self.path))
+                self._answer(b"{}")
+
+            def log_message(self, *a):
+                pass
+        mgr = ThreadingHTTPServer(("127.0.0.1", 0), FakeManager)
+        threading.Thread(target=mgr.serve_forever, daemon=True).start()
+        port = mgr.server_address[1]
+
+        def blocked_build():
+            builds.append(time.monotonic())
+            gate.wait(10)
+            return True, ""
+
+        def check():
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            return json.loads(body), err.getvalue()
+        saved_port, saved_tried = os.environ.get("ROMP_MANAGER_PORT"), km._INPLACE_TRIED[0]
+        km._MANAGER_READ_FAULT[0] = ""
+        try:
+            os.environ["ROMP_MANAGER_PORT"] = str(port)
+            km._INPLACE_TRIED[0] = ""
+            km._MAIN_CONVERGE_OUTCOME[0] = {"failed": "a stale outcome", "updated": "", "why": "", "hint": ""}
+            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(port, dials, allow={self.port})), \
+                 mock.patch.object(km, "_rebuild_dist", side_effect=blocked_build), \
+                 mock.patch.object(km, "_checkout_sha", return_value="abcdef01"), \
+                 mock.patch.object(km, "_send_to_app"):
+                km._UPDATE_AVAIL[0] = ""
+                km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "", "abcdef01"
+                code, body = self._post("/update")
+                self.assertEqual((code, json.loads(body)), (200, {"ok": True, "state": "converging"}))
+                for _ in range(500):
+                    if builds:
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(len(builds), 1, "the converge thread is running, blocked in its rebuild step")
+                self.assertTrue(km._MAIN_CONVERGE_INFLIGHT[0])
+                t0 = time.monotonic()
+                d, said = check()
+                self.assertLess(time.monotonic() - t0, 1.0, "the poll waited on no registry read")
+                self.assertEqual((d["state"], d["sessions"], d["midTurn"], d["otherKernels"]), ("running", None, None, None),
+                                 "mid-converge: the wait's state, and no counts")
+                self.assertEqual((d["failed"], d["updated"]), ("", ""), "the previous converge's latched outcome was cleared at the click")
+                self.assertEqual([h for h in hits if h[0] == "GET"], [], "no registry read reached the manager while the converge runs")
+                self.assertEqual([x for x in dials if x[1] != self.port], [], "no dial but the test's own request to the route")
+                self.assertEqual(said, "", "no fault line about a label the banner is not showing")
+                code, body = self._post("/update")
+                self.assertEqual((code, json.loads(body)), (200, {"ok": True, "state": "converging"}),
+                                 "a second click hears converging, like the tag door's second click hears running")
+                time.sleep(0.05)
+                self.assertEqual(len(builds), 1, "and started no second converge")
+                rows = [r for r in self._audit_rows() if r["action"] == "main-converge"]
+                self.assertEqual(len(rows), 1, ("one audit row for two clicks", rows))
+                self.assertEqual((rows[0]["via"], rows[0]["tag"]), ("update-confirmed", "abcdef01"))
+                gate.set()
+                t0 = time.monotonic()
+                while km._MAIN_CONVERGE_INFLIGHT[0] and time.monotonic() - t0 < 10:
+                    time.sleep(0.01)
+                self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the converge's finally cleared the flag")
+                self.assertEqual([h for h in hits if h[0] == "POST"], [("POST", "/restart-all")], "one restart request went out, to the fake")
+                d, said = check()
+                self.assertEqual((d["state"], d["otherKernels"]), ("", 1), "idle again: the poll reads the registry, which lists one other kernel")
+                self.assertEqual([h for h in hits if h[0] == "GET"], [("GET", "/status")], "the idle read dialled the manager once")
+                self.assertEqual((d["failed"], d["updated"]), ("", ""), "a restart the manager took latches no outcome: the boot id ends the wait")
+        finally:
+            gate.set()
+            km._INPLACE_TRIED[0] = saved_tried
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MANAGER_READ_FAULT[0] = ""
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            mgr.shutdown()
+
+    def test_the_drift_doors_outcome_reaches_every_poll_when_the_banner_cannot_see_it_end(self):
+        # review round 5 of the confirm step (2026-09-10): the no-manager branch of _run_main_update said its
+        # outcome on the sync surface alone; the banner that started the converge stayed in its wait, polling
+        # /update-check every 3 s in every open window until a hand reload, and the same for a restart request
+        # the manager refused and for a refused pull. Now the outcome is latched (_MAIN_CONVERGE_OUTCOME) and
+        # served through the poll's own fields: no manager reads `updated` with the on-disk wording (the poll
+        # ends through its d.updated exit and re-offers no click that cannot work), the refused request and the
+        # refused pull read `failed` (Update re-shows where a retry can succeed). Latched, not consumed: the
+        # running push flipped every window into the wait, so two readers both see it. The converge itself
+        # audits no restart request (its own row, with when and sha, is not written); the click's route row,
+        # via update-confirmed, stands: exactly one main-converge row. No dial with the variable absent
+        import http.server
+        from http.server import ThreadingHTTPServer
+        hits, dials, notices = [], [], []
+
+        class RefusingManager(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                hits.append(("POST", self.path))
+                self.send_response(500)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        mgr = ThreadingHTTPServer(("127.0.0.1", 0), RefusingManager)
+        threading.Thread(target=mgr.serve_forever, daemon=True).start()
+        port = mgr.server_address[1]
+        saved_port, saved_tried = os.environ.get("ROMP_MANAGER_PORT"), km._INPLACE_TRIED[0]
+
+        def check():
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            return json.loads(body)
+        try:
+            km._INPLACE_TRIED[0] = ""
+            os.environ.pop("ROMP_MANAGER_PORT", None)
+            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(port, dials, allow={self.port})), \
+                 mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
+                 mock.patch.object(km, "_checkout_sha", return_value="abcdef0123456789"), \
+                 mock.patch.object(km, "_sync_notice", side_effect=lambda *a, **kw: notices.append((a[0], kw.get("ok", True)))), \
+                 mock.patch.object(km, "_send_to_app"):
+                code, body = self._drift_click_and_wait()
+                self.assertEqual((code, json.loads(body)["state"]), (200, "converging"))
+                for reader in ("the window that clicked", "another window the running push flipped into the wait"):
+                    d = check()
+                    self.assertEqual((d["state"], d["failed"], d["updated"], d["why"]), ("", "", "abcdef01", km._NO_MANAGER_WHY), reader)
+                    self.assertIn("`romp up` starts one", d["hint"], reader)
+                    self.assertEqual((d["manager"], d["otherKernels"]), (False, 0), reader)
+                self.assertEqual([x for x in dials if x[1] != self.port], [], "nothing dialled with the variable absent")
+                self.assertEqual(hits, [])
+                self.assertEqual([ok for _, ok in notices], [False], "one failure notice on the sync surface")
+                self.assertIn(km._NO_MANAGER_WHY, notices[0][0])
+                rows = self._audit_rows()
+                self.assertEqual([r["action"] for r in rows], ["main-converge"], ("the click's route row alone", rows))
+                self.assertEqual(rows[0]["via"], "update-confirmed")
+                self.assertTrue("when" not in rows[0] and "sha" not in rows[0],
+                                "the converge's own row (when and sha) is not written: no restart request went out (%r)" % rows)
+                # a manager that refuses the restart request: `failed`, so the banner re-offers Update
+                os.environ["ROMP_MANAGER_PORT"] = str(port)
+                code, body = self._drift_click_and_wait()
+                self.assertEqual(code, 200)
+                d = check()
+                self.assertEqual(hits, [("POST", "/restart-all")], "the request reached the fake, which refused it")
+                self.assertEqual((d["state"], d["updated"]), ("", ""))
+                self.assertIn("the restart request failed", d["failed"])
+                self.assertIn("HTTP 500", d["failed"])
+                self.assertNotIn("manager", d, "a port is set")
+                self.assertEqual([ok for _, ok in notices], [False, False])
+                # a refused pull (no commit named for the move): `failed` with the refusal's own words
+                km._run_main_update("pull", True, manager_port=None, target="")
+                d = check()
+                self.assertIn("no commit was named for the move", d["failed"])
+                self.assertEqual([ok for _, ok in notices], [False, False, False])
+                self.assertEqual([h for h in hits], [("POST", "/restart-all")], "the refusal dialled nothing")
+        finally:
+            km._INPLACE_TRIED[0] = saved_tried
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            mgr.shutdown()
+
+    def test_a_manager_port_that_is_not_a_port_reads_as_no_manager_and_is_said_once(self):
+        # review round 5 of the confirm step (2026-09-10): _manager_port did int(value) outside every caller's
+        # try, so a ROMP_MANAGER_PORT that was not a number (a typo on a kernel started by hand) made every
+        # /update-check answer 500 with a traceback and the click's converge thread die with one on stderr and
+        # no notice. Red at 5275a4d6 with 'abc' (ValueError from the route) and with '7_777' (int() accepts the
+        # underscore, so the drift door dialled 7777). Now the value reads as no manager on every door, said on
+        # stderr once per distinct value on a latch of its own (not the registry read's episode), and
+        # /update-check answers 200 with `manager: false`, no dial anywhere
+        import contextlib
+        dials, notices, audits = [], [], []
+        saved_port, saved_tried = os.environ.get("ROMP_MANAGER_PORT"), km._INPLACE_TRIED[0]
+        km._MANAGER_PORT_FAULT[0] = ""
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                self.assertEqual((km._manager_port(" 7777 "), km._manager_port("7_777"), km._manager_port("abc"), km._manager_port("\u00b2")),
+                                 (7777, None, None, None), "decimal digits only: a superscript two passes isdigit and fails int()")
+            self.assertEqual(len(err.getvalue().splitlines()), 3, "one line per distinct non-port value")
+            err.seek(0); err.truncate()
+            km._MANAGER_PORT_FAULT[0] = ""
+            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(-1, dials, allow={self.port})), \
+                 mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
+                 mock.patch.object(km, "_checkout_sha", return_value="abcdef01"), \
+                 mock.patch.object(km, "_audit_restart_request", side_effect=lambda *a, **kw: audits.append(a[0])), \
+                 mock.patch.object(km, "_sync_notice", side_effect=lambda *a, **kw: notices.append((a[0], kw.get("ok", True)))), \
+                 contextlib.redirect_stderr(err):
+                for value in ("abc", "7_777"):
+                    os.environ["ROMP_MANAGER_PORT"] = value
+                    km._INPLACE_TRIED[0] = ""
+                    for _ in range(2):
+                        status, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+                        self.assertEqual(status, 200, (value, body[:200]))
+                        d = json.loads(body)
+                        self.assertEqual((d["manager"], d["otherKernels"], d["state"]), (False, 0, ""), value)
+                    self.assertEqual(km._manager_kernels(), [], value)
+                    km._run_main_update("restart", True, manager_port=value)
+                    km._run_main_update("restart", True)
+                    km._restart_this_kernel("test", manager_port=value)
+                    km._restart_this_kernel("test")
+                    with mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: None):
+                        self.assertTrue(km._run_update("v0.7.0"))
+                        km._UPDATE_STATE[0] = ""
+                lines = err.getvalue().splitlines()
+            self.assertEqual(dials, [], "no door dialled anything on a value that is not a port")
+            self.assertEqual(lines, ["ROMP_MANAGER_PORT is 'abc', not a port; read as no manager",
+                                     "ROMP_MANAGER_PORT is '7_777', not a port; read as no manager"],
+                             "said once per distinct value, naming it, across every poll and door")
+            self.assertEqual([ok for _, ok in notices], [False] * 4, "each drift-door converge said what it did not do")
+            for text, _ in notices:
+                self.assertIn("`romp up` starts one", text)
+            self.assertEqual(audits, ["kernel-asks-manager-restart-all"] * 4, "no main-converge row from the door: no request went out")
+            self.assertEqual(km._MANAGER_READ_FAULT[0], "", "the registry read's episode latch is not the one used")
+        finally:
+            km._INPLACE_TRIED[0] = saved_tried
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MANAGER_PORT_FAULT[0] = ""
+            km._MANAGER_READ_FAULT[0] = ""
 
     def test_a_manager_that_accepts_and_never_answers_is_timed_out_and_said_once_per_episode(self):
         # the registry read's 1 s timeout has to reach the connection: without it every /update-check
@@ -1357,6 +1662,39 @@ class Routes(Fresh):
         self.assertEqual(pushed, [], "no 'running' push for a launch that did not happen")
         self.assertEqual(km._UPDATE_STATE[0], "", "not latched — the next click can try again")
         self.assertTrue(any(not n["ok"] and "v0.0.9" in n["text"] for n in self.notices()), "the Log says why")
+
+
+class ManagerReadLatch(unittest.TestCase):
+    """The once-per-episode latches under a concurrent writer (review round 5 of the confirm step, 2026-09-10;
+    the staging of tests/test_free_threaded_caches.py). Every /update-check poll is a request-handler thread;
+    on a free-threaded interpreter two polls that fail the registry read at once both saw the empty latch and
+    both wrote the line (8 of 3000 trials on 3.14t). Under the GIL the compare and the store cannot
+    interleave, so the interleaving is staged: the reason string's one comparison against the latch runs the
+    peer's call. With _MANAGER_READ_LOCK the peer blocks until the first call has stored its reason and then
+    finds the latch equal; without it the peer writes inside the window and the line is written twice."""
+
+    def test_the_once_per_episode_line_is_written_once_under_a_concurrent_writer(self):
+        import contextlib
+        km._MANAGER_READ_FAULT[0] = ""
+        err = io.StringIO()
+        peer = threading.Thread(target=lambda: km._manager_read_fault(7777, "GET /status: the peer's reason"), daemon=True)
+
+        def writer():
+            peer.start()
+            peer.join(0.3)       # with the lock the peer is parked on it; without, it has written its line by now
+        why = _PeerWritesOnCompare("GET /status: the peer's reason", writer)
+        try:
+            why.armed = True
+            with contextlib.redirect_stderr(err):
+                km._manager_read_fault(7777, why)
+                peer.join(5)
+            self.assertFalse(peer.is_alive(), "the peer's call did not return: the lock was not released")
+            lines = err.getvalue().splitlines()
+            self.assertEqual(len(lines), 1, ("the episode's line, once", lines))
+            self.assertIn("the peer's reason", lines[0])
+            self.assertEqual(str(km._MANAGER_READ_FAULT[0]), "GET /status: the peer's reason")
+        finally:
+            km._MANAGER_READ_FAULT[0] = ""
 
 
 class Wiring(unittest.TestCase):

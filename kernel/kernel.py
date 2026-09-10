@@ -9226,22 +9226,67 @@ _UPDATE_REPORT_FAULT = [""]   # the move-aside fault of a junk report still on d
 #                                        or a readable report ends it)
 _MANAGER_READ_FAULT = [""]    # why the manager's registry could not be read, said once per episode (a clean read
 #                                        ends it; a changed reason opens a new one): _manager_kernels
+_MANAGER_PORT_FAULT = [""]    # a ROMP_MANAGER_PORT that is not a port, said once per distinct value (_manager_port);
+#                                        its own latch: the registry read's episode is about a manager on record
+_MANAGER_READ_LOCK = threading.Lock()   # free-threaded hardening (review round 5 of the confirm step, 2026-09-10): the
+#                                        two latches above are compare-and-set on request-handler threads, one per
+#                                        /update-check poll. Under the GIL the compare and the store cannot interleave
+#                                        (no eval-breaker instruction between them); on 3.14t, which romp supports and
+#                                        CI runs, the once-per-episode line was written twice in 8 of 3000 trials. The
+#                                        lock holds the compare and the store (and the clean-read reset) together; the
+#                                        stderr write stays outside it. _UPDATE_REPORT_FAULT has the same shape and is
+#                                        left as it is (a sibling, out of that round's scope)
+_MAIN_CONVERGE_INFLIGHT = [False]   # a main converge (_run_main_update) is running: the banner click's thread or the
+#                                        auto converge. /update-check answers state "running" and no counts while it
+#                                        is set, the tag door's shape (_UPDATE_STATE), and the drift door starts no
+#                                        second converge (review round 5 of the confirm step, 2026-09-10)
+_MAIN_CONVERGE_OUTCOME = [None]     # how the last main converge ended when the banner could not see it end: no
+#                                        manager to restart this kernel (the code is on disk: "updated"), a restart
+#                                        request the manager refused, or a refused pull (both "failed", so Update
+#                                        re-shows where a retry can succeed). The poll's own fields (failed, updated,
+#                                        why, hint), served by /update-check outside the running gate and LATCHED
+#                                        until the next converge starts: the running push flipped every window into
+#                                        the wait, so a slot consumed on first read would end one window's wait
+_MAIN_CONVERGE_LOCK = threading.Lock()   # the in-flight flag's compare-and-set (two clicks racing the drift door)
 _UPDATE_MODES = ("ask", "auto", "off")
 
 
 def _manager_port(value):
     """The manager control port a door dials, as an int, or None when there is no manager to dial. `value`
-    is the ROMP_MANAGER_PORT a caller read (at ack time, or here at use time); absent or empty means no
-    manager started this kernel. One rule for every door: the banner's registry read (_manager_kernels),
-    the drift door's restart (_run_main_update), and the rule _restart_this_kernel and _run_update always
-    had. Never a guess at bin/romp-manager's own default port: a kernel no manager started has no
-    business with whatever manager holds that port, and on a development box that is another operator's
-    live manager, whose restart-all restarts every session on the box. The drift door had guessed it
-    since before the confirm step, and review round 4 of that step made the registry read guess it too
-    so the label and the restart would agree; on 2026-09-10 a review probe run with the variable absent
-    reached the live manager through the door and restarted every session on the box. Round 5 reversed
-    the direction: both agree on no manager instead."""
-    return int(value) if value else None
+    is the ROMP_MANAGER_PORT a caller read (at ack time, or here at use time); absent, empty or not a
+    port means no manager started this kernel. One rule for every door: the banner's registry read
+    (_manager_kernels), the drift door's restart (_run_main_update), _restart_this_kernel and _run_update.
+    Never a guess at bin/romp-manager's own default port: a kernel no manager started has no business
+    with whatever manager holds that port, and on a development box that is another operator's live
+    manager, whose restart-all restarts every session on the box. The drift door had guessed it since
+    before the confirm step, and review round 4 of that step made the registry read guess it too so the
+    label and the restart would agree; on 2026-09-10 a review probe run with the variable absent reached
+    the live manager through the door and restarted every session on the box. Round 5 reversed the
+    direction: both read no manager instead, and /update-check says so (`manager: false`), so the banner
+    words the click as the update on disk it is. Never raises: a value that is not all decimal digits (a
+    typo, reachable on a kernel started by hand) used to leave int() to the caller, so every
+    /update-check answered 500 and the click's converge thread died with a traceback; it reads as no
+    manager, said on stderr once per distinct value (_manager_port_fault). isdecimal, not isdigit: a
+    superscript digit passes isdigit and fails int()."""
+    s = str(value).strip() if value is not None else ""
+    if not s:
+        return None
+    if not s.isdecimal():
+        _manager_port_fault(s)
+        return None
+    return int(s)
+
+
+def _manager_port_fault(value):
+    """One plain line on stderr per distinct non-port value of ROMP_MANAGER_PORT (the pattern of
+    _manager_read_fault, on a latch of its own: that one is about a manager on record not answering, and
+    a clean read clears it). /update-check resolves the port on every poll, so a bad value would
+    otherwise write a line per poll. The compare-and-set is under _MANAGER_READ_LOCK, the write outside."""
+    with _MANAGER_READ_LOCK:
+        if _MANAGER_PORT_FAULT[0] == value:
+            return
+        _MANAGER_PORT_FAULT[0] = value
+    sys.stderr.write("ROMP_MANAGER_PORT is %r, not a port; read as no manager\n" % (value,))
 
 
 def _restart_impact():
@@ -9274,11 +9319,13 @@ def _manager_kernels(timeout=1.0):
     """The kernels the manager's restart-all restarts, as the manager's own registry lists them (its GET
     /status `kernels`, the live map restartAll loops: kernels.json profiles and /ensure kernels alike),
     or None when there is no answer to read (nothing answering within `timeout`, a status other than
-    200, a body of another shape). Without a manager (ROMP_MANAGER_PORT absent or empty: _manager_port)
-    the registry is empty: no restart-all reaches this kernel, nothing else restarts with it, and the
-    drift door's restart dials nothing on the same absence, so the label and the restart it describes
-    agree (review round 5 of the confirm step, 2026-09-10; round 4 had both dial the manager's default
-    port instead, and a probe with the variable absent reached a live manager through the restart).
+    200, a body of another shape). Without a manager (ROMP_MANAGER_PORT absent, empty or not a port:
+    _manager_port) the registry is empty: no restart-all reaches this kernel, nothing else restarts with
+    it, and the drift door's restart dials nothing on the same absence (review round 5 of the confirm
+    step, 2026-09-10; round 4 had both dial the manager's default port instead, and a probe with the
+    variable absent reached a live manager through the restart). Neither door restarts anything then, so
+    /update-check carries `manager: false` beside the 0 and the banner words the click as what it does,
+    an update on disk the user restarts into (never the plain restart form, which promised a restart).
     Read for the banner's confirm label (review round 2 of the confirm step, 2026-09-10): _restart_impact counts
     this kernel's sessions, the manager restarts each kernel it owns, so a box with more than one
     kernel loses more sessions than the count says, and the label says so when the registry holds
@@ -9302,7 +9349,8 @@ def _manager_kernels(timeout=1.0):
             d = json.loads(body)
             ks = d.get("kernels") if isinstance(d, dict) else None
             if isinstance(ks, list):
-                _MANAGER_READ_FAULT[0] = ""              # a clean read: any episode is over
+                with _MANAGER_READ_LOCK:
+                    _MANAGER_READ_FAULT[0] = ""          # a clean read: any episode is over
                 return [k for k in ks if isinstance(k, dict)]
             why = "GET /status answered without a kernels list"
     except (OSError, ValueError, http.client.HTTPException) as e:
@@ -9313,12 +9361,15 @@ def _manager_kernels(timeout=1.0):
 
 def _manager_read_fault(mport, why):
     """One plain line on stderr per episode of failed registry reads (the pattern of _UPDATE_REPORT_FAULT):
-    /update-check reads the registry at every page load, at every arm of the banner and every 3 s of an
-    in-flight wait, so a manager that stays silent would otherwise write a line per read. The first failed
-    read after a clean one says why; a changed reason says so again; a clean read ends the episode."""
-    if _MANAGER_READ_FAULT[0] == why:
-        return
-    _MANAGER_READ_FAULT[0] = why
+    /update-check reads the registry at every page load with an offer pending and at every arm of the
+    banner (never during an in-flight wait: the route skips the read while either door's update runs), so
+    a manager that stays silent would otherwise write a line per read. The first failed read after a clean
+    one says why; a changed reason says so again; a clean read ends the episode. The compare-and-set is
+    under _MANAGER_READ_LOCK (free-threaded hardening; the lock's comment says why), the write outside it."""
+    with _MANAGER_READ_LOCK:
+        if _MANAGER_READ_FAULT[0] == why:
+            return
+        _MANAGER_READ_FAULT[0] = why
     sys.stderr.write("update check: the manager on port %s did not answer its registry read (%s); the update banner "
                      "says other kernels may restart too until it does\n" % (mport, why))
 
@@ -9443,7 +9494,7 @@ def _run_update(tag):
     _UPDATE_STATE[0] = "running"
     q = shlex.quote
     log, rep = q(str(jd.STATE / "update.log")), q(str(jd.STATE / "update-report.json"))
-    mport = os.environ.get("ROMP_MANAGER_PORT") or ""
+    mport = _manager_port(os.environ.get("ROMP_MANAGER_PORT"))     # None: no manager (absent, empty or not a port)
     # IMMEDIATE (T160, the user 2026-08-28, reversing T121's quiet default from live experience):
     # a deploy cuts in-flight turns NOW. The parked quiet window held every push for minutes
     # (measured 0–570s waits, 15-min backstop) and still cut turns when the window never quieted,
@@ -9465,7 +9516,7 @@ def _run_update(tag):
     # yourself". curl's own error lands in update.log (-f: a non-2xx answer is not a restart).
     def report(d):
         return "printf '%%s' %s > %s\n" % (q(json.dumps(d)), rep)
-    if mport.isdigit():
+    if mport is not None:
         # --max-time (review find, 2026-09-08): a manager that accepted the connection and never
         # answered (wedged mid-restart, or a stale port something else holds open) held curl for good,
         # so no report was ever written and the latch stood with nothing to consume. curl's exit 28 is
@@ -9483,16 +9534,16 @@ def _run_update(tag):
                     % (tag, aud))
                    + (r'''  tok="${ROMP_SERVE_TOKEN:-$(cat %s 2>/dev/null)}"; tok="${tok//\\/\\\\}"; tok="${tok//\"/\\\"}"''' % tokf) + "\n"
                    + (r'''  printf 'header = "X-Romp-Token: %%s"\n' "$tok" | curl -fsS --max-time %d -X POST 'http://127.0.0.1:%d/restart-all' --config - >/dev/null 2>>%s; rc=$?'''
-                      % (_RESTART_REQUEST_MAX_S, int(mport), log)) + "\n"
+                      % (_RESTART_REQUEST_MAX_S, mport, log)) + "\n"
                    + "  if [ \"$rc\" -eq 0 ]; then\n"
                    + "    " + report({"ok": True, "tag": tag, "restarted": True})
                    + "  elif [ \"$rc\" -eq 28 ]; then\n"
                    + "    " + report({"ok": True, "tag": tag, "restarted": False,
                                       "why": "the manager on port %d did not answer the restart request within %d s"
-                                             % (int(mport), _RESTART_REQUEST_MAX_S)})
+                                             % (mport, _RESTART_REQUEST_MAX_S)})
                    + "  else\n"
                    + "    " + report({"ok": True, "tag": tag, "restarted": False,
-                                      "why": "the manager on port %d did not take the restart request" % int(mport)})
+                                      "why": "the manager on port %d did not take the restart request" % mport})
                    + "  fi\n")
     else:
         restart = ("  : # no manager — the new code arms on the next romp start (the report says so)\n"
@@ -10333,13 +10384,57 @@ def _main_drift_check():
 # of its request — a test suite fencing off a live deployment does exactly this — could have the
 # RESTORED value read instead of the one in force when the kernel answered. The handlers now read
 # the env once, pre-ack, and hand the value down. _PORT_FROM_ENV keeps every non-HTTP caller
-# exactly as before: the env is read at use time, absent meaning "no manager" in _restart_this_kernel
-# and, since 2026-09-10, in _run_main_update and the banner's registry read too (_manager_port: one rule
-# for every door; _run_main_update used to map absent to the manager's default port, and a probe run
-# with the variable absent restarted a live manager's every kernel through it).
+# exactly as before: the env is read at use time, absent (or empty, or not a port) meaning "no manager"
+# in _restart_this_kernel and, since 2026-09-10, in _run_main_update and the banner's registry read too
+# (_manager_port: one rule for every door; _run_main_update used to map absent to the manager's default
+# port, and a probe run with the variable absent restarted a live manager's every kernel through it).
 _PORT_FROM_ENV = object()
 
 
+def _main_converge_begin():
+    """Take the converge's in-flight flag for a click (the /update drift branch, before its thread starts and
+    its running push goes out): True when this click starts the converge, False when one is already running
+    (another window's click, or the auto converge), so the route answers converging and starts no second
+    thread and writes no second audit row. Taking the flag also clears the last converge's latched outcome:
+    a new converge is in flight and its outcome is not known yet. Compare-and-set under _MAIN_CONVERGE_LOCK,
+    for two clicks racing the route."""
+    with _MAIN_CONVERGE_LOCK:
+        if _MAIN_CONVERGE_INFLIGHT[0]:
+            return False
+        _MAIN_CONVERGE_INFLIGHT[0] = True
+        _MAIN_CONVERGE_OUTCOME[0] = None
+        return True
+
+
+def _main_converge_end():
+    _MAIN_CONVERGE_INFLIGHT[0] = False
+
+
+def _main_converge_outcome(failed="", updated="", why="", hint=""):
+    """Latch how the converge ended for the banner's poll (the slot's comment says which endings and why it
+    latches). Written BEFORE the in-flight flag clears, so no poll reads neither running nor an outcome."""
+    _MAIN_CONVERGE_OUTCOME[0] = {"failed": failed, "updated": updated, "why": why, "hint": hint}
+
+
+def _main_converge_guarded(fn):
+    """_run_main_update runs under the in-flight flag whatever called it: the click's thread (the route took the
+    flag before starting it) or the auto converge (_main_drift_check, which bypasses the route). Set at entry,
+    cleared in a finally over every exit: a refusal, the in-place converge, the no-manager return, a restart
+    request the manager did not take, an exception. functools.wraps, so the pins that read the function's
+    source and signature read the converge's own. The auto converge is not gated on the flag (its cool-down
+    spaces it); a converge that starts while another runs is the pre-existing hazard, not widened here."""
+    @functools.wraps(fn)
+    def run(*a, **kw):
+        _MAIN_CONVERGE_INFLIGHT[0] = True
+        _MAIN_CONVERGE_OUTCOME[0] = None
+        try:
+            return fn(*a, **kw)
+        finally:
+            _main_converge_end()
+    return run
+
+
+@_main_converge_guarded
 def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target=""):
     """Converge on newest main: advance the checkout (fast-forward only; a DIRTY shared tree refuses
     LOUDLY — peer sessions' uncommitted work is never discarded) and bounce every kernel through the
@@ -10355,7 +10450,14 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
     Every step reads its own exit code: a failing `git status` is UNKNOWN, never clean (a tree that
     cannot be read is not a tree that may be moved), and a failed fetch aborts instead of checking
     out whatever the stale local ref points at. Every refusal is said on the sync surface
-    (_sync_notice, ok=False — the row every updater failure already lands on) and re-arms the notice."""
+    (_sync_notice, ok=False: the row every updater failure already lands on) and re-arms the notice.
+    The banner that started a converge waits on /update-check (state "running" while _MAIN_CONVERGE_INFLIGHT
+    is set: the decorator above) and ends its wait on a changed boot id, a `failed` or an `updated`
+    answer, so every ending the banner cannot see as a restart is latched for its poll
+    (_main_converge_outcome, review round 5 of the confirm step, 2026-09-10): a refusal and a restart
+    request the manager did not take as `failed` (Update re-shows), the no-manager case as `updated`
+    with the on-disk wording (no click that cannot work is re-offered). A manager that takes the request
+    restarts this kernel, and the in-place converge's new bundle reloads the page through the reload core."""
     if kind == "pull":
         remote = _release_remote()
         target = _sha8(target)
@@ -10367,6 +10469,7 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
                 said = (r.stderr or r.stdout or "").strip()[-120:]
                 why += (" (git: %s)" % said) if said else (" (git exited %d)" % r.returncode)
             _sync_notice("main moved at %s, but %s." % (remote, why), ok=False)
+            _main_converge_outcome(failed=why)    # the banner's wait ends on it and Update re-shows
             _MAIN_DRIFT[0] = ""                   # every refusal re-arms: the notice re-fires once cured
         try:
             if not target:
@@ -10454,9 +10557,14 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
         # restarted every session on the box through it. A kernel without a manager has nobody to
         # restart it (the manager's exit handler is what spawns the fresh process), so the new code
         # sits on disk and the sync surface says what to run, the tag door's wording for the same
-        # case (_NO_MANAGER_WHY, _update_restart_hint). No restart request, so no audit row for one.
-        _sync_notice("romp is updated on disk, but %s, so nothing restarted it: %s"
-                     % (_NO_MANAGER_WHY, _update_restart_hint({"why": _NO_MANAGER_WHY})), ok=False)
+        # case (_NO_MANAGER_WHY, _update_restart_hint). The converge itself audits no restart request
+        # (its own row below, with when and sha, is not written); the click's route row, via
+        # update-confirmed, stands. The banner's poll reads the same outcome through the latched slot
+        # (`updated`: the code on disk, the why and the hint), so its wait ends with the on-disk
+        # wording in every window instead of polling until a reload.
+        hint = _update_restart_hint({"why": _NO_MANAGER_WHY})
+        _sync_notice("romp is updated on disk, but %s, so nothing restarted it: %s" % (_NO_MANAGER_WHY, hint), ok=False)
+        _main_converge_outcome(updated=_sha8(_checkout_sha()), why=_NO_MANAGER_WHY, hint=hint)
         return
     try:
         # the reason joins the dying kernel's restart-cuts.jsonl row to WHO restarted it (see
@@ -10474,12 +10582,18 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
     except Exception as e:
         _sync_notice("romp is updated on disk but the restart request failed (%s); "
                      "restart it yourself: romp refresh" % e, ok=False)
+        _main_converge_outcome(failed="romp is updated on disk but the restart request failed (%s); "
+                                      "restart it yourself: romp refresh" % e)
         return
     if resp.status >= 400:
         # the manager answered and said no (its write gate: 401, this kernel's token is not one it holds;
-        # 503, it holds none): said three ways, with the notice leading on what did not happen
-        _report_manager_refusal("/restart-all", resp.status, body, reason="main-converge: %s" % kind,
-                                head="romp is updated on disk but the restart request failed")
+        # 503, it holds none): said three ways, with the notice leading on what did not happen. The
+        # banner's wait ends on this ending too: the refusal is latched as `failed`, with the notice's
+        # own words, so Update re-shows where a retry can succeed (the answer used to raise into the
+        # except above, whose latch covered it)
+        text = _report_manager_refusal("/restart-all", resp.status, body, reason="main-converge: %s" % kind,
+                                       head="romp is updated on disk but the restart request failed")
+        _main_converge_outcome(failed=text)
 
 
 def _update_check_loop():
@@ -25913,11 +26027,11 @@ def _restart_this_kernel(reason="", manager_port=_PORT_FROM_ENV):
     a restart that will happen (review round 1, 2026-09-10). The connection-failure arm stays silent on
     purpose: ECONNREFUSED is a standalone kernel, and every test kernel runs against a dead port."""
     _audit_restart_request("kernel-asks-manager-restart-all", reason=reason, pid=os.getpid())
-    mport = os.environ.get("ROMP_MANAGER_PORT") if manager_port is _PORT_FROM_ENV else manager_port
-    if not mport:
-        return ""
+    mport = _manager_port(os.environ.get("ROMP_MANAGER_PORT") if manager_port is _PORT_FROM_ENV else manager_port)
+    if mport is None:
+        return ""                                  # absent, empty or not a port: no manager (one rule for every door)
     try:
-        c = http.client.HTTPConnection("127.0.0.1", int(mport), timeout=4)
+        c = http.client.HTTPConnection("127.0.0.1", mport, timeout=4)
         c.request("POST", "/restart-all", headers=_manager_headers())
         resp = c.getresponse()
         body = resp.read()
@@ -58691,18 +58805,30 @@ class Handler(BaseHTTPRequestHandler):
                 if dsha in dis:
                     dsha = ""
                 # the counts are read only when a label can be worded from them (the offer's arm and
-                # the load of a page with an offer pending): while the update runs the banner shows
-                # the wait and its poll reads boot, failed and updated alone, so the registry read (a
-                # loopback GET, up to 1 s on a silent manager, a stderr line per episode) is skipped
-                # and every count is null (review round 4 of the confirm step, 2026-09-10)
-                running = _UPDATE_STATE[0] == "running"
+                # the load of a page with an offer pending): while an update runs through EITHER door
+                # (the tag door's detached child, _UPDATE_STATE; the drift door's converge thread or
+                # the auto converge, _MAIN_CONVERGE_INFLIGHT) the banner shows the wait and its poll
+                # reads boot, failed and updated alone, so the registry read (a loopback GET, up to 1 s
+                # on a silent manager, a stderr line per episode) is skipped, every count is null and
+                # `state` is the one string the banner keys the wait on (review rounds 4 and 5 of the
+                # confirm step, 2026-09-10; round 4 covered the tag door alone, so a drift converge had
+                # every window's poll dial the registry every 3 s and a page loaded mid-converge saw
+                # the drift still offered)
+                running = _UPDATE_STATE[0] == "running" or _MAIN_CONVERGE_INFLIGHT[0]
                 imp = None if running else _restart_impact()     # None while the SDK backend is still being built: unknown
                 oth = None if running else _other_kernels()      # None when the manager's registry could not be read
-                return self._send(200, json.dumps({
+                # the drift converge's latched outcome (_MAIN_CONVERGE_OUTCOME): served whether or not a
+                # converge is still marked running (it is written before the flag clears), to every window
+                # that polls (latched until the next converge starts), and never over the tag door's report,
+                # which is consumed once above and would otherwise be lost
+                out = _MAIN_CONVERGE_OUTCOME[0]
+                if out and not failed and not updated:
+                    failed, updated, why, hint = out["failed"], out["updated"], out["why"], out["hint"]
+                answer = {
                     "cur": _kernel_ver() or "",
                     "tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]),
                     "mode": _update_mode(),
-                    "state": _UPDATE_STATE[0], "failed": failed, "updated": updated, "why": why, "hint": hint,
+                    "state": ("running" if running else ""), "failed": failed, "updated": updated, "why": why, "hint": hint,
                     # the pending MAIN-DRIFT offer (2026-08-15): a page loaded after the push can
                     # re-derive it, and a stale page can revalidate before acting
                     "drift": (("pull" if _MAIN_DRIFT[0] else "restart") if dsha else ""),
@@ -58720,8 +58846,17 @@ class Handler(BaseHTTPRequestHandler):
                     # too, never the single-kernel form: a manager that missed a 1 s read can still take
                     # the restart request, which waits up to _RESTART_REQUEST_MAX_S. 0 with no manager
                     # port (no manager started this kernel: nothing restarts with it, and the drift
-                    # door's restart dials nothing on the same absence)
-                    "otherKernels": oth}), "application/json", cache="no-cache")
+                    # door's restart dials nothing on the same absence; `manager` below says so)
+                    "otherKernels": oth}
+                # no manager started this kernel (ROMP_MANAGER_PORT absent, empty or not a port): neither door
+                # restarts anything, the drift door leaves the new code on disk, so the banner words the click
+                # as that update rather than as a restart, and its confirm reads Update, not Restart (review
+                # round 5 of the confirm step, 2026-09-10: 0 other kernels alone is also a manager running this
+                # kernel by itself, so the client could not tell the two apart). Present only when there is no
+                # manager; with a port set the field is absent, as an older kernel's answer is
+                if _manager_port(os.environ.get("ROMP_MANAGER_PORT")) is None:
+                    answer["manager"] = False
+                return self._send(200, json.dumps(answer), "application/json", cache="no-cache")
             if p == "/notify-all":
                 # the master bell's state (the user 2026-08-09): on = every task notifies when it
                 # blocks on you or completes, unless its session/card bell mutes it. The shell
@@ -59019,14 +59154,26 @@ class Handler(BaseHTTPRequestHandler):
                 d0, d1 = _MAIN_DRIFT[0], _MAIN_DRIFT[1]
                 kind = "pull" if d0 else ("restart" if d1 else "")
                 if kind:
+                    # one converge at a time (review round 5 of the confirm step, 2026-09-10): the flag is
+                    # taken here, before the thread starts and the running push goes out, so a poll landing
+                    # between the ack and the thread's entry already reads running; a click while a converge
+                    # runs (another window's, or the auto converge) hears converging like the first and starts
+                    # no second thread and writes no second audit row. The thread clears the flag on every
+                    # exit; a start that raises gives it back here, or every later poll would read running
+                    if not _main_converge_begin():
+                        return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
                     _audit_restart_request("main-converge", tag=d0 or d1,
                                            addr=str(self.client_address[0]), via="update-confirmed")
                     # same ack-time port resolution as /restart: the daemon thread's env read could
                     # otherwise land after this response, on a value the caller has already restored
-                    threading.Thread(target=_run_main_update, args=(kind, True),
-                                     kwargs={"manager_port": os.environ.get("ROMP_MANAGER_PORT"),
-                                             "target": d0 or d1},
-                                     daemon=True).start()
+                    try:
+                        threading.Thread(target=_run_main_update, args=(kind, True),
+                                         kwargs={"manager_port": os.environ.get("ROMP_MANAGER_PORT"),
+                                                 "target": d0 or d1},
+                                         daemon=True).start()
+                    except Exception as e:
+                        _main_converge_end()
+                        return self._send(500, "romp could not start the converge: %s" % e, "text/plain")
                     _send_to_app("shell", {"type": "updateAvail", "state": "running", "boot": _BOOT_ID})
                     return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
                 return self._send(409, "no newer release or main commit known to this kernel", "text/plain")
