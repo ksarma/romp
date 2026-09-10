@@ -18412,15 +18412,17 @@ _GATE_SCAN_FAILED, _GATE_STORE_UNREADABLE = "scan_failed", "store_unreadable"
 def _scan_failed_text(who):
     """What both client doors say when the tmux probe the live scan rides did not answer and the verdict
     needed that scan: the list could not be read, nothing was done, try again (tmux answers again: this
-    retry has a writer, unlike the unreadable record's)."""
+    retry has a writer, unlike the unreadable record's). A sentence, period included: the WS records writer
+    joins it to the modal's next sentence (round 8: the modal read "try again Your text is saved")."""
     return ("could not read the live session list while resolving '%s' (tmux did not answer); nothing was "
-            "done, try again" % who)
+            "done, try again." % who)
 
 
 def _store_unreadable_text(who):
     """What both client doors say when a bare name reached the comment threads' store and it would not read
-    (_thread_names answered None): the store by path, nothing was done."""
-    return ("could not read the comment threads' store (%s) while resolving '%s'; nothing was done"
+    (_thread_names answered None): the store by path, nothing was done. A sentence, period included, as
+    _scan_failed_text is."""
+    return ("could not read the comment threads' store (%s) while resolving '%s'; nothing was done."
             % (_tilde(str(jd.STATE / "comments")), who))
 
 

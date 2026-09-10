@@ -2262,6 +2262,41 @@ class UnknownSessionRefused(_RouteServer):
                         if op == "compact":
                             self.assertIn("The refusal is recorded in undelivered.jsonl", errs[0]["text"])
                             self.assertNotIn("Your text is saved verbatim", errs[0]["text"])
+                        else:
+                            # the whole modal text, as sentences: the gate's text ended without a period and the
+                            # writer joined it to the next sentence (review round 8, 2026-09-09)
+                            self.assertEqual(errs[0]["text"],
+                                             "Nothing was sent. Could not read the live session list while resolving 'web' "
+                                             "(tmux did not answer); nothing was done, try again. Your text is saved verbatim "
+                                             "in undelivered.jsonl under romp's state directory.")
+                    self.assertEqual(fake.method_calls, [], "nothing reached a backend")
+                # the comment threads' store will not read: the miss path's third arm, refused naming the store with
+                # the typed spelling and the same three records (round 7 built the arm and tested it at the HTTP door
+                # only); the roster's host:name spelling is no thread's, so the store is not what fails it and it
+                # stays the unknown refusal (review round 8, 2026-09-09)
+                with mock.patch.object(km, "_thread_names", lambda: None):
+                    for op, extra in (("compact", {}), ("sendCommand", {"cmd": "/model opus"})):
+                        errs, rows, log = drive(op, "web", **extra)
+                        self.assertEqual(len(errs), 1, (op, frames))
+                        self.assertIn("comment threads' store", errs[0]["text"], op)
+                        self.assertIn("'web'", errs[0]["text"], op)
+                        self.assertIn(km._tilde(str(km.jd.STATE / "comments")), errs[0]["text"], op)
+                        self.assertNotIn("no session with id", errs[0]["text"], op)
+                        self.assertNotIn("try again", errs[0]["text"].lower(), op)
+                        self.assertEqual(errs[0]["sid"], "web", op)
+                        self.assertEqual([(r["op"], r["sid"], r["target"]) for r in rows], [(op, "web", "web")], op)
+                        self.assertIn("undeliverable %s: %s" % (op, km._refusal_cause(km._GATE_STORE_UNREADABLE, "web")), log, op)
+                        self.assertNotIn("no session", log, op)
+                        if op == "sendCommand":
+                            self.assertEqual(errs[0]["text"],
+                                             "Nothing was sent. Could not read the comment threads' store (%s) while resolving "
+                                             "'web'; nothing was done. Your text is saved verbatim in undelivered.jsonl under "
+                                             "romp's state directory." % km._tilde(str(km.jd.STATE / "comments")))
+                    self.assertEqual(fake.method_calls, [], "nothing reached a backend")
+                    errs, rows, log = drive("compact", "TESTHOST:web")
+                    self.assertEqual(len(errs), 1, frames)
+                    self.assertIn("has no session with id TESTHOST:web", errs[0]["text"])
+                    self.assertEqual([(r["op"], r["sid"]) for r in rows], [("compact", "TESTHOST:web")])
                     self.assertEqual(fake.method_calls, [], "nothing reached a backend")
                 # the scan answers with the pane: the op reaches the backend for the pane's sid
                 with mock.patch.object(km._TMUX, "available", lambda: True), \
@@ -2449,6 +2484,11 @@ class UnknownSessionRefused(_RouteServer):
                     self.assertIn("try again", errs[0]["text"])
                     self.assertNotIn("no session with id", errs[0]["text"])
                     self.assertEqual(errs[0]["copy"], "keep this")
+                    self.assertEqual(errs[0]["text"],
+                                     "Nothing was sent. Could not read the live session list while resolving '%s' (tmux did "
+                                     "not answer); nothing was done, try again. Your text is saved verbatim in "
+                                     "undelivered.jsonl under romp's state directory." % sid,
+                                     "the whole modal text, as sentences (review round 8, 2026-09-09)")
                     self.assertIn("undeliverable sendMessage: tmux probe failed while resolving %r; 'keep this'" % sid,
                                   err.getvalue())
                     self.assertEqual(fake.method_calls, [], "nothing reached a backend at either door")
