@@ -547,6 +547,84 @@ def test_a_comment_on_a_passage_tied_past_the_cap_is_saved_at_the_cap_with_its_p
     assert locate_anchor(raw_moved, anchors[1], followed[1])["from"] == followed[1] + len(raw)
 
 
+# A fenced code line holding `*` and a table row with its cell delimiter: the two passages the Rendered view's
+# painter reads raw since Slice 5 of plans/markdown-viewer.md (items 2 and 8; the owner's ruling of 2026-09-09 that
+# the plan's "strip cell delimiters from a table quote" is a PAINT-time rule). The contract the painter relies on
+# is the host's: the stored quote is the exact source slice, asterisks and pipe included, located byte for byte,
+# with `anchorAt` beside it. The host has read anchors this way since the anchors follow-on, so the two cases
+# below did not fail before the slice; they pin the contract over the kernel wire. Each passage occurs once, so
+# no width of context is needed and a request with no position locates too. Synthetic, the passages of the
+# painter's own fixture (ui/webview/anchor-map-fixtures/wrappers-plain.md).
+PAINTED = ("# Painted\n\nIntro paragraph one with several words in it.\n\n"
+           "```python\ntotal = a * b * 2\nname_ = under_score  # trailing comment\n```\n\n"
+           "| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n| cell three | cell four |\n\n"
+           "Final paragraph here.\n")
+
+
+def _passage_comment(world, fp, quote, body, fence=None, hint=True):
+    """A passage comment on the one occurrence of `quote` in PAINTED, saved through the real host over the wire:
+    the stored comment (from the reply and from disk, which agree), checked against the source slice."""
+    assert PAINTED.count(quote) == 1, "the fixture holds the passage once"
+    start = PAINTED.index(quote)
+    end = start + len(quote)
+    anchor = make_anchor(PAINTED, start, end)
+    assert anchor["quote"] == quote, "the browser's anchor quotes the source slice as it is"
+    r = world.comment(fp, body, fence=fence, anchor=anchor, hint=start if hint else None)
+    c = r["store"]["comments"][-1]
+    assert set(c) == set(KEEP) | {"anchor", "anchorAt"}, "the shape of every passage comment: KEEP plus anchor and anchorAt"
+    assert c["anchor"]["quote"] == quote, "the stored quote is the exact source slice"
+    assert c["anchor"] == anchor, "unique at 24 characters: stored as the browser sent it"
+    assert (c["anchorAt"], c["id"]) == (start, "%d-%d" % (c["ts"], start))
+    assert PAINTED[c["anchorAt"]:c["anchorAt"] + len(c["anchor"]["quote"])] == quote, "the position names the slice"
+    disk = json.loads(Path(r["storePath"]).read_text())["comments"][-1]
+    assert disk == c, "the reply is what the next load sees"
+    assert locate_anchor(PAINTED, c["anchor"], c["anchorAt"]) == {"from": start, "to": end}, "the painter's locate lands on the line"
+    assert locate_anchor(PAINTED, c["anchor"])["from"] == start, "and so does a reader with no position"
+    assert fp.read_text() == PAINTED, "a comment never touches the file"
+    return r, c
+
+
+def test_a_passage_comment_on_a_code_line_holding_asterisks_stores_the_exact_source_slice(world):
+    """Slice 5, item 2 (a regression guard: green before the slice). A comment saved from the Raw view on
+    `total = a * b * 2` inside a fence keeps its asterisks in the stored quote, the key set is KEEP plus anchor
+    and anchorAt, and the engine hinted by anchorAt lands on the line; the Rendered paint, which used to strip
+    the asterisks as emphasis and find nothing, now reads the quote raw against the code block's text."""
+    fp = world.root / "docs" / "note.md"
+    fp.write_text(PAINTED)
+    quote = "total = a * b * 2"
+    fence_open = PAINTED.index("```python")
+    fence_close = PAINTED.index("```", fence_open + 3)
+    assert fence_open < PAINTED.index(quote) < fence_close, "the fixture: the line sits inside the fence"
+    r, c = _passage_comment(world, fp, quote, "Why times two?")
+    assert " * " in c["anchor"]["quote"], "the operator is stored as written"
+    assert c["body"] == "Why times two?"
+    # a quote opening with the marker the old paint read as a heading: the host stores it from its `#`
+    r2, c2 = _passage_comment(world, fp, "# trailing comment", "Say what trails.", fence=world.fence_of(r))
+    assert c2["anchor"]["quote"].startswith("# ")
+    assert [x["body"] for x in r2["store"]["comments"]] == ["Why times two?", "Say what trails."]
+
+
+def test_a_passage_comment_across_two_table_cells_stores_the_slice_with_its_pipe(world):
+    """Slice 5, item 8 (a regression guard: green before the slice). A comment saved from the Raw view on
+    `cell one | cell two` keeps the cell delimiter in the stored quote, the key set is KEEP plus anchor and
+    anchorAt, and the engine lands on the row with or without the position; the Rendered paint reads the pipe
+    as a blank at paint time and marks both cells, the store never strips it."""
+    fp = world.root / "docs" / "note.md"
+    fp.write_text(PAINTED)
+    quote = "cell one | cell two"
+    at = PAINTED.index(quote)
+    row = PAINTED[PAINTED.rindex("\n", 0, at) + 1:PAINTED.index("\n", at)]
+    assert row == "| cell one | cell two |", "the fixture: the quote spans the row's two cells"
+    r, c = _passage_comment(world, fp, quote, "One cell would do.")
+    assert "|" in c["anchor"]["quote"], "the delimiter is stored as written"
+    # the same passage with no position sent: it occurs once, so the host locates it without one
+    r2, c2 = _passage_comment(world, fp, quote, "Still one cell.", fence=world.fence_of(r), hint=False)
+    assert c2["anchorAt"] == c["anchorAt"]
+    # and one cell alone, beside them
+    r3, c3 = _passage_comment(world, fp, "cell three", "Which three?", fence=world.fence_of(r2))
+    assert [x["anchor"]["quote"] for x in r3["store"]["comments"]] == [quote, quote, "cell three"]
+
+
 def test_track_reply_answers_into_the_comment_and_status_derives_unsent(world):
     r = world.comment(world.fp, "Which cache?")
     cid = r["store"]["comments"][0]["id"]
