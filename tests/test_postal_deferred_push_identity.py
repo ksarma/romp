@@ -37,17 +37,29 @@ def _log_events():
     return [json.loads(ln) for ln in p.read_text().splitlines() if ln.strip()]
 
 
+def _reset():
+    """Empty TO's box and the timeline log: before every case, so a case starts from nothing, and
+    after it (2026-09-10), because a restore case leaves a message in new/ on purpose. Every postal
+    test module loads `romp_postal` into the same module object and so shares this MAILROOT, and most
+    address TO as their sid; under xdist a sibling's case can run right after one of these with none
+    of this module's later cases in between to drain the box (tests/test_postal_isolation.py's
+    mailbox case read that leftover as a second body)."""
+    for d in ("new", "cur", "tmp"):
+        p = pm.MAILROOT / TO / d
+        if p.is_dir():
+            for f in p.iterdir():
+                f.unlink()
+    p = pm.TLDIR / "messages.jsonl"
+    if p.exists():
+        p.unlink()
+
+
 class DeferredPushKeepsOneIdentity(unittest.TestCase):
     def setUp(self):
-        for box in (pm.MAILROOT / TO,):
-            for d in ("new", "cur", "tmp"):
-                p = box / d
-                if p.is_dir():
-                    for f in p.iterdir():
-                        f.unlink()
-        p = pm.TLDIR / "messages.jsonl"
-        if p.exists():
-            p.unlink()
+        _reset()
+
+    def tearDown(self):
+        _reset()
 
     def test_restore_puts_it_back_under_the_same_id(self):
         mid = pm.deliver(TO, "api", FROM, "the migration is on staging", kind="coordinate")
@@ -109,14 +121,7 @@ class DeferredPushEndToEnd(unittest.TestCase):
     """The regression at its own level: drive _push with a kernel that refuses to inject."""
 
     def setUp(self):
-        for d in ("new", "cur", "tmp"):
-            p = pm.MAILROOT / TO / d
-            if p.is_dir():
-                for f in p.iterdir():
-                    f.unlink()
-        p = pm.TLDIR / "messages.jsonl"
-        if p.exists():
-            p.unlink()
+        _reset()
         self._disabled, self._post = pm._push_disabled, pm._kernel_post
         self._sessions_file = os.environ.pop("ROMP_SESSIONS_FILE", None)
         pm._push_disabled = lambda: False
@@ -126,6 +131,7 @@ class DeferredPushEndToEnd(unittest.TestCase):
         pm._push_disabled, pm._kernel_post = self._disabled, self._post
         if self._sessions_file is not None:
             os.environ["ROMP_SESSIONS_FILE"] = self._sessions_file
+        _reset()
 
     def test_push_that_cannot_inject_keeps_the_message_id(self):
         mid = pm.deliver(TO, "api", FROM, "staging is green, promoting", kind="coordinate")

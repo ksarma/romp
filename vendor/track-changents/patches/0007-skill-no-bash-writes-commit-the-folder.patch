@@ -1,0 +1,43 @@
+# Patch 0007 — skill: a tracked file is never written through Bash, and the comments folder goes in the commit
+# Offered back: yes
+# Files: skill/SKILL.md
+#
+# Reason: two gaps a host's dry run (2026-09-09) and its user (2026-09-10) found. First, the skill
+# forbade the Edit/Write/MultiEdit tools on a tracked file and said nothing of the shell: an agent working
+# in a mode that writes files through Bash (cp, tee, a heredoc, sed -i) ran track-config and cp in one
+# compound command on a tracked file, and since track-config exits 0 when tracking is ON, the `&&` ran the
+# copy on exactly the file it must not touch; the write landed raw with no suggestion recorded. The
+# "When tracking is ON" section now opens with the rule: no shell write to a tracked file in any of its
+# forms, every write through track-edit, and track-config's exit code checked as a step of its own, never
+# in a compound command with the write. Second, agents never added `.trackchanges/` to their commits, so
+# the reviewer's comments and the record of the agent's changes were not archived with the work; a Notes
+# bullet asks the agent to include the folder when the project has one and does not ignore it (the
+# store is designed to be committed: store-io.mjs's header). Prose only; pinned by the host's
+# tools/vendor-patches.test.mjs (P7) and the drift test.
+diff --git a/skill/SKILL.md b/skill/SKILL.md
+index 8371d2a0f..f7d8bc982 100644
+--- a/skill/SKILL.md
++++ b/skill/SKILL.md
+@@ -51,6 +51,14 @@ the comment-thread reply further down works in EITHER mode.
+ 
+ ## When tracking is ON: never touch the file with Edit/Write — use the CLIs
+ 
++Nor through Bash. A shell write reaches the file behind the tools and leaves no
++record: no `cp` or `mv` over it, no `tee`, no `>` or `>>` redirection into it (a
++heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
++`writeFileSync`. Every write to a tracked file goes through `track-edit`. Check
++`track-config`'s exit code as a step of its own, never in a compound command with
++the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
++the copy on exactly the file it must not touch.
++
+ For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
+ 
+ - **Make or replace text** — applies the change AND records it as your tracked
+@@ -162,3 +170,7 @@ review panel.
+ - Always identify the file by the ABSOLUTE path you're handed — this session may
+   be in a different working directory, so a relative path won't resolve.
+ - Editor mode = one focused change at a time, so each is a clean, reviewable diff.
++- When you commit work in a project that has a `.trackchanges/` folder and does not
++  ignore it, include that folder in the commit: it holds the user's comments on your
++  files and the record of your tracked changes, and it is part of the project's
++  history.

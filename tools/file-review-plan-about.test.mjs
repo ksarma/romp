@@ -37,7 +37,7 @@ function between(doc, from, to) {
 }
 // The Decisions list's numbers, in document order. Compared to the whole run 1..N, never to a tail: a tail check
 // (the first form of this pin compared the last four) let a renumbered or duplicated entry anywhere before it pass.
-const DECISIONS_END = 46;
+const DECISIONS_END = 48;
 const decisionNumbers = (doc) => Array.from(between(doc, '\n## Decisions', '\n## Open questions').matchAll(/(?:^| )(\d+)\. \*\*/g), (m) => Number(m[1]));
 const consecutive = (n) => Array.from({ length: n }, (_, i) => i + 1);
 const LABEL = 'The about follow-on (2026-09-10):';
@@ -59,7 +59,7 @@ test('the paragraph stands under Slice 2 after the arrivals note, and the two de
   for (const text of [note, d45, d46]) {
     assert.ok(!/"[^"]*\b(I|my|me)\b[^"]*"/.test(text.replace(/"about [^"]*"/g, '').replace(/"Resolve the N comments[^"]*"/g, '')), 'no quoted utterance of the user\'s');
   }
-  assert.deepEqual(decisionNumbers(plan), consecutive(DECISIONS_END), 'the list stays consecutive and ends at 46');
+  assert.deepEqual(decisionNumbers(plan), consecutive(DECISIONS_END), 'the list stays consecutive and ends at 48');
   assert.ok(d45.includes('(2026-09-10)') && d46.includes('(2026-09-10)'));
 });
 

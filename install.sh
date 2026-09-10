@@ -80,7 +80,7 @@ mkdir -p "$HOME/.claude/hooks" "$HOME/.claude/skills"
 
 for h in romp-summarize.sh romp-postal-drain.sh romp-postal-ensure.sh \
          romp-postal-revive.sh romp-postal-context.sh romp-usertodo-context.sh \
-         romp-wake.sh tmux-status.sh; do
+         romp-wake.sh tmux-status.sh romp-track-bash-guard.mjs; do
     ln -sf "$ROMP_DIR/hooks/$h" "$HOME/.claude/hooks/$h"
 done
 echo "  Symlinked romp hooks into ~/.claude/hooks/"
@@ -175,7 +175,13 @@ WANT = {  # event -> [(hook script, timeout secs, async)]
     # a raw Write/Edit on a tracked file and points the session at track-edit. Its fourth field is a
     # MATCHER, so it lands in a group of its own; a deny must block, so it is synchronous; and it
     # exits at once in any session romp did not launch (no ROMP_SID in the environment).
-    "PreToolUse":       [("track-guard.mjs", 10, False, "Write|Edit|MultiEdit")],
+    # Beside it, romp's own guard on the Bash tool (hooks/romp-track-bash-guard.mjs, linked with
+    # romp's hooks above): the vendored guard never sees a write made through Bash (cp, tee, a
+    # heredoc, sed -i), which is how a session in auto mode writes files, so this one reads the
+    # command and denies one that would write a tracked file, with the same remedy, the same
+    # synchronous deny and the same ROMP_SID gate (plans/file-review.md, decision 47).
+    "PreToolUse":       [("track-guard.mjs", 10, False, "Write|Edit|MultiEdit"),
+                         ("romp-track-bash-guard.mjs", 10, False, "Bash")],
 }
 # Hooks another installer registers too. One of these counts as registered when any entry in the
 # event names its BASENAME: track-changents' own installer writes $HOME/.claude/hooks/track-guard.mjs

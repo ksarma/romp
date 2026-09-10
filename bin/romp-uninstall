@@ -8,7 +8,7 @@
 #
 # What it removes, mirroring install.sh + bootstrap.sh step for step:
 #   - the login service           (romp-service uninstall: systemd --user / launchd)
-#   - ~/.claude/hooks/*.sh        (the romp hook symlinks only)
+#   - ~/.claude/hooks/*.sh        (the romp hook symlinks only, and romp-track-bash-guard.mjs)
 #   - ~/.claude/settings.json     (ONLY the romp hook entries; your other hooks are untouched)
 #   - ~/.claude/skills/romp*      (skill symlinks)
 #   - ~/.claude/romp-postal.mcp.json
@@ -85,7 +85,8 @@ pkill -f "$ROMP_DIR/bin/romp-kernel"  2>/dev/null || true
 # ── 2. ~/.claude wiring ────────────────────────────────────────────────
 echo "==> ~/.claude hook + skill symlinks"
 for h in romp-summarize.sh romp-postal-drain.sh romp-postal-ensure.sh \
-         romp-postal-revive.sh romp-postal-context.sh romp-usertodo-context.sh romp-wake.sh tmux-status.sh; do
+         romp-postal-revive.sh romp-postal-context.sh romp-usertodo-context.sh romp-wake.sh tmux-status.sh \
+         romp-track-bash-guard.mjs; do
     rm -f "$HOME/.claude/hooks/$h"
 done
 rm -f "$HOME/.claude/skills/romp" "$HOME/.claude/skills/romp-postal"
@@ -123,7 +124,8 @@ import json, os, sys
 
 SETTINGS = os.path.expanduser("~/.claude/settings.json")
 OURS = {"tmux-status.sh", "romp-summarize.sh", "romp-postal-drain.sh", "romp-postal-ensure.sh",
-        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-usertodo-context.sh", "romp-wake.sh"}
+        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-usertodo-context.sh", "romp-wake.sh",
+        "romp-track-bash-guard.mjs"}
 VENDORED = os.path.realpath(os.path.join(sys.argv[1], "vendor", "track-changents"))
 VENDOR_PART = os.sep + os.path.join("vendor", "track-changents") + os.sep
 INSTALLED_GUARD = "~/.claude/hooks/track-guard.mjs"     # the exact command string install.sh registers
