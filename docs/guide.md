@@ -476,7 +476,9 @@ text back in the file. **Accept all** and **Reject all** decide every change at 
 all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
 deletion, since a point is easy to miss; a change the current view does not mark, because it
 cannot or because the marks are hidden, offers it too. Reply on a change's card leaves a
-comment on the change itself, and the session's answer comes back to that card. A session's
+comment on the change itself, and the session's answer comes back to that card. You can also
+comment inside a change without replying to it: a click on a change mark or a comment highlight
+opens its card, and a selection made by dragging inside one leaves a comment on those words. A session's
 tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
