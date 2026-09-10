@@ -184,7 +184,8 @@ class RollbackAndPendingCut(unittest.TestCase):
         self.assertIn("return self._arm_rewind(sid, target_uuid, text)", BACKEND_SRC)
         self.assertIn("bare = text is None", BACKEND_SRC)
         # nothing is enqueued for a bare rollback — the next real message takes the branch
-        self.assertIn("if not bare:\n            s.enqueue(text)", BACKEND_SRC)
+        # (the enqueue re-resolves a queue the crash heal closed under it, round 6: the helper's one call)
+        self.assertIn("if not bare:\n            s = self._enqueue_resolving(sid, s, lambda s: s.enqueue(text))", BACKEND_SRC)
 
     def test_refused_connect_never_pops_the_queue_for_a_bare_rollback(self):
         # the edit flow's queue head IS the held edit turn; a bare rollback enqueued nothing, so

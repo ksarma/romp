@@ -10930,7 +10930,10 @@ class SdkBackend:
         s = self._ensure(sid)
         if not s:
             return False
-        for _attempt in range(3):
+        sent_t = sent_off = sent_fsid = None
+
+        def attempt(s):
+            nonlocal sent_t, sent_off, sent_fsid
             if _is_compact_cmd(text):
                 # Delivering /compact: mark the session compacting NOW (authoritative), covering the gap between
                 # this send and the CLI actually starting the turn, so a drive op the pusher's drain checks in
@@ -10943,28 +10946,15 @@ class SdkBackend:
                 s._clearing = True
             # The echo's stamp AND the transcript's byte size, both taken BEFORE the CLI can see the text: the
             # record it writes is then at or after both by construction (T237b for the stamp; the size,
-            # 2026-09-06, is where _text_landed starts the scan for this echo; see _transcript_mark).
+            # 2026-09-06, is where _text_landed starts the scan for this echo; see _transcript_mark). Taken
+            # again on every attempt: a re-resolved send is a new chance for the CLI to see the text.
             sent_t = int(time.time())
             sent_off, sent_fsid = self._transcript_mark(sid)
             if send_id:
-                ok = s.enqueue(text, todo=user_todo or "", send_id=str(send_id))
-            else:
-                ok = s.enqueue(text, todo=user_todo or "")     # the two-argument shape every session double answers
-            if ok is not False:       # a double's None is a queued text; only the closed queue's False is not
-                break
-            # The session's queue CLOSED under this send (round 5, kernel-3): between _ensure above and the
-            # enqueue, its crash heal folded its pending into the reg and popped it (SdkSession._queue_closed),
-            # so the text reached no queue. The sid resolves to the replacement now (or spawns it from the
-            # reg the heal wrote, nudge first), which takes the text in order. Bounded: a replacement that
-            # dies inside the same window is a crash loop, which the heal refuses to respawn.
-            self._log("send (%s): the session's queue closed under the send (its crash heal folded the queue "
-                      "and popped it); re-resolving to the replacement" % sid[:8], problem=False)
-            s = self._ensure(sid)
-            if not s:
-                return False
-        else:
-            self._log("send (%s): the session's queue closed under the send three times; the text was not queued"
-                      % sid[:8], problem=True)
+                return s.enqueue(text, todo=user_todo or "", send_id=str(send_id))
+            return s.enqueue(text, todo=user_todo or "")     # the two-argument shape every session double answers
+        s = self._enqueue_resolving(sid, s, attempt)   # a queue the crash heal closed under the send: the replacement
+        if not s:
             return False
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
         # stream has it yet at send time — only we know the text). Synthetic uuid; pruned by text once the
@@ -11404,8 +11394,14 @@ class SdkBackend:
             return False, "the session could not start"
         s._rewind_leaf, s._rewind_to = leaf, target_uuid   # already-running thread: the reg seed didn't apply
         s._rewind_bare = bare
+        # a queue the crash heal closed under the enqueue re-resolves to the replacement, which takes the edit
+        # text (round 6, regression-1); the replacement is seeded from the reg the rewind fields were written
+        # to above, so the rewind rides with it. Nothing is enqueued for a bare rollback.
         if not bare:
-            s.enqueue(text)
+            s = self._enqueue_resolving(sid, s, lambda s: s.enqueue(text))
+            if not s:
+                self._update_reg(sid, rewindTo="", rewindLeaf="", rewindBare=False, rewindWait=False)
+                return False, "the session could not take the edit; it was not queued"
         s.request_reconnect()   # idle → reconnects now; a fresh thread's FIRST connect applies the flag
         self._poke()
         return True, ""
@@ -11558,9 +11554,34 @@ class SdkBackend:
         s = self._ensure(sid)
         if not s:
             return False
-        s.enqueue(text)
+        if not self._enqueue_resolving(sid, s, lambda s: s.enqueue(text)):   # a queue the crash heal closed under
+            return False                                                     # the deliver: the replacement (round 6)
         self._poke()
         return True
+
+    def _enqueue_resolving(self, sid: str, s: SdkSession, attempt) -> "SdkSession | None":
+        """Queue a text on the session `sid` resolves to, re-resolving the sid when the session's queue CLOSED
+        under the attempt (round 5, kernel-3; one helper for send, deliver and the rewind's edit text since
+        round 6, regression-1, when deliver ignored the refusal and reported a text it had dropped as
+        delivered). `attempt(s)` runs the enqueue on `s` and returns what it returned: False, the closed
+        queue's answer (SdkSession.enqueue), means the session's crash heal folded its pending into the reg
+        and popped it between the caller's _ensure and the enqueue (SdkSession._queue_closed), so the text
+        reached no queue; any other value (a double's None too) is a queued text. The sid resolves to the
+        replacement now (or spawns it from the reg the heal wrote, nudge first), which takes the text in
+        order. Bounded to three attempts: a replacement that dies inside the same window is a crash loop,
+        which the heal refuses to respawn. Returns the session the text was queued on; None when the sid
+        stopped resolving (the caller's own False) or the bound was hit (logged as a problem)."""
+        for _attempt in range(3):
+            if attempt(s) is not False:
+                return s
+            self._log("send (%s): the session's queue closed under the send (its crash heal folded the queue "
+                      "and popped it); re-resolving to the replacement" % sid[:8], problem=False)
+            s = self._ensure(sid)
+            if not s:
+                return None
+        self._log("send (%s): the session's queue closed under the send three times; the text was not queued"
+                  % sid[:8], problem=True)
+        return None
 
     def interrupt(self, sid: str) -> bool:
         s = self.sessions.get(sid)
@@ -13418,37 +13439,59 @@ class SdkBackend:
         # would have landed after the heal's write (the send's _ensure-to-persist gap, milliseconds under
         # load) cannot put a nudge-less list over the nudge or lose its text; the fold also closes the
         # queue, so a send that reaches this session after the fold is refused and re-resolves to the
-        # replacement (SdkBackend.send). What remains is the pop-to-write window: a send whose _ensure runs
-        # after the pop and before the heal's write spawns a replacement from a reg without the nudge, as
-        # it did before the scope was ever read (microseconds; the residual).
+        # replacement (_enqueue_resolving: send, deliver and the rewind's edit text). The pop and the heal's
+        # write share ONE hold of self._lock (round 6, tests-1; the heal's verdict, attempt count and nudge
+        # are decided before it): _ensure reads the reg under that lock, so a send either resolves the
+        # still-registered dying session (its enqueue folded, or refused after the fold and re-resolved) or
+        # reads the reg the heal wrote; with the pop before the write, a send in that gap spawned the
+        # replacement from the pre-write reg and its persist put a nudge-less list over the fold, losing
+        # the nudge and every sealed text. The fold's write is inside the hold that closes the queue too
+        # (round 6, correctness-1), so a refused enqueue re-resolves to a reg that carries the fold.
+        # Lock order, from the outside in: self._lock, then the session's _persist_lock, then _reg_lock,
+        # then the session's _lock (_write_sealed_queue). Every other site in this module takes them the
+        # same way or takes one alone (self._lock then _reg_lock in _ensure; _persist_lock then the
+        # session's _lock then _reg_lock in _persist_queue; _reg_lock holders take nothing but the log's
+        # own lock). The one reverse edge is the feeder's drain_holding call (self._lock) under a
+        # session's _lock in _amain's inputs(): it runs on that session's own loop thread, which for the
+        # dying session is THIS thread (asyncio.run has returned and the loop is closed before _run's
+        # finally calls here), and the heal takes no other session's _lock, so no cycle can form.
+        # self._lock is a plain Lock: the attempt count's own hold comes before the pop's, and
+        # append_machine_cut and _ensure run after it. What remains is the window between the verdict
+        # and the hold (microseconds): a kill landing there is ended when the hold writes, so the nudge
+        # goes to the reg of a session the heal's _ensure then finds not alive, and a later resume runs it.
         cut = not sess.ended and sess.inflight > 0 and not sess._interrupted
         if cut:
             with sess._lock:
                 sess._queue_sealed = True
         oom = self._oom_killed_scope(sess) if cut else _UNREAD
-        with self._lock:
-            if self.sessions.get(sess.sid) is sess:
-                self.sessions.pop(sess.sid, None)
-        if not sess.ended:
-            if sess.inflight > 0 and not sess._interrupted:
-                # ABNORMAL death mid-turn (killed / crashed — not a user interrupt, not a clean
-                # ResultMessage finish, not our own shutdown). Do NOT settle 'waiting': that masked
-                # the cut (2026-07-06: reaped sessions settled 'waiting', so last_state_value never
-                # read 'working' and nothing ever resumed them — the silent stall). The trailing
-                # 'working' IS the cut marker; heal by resuming, bounded.
-                self._heal_cut_session(sess, oom)
-            else:
-                # process exited on its own while idle (crash / EOF) — settle state; next send resumes
-                append_state(self.state_dir, sess.sid, "waiting")
-        elif cut:
-            # the cut was detected and the mirror sealed, then the session was ENDED during the reads (a
-            # kill or a shutdown, round 5): no heal, but the sealed queue still owes the reg its texts
-            # (a send during the reads persisted nothing), as the persist would have written them
-            try:
-                self._write_sealed_queue(sess)
-            except Exception:
+        if cut and not sess.ended:
+            # ABNORMAL death mid-turn (killed / crashed: not a user interrupt, not a clean
+            # ResultMessage finish, not our own shutdown). Do NOT settle 'waiting': that masked
+            # the cut (2026-07-06: reaped sessions settled 'waiting', so last_state_value never
+            # read 'working' and nothing ever resumed them, the silent stall). The trailing
+            # 'working' IS the cut marker; heal by resuming, bounded. The heal pops the session
+            # itself, in the hold that writes the sealed queue (round 6).
+            self._heal_cut_session(sess, oom)
+        else:
+            err = None
+            with self._lock:
+                if self.sessions.get(sess.sid) is sess:
+                    self.sessions.pop(sess.sid, None)
+                if cut:
+                    # the cut was detected and the mirror sealed, then the session was ENDED during the
+                    # reads (a kill or a shutdown, round 5): no heal, but the sealed queue still owes the
+                    # reg its texts (a send during the reads persisted nothing), as the persist would have
+                    # written them; written in the pop's own hold, like the heal's write (round 6)
+                    try:
+                        self._write_sealed_queue(sess)
+                    except Exception:
+                        err = traceback.format_exc()
+            if err:
                 self._log("session %s: ended during its heal's scope read; its queue could not be written: %s"
-                          % (sess.name, traceback.format_exc()))
+                          % (sess.name, err))
+            if not sess.ended:
+                # process exited on its own while idle (crash / EOF): settle state; next send resumes
+                append_state(self.state_dir, sess.sid, "waiting")
         # the thread (and its claude subprocess) is gone, so any background work is too — clear a stale
         # awaiting overlay so the session doesn't read working/awaiting forever (reorder_bug 2026-06-24).
         self._heal_stale_awaiting(sess.sid)
@@ -13499,8 +13542,12 @@ class SdkBackend:
         re-ensure. BOUNDED to one resume per cut — the counter only resets when a turn COMPLETES
         (_turn_completed), so a CLI that keeps dying before finishing a turn is a crash loop and is
         left cut (loudly) for the next boot reconcile instead of respawning forever. `oom` is the
-        scope's verdict _on_session_gone read before it popped the session (kernel-3, round 4); a
-        caller that has not read it (_UNREAD) gets the read here."""
+        scope's verdict _on_session_gone read before the pop (kernel-3, round 4); a caller that has not
+        read it (_UNREAD) gets the read here. The verdict (resume or refuse), the attempt count and the
+        nudge are decided BEFORE the session is popped, and the sealed queue is written and the session
+        popped in ONE hold of self._lock (round 6, tests-1; the order argument is in _on_session_gone's
+        comment): self._lock is a plain Lock, so the attempt count's hold comes first and the machine cut
+        and the _ensure follow the hold."""
         sid = sess.sid
         # The dead CLI's own scope is read FIRST, before the crash-loop refusal below (kernel-1 2026-09-10):
         # a session OOM-killed twice in a row must still have its cause named in the log, and its scope's
@@ -13526,9 +13573,13 @@ class SdkBackend:
             # The refusal spawns nothing, but it still writes the reg's queue once (round 5, fresh-2): the
             # mirror has been sealed since the cut, so a send that reached the dying session during the
             # reads is in its pending and nowhere else; folded here, it is parked in the reg (no nudge, no
-            # re-head) and runs at the next start, which a later send or the boot reconcile makes.
+            # re-head) and runs at the next start, which a later send or the boot reconcile makes. The pop
+            # shares the write's hold (round 6), or a send in the gap would spawn from the pre-write reg.
             try:
-                parked = [e for e in self._write_sealed_queue(sess) if (qt := _queue_text(e)) and not is_crash_resume_nudge(qt)]
+                with self._lock:
+                    if self.sessions.get(sid) is sess:
+                        self.sessions.pop(sid, None)
+                    parked = [e for e in self._write_sealed_queue(sess) if (qt := _queue_text(e)) and not is_crash_resume_nudge(qt)]
             except Exception:
                 parked = []
                 line += "; its queue could not be written: %s" % traceback.format_exc().strip().splitlines()[-1]
@@ -13555,8 +13606,13 @@ class SdkBackend:
             self._log("session %s: claude process died mid-turn; resuming with history intact" % sess.name)
         nudge = CRASH_RESUME_NUDGE_OOM if named else CRASH_RESUME_NUDGE_KILLED if kind == "sigkill" else CRASH_RESUME_NUDGE
         try:
-            self._write_sealed_queue(sess, nudge)   # reg["queue"] = [nudge] + the session's pending, an earlier crash notice dropped
-            append_machine_cut(self.state_dir, sid, "crash")   # romp's cut, romp's resume — never a user stop
+            with self._lock:
+                # the pop and the fold in one hold: the reg's queue becomes the nudge, then the session's
+                # pending (an earlier crash notice dropped), and _ensure sees the session or that reg
+                if self.sessions.get(sid) is sess:
+                    self.sessions.pop(sid, None)
+                self._write_sealed_queue(sess, nudge)
+            append_machine_cut(self.state_dir, sid, "crash")   # romp's cut, romp's resume, never a user stop
             self._ensure(sid)
         except Exception:
             self._log("session %s: crash-resume FAILED (turn left cut for the next kernel restart): %s"
@@ -13564,30 +13620,37 @@ class SdkBackend:
 
     def _write_sealed_queue(self, sess: SdkSession, nudge: str | None = None) -> list:
         """The reg's ONE queue write for a dying session (round 5, kernel-3): fold the session's in-memory
-        _pending into reg['queue'] and CLOSE the queue in the same hold of the session's _lock
-        (SdkSession._queue_closed: enqueue and unqueue refuse from here, and SdkBackend.send re-resolves the
-        sid to the replacement). Taken under the session's own _persist_lock, the lock its _persist_queue
-        holds across snapshot and write, so a persist that snapshotted before the mirror was sealed
-        (SdkSession._queue_sealed, set at the cut in _on_session_gone) lands before this read of the reg,
-        and none can land after this write. The pending list is authoritative for a live session's queue:
-        it was seeded from the reg and every mutation mirrored it until the seal, so a text queued or
-        cancelled during the heal's reads is in it and not in the reg, and the reg's own list is
-        replaced, not merged (the reg mirrors it; a merge would duplicate or resurrect). With `nudge` the
-        crash resume notice heads the queue and an earlier crash notice is dropped (the heal's de-dup,
-        is_crash_resume_nudge); without one (the crash-loop refusal; a session ended during the reads)
-        the queue is written as it stands. Returns the entries written, in wire form. Raises what
+        _pending into reg['queue'], CLOSE the queue and WRITE the reg in the same hold of the session's _lock
+        (SdkSession._queue_closed: enqueue and unqueue refuse from here, and the backend re-resolves the sid
+        to the replacement, _enqueue_resolving). The write is INSIDE the hold that closes the queue (round 6,
+        correctness-1): an enqueue can see the closed queue only once the fold is on disk, so the _ensure it
+        re-resolves through reads a reg that carries the nudge and every sealed text; with the close before
+        the write, a send refused in that gap spawned the replacement from the pre-fold reg and its first
+        persist put a nudge-less list over the fold. Taken under the session's own _persist_lock, the lock
+        its _persist_queue holds across snapshot and write, so a persist that snapshotted before the mirror
+        was sealed (SdkSession._queue_sealed, set at the cut in _on_session_gone) lands before this read of
+        the reg, and none can land after this write. Every caller holds SdkBackend._lock, the pop's hold
+        (_on_session_gone, _heal_cut_session; round 6, tests-1), so the order is SdkBackend._lock, then
+        the session's _persist_lock, then _reg_lock, then the session's _lock; the comment at
+        _on_session_gone says why no path takes them the other way. The pending list is authoritative for
+        a live session's queue: it was seeded from the reg and every mutation mirrored it until the seal,
+        so a text queued or cancelled during the heal's reads is in it and not in the reg, and the reg's
+        own list is replaced, not merged (the reg mirrors it; a merge would duplicate or resurrect). With
+        `nudge` the crash resume notice heads the queue and an earlier crash notice is dropped (the heal's
+        de-dup, is_crash_resume_nudge); without one (the crash-loop refusal; a session ended during the
+        reads) the queue is written as it stands. Returns the entries written, in wire form. Raises what
         read_reg and write_reg raise: the callers log it."""
         with sess._persist_lock:
             with self._reg_lock:
                 reg = read_reg(self.state_dir, sess.sid) or {"sid": sess.sid}
                 with sess._lock:
-                    pend = list(sess._pending)
                     sess._queue_closed = True
-                queue = [_queue_wire(t) for t in pend if not (nudge and is_crash_resume_nudge(t))]
-                if nudge:
-                    queue = [nudge] + queue
-                reg["queue"] = queue
-                write_reg(self.state_dir, sess.sid, reg)
+                    pend = list(sess._pending)
+                    queue = [_queue_wire(t) for t in pend if not (nudge and is_crash_resume_nudge(t))]
+                    if nudge:
+                        queue = [nudge] + queue
+                    reg["queue"] = queue
+                    write_reg(self.state_dir, sess.sid, reg)
         return queue
 
     def _oom_killed_scope(self, sess: SdkSession):

@@ -2393,6 +2393,133 @@ class CrashHeal(unittest.TestCase):
             self.assertTrue(any("queue closed under the send" in m for m in logs), logs)
             self.assertEqual(be.problems(), [], "the re-resolve is the designed path, not a problem")
 
+    def test_a_send_in_the_heals_pop_to_write_gap_lands_behind_the_nudge(self):
+        # round 6 (tests-1): a send whose _ensure ran between the heal's pop and its reg write found no session and
+        # spawned the replacement from the pre-write reg; the replacement's persist then put a nudge-less list over
+        # the heal's write, so the nudge and every text sealed during the reads were lost from every live queue
+        # (the residual the round-5 body named, grown by the seal: the folded text no longer persisted itself).
+        # Now the pop and the write share one hold of be._lock, the lock _ensure reads the reg under, so the send
+        # blocks until the write has landed and spawns from the reg that carries the fold. The heal thread's
+        # nudge-headed write_reg is slowed once to hold the gap open.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
+            self.assertTrue(be.send(self.SID, "A"), "the send during the reads is accepted")
+            self.assertEqual(s.pending(), ["A"])
+            orig_write, slowed = sb.write_reg, []
+
+            def slow_write(state_dir, sid, reg):
+                if threading.current_thread() is s.thread and not slowed \
+                        and any(sb.is_crash_resume_nudge(sb._queue_text(e)) for e in reg.get("queue") or []):
+                    slowed.append(True)
+                    time.sleep(0.5)
+                return orig_write(state_dir, sid, reg)
+            with mock.patch.object(sb, "write_reg", slow_write):
+                sent.set()
+                deadline = time.time() + 10
+                while not s._queue_closed and time.time() < deadline:
+                    time.sleep(0.001)
+                self.assertTrue(s._queue_closed, "the heal folded the queue")
+                self.assertTrue(be.send(self.SID, "B"), "the send in the gap is accepted")
+                s.thread.join(10)
+            self.assertFalse(s.thread.is_alive())
+            self.assertEqual(slowed, [True], "the heal's write was held open once")
+            rep = be.sessions.get(self.SID)
+            self.assertIsNotNone(rep)
+            self.assertIsNot(rep, s, "the heal spawned the replacement")
+            self.assertEqual(rep.pending(), [sb.CRASH_RESUME_NUDGE_OOM, "A", "B"],
+                             "the replacement was spawned from the written reg and took the second send behind the fold")
+            rep._persist_queue()
+            self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM, "A", "B"])
+
+    def test_a_send_refused_by_the_close_re_resolves_to_a_reg_that_carries_the_fold(self):
+        # round 6 (correctness-1): the fold closed the queue before its write landed, so a send that held the dying
+        # session (its _ensure ran during the reads) and was refused by the close re-resolved through _ensure, which
+        # spawned the replacement from the pre-fold reg; the replacement's first persist then overwrote the fold,
+        # dropping the nudge and every text sealed during the reads. Now the write is inside the hold of the
+        # session's _lock that closes the queue, so an enqueue can see the closed queue only once the fold is on
+        # disk. The heal thread's nudge-headed write is held until a replacement appears or a bounded deadline
+        # passes: with the fix in, the refused send is blocked on the session's _lock until the write lands, so no
+        # replacement can appear during the hold and only the deadline releases it.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
+            self.assertTrue(be.send(self.SID, "first"))
+            orig_mark, in_mark = be._transcript_mark, threading.Event()
+
+            def slow_mark(sid):
+                in_mark.set()
+                deadline = time.time() + 10
+                while time.time() < deadline and not s._queue_closed:
+                    time.sleep(0.001)
+                return orig_mark(sid)
+            be._transcript_mark = slow_mark
+            orig_write, held = sb.write_reg, []
+
+            def holding_write(state_dir, sid, reg):
+                if threading.current_thread() is s.thread and not held \
+                        and any(sb.is_crash_resume_nudge(sb._queue_text(e)) for e in reg.get("queue") or []):
+                    held.append(True)
+                    deadline = time.time() + 1.0
+                    while time.time() < deadline and be.sessions.get(self.SID) in (s, None):
+                        time.sleep(0.005)
+                return orig_write(state_dir, sid, reg)
+            result = []
+            with mock.patch.object(sb, "write_reg", holding_write):
+                sender = threading.Thread(target=lambda: result.append(be.send(self.SID, "second")), daemon=True)
+                sender.start()
+                self.assertTrue(in_mark.wait(10), "the second send holds the dying session")
+                sent.set()
+                s.thread.join(10)
+                sender.join(10)
+            self.assertFalse(sender.is_alive(), "the send returned")
+            self.assertEqual(result, [True], "the send is accepted")
+            self.assertEqual(held, [True], "the heal's write was held")
+            rep = be.sessions.get(self.SID)
+            self.assertIsNotNone(rep)
+            self.assertIsNot(rep, s, "the heal spawned the replacement")
+            self.assertEqual(s.pending(), ["first"], "the fold carried the first text; nothing was appended after the close")
+            self.assertEqual(rep.pending(), [sb.CRASH_RESUME_NUDGE_OOM, "first", "second"],
+                             "the refused send re-resolved to a replacement spawned from the written fold")
+            rep._persist_queue()
+            self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM, "first", "second"])
+
+    def test_a_deliver_that_enqueues_after_the_heals_write_goes_to_the_replacement(self):
+        # round 6 (regression-1): deliver (a peer's mail) ignored enqueue's False, so a text handed to the dying
+        # session during the reads whose enqueue landed after the fold was dropped while the bus was told it was
+        # delivered (the maildir copy consumed). deliver re-resolves like send now, through the one helper
+        # (_enqueue_resolving): here the enqueue is released to run only after the heal has folded the queue, popped
+        # the session and spawned the replacement.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        logs = []
+        be._log_cb = logs.append
+        with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
+            orig_enqueue, released = sb.SdkSession.enqueue, []
+
+            def late_enqueue(self_, text, todo="", send_id=""):
+                if self_ is s and not released:
+                    released.append(True)
+                    sent.set()             # the heal runs to its end before this enqueue reaches the queue
+                    s.thread.join(10)
+                return orig_enqueue(self_, text, todo=todo, send_id=send_id)
+            with mock.patch.object(sb.SdkSession, "enqueue", late_enqueue):
+                self.assertTrue(be.deliver(self.SID, "peer mail"), "the deliver is accepted")
+            self.assertEqual(released, [True])
+            self.assertFalse(s.thread.is_alive())
+            rep = be.sessions.get(self.SID)
+            self.assertIsNotNone(rep)
+            self.assertIsNot(rep, s, "the heal spawned the replacement")
+            self.assertEqual(s.pending(), [], "the dying session's closed queue refused the mail")
+            self.assertEqual(rep.pending(), [sb.CRASH_RESUME_NUDGE_OOM, "peer mail"], "the replacement took it, behind the nudge")
+            rep._persist_queue()
+            self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM, "peer mail"])
+            self.assertTrue(any("queue closed under the send" in m for m in logs), logs)
+            self.assertEqual(be.problems(), [], "the re-resolve is the designed path, not a problem")
+
     def test_a_send_during_the_read_under_a_crash_loop_refusal_is_parked_in_the_reg(self):
         # round 5 (fresh-2): with the one resume spent (_heal_attempts 1), a send that reaches the dying session during
         # the read is accepted and its text folded into the reg by the refusal's own write (the mirror is sealed from
