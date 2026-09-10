@@ -1,7 +1,7 @@
 // The house fake DOM for the UI tests. One node factory, shared by the sixteen ui/timeline-*.test.ts that build the
 // panel on a fake DOM and by ui/webview/tab-color-picker.test.ts (seventeen files at 2026-09-10; the other fourteen
 // ui/timeline-*.test.ts fake no DOM), in place of the seventeen near-copies those files carried (the sixteen siblings'
-// and the tags-scale test's own: nine textual variants of one shape, unified 2026-09-10), and taken outright by
+// and the tags-scale test's own: textual variants of one shape, unified 2026-09-10), and taken outright by
 // ui/webview/timeline-boot.test.ts. Every other file that fakes a DOM (the 163 ui/webview test files that call
 // hideEdges at 2026-09-10, every one in the ratchet's detector's view, which ui/test-dom-shim.test.ts pins) keeps its
 // own node classes, window stand-ins or node literals and reaches this module through hideEdges and staysEnumerable,
