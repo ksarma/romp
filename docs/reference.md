@@ -475,7 +475,10 @@ view). The tab's right-click menu writes the same hide entry: **Hide tab** on a 
 **Show tab** on a hidden one (a hidden copy has no tab on the strip; the way back is the view's
 **Show**, and the group's count opens the view while the group is open). The row follows the copy
 the menu speaks for: the copy you right-clicked while its group holds the session, else the
-session's one remaining group, and none under two or more; that group's tag must already exist (a
+session's one remaining group, and none under two or more (the copy is known by its tag's id, and
+by its name when no tag has that id, so a rename keeps it and so does a tag made again under the
+same name; a tag added from the flyout while the row named the one remaining group keeps the row
+on that group, even when the removed tag comes back); that group's tag must already exist (a
 tag still being created has no row until the kernel answers), and the tabs must be grouped by tag.
 On the flat strip, on the phone layout and for the untagged sessions after the divider, where hides
 do not apply, the menu has no such row; an untagged session gets the row once a tag added from the

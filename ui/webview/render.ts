@@ -7021,6 +7021,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label"); lb.textContent = g.name; bodyE.appendChild(lb);
           row.appendChild(bodyE);
+          row.title = g.name;   // the whole name as the row's tooltip (round 6): the label elides at the flyout's per-row cap; the ✕ keeps its own title (the innermost wins)
           if (g.pending) {
             // a create still in flight: the row shows, and takes no gesture until the ack names the
             // tag (a ✕ here posted the placeholder id and was refused as a tag that does not exist)
@@ -7067,6 +7068,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
             row.appendChild(bodyE);
             row.addEventListener("click", (e2) => { e2.stopPropagation(); aimAdd(g.name); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
           }
+          row.title = lb.textContent ?? "";   // the whole label as the row's tooltip (round 6): a 40-character destination elides at the cap and was readable nowhere in the menu; the + keeps its own title
           add(row);
         }
         // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
@@ -7096,6 +7098,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
           bodyE.appendChild(sb2);
           row.appendChild(bodyE);
+          row.title = sb2.textContent;   // the whole sentence as the row's tooltip (round 6): the sub-line elides at the cap for a long name
           // the click SETS the state this row showed (!on): a toggle would flip whatever a re-render stored between the render and the click.
           // The write dispatches TABGROUPS_EVENT, whose listener runs the notifier, and the pin bit is in flySig (round 6), so the flyout is
           // rebuilt inside the write; the build() after it is a second pass over the same blob, kept so this row's refresh does not hang on

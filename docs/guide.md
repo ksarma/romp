@@ -178,19 +178,28 @@ where to show it again: the group's view, where its row has the **Show** button.
 that view depends on the fold: an open group's count opens the view and leaves the group open; a
 folded group's header opens the group and the view together. While the menu is open, the row
 follows the copy you right-clicked, through your edits in the **Tags** flyout and through changes
-that arrive from elsewhere (another pane, another dashboard); a tag renamed meanwhile keeps the
-row, under its new name, except a group that only another machine's tags make, which the menu
-knows by name alone: renamed there while the session is under two or more groups, the row leaves,
-and a click writes nothing. Moving it to another group changes the group the
-line names. Removing that group's tag takes the row away, unless the session is left under
+that arrive from elsewhere (another pane, another dashboard). The menu knows the group by its
+tag's id, and by its name when no tag has that id: a tag renamed meanwhile keeps the row under its
+new name, and a tag removed and made again under the same name keeps it too. Two kinds of group
+are known by name alone, a group that only another machine's tags make and a tag you created by
+typing its name into the **Tags** flyout while the tab had no group: renamed while the session is
+under two or more groups, the row leaves, and a click writes nothing. Moving it to another group
+changes the group the line names. Removing that group's tag takes the row away, unless the session is left under
 exactly one other tag, whose group the line then names: under two or more, the menu cannot tell
 which copy you mean. If the removed tag comes back (a removal the kernel refused, or the tag added
-again from another pane), the line names your group again. While the row is away, adding a tag brings it back for that group, unless
+again from another pane), the line names your group again, unless you added a tag from the flyout
+while the line named the one remaining group: that add keeps the line on that group, and the tag
+coming back does not move it. While the row is away, adding a tag brings it back for that group, unless
 the copy's tag is still being created: an add then keeps the copy under the pending tag, and the
 row stays away until that tag exists. A removal that leaves one tag brings it back for that one.
 Removing one of the session's other tags leaves the line alone. If the group changes under the menu
-just before you click, the click hides nothing: the line redraws for the group the tab is in now, the
-menu stays open, and a second click acts on what it says. The menu has **Hide tab** only while
+just before you click, the click hides nothing. While the tab is still in the group the line named,
+or has left it for exactly one other group, the line redraws for the group the tab is in now, the
+menu stays open, and a second click acts on what it says; when the words would not change (the
+same group under a new tag), the line flashes instead and its tooltip says to click again. If the
+tab has left that group and is under none, or under two or more (the menu cannot tell which copy
+you mean), or the tabs were ungrouped from another pane, the menu closes and nothing is hidden.
+The menu has **Hide tab** only while
 the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip,
 on a phone, or for the untagged sessions after the divider. A tag that is still being created (its
 row under **Tags** says creating) has no **Hide tab** yet; the row appears once the tag exists. A hidden
