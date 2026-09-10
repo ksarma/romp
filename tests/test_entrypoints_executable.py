@@ -190,10 +190,10 @@ class ScratchCheckout(unittest.TestCase):
     whatever its name, a file without a shebang and a symlink with an extension under bin/ are not
     commands, an untracked file is not a command, a symlink target without its bit is named through
     its link, a hook under hooks/ or .githooks/ is held to the same rules and a symlinked hook is a
-    command whatever its name, an entry marked skip-worktree and absent
-    from the tree is neither a command nor missing, and the index reader skips for a missing git or
-    repository only. The scratch git runs under env(): it sees neither the index a
-    run from a hook inherits nor the machine's own git config, hooks or excludes file."""
+    command whatever its name, an entry marked skip-worktree and absent from the tree is neither a
+    command nor missing, and the index reader skips for a missing git or repository only. The scratch
+    git runs under env(): it sees neither the index a run from a hook inherits nor the machine's own
+    git config, hooks or excludes file."""
 
     def setUp(self):
         try:
