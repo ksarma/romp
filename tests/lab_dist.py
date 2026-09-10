@@ -427,6 +427,10 @@ class DistBuild:
     default runs the command as a subprocess, and the tests inject one."""
 
     def __init__(self, ext=EXT, cmd=("node", "esbuild.js"), inputs=None, root=ROOT, timeout=BUILD_TIMEOUT, run=None):
+        # absolute first, as the three derivation functions make theirs: the dist prune in _input_files and the
+        # dependency filter compare paths textually against the walk's absolute paths, so a relative `ext` kept
+        # dist's outputs in the key (every build changed them, so every call rebuilt) and stat-keyed package-lock.json
+        ext = os.path.abspath(ext)
         self.ext = ext
         self.dist = os.path.join(ext, "dist")
         self.cmd = list(cmd)

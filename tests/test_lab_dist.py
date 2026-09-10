@@ -404,6 +404,25 @@ class MarkerKeysOnInputs(_Checkout):
         os.remove(hidden)
         self.assertTrue(self.build.ensure_built(), "a removed node_modules is a dependency change")
 
+    def test_a_relative_extension_dir_keys_the_same_files_as_the_absolute_one(self):
+        """`DistBuild(ext="ext")` from the checkout root: the dist prune and the dependency filter compare paths
+        textually against the walk's absolute paths, so a relative dir left dist's outputs in the key (every
+        build changed them, so every call rebuilt) and stat-keyed package-lock.json. The dir is made absolute
+        first, as the derivation functions make theirs; every caller passes an absolute dir today (latent)."""
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(self.root)
+        _write(os.path.join(self.ext, "package-lock.json"), '{"a": 1}\n')
+        build = lab_dist.DistBuild(ext="ext", cmd=self.build.cmd, inputs=[(self.src, True), (self.ext, True)])
+        self.assertTrue(build.ensure_built(), "an unbuilt dist builds")
+        self.assertFalse(build.ensure_built(), "unchanged inputs: no second build")
+        self.assertFalse(build.ensure_built())
+        self.assertEqual(len(self.builds()), 1, "a build does not invalidate its own marker")
+        files = list(build._input_files())
+        self.assertFalse([f for f in files if os.sep + "dist" + os.sep in f], "dist's outputs are not inputs: %r" % files)
+        self.assertNotIn(os.path.join(self.ext, "package-lock.json"), files, "content-keyed, not stat-keyed")
+        self.assertIn(self.source, files, "the absolute inputs are still keyed")
+
 
 class InputsDeriveFromEsbuild(unittest.TestCase):
     """The keyed trees come from esbuild.js, never from a list kept here, and from what it EXPORTS, never from
