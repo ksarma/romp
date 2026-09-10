@@ -303,7 +303,8 @@ class TheRestartHandlerAcksWhatTheManagerSaid(unittest.TestCase):
 
 # A kernel in a SUBPROCESS: the real Handler on an ephemeral port with _graceful_term installed as its
 # SIGTERM handler, the way main() installs it. The ack race below cannot be driven in-process: the exit
-# path ends in os._exit, which would take the test runner with it.
+# path ends in os._exit, which would take the test runner with it. `setup` is source run after the load
+# (a fake SDK backend for the drained arm of the exit path; empty for the no-backend arm).
 _SUBPROCESS_KERNEL = r"""
 import os, signal, sys
 sys.path.insert(0, %(tests)r)
@@ -313,11 +314,25 @@ BIN = %(bin)r
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 km = load_source("romp_kernel_ack_probe", os.path.join(BIN, "romp-kernel"))
+%(setup)s
 signal.signal(signal.SIGTERM, km._graceful_term)
 srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
 sys.stdout.write("%%d %%d\n" %% (srv.server_address[1], os.getpid()))
 sys.stdout.flush()
 srv.serve_forever()
+"""
+
+
+# A fake SDK backend for the subprocess kernel (review round 3, 2026-09-10): its drain sleeps DRAIN_S and
+# cuts nothing, so _drain_and_exit takes the drained arm, whose ack wait is what is left of the two-second
+# budget after the drain, not the wait's own two seconds. Installed as the module global the exit path reads.
+_FAKE_BACKEND_SETUP = r"""
+import time
+class _Backend:
+    def drain(self, budget):
+        time.sleep(%(drain)s)
+        return {}
+km._sdk_backend = _Backend()
 """
 
 
@@ -327,18 +342,25 @@ class _SignallingManager(BaseHTTPRequestHandler):
     deterministic: restartAllOrSelf signals its children and json(200) follows in the same tick, and the
     kernel's exit path with no backend to drain takes a few milliseconds, so at HEAD before the marker the
     ack was lost one time in three to five; with the signal 50 ms ahead of the answer it was lost every
-    time. Records every POST."""
+    time. `delay` widens the pause (the drained-arm and past-the-budget cases); `killed_at` is when the
+    SIGTERM went out, the clock the client's timings are read against. Records every POST."""
     pid = 0
     hits = []
+    delay = 0.05
+    killed_at = 0.0
 
     def do_POST(self):
         type(self).hits.append((self.path, self.headers.get("X-Romp-Token")))
         if type(self).pid:
+            type(self).killed_at = time.monotonic()
             os.kill(type(self).pid, 15)
-        time.sleep(0.05)
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'{"ok": true, "restarted": ["main"]}')
+        time.sleep(type(self).delay)
+        try:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"ok": true, "restarted": ["main"]}')
+        except OSError:
+            pass                                    # the kernel left before the answer (the past-the-budget case)
 
     def log_message(self, *a):
         pass
@@ -367,12 +389,17 @@ class TheAckLandsBeforeTheExit(unittest.TestCase):
         cls.mgr.shutdown()
         cls.mgr.server_close()
 
-    def _kernel(self, n):
+    def setUp(self):
+        _SignallingManager.delay = 0.05
+        _SignallingManager.killed_at = 0.0
+        self.addCleanup(setattr, _SignallingManager, "delay", 0.05)
+
+    def _kernel(self, n, setup=""):
         env = {k: v for k, v in os.environ.items() if k not in ("ROMP_STATE_DIR", "ROMP_MANAGER_PID")}
         env.update({"XDG_STATE_HOME": self.state, "ROMP_KERNEL_NO_OPEN": "1", "ROMP_SERVE_TOKEN": km.TOKEN,
                     "ROMP_MANAGER_PORT": str(self.mgr.server_address[1])})
         log = open(os.path.join(self.state, "kernel-%d.log" % n), "w")
-        proc = subprocess.Popen([sys.executable, "-c", _SUBPROCESS_KERNEL % {"tests": HERE, "bin": BIN}],
+        proc = subprocess.Popen([sys.executable, "-c", _SUBPROCESS_KERNEL % {"tests": HERE, "bin": BIN, "setup": setup}],
                                 env=env, stdout=subprocess.PIPE, stderr=log, text=True)
         self.addCleanup(lambda: (proc.poll() is None and proc.kill(), log.close()))
         first = proc.stdout.readline().strip()
@@ -407,6 +434,55 @@ class TheAckLandsBeforeTheExit(unittest.TestCase):
             self.assertEqual(_SignallingManager.hits[0][1], km.TOKEN, "with the token")
         self.assertEqual(lost, [], "the ack was lost on %d of %d runs (the kernel exited before writing it)" % (len(lost), self.RUNS))
         self.assertEqual(exits, [0] * self.RUNS, "every kernel left through _graceful_term's os._exit(0)")
+
+    def _restart(self, port):
+        req = urllib.request.Request("http://127.0.0.1:%d/restart" % port,
+                                     data=json.dumps({"fleet": False}).encode(), method="POST",
+                                     headers={"X-Romp-Token": km.TOKEN, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read())
+
+    def test_the_drained_arm_waits_for_the_ack_with_what_is_left_of_the_budget(self):
+        # Review round 3 (2026-09-10): the twenty-kernel case above drives only the no-backend arm (the wait's
+        # own two seconds). With an SDK backend drained, the wait is the budget minus the drain, and a build
+        # that skipped it after a drain passed that case while losing every ack the manager answered after
+        # the drain. Here the drain takes 0.8 s, the manager answers 1.3 s after its SIGTERM, inside the
+        # two-second budget: the ack lands, and the kernel exits 0 once it has.
+        proc, port, pid, logname = self._kernel(100, setup=_FAKE_BACKEND_SETUP % {"drain": "0.8"})
+        _SignallingManager.hits = []
+        _SignallingManager.pid = pid
+        _SignallingManager.delay = 1.3
+        try:
+            status, ack = self._restart(port)
+        finally:
+            _SignallingManager.pid = 0
+        self.assertEqual((status, ack.get("restarting")), (200, True), ack)
+        self.assertEqual(proc.wait(timeout=15), 0)
+        self.assertEqual([h[0] for h in _SignallingManager.hits], ["/restart-all"])
+        self.assertNotIn("ack was still in flight", open(logname).read(), "the ack landed inside the budget")
+
+    def test_an_ack_the_budget_runs_out_on_is_abandoned_at_the_bound_and_said_on_stderr(self):
+        # Review round 3 (2026-09-10): a manager that answers past the bound is not waited for (the exit is
+        # bounded, at 2.0 s from the SIGTERM with no backend to drain), and the kernel says on stderr that it
+        # left with the ack in flight; it used to exit at the bound and write nothing about the ack it
+        # abandoned. The connection drops when the kernel exits, so the drop's distance from the SIGTERM is
+        # the bound's pin: no earlier than 1.8 s (the wait ran), and under 2.8 s (it is bounded).
+        proc, port, pid, logname = self._kernel(101)
+        _SignallingManager.hits = []
+        _SignallingManager.pid = pid
+        _SignallingManager.delay = 2.6
+        try:
+            with self.assertRaises(Exception):          # RemoteDisconnected or ConnectionResetError: the kernel is gone
+                self._restart(port)
+            dropped_at = time.monotonic()
+        finally:
+            _SignallingManager.pid = 0
+        self.assertEqual(proc.wait(timeout=15), 0, "the exit is _graceful_term's os._exit(0)")
+        since_kill = dropped_at - _SignallingManager.killed_at
+        self.assertGreaterEqual(since_kill, 1.8, "the wait ran to its bound before the exit: %.2f s" % since_kill)
+        self.assertLess(since_kill, 2.8, "and the bound held: %.2f s" % since_kill)
+        self.assertIn("romp-kernel: a /restart ack was still in flight when the drain budget ran out; exiting without it",
+                      open(logname).read())
 
 
 class SelfUpdateScriptCarriesTheToken(unittest.TestCase):

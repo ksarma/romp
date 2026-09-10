@@ -61977,8 +61977,9 @@ def _restart_ack_end():
 
 def _wait_restart_acks(timeout):
     """Block until no /restart ack is in flight, or `timeout` seconds have passed; True when none is
-    left. Called from the exit path only, on the main thread (the signal handler's), while the handler
-    threads keep running; a zero or negative timeout is one look with no wait."""
+    left. Called from the exit path only (the signal handler's main thread, or the parent watch's
+    thread, whichever called _drain_and_exit), while the handler threads keep running; a zero or
+    negative timeout is one look with no wait."""
     deadline = time.monotonic() + max(0.0, float(timeout or 0))
     with _RESTART_ACK_COND:
         while _RESTART_ACKS[0] > 0:
@@ -62075,9 +62076,13 @@ def _drain_and_exit(reason, signum=None, what="SIGTERM", audit=None):
         # _RESTART_ACKS): the manager that sent this signal answered the handler's hop, and the handler
         # thread is writing the ack the caller is waiting on. Bounded by what is left of the drain's
         # budget when a backend drained, else by the wait's own two seconds; nothing in flight returns
-        # at once.
+        # at once. An ack the bound runs out on is said on stderr (review round 3, 2026-09-10: the exit
+        # used to leave nothing behind about the ack it abandoned), inside the try so a failed write
+        # cannot raise past the os._exit.
         try:
-            _wait_restart_acks(budget - time.monotonic() if drained else _RESTART_ACK_WAIT_S)
+            if not _wait_restart_acks(budget - time.monotonic() if drained else _RESTART_ACK_WAIT_S):
+                sys.stderr.write("romp-kernel: a /restart ack was still in flight when the drain budget ran out; "
+                                 "exiting without it\n")
         except Exception:
             pass
         os._exit(0)
