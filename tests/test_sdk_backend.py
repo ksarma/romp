@@ -5289,7 +5289,11 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
     run's, a shell command's and a Monitor's end are each followed 30 to 90 ms later by system/init and
     a model reply), and an arm at the end frame cut that very turn; the removal sites log one line
     naming what ended and that the pick waits for the next settle. So a pick held after a shell task's
-    end waits for the next turn to finish, the same as after an agent's. A pick equal to the launched
+    end waits for the next turn to finish, the same as after an agent's. One ordering is an accepted
+    residual, documented and not latched (review round 11, 2026-09-10): a second task ending while the
+    first task's delivery turn is in flight leaves that turn's settle to arm, and the teardown cuts the
+    second task's own delivery turn (_arm_reconnect_if_quiet's docstring has the shape and why no latch
+    is built). A pick equal to the launched
     value requests no reconnect at all; during a spawn the compare is against the shape being launched.
     A rewind keeps its old behaviour: it replaces the conversation from a point, and the work inside the
     old process is what it discards, and its arm over a hold has its own log line. Private synthetic sid

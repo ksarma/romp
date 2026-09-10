@@ -5534,10 +5534,13 @@ class SdkSession:
         turn), and an arm at the end frame closed stdin under that turn and cut it at the teardown's
         grace. So a pick held after the last task ends waits for the next turn to finish: the delivery
         turn's, or, when the CLI starts none (the stuck-queue regime kernel.py's queue census
-        documents), the session's next turn. No timer. A rewind is the exception: its queue cannot start
-        until the reconnect arms it, and the work in the old process is what the rewind discards, so it
-        arms over live work as before. No-op if the session is shutting down or not yet connected (the
-        new value is in the registry, so it applies on connect).
+        documents), the session's next turn. No timer. One ordering is an accepted residual (review round
+        11, 2026-09-10): a second task ending while the first task's delivery turn is in flight leaves that
+        turn's settle to find the sets empty and arm, and the teardown cuts the second task's own delivery
+        turn (_arm_reconnect_if_quiet says why no latch closes it). A rewind is the exception: its queue
+        cannot start until the reconnect arms it, and the work in the old process is what the rewind
+        discards, so it arms over live work as before. No-op if the session is shutting down or not yet
+        connected (the new value is in the registry, so it applies on connect).
 
         `defer=False` (the immediate-only form, 2026-09-04): reconnect ONLY if the session is still quiet when
         the loop gets to it: nothing in flight, nothing queued, no live subagent or background task. A turn that
@@ -5904,6 +5907,18 @@ class SdkSession:
         (_note_work_ended), and a pick held after the last task ends waits for the next turn to finish:
         the delivery turn's settle in the common case, the session's next turn when the CLI starts none.
         No timer: the settle is the exact event.
+
+        AN ACCEPTED RESIDUAL (review round 11, 2026-09-10; the review's correctness-3): when a second task
+        ends while the first task's delivery turn is in flight, that turn's settle finds the live sets empty
+        and arms, and the teardown cuts the second task's own delivery turn, which the CLI opens 10 to 14 ms
+        after the settle (reproduced on 2.1.266 and in a scratch harness): the round-1 defect shifted by one
+        turn, for two ends inside one turn, the first result delivered and the second's reply lost at the
+        grace. No latch closes it here. The event-based form would key a latch on the CLI's own
+        task_notification enqueue frame, cleared at the next system/init, and let the settle arm only when
+        no such frame landed during that turn; two probes are still owed before it is built (whether a
+        foreground stop emits task_notification; whether two notifications in one turn deliver in one
+        following turn or two), and it must NOT key on any removal while a turn is in flight, since a
+        foreground SubagentStop lands mid-turn with no delivery turn after it.
 
         Called at the request itself (_do_request_reconnect) and the turn's settle (_on_message). Loop
         thread only, like both callers."""

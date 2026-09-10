@@ -540,7 +540,10 @@ subagents or background tasks holds the pick rather than cutting them off, and
 reloads at the end of the first turn that finds none left: the CLI starts a turn
 of its own to deliver each finished task's result, so in the usual case that is
 the turn right after the last one ends; if no turn follows, the session's next
-turn. While the pick is held the chat says so in place of the reloading line
+turn. One ordering is not covered: when a second task finishes while the turn
+delivering the first one's result is still running, that turn's end finds no
+work left and reloads, and the turn the CLI then starts to deliver the second
+result is cut by the reload. While the pick is held the chat says so in place of the reloading line
 ("The effort pick is waiting on 2 subagents and 1 background task", then "The
 effort pick applies when this turn finishes" once the work is done, or "applies
 when the next turn finishes" when no turn is open at that point), and the badge
