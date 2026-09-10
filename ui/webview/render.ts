@@ -6745,6 +6745,19 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       if (!row.parentNode) bellItem.after(row);
     };
     refreshHideRow = () => { refreshHideWords(); reseat(); };   // the placement after the words, every time (round 6)
+    // THE REFUSED CLICK'S CUE (round 6). A guard that refuses re-dresses the row (the click's own refresh), and the new words are the
+    // acknowledgement. When the words come out the same (a same-named tag under a new id, replaced while the pointer was pressed: the
+    // section the row names changed by its id, its sentence did not), nothing paints, so the row acknowledges on its own: one pulse of
+    // .romp-acted, the sheet's press acknowledgement for every control (ui/CLAUDE.md), taken off on the animation's own end, and the
+    // tooltip says why the click did nothing and what to do. The refresh set the row's section to the one resolved, so a second click
+    // acts. Before, the node stood byte-identical with nothing written and the menu open: a click that did nothing, twice
+    const acknowledge = () => {
+      row.title = `${dressed!.slice(dressed!.indexOf("\n") + 1)}. The group changed just before your click, so it did nothing; click again.`;
+      row.classList.remove("romp-acted");
+      void row.offsetWidth;   // a reflow between the remove and the add, so a second refusal pulses again
+      row.classList.add("romp-acted");
+    };
+    row.addEventListener("animationend", () => row.classList.remove("romp-acted"));
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
       const now = rowHome();
@@ -6755,8 +6768,13 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       // user never touched. The same tag under a new name matches by its id (sameSection: the ids when both are local, else the names,
       // so two remote-only sections are two). The guard runs BEFORE the dismissal (round 5): a refused
       // click re-dresses the row in place and leaves the menu open, so the new words are seen and a second click acts on them (before,
-      // the menu was already off the page, and the re-dress reached no one)
-      if (!shown || !sameSection(sec, shown)) { refreshHideRow(); return; }
+      // the menu was already off the page, and the re-dress reached no one); a re-dress that changed no word gives the cue instead (round 6)
+      if (!shown || !sameSection(sec, shown)) {
+        const before = dressed;
+        refreshHideRow();
+        if (dressed !== null && dressed === before) acknowledge();
+        return;
+      }
       dismissTabMenu();
       if (isHidden(st, sec, id) === !hidden) return;
       writeTabGroupsPruned(setHidden(st, sec, id, !hidden));

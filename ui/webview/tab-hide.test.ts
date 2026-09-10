@@ -880,8 +880,11 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.equal(MENU.split("pressHold(").length - 1, 1, "one hold");
   assert.equal(RENDER.split("hold.defer(").length - 1, 1, "one run goes through it, the views hook's whole run (the row's refresh and the Tags block's, the flyout's rebuild inside); two separate parked runs would replace each other under one press");
   assert.match(RENDER, /^import \{ delegate, pressHold \} from "\.\/actions";$/m, "the shared helper, not a copy");
-  assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*let dressed: string \| null = null;[^\n]*\n\s*const rowHome = \(\) => \(phoneLayout\(\) \? undefined : homeNow\(\)\);[^\n]*\n(?:\s*\/\/[^\n]*\n)+\s*const refreshHideWords = \(\) => \{\s*\n\s*const home = rowHome\(\);\s*\n\s*if \(!home\) \{ shown = null; if \(dressed === null\) return; dressed = null; row\.remove\(\); return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*const lab = hidden \? "Show tab" : "Hide tab";\s*\n\s*const sub = hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`;\s*\n\s*const words = lab \+ "\\n" \+ sub;\s*\n\s*if \(row\.parentNode && words === dressed\) return;\s*\n\s*dressed = words;\s*\n\s*dressToggle\(row, "tab", hidden, lab, sub\);\s*\n\s*row\.title = sub;[^\n]*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*\};\s*\n\s*refreshHideRow = \(\) => \{ refreshHideWords\(\); reseat\(\); \};[^\n]*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\);\s*\n\s*const now = rowHome\(\);\s*\n\s*if \(!now\) \{ dismissTabMenu\(\); return; \}\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| !sameSection\(sec, shown\)\) \{ refreshHideRow\(\); return; \}\s*\n\s*dismissTabMenu\(\);\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/,
-    "round 5: the guard runs before the dismissal, so a refused click re-dresses the row on a menu still on the page; the no-home branch dismisses explicitly; a click that writes dismisses first, as every other row does; round 6: the refresh and the click read the copy's section through one gate, rowHome, so a click that lands on the phone layout before the flip's parked refresh writes nothing");
+  assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*let dressed: string \| null = null;[^\n]*\n\s*const rowHome = \(\) => \(phoneLayout\(\) \? undefined : homeNow\(\)\);[^\n]*\n(?:\s*\/\/[^\n]*\n)+\s*const refreshHideWords = \(\) => \{\s*\n\s*const home = rowHome\(\);\s*\n\s*if \(!home\) \{ shown = null; if \(dressed === null\) return; dressed = null; row\.remove\(\); return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*const lab = hidden \? "Show tab" : "Hide tab";\s*\n\s*const sub = hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`;\s*\n\s*const words = lab \+ "\\n" \+ sub;\s*\n\s*if \(row\.parentNode && words === dressed\) return;\s*\n\s*dressed = words;\s*\n\s*dressToggle\(row, "tab", hidden, lab, sub\);\s*\n\s*row\.title = sub;[^\n]*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*\};\s*\n\s*refreshHideRow = \(\) => \{ refreshHideWords\(\); reseat\(\); \};[^\n]*\n(?:\s*\/\/[^\n]*\n)+\s*const acknowledge = \(\) => \{\s*\n\s*row\.title = `\$\{dressed!\.slice\(dressed!\.indexOf\("\\n"\) \+ 1\)\}\. The group changed just before your click, so it did nothing; click again\.`;\s*\n\s*row\.classList\.remove\("romp-acted"\);\s*\n\s*void row\.offsetWidth;[^\n]*\n\s*row\.classList\.add\("romp-acted"\);\s*\n\s*\};\s*\n\s*row\.addEventListener\("animationend", \(\) => row\.classList\.remove\("romp-acted"\)\);\s*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\);\s*\n\s*const now = rowHome\(\);\s*\n\s*if \(!now\) \{ dismissTabMenu\(\); return; \}\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| !sameSection\(sec, shown\)\) \{\s*\n\s*const before = dressed;\s*\n\s*refreshHideRow\(\);\s*\n\s*if \(dressed !== null && dressed === before\) acknowledge\(\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*dismissTabMenu\(\);\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/,
+    "round 5: the guard runs before the dismissal, so a refused click re-dresses the row on a menu still on the page; the no-home branch dismisses explicitly; a click that writes dismisses first, as every other row does; round 6: the refresh and the click read the copy's section through one gate, rowHome, so a click that lands on the phone layout before the flip's parked refresh writes nothing, and a refusal whose re-dress changed no word gives the cue (the sheet's .romp-acted pulse, off on animationend, and the tooltip's note) instead of silence");
+  assert.match(CSS, /\n@keyframes romp-acted-pulse \{[^\n]*\}\n\.romp-acted \{ animation: romp-acted-pulse 0\.28s ease-out; \}\n/, "the cue is the sheet's one press acknowledgement (ui/CLAUDE.md), not a new animation");
+  assert.equal(MENU.split("acknowledge()").length - 1, 1, "the cue has one caller, the refused click whose re-dress changed nothing");
+  assert.doesNotMatch(MENU.slice(MENU.indexOf("// HIDE TAB (the user 2026-09-09)"), MENU.indexOf("// Billing submenu")), /setTimeout|flash\(/, "the class leaves on the animation's own end, never a timer (actions.ts's flash keeps a timer for controls with no node of their own to listen on)");
   assert.equal(MENU.split("phoneLayout()").length - 1, 1, "the gate is read once, in rowHome, which the refresh and the click share (round 6; the flyout's home read is untouched)");
   assert.equal(MENU.split("rowHome()").length - 1, 2, "read by the refresh and by the click");
   assert.match(MENU, /add\(el\("div", "ctx-sep"\)\);\s*\n\s*tagsItem\.title = subText\(\);[^\n]*\n\s*refreshHideRow\(\);[^\n]*\n\s*\};\s*\n\s*build\(\);/, "the flyout's build ends with the Tags row's title and the refresh: every edit path there (a move, a remove, a +, a new or an existing tag) rebuilds the flyout");
@@ -1846,7 +1849,7 @@ test("executed: THE FLYOUT FOLLOWS THE ROW (menu review rounds 3 and 6). With th
   });
 });
 
-test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review round 5). A push that lands between a pointerdown on the menu and its release re-dresses the Hide tab row and rebuilds the flyout only on the release, a tick after the click, so the click lands on the node the user pressed; a push that changes nothing the row shows leaves its child nodes alone; a run parked when the click dismissed the menu paints nothing; the release listeners leave with the release", async () => {
+test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review rounds 5 and 6). A push that lands between a pointerdown on the menu and its release re-dresses the Hide tab row and rebuilds the flyout only on the release, a tick after the click, so the click lands on the node the user pressed; a push that changes nothing the row shows leaves its child nodes alone; a run parked when the click dismissed the menu paints nothing; the release listeners leave with the release; a same-named tag under a new id pushed mid-press: the refused click's re-dress changes no word, so the row pulses and its tooltip says to click again, and the second click writes the new id", async () => {
   // round 4 re-dressed the row with replaceChildren on every hook run, changed or not, and rebuilt the flyout's rows on a sig change,
   // so a frame between mousedown and mouseup swapped the pressed node and the click was lost (probed in Chromium and Firefox: no
   // click at the row, the menu or the document). One pressHold(menu) parks the re-dress, the removal and the rebuild while the
@@ -1965,6 +1968,47 @@ test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review round 5). A push
     assert.equal(win.count("pointerup"), 0, "no hold taken");
     api.push(renamed(V_API_BOTH_QA, 0, "platform", 13));
     assert.equal(row.sub(), HIDE_SUB("platform"), "re-dressed at once");
+    // K8 (round 6): a SAME-NAMED tag under a NEW id while the pointer is pressed (a delete and a create under one name: the kernel mints
+    // a fresh id on every create, and `romp tag` does this as two pushes). web under infra alone; the press; the push replaces g1 by g9;
+    // the release; the click before the parked refresh lands. The row's section is still g1 while the resolution is g9, so the guard
+    // refuses by the id; the click's refresh finds the same words and paints nothing, so the row acknowledges instead: the sheet's pulse
+    // class, taken off on animationend, and the tooltip's note; the parked run then lands and leaves both (unchanged words); the second
+    // click writes g9 and dismisses. Round 5 left the node byte-identical, nothing written, the menu open, no cue: a click that did
+    // nothing, and no word about why
+    const V_G9 = { ...V, tags: [{ ...V.tags[0], id: "g9" }, V.tags[1]], seq: 14 };
+    hooks.views = V; hooks.writes = [];
+    menu = api.open("web", "infra");
+    row = rowOf(menu)!;
+    kids = row.children.slice();
+    press(menu);
+    api.push(V_G9);
+    win.fire("pointerup");
+    const d2 = hooks.dismissed;
+    assert.ok(!row.has("romp-acted"), "no cue before the click");
+    row.click();
+    assert.deepEqual([hooks.writes.length, hooks.dismissed, menu.isConnected], [0, d2, true], "refused: the row named g1 and the copy sits under g9; nothing written, the menu open");
+    assert.ok(sameNodes(row.children, kids) && row.sub() === HIDE_SUB("infra"), "the same words: nothing painted");
+    assert.ok(row.has("romp-acted"), "so the row pulses (round 6; round 5 gave no cue at all)");
+    assert.equal(row.title, HIDE_SUB("infra") + ". The group changed just before your click, so it did nothing; click again.", "and the tooltip says why and what to do");
+    row.fire("animationend");
+    assert.ok(!row.has("romp-acted"), "the pulse class leaves on the animation's end");
+    await tick();
+    assert.ok(sameNodes(row.children, kids) && row.title.endsWith("click again."), "the parked run landed on unchanged words: the node and the note stand");
+    row.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "web", name: "infra", id: "g9" }]], "the second click writes the new id");
+    assert.equal(hooks.dismissed, d2 + 1, "and dismisses");
+    writeTabGroups(d);
+    // the no-press twin: the same push with no pointer down re-dresses the row's section at once under the same words (the node stands,
+    // K6's case), so the first click writes g9
+    hooks.views = V; hooks.writes = [];
+    menu = api.open("web", "infra");
+    row = rowOf(menu)!;
+    kids = row.children.slice();
+    api.push(V_G9);
+    assert.ok(sameNodes(row.children, kids) && row.sub() === HIDE_SUB("infra") && row.title === HIDE_SUB("infra"), "the row stands, naming infra, its tooltip the sentence alone");
+    row.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "web", name: "infra", id: "g9" }]], "no press: the first click writes the new id");
+    assert.ok(!row.has("romp-acted"), "and no cue was needed");
   });
 });
 
