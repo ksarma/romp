@@ -22,7 +22,7 @@ import * as os from "os";
 import { execFile } from "child_process";
 import WebSocket from "ws";
 import { chatBody, FEED_BODY, FLEET_BODY, TIMELINE_BODY, ATTACH_TITLE_VSCODE } from "./page-skeleton";
-import { ensureThenAttach, parseHealthz, warnAfter } from "./kernel-attach";
+import { askManagerEnsure, attachFailureToast, ensureThenAttach, parseHealthz, warnAfter } from "./kernel-attach";
 import { intentOp, ReloadHold } from "./pipe-intent";
 import { routeViewMessage } from "./view-routing";
 import { deriveStatus, freshNeedsYou, renderStatusBar, statusTooltipLines, FleetStatus } from "./fleet-status";
@@ -44,12 +44,17 @@ function serveToken(): string {
   const env = (process.env.ROMP_SERVE_TOKEN || "").trim();
   if (env) return env;
   try {
-    const base = process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state");
-    const root = process.env.ROMP_STATE_DIR || path.join(base, "romp");   // per-kernel state root (plans/multi-kernel.md)
-    return fs.readFileSync(path.join(root, "serve-token"), "utf8").trim();
+    return fs.readFileSync(serveTokenFile(), "utf8").trim();
   } catch {
     return "";
   }
+}
+// The file serveToken reads (the manager-refused toast names it, so the user sees which root this window
+// resolved): the per-kernel state root (plans/multi-kernel.md), else the XDG default.
+function serveTokenFile(): string {
+  const base = process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state");
+  const root = process.env.ROMP_STATE_DIR || path.join(base, "romp");
+  return path.join(root, "serve-token");
 }
 
 // Build-drift banner (the user 2026-07-13, who wanted a banner when anything gets out of sync).
@@ -421,9 +426,12 @@ let ensureFails = 0;   // consecutive failed rounds — one is a transient (a ke
 function ensureKernel(): Promise<boolean> {
   if (ensuring) return ensuring;
   ensuring = (async () => {
+    let token = "";
     const res = await ensureThenAttach({
       healthz: async () => (await healthz()).ok,
-      ensureViaManager: () => askManagerEnsure(kernelPort()),
+      // the token is read at ask time (a freshly minted file is picked up on the next round) and kept
+      // for the toast, which says whether this window found one
+      ensureViaManager: () => { token = serveToken(); return askManagerEnsure({ host: HOST, managerPort: managerPort(), port: kernelPort(), token }); },
       delay: (ms) => new Promise((r) => setTimeout(r, ms)),
     });
     if (res.ok) { notRunningWarned = false; ensureFails = 0; return true; }
@@ -432,14 +440,13 @@ function ensureKernel(): Promise<boolean> {
     // poll) — and only when the failure PERSISTS across rounds: attaching in
     // the middle of a `romp refresh` fails one round and self-heals on the
     // pipes' retry, and that transient must not toast (the user 2026-07-13).
+    // The text per reason lives with the decision (attachFailureToast), pinned there.
     if (!notRunningWarned && warnAfter(ensureFails)) {
       notRunningWarned = true;
-      const port = kernelPort();
-      vscode.window.showErrorMessage(
-        res.reason === "no-manager"
-          ? `romp: no kernel on port ${port} and no manager on :${managerPort()} — start it with \`romp up\` in a terminal.`
-          : `romp: the manager couldn't bring up a kernel on port ${port} — is that port already in use? Check \`romp status\`.`,
-      );
+      vscode.window.showErrorMessage(attachFailureToast(res, {
+        port: kernelPort(), managerPort: managerPort(), tokenFile: serveTokenFile(),
+        tokenFromEnv: !!(process.env.ROMP_SERVE_TOKEN || "").trim(), hadToken: !!token,
+      }));
     }
     return false;
   })();
@@ -448,21 +455,9 @@ function ensureKernel(): Promise<boolean> {
   return p;
 }
 
-// POST the manager's /ensure?port=N so it spawns+owns a kernel there. Resolves true iff a manager
-// answered (i.e. one is running); we never spawn the kernel ourselves. /ensure is a state-changing
-// door, so it carries the serve token the way every kernel request does (the manager gates its
-// writes on X-Romp-Token, bin/romp-manager writeGate); a 401 resolves false like any refusal.
-function askManagerEnsure(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const req = http.request(
-      { host: HOST, port: managerPort(), path: `/ensure?port=${port}`, method: "POST", timeout: 4000,
-        headers: { "X-Romp-Token": serveToken() } },
-      (res) => { res.resume(); resolve((res.statusCode ?? 500) < 400); });
-    req.on("timeout", () => { req.destroy(); resolve(false); });
-    req.on("error", () => resolve(false));
-    req.end();
-  });
-}
+// The manager's /ensure request itself lives in ./kernel-attach (askManagerEnsure), vscode-free, so its
+// header and its three outcomes are tested against a real loopback server; ensureKernel above supplies
+// the host, the ports and the token.
 
 // ---- the pipe: one WebSocket per panel, postMessage in both directions ----
 
