@@ -178,7 +178,10 @@ const src = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
  *  descriptor holding a getter defeats a regex), and a declared field whose type carries a comma (`EDGE:
  *  Record<string, N>;`). A regex reads shape, not meaning, and some code that initialises no edge reads as a shape:
  *  a destructuring default at line start (`function mk({\n  EDGE = [],\n})`) reads as a class field, where the
- *  one-line forms do not (a brace after `(`, `=`, `,`, let, const or var opens no class body); a type literal's
+ *  one-line forms do not (a brace after `(`, `=`, `,`, let, const or var opens no class body, and a `;` inside such a
+ *  one-line brace group separates type members, not class members, so `type N = { tag: string; EDGE: N | null }` is
+ *  told apart; a brace after a name or a colon is a class brace to the regex, so a one-line `interface N { tag:
+ *  string; EDGE: N | null; }` or `o: { tag: string; EDGE: N | null; }` reads as a class field); a type literal's
  *  member on its own line (`type N = {\n  EDGE: N | null;\n}`), or comma-separated on one line (`type N = { EDGE: N,
  *  tag: string }`), reads as a class field or an object-literal key; a type literal's readonly member after a comma
  *  reads as a parameter property; a typed parameter after a comma whose type is a bare name (not a union, an array
@@ -202,7 +205,11 @@ const NOT_LITERAL = "(?!\\s*(?:[\"'`\\-\\d]|(?:true|false)\\b))";   // a declare
 const DECLARED_TYPE = "(?:\\s*\\([^()=;\\n]*\\)[^=;,{}()\\n]*?|[^=;,{}()\\n]+?)\\s*(?:;|$)";
 // a class body opens after a name, `>` or `)` (`class N {`, `extends B<T> {`, `constructor() {`), never after `(`, `=`,
 // `,`, let, const or var: those braces open a destructuring pattern, a type literal or an object literal
-const CLASS_BRACE = "(?<![(=,]\\s*|\\b(?:let|const|var)\\s+)\\{";
+const OPENS_NO_CLASS = "[(=,]\\s*|\\b(?:let|const|var)\\s+";
+const CLASS_BRACE = "(?<!" + OPENS_NO_CLASS + ")\\{";
+// a `;` anchors a member unless it sits inside a one-line brace group such a brace opened: there it separates a type
+// literal's members (`type N = { tag: string; EDGE: N | null }`), where the same `;` after a class brace separates fields
+const MEMBER_SEMI = "(?<!(?:" + OPENS_NO_CLASS + ")\\{[^{}\\n]*);";
 const EDGE_INIT: Record<string, RegExp> = {
   "object-literal key": new RegExp("[{,]\\s*" + KEY + "\\s*:\\s*(?:null\\b|undefined\\b|\\[\\])"),
   "object-literal key, identifier value": new RegExp("[{,]\\s*" + KEY_NOT_HOST + "\\s*:\\s*(?:this\\b|" + IDENT + ")"),
@@ -210,7 +217,7 @@ const EDGE_INIT: Record<string, RegExp> = {
   // with an initializer (typed or not): `EDGE = null`, `private EDGE: N | null = null`; or declared only, where the key
   // host is left out and the value may not be a literal or carry a call's parenthesis: `EDGE!: N | null;`, `EDGE?: N[]`,
   // `EDGE: N | null` ending the line, `EDGE!: (N | Txt | string)[];`
-  "class field": new RegExp("(?:^|;|" + CLASS_BRACE + ")\\s*" + MODS + "*(?:" + KEY + "\\s*[?!]?\\s*(?::[^=;\\n]+)?=\\s*" + VALUE
+  "class field": new RegExp("(?:^|" + MEMBER_SEMI + "|" + CLASS_BRACE + ")\\s*" + MODS + "*(?:" + KEY + "\\s*[?!]?\\s*(?::[^=;\\n]+)?=\\s*" + VALUE
     + "|" + KEY_NOT_HOST + "\\s*[?!]?\\s*:" + NOT_PRIM + NOT_LITERAL + DECLARED_TYPE + ")", "m"),
   "parameter property": new RegExp("[(,]\\s*" + MODS + "+" + KEY + "\\b"),
   "assignment": new RegExp("\\b[A-Za-z_$][\\w$]*\\." + KEY + "\\s*=\\s*" + VALUE),
@@ -296,13 +303,15 @@ function blank(s: string, literals: boolean): string {
 const edgeShapes = (s: string): string[] => { const c = blank(s, true); return Object.keys(EDGE_INIT).filter((k) => EDGE_INIT[k].test(c)); };
 const initsEdge = (s: string) => edgeShapes(s).length > 0;
 /** The credential: an import of hideEdges or nodeFactory from the shared module AND a call of one of them, in code.
- *  The import is a statement at line start, either quote style on the specifier, with or without a .js suffix, as a
- *  named import (`import { hideEdges } from "./test-dom-shim"`) or a namespace import (`import * as shim from
- *  "../test-dom-shim"`, the alias any identifier, dollar signs included); the call is `hideEdges(` or `nodeFactory(`
- *  for a named import and `shim.hideEdges(` or `shim.nodeFactory(` under the namespace's own alias, not under a
- *  longer name that ends in it. An import alone hides nothing; a call under an alias (`import { hideEdges as hide }`),
- *  a reference passed as a callback (`nodes.forEach(hideEdges)`), a local helper of the same name without the
- *  import, or a call token in a comment or a string is not read: import it and write the call. What
+ *  The import is a statement in code at line start (its text up to the specifier reads the same once every literal
+ *  is blanked: an import line quoted inside a template or a backslash-continued string is not one), either quote
+ *  style on the specifier, with or without a .js suffix, as a named import (`import { hideEdges } from
+ *  "./test-dom-shim"`) or a namespace import (`import * as shim from "../test-dom-shim"`, the alias any identifier,
+ *  dollar signs included); the call is `hideEdges(` or `nodeFactory(` for a named import and `shim.hideEdges(` or
+ *  `shim.nodeFactory(` under the namespace's own alias, not under a longer name that ends in it. An import alone
+ *  hides nothing; a call under an alias (`import { hideEdges as hide }`), a reference passed as a callback
+ *  (`nodes.forEach(hideEdges)`), a local helper of the same name without the import, or a call token in a comment or
+ *  a string is not read: import it and write the call. What
  *  no regex can see is whether the call covers every object in the file that declares an edge: a second class, or an
  *  object literal beside the nodeFactory nodes (ui/timeline-transform-tick.test.ts's hover target held an enumerable
  *  parentNode that way until round 4 wrapped it in hideEdges), stays unhidden. That gap is real and is closed per
@@ -310,14 +319,17 @@ const initsEdge = (s: string) => edgeShapes(s).length > 0;
  *  hideEdges(this) at the end of a constructor), with a projection assertion where the object is a node; this file
  *  and the tags-scale test carry one, and the runner's cgroup cap is the backstop. */
 const SHIM_SPECIFIER = "(?:\\.\\.\\/|\\.\\/)test-dom-shim(?:\\.js)?";
-const IMPORTS_SHIM = new RegExp("^\\s*import\\s*\\{[^}]*\\b(?:hideEdges|nodeFactory)\\b[^}]*\\}\\s*from\\s*([\"'])" + SHIM_SPECIFIER + "\\1", "m");
+const IMPORTS_SHIM = new RegExp("^\\s*import\\s*\\{[^}]*\\b(?:hideEdges|nodeFactory)\\b[^}]*\\}\\s*from\\s*([\"'])" + SHIM_SPECIFIER + "\\1", "gm");
 const IMPORTS_SHIM_NS = new RegExp("^\\s*import\\s*\\*\\s*as\\s+([A-Za-z_$][\\w$]*)\\s+from\\s*([\"'])" + SHIM_SPECIFIER + "\\2", "gm");
 const CALLS_SHIM = /\b(?:hideEdges|nodeFactory)\(/;
 const escapeRegExp = (t: string) => t.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 const switched = (s: string): boolean => {
   const imports = blank(s, false), code = blank(s, true);   // the specifier is a string, so the import reads the comment-free text
-  if (IMPORTS_SHIM.test(imports) && CALLS_SHIM.test(code)) return true;
-  for (const m of imports.matchAll(IMPORTS_SHIM_NS)) if (new RegExp("(?<![\\w$])" + escapeRegExp(m[1]) + "\\.(?:hideEdges|nodeFactory)\\(").test(code)) return true;
+  // a statement in code reads the same in both texts up to the specifier's quote; an import line quoted inside a
+  // template or a backslash-continued string is spaces in the fully blanked one
+  const inCode = (m: RegExpExecArray, quote: string) => { const q = m[0].indexOf(quote); return code.slice(m.index, m.index + q) === m[0].slice(0, q); };
+  for (const m of imports.matchAll(IMPORTS_SHIM)) if (inCode(m, m[1]) && CALLS_SHIM.test(code)) return true;
+  for (const m of imports.matchAll(IMPORTS_SHIM_NS)) if (inCode(m, m[2]) && new RegExp("(?<![\\w$])" + escapeRegExp(m[1]) + "\\.(?:hideEdges|nodeFactory)\\(").test(code)) return true;
   return false;
 };
 /** True when `s` must be on the allowlist: it initialises an edge and is not switched. */
@@ -636,12 +648,14 @@ const NEGATIVE: Array<[string, string, string]> = [   // [what it is, scratch so
   ["a declared field with a default after a parenthesised type", "class N {\n  EDGE: (N | null)[] = mk();\n}", "children"],   // the value is a call, not a bare identifier
   ["a class accessor after another member (on the prototype, no edge)", "class N {\n  tag = 'x';\n  get EDGE() { return this.kids[0] || null; }\n}", "firstChild"],
   ["a setter alone (no getter to read)", "const n = { tag: 'x', set EDGE(v) { n._p = v; } };", "parentNode"],
-  // one-line destructuring and type-literal forms: the brace follows `(`, `=`, `,`, let, const or var, so it opens no class body
+  // one-line destructuring and type-literal forms: the brace follows `(`, `=`, `,`, let, const or var, so it opens no class
+  // body, and a `;` inside that one-line brace group anchors no member either
   ["a destructuring pattern with a default, on one line", "function mk({ EDGE = [], tag }) { return tag; }", "children"],
   ["a destructuring declaration with a default", "let { EDGE = null } = o;", "parent"],
   ["a destructuring declaration with a default, const", "const { EDGE = null, tag } = o;", "parent"],
   ["a destructuring default after a comma", "function mk(a, { EDGE = [] }) { return a; }", "children"],
-  ["a type literal's member, semicolon-separated, on one line", "type N = { EDGE: N | null; tagName: string };", "parent"],
+  ["a type literal's member, semicolon-separated on one line, as the first member", "type N = { EDGE: N | null; tagName: string };", "parent"],
+  ["a type literal's member, semicolon-separated on one line, after another member", "type N = { tag: string; EDGE: N | null; id: string };", "parent"],
   // literals and comments are blanked before the shapes are read: each kind, holding a shape
   ["a line comment holding a shape", "// the fake keeps EDGE: null until attached\nconst n = { tag: 'div' };", "parentNode"],
   ["a block comment holding a shape", "/* class N { EDGE = null; } */\nconst n = { tag: 'div' };", "parentNode"],
@@ -671,6 +685,9 @@ const INDISTINGUISHABLE: Array<[string, string, string, string]> = [   // [what 
   ["a statement reassigning a local of an edge name at line start", "class field", "let EDGE: N | null = null;\nfunction reset(other) {\n  EDGE = other;\n}", "parent"],
   ["a statement reassigning a local of an edge name after a semicolon", "class field", "x(); EDGE = []; y();", "children"],
   ["a class whose first member is an edge getter (on the prototype, no edge)", "accessor", "class N { get EDGE() { return this.kids[0] || null; } appendChild() {} }", "firstChild"],
+  // a brace after a name or a colon is a class brace to the regex, so a one-line interface or annotation reads as a class
+  ["an interface's member, semicolon-separated on one line, after another member", "class field", "interface N { tagName: string; EDGE: N | null; }", "parent"],
+  ["a type literal in an annotation, semicolon-separated on one line, after another member", "class field", "let o: { tag: string; EDGE: N | null; };", "parent"],
   // a condition's closing paren and an expression's are the same token to the lexer, so the regex is read as a division
   ["a regex literal right after a condition's closing paren (read as a division: its text stays code)", "class field", "if (x) /class N { EDGE = null; }/.test(y);", "parentNode"],
 ];
@@ -736,6 +753,11 @@ test("the credential: an import of nodeFactory or hideEdges from the shared modu
   }
   assert.ok(needsListing('import * as $s from "./test-dom-shim";\n' + scratch("class N {\n  EDGE!: N | null;\n  constructor() { x$s.hideEdges(this); }\n}\n", "parentNode")), "a call under a longer name that ends in the alias (x$s for $s) is not it");
   assert.ok(needsListing('import * as shim from "./test-dom-shim";\n' + scratch("class N {\n  EDGE!: N | null;\n  constructor() { $shim.hideEdges(this); }\n}\n", "parentNode")), "a call under a longer name that ends in the alias ($shim for shim) is not it");
+  // the import is a statement in code: the shim's import line quoted inside a template or a backslash-continued string, beside a local helper of the name, is not one
+  const local = "function hideEdges(o: any) { return o; }\n";
+  assert.ok(needsListing("const SRC = `\nimport { hideEdges } from \"./test-dom-shim\";\n`;\n" + local + cls), "an import line quoted inside a multi-line template is not an import");
+  assert.ok(needsListing("const SRC = `\n  import * as shim from './test-dom-shim';\n`;\n" + scratch("const shim = { hideEdges(o: any) { return o; } };\nclass N {\n  EDGE!: N | null;\n  constructor() { shim.hideEdges(this); }\n}\n", "parentNode")), "a namespace import line quoted inside a template is not an import");
+  assert.ok(needsListing("const SRC = \"a\\\nimport { hideEdges } from './test-dom-shim';\\\nb\";\n" + local + cls), "an import line inside a backslash-continued string is not an import");
   // a call token that is not code: in a line comment, a doc comment, a string, a template
   const imp = 'import { hideEdges } from "./test-dom-shim";\n';
   assert.ok(needsListing(imp + bare + "// TODO: hideEdges(this) in the constructor\n"), "a call token in a line comment is not a call");
