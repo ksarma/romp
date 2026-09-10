@@ -9517,11 +9517,6 @@ def _run_update(tag):
     if not _semver(tag) or _UPDATE_STATE[0] == "running":
         return False
     _UPDATE_STATE[0] = "running"
-    # the drift door's latched outcome (_MAIN_CONVERGE_OUTCOME) is cleared here too, for the route's tag branch
-    # and the auto path alike (review round 6 of the confirm step, 2026-09-10): the running push flips every
-    # window into the wait for THIS update, and a slot left over from the last converge would otherwise be
-    # served to each of them as soon as this child's latch clears
-    _MAIN_CONVERGE_OUTCOME[0] = None
     q = shlex.quote
     log, rep = q(str(jd.STATE / "update.log")), q(str(jd.STATE / "update-report.json"))
     mport = _manager_port(os.environ.get("ROMP_MANAGER_PORT"))     # None: no manager (absent, empty or not a port)
@@ -9619,6 +9614,15 @@ def _run_update(tag):
         _sync_notice("romp could not start the update to %s: %s — nothing was launched and nothing "
                      "moved" % (tag, e), ok=False)
         return False
+    # the drift door's latched outcome (_MAIN_CONVERGE_OUTCOME) is cleared here too, for the route's tag branch
+    # and the auto path alike (review round 6 of the confirm step, 2026-09-10): the running push flips every
+    # window into the wait for THIS update, and a slot left over from the last converge would otherwise be
+    # served to each of them as soon as this child's latch clears. After the spawn, not beside the running set
+    # (review round 7): a spawn that raises gives the latch back above and leaves the slot as it found it, so a
+    # window still waiting on that outcome reads it on its next poll instead of the wait's neither state for
+    # good. Nothing is served early in between: /update-check folds the slot into its answer only while
+    # _UPDATE_STATE is not running, and the route's running push goes out only once this has returned True
+    _MAIN_CONVERGE_OUTCOME[0] = None
     return True
 
 
@@ -58945,8 +58949,9 @@ class Handler(BaseHTTPRequestHandler):
                 # the converge's decorator, _run_update), and never over the tag door's report, which is
                 # consumed once above and would otherwise be lost. Not while the tag door's child runs (review
                 # round 6, 2026-09-10): its wait ends on its own report or the new boot id, and an outcome an
-                # auto converge latches meanwhile must not end it early; _run_update clears the slot at its
-                # start, and this gate covers a slot written after that
+                # auto converge latches meanwhile must not end it early; _run_update clears the slot once its
+                # child is launched (after the spawn, so a spawn that raises leaves it: review round 7), and
+                # this gate covers the slot between the running set and that clear, and one written after it
                 out = _MAIN_CONVERGE_OUTCOME[0]
                 if out and not failed and not updated and _UPDATE_STATE[0] != "running":
                     failed, updated, why, hint = out["failed"], out["updated"], out["why"], out["hint"]
@@ -59285,7 +59290,11 @@ class Handler(BaseHTTPRequestHandler):
                     # between the ack and the thread's entry already reads running; a click while a converge
                     # runs (another window's, or the auto converge) hears converging like the first and starts
                     # no second thread and writes no second audit row. The thread clears the flag on every
-                    # exit; a start that raises gives it back here, or every later poll would read running
+                    # exit; a start that raises gives it back here, or every later poll would read running,
+                    # and gives back the outcome the take cleared (review round 7, 2026-09-10), or a window
+                    # still waiting on that outcome would poll the wait's neither state for good; only while
+                    # nothing newer was latched meanwhile (an auto converge ending between the two lines)
+                    out0 = _MAIN_CONVERGE_OUTCOME[0]
                     if not _main_converge_begin():
                         return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
                     _audit_restart_request("main-converge", tag=d0 or d1,
@@ -59299,7 +59308,10 @@ class Handler(BaseHTTPRequestHandler):
                                          kwargs={"manager_port": mp, "target": d0 or d1},
                                          daemon=True).start()
                     except Exception as e:
-                        _main_converge_end()
+                        with _MAIN_CONVERGE_LOCK:
+                            if _MAIN_CONVERGE_OUTCOME[0] is None:
+                                _MAIN_CONVERGE_OUTCOME[0] = out0
+                            _main_converge_end()
                         return self._send(500, "romp could not start the converge: %s" % e, "text/plain")
                     _send_to_app("shell", _running_push(mp))
                     return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")

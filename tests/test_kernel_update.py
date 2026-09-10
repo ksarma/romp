@@ -1415,11 +1415,17 @@ class Routes(Fresh):
         # converging with nothing running, and no test failed with that except made a no-op. A Thread subclass
         # whose start raises for the converge's target alone (an unconditional patch would break the test
         # server's own request threads): the 500, the flag clear, no running push, and the NEXT click's converge
-        # runs through to the manager. Red with the except made a no-op (mutation-tested in the round)
+        # runs through to the manager. Red with the except made a no-op (mutation-tested in the round). Review
+        # round 7: the take of the flag (_main_converge_begin) clears the last converge's latched outcome, and the
+        # except gave back the flag alone, so a start that raised erased an outcome the waiting windows had not
+        # read yet and their polls read the wait's neither state for good; the except now gives the outcome back
+        # too, and the 500's readers still see it. The next click's take clears it, and a restart the manager
+        # took latches none
         import http.server
         from http.server import ThreadingHTTPServer
         hits, dials, pushed, fails = [], [], [], [True]
         Real = threading.Thread
+        stale = {"failed": "romp is updated on disk but the restart request failed (HTTP 500)", "updated": "", "why": "", "hint": ""}
 
         class FakeManager(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
@@ -1447,6 +1453,7 @@ class Routes(Fresh):
             km._INPLACE_TRIED[0] = ""
             km._UPDATE_AVAIL[0] = ""
             km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "", "abcdef01"
+            km._MAIN_CONVERGE_OUTCOME[0] = dict(stale)       # the last converge's ending, still unread by a waiting window
             with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(port, dials, allow={self.port})), \
                  mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
                  mock.patch.object(km, "_checkout_sha", return_value="abcdef01"), \
@@ -1456,8 +1463,11 @@ class Routes(Fresh):
                 self.assertEqual((code, body), (500, "romp could not start the converge: no thread"))
                 self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the flag was given back")
                 self.assertEqual(pushed, [], "no running push for a converge that never started")
-                _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
-                self.assertEqual(json.loads(body)["state"], "", "idle to every poll")
+                self.assertEqual(km._MAIN_CONVERGE_OUTCOME[0], stale, "and so was the outcome the take had cleared (review round 7)")
+                for reader in ("the window that clicked", "a window still waiting on the last converge"):
+                    _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+                    d = json.loads(body)
+                    self.assertEqual((d["state"], d["failed"], d["updated"]), ("", stale["failed"], ""), reader + ": idle, the outcome served")
                 code, body = self._post("/update")
                 self.assertEqual((code, json.loads(body)["state"]), (200, "converging"), "the next click starts the converge")
                 t0 = time.monotonic()
@@ -1466,6 +1476,7 @@ class Routes(Fresh):
                 self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0])
                 self.assertEqual(hits, [("POST", "/restart-all")], "and it ran through to the manager")
                 self.assertEqual([m.get("state") for m in pushed], ["running"], "the second click's running push")
+                self.assertIsNone(km._MAIN_CONVERGE_OUTCOME[0], "the click that started a converge cleared the old outcome")
         finally:
             km._INPLACE_TRIED[0] = saved_tried
             if saved_port is None:
@@ -1700,8 +1711,9 @@ class Routes(Fresh):
         # door started (only _main_converge_begin and the converge's decorator cleared it), and /update-check
         # folded the slot into its answer whether or not the tag child was in flight, so every window's wait
         # for a release update ended at once with the previous converge's words. Two halves, each red alone
-        # under mutation in the round's probes: _run_update clears the slot beside its running state (the
-        # route's tag branch and the auto path alike), and the route serves the slot only while _UPDATE_STATE
+        # under mutation in the round's probes: _run_update clears the slot once its child is launched (the
+        # route's tag branch and the auto path alike; after the spawn since review round 7, so a spawn that
+        # raises leaves it, the sibling below), and the route serves the slot only while _UPDATE_STATE
         # is not running, so an auto converge that latches an outcome while a release child runs does not end
         # that wait either (the child's own report does, consumed above the fold)
         km._MAIN_CONVERGE_OUTCOME[0] = {"failed": "a stale outcome", "updated": "", "why": "", "hint": ""}
@@ -1735,6 +1747,56 @@ class Routes(Fresh):
             self.assertIsNone(km._MAIN_CONVERGE_OUTCOME[0], "_run_update clears the slot for every caller, the auto path included")
         finally:
             km._UPDATE_STATE[0] = ""
+
+    def test_a_tag_door_spawn_that_raises_leaves_the_drift_doors_latched_outcome_to_the_waiting_windows(self):
+        # review round 7 of the confirm step (2026-09-10): _run_update cleared the drift door's latched outcome beside
+        # its running state, before its Popen was known to have succeeded, and the spawn's except gave the latch
+        # back but not the slot, so a tag-door start that failed to spawn erased an outcome the waiting windows had
+        # not read yet (the poll leaves the wait only on failed, updated or a boot change) and their polls read
+        # the wait's neither state for good. The clear now sits after the spawn: a spawn that raises leaves the
+        # slot as it found it (the route's 500, the latch given back, no running push, the outcome served with
+        # state ""), through the route and the auto path alike, and a spawn that succeeds clears it as round 6
+        # pinned. Nothing is served early in between: the fold is gated on _UPDATE_STATE, and the running push
+        # goes out only once _run_update has returned True
+        stale = {"failed": "romp is updated on disk but the restart request failed (HTTP 500)", "updated": "", "why": "", "hint": ""}
+        km._MAIN_CONVERGE_OUTCOME[0] = dict(stale)
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+        pushed = []
+
+        def check():
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            return json.loads(body)
+        try:
+            d = check()
+            self.assertEqual((d["state"], d["failed"]), ("", stale["failed"]), "the outcome, served before the click")
+            with mock.patch.object(km.subprocess, "Popen", side_effect=OSError("fork failed")), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: pushed.append(m)):
+                code, body = self._post("/update")
+            self.assertEqual((code, body), (500, "romp could not start the update to v0.7.0; the Log has the reason"))
+            self.assertEqual(km._UPDATE_STATE[0], "", "the latch was given back")
+            self.assertEqual(pushed, [], "no running push for a child that never existed")
+            self.assertEqual(km._MAIN_CONVERGE_OUTCOME[0], stale, "the slot is as the click found it")
+            for reader in ("the window that clicked", "a window still waiting on the last converge"):
+                d = check()
+                self.assertEqual((d["state"], d["failed"], d["updated"]), ("", stale["failed"], ""), reader)
+            self.assertEqual([n["ok"] for n in self.notices()], [False], "the spawn failure is said on the sync surface")
+            # the auto path takes the same door: the same failure leaves the slot too
+            with mock.patch.object(km.subprocess, "Popen", side_effect=OSError("fork failed")):
+                self.assertFalse(km._run_update("v0.7.1"))
+            self.assertEqual((km._UPDATE_STATE[0], km._MAIN_CONVERGE_OUTCOME[0]), ("", stale), "the auto path leaves it as well")
+            # a spawn that succeeds clears it, the round-6 rule
+            with mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: None), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: pushed.append(m)):
+                code, body = self._post("/update")
+            self.assertEqual((code, json.loads(body)), (200, {"ok": True, "state": "running"}))
+            self.assertIsNone(km._MAIN_CONVERGE_OUTCOME[0], "a launched child clears the slot")
+            self.assertEqual([m.get("state") for m in pushed], ["running"], "and its running push goes out")
+            d = check()
+            self.assertEqual((d["state"], d["failed"]), ("running", ""), "the wait for this update, with no old outcome")
+        finally:
+            km._UPDATE_STATE[0] = ""
+            km._UPDATE_AVAIL[0] = ""
 
     def test_a_manager_port_that_is_not_a_port_reads_as_no_manager_and_is_said_once(self):
         # review round 5 of the confirm step (2026-09-10): _manager_port did int(value) outside every caller's
