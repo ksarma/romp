@@ -480,7 +480,10 @@ cannot or because the marks are hidden, offers it too. Reply on a change's card 
 comment on the change itself, and the session's answer comes back to that card. You can also
 comment inside a change without replying to it: a click on a change mark or a comment highlight
 opens its card, and a selection made by dragging inside one leaves a comment on those words. A session's
-tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures.
+tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures. A session
+that tries to write a tracked file any other way, with its editing tools or a shell command such
+as `cp`, `tee`, `sed -i` or a `>` redirection, is refused and pointed at its track-edit command,
+so its edits still come to you as changes.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
 and a deletion struck, and typing around them moves them with the text. Click a change to

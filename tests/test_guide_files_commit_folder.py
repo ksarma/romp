@@ -109,6 +109,18 @@ class PersonFacingTextsStateTheNorm(unittest.TestCase):
         self.assertIn("romp still running no git command", d25)
         self.assertIn("decision 48", d25, "points at the record of the owner's finding")
 
+    def test_decision_48_records_the_finding_and_the_places(self):
+        d48 = _decision(self.plan, 48)
+        self.assertIn("**Sessions commit the comments folder**", d48)
+        self.assertIn("(2026-09-10)", d48)
+        self.assertIn("never added", d48, "the owner's finding, paraphrased")
+        for place in ("`vendor/track-changents/patches/0007", "`claude/romp-session-prompt.md`", "Decision 25 is unchanged"):
+            self.assertIn(place, d48)
+        self.assertNotRegex(d48, r'"[^"]*\b(I|my|me)\b[^"]*"', "no quoted utterance of the user's")
+
+    def test_the_plans_tests_section_names_this_module(self):
+        self.assertIn("`tests/test_guide_files_commit_folder.py`", self.plan)
+
 
 if __name__ == "__main__":
     unittest.main()

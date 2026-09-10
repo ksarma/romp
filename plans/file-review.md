@@ -603,7 +603,14 @@ inherit the session's environment, both romp backends set `ROMP_SID` there, and 
 own hooks already gates on it (`hooks/romp-usertodo-context.sh:29`, rationale at `:11-13`); so the guard is registered
 machine-wide yet inert in every session romp did not launch, at the cost of a node process that
 exits immediately. Anything a romp session itself spawns also carries the variable and counts as
-romp, which is the wanted behavior for the agent's own subprocesses.
+romp, which is the wanted behavior for the agent's own subprocesses. A second PreToolUse hook,
+romp's own (`hooks/romp-track-bash-guard.mjs`, on the `Bash` matcher, registered by the same merge
+and gated the same way), covers the write path the vendored guard never sees: it reads the command
+a session runs through Bash, extracts the paths it would write (cp, mv, install and tee targets,
+`>` and `>>` redirections, `sed -i` and `perl -i` files, a path a python or node inline script
+opens for writing), resolves them against the session's working directory, and refuses when one is
+a tracked text file, naming the file and track-edit; a read never trips it and a command it cannot
+read through passes (decision 47).
 
 ### The comments log
 
@@ -2592,6 +2599,22 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   and with the panel closed the label and the frame open the panel and the card, the drag neither.
   `tools/file-review-plan-markclick.test.mjs` holds this bullet, the surface sentence and decision 44 to the panel,
   the sheets, the overlay and the four modules.
+- The Bash-side guard (2026-09-10, decision 47): `tools/romp-track-bash-guard.test.mjs` drives the hook's
+  evaluate() over synthetic PreToolUse payloads against a scratch project (cp over a tracked file refused naming
+  the file and track-edit, cat allowed, a heredoc redirection refused with its body never read as commands, sed -i
+  in its spellings, an unrelated path and a tracked source copied out allowed, the dry run's compound command, the
+  copy verbs with a directory destination and -t, every write redirection and none of the reads, tee, dd, sort -o,
+  perl -i, python and node inline scripts and a script on stdin, cd and ~/ and an absolute path, the opaque forms
+  allowed, a tracked image passing by name and a new file under a tracked folder refused, the refusal's voice) and
+  the hook as a process (exit 0 at once without ROMP_SID with stdin held open; exit 2 with the reason on stderr
+  with it); `tests/install-sh.bats` the Bash-side guard's registration on its own `Bash` group, once, with the
+  vendored guard's group beside it and a user's own Bash group kept; `tests/romp-uninstall.bats` its removal;
+  `tools/file-review-plan-bash-guard.test.mjs` holds decision 47, the Vendoring paragraph and this bullet to the
+  hook, the installer and the uninstaller. Sessions commit the folder (decision 48): `tests/test_session_prompt.py`
+  pins the prompt's sentence; `tools/vendor-patches.test.mjs` (P7) pins patch 0007's two rules in the skill;
+  `tests/test_guide_files_commit_folder.py` holds the prompt, the skill, the guide's Files sentence and decision 25
+  to one another; `tests/test_guide_files_bash_guard.py` holds the guide's Track changes sentence on the refusal
+  to the hook's grammar.
 
 ## Docs
 
@@ -2618,7 +2641,11 @@ in the list under a narrow column the line stands under the panel's header inste
 panel's tests of both placements). With the seen follow-on (2026-09-09), that the Send's checkbox accepts only the pending
 changes you have seen and says how many unseen ones stay pending, and that a change the session edits again after you
 looked at it is unseen until you look again (`tests/test_guide_files_seen.py` and `tests/test_guide_files_seen_definition.py`
-hold the sentence to the panel).
+hold the sentence to the panel). With the Bash guard follow-on (2026-09-10), that a session writing a tracked file any other
+way, with its editing tools or a shell command, is refused and pointed at track-edit (`tests/test_guide_files_bash_guard.py`
+holds the sentence to the hook), and that sessions are asked to include `.trackchanges/` when they commit their own work while
+the person's commits stay theirs (`tests/test_guide_files_commit_folder.py` holds it to the prompt, the skill and decision
+25); `docs/install.md` names the Bash-side guard beside the vendored one.
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -2855,6 +2882,48 @@ document stands on its own, each with the reasoning it was given.
     in Chromium and Firefox, Rendered and Raw: inside an insertion's mark, and, with words selected in another
     paragraph, on a deletion's label, the marks inside a link, a region rectangle and a framed figure. Client-only; no
     kernel change.
+47. **A guard on the Bash tool too** (2026-09-10). The vendored guard denies a raw Write, Edit or MultiEdit on a
+    tracked file and sees nothing else, and a session in auto mode is told to write files through Bash: cp and mv
+    over the file, tee, a heredoc redirected into it, sed -i, a python or node one-liner. The dry run of the
+    pipeline skills (2026-09-09) saw one do exactly that: it ran track-config and cp in a single compound command on
+    a tracked file, the flag printed on, and the copy landed raw, with no change recorded for the user to accept or
+    reject; the session recovered from its own base copy, whose hash matched the sidecar's fingerprint, and
+    re-applied its edits through track-edit. The remedy is in two places. The skill (patch 0007) says a tracked
+    file is never written through Bash either, and that track-config's exit code is checked as a step of its own,
+    since its 0 means ON and a `&&` after it runs the write on exactly the tracked file. And romp's own PreToolUse
+    hook on the Bash tool, `hooks/romp-track-bash-guard.mjs`, beside the vendored guard and registered by the same
+    installer merge on the `Bash` matcher (synchronous, timeout 10; linked from `hooks/` with romp's own hooks and
+    removed by the uninstaller with romp's hooks), reads the command and refuses one that would write a tracked
+    file. What it reads: the command lexed as a shell would (quotes, escapes, comments, line continuations, heredoc
+    bodies kept as data, pipes and lists cut into simple commands, `cd` moving the working directory for what
+    follows), and from each simple command the paths it would write: the destination of cp, mv, install and ln (a
+    directory destination or `-t` resolved to the files that land in it, a directory source walked to the files it
+    carries), the operands of tee, sponge and truncate, dd's `of=`, sort's `-o`, every `>`, `>>`, `>|`, `&>` and
+    descriptor-prefixed redirection target, the files of sed -i and perl -i in their spellings, and a literal path
+    a python or node inline script opens with a write mode (`-c` or `-e`, or a heredoc on stdin), the same inside
+    `$(...)`, a literal `sh -c`, a loop body or after sudo, env or nice. Each is resolved against the payload's cwd
+    and judged by the project's `.trackchanges/config.json` through store-io's `findVaultRoot` and
+    `isTrackedFile`, the readers the CLIs use. The refusal is exit 2 with one line naming the file and the
+    track-edit command, in the person's voice. What it lets through: a read (cat, grep, diff, git, sed without -i)
+    names no target; a path built from a variable or a glob, and a command behind eval, xargs or a shell -c it
+    cannot read, is unresolvable and passes, since a silent block of ordinary work would cost more than a missed
+    write; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked file
+    is a read. Not read: rm, a mv of the tracked file elsewhere (a rename the store heals by content hash),
+    find -exec, rsync and patch. Without ROMP_SID it exits 0 before reading stdin (decision 24). About 60 ms per
+    Bash call. `tools/romp-track-bash-guard.test.mjs` drives the grammar and the process, `tests/install-sh.bats`
+    the registration, and `tools/file-review-plan-bash-guard.test.mjs` holds this decision to the hook and the
+    installer.
+48. **Sessions commit the comments folder** (2026-09-10). The owner found that his sessions never added
+    `.trackchanges/` to git, so his comments on their files and the record of their tracked changes were not
+    archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the
+    opt-out. The norm is added on the session side: the vendored skill (`vendor/track-changents/patches/0007`, its
+    Notes) and `claude/romp-session-prompt.md` (one sentence in Working style, in the person's voice, naming the
+    folder and nothing else of the machinery) ask a session that commits work in a project which has the folder
+    and does not ignore it to include the folder in the commit, since it holds the person's comments and the
+    record of the tracked changes. The guide's Files section and decision 25 say so to the person: sessions are
+    asked, the person's own commits stay theirs, and nothing on the host stages or commits (the owner did not
+    choose staging). `tests/test_guide_files_commit_folder.py` holds the four texts to one another;
+    `tests/test_session_prompt.py` pins the sentence.
 
 ## Open questions for the user
 
