@@ -109,6 +109,7 @@ function el(id) {
     getAttribute() { return null; }, setAttribute() {} };
 }
 const rail = el('rail-refresh');
+rail.title = 'Restart the romp kernel';
 const byId = { 'rail-refresh': rail };
 const body = el('body');
 body.appendChild = function (x) { this.children.push(x); if (x.id) byId[x.id] = x; };
@@ -137,7 +138,8 @@ rail.onclick();                       // the rail button's click: dims itself, t
 setTimeout(() => {
   const boot = byId['romp-boot'];
   console.log(JSON.stringify({ healthz: log.healthz, notices: log.notices, reloads: log.reloads, restarts: log.restarts,
-    bootGone: boot ? boot._cls.has('gone') : null, railPointer: rail.style.pointerEvents, railOpacity: rail.style.opacity }));
+    bootGone: boot ? boot._cls.has('gone') : null, railPointer: rail.style.pointerEvents, railOpacity: rail.style.opacity,
+    railTitle: rail.title }));
   process.exit(0);
 }, 1200);
 """
@@ -147,10 +149,11 @@ class RestartRefusalProbeTest(unittest.TestCase):
     """The web shell's Restart discarded the kernel's answer (review round 2, 2026-09-10): a 502 (the manager
     refused the restart) left the boot splash up for the two-minute backstop and then reloaded onto the same
     kernel, hiding the dashboard and the bell the whole time. Now a not-ok answer skips the /healthz poll,
-    drops the splash and restores the rail button; a 2xx polls as before. The page files NO notice of its
-    own (review round 3, 2026-09-10): the kernel's /restart handler filed the refusal under the refused kind
-    before it answered, and the feed pane mirrors that into the same bell, so a page-side copy of the text
-    made one refused click read as two rows."""
+    drops the splash and restores the rail button, which wears the kernel's words as its title until the
+    next click; a 2xx polls as before. The page files NO notice of its own (review round 3, 2026-09-10): the
+    kernel's /restart handler filed the refusal under the refused kind before it answered, and the feed pane
+    mirrors that into the same bell, so a page-side copy of the text made one refused click read as two
+    rows."""
 
     def _probe(self, scenario):
         import json
@@ -179,6 +182,8 @@ class RestartRefusalProbeTest(unittest.TestCase):
         self.assertEqual((got["railPointer"], got["railOpacity"]), ("", ""), "the rail button is back")
         self.assertEqual(got["notices"], [], "the kernel's own notice is the one row in the bell, through the feed mirror")
         self.assertNotIn("__rompNotify('refused'", km._LANDING_SETTINGS_JS, "no page-side copy of the kernel's text")
+        self.assertIn("the manager refused (HTTP 401)", got["railTitle"], "the button shows the refusal: the kernel's words as its title")
+        self.assertIn("Run romp refresh", got["railTitle"], "with the way out")
 
     def test_a_taken_restart_polls_for_the_new_boot_id_under_the_splash_as_before(self):
         got = self._probe("taken")
@@ -187,6 +192,7 @@ class RestartRefusalProbeTest(unittest.TestCase):
         self.assertEqual(got["reloads"], 0, "the same boot id: no reload yet")
         self.assertIs(got["bootGone"], False, "the splash stays up while the restart lands")
         self.assertEqual((got["railPointer"], got["railOpacity"]), ("none", "0.5"), "the button stays dimmed")
+        self.assertEqual(got["railTitle"], "Restart the romp kernel", "its own title")
         self.assertEqual(got["notices"], [])
 
 
