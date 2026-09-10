@@ -20,13 +20,14 @@ and a full checkout's). The rule is content, not name shape:
     100755 and be executable in the checkout, whatever its name: a launcher committed as
     bin/romp-<x>.sh without its bit is an offender. A regular file without a shebang (bin/README.md,
     hooks/README.md) is documentation, not a command.
-  - a tracked symlink is a command unless its name carries an extension. The four bin/romp_*.py
-    symlinks (romp_colormap.py, romp_palette.py, romp_sdk_backend.py, romp_session_backend.py) are
-    import shims through which the kernel's modules are reached by name, never run (bin/README.md
-    lists them; their targets carry no shebang or serve as an ABC, and git records the targets as
-    100644, the links as 120000). A command symlink is followed to its target, which must exist
-    inside the repo, be recorded as 100755 and be executable in the checkout, so a dangling or
-    escaping link is an offender too.
+  - a tracked symlink is a command, except under bin/ when its name carries an extension. The four
+    bin/romp_*.py symlinks (romp_colormap.py, romp_palette.py, romp_sdk_backend.py,
+    romp_session_backend.py) are import shims through which the kernel's modules are reached by name,
+    never run (bin/README.md lists them; their targets carry no shebang or serve as an ABC, and git
+    records the targets as 100644, the links as 120000). The exemption is bin/'s only: nothing under
+    hooks/ or .githooks/ is imported, so a symlinked hook is a command whatever its name. A command
+    symlink is followed to its target, which must exist inside the repo, be recorded as 100755 and
+    be executable in the checkout, so a dangling or escaping link is an offender too.
 hooks/* and .githooks/* fall under the same rules: install.sh links the hooks into the harness's hooks
 dir and .githooks/pre-push into git's hook dir, both of which run them by path, and git skips a
 pre-push hook that is not executable with a hint and pushes the commits unscanned.
@@ -108,8 +109,8 @@ def _commands(root, recorded):
             unresolved.append("%s: tracked but missing from the working tree" % rel)
             continue
         if recorded[rel] == SYMLINK:
-            if os.path.splitext(name)[1]:
-                continue  # an import shim, reached by module name and never run
+            if tree == "bin" and os.path.splitext(name)[1]:
+                continue  # an import shim, reached by module name and never run; bin/ only
             target = os.path.realpath(path)
             if not os.path.exists(target):
                 unresolved.append("%s: dangling symlink (target %s does not exist)"
@@ -186,9 +187,10 @@ class EntryPointsExecutable(unittest.TestCase):
 class ScratchCheckout(unittest.TestCase):
     """The rules against a scratch repository, so the negative cases are pinned without touching this
     repo's index or working tree: a shebang file recorded as 100644 is an offender in both layers
-    whatever its name, a file without a shebang and a symlink with an extension are not commands, an
-    untracked file is not a command, a symlink target without its bit is named through its link, a
-    hook under hooks/ or .githooks/ is held to the same rules, an entry marked skip-worktree and absent
+    whatever its name, a file without a shebang and a symlink with an extension under bin/ are not
+    commands, an untracked file is not a command, a symlink target without its bit is named through
+    its link, a hook under hooks/ or .githooks/ is held to the same rules and a symlinked hook is a
+    command whatever its name, an entry marked skip-worktree and absent
     from the tree is neither a command nor missing, and the index reader skips for a missing git or
     repository only. The scratch git runs under env(): it sees neither the index a
     run from a hook inherits nor the machine's own git config, hooks or excludes file."""
@@ -317,6 +319,25 @@ class ScratchCheckout(unittest.TestCase):
         self.assertEqual(_checkout_offenders(commands, self.root), [".githooks/pre-push", "bin/romp-x.sh"])
         self.assertEqual(_index_offenders(commands, recorded, self.root),
                          ["bin/romp-x.sh: recorded as 100644", "hooks/romp-hook.sh: recorded as 100644"])
+
+    def test_a_symlinked_hook_with_an_extension_is_a_command_named_through_its_link(self):
+        # the extension exemption is bin/'s: a hook reached through a symlink is run by path, so a
+        # 100644 target without its bit is an offender in both layers, under hooks/ and .githooks/ alike
+        self.write("kernel/hook-target.sh", "#!/bin/sh\n", 0o644)
+        os.symlink("../kernel/hook-target.sh", self.path("hooks/romp-x.sh"))
+        os.symlink("../kernel/hook-target.sh", self.path(".githooks/pre-push.sh"))
+        self.git("add", "--", "kernel/hook-target.sh", "hooks/romp-x.sh", ".githooks/pre-push.sh")
+        recorded, commands, unresolved = self.walk()
+        self.assertEqual(unresolved, [])
+        self.assertEqual(recorded["hooks/romp-x.sh"], SYMLINK)
+        self.assertEqual([rel for rel, _ in commands],
+                         [".githooks/pre-push", ".githooks/pre-push.sh", "bin/romp", "bin/romp-kernel", "bin/romp-x.sh",
+                          "hooks/romp-hook.sh", "hooks/romp-x.sh"])
+        self.assertEqual(_checkout_offenders(commands, self.root),
+                         [".githooks/pre-push.sh -> kernel/hook-target.sh", "bin/romp-x.sh",
+                          "hooks/romp-x.sh -> kernel/hook-target.sh"])
+        self.assertEqual(_index_offenders(commands, recorded, self.root),
+                         ["bin/romp-x.sh: recorded as 100644", "kernel/hook-target.sh: recorded as 100644"])
 
     def test_a_skip_worktree_entry_absent_from_the_tree_is_neither_a_command_nor_missing(self):
         # what a cone sparse checkout that leaves out hooks/ looks like: the entry stays in the index,
