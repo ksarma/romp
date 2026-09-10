@@ -142,7 +142,7 @@ class InjectedTurnDeadlockEndToEnd(unittest.TestCase):
             "_last_state", "_session_awaiting", "_closer_settled", "_revivers_pending",
             "_pending_ops")}
         self._orig_jd = {n: getattr(jd, n) for n in ("parsed_session", "load_goals", "load_goals_shared",
-                                                     "_segs", "plan_units")}
+                                                     "load_goals_shared_or_fault", "_segs", "plan_units")}
         self._orig_backend = km.Sessions.backend_for
         km._session_flag = lambda sid, flag: False
         km._compacting_now = lambda sid: False
@@ -164,9 +164,10 @@ class InjectedTurnDeadlockEndToEnd(unittest.TestCase):
         jd.parsed_session = lambda sid, paths, now: {"turns": self.turns}
         self.store = _store({G1: _node(G1, "Ship the reconnect banner", log=_incident_log())})
         jd.load_goals = lambda sid: self.store
-        # the walk decides on jd.load_goals_shared since performance round 5 (2026-09-08); the stub follows
-        # whatever jd.load_goals the test installs, so the walk's snapshot is the stub's first answer and a
-        # store file another test left under the shared GOALDIR is never read instead
+        jd.load_goals_shared_or_fault = lambda sid: (self.store, None)   # the walk reads the shared view; the fresh re-read stays on load_goals
+        # load_goals_shared is stubbed beside it: the judge's load_goals_shared_or_fault resolves that name at call
+        # time and the wake sweep reads it directly (2026-09-09), so the stub follows whatever jd.load_goals the
+        # test installs and a store file another test left under the shared GOALDIR is never read instead
         jd.load_goals_shared = lambda sid: jd.load_goals(sid)
         self.sent = []
         test = self

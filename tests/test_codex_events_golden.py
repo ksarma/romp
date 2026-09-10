@@ -212,17 +212,18 @@ class Chain(unittest.TestCase):
 
     def test_several_inputs_land_as_one_text_block_each(self):
         # The backend starts a turn from its WHOLE queue, one input per queued send, and the app-server
-        # answers one userMessage item carrying them all. Each input is its own text block (the Claude
-        # CLI's shape for several sends taken at one boundary, which the kernel's echo prune and the
-        # chat's pending bubbles land per block); until 2026-09-09 the inputs were newline-joined into
-        # one block, "first send\nsecond send", which matched no send's echo, so a batch's echoes never
-        # retired (the round-3 verification). Placeholders for non-text inputs are blocks of their own.
+        # answers one userMessage item carrying them all. Each input is its own text block: a user record
+        # with several text blocks is a shape the kernel already reads per block (_atom_user_texts, behind
+        # the echo prune and the pending-bubble pass; romp bundles its own injected messages that way).
+        # Joined into one block ("first send\nsecond send") the record matches no send's echo, and the
+        # echoes of a turn started from several sends never retire. A placeholder for a non-text input is
+        # a block of its own.
         n = norm()
         two = {"type": "userMessage", "id": "u1",
                "content": [{"type": "text", "text": "first send"},
                            {"type": "text", "text": "  second send\n"}]}
         recs = feed(n, turn_started(), item_completed(two))
-        self.assertEqual([r["type"] for r in recs], ["user"], "one record for the batch")
+        self.assertEqual([r["type"] for r in recs], ["user"], "one record for the one item")
         self.assertEqual(recs[0]["message"]["content"],
                          [{"type": "text", "text": "first send"}, {"type": "text", "text": "second send"}],
                          "a block per input, each stripped of outer whitespace")

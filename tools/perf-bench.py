@@ -891,11 +891,15 @@ def _bench(args, state, repo, out, shadow, rec, maps):
 
     def scope(tmux):
         """The pusher cycle's scope, as _pusher_cycle opens it: the liveness snapshot, the sid->path memo,
-        the discover-rows memo (perf batch 2 P3; a kernel from before it never reads the slot) and the
-        names snapshot."""
+        the discover-rows memo (perf batch 2 P3; a kernel from before it never reads the slot), the names
+        snapshot and the cycle's billing-availability memo (_auth_avail_status, upstream
+        https://github.com/romp-on/romp/pull/1147, folded 2026-09-09; a kernel from before it never reads
+        the slot). tests/test_perf_bench.py CycleScopeParity reads _pusher_cycle's slots and fails when one
+        is missing here."""
         km._live_scope.snapshot = tmux
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
+        km._live_scope.auth = {}
         km._live_scope.names = km._names_snapshot()
 
     def unscope():
@@ -903,11 +907,13 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         km._live_scope.names = None
         km._live_scope.paths = None
         km._live_scope.sessions = None
+        km._live_scope.auth = None
 
     def new_cycle():
         """A fresh cycle's per-cycle memos (what _pusher_cycle resets between two cycles)."""
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
+        km._live_scope.auth = {}
 
     def clear_kernel_caches():
         """The kernel-side caches a freshly started kernel lacks (build_session's inputs above the parse)."""

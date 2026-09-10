@@ -381,9 +381,9 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   // the note bar: a child of the card above the body row, in both builders' place (the fallback editor's calls noteBar now)
   assert.match(local, /bar2\.textContent = msg;\n\s*box\.insertBefore\(bar2, main\);/);
   assert.equal((local.match(/bar2\.id = "fileview-save-err";/g) || []).length, 1, "one builder of the bar");
-  assert.match(local, /enterFallback\(\);\n\s*noteBar\(why \+ " — editing in the plain fallback editor\."\);/, "the fallback editor's notice goes through noteBar");
-  assert.match(local, /document\.getElementById\("fileview-save-err"\)\?\.remove\(\);\n\s*\/\/ per the loading-state rule the chunk wait shows the romp loader/, "the editor's entry removes a standing notice, as the body swap used to");
-  assert.match(local, /document\.getElementById\("fileview-save-err"\)\?\.remove\(\);\n\s*renderBody\(\);\n\s*\/\/ a fetch that landed while the editor was up/, "the editor's exit removes the edit's notices, as the repaint used to");
+  assert.match(local, /enterFallback\(\);\n(?:\s*\/\/[^\n]*\n)*\s*noteBar\(why \+ " — editing in the plain fallback editor\."\);/, "the fallback editor's notice goes through noteBar");
+  assert.match(local, /note\?\.remove\(\); note = null;\n\s*\/\/ per the loading-state rule the chunk wait shows the romp loader/, "the editor's entry removes a standing notice, as the body swap used to");
+  assert.match(local, /note\?\.remove\(\); note = null;\n\s*renderBody\(\);\n\s*\/\/ a fetch that landed while the editor was up/, "the editor's exit removes the edit's notices, as the repaint used to");
   // the float hides on the body's scroll, installed with the float's other listeners (the constructor), not in installLayout
   const PANEL = read("file-comments.ts");
   assert.match(PANEL, /hideFloatOnScroll = \(\) => \{\n\s*if \(this\.float\.hidden\) return;\n\s*const was = this\.floatAt, now = this\.floatSubjectRect\(\);\n\s*if \(was && now && Math\.abs\(now\.top - was\.top\) < 1 && Math\.abs\(now\.right - was\.right\) < 1\) return;[^\n]*\n\s*this\.hideFloat\(\);\n\s*\};/,
