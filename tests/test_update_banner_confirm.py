@@ -235,6 +235,17 @@ out({ atOnce: atOnce, after: state() });""")
             self.assertEqual(s["posts"], [])
         s = run_banner("delete CHECK.otherKernels; GO.onclick(); await tick(); await tick(); out(state());")
         self.assertEqual(s["label"], "Restart 3 sessions here now, interrupting 1" + null_tail, "the field absent: unknown, never 0")
+        # the two counts are known apart: no session count yet (the boot window) with a registry count
+        # keeps the other-kernel clause and names no sessions; neither known says both
+        for others, want in ((2, "Restart every session here now; the other kernels restart too"),
+                             (1, "Restart every session here now; the other kernel restarts too"),
+                             (0, "Restart every session now"),
+                             (None, "Restart every session here now" + null_tail)):
+            s = run_banner("GO.onclick(); await tick(); await tick(); out(state());",
+                           check={"otherKernels": others, "sessions": None, "midTurn": None})
+            self.assertEqual((s["label"], s["armed"], s["posts"]), (want, True, []), others)
+        s = run_banner("delete CHECK.otherKernels; GO.onclick(); await tick(); await tick(); out(state());", check={"sessions": None, "midTurn": None})
+        self.assertEqual(s["label"], "Restart every session here now" + null_tail, "neither count, the field absent")
         # the re-read's answer moves the wording too (a kernel added since the page loaded)
         s = run_banner("""
 CHECK.otherKernels = 1; GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: atOnce, after: state() });""")
@@ -275,6 +286,41 @@ GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: at
 var realFetch = fetch; fetch = function (u, o) { if (u === "/update-check") return Promise.reject(new Error("down")); return realFetch(u, o); };
 GO.onclick(); await tick(); await tick(); out(state());""")
         self.assertEqual((s["label"], s["armed"]), ("Restart 3 sessions now, interrupting 1", True), "a failed read keeps the held counts")
+
+    def test_a_page_loaded_while_the_update_runs_holds_no_counts(self):
+        # the kernel answers no counts while the update runs (its registry read is skipped: no label can be
+        # worded then) and the banner records none from that answer either, so when the update fails and
+        # the offer comes back the arm shows the count-less label until its own re-read lands, never a
+        # count that arrived with the wait
+        s = run_banner("""
+var waited = state(); GO.onclick(); var atOnce = state(); await tick(); await tick();
+out({ waited: waited, atOnce: atOnce, after: state() });""", check={"state": "running", "failed": "the install failed", "sessions": 3, "midTurn": 1, "otherKernels": 1})
+        self.assertTrue(s["waited"]["msg"].startswith("The update did not finish: the install failed"), s["waited"]["msg"])
+        self.assertEqual((s["waited"]["goHidden"], s["waited"]["armed"]), (False, False), "the offer is back")
+        self.assertEqual((s["atOnce"]["label"], s["atOnce"]["armed"]), ("Restart every session now", True),
+                         "the arm shows no counts: the answer that came with the wait recorded none")
+        self.assertEqual(s["after"]["label"], "Restart 3 sessions here now, interrupting 1; the other kernel restarts too", "the arm's own re-read fills them in")
+
+    def test_a_re_read_of_an_arm_that_ended_is_ignored_and_the_resize_listener_lives_with_the_armed_state(self):
+        # the arm's re-read fits the label against the row it measured; an answer to a previous arm's
+        # re-read landing during a later arm would set the label from an older answer (and fit it against
+        # a row that is no longer on screen), so it is ignored. The window's resize listener is added at
+        # the arm and removed at the disarm, so a resize while plain measures nothing
+        s = run_banner("""
+var pending = [], realFetch = fetch;
+fetch = function (u, o) { if (u !== '/update-check') return realFetch(u, o);
+  return new Promise(function (res) { pending.push(function (d) { res({ ok: true, status: 200, json: function () { return Promise.resolve(d); } }); }); }); };
+var plain = state(); GO.onclick(); var armed1 = state(); CX.onclick(); var cancelled = state();
+GO.onclick(); var armed2 = state();
+pending[1]({ boot: 'b1', sessions: 5, midTurn: 2, otherKernels: 0 }); await tick(); await tick(); var second = state();
+pending[0]({ boot: 'b1', sessions: 9, midTurn: 9, otherKernels: 0 }); await tick(); await tick(); var stale = state();
+CX.onclick(); var done = state();
+out({ plain: plain, armed1: armed1, cancelled: cancelled, armed2: armed2, second: second, stale: stale, done: done, reads: pending.length });""")
+        self.assertEqual(s["reads"], 2, "each arm re-read once")
+        self.assertEqual(s["second"]["label"], "Restart 5 sessions now, interrupting 2", "the current arm's answer")
+        self.assertEqual((s["stale"]["label"], s["stale"]["armed"]), ("Restart 5 sessions now, interrupting 2", True), "the earlier arm's answer changes nothing")
+        self.assertEqual([s[k]["resizeListeners"] for k in ("plain", "armed1", "cancelled", "armed2", "done")], [0, 1, 0, 1, 0],
+                         "the resize listener is added at the arm and removed at the disarm")
 
     def test_the_boot_retire_drops_the_held_counts_as_well_as_the_armed_state(self):
         # a kernel restart under a showing offer retires it; the counts were that life's, so the next

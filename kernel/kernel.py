@@ -9207,8 +9207,9 @@ def _user_todos_off_boot_notice():
 #   auto: the kernel updates itself at boot, once per discovered version (update-attempted.json
 #         keeps a failing update from looping on every restart; that stall is logged, not silent).
 #   off:  never even checks.
-# The update itself (_run_update) runs DETACHED (start_new_session: install.sh reloads the manager
-# and the restart takes this kernel down, and the child must outlive both): fetch the tag, then
+# The update itself (_run_update) runs DETACHED (start_new_session: install.sh (re)installs the
+# manager when it is not running, and the restart takes this kernel down, and the child must outlive
+# both): fetch the tag, then
 # `git merge --ff-only <tag>` — the tree lands EXACTLY on the release commit, never the branch tip
 # (the user 2026-08-09) — then ./install.sh, everything appended to update.log under STATE, a
 # report written to update-report.json, and a restart through the manager door ONLY on success. The outcome is never
@@ -9225,7 +9226,19 @@ _UPDATE_REPORT_FAULT = [""]   # the move-aside fault of a junk report still on d
 #                                        or a readable report ends it)
 _MANAGER_READ_FAULT = [""]    # why the manager's registry could not be read, said once per episode (a clean read
 #                                        ends it; a changed reason opens a new one): _manager_kernels
+_MANAGER_DEFAULT_PORT = 7432  # the manager's control port when ROMP_MANAGER_PORT is absent or empty (bin/romp-manager's
+#                                        own default): _manager_port
 _UPDATE_MODES = ("ask", "auto", "off")
+
+
+def _manager_port(value):
+    """The manager control port the update's two doors dial, as an int: `value` (the ROMP_MANAGER_PORT a
+    caller read, at ack time or here) when set, else _MANAGER_DEFAULT_PORT. One resolution for the
+    banner's registry read (_manager_kernels) and the drift door's restart (_run_main_update), so the
+    label and the restart it describes agree on which manager is asked (review round 4 of the confirm
+    step, 2026-09-10: the read said "no manager" on an absent variable while the restart dialled 7432).
+    _restart_this_kernel and _run_update keep their own rule, absent meaning no manager to ask."""
+    return int(value or _MANAGER_DEFAULT_PORT)
 
 
 def _restart_impact():
@@ -9258,9 +9271,10 @@ def _manager_kernels(timeout=1.0):
     """The kernels the manager's restart-all restarts, as the manager's own registry lists them (its GET
     /status `kernels`, the live map restartAll loops: kernels.json profiles and /ensure kernels alike),
     or None when there is no answer to read (nothing answering within `timeout`, a status other than
-    200, a body of another shape). Without a manager (no ROMP_MANAGER_PORT in the environment) the
-    registry is empty: no restart-all reaches this kernel, and nothing else restarts with it. Read for
-    the banner's confirm label (review round 2 of the confirm step, 2026-09-10): _restart_impact counts
+    200, a body of another shape). The port is ROMP_MANAGER_PORT, else the manager's default, the same
+    resolution the drift door's restart dials (_manager_port): the label describes the restart that
+    door runs, so a manager on the default port that the environment does not name is asked by both
+    or by neither, never by the restart alone. Read for the banner's confirm label (review round 2 of the confirm step, 2026-09-10): _restart_impact counts
     this kernel's sessions, the manager restarts each kernel it owns, so a box with more than one
     kernel loses more sessions than the count says, and the label says so when the registry holds
     another kernel. Never a read of kernels.json, which the manager parses on its own terms (it drops a
@@ -9268,11 +9282,9 @@ def _manager_kernels(timeout=1.0):
     answer well is said on stderr, once per episode (_manager_read_fault): the banner then says the other
     kernels MAY restart too, never the single-kernel form, because a manager that missed this 1 s read
     can still take the restart request, which waits up to _RESTART_REQUEST_MAX_S (review round 3)."""
-    mport = os.environ.get("ROMP_MANAGER_PORT") or ""
-    if not mport:
-        return []
+    mport = _manager_port(os.environ.get("ROMP_MANAGER_PORT"))
     try:
-        c = http.client.HTTPConnection("127.0.0.1", int(mport), timeout=timeout)
+        c = http.client.HTTPConnection("127.0.0.1", mport, timeout=timeout)
         c.request("GET", "/status")
         resp = c.getresponse()
         body = resp.read()
@@ -10315,7 +10327,8 @@ def _main_drift_check():
 # RESTORED value read instead of the one in force when the kernel answered. The handlers now read
 # the env once, pre-ack, and hand the value down. _PORT_FROM_ENV keeps every non-HTTP caller
 # exactly as before: the env is read at use time, absent still meaning "no manager" in
-# _restart_this_kernel and "the default port" in _run_main_update.
+# _restart_this_kernel and "the default port" in _run_main_update (_manager_port, which the banner's
+# registry read shares, so the label and the restart agree).
 _PORT_FROM_ENV = object()
 
 
@@ -10433,7 +10446,7 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
         # http.client, the way _restart_this_kernel dials: urllib's default opener honours
         # HTTP_PROXY / http_proxy, so under a proxy environment this loopback POST went to the
         # proxy and the code on disk never restarted — reported only as "restart request failed"
-        c = http.client.HTTPConnection("127.0.0.1", int(manager_port or 7432), timeout=5)
+        c = http.client.HTTPConnection("127.0.0.1", _manager_port(manager_port), timeout=5)
         c.request("POST", "/restart-all%s" % ("" if immediate else "?when=quiet"), headers=_manager_headers())
         resp = c.getresponse()
         body = resp.read()
@@ -56106,10 +56119,17 @@ _UPD_JS = (
     "function label(){if(!impact)return 'Restart every session now';var n=impact.sessions,m=impact.midTurn,o=impact.others;"
     "var here=(o||o===null)?' here':'',tail=o===null?'; the other kernels may restart too (the manager did not answer)':"
     "o?('; the other kernel'+(o===1?' restarts':'s restart')+' too'):'';"
+    "if(n===null)return 'Restart every session'+here+' now'+tail;"
     "if(!n)return 'Restart now, nothing to interrupt'+here+tail;"
     "return 'Restart '+n+' session'+(n===1?'':'s')+here+' now'+(m?', interrupting '+m:'')+tail;}"
-    "function note(d){if(!d)return;impact=(typeof d.sessions==='number')?{sessions:d.sessions,midTurn:d.midTurn||0,"
-    "others:(typeof d.otherKernels==='number')?d.otherKernels:null}:null;}"
+    # the two counts are held apart (review round 4, 2026-09-10): the session count is null while the
+    # kernel's SDK backend is still being built, the registry count while the manager did not answer,
+    # and either can be known without the other, so an answer without a session count keeps a numeric
+    # registry count and the label says the other kernels restart too without naming this kernel's
+    # sessions. label() tests the session count for null BEFORE its falsy test: null is falsy, and the
+    # 0 form ("nothing to interrupt") is a claim about a count the kernel has not made
+    "function note(d){if(!d)return;impact={sessions:(typeof d.sessions==='number')?d.sessions:null,midTurn:d.midTurn||0,"
+    "others:(typeof d.otherKernels==='number')?d.otherKernels:null};}"
     # `back`: the gesture was the user's own cancel (Cancel, Escape) with focus inside the banner, so
     # focus returns to the Update button the armed row replaced; every other disarm leaves focus where
     # the event that caused it put it (a pane, another control, nothing). Cancel's click passes `always`:
@@ -56243,10 +56263,13 @@ _UPD_JS = (
     # persist the Not-now (the user 2026-08-31): page loads and kernel restarts stop re-offering
     "try{fetch('/update-dismiss',{method:'POST',headers:{'Content-Type':'application/json'},"
     "body:JSON.stringify({tag:curTag})}).catch(function(){});}catch(e){}};"
+    # a page loaded while the update runs records no counts: the kernel answers none in that state (the
+    # registry read is skipped while no label can be worded) and the next arm re-reads
     "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){"
-    "bootNow=(d&&d.boot)||'';note(d);"
+    "bootNow=(d&&d.boot)||'';"
     "if(d&&d.state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
     "show('romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
+    "note(d);"
     # a page loaded AFTER the push re-derives the pending offer — release or main drift alike
     "if(d&&d.mode==='ask'){if(d.tag)offer(d.cur||'',d.tag);"
     "else if(d.drift&&d.driftSha)offer(d.cur||'',d.driftSha,d.drift);}})"
@@ -58571,8 +58594,14 @@ class Handler(BaseHTTPRequestHandler):
                 dsha = _MAIN_DRIFT[0] or _MAIN_DRIFT[1]
                 if dsha in dis:
                     dsha = ""
-                imp = _restart_impact()     # None while the SDK backend is still being built: unknown
-                oth = _other_kernels()      # None when the manager's registry could not be read
+                # the counts are read only when a label can be worded from them (the offer's arm and
+                # the load of a page with an offer pending): while the update runs the banner shows
+                # the wait and its poll reads boot, failed and updated alone, so the registry read (a
+                # loopback GET, up to 1 s on a silent manager, a stderr line per episode) is skipped
+                # and every count is null (review round 4 of the confirm step, 2026-09-10)
+                running = _UPDATE_STATE[0] == "running"
+                imp = None if running else _restart_impact()     # None while the SDK backend is still being built: unknown
+                oth = None if running else _other_kernels()      # None when the manager's registry could not be read
                 return self._send(200, json.dumps({
                     "cur": _kernel_ver() or "",
                     "tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]),

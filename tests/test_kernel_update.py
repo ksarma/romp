@@ -923,10 +923,20 @@ class Routes(Fresh):
             self.assertIsNone(check(), "kernels of another shape")
             os.environ["ROMP_MANAGER_PORT"] = "1"
             self.assertIsNone(check(), "nothing answers on the port")
-            # no manager at all (no port in the environment): no restart-all reaches this kernel, so
-            # nothing else restarts with it, and the registry reads empty
+            # no port in the environment, or an empty one: the read dials the manager's DEFAULT port, the
+            # port the drift door's restart dials on the same absence (_manager_port), so the label and the
+            # restart it describes ask the same manager (review round 4: the read said no manager while the
+            # restart asked the one on 7432). The default is patched to the fake: a live manager may hold
+            # the real one on the box running this suite, and no test dials it
             os.environ.pop("ROMP_MANAGER_PORT", None)
-            self.assertEqual((km._manager_kernels(), check()), ([], 0))
+            answer["status"], answer["body"] = 200, registry(km.PORT, 31111)
+            with mock.patch.object(km, "_MANAGER_DEFAULT_PORT", mgr.server_address[1]):
+                self.assertEqual((len(km._manager_kernels()), check()), (2, 1), "the variable absent: the default port is read")
+                os.environ["ROMP_MANAGER_PORT"] = ""
+                self.assertEqual(check(), 1, "the variable empty: the same")
+                self.assertEqual(km._manager_port(None), mgr.server_address[1])
+            self.assertEqual((km._manager_port(None), km._manager_port(""), km._manager_port("7777")), (7432, 7432, 7777),
+                             "one resolution: the value when set, else the manager's own default")
         finally:
             if saved_port is None:
                 os.environ.pop("ROMP_MANAGER_PORT", None)
@@ -934,6 +944,113 @@ class Routes(Fresh):
                 os.environ["ROMP_MANAGER_PORT"] = saved_port
             km._MANAGER_READ_FAULT[0] = ""
             mgr.shutdown()
+
+    def test_the_registry_read_and_the_drift_doors_restart_dial_the_same_manager_port(self):
+        # the banner's label describes the restart the drift door runs, so both resolve the port the same
+        # way: ROMP_MANAGER_PORT when set, else the manager's default (_manager_port). Before round 4 the
+        # read treated an absent variable as "no manager" (otherKernels 0, the single-kernel label) while
+        # _run_main_update dialled 7432 and restarted whatever manager held it. Every dial is recorded by
+        # a connection class that answers 200 without a socket; the converge's own steps are stubbed
+        import socket
+        dials = []
+        Real = km.http.client.HTTPConnection
+
+        class Recording(Real):
+            def __init__(self, host, port=None, *a, **kw):
+                dials.append((host, port))
+                super().__init__(host, port, *a, **kw)
+
+            def request(self, *a, **kw):
+                pass
+
+            def getresponse(self):
+                class R:
+                    status = 200
+
+                    def read(self):
+                        return b'{"ok": true, "kernels": []}'
+                return R()
+
+            def close(self):
+                pass
+        saved_port = os.environ.get("ROMP_MANAGER_PORT")
+        notices = []
+        try:
+            os.environ.pop("ROMP_MANAGER_PORT", None)
+            with mock.patch.object(km.http.client, "HTTPConnection", Recording), \
+                 mock.patch.object(km, "_MANAGER_DEFAULT_PORT", 34567), \
+                 mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
+                 mock.patch.object(km, "_checkout_sha", return_value="abcdef0123456789"), \
+                 mock.patch.object(km, "_audit_restart_request"), \
+                 mock.patch.object(km, "_sync_notice", side_effect=lambda *a, **kw: notices.append(a)):
+                self.assertEqual(km._manager_kernels(), [], "the read reached the default port")
+                km._run_main_update("restart", True, manager_port=None)       # the /update handler's value for an absent variable
+                km._run_main_update("restart", True)                          # the daemon's default: read here, absent
+                os.environ["ROMP_MANAGER_PORT"] = "45678"
+                self.assertEqual(km._manager_kernels(), [])
+                km._run_main_update("restart", True, manager_port="45678")
+            self.assertEqual(dials, [("127.0.0.1", 34567)] * 3 + [("127.0.0.1", 45678)] * 2, "the same port for the label and the restart, set or not")
+            self.assertEqual(notices, [], "the restart request was answered: no failure notice")
+        finally:
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MANAGER_READ_FAULT[0] = ""
+
+    def test_update_check_reads_no_registry_while_the_update_runs(self):
+        # while the update runs the banner shows the wait and its poll reads boot, failed and updated alone,
+        # so the route skips the registry read (a loopback GET, up to 1 s on a manager that accepts and
+        # never answers, and a stderr line per episode about a label that is not on screen) and answers
+        # every count null. The fake manager here never answers: a read would hold the handler for the
+        # timeout, and the socket records whether one was made at all
+        import contextlib
+        import socket
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(5)
+        accepted = []
+
+        def acceptor():
+            while True:
+                try:
+                    c, _ = srv.accept()
+                except OSError:
+                    return
+                accepted.append(c)
+        threading.Thread(target=acceptor, daemon=True).start()
+        saved_port, saved_state = os.environ.get("ROMP_MANAGER_PORT"), km._UPDATE_STATE[0]
+        km._MANAGER_READ_FAULT[0] = ""
+        err = io.StringIO()
+        try:
+            os.environ["ROMP_MANAGER_PORT"] = str(srv.getsockname()[1])
+            km._UPDATE_STATE[0] = "running"
+            t0 = time.monotonic()
+            with contextlib.redirect_stderr(err):
+                _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            took = time.monotonic() - t0
+            d = json.loads(body)
+            self.assertEqual((d["state"], d["otherKernels"], d["sessions"], d["midTurn"]), ("running", None, None, None))
+            self.assertEqual(accepted, [], "no connection reached the manager while the update runs")
+            self.assertEqual(err.getvalue(), "", "no fault line about a label the banner is not showing")
+            self.assertLess(took, 1.0, "the poll did not wait on the manager's timeout")
+            # the control: idle again, the same route reads the registry (and the silent manager is said)
+            km._UPDATE_STATE[0] = ""
+            with contextlib.redirect_stderr(err):
+                _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            self.assertIsNone(json.loads(body)["otherKernels"])
+            self.assertEqual(len(accepted), 1, "the idle read dialled the manager")
+            self.assertIn("did not answer its registry read", err.getvalue())
+        finally:
+            km._UPDATE_STATE[0] = saved_state
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MANAGER_READ_FAULT[0] = ""
+            for c in accepted:
+                c.close()
+            srv.close()
 
     def test_a_manager_that_accepts_and_never_answers_is_timed_out_and_said_once_per_episode(self):
         # the registry read's 1 s timeout has to reach the connection: without it every /update-check
