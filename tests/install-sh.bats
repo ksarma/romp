@@ -52,6 +52,9 @@ PY
     [ "$(count_cmd PostCompact tmux-status.sh)" = "1" ]
     [ "$(count_cmd PostCompact romp-wake.sh)" = "1" ]
     [ -L "$HOME/.claude/romp-postal.mcp.json" ]
+    # romp's own Bash-side track guard (hooks/romp-track-bash-guard.mjs) is linked with the rest
+    [ -L "$HOME/.claude/hooks/romp-track-bash-guard.mjs" ]
+    [ "$(readlink "$HOME/.claude/hooks/romp-track-bash-guard.mjs")" = "$ROMP_DIR/hooks/romp-track-bash-guard.mjs" ]
 }
 
 @test "install.sh: idempotent — a second run adds no duplicate hook entries" {
@@ -614,11 +617,36 @@ PY
     python3 - "$HOME/.claude/settings.json" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
-cmds = [h["command"] for g in s["hooks"]["PreToolUse"] for h in g["hooks"]]
+groups = s["hooks"]["PreToolUse"]
+# the vendored guard's group holds it alone; the Bash-side guard (the test below) has a group of its own
+cmds = [h["command"] for g in groups if g.get("matcher") == "Write|Edit|MultiEdit" for h in g["hooks"]]
 assert cmds == ["~/.claude/hooks/track-guard.mjs"], cmds
 # romp's matcher-less hooks did not land in the guard's group, and no empty group was left behind
 assert all(g.get("hooks") for e in s["hooks"].values() for g in e), s["hooks"]
 PY
+}
+
+@test "install.sh: registers the Bash-side track guard once, in a PreToolUse group whose matcher is exactly Bash, synchronous, timeout 10" {
+    # The vendored guard sees Write/Edit/MultiEdit only; a session in auto mode writes files through
+    # Bash (cp, tee, heredocs, sed -i), which it never sees (plans/file-review.md, decision 47). romp's
+    # own hook on the Bash tool closes that path, and it is registered by the same merge.
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PreToolUse:romp-track-bash-guard.mjs"* ]]
+    [ "$(count_cmd PreToolUse romp-track-bash-guard.mjs)" = "1" ]
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+groups = [g for g in s["hooks"]["PreToolUse"] if any(h["command"].endswith("romp-track-bash-guard.mjs") for h in g["hooks"])]
+assert len(groups) == 1, groups
+assert groups[0]["matcher"] == "Bash", groups[0]
+assert groups[0]["hooks"] == [{"type": "command", "command": "~/.claude/hooks/romp-track-bash-guard.mjs", "timeout": 10, "async": False}], groups[0]
+PY
+    # a second run adds no second entry and no second group
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [ "$(count_cmd PreToolUse romp-track-bash-guard.mjs)" = "1" ]
+    [ "$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(sum(1 for g in s["hooks"]["PreToolUse"] if g.get("matcher")=="Bash"))' "$HOME/.claude/settings.json")" = "1" ]
 }
 
 @test "install.sh: a second run adds no second guard entry, no second group, and reports no replacement" {
@@ -655,13 +683,14 @@ JSON
     [[ "$output" != *"PreToolUse:track-guard.mjs"* ]]
     [ "$(count_cmd PreToolUse track-guard.mjs)" = "1" ]
     [ "$(guard_groups | wc -l)" = "1" ]
-    # the existing entry is left exactly as it was
+    # the existing entry is left exactly as it was; the Bash-side guard's own group stands beside it
     python3 - "$HOME/.claude/settings.json" "$HOME" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
 g = s["hooks"]["PreToolUse"]
-assert len(g) == 1, g
+assert [x.get("matcher") for x in g] == ["Write|Edit|MultiEdit", "Bash"], g
 assert g[0]["hooks"] == [{"type": "command", "command": sys.argv[2] + "/.claude/hooks/track-guard.mjs", "timeout": 10}], g
+assert [h["command"] for h in g[1]["hooks"]] == ["~/.claude/hooks/romp-track-bash-guard.mjs"], g
 PY
 }
 
@@ -681,7 +710,10 @@ import json, sys
 s = json.load(open(sys.argv[1]))
 groups = s["hooks"]["PreToolUse"]
 assert [g.get("matcher") for g in groups] == ["Bash", "Write|Edit|MultiEdit"], groups
-assert groups[0]["hooks"] == [{"type": "command", "command": "my-bash-check.sh"}], groups[0]
+# the merge keys groups by matcher: the user's Bash group keeps its hook and gains romp's Bash-side
+# guard after it (hooks in a group run in parallel; nothing of the user's is moved or reordered)
+assert groups[0]["hooks"][0] == {"type": "command", "command": "my-bash-check.sh"}, groups[0]
+assert [h["command"] for h in groups[0]["hooks"]] == ["my-bash-check.sh", "~/.claude/hooks/romp-track-bash-guard.mjs"], groups[0]
 assert [h["command"] for h in groups[1]["hooks"]] == ["~/.claude/hooks/track-guard.mjs"], groups[1]
 PY
 }

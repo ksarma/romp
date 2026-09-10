@@ -62,7 +62,8 @@ try:
 except (IOError, OSError, ValueError):
     print(0); raise SystemExit
 OURS = ("tmux-status.sh", "romp-summarize.sh", "romp-postal-drain.sh", "romp-postal-ensure.sh",
-        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-usertodo-context.sh", "romp-wake.sh")
+        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-usertodo-context.sh", "romp-wake.sh",
+        "romp-track-bash-guard.mjs")
 n = sum(1 for rules in (s.get("hooks") or {}).values() for r in rules for h in r.get("hooks", [])
         if h.get("command", "").rsplit("/", 1)[-1] in OURS)
 print(n)
@@ -117,7 +118,9 @@ PY
     [ ! -e "$HOME/.claude/hooks/romp-usertodo-context.sh" ]
     [ "$(cmd_count romp-usertodo-context.sh)" = "0" ]
     # every hook install.sh links has a matching rm: the two lists are read from the scripts themselves
-    for h in $(grep -o '"[a-z-]*\.sh"' "$ROMP_DIR/install.sh" | tr -d '"' | sort -u); do
+    # (romp's own .mjs hook, the Bash-side track guard, included; the vendored track-guard.mjs is
+    # linked into this clone's vendored copy here, so the uninstaller judges it ours and drops it too)
+    for h in $(grep -o '"[a-z-]*\.\(sh\|mjs\)"' "$ROMP_DIR/install.sh" | tr -d '"' | sort -u); do
         [ ! -e "$HOME/.claude/hooks/$h" ]
         [ "$(cmd_count "$h")" = "0" ]
     done

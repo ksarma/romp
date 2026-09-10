@@ -70,7 +70,9 @@ the clone updates it:
   `track-comment`, `track-reply` and `track-config` commands and the `track-guard.mjs` hook in
   `~/.claude/hooks/`, and the `tracked-changes` skill in `~/.claude/skills/`. The guard is
   registered as a `PreToolUse` hook on `Write|Edit|MultiEdit`; it stops a session from writing a
-  tracked file silently, and it does nothing in a Claude Code session Romp did not start. If you
+  tracked file silently, and it does nothing in a Claude Code session Romp did not start. Romp's
+  own `romp-track-bash-guard.mjs`, registered on `Bash`, does the same for a write made through a
+  shell command (a `cp` or `tee` onto the file, a `>` redirection, `sed -i`). If you
   had installed track-changents yourself, the installer re-points those links at the bundled copy,
   which carries fixes the checkout lacks, and says so.
 
