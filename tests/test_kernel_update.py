@@ -1334,6 +1334,147 @@ class Routes(Fresh):
             km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
             mgr.shutdown()
 
+    def test_the_auto_converge_is_running_to_every_poll_through_the_decorators_own_flag(self):
+        # review round 6 of the confirm step (2026-09-10): the route takes the in-flight flag for a click, but the
+        # auto converge calls _run_main_update directly (_main_drift_check), so the decorator's set at the
+        # function's entry is its only cover, and no test failed without it. Called directly here, on a thread
+        # blocked in its rebuild step: /update-check reads running with every count null and dials no registry.
+        # Red with the decorator's set deleted (mutation-tested in the round); the fake manager takes the restart
+        import http.server
+        from http.server import ThreadingHTTPServer
+        hits, dials, gate, builds = [], [], threading.Event(), []
+
+        class FakeManager(http.server.BaseHTTPRequestHandler):
+            def _answer(self, body):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                hits.append(("GET", self.path))
+                self._answer(json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}]}).encode())
+
+            def do_POST(self):
+                hits.append(("POST", self.path))
+                self._answer(b"{}")
+
+            def log_message(self, *a):
+                pass
+        mgr = ThreadingHTTPServer(("127.0.0.1", 0), FakeManager)
+        threading.Thread(target=mgr.serve_forever, daemon=True).start()
+        port = mgr.server_address[1]
+
+        def blocked_build():
+            builds.append(1)
+            gate.wait(10)
+            return True, ""
+        saved_port, saved_tried = os.environ.get("ROMP_MANAGER_PORT"), km._INPLACE_TRIED[0]
+        try:
+            os.environ["ROMP_MANAGER_PORT"] = str(port)
+            km._INPLACE_TRIED[0] = ""
+            km._UPDATE_AVAIL[0] = ""
+            km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "", "abcdef01"     # the offer the auto converge acts on
+            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(port, dials, allow={self.port})), \
+                 mock.patch.object(km, "_rebuild_dist", side_effect=blocked_build), \
+                 mock.patch.object(km, "_checkout_sha", return_value="abcdef01"), \
+                 mock.patch.object(km, "_send_to_app"):
+                t = threading.Thread(target=km._run_main_update, args=("restart", True), kwargs={"manager_port": str(port)}, daemon=True)
+                t.start()
+                for _ in range(500):
+                    if builds:
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(len(builds), 1, "the converge is running, blocked in its rebuild step")
+                self.assertTrue(km._MAIN_CONVERGE_INFLIGHT[0], "the decorator's own set: no route took the flag")
+                _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+                d = json.loads(body)
+                self.assertEqual((d["state"], d["sessions"], d["midTurn"], d["otherKernels"]), ("running", None, None, None))
+                self.assertEqual([h for h in hits if h[0] == "GET"], [], "no registry read while the converge runs")
+                gate.set()
+                t.join(10)
+                self.assertFalse(t.is_alive())
+                self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the finally cleared it")
+                self.assertEqual([h for h in hits if h[0] == "POST"], [("POST", "/restart-all")], "the converge reached the manager")
+        finally:
+            gate.set()
+            km._INPLACE_TRIED[0] = saved_tried
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            km._MANAGER_READ_FAULT[0] = ""
+            mgr.shutdown()
+
+    def test_a_converge_thread_that_fails_to_start_gives_the_flag_back_and_the_next_click_converges(self):
+        # review round 6 of the confirm step (2026-09-10): the route takes the in-flight flag before Thread.start();
+        # a start that raises must give it back, or every later poll reads running and every later click hears
+        # converging with nothing running, and no test failed with that except made a no-op. A Thread subclass
+        # whose start raises for the converge's target alone (an unconditional patch would break the test
+        # server's own request threads): the 500, the flag clear, no running push, and the NEXT click's converge
+        # runs through to the manager. Red with the except made a no-op (mutation-tested in the round)
+        import http.server
+        from http.server import ThreadingHTTPServer
+        hits, dials, pushed, fails = [], [], [], [True]
+        Real = threading.Thread
+
+        class FakeManager(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                hits.append(("POST", self.path))
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *a):
+                pass
+
+        class StartFails(Real):
+            def start(self):
+                if self._target is km._run_main_update and fails[0]:
+                    fails[0] = False
+                    raise RuntimeError("no thread")
+                return super().start()
+        mgr = ThreadingHTTPServer(("127.0.0.1", 0), FakeManager)
+        Real(target=mgr.serve_forever, daemon=True).start()
+        port = mgr.server_address[1]
+        saved_port, saved_tried = os.environ.get("ROMP_MANAGER_PORT"), km._INPLACE_TRIED[0]
+        try:
+            os.environ["ROMP_MANAGER_PORT"] = str(port)
+            km._INPLACE_TRIED[0] = ""
+            km._UPDATE_AVAIL[0] = ""
+            km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "", "abcdef01"
+            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(port, dials, allow={self.port})), \
+                 mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
+                 mock.patch.object(km, "_checkout_sha", return_value="abcdef01"), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: pushed.append(m)), \
+                 mock.patch.object(threading, "Thread", StartFails):
+                code, body = self._post("/update")
+                self.assertEqual((code, body), (500, "romp could not start the converge: no thread"))
+                self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the flag was given back")
+                self.assertEqual(pushed, [], "no running push for a converge that never started")
+                _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+                self.assertEqual(json.loads(body)["state"], "", "idle to every poll")
+                code, body = self._post("/update")
+                self.assertEqual((code, json.loads(body)["state"]), (200, "converging"), "the next click starts the converge")
+                t0 = time.monotonic()
+                while km._MAIN_CONVERGE_INFLIGHT[0] and time.monotonic() - t0 < 10:
+                    time.sleep(0.01)
+                self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0])
+                self.assertEqual(hits, [("POST", "/restart-all")], "and it ran through to the manager")
+                self.assertEqual([m.get("state") for m in pushed], ["running"], "the second click's running push")
+        finally:
+            km._INPLACE_TRIED[0] = saved_tried
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            km._MANAGER_READ_FAULT[0] = ""
+            mgr.shutdown()
+
     def test_the_drift_doors_outcome_reaches_every_poll_when_the_banner_cannot_see_it_end(self):
         # review round 5 of the confirm step (2026-09-10): the no-manager branch of _run_main_update said its
         # outcome on the sync surface alone; the banner that started the converge stayed in its wait, polling
