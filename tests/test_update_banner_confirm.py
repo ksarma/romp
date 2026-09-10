@@ -21,13 +21,17 @@ focus a button on a press), the window losing focus, a hidden tab, and every re-
 click that focuses the window therefore never counts: the blur that took focus away disarmed the banner
 first. The press ends with the click, a pointercancel, a pointerup outside the box or in a pane document,
 a mouse pointer's pointerleave outside the box, or the window's blur; a secondary button or a second
-finger never begins one. One ending is missing: a Firefox press released outside the window whose exit
-delivers no leave beyond the box (seen under Playwright's synthetic mouse for a release past the right
-edge, level with the banner) leaves the flag set until the next press, click or blur, and until then a
-focusout to nothing disarms nothing; every gesture that leaves the banner still disarms it. An answer without counts drops the counts the banner held, so the label never
+finger never begins one. A press released outside the window ends with the body's pointerleave (Gecko
+synthesizes the exit as one; Chromium fires a click on the root), which Firefox delivers a refresh tick
+or so AFTER the release, sometimes only with the next input, so a focusout to nothing inside that window
+disarms nothing and the leave then ends the press (the browser leg waits for it; round 4 had read the late
+leave as no leave). An answer without counts drops the counts the banner held, so the label never
 shows a previous kernel life's numbers; an answer without a registry count says other kernels may restart
 too (no article: whether there is another is the one thing the kernel does not know then), and a registry
-count without a session count says the other kernels restart too without naming this kernel's sessions. The armed row is laid over the plain row it replaced, measured: the label
+count without a session count says the other kernels restart too without naming this kernel's sessions.
+When no manager started the kernel (/update-check carries manager:false) neither door restarts anything,
+so the label reads "Update romp on disk now; restart it yourself to run it" and the confirm reads Update,
+in Update's green rather than the error red. The armed row is laid over the plain row it replaced, measured: the label
 covers Update's footprint, Restart stands to its right on Update's row at every width from 640px up
 whatever the label says (its text wraps inside it where the row is short of room), and Cancel never
 shares a pixel with Not now; a resize while armed and the re-read's new text re-fit it.
@@ -1061,32 +1065,50 @@ await step("reread", async () => {
 // 1f. how a press that began inside the banner ends: a primary press on the label released over the pane
 // iframe, one released outside the viewport, a right click on the label, a middle click on Restart and a
 // right click on the message text. After each, a script blur of whatever is focused: a focusout to
-// nothing, which disarms unless a press is still recorded
+// nothing, which disarms unless a press is still recorded. A probe may return extra facts for its record
 await step("pressEnds", async () => {
   const out = {};
   const probe = async (name, fn) => {
     await load();
     await page.click("#rupd-go");
-    await fn();
+    const extra = (await fn()) || {};
     const mid = await st();
     const blurred = await page.evaluate(() => { const a = document.activeElement; if (a && a.blur) a.blur(); return a ? (a.id || a.tagName) : ""; });
     const after = await st();
     await page.mouse.click(5, 790);                    // a press elsewhere: the recovery from a flag that outlived its gesture
-    out[name] = { mid, blurred, after, recovered: await st(), posts };
+    out[name] = Object.assign({ mid, blurred, after, recovered: await st(), posts }, extra);
   };
   const lblCenter = () => center("#rupd-armed");
   await probe("intoPane", async () => {
     const p = await lblCenter(); const pb = await page.frameLocator("#pane").locator("#pane-body").boundingBox();
     await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(pb.x + 30, pb.y + 30, { steps: 6 }); await page.mouse.up();
   });
-  await probe("outsideRight", async () => {          // past the right edge, level with the banner: the pointer leaves the box and then the window
+  // a release outside the window ends with the event the engine delivers for the pointer's exit: Chromium a
+  // click on the root element, Firefox a mouse pointerleave on the body (Gecko synthesizes the widget's exit
+  // as one; past the top edge the pointer also crosses the body on its way), which arrives a refresh tick or
+  // so AFTER the release and sometimes only with the next input. So the probe waits for an ending event
+  // before the blur: a capture-phase document listener records a mouse pointerleave whose target is outside
+  // the box, and a click; a bounded first wait, then, if nothing arrived, one pointer move of one pixel
+  // further outside the box (never an ending event to the script) and the driver's usual loud wait. Round 4
+  // blurred at once and read the late leave as no leave (review round 5, 2026-09-10)
+  const releaseOutside = async (x, y) => {
     const p = await lblCenter();
-    await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(1350, p.y, { steps: 6 }); await page.mouse.up();
-  });
-  await probe("outsideTop", async () => {            // past the top edge: the pointer crosses the body above the banner and leaves it
-    const p = await lblCenter();
-    await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x, -40, { steps: 6 }); await page.mouse.up();
-  });
+    await page.evaluate(() => {
+      window.__ends = [];
+      const box = document.getElementById("rupd"), name = (e) => (e.target && (e.target.tagName || e.target.nodeName)) || "";
+      document.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse" && !box.contains(e.target)) window.__ends.push("pointerleave:" + name(e)); }, true);
+      document.addEventListener("click", (e) => { window.__ends.push("click:" + name(e)); }, true);
+    });
+    await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(x === null ? p.x : x, y === null ? p.y : y, { steps: 6 }); await page.mouse.up();
+    const arrived = await page.waitForFunction(() => window.__ends.length > 0, null, { timeout: 1500 }).then(() => true, () => false);
+    if (!arrived) {
+      await page.mouse.move(x === null ? p.x : x + 1, y === null ? p.y : y - 1);
+      await page.waitForFunction(() => window.__ends.length > 0, null, { timeout: 15000 });
+    }
+    return { ends: await page.evaluate(() => window.__ends.slice()), nudged: !arrived };
+  };
+  await probe("outsideRight", () => releaseOutside(1350, null));   // past the right edge, level with the banner: the pointer leaves the box and then the window
+  await probe("outsideTop", () => releaseOutside(null, -40));      // past the top edge: the pointer crosses the body above the banner and leaves the window
   await probe("rightLabel", async () => { await page.click("#rupd-armed", { button: "right" }); });
   await probe("middleRestart", async () => { await page.click("#rupd-confirm", { button: "middle" }); });
   await probe("rightMessage", async () => { await page.click("#rupd .rup-msg", { button: "right" }); });
@@ -1586,14 +1608,17 @@ class Browser(unittest.TestCase):
         # press on the message text blurs the label to nothing at the mousedown and, with no press recorded,
         # disarms there. A primary press released outside the viewport ends in Chromium with the click the
         # engine fires on the root element, past the top edge or the right; in Firefox under Playwright's
-        # synthetic mouse a release past the top edge ends with the pointerleave the body fires as the
-        # pointer crosses it, and a release past the right edge, level with the banner, ends with NOTHING
-        # after the box's own pointerleave: the one open shape (the script's comment names it), pinned here
-        # as it stands so a change in what the engine delivers shows up. Its consequence is bounded: the
-        # next press anywhere, click or blur ends the flag, and a press elsewhere disarms outright. Where a
-        # press does not focus a button (the Gecko switch leg, Safari) the middle press on Restart blurs the
-        # label to nothing at its mousedown and, with no primary press recorded, disarms there, as the right
-        # press on the message text does everywhere: a secondary click is not a gesture the banner completes
+        # synthetic mouse both releases end with the body's mouse pointerleave, Gecko's synthesized exit of
+        # the pointer from the window, delivered a refresh tick or so AFTER the release and sometimes only
+        # with the next input (round 4 read that late leave as no leave, and its pin of an "open shape" was
+        # a race: whether the driver's blur landed before or after the leave decided it, red under load).
+        # The driver now waits for the ending event before its blur (releaseOutside), so the assertion is
+        # the same in every engine: the blur after the gesture disarms. The recorded endings pin the engine's
+        # real behaviour: a leave outside the box on the Firefox legs, a click or a leave on Chromium. Where
+        # a press does not focus a button (the Gecko switch leg, Safari) the middle press on Restart blurs
+        # the label to nothing at its mousedown and, with no primary press recorded, disarms there, as the
+        # right press on the message text does everywhere: a secondary click is not a gesture the banner
+        # completes
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
                 p = r["pressEnds"]
@@ -1605,11 +1630,15 @@ class Browser(unittest.TestCase):
                     self.assertTrue(p[name]["mid"]["armed"], (engine, name, "the gesture itself disarmed", p[name]["mid"]))
                     self.assertIn(p[name]["blurred"], ("rupd-armed", "rupd-confirm"), (engine, name, "focus was still inside the banner"))
                     self.assertFalse(p[name]["recovered"]["armed"], (engine, name, "a press elsewhere disarms whatever the flag holds"))
-                    if name == "outsideRight" and engine.startswith("firefox"):
-                        self.assertTrue(p[name]["after"]["armed"], (engine, name, "the open shape: no event ends this press under the synthetic mouse; "
-                                                                    "if the engine now delivers one, retire the residual from the script's comment and the PR"))
-                        continue
                     self.assertFalse(p[name]["after"]["armed"], (engine, name, "the blur after the gesture did not disarm: the press outlived it", p[name]["after"]))
+                for name in ("outsideRight", "outsideTop"):
+                    ends = p[name]["ends"]
+                    self.assertTrue(ends, (engine, name, "an ending event arrived for the release outside the window"))
+                    if engine.startswith("firefox"):
+                        self.assertTrue(any(e.startswith("pointerleave:") for e in ends),
+                                        (engine, name, "Gecko delivers the body's pointerleave for the exit", ends))
+                    else:
+                        self.assertTrue(any(e.startswith("click:") or e.startswith("pointerleave:") for e in ends), (engine, name, ends))
                 self.assertFalse(p["rightMessage"]["mid"]["armed"], (engine, "a right press on the message text disarms at its mousedown", p["rightMessage"]["mid"]))
                 self.assertEqual(p["rightMessage"]["posts"], p["intoPane"]["posts"], (engine, "nothing posted along the way"))
 

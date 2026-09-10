@@ -56197,10 +56197,17 @@ _UPD_CSS = (
     # inside the viewport at every width: Restart is about 78px wide in the banner's font, plus its 24px
     # and the box's 14px right padding, 116px past Update's right edge; the reserve leaves that and
     # about 4px more a side (the armed box's own right edge stays at least that far from the viewport's
-    # in the reference font; a wider font eats the slack before the edge). Below 640px the plain
-    # message wraps a little earlier than it did (the release message keeps one line from about 745px).
-    # Under 640px the same rule as #rstale's: the box spans 92vw and its items wrap, the message takes
-    # the full row and the buttons drop beneath it, sharing its width for finger-sized targets; width
+    # in the reference font; a wider font eats the slack before the edge). From 640px up the plain
+    # row wraps LESS than it did in round 3 (a 92vw cap with the buttons wrapping beneath the message)
+    # and no more than on main at any width from 640 to 1366px, measured in both engines: the release
+    # message keeps one line from about 745px, the pull-drift message (with its 8-character sha) from
+    # about 1000px and the restart-drift message from about 865px; below 640px the phone rule next
+    # outranks the cap, so nothing changes there (review round 5, 2026-09-10).
+    # From 639px down, the phone layout: the box spans 92vw and its items wrap, the message takes
+    # the full row and the buttons drop beneath it, sharing its width for finger-sized targets (the
+    # sibling banner's rule; #rstale's own breaks at 640px, one pixel above, because ruling D2 of
+    # review round 4 makes 640 the first desktop width the geometry pins measure, so at exactly 640px
+    # this box holds its row while #rstale wraps; #rstale is upstream's and is not moved here); width
     # is explicit there so the row layout does not depend on the box's intrinsic size, and a button's
     # text may wrap (the armed label is wider than a 360px phone's box in Firefox's metrics; nowrap
     # would overflow it). The armed label takes a full row of its own there too (the selector repeats
@@ -56474,14 +56481,15 @@ _UPD_JS = (
     # delivers pointerup to the pane document alone and the pane's listener ends it; a primary press
     # released outside the viewport ends in Chromium with pointerup and click on the root element (the
     # click ends it), and in Firefox, under Playwright's synthetic mouse, with the pointerleave chain
-    # alone: a release past the top edge leaves the body on the way (the body's pointerleave ends it),
-    # a release past the right edge, level with the banner, leaves the box and then nothing else (no
-    # pointerup, no click, no leave on the body or the root). That last shape stays open: a Firefox
-    # press released outside the window whose exit delivers no leave beyond the box leaves the flag set
-    # until the next pointerdown, click or blur (measured only under the synthetic mouse; a real pointing
-    # device's exit from the window is expected to deliver the leave, unmeasured), and until then a
-    # focusout to nothing (a script's blur) disarms nothing; every user gesture that leaves the banner
-    # still disarms it (a press anywhere, the window's blur, focus moving)
+    # alone: past the top edge and past the right edge alike, Gecko synthesizes the pointer's exit
+    # from the window as a mouse pointerleave on the body (past the top edge the pointer also crosses
+    # the body on its way), and that leave ends the press. It arrives AFTER the release, a refresh
+    # tick or so later (11 to 50 ms measured) and sometimes only with the next input, so a focusout to
+    # nothing (a script's blur) inside that window disarms nothing, and the leave then ends the press
+    # so the next one does; every user gesture that leaves the banner still disarms it (a press
+    # anywhere, the window's blur, focus moving). Review round 4 read the late leave as no leave and
+    # pinned an open shape that was a race; the browser leg now waits for the leave before its blur
+    # and asserts the disarm in every engine (review round 5, 2026-09-10)
     "document.addEventListener('pointerdown',function(e){var inside=!!(e&&e.target&&box.contains(e.target));press=inside&&e.button===0&&e.isPrimary!==false;if(armed&&!inside)disarm();},true);"
     "document.addEventListener('pointerup',function(e){if(!(e&&e.target&&box.contains(e.target)))press=false;},true);"
     "document.addEventListener('pointerleave',function(e){if(e&&e.pointerType==='mouse'&&!(e.target&&box.contains(e.target)))press=false;},true);"
