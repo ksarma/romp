@@ -791,8 +791,9 @@ const NAMES30 = ["qa", "infra", "docs", "archived", "notes-api", "notes-api-web"
   "web", "api", "tests", "notes-api-import-jobs", "notes-api-webhooks", "notes-api-attachments", "notes-api-sharing-links",
   "notes-api-editor-collab", "notes-api-templates", "notes-api-backups-and-restore", "notes-api-search-relevance-experiments-3"];
 type FlyLine = { name: string; em: number; natural: number; elided: boolean; overflow: string; gap: number | null };
-type FlyRead = { faces: string[]; checkInter: boolean; checkSG: boolean; fontPx: number; held: FlyLine[]; moves: FlyLine[]; pin: FlyLine; fly: { width: number; height: number; top: number; left: number }; inputWidth: number; inner: { w: number; h: number } };
-test("in Chromium and Firefox, the Tags flyout nested in the menu over the real sheet with the faces loaded (menu review round 5): a 5- and a 19-character destination whole and a 40-character one elided at the cap, the Show when folded line whole for a short home and elided for a 40-character one, the ✕ and the + beside their labels, in Inter and Space Grotesk; thirty tags: every label under 31 characters whole, the 40-character ones elided, the height recorded", async (t) => {
+type FootRead = { overflowY: string; scrollHeight: number; clientHeight: number; scrollTop: number; input: { top: number; bottom: number }; cfg: { top: number; bottom: number }; cfgClicked: boolean };
+type FlyRead = { faces: string[]; checkInter: boolean; checkSG: boolean; fontPx: number; held: FlyLine[]; moves: FlyLine[]; pin: FlyLine; fly: { width: number; height: number; top: number; left: number }; inputWidth: number; inner: { w: number; h: number }; foot: FootRead };
+test("in Chromium and Firefox, the Tags flyout nested in the menu over the real sheet with the faces loaded (menu review round 5): a 5- and a 19-character destination whole and a 40-character one elided at the cap, the Show when folded line whole for a short home and elided for a 40-character one, the ✕ and the + beside their labels, in Inter and Space Grotesk; thirty tags: every label under 31 characters whole, the 40-character ones elided, the flyout capped inside the pane and scrolling within itself, the New tag input and Configure tags in the pane once scrolled and a real click on Configure tags landing (round 7)", async (t) => {
   let pw: any = null;
   try { pw = requireCjs("playwright"); } catch { pw = null; }
   if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
@@ -855,7 +856,8 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
           sub.appendChild(el("div", "ctx-sep"));
           const nrow = el("div", "ctx-item ctx-item-newtag"); const inp = el("input", "ctx-tag-input") as HTMLInputElement; inp.placeholder = "New tag…"; inp.maxLength = 40; nrow.appendChild(inp); sub.appendChild(nrow);
           sub.appendChild(el("div", "ctx-sep"));
-          const cfg = el("div", "ctx-item ctx-item-configtags"); const cb = el("span", "ctx-item-body"); const cl = el("span", "ctx-item-label"); cl.textContent = "Configure tags…"; cb.appendChild(cl); cfg.appendChild(cb); sub.appendChild(cfg);
+          const cfg = el("div", "ctx-item ctx-item-configtags"); cfg.id = "cfg"; const cb = el("span", "ctx-item-body"); const cl = el("span", "ctx-item-label"); cl.textContent = "Configure tags…"; cb.appendChild(cl); cfg.appendChild(cb); sub.appendChild(cfg);
+          (window as any).__cfgClicks = 0; cfg.addEventListener("click", () => { (window as any).__cfgClicks++; });
           menu.appendChild(sub);
           document.body.appendChild(menu);
           // render.ts's place(): beside the Tags row, right when it fits, the top at the row's clamped to the pane
@@ -888,8 +890,19 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
             inputWidth: (fly.querySelector(".ctx-tag-input") as HTMLElement).getBoundingClientRect().width,
             inner: { w: window.innerWidth, h: window.innerHeight } };
         });
+        // THE FOOT (round 7): the widths above are read unscrolled; then the flyout is scrolled to its end and the New tag input's and
+        // Configure tags' rects read, and a REAL click on Configure tags is attempted (Playwright refuses a target it cannot hit-test:
+        // below the pane's edge on a fixed box with nothing to scroll, the round-6 diagnostic's state, the click timed out)
+        const foot = await page.evaluate(() => {
+          const fly = document.getElementById("fly")!;
+          fly.scrollTop = fly.scrollHeight;
+          const rr = (e: Element | null) => { const b = e!.getBoundingClientRect(); return { top: b.top, bottom: b.bottom }; };
+          return { overflowY: getComputedStyle(fly).overflowY, scrollHeight: fly.scrollHeight, clientHeight: fly.clientHeight, scrollTop: fly.scrollTop, input: rr(fly.querySelector(".ctx-tag-input")), cfg: rr(document.getElementById("cfg")) };
+        });
+        let cfgClicked = false;
+        try { await page.click("#cfg", { timeout: 3000 }); cfgClicked = (await page.evaluate(() => (window as any).__cfgClicks)) === 1; } catch { cfgClicked = false; }
         await page.close();
-        return r as FlyRead;
+        return { ...r, foot: { ...foot, cfgClicked } } as FlyRead;
       };
       const faceOf = (r: FlyRead, light: boolean, where: string) => {
         if (light) assert.ok(r.faces.includes("Space Grotesk:loaded") && r.checkSG, `Space Grotesk loaded before the read (${where}): ` + JSON.stringify(r.faces));
@@ -919,6 +932,8 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
           else whole(r.pin, `the Show when folded line for a ${home.length}-character home (${where}; round 4 cut it at ${r.inputWidth}px, the input's width)`);
           assert.ok(r.fly.width > r.inputWidth + 40, `the flyout is sized by its rows, not collapsed to the input (${where}): fly ${r.fly.width}, input ${r.inputWidth}`);
           assert.ok(r.fly.width <= 36 * 0.82 * r.fontPx + 100, `the flyout is no wider than its widest capped line and the row's chrome allow (${where}): ${r.fly.width}px`);
+          assert.ok(r.foot.scrollTop === 0 && r.foot.scrollHeight <= r.foot.clientHeight + 1, `three tags: nothing to scroll (${where}): ${JSON.stringify(r.foot)}`);
+          assert.ok(r.foot.cfgClicked, `three tags: a real click on Configure tags lands (${where})`);
         }
         // THIRTY TAGS (ui/CLAUDE.md): the first held, the other 29 as Move to rows, placed by place()
         const r30 = await pass(light, NAMES30[0], [NAMES30[0]], NAMES30.slice(1));
@@ -928,8 +943,17 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
         assert.deepEqual(cut.sort(), NAMES30.filter((n) => n.length === 40).sort(), `at thirty tags exactly the 40-character labels elide (${engine}, ${face}): ${JSON.stringify(r30.moves.map((m) => [m.name.length - 8, m.em, m.natural, m.elided]))}`);
         for (const m of r30.moves) { beside(m, `a Move to row among thirty (${engine}, ${face})`); assert.equal(m.overflow, "ellipsis"); }
         whole(r30.pin, `the Show when folded line for the two-character home among thirty (${engine}, ${face})`);
-        assert.ok(r30.fly.width <= 22 * r30.fontPx + 100 && r30.fly.width > r30.inputWidth + 40, `thirty tags: the flyout's width is the capped label's plus the row's chrome (${engine}, ${face}): ${r30.fly.width}px`);
-        t.diagnostic(`${engine}, ${face}, thirty tags: flyout ${Math.round(r30.fly.width)}x${Math.round(r30.fly.height)}px at top ${Math.round(r30.fly.top)} in a ${r30.inner.h}px pane (the height overflows the pane and the top clamps to 0 with no scroll: the base does the same, out of this change's scope); ${cut.length} of 29 labels elide, the 40-character ones`);
+        assert.ok(r30.fly.width <= 22 * r30.fontPx + 100 && r30.fly.width > r30.inputWidth + 40, `thirty tags: the flyout's width is the capped label's plus the row's chrome, the scrollbar included (${engine}, ${face}): ${r30.fly.width}px`);
+        // THE FOOT AT THIRTY TAGS (round 7; ui/CLAUDE.md's many-tags rule): the flyout is capped at the pane's height less place()'s 4px
+        // at each edge and scrolls within itself, so its bottom is inside the pane, and once scrolled to its end the New tag input and
+        // Configure tags are in the pane and a real click on Configure tags lands. Before: 902px in a 700px pane, the top clamped to 0,
+        // nothing scrolling (a fixed box adds no scroll extent), the foot unreachable from 23 tags on
+        assert.ok(r30.fly.top >= 0 && r30.fly.top + r30.fly.height <= r30.inner.h, `thirty tags: the flyout's bottom is inside the pane (${engine}, ${face}): top ${Math.round(r30.fly.top)}, height ${Math.round(r30.fly.height)}, pane ${r30.inner.h} (before: 902 in a 700px pane)`);
+        assert.equal(r30.foot.overflowY, "auto", `the flyout scrolls within itself (${engine}, ${face})`);
+        assert.ok(r30.foot.scrollHeight > r30.foot.clientHeight && r30.foot.scrollTop > 0, `and has rows past its cap to scroll to (${engine}, ${face}): ${JSON.stringify(r30.foot)}`);
+        for (const [what, b] of [["the New tag input", r30.foot.input], ["Configure tags", r30.foot.cfg]] as const) assert.ok(b.top >= 0 && b.bottom <= r30.inner.h, `${what} is inside the pane once the flyout is scrolled to its end (${engine}, ${face}): ${JSON.stringify(b)}`);
+        assert.ok(r30.foot.cfgClicked, `a real click on Configure tags lands (${engine}, ${face}; before: below the pane's edge, not hit-testable, the click timed out)`);
+        t.diagnostic(`${engine}, ${face}, thirty tags: flyout ${Math.round(r30.fly.width)}x${Math.round(r30.fly.height)}px at top ${Math.round(r30.fly.top)} in a ${r30.inner.h}px pane, ${r30.foot.scrollHeight}px of rows; ${cut.length} of 29 labels elide, the 40-character ones`);
       }
     } finally { await browser.close(); }
   }

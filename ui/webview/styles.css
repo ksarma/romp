@@ -744,6 +744,16 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    tab-hide-browser.test measures the flyout nested in a menu, in both faces. */
 .ctx-sub-tags .ctx-item-label { max-width: 22em; overflow: hidden; text-overflow: ellipsis; }
 .ctx-sub-tags .ctx-item-sub { max-width: 36em; overflow: hidden; text-overflow: ellipsis; }
+/* The flyout scrolls within itself past the pane's height (tab menu review round 7; the many-tags rule in ui/CLAUDE.md): at
+   thirty tags its rows ran to 902px in a 700px pane, the top clamped to 0 by place() and nothing scrolling (a fixed element adds
+   no scroll extent), so the New tag input and Configure tags at its foot were off the page and unreachable, from 23 tags on.
+   The cap is the visible height less the 4px place() keeps at each edge (dvh, the picker's unit at the keyboard cap: vh runs past
+   the visible bottom by the browser chrome on the phone page); overflow-y auto is the pop-ups' idiom (.slash-pop, .mention-pop,
+   .cite-preview) and overscroll-behavior contain the staged list's, so a wheel at the end does not scroll the page behind. The
+   foot scrolls with the rows (the flat structure the rows' insertBefore(nrow) scheme relies on); place() reads the flyout's height
+   after layout, so the capped box is what it seats. tab-hide-browser.test measures the thirty-tag flyout inside the pane and reaches
+   Configure tags by scrolling. No structural rule (nothing holds the box open; the rows size its width, as before). */
+.ctx-sub-tags { max-height: calc(100dvh - 8px); overflow-y: auto; overscroll-behavior: contain; }
 /* identity-color swatches (the user 2026-06-29): the romp palette as circles, the current one ringed. A grid
    so 9 colors wrap to a tidy block instead of one long row. */
 /* Billing submenu (the user 2026-08-09: the login/API-key switch lives here now, not the statusline).

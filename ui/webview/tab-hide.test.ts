@@ -976,7 +976,9 @@ test("pinned: a tag name never widens the MAIN menu (menu review rounds 2 to 5).
   // chosen so a 19-character name is whole and a 40-character one elides in both faces and both engines (the note gives the measurements)
   assert.match(CSS, /\n\.ctx-sub-tags \.ctx-item-label \{ max-width: 22em; overflow: hidden; text-overflow: ellipsis; \}\n\.ctx-sub-tags \.ctx-item-sub \{ max-width: 36em; overflow: hidden; text-overflow: ellipsis; \}\n/,
     "the flyout's two rules, after the modifier's: a label up to 22em (a 19-character destination is 14.5em, a 40-character one 23.8em to 25.5em), a sub-line up to 36em of its own font (the Show when folded line is 30.3em at 19 characters, 38.7em to 41.5em at 40)");
-  assert.equal(CSS.split("\n.ctx-sub-tags").length - 1, 2, "the flyout's two rules, nothing else on its class");
+  assert.equal(CSS.split("\n.ctx-sub-tags").length - 1, 3, "the flyout's two per-row caps and its own scroll rule (round 7), nothing else on its class");
+  assert.match(CSS, /\n\.ctx-sub-tags \{ max-height: calc\(100dvh - 8px\); overflow-y: auto; overscroll-behavior: contain; \}\n/, "the flyout scrolls within itself past the pane's height (round 7; ui/CLAUDE.md's many-tags rule): the visible height less place()'s 4px at each edge, in the picker's unit; at thirty tags the foot was off the page from 23 tags on, and tab-hide-browser.test reaches Configure tags by scrolling");
+  assert.ok(CSS.indexOf("\n.ctx-sub-tags .ctx-item-sub") < CSS.indexOf("\n.ctx-sub-tags {"), "the scroll rule follows the per-row caps");
   assert.ok(CSS.indexOf("\n.ctx-sub-capped .ctx-item-label") < CSS.indexOf("\n.ctx-sub-tags .ctx-item-label"), "the flyout's rules follow the modifier's");
   assert.doesNotMatch(CSS, /\.ctx-sub-tags[^\n]*(width: 0|min-width|flex)/, "no structural rule in the flyout: nothing there holds it open, so the rows size it");
   assert.match(CSS, /\n\.ctx-item \{ padding: 4px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; \}/, "the rows stay nowrap: the rule elides, it does not wrap (a wrapped row would grow every menu's rows)");
