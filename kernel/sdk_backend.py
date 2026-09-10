@@ -5630,6 +5630,23 @@ class SdkSession:
         with self._hold_lock:
             return self._pick_names()
 
+    def _pending_names(self) -> set:
+        """Every surface a pick is pending on, in any of its forms (review round 11, 2026-09-10): recorded and not
+        yet armed (the surface set), riding the reconnect in flight (_reconnect_riding, the arm to the landing), or
+        riding an arm made while a connect was in progress (_reconnect_riding_next, moved over at the landing that
+        does not serve it). The ONE definition of "pending" the readers share: snapshot's fastPending and modePending
+        and the init handler's perm_mode keep (_mode_pick_pending_locked). A bare read: the caller holds _hold_lock."""
+        return set(self._reconnect_surfaces) | set(self._reconnect_riding) | set(self._reconnect_riding_next)
+
+    def _mode_pick_pending_locked(self) -> bool:
+        """Whether a mode pick is pending on a reconnect in any of its armed forms, read in one hold of the lock
+        (review round 11, 2026-09-10; the review's correctness-2). The init handler keeps the DECLARED perm_mode on
+        this answer: until round 11 it read the surface set alone, so once the settle's arm moved the name into the
+        riding set an init from the OLD process in the arm-to-teardown window (its buffered frames land before the
+        cancel) reset perm_mode to the reported running mode while the bypass pick rode the armed relaunch."""
+        with self._hold_lock:
+            return "mode" in self._pending_names()
+
     @contextlib.contextmanager
     def _hold_write(self):
         """The hold lock for a WRITE of the hold state (review round 6, 2026-09-10): the same lock, and the
@@ -7963,15 +7980,18 @@ class SdkSession:
                 # during that hold reverted perm_mode, the reg and the badge to the stale mode)
                 with self._hold_write():
                     self._launched_mode = reported_mode
-            if "mode" not in self._pick_names_locked():
+            if not self._mode_pick_pending_locked():
                 self.perm_mode = reported_mode or self.perm_mode
-            # else: a mode pick is pending on a reconnect (held for live work, or deferred to a turn's end;
-            # _reset_reconnect_state at the loop top and _withdraw_held_pick are the removers), so perm_mode
-            # holds the DECLARED intent and only the stamp took the report. Until review round 3 (2026-09-09)
-            # the init overwrote perm_mode with the running mode at the first CLI-started turn of the hold, so
-            # the guard in _can_use_tool stopped applying and every later consult took the ask path against
-            # the declared bypass. Any pending mode pick since round 4 (a pick OUT of bypass made in a bypass
-            # connect's spawn window is pending too), the pick INTO bypass alone before
+            # else: a mode pick is pending on a reconnect in one of its forms (recorded: held for live work, or
+            # deferred to a turn's end; or riding an arm, from the settle's arm to the landing that applies it;
+            # _connect_landed and _withdraw_held_pick are the removers), so perm_mode holds the DECLARED intent
+            # and only the stamp took the report. Until review round 3 (2026-09-09) the init overwrote perm_mode
+            # with the running mode at the first CLI-started turn of the hold, so the guard in _can_use_tool
+            # stopped applying and every later consult took the ask path against the declared bypass. Any
+            # pending mode pick since round 4 (a pick OUT of bypass made in a bypass connect's spawn window is
+            # pending too), the pick INTO bypass alone before. The riding forms since round 11 (the review's
+            # correctness-2): the surface set alone missed an init from the OLD process in the arm-to-teardown
+            # window, which reset perm_mode to the running mode while the bypass pick rode the armed relaunch
             # Fast-mode truth rides the init payload — the AUTHORITATIVE re-assert behind set_fast's
             # optimistic flip, shared with the connect-time initialize response (_adopt_fast_state).
             self._adopt_fast_state(d)
@@ -9445,7 +9465,7 @@ class SdkSession:
         # effort: the chat's reloading line and the badge's pulse read it once the hold ends, where the badge
         # showed the picked value flat until the landing before
         with self._hold_lock:
-            asked = set(self._reconnect_surfaces) | set(self._reconnect_riding) | set(self._reconnect_riding_next)
+            asked = self._pending_names()   # the one definition of pending, shared with the init handler's keep (round 11)
             mode_switching = self._mode_switching is not None
             mode_pending = "mode" in asked or mode_switching
         # while a pick is HELD the process still runs the value it launched with (or, for the mode, the

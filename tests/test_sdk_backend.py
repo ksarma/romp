@@ -8825,6 +8825,73 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._connect_landed(); composed(s)
         self.assertEqual(state(s), ("off", False), "nothing rides: nothing flips at the loop top")
 
+    def test_y11_an_init_from_the_old_process_after_the_arm_keeps_the_declared_mode_while_the_pick_rides_the_arm(self):
+        # the init handler kept perm_mode only while "mode" was in the surface set (review round 11, correctness-2): the
+        # settle's arm moves the name into the riding set, and an init from the OLD process in the arm-to-teardown
+        # window (its buffered frames land before the cancel) reset perm_mode to the reported running mode while the
+        # bypass pick rode the armed relaunch. The keep now reads every armed form in one hold of the lock
+        # (_mode_pick_pending_locked, the surface set and both riding sets, the union snapshot's modePending reads);
+        # the running-mode stamp still follows the report in both branches (test_x6)
+        class _Init:
+            subtype, uuid = "init", "i1"
+            data = {"model": "claude-x", "permissionMode": "default"}
+
+        def init(s, reported="default"):
+            _Init.data = {"model": "claude-x", "permissionMode": reported}
+
+            async def _noop(): pass
+            s._do_refresh_usage = _noop; s._do_refresh_context = _noop
+
+            async def run():
+                s.loop = asyncio.get_running_loop()
+                s._input_wake = asyncio.Event(); s._wake = asyncio.Event()
+                s._handle_stream_message(_Init(), _AssistantMessage, self._Res, _Init)
+            asyncio.run(run())
+            s.loop = self._Now()
+
+        def mode_view(s):
+            snap = s.snapshot()
+            return s.perm_mode, s._launched_mode, snap["mode"], snap["modePending"]
+        # the riding set: a bypass pick held for a subagent, armed at the delivery turn's settle, then the old process's init
+        s = self._sess(mode="default", effort="high")
+        s.perm_mode = s._launched_mode = "default"; s._launched_effort = sb.effort_launch_shape("high")
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        self.assertEqual(mode_view(s), ("bypassPermissions", "default", "default", True), "held: the running mode shows")
+        self._stop(s, "a1")
+        self.assertTrue(self._settle(s)["reconnect"], "the delivery turn's settle arms")
+        self.assertIn("mode", s._reconnect_riding); self.assertNotIn("mode", s._reconnect_surfaces)
+        init(s, "default")                                                     # the old process, before the teardown
+        self.assertEqual(mode_view(s), ("bypassPermissions", "default", "bypassPermissions", True),
+                         "the declared intent holds while the pick rides the arm; the stamp took the report")
+        s._reset_reconnect_state()                                             # the loop top and the bypass compose
+        s._launching = s.backend._launch_shape(s); s._connecting = True
+        self.assertIsNone(s._connect_landed(), "the landing: the process runs the pick")
+        self.assertEqual((s.perm_mode, s._launched_mode), ("bypassPermissions", "bypassPermissions"))
+        init(s, "bypassPermissions")                                           # the new process's init agrees
+        self.assertEqual(mode_view(s), ("bypassPermissions", "bypassPermissions", "bypassPermissions", False))
+        # the next set: a bypass pick armed while a default connect is in progress, then an init from the old process and
+        # one from the intermediate process, both reporting default
+        s = self._sess(mode="default", effort="high")
+        s.perm_mode = s._launched_mode = "default"; s._launched_effort = sb.effort_launch_shape("high")
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))               # the idle arm: the window opens
+        s._reset_reconnect_state()
+        s._launching = s.backend._launch_shape(s); s._connecting = True     # the effort connect, default, in progress
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))   # armed after it
+        self.assertIn("mode", s._reconnect_riding_next)
+        init(s, "default")                                                     # the old process, still streaming
+        self.assertEqual(mode_view(s), ("bypassPermissions", "default", "bypassPermissions", True))
+        self.assertIsNone(s._connect_landed())                               # the intermediate landing moves the name over
+        self.assertIn("mode", s._reconnect_riding)
+        init(s, "default")                                                     # the intermediate process reports default
+        self.assertEqual(mode_view(s), ("bypassPermissions", "default", "bypassPermissions", True),
+                         "the pick rides the arm that stands: the declared intent holds through the intermediate process")
+        s._reset_reconnect_state()
+        s._launching = s.backend._launch_shape(s); s._connecting = True
+        s._connect_landed()
+        init(s, "bypassPermissions")
+        self.assertEqual(mode_view(s), ("bypassPermissions", "bypassPermissions", "bypassPermissions", False))
+
 
 class SettingsPickThroughTheLoop(unittest.TestCase):
     """The reconnect a settings pick asks for, driven through the REAL loop (_amain) against a stand-in SDK
