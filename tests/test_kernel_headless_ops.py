@@ -2262,6 +2262,116 @@ class UnknownSessionRefused(_RouteServer):
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
 
+    def test_a_store_resolved_name_with_no_record_takes_the_miss_path_at_both_doors(self):
+        # a comment thread's name the store resolves to its sid, whose SDK reg is absent: the gate reads that
+        # sid as unknown, and under a failed tmux probe the routes answered the scan's 503 (try again, the log
+        # line) while the WS compact and sendCommand door, which took the miss path for a name handed back
+        # unchanged only, refused it as a session that does not exist, by the thread's sid. The live map is
+        # incomplete when the scan failed, so a live namesake could have won the resolution had tmux answered,
+        # and a 404 there reports a transient failure as a permanent absence. Both doors take the miss path on
+        # every unknown verdict for a typed name now: the scan's verdict with the typed spelling, and on the
+        # no-server exit the unknown refusal at both (the routes' 404 by the typed name, the WS door's by the
+        # resolved sid). The corollary: a torn names-registered generation of the same name answers its
+        # record's 503 at the WS door as the routes do (review round 8, 2026-09-09).
+        import subprocess
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        _drop_regs([km.jd.STATE / "sdk" / (THREAD_TSID + ".json")])   # the store's row stands; the record is absent
+        torn = "e0e07777-8888-9999-0000-111111111111"
+        torn_path = km.jd.STATE / "sdk" / (torn + ".json")
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        undelivered = km.jd.STATE / "undelivered.jsonl"
+        frames = []
+        client = {"send": lambda s: frames.append(json.loads(s))}
+        fake = mock.Mock()
+        gone = subprocess.CompletedProcess(args=[], returncode=1, stdout="",
+                                           stderr="no server running on /tmp/tmux-1000/default")
+
+        def drive(op, **extra):
+            del frames[:]
+            before = len(undelivered.read_text().splitlines()) if undelivered.exists() else 0
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertTrue(km._drive(dict({"type": op, "name": THREAD_NAME}, **extra), client))
+            errs = [f for f in frames if f.get("type") == "err"]
+            rows = [json.loads(x) for x in undelivered.read_text().splitlines()][before:] if undelivered.exists() else []
+            return errs, rows, err.getvalue()
+        try:
+            self.assertEqual((km._thread_names() or {}).get(THREAD_NAME, (None,))[0], THREAD_TSID, "the store resolves the name")
+            self.assertFalse(km._reg_unreadable(THREAD_TSID), "no record: absent, not torn")
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km, "_compact_or_park", lambda be, sid: fake.compact(sid)), \
+                 mock.patch.object(km, "_send_or_park", lambda be, sid, text: fake.send(sid, text)), \
+                 mock.patch.object(km, "_route_meta_command", lambda *a, **k: False), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+                 mock.patch.object(km._TMUX, "available", lambda: True):
+                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
+                    self.assertEqual(km._resolve_sid(THREAD_NAME)[0], THREAD_TSID, "the resolution answers the thread's sid")
+                    for path, body in (("/end", {"name": THREAD_NAME}), ("/interrupt", {"name": THREAD_NAME}),
+                                       ("/send", {"name": THREAD_NAME, "text": "hello"})):
+                        err = io.StringIO()
+                        with contextlib.redirect_stderr(err):
+                            code, resp = self._post(path, body)
+                        self.assertEqual(code, 503, (path, resp))
+                        self.assertIn("could not read the live session list while resolving '%s'" % THREAD_NAME,
+                                      resp.get("error", ""), path)
+                        self.assertIn("try again", resp.get("error", ""), path)
+                        self.assertNotIn(THREAD_TSID, resp.get("error", ""), "the typed spelling, not the resolved sid")
+                        self.assertIn("control %s: tmux probe failed while resolving %r; answered 503, nothing done"
+                                      % (path, THREAD_NAME), err.getvalue(), path)
+                    for op, extra in (("compact", {}), ("sendCommand", {"cmd": "/model opus"})):
+                        errs, rows, log = drive(op, **extra)
+                        self.assertEqual(len(errs), 1, (op, frames))
+                        self.assertIn("could not read the live session list while resolving '%s'" % THREAD_NAME,
+                                      errs[0]["text"].lower(), op)
+                        self.assertIn("try again", errs[0]["text"], op)
+                        self.assertNotIn("no session with id", errs[0]["text"], op)
+                        self.assertNotIn(THREAD_TSID, errs[0]["text"], op)
+                        self.assertEqual(errs[0]["sid"], THREAD_NAME, "the modal carries the typed name")
+                        self.assertEqual([(r["op"], r["sid"]) for r in rows], [(op, THREAD_NAME)], op)
+                        self.assertIn("undeliverable %s: tmux probe failed while resolving %r" % (op, THREAD_NAME), log, op)
+                        self.assertNotIn("no session", log, op)
+                    self.assertEqual(fake.method_calls, [], "nothing reached a backend at either door")
+                # the no-server exit is the authoritative empty board: the unknown refusal at both doors
+                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: gone):
+                    code, resp = self._post("/interrupt", {"name": THREAD_NAME})
+                    self.assertEqual(code, 404, resp)
+                    self.assertIn("no live session named '%s'" % THREAD_NAME, resp.get("error", ""))
+                    errs, rows, log = drive("compact")
+                    self.assertEqual(len(errs), 1, frames)
+                    self.assertIn("has no session with id %s" % THREAD_TSID, errs[0]["text"])
+                    self.assertEqual([(r["op"], r["sid"]) for r in rows], [("compact", THREAD_TSID)])
+                    # the corollary: a torn names-registered generation of the name is its record's 503 at both doors
+                    _register(torn, THREAD_NAME)
+                    torn_path.write_bytes(b"{not json")
+                    km._thread_reg_memo.clear()
+                    km._thread_reg_failed.clear()
+                    self.assertEqual(km._resolve_sid(THREAD_NAME)[0], THREAD_TSID, "the store still answers first")
+                    code, resp = self._post("/interrupt", {"name": THREAD_NAME})
+                    self.assertEqual(code, 503, resp)
+                    self.assertIn("could not read the record for '%s'" % THREAD_NAME, resp.get("error", ""))
+                    self.assertIn(km._tilde(str(torn_path)), resp.get("error", ""))
+                    for op, extra in (("compact", {}), ("sendCommand", {"cmd": "/model opus"})):
+                        errs, rows, log = drive(op, **extra)
+                        self.assertEqual(len(errs), 1, (op, frames))
+                        self.assertIn("could not read the record for '%s'" % THREAD_NAME, errs[0]["text"].lower(), op)
+                        self.assertIn(km._tilde(str(torn_path)), errs[0]["text"], op)
+                        self.assertNotIn("no session with id", errs[0]["text"], op)
+                        self.assertEqual(errs[0]["sid"], torn, "the modal carries the torn generation's sid")
+                        self.assertEqual([(r["op"], r["sid"]) for r in rows], [(op, torn)], op)
+                        self.assertIn("undeliverable %s: the record for session %s will not read" % (op, torn), log, op)
+                self.assertEqual(fake.method_calls, [], "nothing reached a backend at either door")
+                self.assertNotIn(THREAD_TSID, km._end_on_idle_load(), "a refused deferred end records no wish")
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+            _unregister(torn)
+            _drop_regs([torn_path])
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
     def test_a_torn_record_under_a_failed_probe_is_the_scans_verdict_not_the_records(self):
         # for a names-registered sid whose SDK reg is torn and whose pane the probe failed to list, at a cold
         # list_regs cache (the map lists no row for the sid; a listed SDK row is the record's verdict in every

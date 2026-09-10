@@ -18494,9 +18494,14 @@ def _session_gate(sid, live=None, who=None):
 
 
 def _named_miss(who, live, store_unreadable):
-    """The one by-name miss path both client doors read, for a BARE name the resolution handed back unchanged
-    and the gate then read as unknown: (sid, verdict, text, cause), or None when nothing more can be said of
-    the name here (the routes go on to the roster by name and the 404; the WS door refuses it as unknown). In
+    """The one by-name miss path both client doors read, for a BARE name whose resolution the gate read as
+    unknown, whatever sid the resolution answered for it (the input unchanged, or a comment thread's sid whose
+    registry entry is absent): (sid, verdict, text, cause), or None when nothing more can be said of the name
+    here (the routes go on to the roster by name and the 404; the WS door refuses it as unknown, by the sid the
+    resolution answered). Round 8 dropped the WS door's guard that took this path for the input unchanged
+    only: with the probe down the live map is incomplete, so a live namesake could have won the resolution had
+    tmux answered, and a store-resolved name with no record was a session that does not exist at that door
+    where the routes said the list could not be read; the transient failure is what both doors say now. In
     order: the failed scan first (live.tmux_failed, the scan the resolution read: with the probe down, whether
     the name routes to a running session cannot be evaluated, so the verdict is the scan's, try again, and
     never a record's, whose remedy a retry may make irrelevant; review round 7 put it ahead of the torn
@@ -18741,10 +18746,13 @@ def _drive(msg, client):
     # row through to the tmux fallthrough this gate exists to stop). A read that failed on the way (the tmux
     # scan, a torn dormant record of the typed name, the comment threads' store) is refused naming the read,
     # from the same miss path the routes take (_named_miss), with the typed spelling in the modal as in the
-    # routes' 503 (round 7).
+    # routes' 503 (round 7), on every unknown verdict for a typed name whatever sid the resolution answered,
+    # as the routes do (round 8: this door took the miss path for a name handed back unchanged only, so a name
+    # the comment threads' store resolved to a sid with no record was refused here as a session that does not
+    # exist while the probe was down, where the routes said the list could not be read).
     verdict, text = _session_gate(sid, live=live, who=named)
     cause = None
-    if verdict == _GATE_UNKNOWN and named is not None and sid == named:
+    if verdict == _GATE_UNKNOWN and named is not None:
         miss = _named_miss(named, live, store_unreadable)
         if miss is not None:
             sid, verdict, text, cause = miss
@@ -27004,8 +27012,10 @@ def _unreadable_dormant_named(name):
     stays the routes' 404; the one exception is this record, whose failed read must be said (the gate's
     503) and never reported as a session that does not exist. Read by _named_miss, the by-name miss path
     both client doors take (the routes' _control_target on its would-be-404 path, the WS compact and
-    sendCommand door on its would-be-unknown path), after every local door missed and only once the tmux
-    scan answered, so it costs a would-be 404 one registry walk and reaches no _sid_of caller (round 5 read
+    sendCommand door on its would-be-unknown path), after the gate read the resolution's answer for the name
+    as unknown (the input unchanged, or a comment thread's sid whose record is absent: a torn generation of
+    that name answers here for both doors, round 8) and only once the tmux scan answered, so it costs a
+    would-be 404 one registry walk and reaches no _sid_of caller (round 5 read
     it inside the resolution, and the PR-watch contact then took a torn older generation for the live
     session of the name, review round 6; round 7 gave the WS door the same path); sorted, so several
     generations of the name answer the same sid (review round 5, 2026-09-09)."""
