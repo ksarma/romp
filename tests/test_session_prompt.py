@@ -85,8 +85,8 @@ class SessionPrompt(unittest.TestCase):
             self.assertNotIn(word, flat, "%r names machinery the agent cannot see" % word)
 
     def test_asks_sessions_to_commit_the_comments_folder_with_their_work(self):
-        # The owner found that his sessions never added `.trackchanges/` to git, so the comments on
-        # their files and the record of their tracked changes were not archived with the work
+        # The user found that their sessions never added `.trackchanges/` to git, so the comments on
+        # the sessions' files and the record of the tracked changes were not archived with the work
         # (2026-09-10; plans/file-review.md decision 48). One sentence in Working style, in the
         # person's voice, conditional on the project having the folder and not ignoring it: the
         # person's own commits stay theirs, and nothing on the host stages or commits (decision 25).

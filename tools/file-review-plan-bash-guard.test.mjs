@@ -106,7 +106,8 @@ test('decision 48 records the finding, keeps decision 25, and names the places t
   assert.ok(fs.existsSync(path.join(REPO, 'vendor', 'track-changents', 'patches', '0007-skill-no-bash-writes-commit-the-folder.patch')));
   assert.ok(d48.includes('`claude/romp-session-prompt.md`'));
   assert.ok(prompt.includes('include that folder in the commit'), 'the prompt carries the sentence');
-  assert.ok(d48.includes('the owner did not choose staging'));
+  assert.ok(d48.includes('the user did not choose staging'));
+  for (const text of [d47, d48]) assert.ok(!/\b(he|his|him|owner)\b/.test(text), 'the plan speaks of the user, they; never a gendered pronoun or the owner');
   assert.ok(guide.includes('Sessions are asked to include the folder when they commit their own work'));
 });
 

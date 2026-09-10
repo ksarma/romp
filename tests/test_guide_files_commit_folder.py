@@ -2,8 +2,8 @@
 """Sessions are asked to commit the `.trackchanges/` folder with their work; the host still runs no git
 command. The guide, the plan's decision 25, the session prompt and the vendored skill say the same thing.
 
-The owner found that his sessions never added `.trackchanges/` to git, so the comments on their files
-and the record of their tracked changes were not archived with the work (2026-09-10; plans/file-review.md
+The user found that their sessions never added `.trackchanges/` to git, so the comments on the sessions'
+files and the record of the tracked changes were not archived with the work (2026-09-10; plans/file-review.md
 decision 48). Decision 25 stands: romp writes the sidecar and the comments log and does no git operation,
 and a `.gitignore` line is the opt-out. The norm is added on the session side, in two places a session
 reads (the vendored skill, patch 0007; claude/romp-session-prompt.md, one sentence in the person's
@@ -107,13 +107,13 @@ class PersonFacingTextsStateTheNorm(unittest.TestCase):
                       "they commit their work", d25)
         self.assertIn("the person's own commits staying theirs", d25)
         self.assertIn("romp still running no git command", d25)
-        self.assertIn("decision 48", d25, "points at the record of the owner's finding")
+        self.assertIn("decision 48", d25, "points at the record of the user's finding")
 
     def test_decision_48_records_the_finding_and_the_places(self):
         d48 = _decision(self.plan, 48)
         self.assertIn("**Sessions commit the comments folder**", d48)
         self.assertIn("(2026-09-10)", d48)
-        self.assertIn("never added", d48, "the owner's finding, paraphrased")
+        self.assertIn("never added", d48, "the user's finding, paraphrased")
         for place in ("`vendor/track-changents/patches/0007", "`claude/romp-session-prompt.md`", "Decision 25 is unchanged"):
             self.assertIn(place, d48)
         self.assertNotRegex(d48, r'"[^"]*\b(I|my|me)\b[^"]*"', "no quoted utterance of the user's")

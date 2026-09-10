@@ -2,7 +2,7 @@
 # Offered back: yes
 # Files: skill/SKILL.md
 #
-# Reason: two gaps a host's dry run and its owner found (2026-09-09 and 2026-09-10). First, the skill
+# Reason: two gaps a host's dry run (2026-09-09) and its user (2026-09-10) found. First, the skill
 # forbade the Edit/Write/MultiEdit tools on a tracked file and said nothing of the shell: an agent working
 # in a mode that writes files through Bash (cp, tee, a heredoc, sed -i) ran track-config and cp in one
 # compound command on a tracked file, and since track-config exits 0 when tracking is ON, the `&&` ran the

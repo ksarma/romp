@@ -2913,15 +2913,15 @@ document stands on its own, each with the reasoning it was given.
     Bash call. `tools/romp-track-bash-guard.test.mjs` drives the grammar and the process, `tests/install-sh.bats`
     the registration, and `tools/file-review-plan-bash-guard.test.mjs` holds this decision to the hook and the
     installer.
-48. **Sessions commit the comments folder** (2026-09-10). The owner found that his sessions never added
-    `.trackchanges/` to git, so his comments on their files and the record of their tracked changes were not
-    archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the
+48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
+    `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
+    were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the
     opt-out. The norm is added on the session side: the vendored skill (`vendor/track-changents/patches/0007`, its
     Notes) and `claude/romp-session-prompt.md` (one sentence in Working style, in the person's voice, naming the
     folder and nothing else of the machinery) ask a session that commits work in a project which has the folder
     and does not ignore it to include the folder in the commit, since it holds the person's comments and the
     record of the tracked changes. The guide's Files section and decision 25 say so to the person: sessions are
-    asked, the person's own commits stay theirs, and nothing on the host stages or commits (the owner did not
+    asked, the person's own commits stay theirs, and nothing on the host stages or commits (the user did not
     choose staging). `tests/test_guide_files_commit_folder.py` holds the four texts to one another;
     `tests/test_session_prompt.py` pins the sentence.
 
