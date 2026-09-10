@@ -16,6 +16,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -242,6 +243,114 @@ class TheRestartHandlerAcksWhatTheManagerSaid(unittest.TestCase):
         code, ack = self._post()
         self.assertEqual((code, ack["ok"], ack["restarting"], ack["fleet"]), (200, True, True, False))
         self.assertEqual(len(_RecordingManager.hits), 2)
+
+
+# A kernel in a SUBPROCESS: the real Handler on an ephemeral port with _graceful_term installed as its
+# SIGTERM handler, the way main() installs it. The ack race below cannot be driven in-process: the exit
+# path ends in os._exit, which would take the test runner with it.
+_SUBPROCESS_KERNEL = r"""
+import os, signal, sys
+sys.path.insert(0, %(tests)r)
+from romp_load import load_source
+from http.server import ThreadingHTTPServer
+BIN = %(bin)r
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
+km = load_source("romp_kernel_ack_probe", os.path.join(BIN, "romp-kernel"))
+signal.signal(signal.SIGTERM, km._graceful_term)
+srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+sys.stdout.write("%%d %%d\n" %% (srv.server_address[1], os.getpid()))
+sys.stdout.flush()
+srv.serve_forever()
+"""
+
+
+class _SignallingManager(BaseHTTPRequestHandler):
+    """A fake manager that does what the real one does on POST /restart-all: SIGTERMs the kernel that asked,
+    then answers 200. The pause between the two is the real manager's own ordering made wide enough to be
+    deterministic: restartAllOrSelf signals its children and json(200) follows in the same tick, and the
+    kernel's exit path with no backend to drain takes a few milliseconds, so at HEAD before the marker the
+    ack was lost one time in three to five; with the signal 50 ms ahead of the answer it was lost every
+    time. Records every POST."""
+    pid = 0
+    hits = []
+
+    def do_POST(self):
+        type(self).hits.append((self.path, self.headers.get("X-Romp-Token")))
+        if type(self).pid:
+            os.kill(type(self).pid, 15)
+        time.sleep(0.05)
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'{"ok": true, "restarted": ["main"]}')
+
+    def log_message(self, *a):
+        pass
+
+
+class TheAckLandsBeforeTheExit(unittest.TestCase):
+    """The local leg of POST /restart hops to the manager BEFORE it acks (round 1: the ack says what the manager
+    answered), and a manager that takes the request SIGTERMs this kernel before it answers. _graceful_term
+    then ran on the main thread while the handler thread was between the manager's 200 and its own _send,
+    and with no SDK backend to drain the exit won that race often enough to lose the ack (review round 2,
+    2026-09-10: 20 to 50 percent of the time as measured by two refuters); _ask_peer_to_pull then reported
+    a kernel that was restarting as one that never acked. The handler now marks the ack in flight before
+    the hop and clears it after _send, and _drain_and_exit waits for the mark to clear, bounded. Twenty
+    real kernels, each in its own process, each signalled by the fake manager before it answers: every
+    ack lands."""
+    RUNS = 20
+
+    @classmethod
+    def setUpClass(cls):
+        cls.state = tempfile.mkdtemp()
+        cls.mgr = ThreadingHTTPServer(("127.0.0.1", 0), _SignallingManager)
+        threading.Thread(target=cls.mgr.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.mgr.shutdown()
+        cls.mgr.server_close()
+
+    def _kernel(self, n):
+        env = {k: v for k, v in os.environ.items() if k not in ("ROMP_STATE_DIR", "ROMP_MANAGER_PID")}
+        env.update({"XDG_STATE_HOME": self.state, "ROMP_KERNEL_NO_OPEN": "1", "ROMP_SERVE_TOKEN": km.TOKEN,
+                    "ROMP_MANAGER_PORT": str(self.mgr.server_address[1])})
+        log = open(os.path.join(self.state, "kernel-%d.log" % n), "w")
+        proc = subprocess.Popen([sys.executable, "-c", _SUBPROCESS_KERNEL % {"tests": HERE, "bin": BIN}],
+                                env=env, stdout=subprocess.PIPE, stderr=log, text=True)
+        self.addCleanup(lambda: (proc.poll() is None and proc.kill(), log.close()))
+        first = proc.stdout.readline().strip()
+        self.assertTrue(first, "the kernel did not come up; its stderr: %s" % open(log.name).read()[-2000:])
+        port, pid = (int(x) for x in first.split())
+        return proc, port, pid, log.name
+
+    def test_twenty_kernels_signalled_before_the_answer_all_ack_the_restart(self):
+        lost, exits = [], []
+        for n in range(self.RUNS):
+            proc, port, pid, logname = self._kernel(n)
+            _SignallingManager.hits = []
+            _SignallingManager.pid = pid
+            req = urllib.request.Request("http://127.0.0.1:%d/restart" % port,
+                                         data=json.dumps({"fleet": False}).encode(), method="POST",
+                                         headers={"X-Romp-Token": km.TOKEN, "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    ack = json.loads(r.read())
+                if not (r.status == 200 and ack.get("restarting") is True):
+                    lost.append((n, r.status, ack))
+            except Exception as e:                      # the connection dropped: the kernel exited before its ack
+                lost.append((n, type(e).__name__, str(e)[:120]))
+            finally:
+                _SignallingManager.pid = 0
+            try:
+                exits.append(proc.wait(timeout=15))
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                exits.append("hung")
+            self.assertEqual([h[0] for h in _SignallingManager.hits], ["/restart-all"], "one hop per restart")
+            self.assertEqual(_SignallingManager.hits[0][1], km.TOKEN, "with the token")
+        self.assertEqual(lost, [], "the ack was lost on %d of %d runs (the kernel exited before writing it)" % (len(lost), self.RUNS))
+        self.assertEqual(exits, [0] * self.RUNS, "every kernel left through _graceful_term's os._exit(0)")
 
 
 class SelfUpdateScriptCarriesTheToken(unittest.TestCase):

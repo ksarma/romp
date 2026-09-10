@@ -58293,15 +58293,21 @@ class Handler(BaseHTTPRequestHandler):
                 # 1, 2026-09-10). The ack used to go out before the hop, restarting:true whatever the
                 # manager said; with the manager's write gate a 401 or 503 is a real answer and the
                 # caller must hear it. On a 200 the manager has already sent SIGTERM by the time it
-                # answers, and the drain (_graceful_term, about two seconds) is the ack's window; the
-                # buttons poll /healthz either way.
-                refused = _restart_this_kernel("http /restart (local-only)", manager_port=_mport)
-                if refused:
-                    return self._send(502, json.dumps({"ok": False, "restarting": False, "boot": _BOOT_ID,
-                                                       "fleet": bool(_fleet), "error": refused}),
-                                      "application/json")
-                self._send(200, json.dumps({"ok": True, "restarting": True, "boot": _BOOT_ID,
-                                            "fleet": bool(_fleet)}), "application/json")
+                # answers, so the ack is IN FLIGHT while _graceful_term runs on the main thread: the
+                # marker below (review round 2) holds the exit until _send has written it, bounded
+                # (_RESTART_ACKS; with no backend to drain, the exit used to win that race one time in
+                # three to five and the ack was lost). The buttons poll /healthz either way.
+                _restart_ack_begin()
+                try:
+                    refused = _restart_this_kernel("http /restart (local-only)", manager_port=_mport)
+                    if refused:
+                        return self._send(502, json.dumps({"ok": False, "restarting": False, "boot": _BOOT_ID,
+                                                           "fleet": bool(_fleet), "error": refused}),
+                                          "application/json")
+                    self._send(200, json.dumps({"ok": True, "restarting": True, "boot": _BOOT_ID,
+                                                "fleet": bool(_fleet)}), "application/json")
+                finally:
+                    _restart_ack_end()
                 return
             if u.path == "/fleet-restart":
                 # What the last fleet restart did, read back by the page AFTER it reloads (the restart
@@ -61856,6 +61862,44 @@ _TERMINATING = [False]   # set the moment an exit path takes the lock: the watch
 #                          under a running graceful term (T240 review), and readers that only need to
 #                          know an exit is underway ask this instead of touching the lock
 
+# The /restart acks in flight (review round 2, 2026-09-10). The local leg of POST /restart asks the
+# manager BEFORE it acks, so the ack can say what the manager answered (round 1), and a manager that
+# takes the request SIGTERMs this kernel before it answers: _graceful_term then races the handler
+# thread, which is between the manager's 200 and its own _send, and with no SDK backend to drain the
+# exit won that race one time in three to five, losing the ack. The peer that asked
+# (_ask_peer_to_pull) then reported a kernel that was in fact restarting as one that never acked.
+# The handler counts itself in before the hop and out after _send (in a finally), and _drain_and_exit
+# waits for the count to reach zero before os._exit, bounded by the drain budget (its own two seconds
+# when no backend drained). The event waited on is the ack's write, not a delay.
+_RESTART_ACK_COND = threading.Condition()
+_RESTART_ACKS = [0]
+_RESTART_ACK_WAIT_S = 2.0     # the drain's budget, and the wait's own bound when there was no drain
+
+
+def _restart_ack_begin():
+    with _RESTART_ACK_COND:
+        _RESTART_ACKS[0] += 1
+
+
+def _restart_ack_end():
+    with _RESTART_ACK_COND:
+        _RESTART_ACKS[0] = max(0, _RESTART_ACKS[0] - 1)
+        _RESTART_ACK_COND.notify_all()
+
+
+def _wait_restart_acks(timeout):
+    """Block until no /restart ack is in flight, or `timeout` seconds have passed; True when none is
+    left. Called from the exit path only, on the main thread (the signal handler's), while the handler
+    threads keep running; a zero or negative timeout is one look with no wait."""
+    deadline = time.monotonic() + max(0.0, float(timeout or 0))
+    with _RESTART_ACK_COND:
+        while _RESTART_ACKS[0] > 0:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return False
+            _RESTART_ACK_COND.wait(left)
+        return True
+
 
 def _parent_watch():
     """Exit if the manager that spawned us (ROMP_MANAGER_PID) dies, so a supervisor crash doesn't
@@ -61913,9 +61957,12 @@ def _drain_and_exit(reason, signum=None, what="SIGTERM", audit=None):
     res = {}
     err = ""
     be = _sdk_backend or None
+    budget = time.monotonic() + _RESTART_ACK_WAIT_S   # the drain's budget, shared with the ack wait below
+    drained = False
     try:
         sys.stderr.write("romp-kernel: %s — draining SDK sessions\n" % what)
         if be is not None and hasattr(be, "drain"):
+            drained = True
             res = be.drain(2.0)
     except Exception:
         # log-and-record, never die recordless (T143: a raising drain lost 2 of 18 restarts' rows)
@@ -61936,6 +61983,15 @@ def _drain_and_exit(reason, signum=None, what="SIGTERM", audit=None):
             _append_restart_cut(row)
         except Exception:
             sys.stderr.write("romp-kernel: cut ledger failed: %s\n" % traceback.format_exc())
+        # A /restart ack still in flight lands before the exit (review round 2, 2026-09-10; see
+        # _RESTART_ACKS): the manager that sent this signal answered the handler's hop, and the handler
+        # thread is writing the ack the caller is waiting on. Bounded by what is left of the drain's
+        # budget when a backend drained, else by the wait's own two seconds; nothing in flight returns
+        # at once.
+        try:
+            _wait_restart_acks(budget - time.monotonic() if drained else _RESTART_ACK_WAIT_S)
+        except Exception:
+            pass
         os._exit(0)
 
 
