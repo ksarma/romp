@@ -1590,7 +1590,10 @@ def _serve_token_read_or_mint(f, who):
       - The mint sweeps any `serve-token.*.tmp` a crashed attempt left (safe under the lock), writes
         its own with O_EXCL at 0600, checks the write length, fsyncs, and os.replace()s it onto the
         path: the live file appears with the token already inside, at 0600 from its first byte, and
-        the live path is never opened for writing at all.
+        the live path is never opened for writing at all. bin/romp-manager's own mint of an absent
+        primary token (mintServeTokenIfAbsent) holds NO lock and names its temp
+        `serve-token-mgr.<pid>.tmp`, outside this glob on purpose, so this sweep never unlinks a
+        manager's temp mid-mint (review round 2, 2026-09-10); keep the two names apart.
       - A non-empty token with any mode bit outside 0600 (group, other, the owner's execute) has
         those bits stripped in place, and said on stderr; a TIGHTER mode (0400) is left alone. The
         check was equality with 0600, which widened 0400 and called it a repair (review find,

@@ -192,6 +192,26 @@ test('readTokenFile: a symlink at the path is refused, dangling or not, never re
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('mintServeTokenIfAbsent: the temp file is named outside the kernel\'s sweep glob (serve-token.*.tmp), so a locked minter\'s sweep cannot unlink it mid-mint', () => {
+  // review round 2 (2026-09-10): the manager takes no lock, and its temp `serve-token.<pid>.tmp` matched
+  // the glob the kernel's and the bus's mints sweep under their lock. fs.openSync is the mint's first
+  // touch of the temp; the manager and this test share the one fs module object, so the patch reaches it.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-token-tmpname-'));
+  const realOpen = fs.openSync;
+  const opened = [];
+  fs.openSync = function (p, flags, mode) { if (flags === 'wx') opened.push(String(p)); return realOpen.call(fs, p, flags, mode); };
+  try {
+    assert.equal(mintServeTokenIfAbsent(root).minted, true);
+    assert.equal(opened.length, 1, 'one temp, opened exclusively');
+    const name = path.basename(opened[0]);
+    assert.equal(path.dirname(opened[0]), root, 'beside the token file, so the link is on one filesystem');
+    assert.match(name, /^serve-token-mgr\.\d+\.tmp$/, name);
+    // fnmatch('serve-token.*.tmp') as a regex: the kernel's _serve_token_read_or_mint sweep (and the bus's copy)
+    assert.doesNotMatch(name, /^serve-token\..*\.tmp$/, `${name} would be swept by the kernel's mint`);
+    assert.deepEqual(fs.readdirSync(root), ['serve-token'], 'and it is gone once linked');
+  } finally { fs.openSync = realOpen; fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('serveToken: the env spelling first, else the file under the state root, else why', () => {
   const file = path.join(MODULE_STATE, 'serve-token');
   const r0 = serveToken();

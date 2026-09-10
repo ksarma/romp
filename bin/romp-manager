@@ -540,7 +540,11 @@ function mintServeTokenIfAbsent(root = STATE_ROOT) {
   const file = path.join(root, 'serve-token');
   try { fs.lstatSync(file); return { minted: false }; }
   catch (e) { if (!e || e.code !== 'ENOENT') return { minted: false, why: `${file}: ${e && e.message}` }; }
-  const tmp = `${file}.${process.pid}.tmp`;
+  // OUTSIDE the kernel's sweep glob (review round 2, 2026-09-10): the kernel's and the bus's mints sweep
+  // `serve-token.*.tmp` under their lock, and this mint takes no lock, so a temp named that way could be
+  // unlinked mid-mint by a minter racing this start (the link then failed, this mint logged a 503 that
+  // the other minter's file cured moments later). `serve-token-mgr.<pid>.tmp` is not matched by the glob.
+  const tmp = path.join(root, `serve-token-mgr.${process.pid}.tmp`);
   try {
     fs.mkdirSync(root, { recursive: true });
     const fd = fs.openSync(tmp, 'wx', 0o600);
