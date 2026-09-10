@@ -36,18 +36,26 @@ This module owns the build. The rules:
   directory on disk inside the checkout contributes the top-level tree that holds it (ui/ and
   vscode-extension/ today; a directory contributes its whole tree). One under the extension's
   node_modules is a dependency, keyed by the lock files below and pruned from every walk by _SKIP_DIRS;
-  one naming nothing on disk (a format, a glob) contributes nothing; an absolute one outside the checkout
-  is noise too (`/` as a publicPath, a system path, a path node resolved to its realpath on a checkout
-  reached through a symlink: none is a source here); a RELATIVE one that reaches outside the checkout is
-  loud, because the config then points out of the repo at something no tree here can key. The config's
+  one naming nothing on disk (a format, a glob) contributes nothing; a RELATIVE one that reaches an existing
+  path outside the checkout is loud, because the config then points out of the repo at something no tree
+  here can key; an ABSOLUTE one outside the checkout is silent unless it is an existing source-suffixed file
+  not under node_modules' realpath, in which case it is loud too (round 8: the `path.join(__dirname, "..",
+  ...)` idiom naming an inject shim beside the checkout is a build input the key cannot see, and round 7
+  dropped it in silence while the relative spelling raised). The silent absolute shapes cannot be told from
+  a system path by shape: a directory (`/` as a publicPath, a nodePaths resolution root, an absWorkingDir),
+  a file with no source suffix (process.execPath), and a dependency's realpath (node's require.resolve
+  through a node_modules reached by symlink answers a path outside the textual checkout; under the realpath
+  of node_modules it is a dependency, keyed by the lock files). The config's
   own tree (esbuild.js, package.json, tsconfig.json) is keyed unconditionally: those are inputs of the
   build whether or not an exported value happens to resolve inside it. Then, to a fixed point, the
   top-level tree of every relative import a keyed source makes out of the keyed trees (vendor/ today:
   ui/webview/anchor-map.ts imports vendor/track-changents/engine.js). Five rounds of text scans (quoted
   literals, then path tokens, then their union) each missed a quoting corner the next review found; the
-  export has no quoting to get wrong, and a value built at require time is plain data. Its one limit: a
+  export has no quoting to get wrong, and a value built at require time is plain data. Its two limits: a
   path that stands only in code (a plugin's body) is not exported data and is not keyed (a comment is
-  never a build input, so a path in one is harmless). The kernel's hand-maintained `_bundle_inputs` list
+  never a build input, so a path in one is harmless); and an absolute DIRECTORY outside the checkout that
+  is a build input (an outbase of sources beside the repo) is silent, because it cannot be told from a
+  system path by shape, where the relative spelling of the same directory raises. The kernel's hand-maintained `_bundle_inputs` list
   names vscode-extension/src, ui/webview, ui/romp-timeline-view.js and vendor/, and
   tests/test_kernel_bundle_staleness.py pins that every file that list reads is keyed here; that catches
   drift inside the trees the kernel's list names and nothing else: a tree reached only through code in
@@ -305,11 +313,21 @@ def esbuild_roots(root=ROOT, ext=EXT):
     glob, a define value, an empty string); one under the extension's node_modules (the real config's
     nodePaths entry and its CodeMirror aliases, all absolute: a dependency, keyed by the lock files, its
     files pruned from every walk by _SKIP_DIRS); one that resolves to the checkout root itself (a top-level
-    tree is the unit this key walks); and an ABSOLUTE one outside the checkout (`/` as a publicPath, a
-    system path, a path node resolved to its realpath on a checkout reached through a symlink: none is a
-    source of this checkout, and a raise on `/` would make every served lab error on a legitimate config).
-    A RELATIVE value that resolves to an existing path outside the checkout is the suspicious shape and is
-    loud: the config reaches out of the repo to something no top-level tree here can key.
+    tree is the unit this key walks); and an ABSOLUTE one outside the checkout that is not an existing
+    source-suffixed file, or that is one under the realpath of node_modules. A RELATIVE value that resolves
+    to an existing path outside the checkout is the suspicious shape and is loud: the config reaches out of
+    the repo to something no top-level tree here can key. An absolute value outside the checkout is loud on
+    the same grounds when it names an existing source-suffixed FILE not under node_modules' realpath (round
+    8: `path.join(__dirname, "..", "..", "shims", "p.js")` names a build input the key cannot see, and round
+    7 dropped it in silence while the relative spelling raised). Every other absolute outside value is silent
+    because it cannot be told from a system path by shape: a DIRECTORY (`/` as a publicPath, a nodePaths
+    resolution root, an absWorkingDir; a raise on `/` would make every served lab error on a legitimate
+    config), a file with no source suffix (process.execPath), and a dependency's realpath (node's
+    require.resolve through a node_modules reached by symlink answers a file outside the textual checkout;
+    under the realpath of node_modules it is a dependency, keyed by the lock files). The residual, stated:
+    an absolute outside directory that IS a build input (an outbase of sources beside the repo) goes unkeyed
+    in silence where the relative spelling raises; and a system source file named absolutely (a script under
+    /usr/lib/node_modules) raises, as the relative spelling would.
 
     Reading the export replaced five rounds of text scans (round 6): a quoted-literal scan, then a path-token
     scan, then their union, each missed a quoting corner the next review found (a stray quote before a path,
@@ -330,8 +348,9 @@ def esbuild_roots(root=ROOT, ext=EXT):
     module does not load (a syntax error, a throw at load, a missing relative module); the module ends the
     process before the reader writes its file; the require does not finish inside _EXPORTS_TIMEOUT. Three
     are here: module.exports holds no string value (nothing exported, or only functions); a relative value
-    names an existing path OUTSIDE the checkout, which no top-level tree can key and the parity pin cannot
-    see; a config names no path inside the checkout at all, which means the wrong file was read. One
+    names an existing path OUTSIDE the checkout, or an absolute one names an existing source file outside it
+    that is not a dependency, which no top-level tree can key and the parity pin cannot see; a config names
+    no path inside the checkout at all, which means the wrong file was read. One
     failure is a skip instead (esbuild_exports raises unittest.SkipTest, as the build half does on a failed
     build): a bare package the config requires that node cannot find, the environment's state and the
     precondition every served lab skips on (review round 7, decision 2)."""
@@ -352,10 +371,16 @@ def esbuild_roots(root=ROOT, ext=EXT):
             continue
         top = _top_tree(path, root)
         if top is None:
-            if os.path.isabs(candidate):
+            # an absolute value outside the checkout is silent unless it is an existing source-suffixed file not
+            # under node_modules' realpath: a directory (`/`, a resolution root) and a non-source file
+            # (process.execPath) cannot be told from a system path by shape, and a dependency's realpath (a
+            # node_modules reached by symlink) is keyed by the lock files; a relative value outside is always loud
+            source_file = os.path.isfile(path) and path.endswith(_SOURCE_SUFFIXES)
+            dependency = _under(os.path.realpath(path), os.path.realpath(node_modules))
+            if os.path.isabs(candidate) and (not source_file or dependency):
                 continue
-            raise ValueError("%s exports %r, an existing path outside the checkout %s, which cannot be keyed"
-                             % (config, candidate, root))
+            raise ValueError("%s exports %r, an existing %s outside the checkout %s, which cannot be keyed"
+                             % (config, candidate, "source file" if source_file else "path", root))
         roots.add(top)
     if not roots:
         raise ValueError("%s names no path inside the checkout %s: the build's inputs cannot be keyed" % (config, root))

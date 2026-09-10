@@ -17,8 +17,10 @@ does (holding the staging window open long enough to matter):
      a candidate (the values of an object, never its keys), and a candidate naming a path on disk inside the
      checkout contributes its top-level tree, relative or absolute (one naming nothing on disk contributes
      nothing; a directory value contributes its tree; an entry built from a template literal at require time is
-     keyed, a shape no text scan could see; a path in a comment or a code body is not exported data; an absolute
-     value outside the checkout is noise where a relative one that reaches outside is an error; a module that
+     keyed, a shape no text scan could see; a path in a comment or a code body is not exported data; a relative
+     value that reaches an existing path outside the checkout is an error, and so is an absolute one naming an
+     existing source file outside it that is not under node_modules' realpath, while an absolute outside
+     directory, a non-source file and a dependency's realpath are silent; a module that
      exports nothing, a module node cannot load, a module that ends the process before the file is written, a
      missing extension dir, a missing node and a require past its bound are errors carrying node's stderr and
      stdout, with no fallback to the text; a top-level file is keyed as one file; the config's own tree is keyed
@@ -560,14 +562,59 @@ module.exports = { extension, webview, testBuild };
                             'inject: [path.join(__dirname, "..", "shims", "p.js")] } };\n')
         self.assertEqual(self.roots(), ["ext", "shims"])
 
-    def test_an_absolute_value_outside_the_checkout_is_noise_where_a_relative_one_is_loud(self):
-        """The asymmetry, pinned: the same existing file outside the checkout, named absolutely, contributes
-        nothing (`/`, a system path and a realpath node resolved through a symlink all take this shape, and none
-        is a source here), while the relative spelling raises (the first of the loud cases below)."""
+    def test_an_absolute_source_file_outside_the_checkout_is_an_error_like_the_relative_spelling(self):
+        """`path.join(__dirname, "..", "..", "elsewhere", "x.ts")`: an existing source file outside the checkout,
+        named absolutely (an inject shim beside the repo), is a build input no top-level tree here can key, so it
+        raises naming the path, as the relative spelling of the same file does (the loud cases below). Round 7
+        dropped every absolute outside value as noise and this test pinned the asymmetry; the file went unkeyed in
+        silence. A file with NO source suffix stays silent (process.execPath, a binary the config exports, cannot
+        be told from a system path by shape); the directory and dependency exemptions are the two tests below."""
         outside = os.path.join(self.base, "elsewhere", "x.ts")
         _write(outside, "export const e = 1;\n")
+        _write(self.config, 'const path = require("path");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts"], '
+                            'inject: [path.join(__dirname, "..", "..", "elsewhere", "x.ts")] } };\n')
+        with self.assertRaises(ValueError) as cm:
+            self.roots()
+        self.assertIn("source file outside the checkout", str(cm.exception))
+        self.assertIn(outside, str(cm.exception))
         _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts", %s] } };\n' % json.dumps(outside))
+        with self.assertRaises(ValueError, msg="the plain absolute string takes the same door as the path.join"):
+            self.roots()
+        _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts"], nodeBinary: process.execPath } };\n')
+        self.assertEqual(self.roots(), ["ext"], "an absolute outside file with no source suffix is silent")
+
+    def test_an_absolute_directory_outside_the_checkout_is_silent_as_a_system_path(self):
+        """An existing DIRECTORY outside the checkout named absolutely (`/` as a publicPath, a nodePaths resolution
+        root, an absWorkingDir) cannot be told from a system path by shape, so it is silent even when it holds
+        sources; a raise on `/` would error every served lab on a legitimate config. The relative spelling of the
+        same directory raises. The residual, stated in the docstrings: an outside directory that IS a build input
+        goes unkeyed in silence."""
+        elsewhere = os.path.join(self.base, "elsewhere")
+        _write(os.path.join(elsewhere, "x.ts"), "export const e = 1;\n")
+        _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts"], publicPath: "/", absWorkingDir: "/usr", '
+                            'nodePaths: [%s] } };\n' % json.dumps(elsewhere))
         self.assertEqual(self.roots(), ["ext"])
+        _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts"], outbase: "../../elsewhere" } };\n')
+        with self.assertRaises(ValueError) as cm:
+            self.roots()
+        self.assertIn("outside the checkout", str(cm.exception))
+
+    def test_a_dependency_resolved_to_its_realpath_outside_the_checkout_is_silent(self):
+        """This checkout's own layout: the extension's node_modules is a symlink to a tree outside the checkout,
+        and node's require.resolve answers the realpath, an absolute source file outside the textual checkout. It
+        is under the realpath of node_modules, so it is a dependency (keyed by the lock files, pruned from every
+        walk) and silent, where the file rule above would raise. A raise here would fail the real config the day
+        it exports a resolved dependency path on a symlinked node_modules."""
+        shutil.rmtree(os.path.join(self.ext, "node_modules"))
+        store = os.path.join(self.base, "store")
+        _write(os.path.join(store, "pkg", "index.js"), "module.exports = 1;\n")
+        os.symlink(store, os.path.join(self.ext, "node_modules"))
+        _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts"], inject: [require.resolve("pkg")] } };\n')
+        self.assertEqual(self.roots(), ["ext"])
+        _, exports = lab_dist.esbuild_exports(self.ext)
+        self.assertEqual(exports["x"]["inject"], [os.path.join(store, "pkg", "index.js")],
+                         "the fixture holds: node answered the realpath outside the checkout")
 
     def test_a_directory_valued_export_contributes_its_tree(self):
         """A value naming a DIRECTORY on disk (an outbase, a nodePaths entry, an absWorkingDir, a tsconfig dir)
