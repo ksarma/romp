@@ -5,8 +5,8 @@
 // lane), outgoing BELOW it with no dot, clipped by arithmetic (no clipPath), in the SENDER's
 // identity color like every full connector (the user 2026-08-24: state colors at stub alpha read as
 // mud), with the arrived/in-flight state on the STROKE STYLE — dashed until the exec binds, solid
-// after, keyed on the exec EVENT, never a timer. Headless draw() over the render test's DOM shim,
-// asserting on the SVG child tree.
+// after, keyed on the exec EVENT, never a timer. Headless draw() over the shared fake DOM,
+// ui/test-dom-shim.ts, asserting on the SVG child tree.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";

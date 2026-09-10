@@ -11,8 +11,8 @@
 // (the pane's largest cost while visible, and invisible to every handler bracket). draw() now puts every
 // time-positioned element in one plot group, and the tick writes one translate on that group plus a width on
 // each element whose right edge rides the live now (an open bar, an open awaiting or compacting span, an
-// open judging run); a full draw() stays only for what a translate cannot express. Headless, on the DOM shim
-// timeline-render.test.ts uses: the shim counts element creation, so a rebuild is observable.
+// open judging run); a full draw() stays only for what a translate cannot express. Headless, on the shared fake
+// DOM, ui/test-dom-shim.ts; the test's document counts element creation, so a rebuild is observable.
 //
 // Merged 2026-09-07: both mechanisms ship. With a plot handle the tick translates on every animation frame
 // (TICK_MIN_PX guards the sub-pixel move); with none (a glyph rides the live edge) the rebuild is paced as

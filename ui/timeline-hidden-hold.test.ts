@@ -6,7 +6,7 @@
 // path the tooltip and click holds use; the tab coming back (visibilitychange) or the pane coming into view
 // (IntersectionObserver) paints ONE catch-up and re-arms the live tick, which stops while hidden instead of
 // waking every 2 s into a forced layout. A bars frame that outruns its skeleton is parked, not dropped.
-// Headless over the render test's DOM shim, with a recording document and a fake IntersectionObserver.
+// Headless over the shared fake DOM, ui/test-dom-shim.ts, with a recording document and a fake IntersectionObserver.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";

@@ -7,8 +7,8 @@
 // 2026-09-08): the renderer used to read an end within 2 s of data.now as open, and a connect frame
 // re-stamps the cycle clock over the cached build's lanes, so that distance was the cache's age and a lane
 // blocked right now drew closed. The end stays numeric on the wire: a null end was a wire break for every
-// already-loaded renderer (Math.min(null, t1) = 0 dropped the stripe). Headless draw() over a minimal DOM
-// shim (the timeline-render.test.ts pattern), with the live edge pushed MAX_INTERP_AHEAD past data.now so
+// already-loaded renderer (Math.min(null, t1) = 0 dropped the stripe). Headless draw() over the shared fake
+// DOM, ui/test-dom-shim.ts, with the live edge pushed MAX_INTERP_AHEAD past data.now so
 // "to the live edge" and "to the payload's end" land on different pixels.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

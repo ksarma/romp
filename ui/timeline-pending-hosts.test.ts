@@ -4,7 +4,7 @@
 // such hosts (federation.ts mergeHostTimelines.pendingHosts, retired only by the host's first lanes
 // payload or its detach), and draw() reserves one placeholder row per name under the lanes: the romp
 // swirl (reverse-spun) + "loading sessions from <host>…" (or "reconnecting to <host>…" on a dead link).
-// Executed through the real draw() on the headless DOM shim timeline-render.test.ts uses. Synthetic only.
+// Executed through the real draw() on the shared fake DOM, ui/test-dom-shim.ts. Synthetic only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { createRequire } from "node:module";

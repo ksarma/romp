@@ -2,8 +2,8 @@
 // current one ringed; clicking one recolors the session (the user 2026-06-29). Source pins against render.ts —
 // the menu builds DOM at right-click time, so a behavioral jsdom run isn't needed to lock the shape.
 // The T164 balanced split is ALSO the timeline's: its Sessions & tags dialog draws the same swatches, since
-// 2026-09-09 in the colour popover a tag row's dot opens, and that half runs EXECUTED over the house fake-DOM
-// shim with the real TimelinePanel (the shim as ui/timeline-tags-scale.test.ts carries it).
+// 2026-09-09 in the colour popover a tag row's dot opens, and that half runs EXECUTED over the shared fake DOM,
+// ui/test-dom-shim.ts, with the real TimelinePanel.
 import { test } from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";

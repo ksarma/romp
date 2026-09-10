@@ -4,7 +4,7 @@
 // handler bracket. draw() now puts every time-positioned element in one plot group, and the tick writes one
 // translate on that group plus a width on each element whose right edge rides the live now (an open bar, an
 // open awaiting or compacting span, an open judging run); a full draw() stays only for what a translate cannot
-// express. Headless, on the DOM stand-in timeline-render.test.ts uses: the stand-in counts element creation,
+// express. Headless, on the shared fake DOM, ui/test-dom-shim.ts; the test's document counts element creation,
 // so a rebuild is observable. (ui/timeline-live-tick.test.ts pins the loop's pacing; this file pins the look.)
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
