@@ -298,10 +298,11 @@ const initsEdge = (s: string) => edgeShapes(s).length > 0;
 /** The credential: an import of hideEdges or nodeFactory from the shared module AND a call of one of them, in code.
  *  The import is a statement at line start, either quote style on the specifier, with or without a .js suffix, as a
  *  named import (`import { hideEdges } from "./test-dom-shim"`) or a namespace import (`import * as shim from
- *  "../test-dom-shim"`); the call is `hideEdges(` or `nodeFactory(` for a named import and `shim.hideEdges(` or
- *  `shim.nodeFactory(` under the namespace's own alias. An import alone hides nothing; a call under an alias (`import
- *  { hideEdges as hide }`), a reference passed as a callback (`nodes.forEach(hideEdges)`), a local helper of the same
- *  name without the import, or a call token in a comment or a string is not read: import it and write the call. What
+ *  "../test-dom-shim"`, the alias any identifier, dollar signs included); the call is `hideEdges(` or `nodeFactory(`
+ *  for a named import and `shim.hideEdges(` or `shim.nodeFactory(` under the namespace's own alias, not under a
+ *  longer name that ends in it. An import alone hides nothing; a call under an alias (`import { hideEdges as hide }`),
+ *  a reference passed as a callback (`nodes.forEach(hideEdges)`), a local helper of the same name without the
+ *  import, or a call token in a comment or a string is not read: import it and write the call. What
  *  no regex can see is whether the call covers every object in the file that declares an edge: a second class, or an
  *  object literal beside the nodeFactory nodes (ui/timeline-transform-tick.test.ts's hover target held an enumerable
  *  parentNode that way until round 4 wrapped it in hideEdges), stays unhidden. That gap is real and is closed per
@@ -312,10 +313,11 @@ const SHIM_SPECIFIER = "(?:\\.\\.\\/|\\.\\/)test-dom-shim(?:\\.js)?";
 const IMPORTS_SHIM = new RegExp("^\\s*import\\s*\\{[^}]*\\b(?:hideEdges|nodeFactory)\\b[^}]*\\}\\s*from\\s*([\"'])" + SHIM_SPECIFIER + "\\1", "m");
 const IMPORTS_SHIM_NS = new RegExp("^\\s*import\\s*\\*\\s*as\\s+([A-Za-z_$][\\w$]*)\\s+from\\s*([\"'])" + SHIM_SPECIFIER + "\\2", "gm");
 const CALLS_SHIM = /\b(?:hideEdges|nodeFactory)\(/;
+const escapeRegExp = (t: string) => t.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 const switched = (s: string): boolean => {
   const imports = blank(s, false), code = blank(s, true);   // the specifier is a string, so the import reads the comment-free text
   if (IMPORTS_SHIM.test(imports) && CALLS_SHIM.test(code)) return true;
-  for (const m of imports.matchAll(IMPORTS_SHIM_NS)) if (new RegExp("\\b" + m[1].replace("$", "\\$") + "\\.(?:hideEdges|nodeFactory)\\(").test(code)) return true;
+  for (const m of imports.matchAll(IMPORTS_SHIM_NS)) if (new RegExp("(?<![\\w$])" + escapeRegExp(m[1]) + "\\.(?:hideEdges|nodeFactory)\\(").test(code)) return true;
   return false;
 };
 /** True when `s` must be on the allowlist: it initialises an edge and is not switched. */
@@ -727,6 +729,13 @@ test("the credential: an import of nodeFactory or hideEdges from the shared modu
   assert.ok(needsListing('import * as other from "./test-dom-shim";\n' + ns), "a namespace import under another alias than the call's is not it");
   const factoryNs = scratch("import * as dom from './test-dom-shim';\nconst makeNode = dom.nodeFactory();\nconst n = makeNode('div'); n.EDGE = null;\n", "parentNode");
   assert.ok(initsEdge(factoryNs) && !needsListing(factoryNs), "dom.nodeFactory( under a namespace import is switching");
+  // the alias may carry a dollar sign, first or twice, and the call is read under the alias alone, not under a longer name that ends in it
+  for (const alias of ["$dom", "a$b$c", "_$s"]) {
+    const call = scratch("class N {\n  EDGE!: N | null;\n  constructor() { ALIAS.hideEdges(this); }\n  appendChild() {}\n}\n".replace(/ALIAS/g, alias), "parentNode");
+    assert.ok(initsEdge(call) && !needsListing("import * as " + alias + " from \"./test-dom-shim\";\n" + call), "alias " + alias + ": the call under it is switching");
+  }
+  assert.ok(needsListing('import * as $s from "./test-dom-shim";\n' + scratch("class N {\n  EDGE!: N | null;\n  constructor() { x$s.hideEdges(this); }\n}\n", "parentNode")), "a call under a longer name that ends in the alias (x$s for $s) is not it");
+  assert.ok(needsListing('import * as shim from "./test-dom-shim";\n' + scratch("class N {\n  EDGE!: N | null;\n  constructor() { $shim.hideEdges(this); }\n}\n", "parentNode")), "a call under a longer name that ends in the alias ($shim for shim) is not it");
   // a call token that is not code: in a line comment, a doc comment, a string, a template
   const imp = 'import { hideEdges } from "./test-dom-shim";\n';
   assert.ok(needsListing(imp + bare + "// TODO: hideEdges(this) in the constructor\n"), "a call token in a line comment is not a call");
