@@ -336,10 +336,15 @@ test("pins: render.ts builds every lens and order write from the store's blob (p
   const at = RENDER.indexOf("const editUnion = (g: TagUnion");
   const fly = RENDER.slice(at, RENDER.indexOf("// BROWSE FILES", at));
   assert.equal((fly.match(/if \(g\.localId && !g\.pending\) \{/g) || []).length, 2, "a pending union takes no add or remove op");
-  assert.match(fly, /if \(g\.pending\) \{[\s\S]{0,500}busy\.textContent = "creating…"; row\.appendChild\(busy\);\s*\n\s*sub\.appendChild\(row\);\s*\n\s*continue;/,
+  assert.match(fly, /if \(g\.pending\) \{[\s\S]{0,500}busy\.textContent = "creating…"; row\.appendChild\(busy\);\s*\n\s*add\(row\);\s*\n\s*continue;/,
     "a held tag whose create is in flight renders with no ✕");
   assert.match(fly, /const others = unionFor\(\)\.filter\(\(g\) => !g\.members\.includes\(id\) && !g\.pending\);/, "…and is not offered to join or move to");
-  // T264b's review (upstream, folded 2026-09-08): the menu speaks for the right-clicked copy's group when it has one, else the first holder; the pending guard is unchanged
-  assert.match(fly, /const home0 = readTabGroups\(\)\.on \? \(\(copy !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copy\) : undefined\) \?\? holding\(\)\[0\]\) : undefined;\s*\n\s*const home = home0 && !home0\.pending \? home0 : undefined;/,
-    "no move OUT of a home tag whose create is in flight");
+  // T264b's review (upstream, folded 2026-09-08): the menu speaks for the right-clicked copy's group when it has one; since round 3 of the
+  // tab menu review, else the one remaining holder, else nothing; the pending guard is unchanged
+  // (since the menu's Hide tab row, the user 2026-09-09, the computation is showTabMenu's `homeNow`, above the Tags block and outside this
+  // slice; the flyout reads it on every build of its own, and the pending guard is where it was)
+  assert.match(fly, /const home = homeNow\(\);   \/\/ read per build: a move or a remove above changes the copy's group \(the Hide tab row reads the same\)/,
+    "no move OUT of a home tag whose create is in flight: the flyout's per-build read of the shared computation");
+  assert.match(RENDER, /let copyNow: SectionRef \| undefined = copy \? refOf\(copy\) : undefined;\s*\n\s*const sameSection = \(a: SectionRef, b: SectionRef\) => \(a\.localId !== null && b\.localId !== null \? a\.localId === b\.localId : a\.name === b\.name\);[^\n]*\n\s*const heldCopy = \(held: TagUnion\[\]\): TagUnion \| undefined => \{\s*\n\s*const c = copyNow;\s*\n\s*if \(!c\) return undefined;\s*\n\s*return \(c\.localId !== null \? held\.find\(\(g\) => g\.localId === c\.localId\) : undefined\) \?\? held\.find\(\(g\) => g\.name === c\.name\);[^\n]*\n\s*\};\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;\s*\n\s*const held = holding\(\);\s*\n\s*const home0 = heldCopy\(held\) \?\? \(held\.length === 1 && !held\[0\]\.pending \? held\[0\] : undefined\);[^\n]*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};/,
+    "the computation: the copy's group, tracked through a move and an add (copyNow, a section ref since round 4 of the tab menu review: matched by its tag's local id over every held union first and by its name only when no held union carries that id, round 6; aimed by the gestures alone since round 5); else the one remaining holder; else nothing (round 3); only while sectioned, and never a tag whose create is in flight");
 });

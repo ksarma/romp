@@ -140,8 +140,18 @@ again to fold the tab with the rest. A tab set to show when folded keeps that se
 group is renamed. The `archived` section starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
-adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. The row's
-**+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
+adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. A
+change from another pane or another dashboard can take the tab out of that group just before you click,
+or remove the group's tag and make it again under the same name: the click then moves nothing, the row
+flashes, and its tooltip says to click again. If the change moved the tab into the group you picked, that
+row is gone instead (the tag is one of the tab's own now, with a **✕** beside it); if it only added that
+group, the row is still there and the click drops the group you right-clicked it in, the move you asked
+for. **Show when folded** refuses the same way while the tab is still in that group or has left it for
+exactly one other group whose tag already exists. When the tab has left for no group, for two or more (the
+menu cannot tell which copy you mean), or for a tag that is still being created, there is nothing to pin:
+its row leaves the flyout and the menu stays open. **Hide tab** refuses
+the same way on a re-created tag, while the **✕** beside a tag and the row's **+** act on the re-created
+tag at once. The row's **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser. The groups follow one another across the
 strip and wrap as they need (a header left at a row's end with its first tab on the next row moves
 down to join it, when the two fit on one row); the gear's **One tag group per row in the tab strip**
@@ -173,8 +183,43 @@ the desktop layout; the phone layout keeps its flat list.
 **Hiding a session inside its group.** Each row in this view has a **Hide** button, or **Show**
 once the session is hidden. Hiding a session takes its tab off the strip while its group is open
 and moves its row under a **Hidden (N)** fold at the foot of the view, one click away; the row's
-**Show** button puts the tab back at once. Hiding is separate from folding: fold the group and
-open it again, and the hidden sessions stay hidden while the rest come back. Nothing is lost by
+**Show** button puts the tab back at once. You can also hide a session from its tab: right-click
+the tab and pick **Hide tab**. The line under the label names the group the session hides in and
+where to show it again: the group's view, where its row has the **Show** button. Which click opens
+that view depends on the fold: an open group's count opens the view and leaves the group open; a
+folded group's header opens the group and the view together. While the menu is open, the row
+follows the copy you right-clicked, through your edits in the **Tags** flyout and through changes
+that arrive from elsewhere (another pane, another dashboard). The menu knows the group by its
+tag's id, and by its name when no tag has that id: a tag renamed meanwhile keeps the row under its
+new name, and a tag removed and made again under the same name keeps it too. A group the menu
+knows by its name alone is lost to a rename while the session is under two or more groups: the row
+leaves, and a click writes nothing. Three kinds of group are known that way: a group that only
+another machine's tags make, a tag that was still being created when the menu started following
+the tab under it (you typed its name into the **Tags** flyout while the tab had no group, or you
+right-clicked the tab while the tag's row under **Tags** said creating), and a tag removed and made
+again under the same name, which the menu knows by its name from then on. Moving it to another group
+changes the group the line names. Removing that group's tag takes the row away, unless the session is left under
+exactly one other tag, whose group the line then names: under two or more, the menu cannot tell
+which copy you mean. If the removed tag comes back (a removal the kernel refused, or the tag added
+again from another pane), the line names your group again, unless you added a tag from the flyout
+while the line named the one remaining group: that add keeps the line on that group, and the tag
+coming back does not move it. While the row is away, adding a tag brings it back for that group, unless
+the copy's tag is still being created: an add then keeps the copy under the pending tag, and the
+row stays away until that tag exists. A removal that leaves one tag brings it back for that one.
+Removing one of the session's other tags leaves the line alone. If the group changes under the menu
+just before you click, the click hides nothing. While the tab is still in the group the line named,
+or has left it for exactly one other group, the line redraws for the group the tab is in now, the
+menu stays open, and a second click acts on what it says; when the words would not change (the
+same group under a new tag), the line flashes instead and its tooltip says to click again. If the
+tab has left that group and is under none, or under two or more (the menu cannot tell which copy
+you mean), or the tabs were ungrouped from another pane, the menu closes and nothing is hidden.
+The menu has **Hide tab** only while
+the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip,
+on a phone, or for the untagged sessions after the divider. A tag that is still being created (its
+row under **Tags** says creating) has no **Hide tab** yet; the row appears once the tag exists. A hidden
+session has no tab to right-click, so this view's **Show** button puts it back. Hiding is separate
+from folding: fold the group and open it again, and the hidden sessions stay hidden while the rest
+come back. Nothing is lost by
 hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red
 when one of them needs you), and its count shows two numbers, **6+2** for six on the strip and two
 hidden (the tooltip spells it out). When a hidden session needs you, the fold's head says so in

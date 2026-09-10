@@ -621,3 +621,631 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (pointer: fine,
   assert.deepEqual([desktop.pointerFine, desktop.hoverHover, desktop.anyPointerCoarse, desktop.opacity], [true, true, false, "0"],
     "the desktop: no coarse pointer anywhere, so the act rests unseen until the row's hover or focus (round 1's disclosure)");
 });
+
+// A TAG NAME NEVER WIDENS THE MAIN MENU (tab menu review rounds 2 to 5, 2026-09-09): the menu's rows are nowrap and the menu is sized
+// by its widest row, so a row whose text carries a tag name grew the menu with the name (a 512px menu at the 40-character maximum in
+// Inter, clipped at a narrow pane's edge under render.ts's clamp, which never shrinks the menu). Rounds 2 and 3 capped the sub-line at
+// 36em of its own font: round 2 on .ctx-item-sub itself, which cut the Emoji row's sub-line, the widest fixed one, in the light theme's
+// Space Grotesk and in a fallback face; round 3 on a modifier the Hide tab row wore, which still left the dark theme's menu 28px wider
+// than its fixed rows (Emoji's sub-line is 33.1em in Inter), so a 400px pane overflowed where the base's menu fit. Round 4 made the
+// rule structural (styles.css .ctx-sub-capped: the body takes the row's spare width, the label and sub-line contribute nothing to the
+// menu's intrinsic width and elide) and put it on every row whose text carries a tag name, the Tags flyout's Move to and Show when
+// folded rows included; round 5 takes it off the flyout, where no wide fixed row holds the menu open, so the rule collapsed the flyout
+// to the New tag input's width and cut a five-character tag's Show when folded line (the next test measures the flyout). The wearers
+// are the two MAIN-menu rows whose sub-line carries a tag name: the Hide tab row and the Tags row (its sub-line joins the names).
+// Measured here over the real sheet with the faces served from the extension's media (the files the page loads): the dark theme's
+// Inter and the light theme's Space Grotesk (body.theme-light, as theme.ts sets it), each at 450px, 400px and 383px panes, and the
+// no-webfont fallback (the fonts 404'd) at 450px. Each pass inserts the rows FIRST, so the text starts the face's fetch (round 2
+// awaited fonts.ready over an empty page and read the fallback face while calling it Inter), awaits document.fonts.ready and asserts
+// the FontFace's own status and fonts.check, never the font-family string, then reads: the fixed sub-lines (Rename, Notify me, Emoji)
+// are whole with their loaded-face widths, both tag-bearing sub-lines elide, and the menu holding the two tag-bearing rows with
+// 40-character names is as wide (within 1px) as the same menu without them and stays inside the pane under the clamp at every width.
+// The sub-lines are the page's own words, read from render.ts.
+const INTER_PATH = path.join(EXT, "media", "InterVariable.woff2");
+const SG_PATH = path.join(EXT, "media", "SpaceGroteskVariable.woff2");
+const MENU_PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/styles.css><style>body{margin:0}</style></head><body></body></html>`;
+type LineRead = { em: number; natural: number; elided: boolean; overflow: string };
+type MenuRead = { faces: string[]; checkInter: boolean; checkSG: boolean; fixed: LineRead[]; tagged: LineRead[]; menuWidth: number; right: number; inner: number };
+test("in Chromium, over the real sheet with the faces loaded: the main menu's two tag-bearing rows (menu review rounds 2 to 5: Hide tab and Tags) with 40-character names add nothing to the menu's width in Inter and in the light theme's Space Grotesk at 450px, 400px and 383px panes, and in the fallback face; their sub-lines elide; every fixed sub-line is whole, Emoji's 36.1em in Space Grotesk included; the menu stays inside the pane", async (t) => {
+  let pw: any = null;
+  try { pw = requireCjs("playwright"); } catch { pw = null; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
+  assert.ok(fs.existsSync(INTER_PATH) && fs.existsSync(SG_PATH), "the faces the page loads are in the extension's media (a missing file 404s, and the pass would read the fallback face while asserting a loaded one)");
+  const inter = fs.readFileSync(INTER_PATH), sg = fs.readFileSync(SG_PATH);
+  // the source pins sit BEFORE the launch (round 4): a pin that threw between chromium.launch() and the try whose finally
+  // closes the browser left Chromium open, and node --test then never exited, so a sweep hung instead of going red. Each
+  // read asserts with a message naming the literal, so a miss prints one line and not render.ts.
+  const pick = (re: RegExp, what: string) => { const m = RENDER.match(re); assert.ok(m, `render.ts carries ${what}`); return m![1]; };
+  const rename = pick(/sb\.textContent = "(the name is a label[^"]+)"; bodyEl\.appendChild\(sb\);/, "Rename's sub-line");
+  const bell = pick(/"(system notification when its work blocks on you or completes)"/, "Notify me's sub-line");
+  const emoji = pick(/sb\.textContent = "(one glyph before the name on the tab[^"]+)";/, "Emoji's sub-line");
+  const name40 = "notes-api-customer-billing-migration-two";   // 40 characters, the New tag input's maxLength
+  const other40 = "notes-api-customer-invoicing-rollout-one";
+  assert.equal(name40.length, 40); assert.equal(other40.length, 40);
+  const hide = `hidden in ${name40}; to show it, open the group's view`;
+  for (const cls of ['"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"', '"ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"'])
+    assert.ok(RENDER.includes(`el("div", ${cls}`), "a tag-bearing row of the main menu wears the modifier this leg puts on its copy: " + cls);
+  // the flyout's rows (Move to, Show when folded) wear no modifier: tab-hide.test pins their class strings; this leg measures the main menu
+  // alone and the next one measures the flyout, so no source pin of theirs sits here (round 6: a pin duplicated there made this leg red at
+  // the round-4 base before any browser launched, and the measured red the next leg exists for was never reached)
+  let browser: any;
+  try { browser = await pw.chromium.launch(); }
+  catch (e) { t.skip("no playwright chromium on this box (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+  try {
+    const pass = async (fonts: boolean, light: boolean, width: number, tagged: boolean): Promise<MenuRead> => {
+      const page = await browser.newPage({ viewport: { width, height: 700 } });
+      await page.route("http://romp.test/**", (route: any) => {
+        const u = new URL(route.request().url());
+        if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: MENU_PAGE });
+        if (u.pathname === "/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: CSS });
+        if (fonts && u.pathname.endsWith("/InterVariable.woff2")) return route.fulfill({ status: 200, contentType: "font/woff2", body: inter });
+        if (fonts && u.pathname.endsWith("/SpaceGroteskVariable.woff2")) return route.fulfill({ status: 200, contentType: "font/woff2", body: sg });
+        return route.fulfill({ status: 404, body: "" });
+      });
+      await page.goto("http://romp.test/page");
+      // the rows first, in the theme's face: the text is what starts the face's fetch. The fixed rows as render.ts builds them
+      // (a 14px ctxIcon, the body with a label and a sub-line); the tag-bearing rows as their builders do: Hide tab (icon, label,
+      // sub-line), Tags (icon, label, the joined names, the caret). The Move to and Show when folded rows render in the flyout, not
+      // here (round 4 put copies of them in this menu, where the structural rule held; the next test builds the flyout they live in)
+      await page.evaluate(([light, tagged, rename, bell, emoji, hide, name40, other40]: [boolean, boolean, string, string, string, string, string, string]) => {
+        if (light) document.body.className = "theme-light";
+        const el = (tag: string, cls: string) => { const e = document.createElement(tag); e.className = cls; return e; };
+        const icon = () => { const ic = el("span", "ctx-icon"); ic.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; return ic; };
+        const body = (lab: string, sub: string | null, tag: boolean) => {
+          const b = el("span", "ctx-item-body");
+          const l = el("span", "ctx-item-label" + (tag ? " tagged" : "")); l.textContent = lab; b.appendChild(l);
+          if (sub !== null) { const sb = el("span", "ctx-item-sub" + (tag ? " tagged" : "")); sb.textContent = sub; b.appendChild(sb); }
+          return b;
+        };
+        const menu = el("div", "ctx-menu"); menu.id = "menu";
+        for (const [lab, sub] of [["Rename", rename], ["Notify me", bell], ["Emoji…", emoji]]) {
+          const item = el("div", "ctx-item ctx-item-toggle"); item.appendChild(icon()); item.appendChild(body(lab, sub, false)); menu.appendChild(item);
+        }
+        if (tagged) {
+          const h = el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"); h.appendChild(icon()); h.appendChild(body("Hide tab", hide, true)); menu.appendChild(h);
+          const tg = el("div", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"); tg.appendChild(icon()); tg.appendChild(body("Tags", name40 + " · " + other40, true));
+          const caret = el("span", "ctx-caret"); caret.textContent = "▸"; tg.appendChild(caret); menu.appendChild(tg);
+        }
+        document.body.appendChild(menu);
+      }, [light, tagged, rename, bell, emoji, hide, name40, other40]);
+      await page.evaluate(() => (document as any).fonts.ready);   // the fetch the rows started has landed (or failed) before the read
+      const r = await page.evaluate(() => {
+        const fontSet = (document as any).fonts;
+        const faces: string[] = [];
+        for (const f of fontSet as Iterable<{ family: string; status: string }>) faces.push(f.family + ":" + f.status);
+        const menu = document.getElementById("menu")!;
+        // render.ts's clamp (showTabMenu): at the cursor, never past the pane's right edge; the cursor here at 400px
+        const rect = menu.getBoundingClientRect();
+        const mx = Math.max(0, Math.min(400, window.innerWidth - rect.width - 4));
+        menu.style.left = mx + "px"; menu.style.top = "10px";
+        const read = (sb: Element) => { const fs = parseFloat(getComputedStyle(sb).fontSize); const b = sb.getBoundingClientRect(); return { em: +(b.width / fs).toFixed(2), natural: +(sb.scrollWidth / fs).toFixed(2), elided: sb.scrollWidth > sb.clientWidth, overflow: getComputedStyle(sb).textOverflow }; };
+        return { faces, checkInter: fontSet.check("12px Inter"), checkSG: fontSet.check('12px "Space Grotesk"'),
+          fixed: Array.from(menu.querySelectorAll(".ctx-item-sub:not(.tagged)")).map(read),
+          tagged: Array.from(menu.querySelectorAll(".ctx-sub-capped .ctx-item-sub, .ctx-sub-capped .ctx-item-label")).filter((e) => (e.textContent || "").includes("notes-api-")).map(read),
+          menuWidth: rect.width, right: menu.getBoundingClientRect().right, inner: window.innerWidth };
+      });
+      await page.close();
+      return r as MenuRead;
+    };
+    const whole = (r: MenuRead, face: string) => {
+      for (const [i, lab] of [[0, "Rename"], [1, "Notify me"], [2, "Emoji"]] as const) assert.equal(r.fixed[i].elided, false, `${lab}'s sub-line, a fixed one, is whole in ${face}: ${JSON.stringify(r.fixed[i])}`);
+    };
+    const holds = (bare: MenuRead, full: MenuRead, face: string) => {
+      whole(bare, face); whole(full, face);
+      // the pane: the menu with the tag-bearing rows sits where the fixed rows alone put it, so it is inside the pane wherever they are
+      // (Inter's fixed rows make a 377px menu, inside all three panes; Space Grotesk's Emoji sub-line, 36.1em, makes 406px, past a
+      // 400px pane with or without this PR's rows, the base's own width there) and never further right
+      assert.ok(full.right <= bare.right + 1, `the tag-bearing rows never push the menu's right edge past the fixed rows' in ${face} at ${full.inner}px (right ${full.right} with them, ${bare.right} without)`);
+      if (bare.right + 4 <= bare.inner) assert.ok(full.right + 4 <= full.inner, `the menu stays inside the ${full.inner}px pane under the clamp in ${face} (right ${full.right}, menu ${full.menuWidth}px; the fixed rows alone fit at ${bare.right})`);
+      else assert.ok(face === "Space Grotesk" && full.inner <= 400, `only the light face's fixed rows overflow, and only under 400px: ${face} at ${full.inner}px, right ${bare.right}`);
+      assert.equal(full.tagged.length, 2, "the two tag-bearing sub-lines were read: " + JSON.stringify(full.tagged));
+      // each tag-bearing line is boxed by the fixed rows' width and elides when its words are wider (both sub-lines, at 0.82em, are)
+      for (const l of full.tagged) assert.ok(l.overflow === "ellipsis" && (l.elided || l.natural <= l.em + 0.05), `a tag-bearing line elides when its words are wider than its box in ${face} at ${full.inner}px: ${JSON.stringify(l)}`);
+      assert.equal(full.tagged.filter((l) => l.elided).length, 2, `the two 40-character sub-lines elide in ${face} at ${full.inner}px: ${JSON.stringify(full.tagged)}`);
+      assert.ok(Math.abs(full.menuWidth - bare.menuWidth) <= 1, `the tag-bearing rows add nothing to the menu's width in ${face} at ${full.inner}px: ${full.menuWidth}px with them, ${bare.menuWidth}px without (round 3's 36em cap added 28px in Inter)`);
+    };
+    for (const width of [450, 400, 383]) {
+      // the dark theme: Inter, loaded before the read (the face's own status, not the font-family string, which names Inter whether or
+      // not it loaded); Rename 29.8em (round 2 read 31.8, the fallback face's), Emoji the widest fixed sub-line at 33.1em
+      const dark = await pass(true, false, width, false), darkFull = await pass(true, false, width, true);
+      for (const r of [dark, darkFull]) assert.ok(r.faces.includes("Inter:loaded") && r.checkInter, "Inter loaded before the read: " + JSON.stringify(r.faces));
+      holds(dark, darkFull, "Inter");
+      assert.ok(dark.fixed[0].em > 29 && dark.fixed[0].em < 30.5, "Rename's width is Inter's, 29.8em (31.8 is the fallback face's): " + JSON.stringify(dark.fixed[0]));
+      assert.ok(dark.fixed[2].em > 32.5 && dark.fixed[2].em < 34 && dark.fixed[2].em > dark.fixed[0].em && dark.fixed[2].em > dark.fixed[1].em, "Emoji's is the widest fixed sub-line, 33.1em in Inter: " + JSON.stringify(dark.fixed[2]));
+      // the light theme: Space Grotesk, loaded; Emoji's sub-line is 36.1em there, past round 3's cap, and whole because no fixed row is capped
+      const light = await pass(true, true, width, false), lightFull = await pass(true, true, width, true);
+      for (const r of [light, lightFull]) assert.ok(r.faces.includes("Space Grotesk:loaded") && r.checkSG, "Space Grotesk loaded before the read: " + JSON.stringify(r.faces));
+      holds(light, lightFull, "Space Grotesk");
+      assert.ok(light.fixed[2].em > 36 && light.fixed[2].em < 36.5, "Emoji's sub-line is 36.1em in Space Grotesk and whole: " + JSON.stringify(light.fixed[2]));
+    }
+    // no webfont: the fonts 404 and the host's fallback face renders (DejaVu Sans on a bare Linux box, another face elsewhere): the
+    // same properties hold, with a sanity bound on the width instead of an exact one
+    const fallback = await pass(false, false, 450, false), fallbackFull = await pass(false, false, 450, true);
+    for (const r of [fallback, fallbackFull]) assert.ok(r.faces.includes("Inter:error") && !r.faces.includes("Inter:loaded") && !r.checkInter, "the fonts 404'd, so the fallback face read: " + JSON.stringify(r.faces));
+    holds(fallback, fallbackFull, "the fallback face");
+    assert.ok(fallback.fixed[2].em > 30 && fallback.fixed[2].em < 40, "Emoji's sub-line in the fallback face (36.1em in DejaVu Sans): " + JSON.stringify(fallback.fixed[2]));
+  } finally { await browser.close(); }
+});
+
+// THE TAGS FLYOUT KEEPS ITS ROWS WHOLE (round 5 of the tab menu review, 2026-09-09): round 4's structural rule, worn by the
+// flyout's Move to and Show when folded rows, collapsed the flyout to the New tag input's intrinsic width (231px in the dark
+// theme, 191px in the light), because no wide fixed row holds a flyout open the way Rename and Emoji hold the main menu: the
+// Show when folded line elided for a five-character tag and Move to labels from about sixteen characters, both whole at the
+// base; round 4's leg measured copies of the two rows inside the MAIN menu, where the rule held, and passed. Round 5: no
+// flyout row wears the modifier; a flyout row keeps its natural width up to a per-row cap with an ellipsis (styles.css
+// .ctx-sub-tags rules: 22em for a label, 36em of its own font for a sub-line). Measured here as the flyout renders: a
+// .ctx-menu.ctx-sub.ctx-sub-tags NESTED in a .ctx-menu beside a Tags row (the flyout's font compounds 0.92 x 0.92; a flat
+// build overstates widths by eight percent), with the rows build() makes (a held row with its ✕, Move to rows with their +,
+// the Show when folded row, the New tag input, Configure tags), in both engines and both faces, the fonts served and their
+// status asserted as in the leg above. Reads: a 5-character and a 19-character destination whole, a 40-character one elided
+// at the cap; the Show when folded line whole for a 5- and a 19-character home and elided for a 40-character one; the ✕ and
+// the + eight pixels after their labels (the row's gap; round 4 put the + at the flyout's right edge, 74px past the label,
+// while the ✕ hugged); the flyout wider than the input and no wider than the cap allows. A second pass builds thirty tags
+// (ui/CLAUDE.md: a change to a tag surface is checked against thirty), placed as render.ts's place() does: every label
+// under 31 characters whole, the 40-character ones elided, the + beside each; the flyout's height against a 700px pane is
+// recorded (about 900px, top clamped to 0, no scroll: the base does the same, out of this change's scope).
+const NAMES30 = ["qa", "infra", "docs", "archived", "notes-api", "notes-api-web", "notes-api-tests", "notes-api-invoicing",
+  "notes-api-customer-billing", "notes-api-search-indexing", "notes-api-auth-and-sessions", "notes-api-mobile-sync",
+  "notes-api-export-pipeline", "notes-api-rate-limits", "notes-api-onboarding", "notes-api-release-candidates",
+  "notes-api-customer-billing-migration-two", "notes-api-customer-invoicing-rollout-one", "notes-api-observability-dash",
+  "web", "api", "tests", "notes-api-import-jobs", "notes-api-webhooks", "notes-api-attachments", "notes-api-sharing-links",
+  "notes-api-editor-collab", "notes-api-templates", "notes-api-backups-and-restore", "notes-api-search-relevance-experiments-3"];
+type FlyLine = { name: string; em: number; natural: number; elided: boolean; overflow: string; gap: number | null };
+type FootRead = { overflowY: string; scrollHeight: number; clientHeight: number; scrollTop: number; input: { top: number; bottom: number }; cfg: { top: number; bottom: number }; cfgClicked: boolean };
+type FlyRead = { faces: string[]; checkInter: boolean; checkSG: boolean; fontPx: number; held: FlyLine[]; moves: FlyLine[]; pin: FlyLine; fly: { width: number; height: number; top: number; left: number }; inputWidth: number; inner: { w: number; h: number }; foot: FootRead };
+test("in Chromium and Firefox, the Tags flyout nested in the menu over the real sheet with the faces loaded (menu review round 5): a 5- and a 19-character destination whole and a 40-character one elided at the cap, the Show when folded line whole for a short home and elided for a 40-character one, the ✕ and the + beside their labels, in Inter and Space Grotesk; thirty tags: every label under 31 characters whole, the 40-character ones elided, the flyout capped inside the pane and scrolling within itself, the New tag input and Configure tags in the pane once scrolled and a real click on Configure tags landing (round 7)", async (t) => {
+  let pw: any = null;
+  try { pw = requireCjs("playwright"); } catch { pw = null; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
+  assert.ok(fs.existsSync(INTER_PATH) && fs.existsSync(SG_PATH), "the faces the page loads are in the extension's media");
+  const inter = fs.readFileSync(INTER_PATH), sg = fs.readFileSync(SG_PATH);
+  assert.equal(NAMES30.length, 30); assert.equal(new Set(NAMES30).size, 30);
+  assert.deepEqual(NAMES30.filter((n) => n.length > 30 && n.length < 40), [], "no borderline name: under 31 characters is whole in every face and engine, 40 elides");
+  assert.equal(NAMES30.filter((n) => n.length === 40).length, 3);
+  const N5 = "infra", N19 = "notes-api-invoicing", N40 = "notes-api-customer-billing-migration-two";
+  assert.deepEqual([N5.length, N19.length, N40.length], [5, 19, 40]);
+  // the per-row caps this leg measures are pinned in tab-hide.test; no copy of that pin here, so against a sheet without them this leg goes
+  // red on the measurement (the 40-character destination not eliding), which is what it is for (round 6)
+  for (const engine of ["chromium", "firefox"] as const) {
+    let browser: any;
+    try { browser = await pw[engine].launch(); }
+    catch (e) { t.skip(`no playwright ${engine} on this box (CI installs none): ` + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      /** the menu with a Tags row and the flyout beside it: `held` rows with their ✕, `others` as Move to rows with their +, the pin row for `home` */
+      const pass = async (light: boolean, home: string, held: string[], others: string[]): Promise<FlyRead> => {
+        const page = await browser.newPage({ viewport: { width: 1200, height: 700 } });
+        await page.route("http://romp.test/**", (route: any) => {
+          const u = new URL(route.request().url());
+          if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: MENU_PAGE });
+          if (u.pathname === "/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: CSS });
+          if (u.pathname.endsWith("/InterVariable.woff2")) return route.fulfill({ status: 200, contentType: "font/woff2", body: inter });
+          if (u.pathname.endsWith("/SpaceGroteskVariable.woff2")) return route.fulfill({ status: 200, contentType: "font/woff2", body: sg });
+          return route.fulfill({ status: 404, body: "" });
+        });
+        await page.goto("http://romp.test/page");
+        await page.evaluate(([light, home, held, others]: [boolean, string, string[], string[]]) => {
+          if (light) document.body.className = "theme-light";
+          const el = (tag: string, cls: string) => { const e = document.createElement(tag); e.className = cls; return e; };
+          const chip = () => { const c = el("span", "ctx-tag-dot"); c.style.background = "var(--dim)"; return c; };
+          const menu = el("div", "ctx-menu"); menu.id = "menu"; menu.style.left = "100px"; menu.style.top = "40px";
+          // the Tags row as render.ts builds it (icon, label, the joined names, the caret), the flyout's anchor
+          const tags = el("div", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"); tags.id = "tags";
+          const ic = el("span", "ctx-icon"); ic.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; tags.appendChild(ic);
+          const tb = el("span", "ctx-item-body"); const tl = el("span", "ctx-item-label"); tl.textContent = "Tags"; tb.appendChild(tl);
+          const ts = el("span", "ctx-item-sub"); ts.textContent = held.join(" · "); tb.appendChild(ts); tags.appendChild(tb);
+          const caret = el("span", "ctx-caret"); caret.textContent = "▸"; tags.appendChild(caret); menu.appendChild(tags);
+          // the flyout as build() makes it
+          const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags"); sub.id = "fly";
+          for (const name of held) {
+            const row = el("div", "ctx-item ctx-item-toggle"); row.className += " probe-held"; row.appendChild(chip());
+            const b = el("span", "ctx-item-body"); const l = el("span", "ctx-item-label"); l.textContent = name; b.appendChild(l); row.appendChild(b);
+            const x = el("button", "ctx-tag-x"); (x as HTMLButtonElement).type = "button"; x.textContent = "✕"; row.appendChild(x);
+            sub.appendChild(row);
+          }
+          if (held.length && others.length) sub.appendChild(el("div", "ctx-sep"));
+          for (const name of others) {
+            const row = el("div", "ctx-item ctx-item-toggle"); row.className += " probe-move"; row.appendChild(chip());
+            const b = el("span", "ctx-item-body"); const l = el("span", "ctx-item-label"); l.textContent = "Move to " + name; b.appendChild(l); row.appendChild(b);
+            const plus = el("button", "ctx-tag-x ctx-tag-plus"); (plus as HTMLButtonElement).type = "button"; plus.textContent = "+"; row.appendChild(plus);
+            sub.appendChild(row);
+          }
+          sub.appendChild(el("div", "ctx-sep"));
+          const pn = el("div", "ctx-item ctx-item-toggle ctx-item-pin"); pn.id = "pin"; pn.appendChild(chip());
+          const pb = el("span", "ctx-item-body"); const pl = el("span", "ctx-item-label"); pl.textContent = "Show when folded"; pb.appendChild(pl);
+          const ps = el("span", "ctx-item-sub"); ps.textContent = `keep this tab on the strip while ${home} is folded`; pb.appendChild(ps); pn.appendChild(pb); sub.appendChild(pn);
+          sub.appendChild(el("div", "ctx-sep"));
+          const nrow = el("div", "ctx-item ctx-item-newtag"); const inp = el("input", "ctx-tag-input") as HTMLInputElement; inp.placeholder = "New tag…"; inp.maxLength = 40; nrow.appendChild(inp); sub.appendChild(nrow);
+          sub.appendChild(el("div", "ctx-sep"));
+          const cfg = el("div", "ctx-item ctx-item-configtags"); cfg.id = "cfg"; const cb = el("span", "ctx-item-body"); const cl = el("span", "ctx-item-label"); cl.textContent = "Configure tags…"; cb.appendChild(cl); cfg.appendChild(cb); sub.appendChild(cfg);
+          (window as any).__cfgClicks = 0; cfg.addEventListener("click", () => { (window as any).__cfgClicks++; });
+          menu.appendChild(sub);
+          document.body.appendChild(menu);
+          // render.ts's place(): beside the Tags row, right when it fits, the top at the row's clamped to the pane
+          const ir = tags.getBoundingClientRect(), sr = sub.getBoundingClientRect();
+          if (ir.right + 2 + sr.width <= window.innerWidth - 8) sub.style.left = Math.round(ir.right + 2) + "px";
+          else sub.style.left = Math.max(8, Math.round(ir.left) - sr.width - 2) + "px";
+          sub.style.top = Math.max(0, Math.min(ir.top, window.innerHeight - sr.height - 4)) + "px";
+        }, [light, home, held, others]);
+        await page.evaluate(() => (document as any).fonts.ready);
+        const r = await page.evaluate(() => {
+          const fontSet = (document as any).fonts;
+          const faces: string[] = [];
+          for (const f of fontSet as Iterable<{ family: string; status: string }>) faces.push(f.family.replace(/"/g, "") + ":" + f.status);
+          const fly = document.getElementById("fly")!;
+          const fontPx = parseFloat(getComputedStyle(fly.querySelector(".ctx-item-label")!).fontSize);
+          // a line: its box and natural width in its OWN em, whether it elides, and the gap from its text's end (a Range over the text
+          // node; the box's right edge where the text is cut, since the range measures the whole text) to the row's button
+          const read = (row: Element, sel: string, btn: string | null): FlyLine => {
+            const e = row.querySelector(sel)!; const fs = parseFloat(getComputedStyle(e).fontSize); const b = e.getBoundingClientRect();
+            let gap: number | null = null;
+            if (btn) { const range = document.createRange(); range.selectNodeContents(e); gap = +(row.querySelector(btn)!.getBoundingClientRect().left - Math.min(range.getBoundingClientRect().right, b.right)).toFixed(1); }
+            return { name: e.textContent || "", em: +(b.width / fs).toFixed(2), natural: +(e.scrollWidth / fs).toFixed(2), elided: e.scrollWidth > e.clientWidth, overflow: getComputedStyle(e).textOverflow, gap };
+          };
+          const fr = fly.getBoundingClientRect();
+          return { faces, checkInter: fontSet.check("12px Inter"), checkSG: fontSet.check('12px "Space Grotesk"'), fontPx,
+            held: Array.from(fly.querySelectorAll(".probe-held")).map((row) => read(row, ".ctx-item-label", ".ctx-tag-x")),
+            moves: Array.from(fly.querySelectorAll(".probe-move")).map((row) => read(row, ".ctx-item-label", ".ctx-tag-plus")),
+            pin: read(document.getElementById("pin")!, ".ctx-item-sub", null),
+            fly: { width: fr.width, height: fr.height, top: fr.top, left: fr.left },
+            inputWidth: (fly.querySelector(".ctx-tag-input") as HTMLElement).getBoundingClientRect().width,
+            inner: { w: window.innerWidth, h: window.innerHeight } };
+        });
+        // THE FOOT (round 7): the widths above are read unscrolled; then the flyout is scrolled to its end and the New tag input's and
+        // Configure tags' rects read, and a REAL click on Configure tags is attempted (Playwright refuses a target it cannot hit-test:
+        // below the pane's edge on a fixed box with nothing to scroll, the round-6 diagnostic's state, the click timed out). This leg
+        // builds the menu by hand with no window listener on the page, so the click proves the GEOMETRY alone: the foot is inside the
+        // pane and hit-testable once scrolled to. That the click reaches Configure tags through render.ts's own listeners, whose scroll
+        // dismissal must leave the flyout's scroll alone, is the fifth leg's M6 (round 8)
+        const foot = await page.evaluate(() => {
+          const fly = document.getElementById("fly")!;
+          fly.scrollTop = fly.scrollHeight;
+          const rr = (e: Element | null) => { const b = e!.getBoundingClientRect(); return { top: b.top, bottom: b.bottom }; };
+          return { overflowY: getComputedStyle(fly).overflowY, scrollHeight: fly.scrollHeight, clientHeight: fly.clientHeight, scrollTop: fly.scrollTop, input: rr(fly.querySelector(".ctx-tag-input")), cfg: rr(document.getElementById("cfg")) };
+        });
+        let cfgClicked = false;
+        try { await page.click("#cfg", { timeout: 3000 }); cfgClicked = (await page.evaluate(() => (window as any).__cfgClicks)) === 1; } catch { cfgClicked = false; }
+        await page.close();
+        return { ...r, foot: { ...foot, cfgClicked } } as FlyRead;
+      };
+      const faceOf = (r: FlyRead, light: boolean, where: string) => {
+        if (light) assert.ok(r.faces.includes("Space Grotesk:loaded") && r.checkSG, `Space Grotesk loaded before the read (${where}): ` + JSON.stringify(r.faces));
+        else assert.ok(r.faces.includes("Inter:loaded") && r.checkInter, `Inter loaded before the read (${where}): ` + JSON.stringify(r.faces));
+        return light ? "Space Grotesk" : "Inter";
+      };
+      const whole = (l: FlyLine, what: string) => assert.ok(!l.elided && l.natural <= l.em + 0.05, `${what} is whole: ${JSON.stringify(l)}`);
+      const elided = (l: FlyLine, what: string) => assert.ok(l.elided && l.overflow === "ellipsis" && l.natural > l.em + 0.05, `${what} elides at the cap: ${JSON.stringify(l)}`);
+      const beside = (l: FlyLine, what: string) => assert.ok(l.gap !== null && Math.abs(l.gap - 8) <= 1, `${what}'s button sits eight pixels after its label, the row's gap (round 4 put the + 74px past a short label): ${JSON.stringify(l)}`);
+      for (const light of [false, true]) {
+        for (const home of [N5, N19, N40]) {
+          const others = [N5, N19, N40].filter((n) => n !== home);
+          const r = await pass(light, home, [home], others);
+          const face = faceOf(r, light, `${engine}, home ${home.length}`);
+          const where = `${engine}, ${face}, home ${home.length} characters`;
+          assert.ok(Math.abs(r.fontPx - 11) < 0.2, `the flyout's font is the compounded 11px (0.92 x 0.92 of 13px), not a flat build's 12px: ${r.fontPx} (${where})`);
+          assert.equal(r.moves.length, 2); assert.equal(r.held.length, 1);
+          for (const m of r.moves) {
+            const n = m.name.replace(/^Move to /, "").length;
+            if (n === 40) elided(m, `the 40-character destination (${where})`); else whole(m, `the ${n}-character destination (${where})`);
+            beside(m, `the Move to row (${where})`);
+          }
+          const h = r.held[0];
+          if (home.length === 40) assert.ok(h.natural > 19, `a 40-character held name is 19em or more (${where}): ${JSON.stringify(h)}`); else whole(h, `the ${home.length}-character held name (${where})`);
+          beside(h, `the held row (${where})`);
+          if (home.length === 40) elided(r.pin, `the Show when folded line for a 40-character home (${where})`);
+          else whole(r.pin, `the Show when folded line for a ${home.length}-character home (${where}; round 4 cut it at ${r.inputWidth}px, the input's width)`);
+          assert.ok(r.fly.width > r.inputWidth + 40, `the flyout is sized by its rows, not collapsed to the input (${where}): fly ${r.fly.width}, input ${r.inputWidth}`);
+          assert.ok(r.fly.width <= 36 * 0.82 * r.fontPx + 100, `the flyout is no wider than its widest capped line and the row's chrome allow (${where}): ${r.fly.width}px`);
+          assert.ok(r.foot.scrollTop === 0 && r.foot.scrollHeight <= r.foot.clientHeight + 1, `three tags: nothing to scroll (${where}): ${JSON.stringify(r.foot)}`);
+          assert.ok(r.foot.cfgClicked, `three tags: a real click on Configure tags lands (${where})`);
+        }
+        // THIRTY TAGS (ui/CLAUDE.md): the first held, the other 29 as Move to rows, placed by place()
+        const r30 = await pass(light, NAMES30[0], [NAMES30[0]], NAMES30.slice(1));
+        const face = faceOf(r30, light, `${engine}, thirty`);
+        assert.equal(r30.moves.length, 29);
+        const cut = r30.moves.filter((m) => m.elided).map((m) => m.name.replace(/^Move to /, ""));
+        assert.deepEqual(cut.sort(), NAMES30.filter((n) => n.length === 40).sort(), `at thirty tags exactly the 40-character labels elide (${engine}, ${face}): ${JSON.stringify(r30.moves.map((m) => [m.name.length - 8, m.em, m.natural, m.elided]))}`);
+        for (const m of r30.moves) { beside(m, `a Move to row among thirty (${engine}, ${face})`); assert.equal(m.overflow, "ellipsis"); }
+        whole(r30.pin, `the Show when folded line for the two-character home among thirty (${engine}, ${face})`);
+        assert.ok(r30.fly.width <= 22 * r30.fontPx + 100 && r30.fly.width > r30.inputWidth + 40, `thirty tags: the flyout's width is the capped label's plus the row's chrome, the scrollbar included (${engine}, ${face}): ${r30.fly.width}px`);
+        // THE FOOT AT THIRTY TAGS (round 7; ui/CLAUDE.md's many-tags rule): the flyout is capped at the pane's height less place()'s 4px
+        // at each edge and scrolls within itself, so its bottom is inside the pane, and once scrolled to its end the New tag input and
+        // Configure tags are in the pane and a real click on Configure tags lands. Before: 902px in a 700px pane, the top clamped to 0,
+        // nothing scrolling (a fixed box adds no scroll extent), the foot unreachable from 23 tags on
+        assert.ok(r30.fly.top >= 0 && r30.fly.top + r30.fly.height <= r30.inner.h, `thirty tags: the flyout's bottom is inside the pane (${engine}, ${face}): top ${Math.round(r30.fly.top)}, height ${Math.round(r30.fly.height)}, pane ${r30.inner.h} (before: 902 in a 700px pane)`);
+        assert.equal(r30.foot.overflowY, "auto", `the flyout scrolls within itself (${engine}, ${face})`);
+        assert.ok(r30.foot.scrollHeight > r30.foot.clientHeight && r30.foot.scrollTop > 0, `and has rows past its cap to scroll to (${engine}, ${face}): ${JSON.stringify(r30.foot)}`);
+        for (const [what, b] of [["the New tag input", r30.foot.input], ["Configure tags", r30.foot.cfg]] as const) assert.ok(b.top >= 0 && b.bottom <= r30.inner.h, `${what} is inside the pane once the flyout is scrolled to its end (${engine}, ${face}): ${JSON.stringify(b)}`);
+        assert.ok(r30.foot.cfgClicked, `a real click on Configure tags lands (${engine}, ${face}; before: below the pane's edge, not hit-testable, the click timed out)`);
+        t.diagnostic(`${engine}, ${face}, thirty tags: flyout ${Math.round(r30.fly.width)}x${Math.round(r30.fly.height)}px at top ${Math.round(r30.fly.top)} in a ${r30.inner.h}px pane, ${r30.foot.scrollHeight}px of rows; ${cut.length} of 29 labels elide, the 40-character ones`);
+      }
+    } finally { await browser.close(); }
+  }
+});
+
+// THE MENU UNDER A PRESSED POINTER (round 5 of the tab menu review): render.ts's own showTabMenu, sliced verbatim and bundled
+// with the real tab-groups, session-views and actions modules over a stand-in for the rest of the page (the maps and helpers
+// named as render.ts names them; the same shape tab-hide.test's harness uses), run in headless Chromium and Firefox with the
+// real sheet and REAL pointer input. Round 4 re-dressed the Hide tab row with replaceChildren on every hook run and rebuilt the
+// flyout's rows on a signature change, so a push between a mousedown and its mouseup replaced the pressed node and the click
+// was lost (no click at the row, the menu or the document, in both engines). Round 5 parks the hook's whole run through one
+// pressHold(menu) while the pointer is down and runs it on the release, a tick after the click. Read here with the mouse:
+//   - a press on the Hide tab row's label, a rename pushed mid-press, the release: the click lands (the hide is written for
+//     the same copy by its id, the menu dismissed), and the re-dress never painted a dismissed menu;
+//   - a press on a Move to row's label in the flyout, a recolour pushed mid-press (a signature change, so the rows would have
+//     been rebuilt), the release: the move is posted;
+//   - the same on the Show when folded row: the pin is written;
+//   - a push that changes nothing the row shows leaves its label node in place (round 4 replaced it every time);
+//   - at thirty tags (round 8) the flyout's own scroll, through render.ts's window listeners, leaves the menu standing: a real
+//     wheel, the click's scroll into view; a scroll in a box outside the menu still dismisses; and the click that opens the flyout
+//     leaves it at its top with the session's own row and its x in view, the New tag input focused without a scroll (round 9).
+function menuProbeSource(): string {
+  const a = RENDER.indexOf("function showTabMenu(e: MouseEvent, id: string, copy?: string) {");
+  const end = RENDER.indexOf("seatMenu(e.clientX, e.clientY);", a);
+  const b = RENDER.indexOf("\n}\n", end) + 3;
+  assert.ok(a > 0 && end > a && b > end, "showTabMenu's anchors moved; re-anchor this probe");
+  const MENU = RENDER.slice(a, b);
+  // THE MENU'S WINDOW LISTENERS (round 8), verbatim: the outside mousedown, Escape, the picker's two, the scroll and the blur. The scroll
+  // dismissal saw the Tags flyout's own scroll once the flyout was capped and scrolled within itself, so a real page closed the menu on
+  // the click that opened the flyout at thirty tags while the fourth leg, built by hand with no listener, stayed green (M6 below)
+  const wa = RENDER.indexOf('window.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target as Node)) dismissTabMenu(); }, true);');
+  const wb = RENDER.indexOf("\n", RENDER.indexOf('window.addEventListener("blur", () => dismissTabMenu());', wa)) + 1;
+  assert.ok(wa > 0 && wb > wa, "the menu's window listeners moved; re-anchor this probe");
+  const LISTENERS = RENDER.slice(wa, wb);
+  return `
+import { readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden, TABGROUPS_KEY } from "./tab-groups";
+import { viewTagUnion } from "./session-views";
+import { pressHold } from "./actions";
+// THE STAND-IN PAGE: what showTabMenu reads, declared as render.ts declares it
+const sessions = new Map<string, any>([["api", { name: "api", status: { state: "working" } }], ["web", { name: "web", status: { state: "ready" } }]]);
+const tabMeta = new Map<string, any>();
+const paletteColors: string[] = [];
+const H: any = { views: null, hides: [] as any[], edits: [] as any[], dismissed: 0, renders: 0, flags: [] as any[] };
+let ctxMenuEl: HTMLElement | null = null, ctxMenuAt: any = null, tagsFlyNewInput: HTMLInputElement | null = null, pendingSessionViews: any = null;
+let tabMenuViewsHook: () => void = () => {};
+function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
+function ctxIcon(kind: string, off: boolean): HTMLElement { const sp = el("span", "ctx-icon" + (off ? " off" : "")); sp.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; sp.dataset.kind = kind; return sp; }
+function dismissTabMenu() { H.dismissed++; ctxMenuEl?.remove(); ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; }
+let emojiPrompt: any = null;   // the picker's listeners read it (never open here)
+function closeEmojiPrompt() {}
+function setSessionFlag(id: string, k: string, v: boolean) { H.flags.push([id, k, v]); }
+function setSessionColor() {} function startTabRename() {} function showMovePrompt() {} function showEmojiPrompt() {}
+function billingSubText() { return ""; }
+const vscodeApi: any = null;
+function renderTabs() { H.renders++; }
+function postTagEdit(nv: any, op: any) { H.edits.push(op); H.views = nv; }
+function syncNewTagInput() {}
+function createInFlight() { return false; }
+const viewsWrites: any[] = [];
+function viewTags(v: any) { return (v && v.tags) || []; }
+function effViews() { return H.views; }
+function phoneLayout() { return false; }
+function knownTabIds() { return new Set<string>(["api", "web", "tests", "old1", "old2"]); }
+function reachableHosts() { return new Set<string>(); }
+function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
+function writeTabGroupsPruned(st: any) { const out = prunePinned(st, viewTagUnion(effViews()), knownTabIds(), reachableHosts()); H.hides.push(out.hidden); writeTabGroups(out); }
+function browseRouteNow() { return "pane"; } function openBrowse() {}
+${MENU}
+${LISTENERS}
+// a scrolling box OUTSIDE the menu (round 8): the page's body never scrolls (styles.css), so the control that a scroll elsewhere still
+// dismisses the menu needs a box of its own, at the pane's far corner where no menu or flyout of these tests reaches
+const box = el("div"); box.id = "box"; box.style.cssText = "position:fixed;right:0;bottom:0;width:120px;height:120px;overflow:auto;background:transparent";
+const tall = el("div"); tall.style.height = "1000px"; box.appendChild(tall); document.body.appendChild(box);
+let marked: Element | null = null;
+const rowOf = () => ctxMenuEl?.querySelector(".ctx-item-hide") ?? null;
+const flyRow = (label: string) => Array.from(ctxMenuEl?.querySelectorAll(".ctx-sub-tags .ctx-item") ?? []).find((r) => r.querySelector(".ctx-item-label")?.textContent === label) ?? null;
+const rect = (e: Element | null) => { if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+(window as any).__menu = {
+  setup(v: any) { localStorage.removeItem(TABGROUPS_KEY); H.views = v; H.hides = []; H.edits = []; H.dismissed = 0; },
+  open(id: string, copy: string, x: number, y: number) { showTabMenu({ clientX: x, clientY: y } as MouseEvent, id, copy); return !!ctxMenuEl; },
+  openFly() { (ctxMenuEl!.querySelector(".ctx-item-tags") as HTMLElement).click(); return !!ctxMenuEl!.querySelector(".ctx-sub-tags"); },
+  push(v: any) { H.views = v; tabMenuViewsHook(); },   // as viewsChanged runs the hook after the blob is held
+  rowLabelAt() { return rect(rowOf()?.querySelector(".ctx-item-label") ?? null); },
+  flyLabelAt(label: string) { return rect(flyRow(label)?.querySelector(".ctx-item-label") ?? null); },
+  mark() { marked = rowOf()?.querySelector(".ctx-item-label") ?? null; return !!marked; },
+  sameLabel() { return !!marked && rowOf()?.querySelector(".ctx-item-label") === marked; },
+  inputAt() { return rect(ctxMenuEl?.querySelector(".ctx-tag-input") ?? null); },
+  flyAt() { return rect(ctxMenuEl?.querySelector(".ctx-sub-tags") ?? null); },
+  flyScroll() { const f = ctxMenuEl?.querySelector(".ctx-sub-tags"); return f ? { top: f.scrollTop, height: f.scrollHeight, client: f.clientHeight } : null; },
+  // a held row and its x against the flyout's box (round 9): whether each lies inside the capped flyout's rect as it stands
+  rowInFly(label: string) { const f = ctxMenuEl?.querySelector(".ctx-sub-tags"); const r = flyRow(label); const x = r?.querySelector(".ctx-tag-x"); if (!f || !r || !x) return null; const fr = f.getBoundingClientRect(), rr = r.getBoundingClientRect(), xr = x.getBoundingClientRect(); const inside = (b: DOMRect) => b.top >= fr.top && b.bottom <= fr.bottom && b.left >= fr.left && b.right <= fr.right; return { fly: [Math.round(fr.top), Math.round(fr.bottom)], row: [Math.round(rr.top), Math.round(rr.bottom)], x: [Math.round(xr.top), Math.round(xr.bottom)], rowIn: inside(rr), xIn: inside(xr) }; },
+  cfgAt() { return rect(ctxMenuEl?.querySelector(".ctx-item-configtags") ?? null); },
+  boxAt() { return rect(document.getElementById("box")); },
+  boxScroll() { return document.getElementById("box")!.scrollTop; },
+  markInput() { marked = ctxMenuEl?.querySelector(".ctx-tag-input") ?? null; return !!marked; },
+  sel() { const i = ctxMenuEl?.querySelector(".ctx-tag-input") as HTMLInputElement | null; return i ? { value: i.value, start: i.selectionStart, end: i.selectionEnd, dir: i.selectionDirection, focused: document.activeElement === i, same: i === marked } : null; },
+  state() {
+    const row = rowOf();
+    return { menu: !!ctxMenuEl && ctxMenuEl.isConnected, label: row?.querySelector(".ctx-item-label")?.textContent ?? null, sub: row?.querySelector(".ctx-item-sub")?.textContent ?? null,
+      hides: H.hides, edits: H.edits, dismissed: H.dismissed, flyRows: Array.from(ctxMenuEl?.querySelectorAll(".ctx-sub-tags .ctx-item-label") ?? []).map((l) => l.textContent),
+      stored: JSON.parse(localStorage.getItem(TABGROUPS_KEY) || "null") };
+  },
+};
+`;
+}
+function bundleMenu(): string {
+  const esbuild = requireCjs("esbuild");
+  const r = esbuild.buildSync({
+    stdin: { contents: menuProbeSource(), resolveDir: UI, loader: "ts", sourcefile: "tab-menu-probe.ts" },
+    bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
+    nodePaths: [path.join(EXT, "node_modules")], logLevel: "silent",
+  });
+  return r.outputFiles[0].text;
+}
+const MENU_PROBE_PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/styles.css><style>body{margin:0}</style></head><body><script src=/menu-probe.js></script></body></html>`;
+type MenuState = { menu: boolean; label: string | null; sub: string | null; hides: any[][]; edits: any[]; dismissed: number; flyRows: (string | null)[]; stored: any };
+type Sel = { value: string; start: number | null; end: number | null; dir: string | null; focused: boolean; same: boolean };
+test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer input (menu review round 5): a push between mousedown and mouseup on the Hide tab row, a Move to row or the Show when folded row waits for the release, so the click lands (the hide written by the copy's id, the move posted, the pin written) and the rebuild follows; a push that changes nothing the row shows leaves its label node; the New tag input keeps its text, caret, selection and focus through a rebuild, and Configure tags stays; at thirty tags the click-open leaves the flyout at its top with the session's own row in view and the input focused (round 9), the flyout's own scroll (a real wheel, the click's scroll into view) leaves the menu standing and a scroll outside it still dismisses (round 8)", async (t) => {
+  let pw: any = null;
+  try { pw = requireCjs("playwright"); } catch { pw = null; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
+  const js = bundleMenu();
+  const V_QA = { ...V, tags: [{ ...V.tags[0], members: ["web", "api", "tests"] }, { ...V.tags[1], members: ["old1", "api"] }, { id: "g5", name: "qa", color: "#7aa2f7", members: [] as string[] }], seq: 6 };   // api under infra and archived, qa empty
+  const V30 = { active: "all", tags: NAMES30.map((n, i) => ({ id: "t" + i, name: n, color: "#4EC9B0", members: i === 0 ? ["api"] : [] as string[] })), seq: 3 };   // thirty tags (the fourth leg's names), api under the first: a held row, 29 Move to rows, the pin row, the input and the foot
+  const renamed = (v: typeof V_QA, name: string, seq: number) => ({ ...v, tags: v.tags.map((tg, i) => (i === 0 ? { ...tg, name } : tg)), seq });
+  const recoloured = (v: typeof V_QA, seq: number) => ({ ...v, tags: v.tags.map((tg, i) => (i === 1 ? { ...tg, color: "#abcdef" } : tg)), seq });
+  for (const engine of ["chromium", "firefox"] as const) {
+    let browser: any;
+    try { browser = await pw[engine].launch(); }
+    catch (e) { t.skip(`no playwright ${engine} on this box (CI installs none): ` + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+      const errors: string[] = [];
+      page.on("pageerror", (e: Error) => { errors.push(e.message); });
+      await page.route("http://romp.test/**", (route: any) => {
+        const u = new URL(route.request().url());
+        if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: MENU_PROBE_PAGE });
+        if (u.pathname === "/menu-probe.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
+        if (u.pathname === "/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: CSS });
+        return route.fulfill({ status: 404, body: "" });
+      });
+      await page.goto("http://romp.test/page");
+      const menu = (fn: string, ...args: unknown[]) => page.evaluate(([fn, args]: [string, unknown[]]) => (window as any).__menu[fn](...args), [fn, args] as [string, unknown[]]);
+      const state = (): Promise<MenuState> => menu("state") as Promise<MenuState>;
+      const settle = () => page.evaluate(() => new Promise((r) => setTimeout(r, 20)));   // pressHold's zero timer at the release, and the browser's own click dispatch
+      const where = (what: string) => `${engine}: ${what}`;
+      const open = async (copy: string) => { await menu("setup", V_QA); assert.ok(await menu("open", "api", copy, 40, 40), where("the menu opened")); assert.deepEqual(errors, [], where("the slice ran against the stand-in (a ReferenceError means render.ts grew a dependency the probe lacks)")); };
+      // M1: THE HIDE TAB ROW. Press on its label; the rename pushed mid-press; release. The click lands on the node the user pressed and
+      // writes the hide for the same copy under its new name (by the id), the menu is dismissed, and the parked run paints nothing
+      await open("infra");
+      let s = await state();
+      assert.deepEqual([s.label, s.sub, s.menu], ["Hide tab", "hidden in infra; to show it, open the group's view", true], where("the row as built"));
+      const d0 = s.dismissed;   // showTabMenu dismisses any earlier menu as it opens; the click's own dismissal is the one counted
+      let at = await menu("rowLabelAt") as { x: number; y: number };
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await menu("push", renamed(V_QA, "platform", 7));
+      const midPress = (await state()).sub;
+      await page.mouse.up();
+      await settle();
+      s = await state();
+      assert.deepEqual(s.hides, [[{ sid: "api", name: "platform", id: "g1" }]], where("the click landed: the hide written for the same copy by its id (round 4 lost the click to the mid-press replaceChildren)"));
+      assert.deepEqual([s.dismissed, s.menu], [d0 + 1, false], where("dismissed by the click; the parked re-dress found the menu gone"));
+      assert.equal(midPress, "hidden in infra; to show it, open the group's view", where("under the press the row still read infra (the re-dress was parked)"));
+      // M2: A MOVE TO ROW in the flyout. Press on its label; a recolour of another tag pushed mid-press (a signature change: the flyout
+      // would have been rebuilt); release: the move is posted, one op, from infra to qa
+      await open("infra");
+      assert.ok(await menu("openFly"), where("the flyout opened"));
+      s = await state();
+      assert.ok(s.flyRows.includes("Move to qa"), where("the Move to qa row: " + JSON.stringify(s.flyRows)));
+      at = await menu("flyLabelAt", "Move to qa") as { x: number; y: number };
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await menu("push", recoloured(V_QA, 8));
+      await page.mouse.up();
+      await settle();
+      s = await state();
+      assert.deepEqual(s.edits, [{ op: "move", tid_from: "g1", tid_to: "g5", sid: "api" }], where("the click landed: the move posted (round 4 rebuilt the pressed row and lost the click)"));
+      assert.equal(s.sub, "hidden in qa; to show it, open the group's view", where("the Hide tab row follows the move"));
+      // M3: THE SHOW WHEN FOLDED ROW: the same press, a recolour mid-press, the release: the pin is written for infra
+      await open("infra");
+      assert.ok(await menu("openFly"));
+      at = await menu("flyLabelAt", "Show when folded") as { x: number; y: number };
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await menu("push", recoloured(V_QA, 9));
+      await page.mouse.up();
+      await settle();
+      s = await state();
+      assert.deepEqual(s.stored?.pinned, [{ sid: "api", name: "infra", id: "g1" }], where("the click landed: the pin written"));
+      // M4: an unchanged push leaves the row's label node in place (round 4 re-dressed on every run); a changing push replaces it
+      await open("infra");
+      assert.ok(await menu("mark"));
+      await menu("push", { ...V_QA, tags: [V_QA.tags[0], { ...V_QA.tags[1], members: ["api"] }, V_QA.tags[2]], seq: 10 });   // old1 left archived: nothing the row shows
+      await settle();
+      assert.equal(await menu("sameLabel"), true, where("unchanged words: the same label node"));
+      await menu("push", renamed(V_QA, "platform", 11));
+      await settle();
+      assert.equal(await menu("sameLabel"), false, where("changed words: re-dressed"));
+      assert.equal((await state()).sub, "hidden in platform; to show it, open the group's view");
+      // M5: THE NEW TAG INPUT THROUGH A REBUILD. Typed by keyboard, the caret moved to 3 of a ten-character draft; a recolour pushed (a
+      // signature change: the rows are rebuilt): the caret is still at 3 in the same, still-focused node, and the next keystroke lands
+      // there (round 4 built a new input, copied the value back and refocused it, so the caret jumped to the end); a range selection
+      // survives another rebuild with its direction; the foot, Configure tags…, is still on the flyout (round 4's replaceChildren
+      // swept it on every rebuild after the first)
+      await open("infra");
+      assert.ok(await menu("openFly"));
+      const inAt = await menu("inputAt") as { x: number; y: number };
+      await page.mouse.click(inAt.x, inAt.y);
+      assert.ok(await menu("markInput"));
+      await page.keyboard.type("biling-two");
+      await page.keyboard.press("Home");
+      for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+      let sel = await menu("sel") as Sel;
+      assert.deepEqual([sel.value, sel.start, sel.end, sel.focused], ["biling-two", 3, 3, true], where("the draft, the caret at 3"));
+      await menu("push", recoloured(V_QA, 12));
+      await settle();
+      sel = await menu("sel") as Sel;
+      assert.deepEqual([sel.value, sel.start, sel.end, sel.focused, sel.same], ["biling-two", 3, 3, true, true], where("after the rebuild: the same node, the caret still at 3, focus kept (round 4: 10, the end)"));
+      await page.keyboard.type("l");
+      sel = await menu("sel") as Sel;
+      assert.equal(sel.value, "billing-two", where("the next keystroke lands at the caret"));
+      await page.keyboard.down("Shift");
+      for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+      await page.keyboard.up("Shift");
+      sel = await menu("sel") as Sel;
+      assert.deepEqual([sel.start, sel.end, sel.dir], [4, 7, "forward"], where("a range selection"));
+      await menu("push", { ...recoloured(V_QA, 13), tags: recoloured(V_QA, 13).tags.map((tg, i) => (i === 2 ? { ...tg, color: "#fedcba" } : tg)) });
+      await settle();
+      sel = await menu("sel") as Sel;
+      assert.deepEqual([sel.value, sel.start, sel.end, sel.dir, sel.focused, sel.same], ["billing-two", 4, 7, "forward", true, true], where("the selection survives the rebuild (round 4 collapsed it to the end)"));
+      s = await state();
+      assert.ok(s.flyRows.includes("Configure tags…"), where("the foot stands through the rebuilds: " + JSON.stringify(s.flyRows)));
+      // M6 (round 8, reshaped in round 9): THIRTY TAGS, THE FLYOUT'S OWN SCROLL. The flyout is capped at the pane's height and scrolls
+      // within itself (round 7, styles.css .ctx-sub-tags), and the window's capture scroll listener, which closes the menu when the page
+      // moves under it, saw that scroll: a wheel over an open flyout closed it on the first tick, and the click on the Tags row closed the
+      // menu as the flyout opened, since openTagsFly's focus() on the New tag input at the foot scrolled the capped box to it (cut from 24
+      // tags on, the rows fully out of view from 25). The listener leaves a scroll whose target the menu contains alone (round 8), and the
+      // click-open focuses without scrolling (round 9: the focus scroll had put the session's own rows, with their x, above the fold, where
+      // the hover-open showed them at the top, so the two ways in showed different views). Read here through render.ts's own listeners with
+      // real input: the click-open leaves the flyout at scrollTop 0 with the held row and its x inside the flyout and the input focused,
+      // and the menu survives it; a real wheel over the flyout scrolls it down and leaves the menu standing; a real click on Configure tags
+      // lands (Playwright scrolls the foot into view first, another scroll inside the menu); and a wheel in a scrolling box outside the
+      // menu still dismisses it (the control: the exemption is the menu's own scroll, not every scroll while a menu is open)
+      // the waits below key on the scroll having landed (Firefox applies a wheel asynchronously, about 110ms before scrollTop moves;
+      // Chromium about 30ms) or on the menu having gone, never on a fixed delay; a wait that runs out fails the step by name
+      const flyScrolledPast = (top: number) => page.waitForFunction((t: number) => { const f = document.querySelector(".ctx-sub-tags"); return !f || f.scrollTop > t; }, top, { timeout: 3000 });
+      await menu("setup", V30);
+      assert.ok(await menu("open", "api", NAMES30[0], 40, 40), where("the menu opened at thirty tags"));
+      const d6 = (await state()).dismissed;
+      assert.ok(await menu("openFly"), where("the flyout opened"));
+      let fs = await menu("flyScroll") as { top: number; height: number; client: number } | null;
+      s = await state();
+      assert.deepEqual([s.menu, s.dismissed], [true, d6], where("the menu survives the click that opened the flyout (round 8: the New tag input's focus scrolled the capped box, and the window's scroll listener dismissed the menu)"));
+      assert.ok(fs && fs.height > fs.client, where("thirty tags: the flyout has rows past its cap: " + JSON.stringify(fs)));
+      assert.equal(fs!.top, 0, where("the click-open left the flyout at its top (round 8's focus scrolled it to the input at the foot): " + JSON.stringify(fs)));
+      const held = await menu("rowInFly", NAMES30[0]) as { rowIn: boolean; xIn: boolean } | null;
+      assert.ok(held && held.rowIn && held.xIn, where("the session's own row and its x are inside the flyout after the click-open (round 8: above the fold): " + JSON.stringify(held)));
+      assert.equal((await menu("sel") as Sel).focused, true, where("and the New tag input has the keyboard (the click-open focuses it, without the scroll)"));
+      fs = await menu("flyScroll") as { top: number; height: number; client: number } | null;
+      assert.equal(fs!.top, 0, where("still at its top a few round trips later: no deferred scroll from the focus"));
+      const flyAt = await menu("flyAt") as { x: number; y: number };
+      await page.mouse.move(flyAt.x, flyAt.y);
+      await page.mouse.wheel(0, 240);
+      await flyScrolledPast(0).catch(() => assert.fail(where("a real wheel over the flyout never moved it")));
+      fs = await menu("flyScroll") as { top: number; height: number; client: number } | null;
+      s = await state();
+      assert.deepEqual([s.menu, s.dismissed], [true, d6], where("a real wheel over the flyout leaves the menu standing (before: the first wheel tick dismissed it)"));
+      assert.ok(fs && fs.top > 0, where("and the wheel scrolled the flyout down from its top: " + JSON.stringify(fs)));
+      let cfgClicked = false;
+      try { await page.click(".ctx-item-configtags", { timeout: 3000 }); cfgClicked = true; } catch { cfgClicked = false; }
+      s = await state();
+      assert.ok(cfgClicked, where("a real click on Configure tags lands through render.ts's listeners (the scroll into view is the menu's own)"));
+      assert.deepEqual([s.menu, s.dismissed], [false, d6 + 1], where("Configure tags dismissed the menu, once, as its handler does"));
+      // the control: a scroll OUTSIDE the menu still dismisses it
+      await menu("setup", V30);
+      assert.ok(await menu("open", "api", NAMES30[0], 40, 40));
+      assert.ok(await menu("openFly"));
+      const d7 = (await state()).dismissed;
+      assert.equal((await state()).menu, true);
+      const boxAt = await menu("boxAt") as { x: number; y: number };
+      await page.mouse.move(boxAt.x, boxAt.y);
+      await page.mouse.wheel(0, 120);
+      await page.waitForFunction(() => document.getElementById("box")!.scrollTop > 0, null, { timeout: 3000 }).catch(() => assert.fail(where("the wheel never scrolled the outside box")));
+      await page.waitForFunction(() => !(window as any).__menu.state().menu, null, { timeout: 3000 }).catch(() => { /* judged below */ });
+      s = await state();
+      assert.deepEqual([s.menu, s.dismissed], [false, d7 + 1], where("a scroll outside the menu dismisses it, as before"));
+      assert.deepEqual(errors, [], where("no page errors"));
+      await page.close();
+    } finally { await browser.close(); }
+  }
+});
