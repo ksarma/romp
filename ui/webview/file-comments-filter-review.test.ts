@@ -2,17 +2,23 @@
 // first build got wrong, driven AS A PANEL over the filter suite's DOM stand-in (its harness, copied: a Raw or Rendered
 // body built to the viewer's shape, the seam as closures, the stub localStorage every panel suite installs — here with
 // the viewer's edit mode and its selection hook wired, which the filter suite leaves inert).
-//   • a reply on a comment bound to a change, under Comments: the comment stands on its own card there (renderCards), so
-//     resolved it is under the Resolved fold — the slot's line names that fold and Cancel focuses its row, whether the
-//     comment was resolved before the reply began (from the change card under All, then Comments picked; from the open
-//     fold, then closed) or meanwhile; never the "… N more changes" row, which Comments does not render;
-//   • the "on a change" tag says which change the comment is on: a pending one, or a detached one whose text the file no
-//     longer holds (cardModel sets `hunk` for both); the change card's kind cue says a detached change is nobody's to decide;
+//   • a reply on a comment a change answered, under All or Comments: the comment stands on its own card (renderCards; since
+//     the about follow-on, 2026-09-10, no comment is drawn inside a change card), so resolved it is under the Resolved fold,
+//     whatever the changes fold does to the change's card. The slot's line names that fold and Cancel focuses its row,
+//     whether the comment was resolved before the reply began (from the open fold under All, then Comments picked and
+//     the fold closed; from the open fold under Comments, then closed) or meanwhile; never the "… N more changes" row,
+//     which hides change cards alone and which Comments does not render;
+//   • the "answered by a change" tag names the change that answered the comment (a legacy suggestionId, read as the
+//     session's answer): a pending one, or a detached one whose text the file no longer holds (cardModel sets `refs` for
+//     both); the change card counts the open comments about it; its kind cue says a detached change is nobody's to decide;
 //   • the filter is offered while the editor is up (Slice 5), where the list half works and the editor keeps its own
-//     marks: the option titles say so there, and say the read view's marks rule otherwise;
+//     marks: the option titles say so there, and say the read view's marks rule otherwise; the titles name a comment's
+//     relation to a change as CONTEXT.md's About entry does (comments about changes; each counting the comments about
+//     it), never as the hosted era did (the consolidation, 2026-09-10);
 //   • a comment saved while Changes is chosen: its card and mark are hidden by that choice, so the list says so where the
 //     card would be, with a ✕ — the kept choice stands; the line is over once the card shows or the comment is gone, and
-//     does not come back on a later Changes; a comment on a change rides its card and gets no line;
+//     does not come back on a later Changes; a comment about a change (the change card's Comment on this change) is its
+//     own card, hidden under Changes like every comment's, so the line shows for it too;
 //   • the Changes option carries the action-row label's own detached clause ("Changes 0 · 1 detached"), so a file holding
 //     detached changes alone does not read as one with nothing to show, and its title names them;
 //   • the Track scope choice, the Stop confirm and the track slot's refusal stand directly under the toggles' row, above the
@@ -408,12 +414,14 @@ const full = (over: Partial<Status> = {}): Status => status({
 
 // ── this suite's own fixtures and helpers ──────────────────────────────────────────────────────────
 // a detached op as store-io keeps it: the engine's op record with `detached: true`, at its LAST place in a text that has
-// moved on (300 is past the end of DOC), and a comment bound to it (cardModel gives it a `hunk` as it does a pending one's)
+// moved on (300 is past the end of DOC), and a comment it answered (a legacy suggestionId: cardModel gives it a ref with
+// source "answered" and state "detached", as a pending one's ref reads "pending")
 const D1 = { id: "d1", author: "api", authorId: SID, ts: T0 - 40000, kind: "sub", from: 300, oldText: "cold starts were slow",
   newText: "cold starts stay slow", anchor: { quote: "cold starts stay slow", prefix: "and ", suffix: "." }, detached: true };
 const D2 = { ...D1, id: "d2", ts: T0 - 39000, kind: "del", oldText: "the old footnote", newText: "" };
 const onD1: StoreComment = { id: T0 + 6000 + "-30", author: "you", ts: T0 + 6000, body: "Keep the old wording.", suggestionId: "d1", replies: [], resolved: false };
-/** A comment bound to h5, in the fourth paragraph group — the one the changes fold hides under All. */
+/** A resolved comment h5 answered; h5's change card is in the fourth paragraph group, the one the changes fold hides under
+ *  All. The comment's own card is never behind that fold (the about follow-on): resolved, it is under the Resolved fold. */
 const onH5: StoreComment = { id: T0 + 7000 + "-31", author: "you", ts: T0 + 7000, body: "Measure twice.", suggestionId: "h5", replies: [], resolved: true };
 const withComments = (comments: StoreComment[], over: Partial<Status> = {}): Status =>
   full({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments }, ...over });
@@ -466,54 +474,71 @@ async function saveNote(aside: El, w: World, note: string): Promise<any> {
   return m;
 }
 
-// ── a reply on a resolved comment bound to a change, under Comments ────────────────────────────────
+// ── a reply on a resolved comment a change answered, under All and under Comments ─────────────────
 
-test("a resolved comment on a change, replied to from the change card under All, then Comments picked: the slot's line names the Resolved fold, where its own card now is, and Cancel focuses that fold — not a '… N more changes' row Comments never renders", async (t: TestContext) => {
+test("a resolved comment a change answered, replied to from the open Resolved fold under All, then Comments picked and the fold closed: the slot's line names the Resolved fold, where its own card is under either filter, and Cancel focuses that fold; never a '… N more changes' row, which Comments does not render", async (t: TestContext) => {
   store.delete(SETTINGS_KEY);
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, withComments([passage, { ...hosted, resolved: true }, whole, region, done]));
-  // under All the comment is on the change card, resolved or not: the box stands in its .fc-hosted box, no slot line
-  card(aside, "chg:h1")!.querySelector(".fc-card-head")!.click();
-  act(aside, "fcreply", hosted.id)!.click();
-  assert.ok(composerIn(aside).classes.includes("fc-hosted") && composerIn(aside).dataset.id === hosted.id, "All: the box in the hosted comment's box on the change card");
-  await pick(aside, "comments");
-  assert.equal(card(aside, hosted.id), null, "Comments: the comment's own card is under the closed Resolved fold");
+  // under All the comment is its own card, under the closed Resolved fold (the about follow-on, 2026-09-10; before it the
+  // comment rode the change card, resolved or not); the change card counts open comments alone, so it wears no count tag
+  assert.ok(!card(aside, hosted.id), "All: the resolved comment's card is under the closed Resolved fold");
   assert.equal(act(aside, "fcresolved")!.textContent, "▸ Resolved (2)");
-  assert.equal(act(aside, "fcmore"), null, "no change fold row under Comments");
+  assert.equal(card(aside, "chg:h1")!.querySelectorAll(".fc-about-count").length, 0, "the change card counts no open comment about it");
+  act(aside, "fcresolved")!.click();                  // open the fold
+  card(aside, hosted.id)!.querySelector(".fc-card-head")!.click();
+  act(aside, "fcreply", hosted.id)!.click();
+  assert.ok(composerIn(aside).classes.includes("fc-card") && composerIn(aside).dataset.id === hosted.id, "All: the box in the comment's own card, under the open fold");
+  await pick(aside, "comments");
+  assert.ok(!act(aside, "fcmore"), "no change fold row under Comments");
+  assert.equal(composerIn(aside).dataset.id, hosted.id, "Comments: the fold stays open across the pick, and the box in the card");
+  act(aside, "fcresolved")!.click();                  // close the fold under the reply
+  assert.ok(!card(aside, hosted.id), "Comments: the comment's own card is under the closed Resolved fold");
+  assert.equal(act(aside, "fcresolved")!.textContent, "▸ Resolved (2)");
   assert.ok(composerIn(aside).classes.includes("fc-panel"), "the box is back in the panel's slot");
   assert.deepEqual(slotNotes(aside).slice(1), [RESOLVED_LINE], "the line says where the card is");
   const focused = cancelFromBox(aside);
-  assert.equal(focused, act(aside, "fcresolved"), "Cancel: the keyboard goes to the Resolved fold, the row that brings the card back");
-  assert.equal(focused!.dataset.act, "fcresolved");
+  assert.equal(focused!.dataset.act, "fcresolved", "Cancel: the keyboard goes to the Resolved fold, the row that brings the card back");
   store.delete(SETTINGS_KEY);
 });
 
-test("under Comments, a resolved comment on a change the fold hides under All (h5, the fourth group): Reply from the open Resolved fold, then the fold closed — the line names Resolved, not '… 1 more change', and Cancel focuses the fold; the same under All stays on the change card's row", async (t: TestContext) => {
+test("under Comments, a resolved comment answered by a change the fold hides under All (h5, the fourth group): Reply from the open Resolved fold, then the fold closed; the line names Resolved, not '… 1 more change', and Cancel focuses the fold; under All the comment's own card is under Resolved too, whatever the changes fold does to h5's card", async (t: TestContext) => {
   store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "comments" }));
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, withComments([passage, hosted, whole, region, done, onH5]));
   assert.deepEqual(chosen(aside), ["comments"]);
-  assert.equal(act(aside, "fcmore"), null, "Comments renders no change fold row");
+  assert.ok(!act(aside, "fcmore"), "Comments renders no change fold row");
   act(aside, "fcresolved")!.click();                  // open the fold: done and onH5
   assert.deepEqual(commentCards(aside).map((c) => c.dataset.id), [passage.id, whole.id, region.id, hosted.id, done.id, onH5.id], "oldest first, the open cards then the fold's");
   card(aside, onH5.id)!.querySelector(".fc-card-head")!.click();
   act(aside, "fcreply", onH5.id)!.click();
-  assert.equal(composerIn(aside), card(aside, onH5.id), "the box in the comment's own card");
+  assert.equal(composerIn(aside).dataset.id, onH5.id, "the box in the comment's own card");
   act(aside, "fcresolved")!.click();                  // close the fold under the reply
-  assert.equal(card(aside, onH5.id), null, "the card is behind the closed fold");
+  assert.ok(!card(aside, onH5.id), "the card is behind the closed fold");
   assert.ok(composerIn(aside).classes.includes("fc-panel"));
   assert.deepEqual(slotNotes(aside).slice(1), [RESOLVED_LINE]);
-  assert.equal(cancelFromBox(aside), act(aside, "fcresolved"), "Cancel: the Resolved fold");
-  // control, under All: the comment is on h5's change card, behind the changes fold — that row is the one named and focused
+  assert.equal(cancelFromBox(aside)!.dataset.act, "fcresolved", "Cancel: the Resolved fold");
+  // under All: h5's change card is behind the changes fold, and the comment's own card under the Resolved fold (the about
+  // follow-on, 2026-09-10; before it the comment rode h5's card, and the changes fold row was the one named and focused)
   await pick(aside, "all");
-  assert.equal(card(aside, "chg:h5"), null, "h5's group is folded");
-  act(aside, "fcmore")!.click();
-  card(aside, "chg:h5")!.querySelector(".fc-card-head")!.click();
+  assert.ok(!card(aside, "chg:h5"), "h5's group is folded");
+  assert.ok(!card(aside, onH5.id), "the comment's card is under the closed Resolved fold, not the changes fold");
+  act(aside, "fcresolved")!.click();                  // open the Resolved fold: the comment's card, h5's still folded
+  assert.ok(card(aside, onH5.id) && !card(aside, "chg:h5"), "the comment's card shows without h5's");
+  assert.ok(card(aside, onH5.id)!.classes.includes("open"), "still open: the keyed expand state is untouched by the pick");
   act(aside, "fcreply", onH5.id)!.click();
-  assert.ok(composerIn(aside).classes.includes("fc-hosted"));
-  act(aside, "fcmore")!.click();                      // fold the changes again under the reply
-  assert.deepEqual(slotNotes(aside).slice(1), ["The comment's card is under “… 1 more change” below; the reply still goes to it."]);
-  assert.equal(cancelFromBox(aside), act(aside, "fcmore"), "All: the changes fold row");
+  assert.equal(composerIn(aside).dataset.id, onH5.id, "the box in the comment's own card");
+  act(aside, "fcmore")!.click();                      // unfold the changes: h5's card, with no count tag (the comment is resolved)
+  assert.ok(card(aside, "chg:h5"), "h5's card shows");
+  assert.equal(card(aside, "chg:h5")!.querySelectorAll(".fc-about-count").length, 0, "a resolved comment is not counted on the change card");
+  assert.equal(composerIn(aside).dataset.id, onH5.id, "the box stays in the comment's card");
+  act(aside, "fcmore")!.click();                      // fold the changes again under the reply: the comment's card stays
+  assert.ok(!card(aside, "chg:h5") && !!card(aside, onH5.id), "the changes fold hides change cards alone");
+  assert.equal(composerIn(aside).dataset.id, onH5.id);
+  act(aside, "fcresolved")!.click();                  // close the Resolved fold under the reply
+  assert.ok(composerIn(aside).classes.includes("fc-panel"));
+  assert.deepEqual(slotNotes(aside).slice(1), [RESOLVED_LINE], "the line names Resolved under All too");
+  assert.equal(cancelFromBox(aside)!.dataset.act, "fcresolved", "All: the Resolved fold row");
   store.delete(SETTINGS_KEY);
 });
 
@@ -523,42 +548,55 @@ test("under Comments, a comment on a change resolved while its reply is written:
   const { aside } = await openPanel(w, full());
   card(aside, hosted.id)!.querySelector(".fc-card-head")!.click();
   act(aside, "fcreply", hosted.id)!.click();
-  assert.equal(composerIn(aside), card(aside, hosted.id));
+  assert.equal(composerIn(aside).dataset.id, hosted.id, "the box in the comment's own card");
   act(aside, "fcresolve", hosted.id)!.click(); await flush();
   const m = lastOf(w, "fileComments", "resolve");
   assert.deepEqual(m.args, { commentId: hosted.id, on: true });
   answer(w, withComments([passage, { ...hosted, resolved: true }, whole, region, done], { storeMtimeNs: "1757145600000000005" }), m); await flush(); await flush();
-  assert.equal(card(aside, hosted.id), null, "resolved: under the closed fold");
+  assert.ok(!card(aside, hosted.id), "resolved: under the closed fold");
   assert.equal(act(aside, "fcresolved")!.textContent, "▸ Resolved (2)");
   assert.ok(composerIn(aside).classes.includes("fc-panel"));
   assert.deepEqual(slotNotes(aside).slice(1), [MEANWHILE_LINE]);
-  assert.equal(cancelFromBox(aside), act(aside, "fcresolved"));
+  assert.equal(cancelFromBox(aside)!.dataset.act, "fcresolved");
   store.delete(SETTINGS_KEY);
 });
 
-// ── the "on a change" tag and the change card's cue name a detached change ─────────────────────────
+// ── the "answered by a change" tag and the change card's cue name a detached change ────────────────
 
-test("under Comments a comment on a DETACHED change wears the 'on a change' tag with a title that says detached and names the group; on a pending change the title says pending; under All the detached change card's cue says nobody decides it", async (t: TestContext) => {
+test("under Comments a comment a DETACHED change answered wears the 'answered by a change' tag with a title that names the change and says detached; on a pending change the title says pending; under All the comment keeps its own card, both change cards count it, and the detached change card's cue says nobody decides it", async (t: TestContext) => {
   store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "comments" }));
   const w = world(); t.after(() => w.close());
   const { aside, button } = await openPanel(w, full({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, hosted, onD1], detached: [D1] } }));
   assert.equal(button.textContent, "Comments · 3 · 5 changes · 1 detached change");
   const d = card(aside, onD1.id)!, p = card(aside, hosted.id)!;
-  assert.ok(d && p, "both bound comments stand on their own cards under Comments");
-  assert.deepEqual(tags(d), ["on a change"]); assert.deepEqual(tags(p), ["on a change"]);
-  assert.equal(tagTitled(d, "on a change").title, "This comment is on a detached change, whose text the file no longer holds; All or Changes above shows the change's card, under Detached changes");
-  assert.equal(tagTitled(p, "on a change").title, "This comment is on a pending change; All or Changes above shows the change's card");
-  assert.equal(d.querySelector(".fc-ref")!.textContent, "cold starts were slow → cold starts stay slow", "the change's words as the reference, as for a pending one");
-  // All: the detached change's card, in its group behind the fold (five groups: four paragraphs and the detached one)
+  assert.ok(d && p, "both answered comments stand on their own cards under Comments");
+  // the about tag with source "answered" (a legacy suggestionId; the about follow-on, 2026-09-10, replacing the "on a change"
+  // tag): its data-refs the change's id, its title the change's words and its state
+  assert.deepEqual(tags(d), ["answered by a change"]); assert.deepEqual(tags(p), ["answered by a change"]);
+  const dt = tagTitled(d, "answered by a change"), pt = tagTitled(p, "answered by a change");
+  assert.ok(dt.classes.includes("fc-about") && pt.classes.includes("fc-about"), "the about tag's class");
+  assert.equal(dt.dataset.refs, "d1"); assert.equal(pt.dataset.refs, "h1");
+  assert.equal(dt.title, "The session answered this comment with: cold starts were slow → cold starts stay slow (detached: the file no longer holds its text)");
+  assert.equal(pt.title, "The session answered this comment with: reduced → cut (pending)");
+  assert.equal(d.querySelector(".fc-ref")!.textContent, "cold starts were slow → cold starts stay slow", "no passage: the change's words as the reference, as for a pending one");
+  assert.equal(titleOf(d, ".fc-kind"), "A comment the session answered with a change", "answered, never about: the person named no change (the review, 2026-09-10)");
+  assert.equal(p.querySelector(".fc-ref")!.textContent, "“cut p95 latency”", "a legacy passage comment keeps its passage as the reference");
+  assert.equal(titleOf(p, ".fc-kind"), "A comment on a passage");
+  // All: the comment keeps its own card (before the about follow-on it rode the change card), the pending change's card
+  // counts it, and the detached change's card is in its group behind the fold (five groups: four paragraphs and the
+  // detached one) and counts it too
   await pick(aside, "all");
-  assert.equal(card(aside, onD1.id), null, "the comment rides the change card again");
+  assert.ok(card(aside, onD1.id), "the comment's own card under All too");
+  assert.equal(card(aside, "chg:h1")!.querySelector(".fc-about-count")!.textContent, "1 comment", "the pending change counts the open comment it answered");
   act(aside, "fcmore")!.click();
   const dc = card(aside, "chg:d1")!;
   assert.ok(dc.classes.includes("fc-card-detached"));
+  assert.deepEqual(tags(dc), ["detached", "1 comment"], "the detached change counts it too");
   assert.ok(texts(aside.querySelectorAll(".fc-group")).includes(DETACHED_GROUP_TITLE));
   assert.equal(titleOf(dc, ".fc-kind"), "A change the session made to the file, whose text the file no longer holds; nothing here accepts or rejects it");
   assert.equal(titleOf(card(aside, "chg:h1")!, ".fc-kind"), "A change the session made to the file, for you to accept or reject");
-  assert.equal(dc.querySelector('[data-act="fcaccept"]'), null, "…and indeed it offers no decision");
+  assert.ok(!dc.querySelector('[data-act="fcaccept"]'), "…and indeed it offers no decision");
+  assert.ok(!dc.querySelector('[data-act="fcchangecomment"]'), "nor Comment on this change: a detached card has no actions");
   store.delete(SETTINGS_KEY);
 });
 
@@ -568,26 +606,26 @@ test("while the editor is up the filter row is offered (its list half is the poi
   store.delete(SETTINGS_KEY);
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, full());
-  assert.equal(option(aside, "comments").title, "Show only the comments, including comments on changes; the change marks in the text are hidden with the change cards");
-  assert.equal(option(aside, "changes").title, "Show only the changes, each with the comments made on it; the comment highlights in the text are hidden with the comment cards");
+  assert.equal(option(aside, "comments").title, "Show only the comments, comments about changes among them; the change marks in the text are hidden with the change cards");
+  assert.equal(option(aside, "changes").title, "Show only the changes, each counting the comments about it; the comment highlights in the text are hidden with the comment cards");
   // Edit: begin() runs at the click and renders; the viewer then holds the body and answers editing()
   w.editing = true;
   const begun = w.tracked!.begin()!;
   assert.equal(begun.records.length, SUGG.length, "the sidecar's records ride into the editor, whatever the filter (pendingRecords reads the store)");
   assert.ok(filterRow(aside), "the filter row stands in edit mode");
   assert.equal(act(aside, "fcinline"), null, "Show changes inline does not: the editor draws every change itself");
-  assert.equal(option(aside, "comments").title, "Show only the comments, including comments on changes; the editor keeps every change marked in its text");
-  assert.equal(option(aside, "changes").title, "Show only the changes, each with the comments made on it", "the editor paints no comment highlight: nothing to claim hidden");
+  assert.equal(option(aside, "comments").title, "Show only the comments, comments about changes among them; the editor keeps every change marked in its text");
+  assert.equal(option(aside, "changes").title, "Show only the changes, each counting the comments about it", "the editor paints no comment highlight: nothing to claim hidden");
   await pick(aside, "comments");
   assert.deepEqual(changeCards(aside), [], "the list half works in the editor");
   assert.deepEqual(commentCards(aside).map((c) => c.dataset.id), [passage.id, whole.id, region.id, hosted.id], "every comment card on its own, oldest first");
   assert.equal(stored()!.commentsFilter, "comments");
-  assert.equal(option(aside, "comments").title, "Show only the comments, including comments on changes; the editor keeps every change marked in its text");
+  assert.equal(option(aside, "comments").title, "Show only the comments, comments about changes among them; the editor keeps every change marked in its text");
   // the edit ends: the read view's titles are back
   w.editing = false;
   await pick(aside, "all");
-  assert.equal(option(aside, "comments").title, "Show only the comments, including comments on changes; the change marks in the text are hidden with the change cards");
-  assert.equal(option(aside, "changes").title, "Show only the changes, each with the comments made on it; the comment highlights in the text are hidden with the comment cards");
+  assert.equal(option(aside, "comments").title, "Show only the comments, comments about changes among them; the change marks in the text are hidden with the change cards");
+  assert.equal(option(aside, "changes").title, "Show only the changes, each counting the comments about it; the comment highlights in the text are hidden with the comment cards");
   store.delete(SETTINGS_KEY);
 });
 
@@ -639,7 +677,7 @@ test("a whole-file comment saved under Changes: the box closes, the card is hidd
   store.delete(SETTINGS_KEY);
 });
 
-test("a passage comment saved under Changes: the line names the card and the highlight, neither painted; the ✕ ends it; a comment on a change (the change card's Reply) rides its card and gets no line; closing the panel ends a standing line", async (t: TestContext) => {
+test("a passage comment saved under Changes: the line names the card and the highlight, neither painted; the ✕ ends it; a comment about a change (the change card's Comment on this change) is its own card, hidden like every comment's, so the line is due for it too and the change card counts it; closing the panel ends a standing line", async (t: TestContext) => {
   store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "changes" }));
   const w = world(); t.after(() => w.close());
   const { aside, button } = await openPanel(w, full());
@@ -650,27 +688,42 @@ test("a passage comment saved under Changes: the line names the card and the hig
   assert.equal(m.args.anchor.quote, "fallback path");
   const fresh: StoreComment = { id: T0 + 9500 + "-10", author: "you", ts: T0 + 9500, body: "Name the risks.", anchor: { quote: "fallback path", prefix: "Risks remain in the ", suffix: "." }, replies: [], resolved: false };
   answer(w, withComments([...ALL_COMMENTS, fresh], { storeMtimeNs: "1757145600000000007" }), m); await flush(); await flush();
-  assert.equal(card(aside, fresh.id), null);
+  assert.ok(!card(aside, fresh.id));
   assert.equal(highlights(w).length, 0, "the highlight is hidden with the card");
   assert.equal(savedLine(aside)!.textContent, "Your comment is saved; its card and highlight are hidden while Changes is chosen above (All or Comments shows them).✕");
   act(aside, "fchiddenx")!.click();
-  assert.equal(savedLine(aside), null, "dismissed");
+  assert.ok(!savedLine(aside), "dismissed");
   assert.deepEqual(chosen(aside), ["changes"]);
-  // a comment on a change: under Changes it is on the change's card, so nothing is hidden and no line is due
-  card(aside, "chg:h2")!.querySelector(".fc-card-head")!.click();
-  act(aside, "fcchangereply", "h2")!.click();
+  // a comment about a change (the about follow-on, 2026-09-10; before it the change card's Reply bound a comment that rode the
+  // card, so nothing was hidden and no line was due): Comment on this change opens the passage composer in the panel's slot
+  // over the change's new text with the about option checked, and the saved comment is its own card, hidden under Changes
+  // like every comment's, so the line is due for it too; the change card counts it
+  assert.ok(!card(aside, "chg:h2")!.classes.includes("open"), "h2's card is collapsed before the click");
+  act(aside, "fcchangecomment", "h2")!.click(); await flush();
+  assert.ok(card(aside, "chg:h2")!.classes.includes("open"), "Comment on this change opens the change card");
+  assert.ok(composerIn(aside).classes.includes("fc-panel"), "the composer in the panel's slot, not in the card");
+  const opt = aside.querySelector('.fc-composer .fc-about-opt input[data-opt="about"]');
+  assert.ok(opt && opt.checked, "the about option, checked");
+  assert.equal(opt!.parentNode!.textContent, "about this change");
   const m2 = await saveNote(aside, w, "Say which percentile.");
-  assert.deepEqual(m2.args, { suggestionId: "h2", note: "Say which percentile." });
-  const onH2: StoreComment = { id: T0 + 9600 + "-11", author: "you", ts: T0 + 9600, body: "Say which percentile.", suggestionId: "h2", replies: [], resolved: false };
+  assert.deepEqual(Object.keys(m2.args).sort(), ["anchor", "changeIds", "hintOffset", "note"], "a passage comment naming the change; never suggestionId");
+  assert.equal(m2.args.note, "Say which percentile.");
+  assert.equal(m2.args.anchor.quote, h2.newText, "the anchor over the change's new text");
+  assert.equal(m2.args.hintOffset, h2.curFrom);
+  assert.deepEqual(m2.args.changeIds, ["h2"]);
+  const onH2: StoreComment = { id: T0 + 9600 + "-11", author: "you", ts: T0 + 9600, body: "Say which percentile.", anchor: m2.args.anchor, anchorAt: h2.curFrom, changeIds: ["h2"], replies: [], resolved: false };
   answer(w, withComments([...ALL_COMMENTS, fresh, onH2], { storeMtimeNs: "1757145600000000008" }), m2); await flush(); await flush();
-  assert.ok(card(aside, "chg:h2")!.querySelector('.fc-hosted[data-id="' + onH2.id + '"]'), "on the change card");
-  assert.equal(savedLine(aside), null, "no line: the card shows the comment");
+  assert.ok(!card(aside, onH2.id), "Changes: the comment's own card is hidden like every comment's");
+  assert.equal(highlights(w).length, 0, "and its highlight with it");
+  assert.equal(card(aside, "chg:h2")!.querySelector(".fc-about-count")!.textContent, "1 comment", "the change card counts the comment about it");
+  assert.equal(savedLine(aside)!.dataset.id, onH2.id, "the line is due for it too");
+  assert.equal(savedLine(aside)!.textContent, "Your comment is saved; its card and highlight are hidden while Changes is chosen above (All or Comments shows them).✕");
   // a standing line ends with the panel: the person read it with the panel open
   act(aside, "fcfile")!.click();
   const m3 = await saveNote(aside, w, "One more.");
   const fresh3: StoreComment = { id: T0 + 9700 + "-12", author: "you", ts: T0 + 9700, body: "One more.", anchor: null, replies: [], resolved: false };
   answer(w, withComments([...ALL_COMMENTS, fresh, onH2, fresh3], { storeMtimeNs: "1757145600000000009" }), m3); await flush(); await flush();
-  assert.ok(savedLine(aside));
+  assert.equal(savedLine(aside)!.dataset.id, fresh3.id, "the latest save's line");
   button.click(); await flush();                     // close
   button.click(); answer(w, withComments([...ALL_COMMENTS, fresh, onH2, fresh3], { storeMtimeNs: "1757145600000000009" })); await flush(); await flush();
   const again = w.main.querySelector(".fileview-aside")!;
@@ -689,7 +742,7 @@ test("a file with detached changes alone: the label says '1 detached change', th
   assert.equal(button.textContent, "Comments · 0 · 1 detached change");
   assert.deepEqual(cardCounts(only), { comments: 0, changes: 0 }, "the shared counts are unchanged: a detached change is not pending");
   assert.deepEqual(texts(filterRow(aside)!.childNodes as El[]), ["All", "Comments 0", "Changes 0 · 1 detached"]);
-  assert.equal(option(aside, "changes").title, "Show only the changes, each with the comments made on it; the comment highlights in the text are hidden with the comment cards; the detached change is listed too, in a group of its own");
+  assert.equal(option(aside, "changes").title, "Show only the changes, each counting the comments about it; the comment highlights in the text are hidden with the comment cards; the detached change is listed too, in a group of its own");
   await pick(aside, "changes");
   assert.deepEqual(changeCards(aside).map((c) => c.dataset.id), ["chg:d1"], "the option opens on the card it counted");
   assert.equal(aside.querySelector(".fc-empty"), null);
@@ -738,17 +791,20 @@ test("Track changes on an untracked file with cards: the scope choice renders di
 
 // ── source pins ────────────────────────────────────────────────────────────────────────────────────
 
-test("pins: replyAway takes the filter into account before the change fold; the saved line's state, its action, and its place; the head's confirm rows go above the filter row in the DOM while the source order the filter suite pins stands", () => {
+test("pins: replyAway takes the filter into account before the Resolved fold and has no change fold case (the about follow-on: no comment is behind the changes fold); the saved line's state, its action, and its place; the head's confirm rows go above the filter row in the DOM while the source order the filter suite pins stands", () => {
   const away = SRC.slice(SRC.indexOf("private replyAway("), SRC.indexOf("private hiddenSavedRow("));
-  assert.match(away, /const card = this\.activeFilter\(\) === "comments" \? \{ \.\.\.found, hunk: null \} : found;/, "under Comments a bound comment is read as one on no change: the fold tests below stand as the reply suites pin them");
-  assert.match(away, /if \(card\.resolved && card\.hunk === null\) return \{ gone: false, back: "fcresolved",/);
-  assert.match(away, /if \(card\.hunk === null\) return \{ gone: false, back: null, text: "The comment's card is not in the list; the reply still goes to it\." \};[^\n]*\n\s+const view = this\.changeView\(\);/, "the change fold is consulted only for a comment shown on a change card");
+  assert.match(away, /if \(!found\) return \{ text: "The comment is gone from the file's comments\.", gone: true, back: null \};/);
+  assert.match(away, /if \(this\.activeFilter\(\) === "changes"\) return \{ gone: false, back: "fcfilter", text: "The comment's card is hidden while Changes is chosen above \(All or Comments shows it\); the reply still goes to it\." \};/, "under Changes every comment's card is hidden, a comment about a change too");
+  assert.match(away, /if \(found\.resolved\) return \{ gone: false, back: "fcresolved", text: c\.resolved \? "The comment's card is under “Resolved” below; the reply still goes to it\." : "The comment was resolved meanwhile, so its card is under “Resolved” below; the reply still goes to it\." \};/);
+  assert.ok(away.indexOf('this.activeFilter() === "changes"') < away.indexOf("found.resolved"), "the filter before the fold: under Changes no Resolved fold is rendered to name");
+  assert.match(away, /return \{ gone: false, back: null, text: "The comment's card is not in the list; the reply still goes to it\." \};/, "the one case left: a status not yet in");
+  assert.doesNotMatch(away, /fcmore|hunk|changeView/, "no change fold case: every comment is its own card, never behind the changes fold (the about follow-on, 2026-09-10; before it a comment bound to a change rode the change card, and the row named was the fold's)");
   assert.match(SRC, /hiddenSaved: string \| null = null;/);
   assert.match(SRC, /fchiddenx: \(\) => \{ this\.hiddenSaved = null; this\.render\(\); \},/, "the ✕ is one of the panel's own delegated actions");
   assert.match(SRC, /const before = new Set\(this\.cards\(\)\.map\(\(x\) => x\.id\)\);[^\n]*\n(?:\s+\/\/[^\n]*\n)*\s+this\.gesture\(\);\n\s+let r: Status \| null;/, "the comments before the save, so the fresh one is known (then the save's own gesture: the arrivals follow-on, 2026-09-09; the count it sampled went with the save's scroll, decision 43)");
   assert.match(SRC, /const hid = r !== null && c\.kind !== "reply" && this\.noteHiddenSave\(before, note\);\n\s+const lined = r !== null && this\.landSaved\(c, had, r, note\);[^\n]*\n\s+if \(r\) this\.closeComposer\(\);[^\n]*\n\s+if \(hid \|\| \(lined && c\.kind !== "reply"\)\) this\.render\(\);/, "noted after the save, before the landing (which finds no card the filter hides, so raises no line of its own) and the composer's close; the cards rendered once more with the line");
-  assert.match(SRC, /if \(!mine \|\| mine\.hunk !== null \|\| this\.activeFilter\(\) !== "changes"\) return false;/, "only a comment on no change, under Changes");
-  assert.match(SRC, /if \(!card \|\| filter !== "changes" \|\| card\.hunk !== null\) \{ this\.hiddenSaved = null; return null; \}/, "the line ends, and the id with it, once the card shows or the comment is gone");
+  assert.match(SRC, /if \(!mine \|\| this\.activeFilter\(\) !== "changes"\) return false;/, "every comment saved under Changes, a comment about a change too (the about follow-on; before it a comment on a change rode the change card and raised no line)");
+  assert.match(SRC, /if \(!card \|\| filter !== "changes"\) \{ this\.hiddenSaved = null; return null; \}/, "the line ends, and the id with it, once the card shows or the comment is gone");
   assert.match(SRC, /for \(const n of \[this\.loader\("bytes"\), this\.errRow\("bytes"\)\]\) if \(n\) list\.appendChild\(n\);\n\s+const saved = this\.hiddenSavedRow\(filter\);/, "at the top of the list, before the empty states and the cards");
   assert.match(SRC, /closePanel\(\): void \{(?:(?!\n  \}\n)[\s\S])*?this\.hiddenSaved = null;[^\n]*\n\s+this\.stopPoll\(\);\n\s+\}\n/, "closePanel ends it");   // the method's own body (draftAsk stands between it and dispose)
   const head = SRC.slice(SRC.indexOf("private renderHead("), SRC.indexOf("private renderComposer("));
@@ -764,7 +820,9 @@ test("pins: replyAway takes the filter into account before the change fold; the 
   assert.match(head, /const d = s && s\.store \? detachedChanges\(s\.store\)\.length : 0;/);
   // the titles: the read view's marks, or the editor's
   assert.match(head, /const editing = this\.ctx\.editing\(\);\n\s+const commentsTitle = /);
-  // the tag's title by the change's state, the cue's by the card's
-  assert.match(SRC, /const pending = !!this\.status && \(this\.status\.hunks \|\| \[\]\)\.some\(\(h\) => h\.id === c\.hunk!\.id\);\n\s+const t = el\("span", "fc-tag", "on a change"\);/);
+  // the about tag's title by the changes' words and states (the about follow-on, 2026-09-10, replacing the "on a change" tag,
+  // whose title read the change's state off `hunk`), the cues' by the card's
+  assert.match(SRC, /const t = el\("span", "fc-tag fc-about", aboutTagWords\(refs\.length, source\)\);\n\s+t\.dataset\.refs = refs\.map\(\(r\) => r\.id\)\.join\(" "\);\n\s+t\.title = \(source === "about" \? "This comment is about: " : "The session answered this comment with: "\)\n\s+\+ refs\.map\(\(r\) => \(r\.kind === null \? "a change the file no longer records" : changeRef\(\{ kind: r\.kind, oldText: r\.oldText, newText: r\.newText \}\)\) \+ " \(" \+ refStateWords\(r\.state\) \+ "\)"\)\.join\("; "\);/);
+  assert.match(SRC, /kind\.title = c\.kind === "region" \? "A comment on a region of the picture"\n\s+: c\.kind === "file" && c\.refs\.some\(\(r\) => r\.source === "about"\) \? "A comment about a change"\n\s+: c\.kind === "file" && c\.refs\.length \? "A comment the session answered with a change"\n\s+: c\.kind === "file" \? "A comment on the file as a whole" : "A comment on a passage";/, "a comment with no passage that names changes is the file kind, cued as about a change when the person picked one (source about) and as answered when its only binding is the format's field (the review, 2026-09-10)");
   assert.match(SRC, /kind\.title = c\.detached \? "A change the session made to the file, whose text the file no longer holds; nothing here accepts or rejects it" : "A change the session made to the file, for you to accept or reject";/);
 });

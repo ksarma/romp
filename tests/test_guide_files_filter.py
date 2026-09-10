@@ -67,15 +67,19 @@ class TrackChangesParagraphDescribesTheFilter(unittest.TestCase):
         self.assertRegex(self.panel, r'\["changes", "Changes " \+ n\.changes, ')
 
     def test_each_option_s_sentence_matches_what_the_panel_hides(self):
-        self.assertIn("**Comments** lists only the comments, including comments on changes, and hides the change marks "
+        self.assertIn("**Comments** lists only the comments, comments about changes among them, and hides the change marks "
                       "in the file;", self.paragraph)
         self.assertIn('if (this.activeFilter() === "comments") return;', self.panel, "Comments: no change mark painted")
-        self.assertIn('filter === "comments" || c.hunk === null', self.panel, "Comments: the bound comment's card stands on its own")
-        self.assertIn("**Changes** lists only the changes, each with the comments made on it, and hides the comment "
+        self.assertIn('const cards = filter === "changes" ? [] : this.cards();', self.panel,
+                      "Comments and All: every comment's card, the ones about changes too (the about follow-on, 2026-09-10)")
+        self.assertIn("**Changes** lists only the changes, each counting the comments about it, and hides the comment "
                       "highlights and the rectangles on figures;", self.paragraph)
         self.assertIn('this.activeFilter() === "changes" ? [] : this.cards()', self.panel, "Changes: no highlight painted")
         self.assertIn('const hideRegions = this.activeFilter() === "changes";', self.panel, "Changes: no rectangle painted")
-        self.assertIn("for (const cm of c.comments) card.appendChild(this.renderHosted(cm));", self.panel, "the comments made on a change ride its card")
+        self.assertIn('comments: commentsAbout(cards, h.id).length, detached: false,', self.model, "the count of comments about a change is the model's")
+        self.assertIn('const t = el("span", "fc-tag fc-count fc-about-count", c.comments + (c.comments === 1 ? " comment" : " comments"));',
+                      self.panel, "the change card counts them in a tag")
+        self.assertNotIn("renderHosted", self.panel, "no comment is drawn inside a change card")
         self.assertIn("**All** lists both.", self.paragraph)
 
     def test_the_choice_is_kept_like_the_marks_setting(self):

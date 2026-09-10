@@ -1,13 +1,14 @@
 // The reply's box inside the card it answers (plans/file-review.md, "The composer follow-on (2026-09-07)", its closing
 // sentence): after walking the loop the user asked for the reply box to open under the comment being answered, not in
 // the panel's one composer slot above the cards. The box is the same persistent node every composer uses; for a reply it
-// is moved into the card — the comment's own card, or the comment's box on the change card hosting it — below the turns
-// and above the buttons (placeComposer), and back to the slot for every other kind, when the composer closes, and when
-// the list stops showing the card (the comment resolved into the closed fold, gone from the sidecar), where a line says
-// why and the words stay. The card opens for the reply and stays open while it is written; the poll's re-render keeps
-// the box in its card — the card node stays, the children around the box are the fresh render's (swapCards) — with the
-// words, the caret, the height and the keyboard, and moves it into the card's successor when the comment changes cards
-// (a change accepted: the comment on its own card); Escape, Cancel and a save hand the keyboard back to the card's Reply.
+// is moved into the comment's own card (before the about follow-on, 2026-09-10, a comment bound to a pending change was drawn
+// inside the change's card, and the box went into that), below the turns and above the buttons (placeComposer), and back to
+// the slot for every other kind, when the composer closes, and when the list stops showing the card (the comment resolved
+// into the closed fold, gone from the sidecar, hidden by the Changes filter), where a line says why and the words stay. The
+// card opens for the reply and stays open while it is written; the poll's re-render keeps the box in its card, the card node
+// stays and the children around the box are the fresh render's (swapCards), with the words, the caret, the height and the
+// keyboard (a change accepted under the reply changes the card's tags, not its place); Escape, Cancel and a save hand the
+// keyboard back to the card's Reply.
 // Driven through the DOM stand-in the composer test uses (there is no jsdom in this tree), with focus tracked and
 // scrollIntoView recorded. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
@@ -263,7 +264,8 @@ const passage: StoreComment = {
   resolved: false,
 };
 const whole: StoreComment = { id: T0 + "-119", author: "you", ts: T0 + 4000, body: "Lead with the numbers.", replies: [], resolved: false };
-// a pending change and the comment bound to it, shown on the change's card
+// a pending change and a comment the change answered (suggestionId, the format's own field): its own card in the list,
+// wearing the "answered by a change" tag (before the about follow-on, 2026-09-10, it was drawn inside the change's card)
 const cut = DOC.indexOf("cut");
 const h1: Hunk = { id: "h1", author: "api", ts: T0 - 90000, kind: "sub", curFrom: cut, curTo: cut + 3, baseFrom: cut, baseTo: cut + 7, oldText: "reduced", newText: "cut", anchor: null };
 const SUGG = [{ id: "h1", author: "api", authorId: SID, ts: T0 - 90000, kind: "sub", from: cut, oldText: "reduced", newText: "cut" }];
@@ -281,9 +283,9 @@ function status(over: Partial<Status> = {}): Status {
     ...over,
   };
 }
-/** The world with the change h1 pending and the comment bound to it on its card. */
+/** The world with the change h1 pending and the comment it answered: the change card first, then the comment's own card. */
 const WITH_CHANGE: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, bound] }, hunks: [h1], unsent: unsent(passage.id, bound.id) };
-/** The same world after the change was accepted: the comment stands on its own card, wearing the decision. */
+/** The same world after the change was accepted: the change card is gone, and the comment's card wears the decision. */
 const ACCEPTED: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage, bound] }, hunks: [], log: [ACCEPT_LOG],
   storeMtimeNs: "1757145600000000006", unsent: { comments: [passage.id, bound.id], replies: [], accepted: 1, rejected: 0, watermark: null } };
 
@@ -328,7 +330,6 @@ async function harness(over: Partial<FileViewActionCtx> = {}) {
     box: (): E => { const b = main.querySelector("textarea.fc-input"); assert.ok(b, "the comment box is a textarea"); return b!; },
     composer: (): E => { const c = main.querySelector(".fc-composer"); assert.ok(c, "the composer box"); return c!; },
     card: (id: string): E | null => main.querySelector('.fc-card[data-id="' + id + '"]'),
-    hosted: (id: string): E | null => main.querySelector('.fc-hosted[data-id="' + id + '"]'),
     replyBtn: (id: string): E | null => main.querySelector('[data-act="fcreply"][data-id="' + id + '"]'),
     key: (init: Init): Ev => h.box().dispatch("keydown", init),
     chord: (): Ev => h.key({ key: "Enter", ctrlKey: true }),
@@ -368,7 +369,7 @@ test("Reply moves the box into the comment's card, below its replies and above i
   assert.equal(box.placeholder, "Your reply", "the placeholder says what the box is for");
   assert.equal(box.getAttribute("aria-label"), "Reply text");
   assert.deepEqual(h.kids(h.q(".fc-composer .fc-actions")), ["fc-note fc-hint", "fileview-btn", "fileview-btn"], "the hint, Save and Cancel as ever");
-  assert.equal(doc.activeElement, box, "the box takes the keyboard");
+  assert.ok(doc.activeElement === box, "the box takes the keyboard");
   assert.ok(doc.scrolled.includes(h.composer()), "the box's place in the card is scrolled into view");
   // Cancel: the box returns to the slot, hidden, undressed; the card stays open
   h.click('[data-act="fccancel"]');
@@ -387,28 +388,31 @@ test("Reply moves the box into the comment's card, below its replies and above i
   h.dispose();
 });
 
-test("a comment bound to a change: Reply moves the box into its box on the change card, below its turns; once the change is accepted the comment's own card takes the box, opened for it", async () => {
+test("a comment answered by a change: Reply opens the box in the comment's own card, below its turns (the change card holds none); once the change is accepted the same card keeps the box and wears the decision", async () => {
   const h = await harness();
   await h.open(WITH_CHANGE);
-  h.startReply("chg:h1", bound.id);
+  h.startReply(bound.id, bound.id);
   const box = h.box();
-  const hosted = h.hosted(bound.id)!;
-  assert.ok(hosted, "the bound comment is on the change's card");
-  assert.deepEqual(h.kids(hosted), ["fc-reply fc-reply-you", "fc-replies fc-clip", "fc-composer fc-composer-in", "fc-actions"], "the box after the comment's turns, before its Reply and Resolve");
-  assert.deepEqual(h.sections(), NO_SLOT);
-  assert.equal(h.q(".fc-composer-ref")!.hidden, true);
-  assert.equal(doc.activeElement, box);
-  draft(box, "Trimmed is fine.", 8, 63);
-  // the change is accepted elsewhere: the comment stands on its own card now, under a key the expand state never saw
-  await h.repoll(ACCEPTED);
-  assert.equal(h.card("chg:h1"), null, "the change's card is gone");
   const own = h.card(bound.id)!;
   assert.ok(own, "the comment's own card");
-  assert.ok(own.classList.contains("open"), "opened for the reply being written");
-  assert.deepEqual(h.kids(own), ["fc-card-head", "fc-body fc-clip", "fc-replies fc-clip", "fc-clip-row", "fc-composer fc-composer-in", "fc-actions"], "the box rode into it");
-  assert.equal(h.box(), box, "the same node");
+  assert.deepEqual(h.kids(own), ["fc-card-head", "fc-body fc-clip", "fc-replies fc-clip", "fc-clip-row", "fc-composer fc-composer-in", "fc-actions"], "the box after the comment's turns, before its Reply and Resolve");
+  assert.equal(h.card("chg:h1")!.contains(h.composer()), false, "the change card holds no box");
+  assert.ok(own.querySelectorAll(".fc-card-head .fc-tag").some((t) => t.textContent === "answered by a change"), "the card names the change that answered it");
+  assert.deepEqual(h.sections(), NO_SLOT);
+  assert.equal(h.q(".fc-composer-ref")!.hidden, true);
+  assert.ok(doc.activeElement === box, "doc.activeElement is box");
+  draft(box, "Trimmed is fine.", 8, 63);
+  // the change is accepted elsewhere: the comment's card is where it was, wearing the decision (before the about follow-on,
+  // 2026-09-10, the comment left the change card for its own card here, under a key the expand state never saw)
+  await h.repoll(ACCEPTED);
+  assert.ok(h.card("chg:h1") === null, "the change's card is gone");
+  assert.ok(h.card(bound.id) === own, "the same card node");
+  assert.ok(own.classList.contains("open"), "open, the reply being written");
+  assert.deepEqual(h.kids(own), ["fc-card-head", "fc-body fc-clip", "fc-replies fc-clip", "fc-clip-row", "fc-composer fc-composer-in", "fc-actions"], "the box where it was");
+  assert.ok(own.querySelectorAll(".fc-card-head .fc-tag").some((t) => t.textContent === "accepted"), "the decision on the card");
+  assert.ok(h.box() === box, "the same node");
   assert.equal(box.value, "Trimmed is fine."); assert.deepEqual([box.selectionStart, box.selectionEnd], [8, 8]); assert.equal(box.style.height, "65px");
-  assert.equal(doc.activeElement, box, "the keyboard stays in the box");
+  assert.ok(doc.activeElement === box, "the keyboard stays in the box");
   // Save from inside the card goes through the panel's delegate root as the reply verb
   h.click('[data-act="fcsave"]');
   await tick();
@@ -437,7 +441,7 @@ test("the poll's re-render keeps the box in the same comment's card — the same
   assert.equal(box.value, "Line one.\nLine two.", "the text");
   assert.deepEqual([box.selectionStart, box.selectionEnd], [5, 5], "the caret");
   assert.equal(box.style.height, "65px", "the height");
-  assert.equal(doc.activeElement, box, "the keyboard, put back after the move");
+  assert.ok(doc.activeElement === box, "the keyboard, put back after the move");
   assert.deepEqual(h.sections(), NO_SLOT, "nothing stands in the slot");
   assert.equal(h.q('.fc-card[data-id="' + third.id + '"] .fc-composer'), null, "no other card has a box");
   // a refusal keeps the box in the card with the words
@@ -484,7 +488,7 @@ test("the comment vanished: the box returns to the slot with the words and a lin
   assert.equal(h.box(), box);
   assert.equal(box.value, "Keep going.", "the words are kept");
   assert.deepEqual([box.selectionStart, box.selectionEnd], [4, 4]); assert.equal(box.style.height, "44px");
-  assert.equal(doc.activeElement, box);
+  assert.ok(doc.activeElement === box, "doc.activeElement is box");
   const ref = h.q(".fc-composer-ref")!;
   assert.equal(ref.hidden, false, "the reference row is back: the box has no card to be read against");
   assert.deepEqual(ref.childNodes.map((n) => (n as E).className + ":" + n.textContent),
@@ -520,8 +524,8 @@ test("resolved elsewhere: the card goes into the closed Resolved fold and the bo
   h.dispose();
 });
 
-test("every other kind keeps the slot: a whole-file comment and a comment bound to a change take the box out of a reply's card and back to the slot", async () => {
-  const h = await harness();
+test("every other kind keeps the slot: a whole-file comment and Comment on this change take the box out of a reply's card and back to the slot", async () => {
+  const h = await harness({ text: () => DOC, mode: () => "raw" });
   await h.open({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage] }, hunks: [h1], unsent: unsent(passage.id) });
   h.startReply(passage.id, passage.id);
   assert.deepEqual(h.sections(), NO_SLOT);
@@ -530,12 +534,17 @@ test("every other kind keeps the slot: a whole-file comment and a comment bound 
   assert.equal(h.composer().className, "fc-composer");
   assert.equal(h.q(".fc-composer-ref")!.textContent, "On this file");
   assert.equal(h.card(passage.id)!.contains(h.composer()), false);
+  // Comment on this change (the about follow-on, 2026-09-10; before it the change card's Reply wrote a comment bound to the
+  // change): a passage composer over the change's span with the about option checked, in the slot like any comment's
   h.click('.fc-card[data-id="chg:h1"] .fc-card-head');
-  h.click('[data-act="fcchangereply"][data-id="h1"]');
-  assert.deepEqual(h.sections(), SLOT, "a comment bound to a change: the slot too");
-  assert.equal(h.q(".fc-composer-ref")!.textContent, "Reply on the change reduced → cut");
+  h.click('[data-act="fcchangecomment"][data-id="h1"]');
+  assert.deepEqual(h.sections(), SLOT, "a comment about a change: the slot too");
+  assert.equal(h.q(".fc-composer-ref .fc-quote")!.textContent, "cut", "anchored over the change's span");
+  assert.equal((h.q('input[data-opt="about"]') as E).checked, true, "about this change, checked");
+  assert.equal(h.q(".fc-about-opt span")!.textContent, "about this change");
   assert.equal(h.box().placeholder, "Your comment");
   assert.equal(h.card("chg:h1")!.contains(h.composer()), false, "the change card holds no box: the change is not a comment to answer under");
+  assert.ok(h.q('[data-act="fcchangereply"]') === null, "no Reply on a change card");
   h.startReply(passage.id, passage.id);
   assert.deepEqual(h.sections(), NO_SLOT, "…and a reply takes it into the card again");
   h.dispose();
@@ -547,17 +556,17 @@ test("Escape, Cancel and a save hand the keyboard back to the card's Reply; a ke
   const h = await harness();
   await h.open();
   h.startReply(passage.id, passage.id);
-  assert.equal(doc.activeElement, h.box());
+  assert.ok(doc.activeElement === h.box(), "doc.activeElement is h.box()");
   const ev = h.key({ key: "Escape" });
   assert.equal(ev.defaultPrevented, true);
   assert.equal(h.composer().hidden, true, "cancelled");
-  assert.equal(doc.activeElement, h.replyBtn(passage.id), "Escape: the keyboard is on the Reply that opened the box");
+  assert.ok(doc.activeElement === h.replyBtn(passage.id), "Escape: the keyboard is on the Reply that opened the box");
   assert.ok(h.card(passage.id)!.classList.contains("open"), "the card stays open under it");
   // Cancel, from the keyboard on the box
   h.click('[data-act="fcreply"][data-id="' + passage.id + '"]');
-  assert.equal(doc.activeElement, h.box());
+  assert.ok(doc.activeElement === h.box(), "doc.activeElement is h.box()");
   h.click('[data-act="fccancel"]');
-  assert.equal(doc.activeElement, h.replyBtn(passage.id), "Cancel: the same");
+  assert.ok(doc.activeElement === h.replyBtn(passage.id), "Cancel: the same");
   // a save: the reply lands, the composer closes, the keyboard is on the rebuilt card's Reply
   h.click('[data-act="fcreply"][data-id="' + passage.id + '"]');
   h.box().value = "The response cache, then.";
@@ -568,12 +577,12 @@ test("Escape, Cancel and a save hand the keyboard back to the card's Reply; a ke
   assert.equal(h.composer().hidden, true, "saved: the composer closes");
   assert.deepEqual(h.sections(), SLOT);
   assert.equal(h.card(passage.id)!.querySelectorAll(".fc-reply").length, 3, "the new turn is on the card");
-  assert.equal(doc.activeElement, h.replyBtn(passage.id), "a save: the keyboard is on Reply, ready for the next");
+  assert.ok(doc.activeElement === h.replyBtn(passage.id), "a save: the keyboard is on Reply, ready for the next");
   // the keyboard was not in the box (the person clicked into the file): Cancel moves it nowhere
   h.click('[data-act="fcreply"][data-id="' + passage.id + '"]');
   doc.activeElement = doc.body;
   h.click('[data-act="fccancel"]');
-  assert.equal(doc.activeElement, doc.body, "not ours to move");
+  assert.ok(doc.activeElement === doc.body, "not ours to move");
   // a whole-file comment's Escape moves the keyboard nowhere either: there is no Reply it came from
   h.click('[data-act="fcfile"]');
   h.key({ key: "Escape" });
@@ -595,7 +604,8 @@ test("source: render builds the cards before the composer and puts the typing bo
   assert.match(SRC, /if \(typing && document\.activeElement !== this\.input\) this\.input\.focus\(\{ preventScroll: true \}\);/, "a moved node drops its focus; render puts it back");
   assert.match(SRC, /if \(this\.noteBox\.scrollTop !== noteScroll\) this\.noteBox\.scrollTop = noteScroll;/, "the note box keeps its scroll offset across the rebuild, as the composer's box does (its keyboard: file-comments-send-note.test.ts)");
   const place = SRC.slice(SRC.indexOf("  private placeComposer(): boolean {"), SRC.indexOf("  private renderCards("));
-  assert.ok(place.includes(`this.sections.cards.querySelector('.fc-card[data-id="' + id + '"], .fc-hosted[data-id="' + id + '"]')`), "the card by comment id — its own, or its box on the change card");
+  assert.ok(place.includes(`this.sections.cards.querySelector('.fc-card[data-id="' + id + '"]')`), "the card by comment id: its own (before the about follow-on, 2026-09-10, or the comment's box on the change card)");
+  assert.ok(!place.includes("fc-hosted"), "no other card can hold the box");
   assert.ok(place.includes("if (at < 0 || at !== want - 1) parent.insertBefore(box, next);"), "no move when the box is already where it belongs (a move drops the keyboard)");
   assert.ok(place.includes('n.classList.contains("fc-actions")') && place.includes("before(root, this.sections.cards);"), "before the buttons in a card; before the cards in the slot");
   assert.ok(place.includes('box.classList.add("fc-composer-in");') && place.includes('box.classList.remove("fc-composer-in");'), "the in-card dress on and off");
@@ -603,7 +613,7 @@ test("source: render builds the cards before the composer and puts the typing bo
   assert.match(SRC, /ref\.hidden = inCard;/, "no reference row in the card");
   assert.match(SRC, /this\.input\.placeholder = c\.kind === "reply" \? "Your reply" : "Your comment";/);
   assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.id\) \|\| this\.replyTo\(\) === c\.id;/, "a comment card is open while its reply is written");
-  assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.key\) \|\| c\.comments\.some\(\(cm\) => cm\.id === this\.replyTo\(\)\);/, "a change card too, for a hosted comment's reply");
+  assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.key\);/, "a change card is open by its own key alone: no reply's box stands in it (the about follow-on, 2026-09-10)");
   assert.match(SRC, /fccard: \(x\) => \{ const id = x\.dataset\.id!; if \(!this\.openCards\.has\(id\)\) this\.openCards\.add\(id\); else if \(!this\.hostsReply\(id\)\) this\.openCards\.delete\(id\); this\.render\(\); \},/, "the head folds every card but the one hosting the reply");
   assert.match(SRC, /this\.render\(\);\n\s*this\.showComposer\(\);[^\n]*\n\s*this\.input\.focus\(\);\n\s*\}/, "startReply scrolls the box's place into view (showComposer: scrollIntoView outside the margin layout), then focuses it");
   assert.match(SRC, /const held = this\.composerBox\.contains\(document\.activeElement\);/, "closeComposer reads where the keyboard is before hiding the box");
@@ -631,7 +641,9 @@ test("docs: the guide says Reply opens the box inside the card; the plan's follo
   assert.ok(files.includes("**Reply** opens the reply box inside the card, under the comment and its replies"), "the guide");
   assert.ok(!files.includes("reply into it"), "the old phrase is gone");
   const note = flat(PLAN.slice(PLAN.indexOf("The composer follow-on (2026-09-07)"), PLAN.indexOf("### Slice 3: region comments on images")));
-  for (const phrase of ["inside the card it answers", "below the comment's turns and above its buttons", "across the poll's re-render", "resolved into the closed fold", "its change card behind the \"… N more changes\" row", "gone from the sidecar", "returns to the panel's slot", "a line saying why", "hands the keyboard back to the card's Reply", "file-comments-reply-place.test.ts"]) {
+  // (the note's "its change card behind the … N more changes row" is not held: no comment is behind that fold since the about
+  // follow-on, 2026-09-10, and the plan's wording of that is the user's)
+  for (const phrase of ["inside the card it answers", "below the comment's turns and above its buttons", "across the poll's re-render", "resolved into the closed fold", "gone from the sidecar", "returns to the panel's slot", "a line saying why", "hands the keyboard back to the card's Reply", "file-comments-reply-place.test.ts"]) {
     assert.ok(note.includes(phrase), "the plan's note says: " + phrase);
   }
 });

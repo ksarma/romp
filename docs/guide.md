@@ -466,9 +466,9 @@ inline**, beside Track changes, hides the marks and shows them again; with the m
 the file reads as it is and the cards alone show the changes. The setting is kept for every
 file you open. Once a file has a comment or a change, **All**, **Comments**, and **Changes**
 appear under those two toggles and choose what the panel lists; Comments and Changes show
-their counts. **Comments** lists only the comments, including comments on changes, and hides
-the change marks in the file; **Changes** lists only the changes, each with the comments made
-on it, and hides the comment highlights and the rectangles on figures; **All** lists both. The
+their counts. **Comments** lists only the comments, comments about changes among them, and hides
+the change marks in the file; **Changes** lists only the changes, each counting the comments
+about it, and hides the comment highlights and the rectangles on figures; **All** lists both. The
 choice is kept like the marks setting and changes only what is shown: **Send to session**
 still sends everything unsent. Every card names its kind, **Comment**, **Change**, or
 **Region**, before the author's chip, and its left edge is colored by kind, the accent for a
@@ -476,10 +476,19 @@ comment and a muted tone for a change, so the two are told apart at a glance. **
 text back in the file. **Accept all** and **Reject all** decide every change at once; Reject
 all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
 deletion, since a point is easy to miss; a change the current view does not mark, because it
-cannot or because the marks are hidden, offers it too. Reply on a change's card leaves a
-comment on the change itself, and the session's answer comes back to that card. You can also
-comment inside a change without replying to it: a click on a change mark or a comment highlight
-opens its card, and a selection made by dragging inside one leaves a comment on those words. A session's
+cannot or because the marks are hidden, offers it too. **Comment on this change** on a change's
+card opens the comment box over the change's text with **about this change** checked, so the
+comment names the change and the message tells the session which change it is about; a deletion,
+whose text is no longer in the file, takes a comment about the change alone, laid beside its mark (in the list
+under a narrow column, listed like any other card).
+A comment is never shown inside a change's card: every comment is its own card, and the comment
+and the change each carry a tag for the other, **about a change** on the comment (hover it to ring
+the change's marks) and **N comments** on the change (click it to open the first). Selecting text
+inside a change and pressing Comment leaves an ordinary comment on those words, with the same
+**about** box checked for the change your selection touches (**about N changes** when it touches
+several); uncheck it for a plain comment on the passage. A click on a change mark or a comment
+highlight opens its card, and a selection made by dragging inside one leaves a comment on those
+words. A comment an older session's edit answered wears **answered by a change** instead. A session's
 tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
@@ -496,7 +505,7 @@ the editor rewrites its line endings, which would move them; accept or reject th
 
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with
-what it refers to and the commands the session needs to answer it. The number on the button
+what it refers to, the changes it is about, and the commands the session needs to answer it. The number on the button
 is what will go, and the confirm lists it, with a box for anything you want to add in your own
 words, which go first in the message; words alone send too. When a
 todo under Waiting on you names this file, or you opened the file from a todo, a checkbox
@@ -517,7 +526,12 @@ it when the session has gone quiet, in which case the message goes when it wakes
 While the panel is open it checks the file, its comments, and the project's tracking list
 every few seconds, so a reply the session writes appears without a reload and a file the
 session rewrote is shown as it is now.
-A line under the panel's header counts the changes, comments, and replies the session added since you last looked, and each of their cards wears a dot until you scroll or click with it in view; click the line to open the first of them. The first comment, like the first save, asks once
+A line under the panel's header counts the changes, comments, and replies the session added since you last looked, and each of their cards wears a dot until you scroll or click with it in view; click the line to open the first of them.
+Nothing resolves a comment but you: **Resolve** on its card, or **Resolve answered (N)** in the panel's header, shown once
+the session has replied to N of your open comments since you last wrote on them (a revision counts as a reply), which
+resolves those N after a plain confirm and offers **Reopen all** where the sent acknowledgment stands (in the list under
+a narrow column, under the panel's header) until your next scroll, click, tap, or key. The first comment, like the first
+save, asks once
 whether the dashboard may write files on that machine; the same switch, **File editing** in
 the gear, turns it off again, and while it is off a send is refused too (it writes the log)
 and asks for the consent back. The **Log** at the foot of the panel is the comments log: what

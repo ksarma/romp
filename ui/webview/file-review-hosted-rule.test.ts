@@ -1,15 +1,15 @@
 // The plan's account of which panel elements have a rule of their own (plans/file-review.md, the Slice 2 build note
-// and the composer follow-on) is held to the sheets. The Slice 2 note said the new elements (.fc-change, .fc-group,
-// .fc-hosted, .fc-foot, .fc-diff) wear the Slice 1 classes and need no rule of their own; the review of the reply-place
-// follow-on (2026-09-07) gave .fc-hosted one (a flex column at the turns' gap, both sheets; feed-fc-hosted-gap.test.ts
-// pins the rule itself), and for a round the plan still listed .fc-hosted among the elements that need none, while the
-// follow-on paragraph never named the rule. A reader of that sentence would take the rule for a stray and remove it,
-// or not mirror it when the block is next edited, and the 0px seam would be back. This file holds the two sides
-// together, the way file-review-docs.test.ts holds the Tests and Docs sections to the tree: the Slice 2 sentence
-// names .fc-hosted as its one exception; every other element it lists has no rule of its own in either sheet (so the
-// sentence stays true of them); .fc-hosted has one in both sheets (so the exception stays true); and the follow-on
-// note names the rule and the test that pins it, which exists. Whichever side moves first, the plan or a sheet, a
-// test here names the other. Prose is matched across line wraps. Synthetic throughout — nothing here renders.
+// and the composer follow-on) is held to the sheets. The Slice 2 note lists the elements the build added as wearing the
+// Slice 1 classes and needing no rule of their own. For a while one of them, `.fc-hosted` (the comment drawn inside a
+// change card), had a rule after all (a flex column at the turns' gap, in both sheets, from the reply-place follow-on's
+// review, 2026-09-07), and this file held the plan's exception to the sheets. The about follow-on (2026-09-10) draws no
+// comment inside a change card: the element, its rule in both sheets and the test that pinned the rule
+// (feed-fc-hosted-gap.test.ts) are gone. This file now holds the other direction: every element the note lists has no
+// rule of its own in either sheet (so the sentence stays true of them), and `.fc-hosted` is in neither sheet nor the
+// panel (so nothing brings the element or its rule back unnoticed). The plan's wording of the element's departure is the
+// user's and is matched loosely here: a mention of `.fc-hosted` in either note must sit with the about follow-on that
+// removed it, so a rewording does not fail this file. Prose is matched across line wraps. Synthetic throughout: nothing
+// here renders.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -20,6 +20,7 @@ const read = (...p: string[]) => fs.readFileSync(path.join(ROOT, ...p), "utf8");
 const PLAN = read("plans", "file-review.md");
 const FEED = read("ui", "webview", "feed.css");
 const CHAT = read("ui", "webview", "styles.css");
+const PANEL = read("ui", "webview", "file-comments.ts");
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** A phrase as the plan wraps it: any run of whitespace between words. */
@@ -38,26 +39,31 @@ const hasOwnRule = (css: string, cls: string) => new RegExp("(?:^|\\n|,[ \\t]*)"
 const SLICE2 = between(PLAN, "The Slice 2 build (2026-09-06), panel side", "The composer follow-on (2026-09-07)");
 const FOLLOW_ON = between(PLAN, "The composer follow-on (2026-09-07)", "### Slice 3: region comments on images");
 /** The elements the Slice 2 note lists as wearing the Slice 1 classes, read from the note itself. */
-const listed = Array.from(SLICE2.match(/The new\s+elements \(([^)]+)\)/)![1].matchAll(/`(\.fc-[a-z-]+)`/g), (m) => m[1]);
+function listedElements(): string[] {
+  const m = SLICE2.match(/The new\s+elements \(([^)]+)\)/);
+  assert.ok(m, "the Slice 2 note lists the new elements in parentheses");
+  return Array.from(m![1].matchAll(/`(\.fc-[a-z-]+)`/g), (x) => x[1]);
+}
 
-test("the Slice 2 note lists the new elements and names .fc-hosted as the one that has a rule of its own", () => {
-  assert.deepEqual(listed, [".fc-change", ".fc-group", ".fc-hosted", ".fc-foot", ".fc-diff"], "the list the note gives");
-  assert.match(SLICE2, prose("need no rule of their own to be usable, all but `.fc-hosted`"), "the exception, in the same sentence as the claim");
-  assert.match(SLICE2, prose("gave a flex-column rule at the turns' gap"), "what the exception's rule is");
-});
-
-test("the sheets agree: no rule of its own for the elements the note says need none, one in both sheets for .fc-hosted", () => {
-  for (const [name, css] of [["feed.css", FEED], ["styles.css", CHAT]] as const) {
-    for (const cls of listed.filter((c) => c !== ".fc-hosted")) {
-      assert.ok(!hasOwnRule(css, cls), `${name} has a rule of its own for ${cls}; the plan's Slice 2 note says it needs none — change the note or the sheet`);
-    }
-    assert.ok(hasOwnRule(css, ".fc-hosted"), `${name} has no .fc-hosted rule; the plan says both sheets carry one (feed-fc-hosted-gap.test.ts pins its shape)`);
+test("the Slice 2 note lists the new elements, none of them .fc-hosted, and says they need no rule of their own", () => {
+  const listed = listedElements();
+  assert.ok(listed.length > 0, "the list the note gives: " + listed.join(", "));
+  assert.ok(!listed.includes(".fc-hosted"), ".fc-hosted is not among the elements the panel has");
+  assert.match(SLICE2, prose("need no rule of their own to be usable"), "the claim");
+  for (const [name, note] of [["the Slice 2 note", SLICE2], ["the composer follow-on note", FOLLOW_ON]] as const) {
+    if (note.includes(".fc-hosted")) assert.match(note, /about follow-on/, name + " mentions .fc-hosted only beside the about follow-on that removed it");
   }
 });
 
-test("the follow-on note names the .fc-hosted rule, the seam it closed, and the test that pins it", () => {
-  assert.match(FOLLOW_ON, prose("A comment on a change card (`.fc-hosted`) had no rule of its own until then"));
-  assert.match(FOLLOW_ON, prose("it is a flex column at the turns' own gap now, in both sheets"));
-  assert.match(FOLLOW_ON, prose("(`feed-fc-hosted-gap.test.ts`)"), "the test the note credits");
-  assert.ok(fs.existsSync(path.join(ROOT, "ui", "webview", "feed-fc-hosted-gap.test.ts")), "and that file exists");
+test("the sheets agree: no rule of its own for any element the note lists, and no .fc-hosted rule or class in either sheet or the panel", () => {
+  const listed = listedElements();
+  for (const [name, css] of [["feed.css", FEED], ["styles.css", CHAT]] as const) {
+    for (const cls of listed) assert.ok(!hasOwnRule(css, cls), `${name} has a rule of its own for ${cls}; the plan's Slice 2 note says it needs none; change the note or the sheet`);
+    assert.ok(!css.includes(".fc-hosted"), `${name} still names .fc-hosted; the element went with the about follow-on (2026-09-10)`);
+  }
+  assert.ok(!PANEL.includes("fc-hosted") && !PANEL.includes("renderHosted"), "the panel draws no comment inside a change card");
+});
+
+test("the test that pinned the .fc-hosted rule is gone with the rule", () => {
+  assert.ok(!fs.existsSync(path.join(ROOT, "ui", "webview", "feed-fc-hosted-gap.test.ts")), "feed-fc-hosted-gap.test.ts would pin a rule neither sheet has");
 });

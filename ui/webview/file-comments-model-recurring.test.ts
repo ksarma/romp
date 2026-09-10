@@ -90,7 +90,7 @@ test("ANCHOR_CTX is the engine's default context and the host's: 24, pinned at b
   assert.equal(ANCHOR_CTX, 24);
   assert.match(HOST, /^export const ANCHOR_CTX = 24;$/m, "the host's constant — uniqueAnchor starts here and widens from here");
   assert.match(ENGINE, /const c = ctx == null \? 24 : ctx;/, "engine.js makeAnchor's default, what track-comment and the other editors write");
-  assert.match(MODEL, /return passageDesc\(c\.anchor\);/, "describeComment routes every anchored comment through passageDesc, so the injected-voice scan reaches its phrases");
+  assert.match(MODEL, /else if \(c\.anchor && typeof c\.anchor\.quote === "string" && c\.anchor\.quote\) head = passageDesc\(c\.anchor\);/, "describeComment routes every anchored comment through passageDesc, so the injected-voice scan reaches its phrases");
 });
 
 test("a passage unique at the default context keeps the plan's form, with or without anchorAt", () => {

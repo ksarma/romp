@@ -92,19 +92,22 @@ class GuideAnchors(unittest.TestCase):
         panel = _read("ui", "webview", "file-comments.ts")
         self.assertIn('el("span", "fc-tag", "passage recurs")', panel, "the tag the guide names is the one the panel adds")
 
-    def test_the_adr_names_both_additive_fields(self):
+    def test_the_adr_names_the_additive_fields(self):
         adr = _flat(_read("docs", "adr", "0002-file-comments-in-the-track-changents-sidecar.md"))
-        self.assertIn("Under that rule the sidecar now carries two additive fields, `target` (a region) and `anchorAt`", adr)
+        self.assertIn("Under that rule the sidecar now carries three additive fields on a comment, `target` (a region), "
+                      "`anchorAt`", adr)
         self.assertIn("the anchors follow-on, 2026-09-07", adr)
+        self.assertIn("`changeIds` (the changes the comment is about, by id, the person's own pick; the about follow-on, "
+                      "2026-09-10)", adr)
 
     def test_the_fields_the_adr_names_are_optional_fields_of_the_store_comment(self):
         # The names come from the ADR's sentence, not from here: a field the ADR renames or adds is looked up
         # under its new name. "Additive" means optional on the type, whatever line or order the type puts it on.
         adr = _flat(_read("docs", "adr", "0002-file-comments-in-the-track-changents-sidecar.md"))
-        m = re.search(r"two additive fields, `(\w+)` \([^)]*\) and `(\w+)` \(", adr)
-        self.assertIsNotNone(m, "the ADR's Consequences name the two fields")
+        m = re.search(r"three additive fields on a comment, `(\w+)` \([^)]*\), `(\w+)` \([^)]*\) and `(\w+)` \(", adr)
+        self.assertIsNotNone(m, "the ADR's Consequences name the three fields")
         names = m.groups()
-        self.assertEqual(sorted(names), ["anchorAt", "target"])
+        self.assertEqual(sorted(names), ["anchorAt", "changeIds", "target"])
         model = _read("ui", "webview", "file-comments-model.ts")
         typ = re.search(r"export type StoreComment = \{(.*?)\n\};", model, re.S)
         self.assertIsNotNone(typ, "the store comment type")

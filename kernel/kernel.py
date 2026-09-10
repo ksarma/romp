@@ -46269,7 +46269,11 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text,
     (on "<passage>" — for a passage the host widened because it recurs, followed by the copy's
     surroundings, `, the one after "…" and before "…"`, or past the model's bound by the short clause
     that it appears more than once (file-comments-model.ts passageDesc); on this file; on the region
-    at …); `body` is the comment's unsent turns
+    at …; and after the passage or alone, the changes the comment is about, `about your change "<old>"
+    to "<new>"`, `about the text you added "<new>"`, `about the text you removed "<old>"`, several
+    joined as a list (the about follow-on, 2026-09-10; file-comments-model.ts describeComment and
+    aboutClause: the comment's stored `changeIds`, the person's own pick of the changes it is about,
+    each with its texts from the sidecar or the comments log); `body` is the comment's unsent turns
     verbatim. The path and every request-supplied string are marker-neutralized; on the two command
     lines the path is then one shell word (_sh_word), in the prose it stays plain. The second
     "To respond" bullet depends on the file: plain track-edit for a TRACKED text file (never

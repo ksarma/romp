@@ -6,9 +6,10 @@
 //   • Comment on this file, a picture's Comment, a selection's Comment or a region drawn over a reply left the card's head
 //     saying it would not fold (holdHead: aria-disabled, a title) while a click on it already folded the card; the kind
 //     change renders the cards too (renderFrom), as Cancel did.
-//   • A resolved comment bound to a change is shown on the change card, never under Resolved (changeCards), so the slot's
-//     row for one behind "… N more changes" named a Resolved fold that was not rendered; replyAway tests the fold that can
-//     hide the card.
+//   • The slot's row names what hides the card, and only that (replyAway): the Resolved fold for a resolved comment, the
+//     Changes filter otherwise. Before the about follow-on (2026-09-10) a resolved comment bound to a change was shown on the
+//     change card, never under Resolved, and the review found the row naming a Resolved fold the list did not render for one
+//     behind "… N more changes"; every comment is its own card now, so no comment is behind the changes fold.
 //   • Escape or Cancel with the box in the slot found no Reply to hand the keyboard to and left it on the hidden box (the
 //     body, in a browser); it goes to the fold row the slot's line names, or to the nearest control (focusAway).
 //   • The textarea's scroll offset across the box's move was pinned at source only; here the stand-in's detach zeroes a
@@ -310,11 +311,13 @@ const sub = (id: string, word: string, was: string, ts: number): Hunk => {
 const sugg = (x: Hunk) => ({ id: x.id, author: x.author, authorId: SID, ts: x.ts, kind: x.kind, from: x.curFrom, oldText: x.oldText, newText: x.newText });
 const hA = sub("hA", "cut", "reduced", T0 - 90000), hB = sub("hB", "shipping", "releasing", T0 - 80000);
 const hC = sub("hC", "Risks", "Hazards", T0 - 70000), hD = sub("hD", "measure", "check", T0 - 60000);
-/** A RESOLVED comment bound to the fourth paragraph's change: shown on the change card all the same (changeCards). */
+/** A RESOLVED comment the fourth paragraph's change answered: under the Resolved fold like any resolved comment (the about
+ *  follow-on, 2026-09-10; before it, shown on the change card all the same), and not counted on the change's card
+ *  (commentsAbout counts the open ones). */
 const onD: StoreComment = { id: T0 + 2000 + "-9", author: "you", ts: T0 + 2000, body: "Measure what, exactly?", suggestionId: "hD", replies: [], resolved: true };
 const THREE: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: [hB, hC, hD].map(sugg), comments: [whole, onD] }, hunks: [hB, hC, hD], unsent: unsent(whole.id) };
 const FOUR: Partial<Status> = { store: { v: 3, path: "docs/report.md", suggestions: [hA, hB, hC, hD].map(sugg), comments: [whole, onD] }, hunks: [hA, hB, hC, hD], unsent: unsent(whole.id), storeMtimeNs: "1757145600000000011" };
-const FOLD_LINE = "fc-note:The comment's card is under “… 1 more change” below; the reply still goes to it.";
+const CHANGES_LINE = "fc-note:The comment's card is hidden while Changes is chosen above (All or Comments shows it); the reply still goes to it.";
 const HOLD = "The card stays open while its reply is written; Save or Cancel the reply first";
 
 // ── the harness: a mounted panel inside the viewer's body row ──────────────────────────────────────
@@ -358,7 +361,6 @@ async function harness(over: Partial<FileViewActionCtx> = {}) {
     box: (): E => { const b = main.querySelector("textarea.fc-input"); assert.ok(b, "the comment box is a textarea"); return b!; },
     composer: (): E => { const c = main.querySelector(".fc-composer"); assert.ok(c, "the composer box"); return c!; },
     card: (id: string): E | null => main.querySelector('.fc-card[data-id="' + id + '"]'),
-    hosted: (id: string): E | null => main.querySelector('.fc-hosted[data-id="' + id + '"]'),
     head: (key: string): E => { const e = main.querySelectorAll(".fc-card-head").find((x) => x.dataset.id === key); assert.ok(e, "the head of " + key); return e!; },
     replyBtn: (id: string): E | null => main.querySelectorAll('[data-act="fcreply"]').find((b) => b.dataset.id === id) || null,   // by the id as data: it may hold a quote
     cardBy: (id: string): E | null => main.querySelectorAll('.fc-card').find((c) => c.dataset.id === id) || null,
@@ -453,44 +455,53 @@ test("Comment on this file over a reply, and a picture's Comment: the head of th
   h.dispose();
 });
 
-// ── the slot's row for a resolved comment on a change card behind the fold ────────────────────────
+// ── the slot's row for a resolved comment a change answered ───────────────────────────────────────
 
-test("a resolved comment bound to a change whose card is behind “… 1 more change”: the row names that fold — the one that hides the card — not a Resolved fold the list does not render", async () => {
+test("a resolved comment answered by a change: its card is under the Resolved fold like any resolved comment's, and the change card counts it among no open comments; Reply from the open fold puts the box in that card, the changes fold moves nothing, and closing Resolved sends the box to the slot with the row naming Resolved", async () => {
   const h = await harness({ text: () => DOC, mode: () => "raw" });
   await h.open(FOUR);
-  assert.equal(h.card("chg:hD"), null, "the fourth paragraph's change is behind the fold");
-  assert.equal(h.q('[data-act="fcresolved"]'), null, "no Resolved fold: the resolved comment is on its change card (changeCards)");
+  assert.ok(h.card("chg:hD") === null, "the fourth paragraph's change is behind the fold");
+  assert.ok(h.card(onD.id) === null, "the resolved comment is under the closed Resolved fold");
+  assert.equal(h.q('[data-act="fcresolved"]')!.textContent, "▸ Resolved (1)", "the fold is rendered for it");
   h.click('[data-act="fcmore"]');
-  h.startReply("chg:hD", onD.id);
-  const box = h.box();
+  assert.ok(h.card("chg:hD"), "every change shown");
+  assert.ok(h.card("chg:hD")!.querySelector(".fc-about-count") === null, "the change card counts open comments only: none for a resolved one");
+  h.click('[data-act="fcresolved"]');
+  assert.ok(h.card(onD.id), "the fold shows the comment's own card");
+  assert.deepEqual(h.card(onD.id)!.querySelectorAll(".fc-card-head .fc-tag").map((t) => t.textContent), ["answered by a change", "resolved"], "the card names the change and its own state");
+  h.startReply(onD.id, onD.id);                       // its render rebuilds the list (the box was in the slot): the card node is read after it
+  const box = h.box(), card = h.card(onD.id);
   draft(box, "The p99.", 8, 42);
-  assert.ok(h.hosted(onD.id)!.contains(h.composer()), "the box stands in the comment's box on the change card");
-  assert.ok(h.hosted(onD.id)!.querySelectorAll(".fc-tag").some((t) => t.textContent === "resolved"), "…where the comment shows with its resolved tag");
+  assert.ok(card && card.contains(h.composer()), "the box stands in the comment's own card");
   h.click('[data-act="fcmore"]');                     // ▾ Fewer changes
-  assert.equal(h.card("chg:hD"), null);
+  assert.ok(h.card("chg:hD") === null);
+  assert.ok(h.card(onD.id) === card && card!.contains(h.composer()), "the changes fold hides the change card and nothing else");
+  assert.deepEqual(h.sections(), NO_SLOT);
+  h.click('[data-act="fcresolved"]');                 // the person closes Resolved
+  assert.ok(h.card(onD.id) === null);
   assert.deepEqual(h.sections(), SLOT);
-  assert.equal(h.row()[1], FOLD_LINE, "the row names the change fold");
-  assert.equal(h.q('[data-act="fcresolved"]'), null, "…and there is still no Resolved fold to have named");
+  assert.equal(h.row()[1], "fc-note:The comment's card is under “Resolved” below; the reply still goes to it.", "the row names the Resolved fold: the comment was resolved when the reply began");
   assert.equal(h.q('[data-act="fcmore"]')!.textContent, "… 1 more change");
-  h.click('[data-act="fcmore"]');
-  assert.ok(h.hosted(onD.id)!.contains(h.composer()), "the named row brings the card and the box back");
+  h.click('[data-act="fcresolved"]');
+  assert.ok(h.card(onD.id)!.contains(h.composer()), "the named row brings the card and the box back");
   assert.equal(box.value, "The p99.");
   h.dispose();
-  // the poll's way: the fourth change lands in the first paragraph while the reply is written
+  // the poll's way: the fourth change lands in the first paragraph while the reply is written; the comment's card is untouched
   const g = await harness({ text: () => DOC, mode: () => "raw" });
   await g.open(THREE);
-  g.startReply("chg:hD", onD.id);
+  g.click('[data-act="fcresolved"]');
+  g.startReply(onD.id, onD.id);
   draft(g.box(), "The p99.", 8, 42);
   await g.repoll(FOUR);
-  assert.equal(g.card("chg:hD"), null, "pushed past the limit");
-  assert.deepEqual(g.sections(), SLOT);
-  assert.equal(g.row()[1], FOLD_LINE, "the change fold, not “resolved meanwhile”: nothing about the comment changed");
+  assert.ok(g.card("chg:hD") === null, "pushed past the limit");
+  assert.ok(g.card(onD.id)!.contains(g.composer()), "the box stays in the comment's card: nothing about the comment changed");
+  assert.deepEqual(g.sections(), NO_SLOT);
   g.dispose();
 });
 
 // ── Escape or Cancel with the box in the slot ─────────────────────────────────────────────────────
 
-test("Escape or Cancel with the box in the slot: the keyboard goes to the fold row that hides the card — Resolved, or the changes fold — and with none, to the first card's head; never to the body", async () => {
+test("Escape or Cancel with the box in the slot: the keyboard goes to the row that hides the card, the Resolved fold or the Changes filter's All, and with none, to the first card's head; never to the body", async () => {
   // the comment resolved meanwhile: its card is under the closed Resolved fold
   const h = await harness();
   await h.open();
@@ -505,17 +516,20 @@ test("Escape or Cancel with the box in the slot: the keyboard goes to the fold r
   h.click('[data-act="fcresolved"]');
   assert.ok(h.card(passage.id), "…and Enter there shows the card");
   h.dispose();
-  // a hosted comment's change card behind the changes fold: Cancel
+  // the comment's card hidden by the Changes filter: Cancel puts the keyboard on the filter group's first button, All (before
+  // the about follow-on, 2026-09-10, this leg had the comment on its change card behind the changes fold, and the keyboard
+  // went to the "… 1 more change" row)
   const g = await harness({ text: () => DOC, mode: () => "raw" });
   await g.open({ ...FOUR, store: { v: 3, path: "docs/report.md", suggestions: [hA, hB, hC, hD].map(sugg), comments: [whole, { ...onD, resolved: false }] } });
-  g.click('[data-act="fcmore"]');
-  g.startReply("chg:hD", onD.id);
+  g.startReply(onD.id, onD.id);
   draft(g.box(), "The p99.", 8, 42);
-  g.click('[data-act="fcmore"]');
-  assert.deepEqual(g.sections(), SLOT); assert.equal(g.row()[1], FOLD_LINE);
+  g.click('[data-act="fcfilter"][data-key="changes"]');
+  assert.deepEqual(g.sections(), SLOT); assert.equal(g.row()[1], CHANGES_LINE);
   g.click('[data-act="fccancel"]');
   assert.equal(g.composer().hidden, true);
-  assert.ok(doc.activeElement === g.q('[data-act="fcmore"]'), "Cancel: the keyboard is on the “… 1 more change” row");
+  const back = doc.activeElement as E;
+  assert.equal(back.dataset.act, "fcfilter", "Cancel: the keyboard is on the filter row that hides the card");
+  assert.equal(back.dataset.key, "all", "…its first button, All, which shows the card again");
   g.dispose();
   // the comment gone from the sidecar: no fold hides its card, so the nearest control below the slot
   const k = await harness();
@@ -585,7 +599,7 @@ test("the session rewrites the passage under an open reply: the repaint's locate
 
 // ── the held head's words, where the title cannot reach ───────────────────────────────────────────
 
-test("on a coarse pointer the held head's words stand under it as a line, on the comment's card and on a change card alike; a fine pointer keeps the title alone", async () => {
+test("on a coarse pointer the held head's words stand under it as a line on the comment's card (a change card never holds a reply, so never the line); a fine pointer keeps the title alone", async () => {
   pointer(true);
   try {
     const h = await harness();
@@ -598,25 +612,29 @@ test("on a coarse pointer the held head's words stand under it as a line, on the
     h.click('.fc-card[data-id="' + passage.id + '"] .fc-card-head');   // a tap: the card stays, the words are there to read
     assert.ok(h.card(passage.id)!.classList.contains("open")); assert.ok(h.card(passage.id)!.querySelector(".fc-held"));
     h.click('[data-act="fccancel"]');
-    assert.equal(h.card(passage.id)!.querySelector(".fc-held"), null, "Cancel: the line goes with the reply");
-    assert.equal(h.card("chg:h1")!.querySelector(".fc-held"), null, "no other card wears it");
-    h.startReply("chg:h1", bound.id);
-    assert.deepEqual(h.kids(h.card("chg:h1")!).slice(0, 2), ["fc-card-head", "fc-note fc-held"], "a change card hosting the reply: the line under its head");
+    assert.ok(h.card(passage.id)!.querySelector(".fc-held") === null, "Cancel: the line goes with the reply");
+    assert.ok(h.card("chg:h1")!.querySelector(".fc-held") === null, "no other card wears it");
+    // a reply on the comment the change answered: the line stands in the comment's own card, never in the change card (no
+    // reply's box stands in one since the about follow-on, 2026-09-10)
+    h.startReply(bound.id, bound.id);
+    assert.deepEqual(h.kids(h.card(bound.id)!).slice(0, 2), ["fc-card-head", "fc-note fc-held"], "the comment's card: the line under its head");
+    assert.ok(h.card("chg:h1")!.querySelector(".fc-held") === null, "the change card wears no line");
+    assert.equal(h.head("chg:h1").getAttribute("aria-disabled"), null, "…and its head is not held");
     h.key({ key: "Escape" });
-    assert.equal(h.card("chg:h1")!.querySelector(".fc-held"), null);
+    assert.ok(h.card(bound.id)!.querySelector(".fc-held") === null);
     h.dispose();
   } finally { pointer(null); }
   const g = await harness();
   await g.open();
   g.startReply(passage.id, passage.id);
-  assert.equal(g.card(passage.id)!.querySelector(".fc-held"), null, "a fine pointer: no line, the card keeps its compact form");
+  assert.ok(g.card(passage.id)!.querySelector(".fc-held") === null, "a fine pointer: no line, the card keeps its compact form");
   assert.equal(g.head(passage.id).title, HOLD, "…the title says it");
   g.dispose();
 });
 
 // ── pinned at source ──────────────────────────────────────────────────────────────────────────────
 
-test("source: every kind change over a reply renders the cards (renderFrom); the ids go through cssId in every selector; replyAway names the fold and tests the change fold for a bound comment; focusAway", () => {
+test("source: every kind change over a reply renders the cards (renderFrom); the ids go through cssId in every selector; replyAway names the Changes filter or the Resolved fold, never the changes fold; focusAway", () => {
   const slice = (from: string, to: string): string => { const a = SRC.indexOf(from), b = SRC.indexOf(to, a); assert.ok(a >= 0 && b > a, from); return SRC.slice(a, b); };
   // onRegionDrawn keeps one renderComposer: the re-place path, which closes a "replace" composer (never a reply)
   for (const [name, from, to, alone] of [
@@ -637,10 +655,11 @@ test("source: every kind change over a reply renders the cards (renderFrom); the
   assert.match(SRC, /this\.root\?\.querySelector\('\.fc-card\[data-id="' \+ cssId\(id\) \+ '"\]'\)\?\.scrollIntoView/, "scrollCard's");
   // every selector built from an id: placeComposer's `id` is cssId(r) already; the rest wrap the id where they build the string
   const raw = SRC.match(/\[data-id="' \+ (?!cssId\()[\w.()]+ \+ '"\]/g) || [];
-  assert.deepEqual(raw, ['[data-id="\' + id + \'"]', '[data-id="\' + id + \'"]'], "the two raw-looking selectors are placeComposer's, over the escaped id");
-  assert.match(SRC, /const id = r === null \? null : cssId\(r\);\s*\/\/[^\n]*\n\s*const host = id === null \? null : this\.sections\.cards\.querySelector\('\.fc-card\[data-id="' \+ id \+ '"\], \.fc-hosted\[data-id="' \+ id \+ '"\]'\)/, "…which escapes it first");
-  assert.match(SRC, /if \(card\.resolved && card\.hunk === null\) return \{ gone: false, back: "fcresolved",/, "replyAway: the Resolved fold only for a comment on its own card");
-  assert.match(SRC, /return \{ gone: false, back: "fcmore", text: "The comment's card is under “" \+ moreChangesLabel\(view\.hiddenChanges\)/, "…the change fold for a bound comment behind it");
+  assert.deepEqual(raw, ['[data-id="\' + id + \'"]'], "the one raw-looking selector is placeComposer's, over the escaped id");
+  assert.match(SRC, /const id = r === null \? null : cssId\(r\);\s*\/\/[^\n]*\n\s*const host = id === null \? null : this\.sections\.cards\.querySelector\('\.fc-card\[data-id="' \+ id \+ '"\]'\)/, "…which escapes it first; the comment's own card is the one card a reply's box can stand in");
+  assert.match(SRC, /if \(this\.activeFilter\(\) === "changes"\) return \{ gone: false, back: "fcfilter", text: "The comment's card is hidden while Changes is chosen above \(All or Comments shows it\); the reply still goes to it\." \};/, "replyAway: the Changes filter, the one row besides the Resolved fold that can hide a comment's card");
+  assert.match(SRC, /if \(found\.resolved\) return \{ gone: false, back: "fcresolved",/, "…the Resolved fold for a resolved comment");
+  assert.doesNotMatch(SRC, /back: "fcmore"/, "no comment is behind the changes fold: none is drawn inside a change card (the about follow-on, 2026-09-10)");
   assert.match(SRC, /if \(was && was\.kind === "reply" && held\) this\.focusAway\(was\);/, "closeComposer hands the keyboard on when no Reply is rendered");
   assert.match(SRC, /const back = this\.replyAway\(was\)\.back;\n\s*const row = back \? root\.querySelector\('\[data-act="' \+ back \+ '"\]'\) as HTMLElement \| null : null;\n\s*if \(row\) row\.focus\(\{ preventScroll: true \}\);\n\s*else this\.focusNear\(\{ act: "fcreply", id: was\.commentId, at: 0 \}\);/, "…to the fold row, else the nearest control");
   assert.match(SRC, /return isCoarsePointer\(\) \? el\("div", "fc-note fc-held", HOLD_WORDS \+ "\."\) : null;/, "the held head's line on a coarse pointer");

@@ -92,13 +92,13 @@ test("the card and the message agree: changeRef's added/removed is changeDesc's 
 
 test("cardModel: a decided insertion's card reads 'added …' and a decided deletion's 'removed …' — the change card's own words — with the decision from the log", () => {
   const cards = cardModel({ v: 3, path: "docs/report.md", suggestions: [], comments: [onH1, onH2, onH3] }, [], [ACCEPT_SUB, ACCEPT_INS, REJECT_DEL]);
-  assert.deepEqual(cards.map((c) => [c.kind, c.ref, c.decision, c.hunk]), [
-    ["change", "reduced → cut", "accepted", null],
-    ["change", "added Cold starts stay slow.", "accepted", null],
-    ["change", "removed quickly", "rejected", null],
-  ]);
+  assert.deepEqual(cards.map((c) => [c.kind, c.ref, c.decision, c.refs[0].state]), [
+    ["file", "reduced → cut", "accepted", "accepted"],
+    ["file", "added Cold starts stay slow.", "accepted", "accepted"],
+    ["file", "removed quickly", "rejected", "rejected"],
+  ], "a comment with no passage naming a change: kind file, the change's words as its reference (the about follow-on: no kind change any more)");
   const pending = cardModel({ v: 3, path: "docs/report.md", suggestions: [], comments: [onH2] }, [h2], []);
-  assert.equal(pending[0].ref, "added Cold starts stay slow."); assert.equal(pending[0].hunk?.id, "h2"); assert.equal(pending[0].decision, null);
+  assert.equal(pending[0].ref, "added Cold starts stay slow."); assert.equal(pending[0].refs[0].id, "h2"); assert.equal(pending[0].refs[0].state, "pending"); assert.equal(pending[0].decision, null);
 });
 
 test("a truncated log: when the host's tail lacks the decision, a bound comment names the change rather than claiming the file; a full log without it keeps the file fallback; an anchor still wins", () => {
@@ -131,7 +131,7 @@ test("a truncated log: when the host's tail lacks the decision, a bound comment 
   assert.equal(viaDecided.comments[0].desc, 'on your change "reduced" to "cut"', "the message names the texts, not the id");
   assert.equal(describeComment(onH1, [], [EDIT], { logTruncated: true, decided }), 'on your change "reduced" to "cut"');
   const cards = cardModel(st, [], [EDIT, EDIT], decided);
-  assert.deepEqual(cards.map((c) => [c.kind, c.ref, c.decision, c.hunk]), [["change", "reduced → cut", "accepted", null]], "the card reads as a decided change, not as a comment on the file");
+  assert.deepEqual(cards.map((c) => [c.kind, c.ref, c.decision, c.refs[0].state]), [["file", "reduced → cut", "accepted", "accepted"]], "the card reads as a comment on a decided change, not as one on the file");
   assert.deepEqual(cardModel(st, [], [EDIT, EDIT]).map((c) => [c.kind, c.ref]), [["file", "this file"]], "without it, the standing fallback — the truncation the field exists for");
   // the lookup order is the sidecar's own, then the tail's entry, then decided: a pending hunk wins, and the tail's own
   // entry is read before the host's (same texts by construction; the order says whose word it is)

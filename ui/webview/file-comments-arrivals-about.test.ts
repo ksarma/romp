@@ -1,24 +1,19 @@
-// The focus follow-on's verification review (2026-09-09; plans/file-review.md, "The focus follow-on (2026-09-08)" under the
-// margin-layout note), driven over the review stand-in file-comments-focus.test.ts uses: three gaps in the follow-on's
-// coverage, each closed with the behavior it pins. The card a save landed in becomes the FOCUS (landSaved, focusOn): a
-// reply saved on an OPEN card that is not the focus — pushed under the tall change card whose mark was clicked after the
-// card opened — lands level with its mark, not where the push-down rule left it, a viewport below its mark (the other save
-// tests open the card by its head first, which sets the focus before the save, so they held with the save's own setter
-// removed); since decision 43 the save scrolls nothing, and the line at the panel's foot brings the card into view on a
-// click (scrollCard). A comment bound to a change folds on its OWN card (the about follow-on, 2026-09-10; before it the
-// change card hosted the comment, and this module drove the hosted run's fold through the change card's one row): its run
-// of turns is marked cut, scrolled to its end and lifted by its own Show more, while the change card folds its own text
-// alone and counts the comment in a tag, on a change whose own text is long and on a short change, whose card offers no
-// toggle while the comment's does. And
-// the fold's choice survives a re-render a STATUS drives (an ask answered with the store), not only the viewer's repaint
-// the earlier modules used. The stand-in and the notes-api world are file-comments-focus.test.ts's, copied as the other
-// focus modules copy them. Synthetic fixtures only: invented prose, placeholder ids.
+// The arrivals follow-on meets the about follow-on (plans/file-review.md, "The arrivals follow-on (2026-09-09)" and "The about
+// follow-on (2026-09-10)" under Slice 2; the review of 2026-09-10), driven over the stand-in file-comments-arrivals-review2.test.ts
+// drives (copied here, as the sibling modules copy it). Pinned: a session's reply arriving on the person's comment ABOUT a
+// pending change marks the comment's own card new, and never the change's card — the card an arrival shows on is the
+// comment's own (arrivalCard, cardKey), since no comment is drawn inside a change card any more; the same for a legacy
+// comment bound by the format's own field (suggestionId, read as answered); under the Changes filter, which hides the comment
+// cards, the change card still wears no dot for it and the arrival waits for the comment's card; the arrivals line counts the
+// reply and its click shows the comment's card, not the change's. Before this, the review found no test would fail if the
+// hosted-era routing (the reply onto the change card) came back. Synthetic fixtures only: the notes-api world, placeholder ids,
+// the session "api".
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
-import type { Status, StoreComment, Hunk } from "./file-comments-model";
+import { SEND_NOTE_MAX, type Status, type StoreComment, type Hunk } from "./file-comments-model";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -30,7 +25,8 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string; ctrlKey: boolean; metaKey: boolean;   // the save is Ctrl+Enter or Cmd+Enter since the composer follow-on (composerKeyAction)
-  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
+  button: number;                                     // a press's button, 0 the primary as a pointer event defaults it: pressHold arms on that one alone
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean; button?: number } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; this.button = init.button === undefined ? 0 : init.button; }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -105,8 +101,8 @@ class El {
     toggle: (c: string, on?: boolean) => { const want = on === undefined ? !this.classes.includes(c) : on; if (want) this.classList.add(c); else this.classList.remove(c); },
     contains: (c: string) => this.classes.includes(c),
   };
-  /** As the browser has it: a tabindex attribute, else 0 for a button or input, else -1 (not focusable). */
-  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" ? 0 : -1); }
+  /** As the browser has it: a tabindex attribute, else 0 for a button, an input or a textarea, else -1 (not focusable). */
+  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" || this.tagName === "TEXTAREA" ? 0 : -1); }
   set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
   dataset: Record<string, string> = new Proxy({} as Record<string, string>, {
     get: (_, k) => this.attrs.get("data-" + kebab(String(k))) as string,
@@ -176,7 +172,9 @@ class El {
   dispatchEvent(ev: Ev): boolean { return dispatch(this, ev); }
   click(): void { this.dispatchEvent(new Ev("click")); }
   /** Focus lands only on a focusable, enabled element — a div with no tabindex ignores focus(), as the browser does. */
-  focus(): void { if (this.tabIndex >= 0 && !this.disabled) doc.activeElement = this; }
+  /** …and only on an element in the document: a node the rebuild detached takes no focus, as in the browser (the note box
+   *  during a send: file-comments-arrivals-fixes.test.ts's focus() has no such rule, and read the detached box as focused). */
+  focus(): void { if (this.tabIndex >= 0 && !this.disabled && doc.body.contains(this)) doc.activeElement = this; }
   blur(): void { if (doc.activeElement === this) doc.activeElement = doc.body; }
   scrollIntoView(): void { scrolledInto.push(this); }
   getBoundingClientRect(): Rect { return this.rect || (cur ? cur.measure(this) : ZERO); }
@@ -236,7 +234,8 @@ win.getSelection = () => null;
 win.confirm = () => true;
 (globalThis as any).window = win;
 (globalThis as any).document = doc;
-(globalThis as any).fetch = async () => ({ status: 404, headers: { get: () => null }, json: async () => [] });
+let sessions: unknown[] = [];                              // GET /sessions's rows (loadColors): the session names and colours a test lends the panel
+(globalThis as any).fetch = async (url: unknown) => ({ status: String(url).includes("/sessions") ? 200 : 404, headers: { get: () => null }, json: async () => (String(url).includes("/sessions") ? sessions : []) });
 // the layout's environment: the sheet's verdict on the fold, the frame queue, the observers
 let narrow = false;
 (globalThis as any).getComputedStyle = (el: El) => ({ flexDirection: el.classList.contains("fileview-main") && narrow ? "column" : "row" });
@@ -278,8 +277,8 @@ const T0 = 1757145600000;
 const QUOTE = "shipping the cache in v1.2";
 // one logical line per row of the Raw view, each ROW px tall in the measurement table. Row 3 is a long paragraph the
 // session inserted whole (the change whose card is TALL open: its text is a long part, folded in the margin layout); row
-// 5 holds the passage comment under it; blank rows between the later lines make each its own paragraph, and row 11 is the
-// short change when the bound-comment fold tests put it in the store (withBound)
+// 5 holds the passage comment under it; blank rows between the later lines make each its own paragraph, and rows 7 and 9
+// carry the essay and the talked comment when the comment-fold test puts them in the store
 const LONG = "The api session rewrote the findings as one long paragraph about the cache, the latency budget, the plan for the next release and the reasons the team settled on it, going on for several sentences more than the one line it replaced, so that its card shows far more text than fits beside the passage.";
 const LINES = ["# Report", "", "## Findings", LONG, "", "We recommend " + QUOTE + ".", "", "More text here."];
 for (let i = 8; i < 33; i++) LINES.push(i % 2 ? "Line " + i + " of the report." : "");
@@ -299,28 +298,33 @@ const closing: StoreComment = {   // row 33, the last line
   id: (T0 + 5000) + "-9", author: "you", ts: T0 + 5000, body: "End on the recommendation, not on this.",
   anchor: { quote: "The closing line of the report", prefix: "", suffix: "." }, replies: [], resolved: false,
 };
-// a comment bound to the change by the legacy field (suggestionId "h1"): its own card, tagged "answered by a change", and
-// the change card counts it (the about follow-on, 2026-09-10; before it the change card hosted the comment). A short body
-// and a run of three turns, the run a long part of its own. Only the bound-comment fold tests put it in the store
-// (withBound), so the other tests' numbers stand
-const onChange: StoreComment = {
-  id: (T0 + 2000) + "-3", author: "you", ts: T0 + 2000, body: "Cut this to the finding itself.", suggestionId: "h1", resolved: false,
+// two comments with long parts of their own, for the comment card's fold (renderCard's fc-more is not renderChange's): the
+// essay's BODY runs past the cap, and the talked comment's short body carries a RUN OF TURNS that does. Only the comment-fold test
+// puts them in the store (withLong), so the other tests' numbers stand
+const LONG_BODY = "This paragraph needs the numbers behind it: the latency budget it cites, the cache hit rate the api session measured, the release the plan names and the reasons the team settled on it, each with a pointer to where a reader can check it, or the claim reads as opinion.";
+const essay: StoreComment = {   // row 7
+  id: (T0 + 7000) + "-7", author: "you", ts: T0 + 7000, body: LONG_BODY,
+  anchor: { quote: "More text here", prefix: "", suffix: "." }, replies: [], resolved: false,
+};
+const talked: StoreComment = {   // row 9: a comment with a run of three turns under it (the name the focus-review module gives the shape)
+  id: (T0 + 9000) + "-9", author: "you", ts: T0 + 9000, body: "Is this line still current?",
+  anchor: { quote: "Line 9 of the report", prefix: "", suffix: "." }, resolved: false,
   replies: [
-    { author: "api", ts: T0 + 2100, body: "The paragraph carries the reasons the team weighed; cutting it loses why the plan changed." },
-    { author: "you", ts: T0 + 2200, body: "Keep the reasons in a footnote, then; the finding should read in one breath." },
-    { author: "api", ts: T0 + 2300, body: "Done in the next revision: the finding in one sentence, the reasons in a footnote under it." },
+    { author: "api", ts: T0 + 9100, body: "It is: the numbers came from the run on the release branch, not the draft's." },
+    { author: "you", ts: T0 + 9200, body: "Then say so in the line itself, with the branch and the date of the run." },
+    { author: "api", ts: T0 + 9300, body: "Done in the next revision; the branch and the date are in the sentence now." },
   ],
 };
-// a second change, a SHORT one: row 11's line, inserted whole by the session. Its card's own text fits the cap, so its card
-// offers no toggle, while the comment bound to it folds its run of turns on its own card and offers one
-const SHORT_LINE = "Line 11 of the report.";
-const SHORT_AT = DOC.indexOf(SHORT_LINE);
-const onShort: StoreComment = { ...onChange, id: (T0 + 3000) + "-11", ts: T0 + 3000, suggestionId: "h2", body: "Is this line needed at all?" };
+// a second comment on row 5, later than the passage's, on the words before QUOTE. Only the leader test puts it in the store
+// (withRec): two cards want the same top, so the later one is pushed under the first — and as the focus it holds the top and
+// moves the first UP past its mark, the case the leader down is drawn for
+const rec: StoreComment = {
+  id: (T0 + 1000) + "-5", author: "you", ts: T0 + 1000, body: "Recommend, or require?",
+  anchor: { quote: "We recommend", prefix: "", suffix: " " + QUOTE }, replies: [], resolved: false,
+};
 const LONG_AT = DOC.indexOf(LONG);
 const hunk: Hunk = { id: "h1", author: "api", ts: T0 - 30000, kind: "ins", curFrom: LONG_AT, curTo: LONG_AT + LONG.length, baseFrom: LONG_AT, baseTo: LONG_AT, oldText: "", newText: LONG, anchor: null };   // row 3
 const CHG = "chg:h1";
-const hunk2: Hunk = { id: "h2", author: "api", ts: T0 - 20000, kind: "ins", curFrom: SHORT_AT, curTo: SHORT_AT + SHORT_LINE.length, baseFrom: SHORT_AT, baseTo: SHORT_AT, oldText: "", newText: SHORT_LINE, anchor: null };   // row 11
-const CHG2 = "chg:h2";
 function status(over: Partial<Status> = {}): Status {
   return {
     verb: "status", root: ROOT, storePath: ROOT + "/.trackchanges/docs%2Freport.md.json", trackedBy: { kind: "file", entry: "docs/report.md" }, agentTooling: "present",
@@ -331,22 +335,30 @@ function status(over: Partial<Status> = {}): Status {
     ...over,
   };
 }
-/** The status with the two bound comments and the short change in the store too (the bound-comment fold tests). */
-const withBound = (storeMtimeNs: string, comments: StoreComment[] = [whole, findings, passage, closing, onChange, onShort], verb = "status"): Status =>
-  status({ verb, store: { v: 3, path: "docs/report.md", suggestions: [], comments }, hunks: [hunk, hunk2], storeMtimeNs });
+/** The status with the later comment on row 5 in the store too (the leader test). */
+const withRec = (storeMtimeNs: string): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, rec] }, storeMtimeNs });
+/** The status with the essay and the talked comment in the store too (the comment-fold test); `comments` and `verb` for
+ *  the reply that answers a Resolve or Reopen there, the render a status drives. */
+const withLong = (storeMtimeNs: string, comments: StoreComment[] = [whole, findings, passage, closing, essay, talked], verb = "status"): Status =>
+  status({ verb, store: { v: 3, path: "docs/report.md", suggestions: [], comments }, storeMtimeNs });
 
 // ── the viewer stand-in: the body row, the seam as closures, a measurement table ───────────────────
 // Geometry: the body's box is at viewport y=100, BODY_VIEW tall; the header stands OFFSET tall above the track and the
 // footer FOOTER tall below it, so the track's box is TRACK tall; row i's text sits at 100 + ROW·i − scrollTop; a card is
-// CARD tall closed and OPEN tall open, except a card with a long part (the change card's old and new text; a bound
-// comment's run of turns, in the bound-comment fold tests), which is TALL open and folded (eight lines of the part)
+// CARD tall closed and OPEN tall open — except a card with a long part (the change card's old and new text; the essay's
+// body and the talked comment's run of turns, in the comment-fold test), which is TALL open and folded (eight lines of the part)
 // and WHOLE once Show more is pressed. A long part (LONG_PART: more than 200 characters) measures PART_ALL of content in
 // a box of PART_CAP until its card wears fc-more — the table's reading of the sheet's cap; a short part fits its box.
 const ROW = 60, OFFSET = 60, FOOTER = 40, CARD = 40, OPEN = 120, TALL = 200, WHOLE = 400, BODY_VIEW = 260, TRACK = BODY_VIEW - OFFSET - FOOTER;   // TRACK 160
 const PART_ALL = 400, PART_CAP = 100, LONG_PART = 200;
+// the list layout's geometry (narrow): the aside's box at LIST_TOP, LIST_VIEW tall, holding three closed cards; `listScroll` is
+// how far the person scrolled it (the table moves the cards up by it); `noteContent` is the note box's scroll height
+const LIST_TOP = 360, LIST_VIEW = 120;
+let listScroll = 0;
+let noteContent = 0;
 type World = {
   ctx: FileViewActionCtx; posted: any[]; main: El; body: El; code: El;
-  hooks: { rendered: Array<() => void>; close: Array<() => void> };
+  hooks: { rendered: Array<() => void>; close: Array<() => void>; saved: Array<(info: { mtimeNs: string; logged: boolean }) => void> };
   editing: boolean; viewMtime: string;
   content: number;
   measure(el: El): Rect; scrollHeightOf(el: El): number; clientHeightOf(el: El): number;
@@ -377,13 +389,14 @@ function textWorld(): World {
   main.appendChild(body);
   doc.body.replaceChildren(main);
   const w = {
-    posted: [] as any[], main, body, code, hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void> }, editing: false,
+    posted: [] as any[], main, body, code, hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void>, saved: [] as Array<(info: { mtimeNs: string; logged: boolean }) => void> }, editing: false,
     viewMtime: "1757145600000000001", content: ROW * ROWS,
   } as World;
   rows(code, DOC);
   const pad = (): number => parseFloat((body.style.paddingBottom as string) || "0") || 0;
   w.scrollHeightOf = (el) => {
     if (el === body) return Math.max(w.content + pad(), BODY_VIEW);
+    if (el.classList.contains("fc-send-note")) return noteContent;   // the note box's content, as the test sets it
     if (el.classList.contains("fc-sec-cards")) { const l = el.childNodes.find((n) => n instanceof El) as El | undefined; return Math.max(l ? parseFloat((l.style.height as string) || "0") || 0 : 0, TRACK); }
     if (el.classList.contains("fc-clip")) return isLongPart(el) ? PART_ALL : 20;
     return 0;
@@ -394,13 +407,21 @@ function textWorld(): World {
     if (el.classList.contains("fc-clip")) { const c = cardOf(el); return isLongPart(el) && !(c && c.classList.contains("fc-more")) ? PART_CAP : el.scrollHeight; }
     return 0;
   };
+  const cardHeight = (el: El): number => {
+    const open = el.classList.contains("open");
+    return !open ? CARD : el.querySelectorAll(".fc-clip").some(isLongPart) ? (el.classList.contains("fc-more") ? WHOLE : TALL) : OPEN;
+  };
   w.measure = (el: El): Rect => {
     if (el === body) return R(0, 100, 400, BODY_VIEW);
+    if (el.classList.contains("fc-panel")) return R(0, LIST_TOP, 400, LIST_VIEW);   // the aside: under the body in the narrow column (the list layout reads its box)
     if (el.classList.contains("fc-sec-cards")) return R(400, 100 + OFFSET, 340, TRACK);
     if (el.classList.contains("fc-card")) {
-      const open = el.classList.contains("open");
-      const h = !open ? CARD : el.querySelectorAll(".fc-clip").some(isLongPart) ? (el.classList.contains("fc-more") ? WHOLE : TALL) : OPEN;
-      return R(412, 0, 316, h);
+      if (narrow) {   // the list layout: the cards in flow, one under the other from the aside's top, less the aside's scroll
+        let y = 0;
+        for (const c of w.aside().querySelectorAll(".fc-card")) { if (c === el) break; y += cardHeight(c); }
+        return R(0, LIST_TOP + y - listScroll, 400, cardHeight(el));
+      }
+      return R(412, 0, 316, cardHeight(el));
     }
     if (el.classList.contains("fc-hl") || el.classList.contains("fc-ins") || el.classList.contains("fc-del")) {
       const row = el.closest(".fv-cl");
@@ -422,7 +443,7 @@ function textWorld(): World {
     path: ABS, sid: SID, todoId: null,
     body: () => w.body as unknown as HTMLElement, mode: () => "raw", text: () => DOC, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
-    onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: noop, onSaved: noop, onClose: (cb) => { w.hooks.close.push(cb); },
+    onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: noop, onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
     post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => w.editing, setTrackedEdit: (_t: TrackedEdit | null) => { /* inert */ }, guardClose: noop,
     aside: (node) => { w.main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); w.main.appendChild(n); } },
     setMode: noop, scrollToOffset: noop, reload: noop,
@@ -432,9 +453,10 @@ function textWorld(): World {
 }
 type Posted = Record<string, any>;
 type Ctx = { after(fn: () => void): void };
-async function open(t: Ctx, w: World, s: Status = status()) {
-  t.after(() => w.close());                            // a failing assertion must not leave the panel alive (its deadline timers would hold the process)
-  narrow = false; frames.length = 0; RO.all.length = 0; IO.all.length = 0; scrolledInto.length = 0; doc.activeElement = doc.body;
+/** Mount, and answer the probe with `s`; the panel stays closed (a test opens it, and answers the open's own re-ask). */
+async function probed(t: Ctx, w: World, s: Status = status()) {
+  t.after(() => { w.close(); sessions = []; });        // a failing assertion must not leave the panel alive (its deadline timers would hold the process)
+  frames.length = 0; RO.all.length = 0; IO.all.length = 0; scrolledInto.length = 0; doc.activeElement = doc.body; listScroll = 0; noteContent = 0;   // `narrow` is the test's: set before open
   const fc = await import("./file-comments");
   const unit = fc.fileCommentsAction.mount(w.ctx) as unknown as El;
   const button = unit.childNodes[0] as El;
@@ -442,9 +464,15 @@ async function open(t: Ctx, w: World, s: Status = status()) {
   const reply = async (data: Record<string, unknown>) => { win.dispatchEvent(new MessageEvent("message", { data })); await tick(); await tick(); };
   const ok = (o: Status = s) => reply({ type: "fileCommentsResult", reqId: last().reqId, ...o });
   await ok();                                          // the probe's status
-  button.click();                                      // open: the aside mounts, the panel re-asks
-  await ok();
   return { w, fc, button, ok, last };
+}
+/** The probe answered with `s`, the panel opened, and the open's own re-ask answered with `first` — the same status unless a
+ *  test says what the session did between the probe and the open. */
+async function open(t: Ctx, w: World, s: Status = status(), first: Status = s) {
+  const h = await probed(t, w, s);
+  h.button.click();                                    // open: the aside mounts, the panel re-asks
+  await h.ok(first);
+  return h;
 }
 // the desired top of a mark on row i in the track's content: the row's top in the body's content, less the header's height
 const desired = (i: number): number => ROW * i - OFFSET;
@@ -470,207 +498,100 @@ const foldOf = (w: World, key: string): { row: El | null; hidden: boolean | null
 const PUSHED = desired(3) + TALL + 8;                            // 328: where the push-down rule puts the passage's card under the open change card
 const LIFTED = desired(5) - TALL - 8;                            // 32: where the change card goes when the passage is the focus
 
-// ── the save's focus ──────────────────────────────────────────────────────────────────────────────
-
-test("a reply saved on an open card that is NOT the focus makes that card the focus: level with its mark, the tall change card above moved up — not left where the push-down rule had it, a viewport below its mark — and nothing scrolled (decision 43); the line at the foot says below, and its click centers the card (the save's landSaved sets the focus; no earlier gesture on this path does)", async (t) => {
-  const { w, ok, last } = await open(t, textWorld());
-  const body = w.body, track = w.track();
-  markOf(w, CHG).click(); await tick();                // the change card open, the focus; the passage's card pushed under it
-  assert.equal(w.top(passage.id), PUSHED);
-  headOf(w, passage.id).click(); await tick();         // the passage's card opened by its head: the focus, level
-  assert.equal(w.top(passage.id), desired(5));
-  markOf(w, CHG).click(); await tick();                // the change mark again: its card the focus; the OPEN passage card back under it
-  assert.equal(w.top(CHG), desired(3));
-  assert.ok(w.card(passage.id)!.classList.contains("open"), "the fixture: the passage's card is open");
-  assert.equal(w.top(passage.id), PUSHED, "the fixture: open and not the focus, it is pushed under the tall card");
-  assert.equal(w.card(passage.id)!.dataset.pushed, "1");
-  // Reply on the passage's card: the box opens in the card. Reply is not a head click, so the focus stays the change card's
-  actIn(w.card(passage.id)!, "fcreply")!.click(); await tick();
-  const composer = w.aside().querySelector(".fc-composer")!;
-  assert.equal(composer.hidden, false);
-  assert.equal(w.top(passage.id), PUSHED, "Reply moved nothing");
-  assert.equal(w.top(CHG), desired(3));
-  body.scrollTop = 0; body.dispatchEvent(new Ev("scroll"));   // the reader looked at the top of the text meanwhile
-  assert.equal(track.scrollTop, 0);
-  const input = composer.querySelector(".fc-input")!;
-  input.value = "The write-through one.";
-  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true }));   // the save chord
+// ── the session's answer: what arrives while the person reads ─────────────────────────────────────
+const apiReply = (c: StoreComment, ts: number, body: string): StoreComment => ({ ...c, replies: [...(c.replies || []), { author: "api", authorId: SID, ts, body }] });
+const findingsR = apiReply(findings, T0 + 20000, "Findings first: the methods are in the appendix.");   // row 2
+const passageR = apiReply(passage, T0 + 21000, "The query cache; the sentence now says so.");           // row 5
+const line9: StoreComment = {   // row 9: a comment of the session's own
+  id: (T0 + 30000) + "-3", author: "api", authorId: SID, ts: T0 + 30000, body: "Is this line still the plan?",
+  anchor: { quote: "Line 9 of the report", prefix: "", suffix: "." }, replies: [], resolved: false,
+};
+const mine2: StoreComment = {   // row 11: the person's own comment, saved from another tab meanwhile — never an arrival
+  id: (T0 + 32000) + "-4", author: "you", ts: T0 + 32000, body: "Cite the run.",
+  anchor: { quote: "Line 11 of the report", prefix: "", suffix: "." }, replies: [], resolved: false,
+};
+const MORE = "More text here.";
+const MORE_AT = DOC.indexOf(MORE);
+const hunk2: Hunk = { id: "h2", author: "api", ts: T0 + 31000, kind: "ins", curFrom: MORE_AT, curTo: MORE_AT + MORE.length, baseFrom: MORE_AT, baseTo: MORE_AT, oldText: "", newText: MORE, anchor: null };   // row 7
+const CHG2 = "chg:h2";
+/** The status the session's answer lands in: two replies, a comment and a change of the session's, and a comment of the person's. */
+const arrived = (over: Partial<Status> = {}): Status => status({
+  verb: "resolve", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findingsR, passageR, closing, line9, mine2] },
+  hunks: [hunk, hunk2], storeMtimeNs: "1757145600000000004", ...over,
+});
+const lineOf = (w: World): El | null => actIn(w.aside(), "fcarrivals");
+const isNew = (el: El | null | undefined): boolean => !!el && el.dataset.new === "1";
+/** A gesture of the person's, as the stand-in can make it: the event dispatched on an element in the body row. */
+const gesture = (el: El, type: string): void => { el.dispatchEvent(new Ev(type)); };
+const scrollBody = (w: World, to: number): void => { w.body.scrollTop = to; w.body.dispatchEvent(new Ev("scroll")); };
+/** The session's answer landing: the panel re-asks status the way the viewer's onSaved makes it (no gesture, nothing in the
+ *  layout touched), and the answer is the status with the session's entries. */
+async function land(w: World, ok: (s: Status) => Promise<void>, s: Status): Promise<void> {
+  for (const cb of w.hooks.saved) cb({ mtimeNs: w.viewMtime, logged: true });
   await tick();
-  assert.equal(last().verb, "reply");
-  assert.equal(last().args.commentId, passage.id);
-  const replied: StoreComment = { ...passage, replies: [{ author: "you", ts: T0 + 6000, body: "The write-through one." }] };
-  await ok(status({ verb: "reply", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, replied, closing] }, storeMtimeNs: "1757145600000000005" }));
-  assert.ok(w.card(passage.id)!.classList.contains("open"), "the card stays open with its reply");
-  assert.equal(w.card(passage.id)!.getBoundingClientRect().height, OPEN, "the fixture: the card with its one short turn fits the track");
-  assert.equal(w.top(passage.id), desired(5), "the saved card is the focus: level with its mark (the push-down rule alone left it at " + PUSHED + ")");
-  assert.equal(w.card(passage.id)!.dataset.pushed, undefined, "not pushed");
-  assert.equal(w.top(CHG), LIFTED, "the change card moved up: its end a gap above the focused card");
-  assert.equal(body.scrollTop, 0, "and nothing scrolled: a save never moves the view (decision 43; before it, the save brought the text to the card's mark)");
-  assert.equal(track.scrollTop, 0);
-  let box = cardBox(w, passage.id), mark = markOf(w, passage.id).getBoundingClientRect();
-  assert.equal(box.top, mark.top, "the card and its highlight are level, past the boxes together");
-  assert.ok(!inBox(box, TRACK_BOX), "the card is out of the track's box: " + JSON.stringify(box));
-  assert.equal(composer.hidden, true, "the composer closed after");
-  const line = actIn(w.aside(), "fcsavedgo")!;
-  assert.equal(line.textContent, "Saved · the card is below", "the line at the foot says where it is");
-  line.click(); await tick();
-  const showCard = desired(5) + OPEN + 8 - TRACK;
-  assert.equal(body.scrollTop, showCard, "the line's click brings the text to the card's mark: the least scroll that shows the card's end (scrollCard, the card the focus already)");
-  assert.equal(track.scrollTop, showCard, "the track came along");
-  box = cardBox(w, passage.id); mark = markOf(w, passage.id).getBoundingClientRect();
-  assert.ok(inBox(box, TRACK_BOX), "the whole card is in the track's box: " + JSON.stringify(box));
-  assert.ok(inBox(mark, BODY_BOX), "the highlight is in the body's box: " + JSON.stringify(mark));
-  assert.equal(box.top, mark.top, "and the two are level");
-  assert.deepEqual(scrolledInto, [], "a marked card is centered, not scrollIntoView'd");
-  assert.equal(actIn(w.aside(), "fcsavedgo"), null, "the line is over");
+  await ok({ ...s, verb: "status" });
+}
+const ARRIVED = "api made 1 change, 1 comment and 2 replies since you last looked";
+
+/** The press's release, as the browser ends it: a pointerup at the window (pressHold's release target), then the zero timer
+ *  the hold runs the parked change on (after the click, which dispatches synchronously with the release). */
+const release = async (): Promise<void> => { win.dispatchEvent(new Event("pointerup")); await new Promise<void>((r) => setTimeout(r, 0)); await tick(); };
+const acceptLabel = (w: World): string | null => { const cb = w.aside().querySelector('input[data-opt="accept"]'); return cb ? cb.parentNode!.textContent : null; };
+const noteBox = (w: World): El => w.aside().querySelector(".fc-confirm .fc-send-note")!;
+const typeNote = (w: World, text: string, content = 0): void => { const b = noteBox(w); b.value = text; noteContent = content; b.dispatchEvent(new Ev("input")); };
+const NO_UNSENT = { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null };
+const lastOf = (w: World, type: string): Posted | undefined => w.posted.slice().reverse().find((m) => m.type === type);
+const filterButton = (w: World, key: string): El => w.aside().querySelectorAll('[data-act="fcfilter"]').find((b) => b.dataset.key === key)!;
+
+// ── the first open ────────────────────────────────────────────────────────────────────────────────
+
+// ── the person's comment about the pending change ─────────────────────────────────────────────────
+/** The person's comment about h1 by their own pick (changeIds), unanswered at the first status. */
+const aboutH1: StoreComment = { id: (T0 + 3000) + "-8", author: "you", ts: T0 + 3000, body: "Shorter, and say which cache.", changeIds: ["h1"], replies: [], resolved: false };
+/** The same comment bound by the format's own field: an older sidecar's, read as answered by the change. */
+const legacyH1: StoreComment = { ...aboutH1, id: (T0 + 3500) + "-9", changeIds: undefined, suggestionId: "h1" };
+const answered = (c: StoreComment): StoreComment => apiReply(c, T0 + 23000, "The response cache; the sentence names it now.");
+const storeWith = (comments: StoreComment[]): Status["store"] => ({ v: 3, path: "docs/report.md", suggestions: [{ id: "h1", author: "api", authorId: SID, ts: T0 - 30000, kind: "ins", from: LONG_AT, oldText: "", newText: LONG }], comments });
+const dotted = (w: World): string[] => w.aside().querySelectorAll(".fc-card").filter(isNew).map((c) => c.dataset.id);
+
+test("a session's reply arriving on the person's comment about a pending change marks the comment's own card new, never the change's card; the arrivals line counts it and its click shows the comment's card", async (t) => {
+  const { w, ok } = await open(t, textWorld(), status({ store: storeWith([whole, aboutH1]), unsent: NO_UNSENT }));
+  assert.equal(w.card(aboutH1.id)!.dataset.new, undefined, "the first open: all seen");
+  assert.deepEqual(w.card(CHG)!.querySelectorAll(".fc-tag").map((x) => x.textContent), ["1 comment"], "the change card counts the comment about it, and hosts nothing");
+  await land(w, ok, status({ store: storeWith([whole, answered(aboutH1)]), storeMtimeNs: "1757145600000000004", unsent: NO_UNSENT }));
+  assert.equal(lineOf(w)!.textContent, "api made 1 reply since you last looked", "the reply is an arrival");
+  assert.deepEqual(dotted(w), [aboutH1.id], "the dot is on the comment's own card…");
+  assert.ok(!isNew(w.card(CHG)), "…and not on the change's, which showed the comment in the hosted era");
+  assert.ok(isNew(markOf(w, aboutH1.id) ?? null) === false, "an anchorless comment has no highlight to dot");
+  // the line's click: the first arrival's card into view is the comment's
+  lineOf(w)!.click(); await tick();
+  assert.ok(w.card(aboutH1.id)!.classList.contains("open"), "the comment's card opens as the arrival's card");
+  assert.ok(!w.card(CHG)!.classList.contains("open"), "the change's card is not the arrival's");
   w.close();
 });
 
-// ── the bound comment's fold: on its own card ──────────────────────────────────────────────────────
-
-test("a comment bound to a change folds on its OWN card (the about follow-on): its run of turns is marked cut and scrolled to its end, and the card's own Show more lifts it; the change card folds its own text alone, counts the comment in a '1 comment' tag and hosts nothing: on a change whose own text is long, and on a short change, whose card offers no toggle while the comment's card does", async (t) => {
-  const { w } = await open(t, textWorld(), withBound("1757145600000000002"));
-  const runText = onChange.replies!.map((r) => r.body!).join("");
-  assert.ok(runText.length > LONG_PART && onChange.body.length <= LONG_PART && LONG.length > LONG_PART && SHORT_LINE.length <= LONG_PART, "the fixture: the bound comment's run is a long part and its body is not; the first change's text is long, the second's short");
-  // every comment is its own card: the bound comment keeps one, tagged as answered by the change, and the change card counts
-  // it (before the about follow-on, 2026-09-10, the change card hosted the comment and no card of its own stood in the list)
-  for (const [c, id] of [[onChange, "h1"], [onShort, "h2"]] as Array<[StoreComment, string]>) {
-    const card = w.card(c.id);
-    assert.ok(!!card, "the comment bound to " + id + " has a card of its own");
-    assert.equal(card!.querySelector(".fc-kind")!.title, "A comment the session answered with a change", "the legacy binding's title: answered, not about (the review, 2026-09-10)");
-    assert.ok(card!.querySelector(".fc-ref")!.textContent.startsWith("added "), "its reference is the change's words");
-    const tag = card!.querySelector(".fc-about")!;
-    assert.equal(tag.textContent, "answered by a change", "the legacy binding's tag");
-    assert.equal(tag.dataset.refs, id);
-    assert.ok(tag.title.startsWith("The session answered this comment with: added ") && tag.title.endsWith("(pending)"), tag.title);
-    const count = w.card("chg:" + id)!.querySelector(".fc-about-count")!;
-    assert.equal(count.textContent, "1 comment", "the change card counts the comment about it");
-    assert.equal(count.dataset.act, "fcaboutfirst"); assert.equal(count.dataset.id, id);
-    assert.equal(count.title, "Show the comment about this change");
-  }
-  assert.equal(w.aside().querySelectorAll(".fc-hosted").length, 0, "no comment is drawn inside a change card");
-  const partsOf = (key: string): El[] => w.card(key)!.querySelectorAll(".fc-clip");
-  const runOf = (key: string): El => w.card(key)!.querySelector(".fc-replies")!;
-  const toggle = (key: string): void => { foldOf(w, key).row!.querySelector("button")!.click(); };
-  // the long change: its own text is the one part its card folds; nothing of the comment's is among its parts
-  markOf(w, CHG).click(); await tick();
-  let f = foldOf(w, CHG);
-  assert.equal(f.parts, 1, "the change's text alone: the comment's body and run are on the comment's own card");
-  assert.deepEqual(partsOf(CHG).map((x) => x.className), ["fc-body fc-diff fc-clip"]);
-  assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip"], "the pass found the cap cut the change's text");
-  assert.equal(f.hidden, false, "Show more shows"); assert.equal(f.label, "Show more"); assert.equal(f.more, false);
-  assert.equal(w.card(CHG)!.getBoundingClientRect().height, TALL);
-  // Show more on the change card lifts the change's text, and nothing else
-  toggle(CHG); await tick();
-  f = foldOf(w, CHG);
-  assert.equal(f.more, true, "the card wears fc-more"); assert.deepEqual(f.clipped, [], "no fade on the part"); assert.equal(f.label, "Show less");
-  assert.equal(w.card(CHG)!.getBoundingClientRect().height, WHOLE);
-  // the comment's own card, opened by its head: its run of turns is cut, its body fits, and its own row shows
-  headOf(w, onChange.id).click(); await tick();
-  let g = foldOf(w, onChange.id);
-  assert.equal(g.parts, 2, "the comment's body and its run of turns");
-  assert.deepEqual(partsOf(onChange.id).map((x) => x.className), ["fc-body fc-clip", "fc-replies fc-clip"]);
-  assert.deepEqual(g.clipped, ["fc-replies fc-clip"], "the pass found the cap cut the run; the body fits");
-  assert.equal(g.hidden, false, "Show more shows on the comment's card"); assert.equal(g.label, "Show more"); assert.equal(g.more, false);
-  assert.equal(runOf(onChange.id).clientHeight, PART_CAP, "the run's box is the cap");
-  assert.equal(runOf(onChange.id).scrollTop, PART_ALL - PART_CAP, "the run shows its end: the newest turn");
-  assert.equal(w.card(onChange.id)!.getBoundingClientRect().height, TALL);
-  assert.equal(foldOf(w, CHG).more, true, "the change card's choice is its own: still whole");
-  // the comment's Show more lifts its run; the change card is not touched
-  toggle(onChange.id); await tick();
-  g = foldOf(w, onChange.id);
-  assert.equal(g.more, true); assert.deepEqual(g.clipped, []); assert.equal(g.label, "Show less");
-  assert.equal(runOf(onChange.id).clientHeight, runOf(onChange.id).scrollHeight, "the run's box is its content");
-  assert.equal(runOf(onChange.id).scrollTop, 0, "the run whole stands at its start");
-  assert.equal(w.card(onChange.id)!.getBoundingClientRect().height, WHOLE);
-  // Show less on the comment's card: folded again, the run at its end again
-  toggle(onChange.id); await tick();
-  g = foldOf(w, onChange.id);
-  assert.equal(g.more, false); assert.deepEqual(g.clipped, ["fc-replies fc-clip"]); assert.equal(g.label, "Show more");
-  assert.equal(runOf(onChange.id).scrollTop, PART_ALL - PART_CAP);
-  assert.equal(foldOf(w, CHG).more, true, "the comment's fold left the change card whole");
-  // Show less on the change card folds its text again
-  toggle(CHG); await tick();
-  f = foldOf(w, CHG);
-  assert.equal(f.more, false); assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip"]); assert.equal(f.label, "Show more");
-  assert.equal(w.card(CHG)!.getBoundingClientRect().height, TALL);
-  // the short change: its text fits, and nothing of the comment's is on its card, so it offers no toggle. Before the about
-  // follow-on the bound comment's run was the one part cut on this card and the row showed for it alone; the run now folds
-  // on the comment's own card, which offers the row
-  markOf(w, CHG2).click(); await tick();
-  f = foldOf(w, CHG2);
-  assert.equal(f.parts, 1); assert.deepEqual(f.clipped, [], "the change's own text fits");
-  assert.equal(f.hidden, true, "no Show more on a card with nothing cut"); assert.equal(f.more, false);
-  assert.equal(w.card(CHG2)!.getBoundingClientRect().height, OPEN);
-  headOf(w, onShort.id).click(); await tick();
-  g = foldOf(w, onShort.id);
-  assert.equal(g.parts, 2);
-  assert.deepEqual(g.clipped, ["fc-replies fc-clip"], "the run alone is cut: the body fits");
-  assert.equal(g.hidden, false, "Show more shows for the run"); assert.equal(g.label, "Show more"); assert.equal(g.more, false);
-  assert.equal(runOf(onShort.id).scrollTop, PART_ALL - PART_CAP, "scrolled to its end");
-  assert.equal(w.card(onShort.id)!.getBoundingClientRect().height, TALL, "the card is folded at the run's cap");
-  toggle(onShort.id); await tick();
-  g = foldOf(w, onShort.id);
-  assert.equal(g.more, true); assert.deepEqual(g.clipped, []); assert.equal(g.label, "Show less");
-  assert.equal(runOf(onShort.id).scrollTop, 0);
-  assert.equal(w.card(onShort.id)!.getBoundingClientRect().height, WHOLE);
-  assert.equal(foldOf(w, CHG2).hidden, true, "the short change's card still offers no toggle");
+test("under the Changes filter the comment cards are hidden: the reply's arrival stands, the change card wears no dot for it, and All shows the dot on the comment's card", async (t) => {
+  const { w, ok } = await open(t, textWorld(), status({ store: storeWith([whole, aboutH1]), unsent: NO_UNSENT }));
+  filterButton(w, "changes").click(); await tick();
+  assert.equal(w.card(aboutH1.id), null, "Changes hides the comment cards");
+  await land(w, ok, status({ store: storeWith([whole, answered(aboutH1)]), storeMtimeNs: "1757145600000000004", unsent: NO_UNSENT }));
+  assert.equal(lineOf(w)!.textContent, "api made 1 reply since you last looked");
+  assert.deepEqual(dotted(w), [], "no card of the list is the arrival's: the change card is not marked for a reply on a comment about it");
+  gesture(w.body, "pointerdown");
+  assert.equal(lineOf(w)!.textContent, "api made 1 reply since you last looked", "a gesture with the comment's card hidden marks nothing seen: the arrival waits for its card");
+  filterButton(w, "all").click(); await tick();
+  assert.deepEqual(dotted(w), [aboutH1.id], "All: the dot on the comment's own card");
   w.close();
 });
 
-// ── a status's re-render ──────────────────────────────────────────────────────────────────────────
-
-test("the fold's choice survives a re-render a STATUS drives: after Show more, an ask answered with the store (Resolve on another card) rebuilds the cards and the change card still wears fc-more and reads Show less, the bound comment's own card too; after Show less, the next status leaves both folded, the comment's run scrolled to its end again", async (t) => {
-  const { w, ok } = await open(t, textWorld(), withBound("1757145600000000002"));
-  const run = (): El => w.card(onChange.id)!.querySelector(".fc-replies")!;   // the bound comment's run of turns, on its own card (the about follow-on)
-  headOf(w, closing.id).click(); await tick();          // the two cards the asks below go through, opened for their Resolve (a closed card has no buttons)
-  headOf(w, passage.id).click(); await tick();
-  markOf(w, CHG).click(); await tick();                // the change card open, the focus
-  foldOf(w, CHG).row!.querySelector("button")!.click(); await tick();   // Show more
-  assert.equal(foldOf(w, CHG).more, true);
-  headOf(w, onChange.id).click(); await tick();        // the comment's own card open: its run cut, at its end
-  assert.deepEqual(foldOf(w, onChange.id).clipped, ["fc-replies fc-clip"]);
-  assert.equal(run().scrollTop, PART_ALL - PART_CAP);
-  foldOf(w, onChange.id).row!.querySelector("button")!.click(); await tick();   // Show more there too
-  assert.equal(foldOf(w, onChange.id).more, true);
-  const before = w.card(CHG)!; const beforeC = w.card(onChange.id)!;
-  // an ask answered with a status: Resolve on the closing line's card, the store holding it resolved, the render a status runs
-  actIn(w.card(closing.id)!, "fcresolve")!.click(); await tick();
-  await ok(withBound("1757145600000000005", [whole, findings, passage, { ...closing, resolved: true }, onChange, onShort], "resolve"));
-  assert.ok(w.card(CHG) !== before && w.card(onChange.id) !== beforeC, "the fixture: the status rebuilt the cards");
-  let f = foldOf(w, CHG);
-  assert.equal(f.more, true, "the choice survives the status's render: keyed by the card (openBodies)");
-  assert.equal(f.label, "Show less"); assert.deepEqual(f.clipped, []);
-  assert.equal(w.card(CHG)!.getBoundingClientRect().height, WHOLE);
-  let g = foldOf(w, onChange.id);
-  assert.equal(g.more, true, "the comment card's choice survives it too, under its own key");
-  assert.equal(g.label, "Show less"); assert.deepEqual(g.clipped, []);
-  assert.equal(w.card(onChange.id)!.getBoundingClientRect().height, WHOLE);
-  assert.equal(run().scrollTop, 0, "the run whole, at its start");
-  // Show less on both, then another status: folded stays folded, and the fresh render's run (its box starts at 0) is at its
-  // end again
-  foldOf(w, CHG).row!.querySelector("button")!.click(); await tick();
-  foldOf(w, onChange.id).row!.querySelector("button")!.click(); await tick();
-  assert.equal(foldOf(w, CHG).more, false); assert.equal(foldOf(w, onChange.id).more, false);
-  const folded = w.card(CHG)!; const foldedC = w.card(onChange.id)!;
-  actIn(w.card(passage.id)!, "fcresolve")!.click(); await tick();
-  await ok(withBound("1757145600000000006", [whole, findings, { ...passage, resolved: true }, { ...closing, resolved: true }, onChange, onShort], "resolve"));
-  assert.ok(w.card(CHG) !== folded && w.card(onChange.id) !== foldedC, "the fixture: rebuilt again");
-  f = foldOf(w, CHG);
-  assert.equal(f.more, false); assert.equal(f.label, "Show more");
-  assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip"], "the pass marked the fresh part cut");
-  assert.equal(w.card(CHG)!.getBoundingClientRect().height, TALL);
-  g = foldOf(w, onChange.id);
-  assert.equal(g.more, false); assert.equal(g.label, "Show more");
-  assert.deepEqual(g.clipped, ["fc-replies fc-clip"], "the comment card's fresh run is marked cut");
-  assert.equal(run().scrollTop, PART_ALL - PART_CAP, "the fresh render's run is scrolled to its end");
-  assert.equal(w.card(onChange.id)!.getBoundingClientRect().height, TALL);
+test("a legacy comment bound by the format's own field (answered by the change) routes the same: the reply's dot is on the comment's card, not the change's", async (t) => {
+  const { w, ok } = await open(t, textWorld(), status({ store: storeWith([whole, legacyH1]), unsent: NO_UNSENT }));
+  assert.deepEqual(w.card(legacyH1.id)!.querySelectorAll(".fc-tag").map((x) => x.textContent), ["answered by a change"]);
+  await land(w, ok, status({ store: storeWith([whole, answered(legacyH1)]), storeMtimeNs: "1757145600000000004", unsent: NO_UNSENT }));
+  assert.deepEqual(dotted(w), [legacyH1.id]);
+  assert.ok(!isNew(w.card(CHG)));
+  // the source: the card an arrival shows on is the comment's own, and nothing maps a comment onto a change card
+  assert.match(SRC, /private arrivalCard\(e: Entry\): string \{\s+return e\.subject\.startsWith\("chg:"\) \? e\.subject : this\.cardKey\(e\.subject\);\s+\}/);
+  assert.match(SRC, /cardKey\(commentId: string\): string \{\s+return commentId;\s+\}/);
   w.close();
-});
-
-test("vocabulary: this module's own prose says file comment and run of turns; the word CONTEXT.md sets aside for a forked side session appears nowhere in it, nor the banned sessions-pane word, nor a home path", () => {
-  const SELF = web("file-comments-focus-verify.test.ts").split("\n").filter((l) => !l.includes("assert.doesNotMatch(SELF")).join("\n");
-  assert.doesNotMatch(SELF, /\bthreads?\b/i, "a comment with replies is a file comment with a run of turns (CONTEXT.md, File comment: Avoid)");
-  assert.doesNotMatch(SELF, /fleet/i, "no new identifiers or prose in the old word for the sessions pane");
-  assert.doesNotMatch(SELF, /\/home\/[a-z]/, "no absolute home paths");
 });

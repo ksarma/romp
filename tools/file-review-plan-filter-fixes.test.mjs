@@ -84,7 +84,7 @@ test('the note and the Tests bullet name the second round\'s two suites and this
   assert.ok(bullet.includes('drives the second round\'s cases the same way'), 'the bullet says the fixes suite drives the round over the same stand-in');
   assert.ok(bullet.includes('byte-equal across the two sheets'), 'the bullet says the kind-cue pin holds both sheets');
   const fixes = read('ui', 'webview', 'file-comments-filter-fixes.test.ts');
-  for (const phrase of ['no status, so no filter row', 'with cards the same rows stand above the filter\'s row', '\'Nothing decided\' row', 'the line names the card and the rectangle', 'comes to ride a change card', 'Show changes inline under Comments: the toggle stays']) {
+  for (const phrase of ['no status, so no filter row', 'with cards the same rows stand above the filter\'s row', '\'Nothing decided\' row', 'the line names the card and the rectangle', 'keeps its own card, hidden like every comment under Changes', 'Show changes inline under Comments: the toggle stays']) {
     assert.ok(fixes.includes(phrase), 'the fixes suite drives: ' + phrase);
   }
   const cue = read('ui', 'webview', 'feed-css-kind-cue.test.ts');

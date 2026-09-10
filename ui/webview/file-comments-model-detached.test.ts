@@ -87,17 +87,17 @@ test("changeCards: the pending changes in text order, then one card per detached
   assert.deepEqual(changeCards(null, [h1]).map((c) => c.detached), [false], "no sidecar in the reply: pending cards only, none detached");
 });
 
-test("a comment bound to a detached change rides its card: hunk set (the op in hunk shape) so it leaves the comment list, kind change, no decision; the message names the change's texts", () => {
+test("a comment naming a detached change is its own card with a ref in state detached (the op's texts and kind), no decision; the change's card counts it; the message names the change's texts", () => {
   const st = store({ detached: [D1, D2], comments: [onD1, onD2] });
   const cm = cardModel(st, [h1], []);
-  assert.equal(cm[0].kind, "change"); assert.equal(cm[0].hunk?.id, "d1"); assert.equal(cm[0].hunk?.kind, "sub");
+  assert.equal(cm[0].kind, "file"); assert.deepEqual(cm[0].refs.map((r) => [r.id, r.source, r.state, r.kind]), [["d1", "answered", "detached", "sub"]]);
   assert.equal(cm[0].decision, null, "detached is not decided");
   assert.equal(cm[0].ref, "cold starts were slow → cold starts stay slow");
-  assert.equal(cm[1].hunk?.id, "d2"); assert.equal(cm[1].ref, "added Cold starts stay slow.");
+  assert.equal(cm[1].refs[0].id, "d2"); assert.equal(cm[1].refs[0].state, "detached"); assert.equal(cm[1].ref, "added Cold starts stay slow.");
   const cards = changeCards(st, [h1]);
-  assert.deepEqual(cards.find((c) => c.id === "d1")!.comments.map((c) => c.id), [onD1.id], "on the detached change's card");
-  assert.deepEqual(cards.find((c) => c.id === "d2")!.comments.map((c) => c.id), [onD2.id]);
-  assert.equal(cards.find((c) => c.id === "h1")!.comments.length, 0);
+  assert.equal(cards.find((c) => c.id === "d1")!.comments, 1, "the detached change's card counts the comment naming it");
+  assert.equal(cards.find((c) => c.id === "d2")!.comments, 1);
+  assert.equal(cards.find((c) => c.id === "h1")!.comments, 0);
   assert.equal(describeComment(onD1, [h1], [], { detached: st.detached }), 'on your change "cold starts were slow" to "cold starts stay slow"');
   assert.equal(describeComment(onD2, [h1], [], { detached: st.detached }), 'on the text you added "Cold starts stay slow."');
   assert.equal(describeComment(onD1, [h1]), "on this file", "without the sidecar's detached ops the model cannot know the change — which is why sendParts passes them");

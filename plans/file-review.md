@@ -183,16 +183,23 @@ sidecar store"): `v: 3`, `id`, `path`, `suggestions[]` as insert/delete/replace 
 coordinates, each with `author`, optional `authorId`, `ts`, and an `anchor {prefix, quote,
 suffix}` (these are the changes); `comments[]` as file comments with `id`, `author`, `body`,
 `ts`, `replies[]`, `resolved`, an optional `anchor {quote, prefix, suffix}` for a passage comment,
-and an optional `suggestionId` binding the comment to a change; a top-level `detached[]` of ops
+the format's optional `suggestionId` binding the comment to a change, and romp's own optional
+`changeIds[]`, the changes the comment is ABOUT by id, the person's pick (the about follow-on,
+2026-09-10, decision 45; the third romp-only additive field after `target` and `anchorAt`, ADR
+0002); a top-level `detached[]` of ops
 the load-time rebase could not re-place, which a host preserves and shows rather than drops; and
-a `fingerprint` over the current text. A file comment is a change comment when `suggestionId` is
-set (the README calls it the cross-editor key, and the Obsidian host classifies on it); a passage
-comment keeps its anchor and gains a `suggestionId` when the agent answers it with `track-edit
---thread`, and is then shown on the change's card — a shape the format allows and romp's message
-no longer asks for (decision 42: the session makes edits with plain `track-edit` and answers a
-comment with `track-reply`). The VS Code host classifies on the absent
-anchor instead (`vscode/src/panel.ts:206`), so it shows such a comment as a passage comment; a
-comment written by the CLIs has exactly one of the two fields until then. The file on disk is
+a `fingerprint` over the current text. The README calls `suggestionId` the cross-editor key and the
+Obsidian host classifies on it: a passage comment keeps its anchor and gains a `suggestionId` when
+an agent answers it with `track-edit --thread`, a shape the format allows and romp's message no
+longer asks for (decision 42: the session makes edits with plain `track-edit` and answers a comment
+with `track-reply`). romp never writes `suggestionId` (decision 45) and reads one it finds as the
+change that ANSWERED the comment, a legacy reference on the comment's own card; a comment names the
+changes it is about in `changeIds`, with or without an anchor, and its card and the sent message
+name them ("about your change …"), so the reference is the person's own and survives the passage's
+rewrite and the change's acceptance. The VS Code host classifies on the absent
+anchor instead (`vscode/src/panel.ts:206`), so it shows a comment with `suggestionId` and no anchor
+as a passage comment; a comment written by the CLIs has at most one of `anchor` and `suggestionId`.
+The file on disk is
 always the current text with every change applied. The root is the nearest `.obsidian/`, `.git/`, or `.trackchanges/` ancestor; nothing reads git,
 the folder is only a landmark for where the one `.trackchanges/` directory of a project lives.
 One `.trackchanges/` per project, at its root, never one per directory (decision 38): the tracked
@@ -452,7 +459,8 @@ parents and returns null), `status` answers `root: null, storePath: null, tracke
 null` and the panel still offers Comment on this file and Track changes; `comment` and `set-tracked` then create `.trackchanges/` beside the file
 and call `findVaultRoot` again, which now returns the file's directory, and the CLIs resolve the
 same root from then on with no `TRACKCHANGES_ROOT`; `log-edit` never creates it. The host script's
-decisions never drop a comment bound by `suggestionId`, a stated divergence from the Obsidian host's
+decisions never drop a comment about a change (`changeIds`) or bound to one by a legacy `suggestionId`, a
+stated divergence from the Obsidian host's
 accept-all, kept so the comment ids in a sent message stay addressable by `track-reply`; and since
 decision 42 (2026-09-09) they never resolve one either — before it, accept and a save's decisions set
 `resolved: true` on the bound comments. The comments a decision stages equal the loaded ones apart
@@ -477,8 +485,12 @@ empty is not named), the text a session can pass to `track-edit --old`, which re
 is not unique, to reach that copy; a side wider than 120 characters (five widening steps) is not
 printed, and the desc says instead that the passage appears more than once with the same text
 around each copy, since at the host's cap the anchor may still tie, so the sides would name every
-copy, and would run to a kilobyte of escaped text (the anchors follow-on review, 2026-09-07); the change's old and
-new text for a comment bound by `suggestionId`, "this file" for a whole-file comment, and "the
+copy, and would run to a kilobyte of escaped text (the anchors follow-on review, 2026-09-07); after the passage, or
+alone when the comment has none, the changes it is about (`changeIds`, the about follow-on, 2026-09-10) in the change
+card's words, `about your change "<old>" to "<new>"`, `about the text you added "<new>"`, `about the text you removed
+"<old>"`, several joined as a list; the change's old and
+new text alone, in the older `on your change …` form, for a legacy comment bound by `suggestionId` with no passage;
+"this file" for a whole-file comment, and "the
 region at x, y, w, h" (with the page for a PDF) for a region comment. `body` is the comment's
 unsent `you` turns joined with a blank line, oldest first; a comment whose opening was already
 sent lists only its new replies. `watermark` is the largest `ts` among the `you` comments and
@@ -1044,8 +1056,10 @@ for `files.ts` and the relay / ~160 / ~260, plus about 150 lines of tests on eac
 ### Slice 2: the session's changes as accept/reject cards and inline marks
 
 User-visible: change cards grouped by paragraph with Accept, Reject, Accept all, Reject all, and
-a Reply bound to the change (a change comment, which the session answers in words with
-`track-reply`; the `track-edit --thread` link that folded its revisions into the card left the
+Comment on this change (a comment about the change, its own card in the list, the comment and the
+change each carrying a tag for the other; the about follow-on, 2026-09-10. Before it a Reply that wrote a comment bound
+to the change by the format's own field and drawn inside the change card; the `track-edit --thread`
+link that folded the session's revisions into that card left the
 loop with decision 42); inline
 marks in Raw, highlights and deletion points in Rendered (the points since the inline-display
 follow-on, 2026-09-07), Reveal for a change the Rendered view cannot paint; Send to session states
@@ -1075,16 +1089,20 @@ paragraph and names no paragraph for the changes it passes through. A comment bo
 change is shown on the change's card and leaves the comment list; once the change is decided, the
 comment's card stands on its own again with the change's texts read from the log's accept or reject
 entry, which is also what `describeComment` falls back to, so a manual Accept before the send keeps
-"on your change …" in the message. Reply on a change card writes `comment {suggestionId, note}`,
-an argument the verb list above does not name. The panel re-fetches the view's bytes itself whenever
+the change's words in the message. Since the about follow-on (2026-09-10) every comment is its own card
+whatever it names, and Comment on this change writes `comment {anchor, hintOffset, changeIds: [id], note}`
+over the change's span (a deletion: `{changeIds: [id], note}`; for a spanned change the card offers it only while the
+view carries the change's text, `spanCarried` in the about follow-on's paragraph below), the verb's `changeIds` argument
+the list above does not name; before it, Reply on a change card wrote `comment {suggestionId, note}`. The panel re-fetches the view's bytes itself whenever
 a status lands whose file mtime is not the view's — a reject's reply, the fresh status a moved fence
 asked for, an accept's reply after a write the poll had not seen — one fetch per mtime, with the loader
 over the cards until the paint shows that text: every reply re-baselines the poll, so the poll never
 sees a move a status already reported (the consolidation, 2026-09-06; before it, only a reject's reply
 and a `file-moved` code re-fetched, and a `store-moved` from a `track-edit` left stale bytes up). The new
-elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
-beside their own and need no rule of their own to be usable, all but `.fc-hosted`, which the reply-place
-follow-on below gave a flex-column rule at the turns' gap (the review of 2026-09-07); the sheets are the
+elements (`.fc-change`, `.fc-group`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
+beside their own and need no rule of their own to be usable (`.fc-hosted`, the comment drawn inside a change
+card, had a flex-column rule at the turns' gap from the reply-place follow-on's review, 2026-09-07, and went
+with its element in the about follow-on, 2026-09-10); the sheets are the
 painter's.
 
 The inline-display follow-on (2026-09-07): after walking the loop, the user asked for two things the
@@ -1158,13 +1176,15 @@ adds a line wherever the plan names it, and the four sentences that once anchore
 key say the save. The same walk asked for the reply's box to open where the comment is read (2026-09-07): a
 reply's box now stands inside the card it answers, below the comment's turns and above its buttons, and
 stays in that card across the poll's re-render with its words, caret and height; when the list stops
-showing the card (the comment resolved into the closed fold, its change card behind the "… N more
-changes" row, or gone from the sidecar) the box returns to the panel's slot with the words and a line
+showing the card (the comment resolved into the closed fold, hidden by the Changes filter, or gone from the sidecar;
+until the about follow-on, 2026-09-10, its change card behind the "… N more
+changes" row too) the box returns to the panel's slot with the words and a line
 saying why, and Escape or Cancel hands the keyboard back to the card's Reply
 (`file-comments-reply-place.test.ts`). A comment on a change card (`.fc-hosted`) had no
 rule of its own until then, so as a plain block it stood the box against the turn above and the buttons
-below at 0px, and after a turn of yours the two washes ran together; it is a flex column at the turns' own
-gap now, in both sheets (`feed-fc-hosted-gap.test.ts`).
+below at 0px, and after a turn of yours the two washes ran together; the review gave it a flex column at the
+turns' own gap, in both sheets. The about follow-on (2026-09-10) draws no comment inside a change card, so the
+element, its rule and its test (`feed-fc-hosted-gap.test.ts`) are gone.
 
 The margin-layout follow-on (2026-09-07), panel side. The user, after walking the loop, asked whether comments could
 move with the window when possible, each trying to stay centered near the place in the text it was left as the reader
@@ -1423,20 +1443,21 @@ sheets cap each at eight of its lines (`8lh`), the last lines fading (a mask) wh
 content (`clipCards`: `data-clipped`, read before the cards' heights, since the fold changes them) — a run of turns cut
 at its START instead, scrolled to its last row with the sheets' fade at its first lines (`keepEnd`; the review,
 2026-09-08: the turns stand oldest first, so the cap hid the newest, the session's latest answer and the turn a reply
-box under the run answers, behind Show more); the parts are every `fc-clip` under the card, a change card's hosted
-comments' body and run of turns among them (`renderHosted`, `.fc-hosted`), so the card's one Show more lifts them with
-the change's text (the verification review, 2026-09-09: a pass that read the card's own children alone would leave a
-hosted run capped with no fade and, where the change's own text is short, no Show more at all, a compact view with no
-way in); the card's foot then offers Show more (`fcclip`, a `fileview-btn` through the delegate root, hidden as rendered
+box under the run answers, behind Show more); the parts are every `fc-clip` under the card (until the about follow-on,
+2026-09-10, a change card's hosted comments' body and run of turns among them, so the card's one Show more lifted them with
+the change's text: the verification review, 2026-09-09, found that a pass reading the card's own children alone left a
+hosted run capped with no fade and, where the change's own text was short, no Show more at all, a compact view with no
+way in; no comment is drawn inside a change card now); the card's foot then offers Show more (`fcclip`, a `fileview-btn` through the delegate root, hidden as rendered
 until the pass finds a part cut), Show less once open, keyed like the expand state (`openBodies`; the card wears
 `fc-more`) so the choice
 survives a re-render; Show more makes the card the focus and centers its mark, as opening a card does.
 The row stands at the card's foot above the action row — on a comment's card under the run of turns, on a change card
-after its hosted comments, above Accept and Reject — and a reply's box opened on the card stands between the row and
+after its old and new text, above Accept and Reject — and a reply's box opened on the card stands between the row and
 the buttons (`placeComposer` puts it before `.fc-actions`): the box below the turns and above the card's Reply and
-Resolve, as asked on 2026-09-07, with the toggle kept by the text it lifts; a hosted comment's Reply and Resolve so
-stand above the change card's one Show more, which lifts the hosted parts too (the verification review, 2026-09-09,
-raised both orders; recorded as the choice, and the reply-place stand-ins assert the comment card's).
+Resolve, as asked on 2026-09-07, with the toggle kept by the text it lifts (until the about follow-on, 2026-09-10, a
+hosted comment's Reply and Resolve so stood above the change card's one Show more, which lifted the hosted parts too:
+the verification review, 2026-09-09, raised both orders and the choice was recorded; with every comment on its own card
+there is one order, the comment card's, which the reply-place stand-ins assert).
 The list layout caps nothing. The keyboard stays on Show more and Show less (the review, 2026-09-08): the row is rendered hidden and the
 pass shows it, so `render`'s refocus before the pass could not land on the fresh toggle — focus() on an element not
 rendered is a no-op — and the keyboard fell to the body when the toggle was pressed, and on any re-render while it was
@@ -1480,19 +1501,21 @@ second pushed by the first alone; a card above the spilled one still pushing the
 giving the first paragraph's card the start, and the card under a kept head laid from that head's end; and a grid of
 fixtures where every card under its mark sits exactly a gap under the card placed above it),
 `file-comments-focus-verify.test.ts` (the panel over the stand-in: a reply saved on an open card that is not the focus
-making it the focus, level with its mark and centered, the tall change card above moved up; a change card's hosted
-comment folding with the card, its run of turns cut and scrolled to its end and lifted by the card's one Show more, on a
-change whose own text is long and on a short one where the hosted run is the only part cut; the fold's choice surviving
-a re-render a status drives, an ask answered with the store; and the module's own vocabulary),
+making it the focus, level with its mark and centered, the tall change card above moved up; a comment a change
+answered folding on its own card, its run of turns cut and scrolled to its end and lifted by that card's own Show more,
+while the change card folds its own text alone and hosts nothing, on a change whose own text is long and on a short
+one, whose card offers no toggle while the comment's does (the about follow-on's rewrite, 2026-09-10, of the hosted
+comment's fold with the change card the module pinned until then); the fold's choice surviving a re-render a status
+drives, an ask answered with the store; and the module's own vocabulary),
 `tools/file-review-plan-focus-centering.test.mjs` (the fallback's trigger as recorded here held to `centerOn`'s
 condition — the card's end against the centered scroll, not its height against the track's — and to the panel fixtures'
 geometry, whose open card fits the track and takes the fallback) and `tools/file-review-plan-focus-verify.test.mjs` (the
-re-lay, the save's focus and the hosted fold as recorded here held to the layout, the panel and the modules this round
-names, and every focus module in the tree — the layout's, the panel's, the guide's and the plan's — named here and in the
-Tests section's bullet, so a round's module fails by name, not in a later consolidation — a scan of the names,
-`card-layout` and `file-comments-focus`, which a focus module named otherwise passed unnamed: the module of the review
-of the merge audit's fixes, named for Reveal, until `tools/file-review-plan-focus-audit.test.mjs` below read the
-headers);
+re-lay, the save's focus and the fold's parts as recorded here, the hosted fold among them as history, held to the
+layout, the panel and the modules this round names, and every focus module in the tree — the layout's, the panel's,
+the guide's and the plan's — named here and in the Tests section's bullet, so a round's module fails by name, not in a
+later consolidation — a scan of the names, `card-layout` and `file-comments-focus`, which a focus module named
+otherwise passed unnamed: the module of the review of the merge audit's fixes, named for Reveal, until
+`tools/file-review-plan-focus-audit.test.mjs` below read the headers);
 and from its second round, `file-comments-focus-verify-2.test.ts` (the panel over the review stand-in: a head click, a
 Show more and a whole-file comment's save on a loose card the reach rule laid below the focused card leave the layout
 and the scroll as they were, the focus kept on the card the person was reviewing; the keyboard's memory of a control a
@@ -1529,7 +1552,9 @@ from Raw and from Rendered, and on the deletion's card, runs one pass, the switc
 keeps the focus it had, with none after it — before, the whole margin was measured and written a second time, to the
 same values — the row centered and wearing the landing cue; on a file with no Rendered view the pass `revealInRaw` runs
 itself is the click's only pass, laying the card level with its point; and on the comment's branch in Rendered the
-switch's own pass, laying the card level with its Raw highlight, is the only one).
+switch's own pass, laying the card level with its Raw highlight, is the only one). From the about follow-on's review
+(2026-09-10), `tools/file-review-plan-about-records.test.mjs` holds the sentences here the follow-on superseded, the
+Show more row's order and the focus module's fold, to the panel and the module as history.
 
 The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that
 recurs. Before it, a comment on a passage whose 24 characters of context matched another copy's was
@@ -1620,10 +1645,12 @@ agree; All carries no count. A detached change is neither an open comment nor a 
 Changes option carries the label's detached count after its own, "Changes 0 · 1 detached", and its title
 says the detached changes are listed in a group of their own: a file holding detached changes alone does
 not read as one with nothing to show (the review, 2026-09-07). **Comments** lists every comment card on
-its own, a comment bound to a pending change included
-(with the change's words as its reference and an "on a change" tag), with no change card, group, fold or
+its own, a comment naming a change included with its tag (until the about follow-on, 2026-09-10, a comment
+bound to a pending change stood here with the change's words as its reference and an "on a change" tag, its
+only card of its own under the filter), with no change card, group, fold or
 Accept all · Reject all foot, and paints no change mark in the text; **Changes** lists the change cards
-alone, each with the comments made on it, and paints no comment highlight or region rectangle; **All**
+alone, each counting the comments about it (before the about follow-on, each with the comments made on it
+drawn inside), and paints no comment highlight or region rectangle; **All**
 is the list as before. Show changes inline applies on top ("Changes" with the marks off shows the cards
 and no mark), the keyed expand state is untouched by a pick, and Send to session is not filtered: the
 confirm lists everything unsent as before. The buttons are one group for the keyboard: an arrow chooses
@@ -1633,18 +1660,23 @@ names its kind, Comment, Change, or Region, in a word before the author's chip, 
 accent for a comment (a region is one) and in `--text-muted` for a change (`data-cue`; both sheets,
 tokens only); a detached card keeps its dashed edge. A reply's box whose card the filter hides returns to
 the panel's slot with a line saying so, and Escape or Cancel moves the focus to the All button, the one
-that brings the card back. The review of 2026-09-07 settled five more behaviors. Under Comments a comment
-bound to a change is read as one on no change when the reply's box is placed (`replyAway`), so a resolved
-bound comment's line names the Resolved fold, where its card is, and Cancel focuses that fold; Comments
-never names a "… N more changes" row it does not render. The "on a change" tag's title says the change is
-pending only when it is among the status's hunks and says detached otherwise, naming the Detached changes
-group, and a detached change card's kind cue offers no accept or reject. A comment saved while Changes is
+that brings the card back. The review of 2026-09-07 settled five more behaviors. Under Comments a resolved
+comment's line names the Resolved fold, where its card is, and Cancel focuses that fold (`replyAway`; until
+the about follow-on, 2026-09-10, a comment bound to a change was read there as one on no change, since under
+All and Changes it rode the change's card and the "… N more changes" row could hide it, and Comments never
+named a row it did not render; no comment rides a change card now, so the fold case is gone). The tag a
+comment wears for the changes it names says each change's state, pending or detached (`refStateWords`; before
+the about follow-on the "on a change" tag's title said pending only when the change was among the status's
+hunks and detached otherwise, naming the Detached changes
+group), and a detached change card's kind cue offers no accept or reject. A comment saved while Changes is
 chosen is hidden by the choice, its highlight or rectangle with it, and a save that shows nothing reads
 as one that failed: the panel keeps the saved comment's id (`hiddenSaved`) and renders a dismissable line
 at the top of the list saying the comment is saved and that All or Comments shows it (`hiddenSavedRow`);
 the line ends once the card shows, the comment is gone from the file, the ✕ is clicked, or the panel
-closes, a later return to Changes does not bring it back, and the kept choice is unchanged; a comment
-made from a change card's Reply rides that card under Changes and gets no line. Under the margin layout
+closes, a later return to Changes does not bring it back, and the kept choice is unchanged; since the about
+follow-on every comment is its own card, so a comment made from the change card's Comment on this change is
+hidden under Changes like any other and gets the line (before it, a comment made from the change card's Reply
+rode that card under Changes and got no line). Under the margin layout
 (the margin-layout follow-on, above) the line is one of the list's rows and stands in the footer above Send
 with the foot and the folds (`moveRows`), in view wherever the text is scrolled, where a row at the top of the
 locked track is not; the save's landing (`landSaved`) finds no card for a comment the filter hides and raises no
@@ -1673,7 +1705,7 @@ does not. Tests: `ui/webview/file-comments-filter.test.ts` (driven),
 `ui/webview/file-comments-filter-review.test.ts` (the first round's fixes, driven over the same stand-in,
 with source pins) and `ui/webview/file-comments-filter-fixes.test.ts` (the second round's, driven the same
 way: the track rows with and without a filter row, the Changes empty state's stray rows, the saved line's
-rectangle wording and its end when the comment comes to ride a change card, and the inline toggle's title
+rectangle wording and its end when the comment's card comes to show, and the inline toggle's title
 under each filter); the third round (2026-09-07) added `ui/webview/file-comments-filter-saved-line.test.ts`
 (driven the same way: the saved line's pick among several fresh comments in one status, and the row's
 shape, `.fc-note` on the words alone so the ✕ keeps the panel buttons' size) and
@@ -1819,6 +1851,80 @@ acknowledgment is unchanged. Tests: `file-comments-model-arrivals.test.ts` (the 
 and Firefox), `tests/test_guide_files_arrivals.py` (the guide's two sentences held to the panel),
 `tests/test_guide_files_save_line.py` (the save sentences' gesture words derived from the listeners) and
 `tools/file-review-plan-arrivals.test.mjs` (this note held to the code and the modules it names).
+
+The about follow-on (2026-09-10): the user's answers to the decoupling assessment of 2026-09-09 (a report kept
+outside the repo, at ~/romp-handoffs/romp-filereview-notes/decouple-assessment-report.txt), three rulings and one
+requirement. The first: a comment should say which changes it is about, by the
+user's own pick, not by the session's stamp; built as `changeIds` on the comment (decision 45), the third romp-only
+additive field. The second: one list with the All / Comments / Changes filter, no tabs and no second section. The third:
+nothing resolves a comment except the user, with a bulk action for the comments the session has answered (decision 46).
+The requirement: a comment inside a tracked change is an ordinary comment, never turned into a reply on the change
+(decision 44's rule, kept here with the about option). Built: the host's `comment` op takes `changeIds` (each id a
+pending or detached change, else `no-change` naming the missing ids), the suggestionId request branch is gone and a
+request naming one is a caller bug, `decidedFor` collects both fields, and romp writes `suggestionId` never again
+(`tools/file-comments-host-about.test.mjs`). The model reads a comment's changes as `refs` (`refIds`, `commentRefs`:
+source about for `changeIds`, answered for a legacy `suggestionId`, each with its state through `boundChange` and its
+texts), `CardKind` loses "change" and `Card` loses `hunk` (a comment about a change with no passage is kind file with the
+changes' words as its reference), `changeCards` drops the hosted comments for a count of the open comments naming the
+change (`commentsAbout`), and `describeComment` names the passage or the region first and then the changes, in the
+change card's words (`aboutClause`, `changeWords`: `on "<quote>", about your change "<old>" to "<new>"`; a truncated tail
+names an unknown change by id), so the sent message says which changes a comment is about; the kernel's builder prints
+the desc verbatim, unchanged in code, its docstring naming the forms and the parity suites rendering them
+(`file-comments-model-about.test.ts`, `tests/test_file_comments.py`, `tests/test_injected_voice.py`). The panel draws
+no comment inside a change card any more (`renderHosted` and `.fc-hosted` are gone from the panel and both sheets;
+`cardKey` answers the comment's own id): every comment is its own card in the one list, the change cards first under
+All. The change card's Reply is Comment on this change (`fcchangecomment`, `startChangeComment`): the composer opens in
+the panel's slot anchored over the change's span in the current text, the presel over it, with an about option checked
+(`aboutOption`, `input[data-opt="about"]`, "about this change"), and Save posts `changeIds: [id]` beside the anchor; a
+deletion, whose text is not in the file, takes the comment by id alone, the reference row saying "About the change …"
+and, in one line, that the comment is laid at the change's point (`markTop`'s fallback lays an anchorless comment's card
+level with the first pending change it names) or, in the list layout, where no card is laid at any point, that the comment
+names the change instead of a passage (the review's second round, 2026-09-10). For a spanned change, an insertion or a
+substitution, the card offers
+Comment on this change only while the view carries the change's text (`spanCarried`: the view's bytes are the status's,
+whose offsets place the span (`textCurrent`); there is a text to cut it from (`indexedText`: the view's, or while the
+editor is up the file as the editor loaded it, never the buffer); and the view shows text at all, not the picture of a
+media file); in flux, a reject's reply landed and its reload not, or the poll's reload landed and its status not, the
+card shows Accept and Reject alone, no Comment on this change, and a click that reaches `startChangeComment` anyway
+writes nothing, since the composer over the span would quote other bytes and a comment by id alone would lose the
+passage the change has; the button comes back with the bytes, as an unpainted change's Reveal and its "not shown" tag
+do on the same ground (`inFlux`), while a deletion's, by id, stands whatever the view shows (the review of the slice,
+2026-09-10; before it a spanned change in flux took the deletion's by-id composer and Save wrote a comment with no
+passage though the change has one). A selection overlapping pending changes' marks (`overlapping`: an
+insertion's or a substitution's span sharing a character with the range, a deletion's point strictly inside it; nothing
+while the view shows other bytes) gets the same option, "about N changes" for several, checked; unchecked, Save writes a
+plain passage comment (`About.on`). A selection over a deletion's struck label alone holds no text of the file (the
+mapping refuses or maps an empty range), and the composer offers the comment about that change by id (`deletionUnder`:
+the one deletion mark the selection's range intersects). Both cards wear tags: the comment "about a change" or "about N
+changes", "answered by a change" for a legacy binding (`aboutTagWords`), the title the changes' words and states
+(`refStateWords`), and the pointer over it rings the pending changes' marks in the text (`lightChanges`, `.fc-lit`, a
+render unlighting first since the tag under the pointer is rebuilt); the change card "N comments" (`fc-about-count`), a
+control whose click shows the first open comment about the change, All chosen first when Changes hides the comment
+cards (`fcaboutfirst`, `showAbout`; the keyboard's activation through `KEY_ACTS`). The "on a change" tag, the change fold case of
+`replyAway` and the held head of a change card go with the hosting. The Send confirm and the message are otherwise
+unchanged. Tests: `file-comments-about.test.ts` (the stand-in: the list, the tags and the ring, the count tag's click and
+key, Comment on this change on a substitution and on a deletion, the option unchecked, a selection inside an insertion,
+across two marks, reaching a deletion's point and over its label alone, the sources), `file-comments-about-browser.test.ts`
+(Chromium and Firefox, Rendered with the marks shown and hidden and Raw: the composer over the real span, a real drag
+inside an insertion and a substitution's new text, the option unchecked, a drag across the insertion's end with its
+highlight painting in the other view too, the deletion's label and the card laid level with its mark, the ring's computed
+outline, the count tag's click), `file-comments-model-about.test.ts` (the pure half),
+`tools/file-comments-host-about.test.mjs` (the host), `tests/test_guide_files_about.py` (the guide's sentences held to
+the panel) and `tools/file-review-plan-about.test.mjs` (this note and decisions 45 and 46 held to the code and the
+modules they name). From the about follow-on's review (2026-09-10): `file-comments-about-fixes.test.ts` (the stand-in
+with the editor's seam: the span cut from the file as the editor loaded it, Comment on this change withheld in flux and
+in media mode and standing on a deletion, a refused selection crossing a deletion's mark, a BOM file's offsets,
+`deletionUnder`'s one mark, the open card's line naming the changes), `file-comments-resolve-answered-fixes.test.ts`
+(the confirm's end when nothing answered remains and at the panel's close, the editing consent asked once, the Reopen
+all row's dress and place, a wheel ending the offer under focus), `tools/file-comments-host-about-scale.test.mjs` (the
+host's id walk in linear time: a hundred thousand ids refused `no-change` inside the kernel's deadline) and
+`tools/file-review-plan-about-flux.test.mjs` (the withholding as recorded here and in the Slice 2 build paragraph held to
+the panel and the stand-in). From its second round (2026-09-10): `file-comments-about-review2.test.ts` (the stand-in
+with the layout switchable: the composer's about ids pruned as a status retires a change, a selection starting exactly at a deletion's point, the
+deletion marks a drag crosses, the kind cue's title by source, the ids-only line by layout),
+`file-comments-resolve-answered-review2.test.ts` (the Reopen all offer's place by layout and the keyboard after a run
+the confirm's Resolve began from the keyboard) and `file-comments-arrivals-about.test.ts` (a session's reply on a comment
+about a pending change shows on the comment's own card, never the change's).
 
 ### Slice 3: region comments on images
 
@@ -2399,12 +2505,15 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   cards above the focus without the cards laid below it: the card between a spilled tall card and the focus at its
   own mark, the loose group's spill giving the first paragraph's card the start, a grid where every card under its
   mark sits a gap under the card placed above it); `file-comments-focus-verify.test.ts` (the stand-in: a reply's save
-  making an open card that was not the focus the focus, level and centered; a change card's hosted comment folding
-  with the card, on a long change and on a short one where the hosted run is the only part cut; the fold's choice
-  surviving a status-driven re-render); `tools/file-review-plan-focus-centering.test.mjs` holds the paragraph's
+  making an open card that was not the focus the focus, level and centered; a comment a change answered folding on
+  its own card while the change card folds its own text alone and hosts nothing, on a long change and on a short one
+  whose card offers no toggle (the about follow-on's rewrite, 2026-09-10, of the hosted fold the module pinned until
+  then); the fold's choice surviving a status-driven re-render); `tools/file-review-plan-focus-centering.test.mjs`
+  holds the paragraph's
   account of the centering fallback — its trigger the card's end past the track's box with the mark centered, an open
   card that fits the track included — to `centerOn`'s condition and the panel fixtures' geometry;
-  `tools/file-review-plan-focus-verify.test.mjs` holds the paragraph's re-lay, save and hosted-fold statements to the
+  `tools/file-review-plan-focus-verify.test.mjs` holds the paragraph's re-lay, save and fold statements (the hosted
+  fold as history) to the
   layout, the panel and these modules, and every focus module in the tree to the paragraph and this bullet (the
   round's commit added modules this section did not name, as the margin follow-on's three review rounds' had; found
   in the round's review, 2026-09-09).
@@ -2499,7 +2608,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tools/file-review-plan-seen-review-3.test.mjs` holds the third round's plan fixes (the saved line's place stated by
   layout in the arrivals paragraph, decision 43 and the Docs sentence; the keys that are no gesture named against
   `NAV_KEYS`; the acknowledgment never a note, across a wrap either; this list against the tree) to the panel, the guide
-  and the tree.
+  and the tree. From the about follow-on's review (2026-09-10), `tools/file-review-plan-about-records.test.mjs` holds
+  this paragraph's superseded sentences, the Show more row's order and the focus module's fold, to the panel and the
+  module as history.
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
@@ -2544,8 +2655,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   filter's) and pins their source; `ui/webview/file-comments-filter-fixes.test.ts` drives the second
   round's cases the same way (the track slot's loader and refusal with and without a filter row, the
   Changes empty state and the "Nothing decided" row under it, a region comment's saved line naming the
-  rectangle, the line's end when the comment comes to ride a change card, and the inline toggle's title
-  under each filter) and pins the anchor and the title at source;
+  rectangle, the line standing when a change comes to answer the comment and its end at the count's click (the
+  about follow-on, 2026-09-10; until it the comment rode the change card and the line ended there), and the inline
+  toggle's title under each filter) and pins the anchor and the title at source;
   `ui/webview/file-comments-filter-saved-line.test.ts` drives the third round's cases the same way (a
   status answering a save with several fresh comments, a session's among them, and the saved row's shape:
   `.fc-note` on the words' span, the ✕ a `.fileview-btn` under the unsized row) and pins the row at
@@ -2592,6 +2704,39 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   and with the panel closed the label and the frame open the panel and the card, the drag neither.
   `tools/file-review-plan-markclick.test.mjs` holds this bullet, the surface sentence and decision 44 to the panel,
   the sheets, the overlay and the four modules.
+- The about follow-on (2026-09-10, decisions 45 and 46): `tools/file-comments-host-about.test.mjs` (the host: `changeIds`
+  with and without an anchor, the id rule, the refusal naming the missing ids, the suggestionId caller bug, `decidedFor`
+  over both fields, the field through track-reply and accept); `file-comments-model-about.test.ts` (refIds, commentRefs,
+  the card's refs and reference, the count, describeComment's about clause and its edges, the sent text against the
+  kernel's literal); `file-comments-about.test.ts` (the stand-in: every comment its own card, the tags and the ring, the
+  count tag's click and key, Comment on this change on a substitution and on a deletion, the option unchecked, a selection
+  inside an insertion, across two marks, reaching a deletion's point and over its label alone, the sources);
+  `file-comments-about-browser.test.ts` (Chromium and Firefox, Rendered with the marks shown and hidden and Raw);
+  `file-comments-resolve-answered.test.ts` (the stand-in: the header action's count and its absence, the confirm, the
+  resolve requests, a refusal per comment, Reopen all and its end at a gesture) and `file-comments-resolve-answered-browser.test.ts`
+  (Chromium and Firefox); `tests/test_guide_files_about.py` holds the guide's sentences to the panel;
+  `tools/file-review-plan-about.test.mjs` holds the about follow-on's note and decisions 45 and 46 to the code and the
+  modules they name; `tools/file-review-plan-about-records.test.mjs` holds the hosted-era sentences the follow-on
+  superseded elsewhere in this document (the Show more row's order, the focus module's fold, the filter module's saved
+  line) to the panel and the modules as history, decision 46 to the vocabulary, and the note's citation of the
+  assessment to the tree (the report is outside it), and, since the review's consolidation (2026-09-10), the relation's
+  names in the records, the panel, the ADR and the host to CONTEXT.md's About entry (each carries a tag for the other;
+  never linked, cross-linked or thread), with the filter's option titles and the decision tag held to the guide's words.
+  From the about follow-on's review (2026-09-10):
+  `file-comments-about-fixes.test.ts` (the stand-in with the editor's seam: the span cut from the file as the editor
+  loaded it, Comment on this change withheld in flux and in media mode and standing on a deletion, a refused selection
+  crossing a deletion's mark, a BOM file's offsets, `deletionUnder`'s one mark, the open card's line naming the
+  changes), `file-comments-resolve-answered-fixes.test.ts` (the confirm's end when nothing answered remains and at the
+  panel's close, the editing consent asked once, the Reopen all row's dress and place, a wheel ending the offer under
+  focus) and `tools/file-comments-host-about-scale.test.mjs` (the host's id walk in linear time: a hundred thousand ids
+  refused `no-change` inside the kernel's deadline); `tools/file-review-plan-about-flux.test.mjs` holds the paragraph's
+  account of Comment on this change withheld in flux and in media mode, and the Slice 2 build paragraph's clause, to the
+  panel and the stand-in. From its second round (2026-09-10): `file-comments-about-review2.test.ts` (the stand-in with
+  the layout switchable: the composer's about ids pruned as a status retires a change, a selection starting exactly at a deletion's point, the
+  deletion marks a drag crosses, the kind cue's title by source, the ids-only line by layout),
+  `file-comments-resolve-answered-review2.test.ts` (the Reopen all offer's place by layout and the keyboard after a run
+  the confirm's Resolve began from the keyboard) and `file-comments-arrivals-about.test.ts` (a session's reply on a
+  comment about a pending change shows on the comment's own card, never the change's).
 
 ## Docs
 
@@ -2618,7 +2763,12 @@ in the list under a narrow column the line stands under the panel's header inste
 panel's tests of both placements). With the seen follow-on (2026-09-09), that the Send's checkbox accepts only the pending
 changes you have seen and says how many unseen ones stay pending, and that a change the session edits again after you
 looked at it is unseen until you look again (`tests/test_guide_files_seen.py` and `tests/test_guide_files_seen_definition.py`
-hold the sentence to the panel).
+hold the sentence to the panel). With the about follow-on (2026-09-10), that Comment on this change opens the box over
+the change's text with "about this change" checked so the message names the change, that a comment is never shown inside
+a change's card and the comment and the change each carry a tag for the other, that a selection inside a change leaves
+an ordinary comment with the same
+box checked, that an older binding reads "answered by a change", and that nothing resolves a comment but you, singly or
+with Resolve answered (`tests/test_guide_files_about.py` holds the sentences to the panel).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -2853,6 +3003,31 @@ document stands on its own, each with the reasoning it was given.
     in Chromium and Firefox, Rendered and Raw: inside an insertion's mark, and, with words selected in another
     paragraph, on a deletion's label, the marks inside a link, a region rectangle and a framed figure. Client-only; no
     kernel change.
+45. **A comment names the changes it is about by stored ids the person picks; romp never writes `suggestionId`**
+    (2026-09-10). The user's answers to the decoupling assessment: a comment should be able to say which changes it is
+    about, by their own pick and not by the session's stamp; one list with the filter, no tabs; and a comment made inside
+    a change is an ordinary comment. Built as `changeIds` on the comment, romp's third additive field: Comment on this
+    change (the change card's Reply until now) and the composer's checked "about this change" option over a selection
+    that overlaps pending changes' marks write the ids beside the anchor, or alone for a deletion, whose text is not in
+    the file; the card wears "about a change" and the change card "N comments", each a tag for the other; the message says
+    "about your change …" after the passage. Stored ids over a derived overlap because an explicit list is what saying
+    which changes a comment is about means, and it survives the passage's rewrite and the change's acceptance (the
+    texts come from the sidecar or the comments log). The format's own `suggestionId` is read as the change that
+    answered the comment (an older sidecar, or one `track-edit --thread` wrote) and never written: the host refuses a
+    request naming it as a caller bug, and no comment is drawn inside a change card any more. The about follow-on under
+    Slice 2 has the build. Client and host; the kernel's builder prints the desc verbatim and changed only in its
+    docstring, so no kernel restart is needed for the message to say it.
+46. **Resolve answered: the person resolves, singly or all the answered ones at once** (2026-09-10). The user's ruling
+    on what should resolve a comment: nothing but them, and a button that resolves every comment the session has
+    replied to. Built: nothing in the host or the panel resolves a comment except the card's Resolve (as before) and a
+    header action "Resolve answered (N)", shown while N > 0, N being the unresolved comments by the person that carry a
+    reply by another author since the person's last message on the comment (a reply of kind edit counts as an answer;
+    the person's own later reply does not). Its click asks in one plain line, "Resolve the N comments the session has
+    answered?", resolves them through the host's `resolve` op one request each (a refusal is reported per comment,
+    under the card), and puts "Reopen all" in the acknowledgment's position (the margin layout's Send section; in the list
+    layout, whose Send section is the scroller's foot and left the offer off screen after the click, under the header: the
+    review's second round, 2026-09-10) until the person's next gesture, which reopens the same comments the same way.
+    Event-based: the set is read off the status when the button is pressed, never a timer. Client-only; no kernel change.
 
 ## Open questions for the user
 
