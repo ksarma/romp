@@ -55639,7 +55639,7 @@ else if(m&&m.type==='notifyAll'&&window.__rompNotifyAllPaint)window.__rompNotify
 // the bottom bar's API health cell: one frame, painted by _LANDING_APIH_JS (sent on change + on ready)
 else if(m&&m.type==='apiHealth'&&window.__rompApiHealth)window.__rompApiHealth(m);
 else if(m&&m.type==='notifyTurns'&&window.__rompNotifyTurnsPaint)window.__rompNotifyTurnsPaint(!!m.on);
-// the boot check found a newer romp release — raise the update banner on every open dashboard (the running
+// the boot check found a newer romp release: raise the update banner on every open dashboard (the running
 // push's manager field rides along: false when no manager started the kernel, so the wait names no restart)
 else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'',m.manager);};
 // the API health detail's pause acknowledgment rides this socket: a press it carried cannot be answered now (the
