@@ -372,8 +372,45 @@ test("every close the browser reports for a socket that OPENED leaves a wsclose 
   const rows = h.diags("wsclose");
   assert.equal(rows.length, 1, "…and delivered on the reconnect");
   assert.equal(rows[0].surface, "pane-shim");
-  assert.deepEqual(rows[0].data, { app: "feed", code: 1006, reason: "", wasClean: false, sinceOpenMs: 6_500, quietMs: 2_500, everConnected: true });
+  // bundleReady false: the bundle never said ready on this page, so the redial dialed as a fresh page (below)
+  assert.deepEqual(rows[0].data, { app: "feed", code: 1006, reason: "", wasClean: false, sinceOpenMs: 6_500, quietMs: 2_500, everConnected: true, bundleReady: false });
   assert.equal(h.diags("wsconnfail").length, 0, "no handshake failed");
+});
+
+// The wsclose row's bundleReady is the shim's state at the CLOSE; the kernel stamps every row with whether the
+// socket that carried it declared the redial (?reconnect=1). The queued row rides the redial, so the pair tells
+// the three shapes apart in client-diag.jsonl (2026-09-10; the kernel half is tests/test_client_diag_reconnect_stamp.py).
+test("the wsclose row says whether the bundle had said ready at the close, beside the redial's own term", () => {
+  // declared: the bundle said ready on the socket that died, and the redial carries the term
+  let h = FEED();
+  h.ws.open(); h.bundleReady(); h.ws.msg({ type: "feed", asks: [] });
+  h.ws.close(); h.runTimers();
+  assert.match(h.ws.url, /&reconnect=1$/, "the redial declares itself");
+  h.ws.open();
+  assert.equal(h.diags("wsclose")[0].data.bundleReady, true, "the bundle had said ready when the socket closed");
+  // gated off: the socket died before the bundle said ready, and the redial dials as a fresh page
+  h = FEED();
+  h.ws.open(); h.ws.close(); h.runTimers();
+  assert.doesNotMatch(h.ws.url, /reconnect=1/, "no term: the page held nothing");
+  h.ws.open();
+  assert.equal(h.diags("wsclose")[0].data.bundleReady, false, "the bundle had not said ready at the close");
+  // the ready reached the shim while the socket was CLOSING (the browser holds a closing handshake open): it
+  // queued, the row says the bundle was ready, and the redial still carries no term (the queued ready is the
+  // bundle's own, flushed onto the redial); the kernel reads the pair as reconnect false, bundleReady true
+  h = FEED();
+  h.ws.open(); h.ws.readyState = 2; h.bundleReady();
+  h.ws.close(); h.runTimers();
+  assert.doesNotMatch(h.ws.url, /reconnect=1/, "the ready is still queued for this open, so no term");
+  h.ws.open();
+  const kinds = h.sent.map((m) => (m.type === "clientDiag" ? m.what : m.type));
+  assert.deepEqual(kinds, ["ready", "wsclose"], "the ready queued first, during the close; this socket declared no term, so the order does not touch the stamp");
+  assert.equal(h.diags("wsclose")[0].data.bundleReady, true);
+  assert.equal(h.readys(), 1, "the queued ready went out once; nothing re-sent it");
+  // on the declared shape the order is the other way round: the row is flushed ahead of the re-sent ready whose
+  // strip consumes the kernel's flag, so the kernel stamps the row while the flag still stands
+  h = FEED();
+  h.ws.open(); h.bundleReady(); h.ws.msg({ type: "feed", asks: [] }); h.ws.close(); h.runTimers(); h.ws.open();
+  assert.deepEqual(h.sent.slice(-2).map((m) => (m.type === "clientDiag" ? m.what : m.type)), ["wsclose", "ready"]);
 });
 
 test("the redials an outage refuses leave ONE coalesced row on the next open, never a wsclose each", () => {
