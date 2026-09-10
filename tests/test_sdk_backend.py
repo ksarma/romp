@@ -8707,6 +8707,28 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(flags(s), (True, False), "the mode pick applied live leaves the arm; the fast pick rides on")
         self.assertEqual(set(s._reconnect_riding), {"fast"})
         self.assertTrue(any("the reconnect armed during the connect stands for the rest" in str(m) for m in self.logs), self.logs)
+        # (i) a FLAGGED connection running fast off (a live off answered on it), an effort pick's arm half, then fast on
+        # (the reconnect route: the name rides the arm) and off again: the on pick is withdrawn whatever flag the running
+        # connection carries (review round 11, regression-2). Until round 11 the guard keyed the withdrawal on the flag,
+        # so the name rode the arm and fastPending stayed true through a flagless relaunch that changed nothing about fast
+        s = session()
+        s._fast_unlocked = True                                          # the running connection carries the flag; fast is off live
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertFalse(s._connecting); self.assertIsNotNone(s._launching)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertEqual(flags(s), (True, False)); self.assertIn("fast", s._reconnect_riding)
+        del self.logs[:]
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertEqual(flags(s), (False, False), "the withdrawn on pick's name leaves the arm, flagged connection or not")
+        self.assertNotIn("fast", s._reconnect_riding); self.assertEqual(s.fast, "off")
+        self.assertTrue(s._reconnect, "the arm stands for the effort pick")
+        self.assertTrue(any("fast (web): set to off; the reconnect in flight launches without the flag" in str(m) for m in self.logs), self.logs)
+        self.assertEqual(len(fast_lines("off")), 1)
+        composed(s)
+        self.assertEqual(flags(s), (False, False), "nothing of fast pends through the flagless relaunch")
+        self.assertFalse(s._fast_unlocked)
+        s._connect_landed()
+        self.assertEqual(flags(s), (False, False))
 
     def test_y8_a_fast_on_re_pick_in_the_arm_half_on_a_session_already_running_fast_asks_for_nothing(self):
         # round 9 sent every arm-half fast pick down the reconnect route (its fold into the compose), with no unchanged

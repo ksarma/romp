@@ -13703,9 +13703,13 @@ class SdkBackend:
             return True
         if value == "off":                     # no flag at connect → fast mode is already off; nothing to send
             # `unlocked` here means the ARM half on a flagged running connection (every other flagged case took the
-            # live send above): the off is a real change the relaunch applies, so a fast name riding the arm stands
-            # for it. Otherwise the connection the flag describes is flagless, the off returns to it, and an on
-            # pick anywhere (recorded, or riding an arm) is withdrawn (review round 10)
+            # live send above). A fast name RIDING that arm can only be an on pick made after a live off (an on over
+            # an on records nothing, below), so this off returns to what the running process has and withdraws it,
+            # whatever flag the connection carries (review round 11; the review's regression-2: round 10 keyed the
+            # withdrawal below on the flag, on the premise that the arm-half off was itself the real change, and the
+            # name rode a flagless relaunch that changed nothing about fast, fastPending true through it). With the
+            # connection flagless the off returns to it the same way, and an on pick anywhere (recorded, or riding
+            # an arm) is withdrawn (review round 10)
             if "fast" in s._pick_names_locked():
                 # an on pick is pending on a reconnect (held for live work, or deferred to the turn's end) and
                 # this returns to the state the process runs: the pick is withdrawn through the one withdraw
@@ -13729,8 +13733,9 @@ class SdkBackend:
                 # with a fast on then off inside it relaunched the identical flagless shape a second time, the third
                 # client, and the badge pulsed through it). In the arm half nothing is disarmed (the loop top
                 # composes the relaunch, flagless, from the session); after a landing the arm stands for the same
-                # reason (the loop is about to break for it) and relaunches flagless, the flag right meanwhile
-                if not unlocked and was_on:
+                # reason (the loop is about to break for it) and relaunches flagless, the flag right meanwhile.
+                # Keyed on the pick, not the flag (review round 11): the ask was on, so an on pick rides the arm
+                if was_on:
                     s._withdraw_held_pick("fast")
                 s.fast = "off"
                 if connecting:
