@@ -25636,13 +25636,12 @@ def _manager_refusal(door, status, body):
         err = ""
     src = "ROMP_SERVE_TOKEN" if (os.environ.get("ROMP_SERVE_TOKEN") or "").strip() else str(jd.STATE / "serve-token")
     if status == 401:
-        why = ("the manager refused it (HTTP 401): the serve token this kernel sent, read from %s, is not one "
-               "the manager holds" % src)
-        fix = "Run romp refresh from a terminal, which reads the manager's own token file"
+        why = ("the manager refused it (HTTP 401) because it does not hold the serve token this kernel sent, "
+               "read from %s" % src)
+        fix = "Run romp refresh from a terminal; it reads the manager's own token file"
     elif status == 503:
-        why = ("the manager refused it (HTTP 503): it cannot read its own serve-token file, so it holds no "
-               "token to compare against")
-        fix = "Make that file a regular file of yours at mode 0600 under the manager's state root, then run romp refresh"
+        why = "the manager refused it (HTTP 503) because it cannot read its own serve-token file"
+        fix = "Make that file a regular 0600 file that you own, under the manager's state root, then run romp refresh"
     else:
         why = "the manager answered HTTP %d" % status
         fix = "Restart it yourself: romp refresh"

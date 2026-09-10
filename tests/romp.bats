@@ -3030,11 +3030,11 @@ PY
         [[ "$output" != *"still running"* ]]
         if [ "$code" = 401 ]; then
             [[ "$output" == *"X-Romp-Token"* ]]                  # the manager's own words
-            [[ "$output" == *"read from $XDG_STATE_HOME/romp/serve-token is not one the manager holds"* ]]
+            [[ "$output" == *"It does not hold the serve token this romp read from $XDG_STATE_HOME/romp/serve-token"* ]]
             [[ "$output" == *"Check ROMP_STATE_DIR and ROMP_MANAGER_PORT"* ]]
         else
             [[ "$output" == *"cannot read the serve token"* ]]
-            [[ "$output" == *"Make that file a regular file of yours at mode 0600"* ]]
+            [[ "$output" == *"Make that file a regular 0600 file that you own"* ]]
         fi
         grep -qx 'POST /stop token=refused-down-token' "$TEST_DIR/mgr-seen"
         [ "$(grep -c '^POST ' "$TEST_DIR/mgr-seen")" -eq 1 ]     # one ask, never repeated

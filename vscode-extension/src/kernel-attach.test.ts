@@ -180,7 +180,7 @@ test("attachFailureToast: each reason names its own fix; a refusal never sends t
   assert.match(dead, /romp status/);
   const words = "serve token required: send it in X-Romp-Token (the serve-token file under the kernel's state root: /m/state/serve-token for the primary kernel)";
   const wrong = attachFailureToast({ ok: false, reason: "manager-refused", status: 401, detail: words }, ctx);
-  assert.match(wrong, /refused the serve token this window read from \/x\/state\/serve-token/, "which root this window read");
+  assert.match(wrong, /does not hold the serve token this window read from \/x\/state\/serve-token/, "which root this window read");
   assert.match(wrong, /another state root/);
   assert.match(wrong, /ROMP_STATE_DIR/);
   assert.match(wrong, /romp status/);
@@ -193,7 +193,7 @@ test("attachFailureToast: each reason names its own fix; a refusal never sends t
   assert.match(env, /read from ROMP_SERVE_TOKEN/, "the env spelling outranks the file, so the toast names it");
   const notoken = attachFailureToast({ ok: false, reason: "manager-refused", status: 503, detail: "the manager cannot read the serve token (/m/state/serve-token: EACCES); state-changing requests are refused until it can" }, ctx);
   assert.match(notoken, /cannot read its serve-token file/);
-  assert.match(notoken, /mode 0600/);
+  assert.match(notoken, /0600 file/);
   assert.doesNotMatch(notoken, /romp up/);
   const other = attachFailureToast({ ok: false, reason: "manager-refused", status: 500, detail: "HTTP 500" }, ctx);
   assert.match(other, /HTTP 500/);

@@ -157,7 +157,7 @@ class ManagerHopsCarryTheToken(unittest.TestCase):
         # the /restart handler and the converge share this hop; its answer used to be discarded
         # (`c.getresponse(); c.close()` under `except Exception: pass`), so a 401 or 503 left no line, no
         # notice and no row (review round 1, 2026-09-10)
-        for status, tell in ((401, "is not one the manager holds"), (503, "cannot read its own serve-token file")):
+        for status, tell in ((401, "does not hold the serve token this kernel sent"), (503, "cannot read its own serve-token file")):
             with self.subTest(status=status):
                 _RecordingManager.answer = status
                 _RecordingManager.hits = []

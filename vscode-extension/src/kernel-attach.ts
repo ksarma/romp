@@ -138,15 +138,15 @@ export function attachFailureToast(res: Exclude<AttachResult, { ok: true }>,
   const src = ctx.tokenFromEnv ? "ROMP_SERVE_TOKEN" : ctx.tokenFile;
   if (res.status === 401 && !ctx.hadToken) {
     return `romp: the manager on ${mp} needs the serve token, and this window found none at ${src}. `
-      + `Point the window at the manager's state root (ROMP_STATE_DIR), or check \`romp status\` in a terminal. Manager: ${res.detail}`;
+      + `Point this window at the manager's state root (ROMP_STATE_DIR) or check \`romp status\` in a terminal. Manager: ${res.detail}`;
   }
   if (res.status === 401) {
-    return `romp: the manager on ${mp} refused the serve token this window read from ${src}: it holds a different one, so it runs `
-      + `under another state root. Point the window at that root (ROMP_STATE_DIR), or check \`romp status\` in a terminal. Manager: ${res.detail}`;
+    return `romp: the manager on ${mp} does not hold the serve token this window read from ${src}, so it runs under another state root. `
+      + `Point this window at that root (ROMP_STATE_DIR) or check \`romp status\` in a terminal. Manager: ${res.detail}`;
   }
   if (res.status === 503) {
     return `romp: the manager on ${mp} cannot read its serve-token file, so it refuses every request. `
-      + `Make that file a regular file of yours at mode 0600 under the manager's state root; the manager log names it. Manager: ${res.detail}`;
+      + `Make that file a regular 0600 file that you own, under the manager's state root; the manager log names it. Manager: ${res.detail}`;
   }
   return `romp: the manager on ${mp} refused to bring up a kernel on port ${ctx.port} (HTTP ${res.status}: ${res.detail}). Check \`romp status\` and the manager log.`;
 }

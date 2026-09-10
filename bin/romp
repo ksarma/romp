@@ -2777,12 +2777,12 @@ except Exception:
     err = ""
 src = "ROMP_SERVE_TOKEN" if os.environ.get("DN_ENV") else os.environ.get("DN_TOK") or "its token file"
 if code == "401":
-    fix = ("The serve token this romp read from %s is not one the manager holds, so the manager runs under "
-           "another state root or belongs to another romp. Check ROMP_STATE_DIR and ROMP_MANAGER_PORT, or stop "
-           "it from the shell that started it." % src)
+    fix = ("It does not hold the serve token this romp read from %s, so it runs under another state root or "
+           "belongs to another romp. Check ROMP_STATE_DIR and ROMP_MANAGER_PORT, or stop it from the shell that "
+           "started it." % src)
 elif code == "503":
-    fix = ("The manager cannot read its own serve-token file. Make that file a regular file of yours at mode "
-           "0600 under the manager's state root, then run romp down again.")
+    fix = ("It cannot read its own serve-token file. Make that file a regular 0600 file that you own, under the "
+           "manager's state root, then run romp down again.")
 else:
     fix = "See the manager's log."
 print(code)
