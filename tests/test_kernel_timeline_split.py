@@ -485,6 +485,13 @@ class SkeletonFromCache(unittest.TestCase):
                             "a surface joining the hold busts it")
         self.assertNotEqual(sig(1000, {"S": held1}), sig(1000, {"S": {**pend, "pickHeld": None}}),
                             "the hold clearing while effortPending stays busts it")
+        # a re-pick DURING the hold changes the picked value the menus check-mark and the tooltip rows name
+        # (pickHeld.picked, review round 5, 2026-09-10): same surfaces, same counts, a different pick repaints
+        pk1 = {**pend, "pickHeld": {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "picked": {"effort": "max"}}}
+        pk2 = {**pend, "pickHeld": {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "picked": {"effort": "low"}}}
+        self.assertNotEqual(sig(1000, {"S": pk1}), sig(1000, {"S": pk2}), "a re-pick during the hold busts it")
+        self.assertEqual(sig(1000, {"S": pk1}), sig(1000, {"S": {**pend, "pickHeld": dict(pk1["pickHeld"])}}), "stable on the same pick")
+        self.assertNotEqual(sig(1000, {"S": held1}), sig(1000, {"S": pk1}), "a payload gaining the picked value busts it once")
         self.assertEqual(base, sig(1000, {"S": {**row, "snapT": 123456.0}}), "the snapshot's clock stays out")
         self.assertEqual(base, sig(1000, {"S": {**row, "interrupting": True}}),
                          "`interrupting` is not keyed: the merged liveness row never carries it (the SDK merge copies "

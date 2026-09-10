@@ -7,6 +7,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
+import { heldMenuMarks } from "./pick-held";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
@@ -40,7 +42,7 @@ test("a pick HELD for live work renders a waiting line, not the reloading animat
   // kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the element then
   // says which pick waits and on what, with no loader dots. The words come from pick-held.ts (executed
   // in pick-held.test.ts, per kind and per state); render.ts is pinned to take them from there
-  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, type PickHeld \} from "\.\/pick-held";/);
+  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
   assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null;/);
   assert.match(RENDER, /effortPending\?: boolean; pickHeld\?: PickHeld \| null;/);
   assert.match(RENDER, /if \(ev\.held\) \{/);
@@ -95,9 +97,71 @@ test("the tab tooltip's Mode and Effort rows show a held pick the way the Billin
   const fn = RENDER.slice(start, RENDER.indexOf("\nfunction ", start + 1));
   assert.ok(start > 0 && fn.length > 0);
   assert.match(fn, /const held = s\.status\.pickHeld;/);
-  assert.match(fn, /const heldRow = \(kind: string, now: string\) => held && held\.surfaces\.includes\(kind\) \? heldRowValue\(now, kind, held\) : now;/);
+  // the rows name the PICKED value when the status carries it (pickHeld.picked, review round 5), a mode prettified
+  // the way the running one is; pick-held.test.ts executes heldRowValue with and without it
+  assert.match(fn, /const pickedOf = \(kind: string\) => \{ const p = \(\(held && held\.picked\) \|\| \{\}\)\[kind\]; return p \? \(kind === "mode" \? prettyMode\(p\) : p\) : undefined; \};/);
+  assert.match(fn, /const heldRow = \(kind: string, now: string\) => held && held\.surfaces\.includes\(kind\) \? heldRowValue\(now, kind, held, pickedOf\(kind\)\) : now;/);
   assert.match(fn, /rows\.push\(\["Mode", heldRow\("mode", prettyMode\(s\.status\.mode\)\)\]\);/);
   assert.match(fn, /rows\.push\(\["Effort", heldRow\("effort", s\.status\.effort\)\]\);/);
   assert.match(fn, /rows\.push\(\["Billing", billingRowText\(s\.status\)\]\);/, "the Billing row keeps its own decision, from billing-label.ts");
   assert.doesNotMatch(fn, /badgeHeldTip|pickHeldLine/, "not the badge tip's words (it ends on what the badge shows) nor the chat line's");
+});
+
+test("the badge menus and the Billing flyout mark a held pick the same way: the check on the picked value, a running tag on the running one", () => {
+  // during a hold the effort and mode menus check-marked the RUNNING value (isCurrentMeta over st.effort / st.mode;
+  // toggleMetaMenu never read pickHeld) while the tab menu's Billing flyout check-marked the PICKED side (review
+  // round 5, ui-2). One convention now, pick-held.ts's heldMenuMarks (executed in pick-held.test.ts): the check on the
+  // pick, the running value tagged. render.ts's rows are pinned here and metaRowMarks is executed below
+  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
+  assert.match(RENDER, /function matchesMeta\(kind: MetaKind, current: string, value: string\): boolean \{/);
+  assert.match(RENDER, /function isCurrentMeta\(kind: MetaKind, st: Status, value: string\): boolean \{\n\s+if \(kind === "model"\) return \(st\.model \|\| ""\)\.toLowerCase\(\)\.startsWith\(value\);\n\s+return matchesMeta\(kind, metaCurrent\(kind, st\), value\);\n\}/);
+  assert.match(RENDER, /function metaRowMarks\(kind: MetaKind, st: Status, value: string\): \{ current: boolean; running: boolean \} \{\n\s+const held = heldMenuMarks\(kind, st\.pickHeld, metaCurrent\(kind, st\)\);/);
+  // the menu rows take their classes from it, and the running row wears the tag in each of the three row shapes
+  const menu = RENDER.slice(RENDER.indexOf("function toggleMetaMenu("), RENDER.indexOf("\nfunction ", RENDER.indexOf("function toggleMetaMenu(") + 1));
+  assert.match(menu, /const marks = metaRowMarks\(kind, s\.status, c\.value\);\n\s+const item = el\("div", "meta-item" \+ \(marks\.current \? " current" : ""\) \+ \(marks\.running \? " running" : ""\)\);/);
+  assert.equal((menu.match(/if \(marks\.running\) (?:head|item)\.appendChild\(runningTag\(\)\);/g) || []).length, 3, "the sub-lined, the icon and the plain row shapes");
+  assert.doesNotMatch(menu, /el\("div", "meta-item" \+ \(isCurrentMeta\(kind, s\.status, c\.value\)/, "the rows no longer check the running value alone");
+  // the Billing flyout, the same rule: the check on the pick and the tag on the side the CLI reports while held
+  const flyout = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub");'), RENDER.indexOf("menu.appendChild(sub);"));
+  assert.match(flyout, /const heldAuth = heldMenuMarks\("auth", st\.pickHeld, st\.authLive \|\| ""\);/);
+  assert.match(flyout, /const current = heldAuth \? heldAuth\.current === c\.value : st\.auth === c\.value;/);
+  assert.match(flyout, /const running = !!heldAuth && heldAuth\.running === c\.value;/);
+  assert.match(flyout, /el\("div", "ctx-item" \+ \(current \? " current" : ""\) \+ \(running \? " running" : ""\)\)/);
+  assert.match(flyout, /if \(running\) opt\.appendChild\(runningTag\(\)\);/);
+  // the tag is the menu sub-line vocabulary, spaced from the label; no size of its own (ui/CLAUDE.md)
+  assert.match(RENDER, /function runningTag\(\): HTMLElement \{\n\s+const tag = el\("span", "meta-item-sub running-tag"\);\n\s+tag\.textContent = " " \+ RUNNING_TAG;/);
+  assert.match(CSS, /\.running-tag \{ margin-left: 6px; \}/);
+  assert.doesNotMatch((CSS.match(/\.running-tag \{([^}]*)\}/) || ["", ""])[1], /font-size|opacity/);
+});
+
+test("executed: metaRowMarks checks the picked row and tags the running row while held, and the current row otherwise", () => {
+  // the row-mark rule lifted from render.ts (metaCurrent through metaRowMarks) and run against statuses, with
+  // heldMenuMarks supplied from pick-held.ts, so the classes the menu draws are executed, not only pinned
+  const requireCjs = createRequire(__filename);
+  const start = RENDER.indexOf("function metaCurrent(kind: MetaKind, st: Status): string {");
+  const end = RENDER.indexOf("\n}\n", RENDER.indexOf("function metaRowMarks(")) + 3;
+  assert.ok(start > 0 && end > start, "the slice anchors moved; re-anchor");
+  const js = requireCjs("esbuild").transformSync(RENDER.slice(start, end), { loader: "ts" }).code;
+  const api = new Function("heldMenuMarks", js + "\nreturn { metaRowMarks, isCurrentMeta, matchesMeta };")(heldMenuMarks);
+  const held = { surfaces: ["effort", "mode"], subagents: 1, tasks: 0, picked: { effort: "max", mode: "bypassPermissions" } };
+  const st = { effort: "high", mode: "default", model: "Opus 5", fast: "off", pickHeld: held };
+  assert.deepEqual(api.metaRowMarks("effort", st, "max"), { current: true, running: false }, "the pick is checked");
+  assert.deepEqual(api.metaRowMarks("effort", st, "high"), { current: false, running: true }, "the running value is tagged");
+  assert.deepEqual(api.metaRowMarks("effort", st, "low"), { current: false, running: false });
+  assert.deepEqual(api.metaRowMarks("mode", st, "bypassPermissions"), { current: true, running: false });
+  assert.deepEqual(api.metaRowMarks("mode", st, "default"), { current: false, running: true }, "the default alias tags the running row");
+  assert.deepEqual(api.metaRowMarks("mode", { ...st, mode: "" }, "default"), { current: false, running: true }, "'' aliases default too");
+  assert.deepEqual(api.metaRowMarks("fast", st, "off"), { current: true, running: false }, "a kind not held: the current rule");
+  assert.deepEqual(api.metaRowMarks("model", st, "opus"), { current: true, running: false });
+  // not held at all: the current rule for every kind, no running tag
+  const plain = { ...st, pickHeld: null };
+  assert.deepEqual(api.metaRowMarks("effort", plain, "high"), { current: true, running: false });
+  assert.deepEqual(api.metaRowMarks("effort", plain, "max"), { current: false, running: false });
+  // an older kernel's payload (no picked value): nothing checked, the running row tagged
+  const older = { ...st, pickHeld: { surfaces: ["effort"], subagents: 1, tasks: 0 } };
+  assert.deepEqual(api.metaRowMarks("effort", older, "high"), { current: false, running: true });
+  assert.deepEqual(api.metaRowMarks("effort", older, "max"), { current: false, running: false });
+  // the running value picked again is no hold, so it is simply current (the kernel reconnects nothing for it)
+  assert.equal(api.isCurrentMeta("effort", plain, "high"), true);
+  assert.equal(api.matchesMeta("mode", "normal", "default"), true);
 });

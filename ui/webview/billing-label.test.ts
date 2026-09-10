@@ -92,6 +92,19 @@ test("a billing pick HELD for the session's live work says so, and names what bi
   // and the clause is pick-held.ts's, never a second wording here
   assert.match(BILLING, /import \{ heldUntil, type PickHeld \} from "\.\/pick-held";/);
   assert.doesNotMatch(BILLING, /until the background work finishes|waiting for background work/);
+  // the picked side EQUALS the side the CLI reports (review round 5, ui-1): the kernel compares a billing pick against
+  // the side that launched, never against the report, so a key pick on a process that launched plain and found the
+  // helper's key is held with authLive "key" already. The row said "API key until the background work finishes, then
+  // API key"; it names the side once now and says the reload waits. The sub-line names no side and is unchanged
+  const sameKey = { auth: "key", authLive: "key", authPicked: true, authPending: true,
+                    pickHeld: { surfaces: ["auth"], subagents: 1, tasks: 0 } };
+  assert.equal(billingRowText(sameKey), "API key (the reload waits until the background work finishes)");
+  assert.equal(billingSubText(sameKey), "waiting until the background work finishes");
+  const sameLogin = { auth: "login", authLive: "login", authPicked: true, authPending: true, authAcct: "user@example.com",
+                      pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: true } };
+  assert.equal(billingRowText(sameLogin), "Login (user@example.com) (the reload waits until this turn finishes)");
+  assert.equal(billingSubText(sameLogin), "waiting until this turn finishes");
+  assert.doesNotMatch(billingRowText(sameKey), /applying/, "nothing is applying during a hold (round 2 retired that wording for holds)");
   // a hold on some OTHER pick leaves the billing words alone, and so does the armed reconnect (no hold)
   const h = { auth: "login", authLive: "", authPicked: true, authPending: true, pickHeld: { surfaces: ["effort"], subagents: 1, tasks: 0 } };
   assert.equal(billingRowText(h), "Login (applying, not confirmed yet)");

@@ -49920,12 +49920,15 @@ def _fleet_view_sig(now, tmux):
 
 
 def _pick_held_sig(h):
-    """A held pick's status entry ({surfaces, subagents, tasks} or None) as a hashable: the waiting line
-    the chat renders off it must change when the hold begins, when a count falls, and when the arm
-    clears it while effortPending stays set (2026-09-09)."""
+    """A held pick's status entry ({surfaces, subagents, tasks, picked} or None) as a hashable: the waiting
+    line the chat renders off it must change when the hold begins, when a count falls, when the arm clears
+    it while effortPending stays set (2026-09-09), and when a re-pick during the hold changes the picked
+    value the badge menus check-mark and the tooltip rows name (`picked`, review round 5, 2026-09-10)."""
     if not isinstance(h, dict):
         return None
-    return (tuple(h.get("surfaces") or ()), h.get("subagents"), h.get("tasks"))
+    picked = h.get("picked")
+    return (tuple(h.get("surfaces") or ()), h.get("subagents"), h.get("tasks"),
+            tuple(sorted(picked.items())) if isinstance(picked, dict) else None)
 
 
 def _reconnecting_event(tm0):

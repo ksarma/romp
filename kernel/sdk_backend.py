@@ -5937,7 +5937,21 @@ class SdkSession:
             # readers, whether or not the loop has settled the flag yet (_withdraw_held_pick, review round 4)
             return None
         n_sub, n_task = self._live_work_counts()
-        return {"surfaces": names, "subagents": n_sub, "tasks": n_task, "inflight": self.inflight != 0}
+        # the PICKED value of each held kind (review round 5, 2026-09-10), since the status beside this marker
+        # reports what the process RUNS: the badge menus check-mark the pick and tag the running value, and the
+        # tab tooltip's held rows name it ("high until ..., then max"); until round 5 no payload carried the
+        # picked strings and the menus check-marked the running value while the Billing flyout checked the
+        # pick. A fast pick is the opt-in (on); the restore and an env pick have no menu value
+        picked = {}
+        if "effort" in names:
+            picked["effort"] = self.effort
+        if "mode" in names:
+            picked["mode"] = self.perm_mode
+        if "fast" in names:
+            picked["fast"] = "on"
+        if "auth" in names:
+            picked["auth"] = self.auth
+        return {"surfaces": names, "subagents": n_sub, "tasks": n_task, "inflight": self.inflight != 0, "picked": picked}
 
     def _connect_landed(self) -> None:
         """The (re)connect is up (the reconnect loop, right after the handshake): the shape _options

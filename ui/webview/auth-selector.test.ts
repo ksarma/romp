@@ -92,7 +92,12 @@ test("the switching CONTROL is the tab menu's Billing submenu, both sides listed
   // with the session's current choice check-marked
   assert.match(RENDER, /\{ label: st\.authAcct \? `Login \(\$\{st\.authAcct\}\)` : "Login", value: "login", why: avail\.login \? "" : /);   // 2026-09-08: each option carries the reason it is greyed, or ""
   assert.match(RENDER, /\{ label: "API key", value: "key", why: avail\.key \? "" : /);   // 2026-09-08: reason field, see above
-  assert.match(RENDER, /el\("div", "ctx-item" \+ \(st\.auth === c\.value \? " current" : ""\) \+ \(c\.why \? " disabled" : ""\)\)/);   // 2026-09-08: the unavailable side is greyed, never hidden
+  // ...check-marked on the intent, or, while the billing pick is HELD for live work, on the pick with the side the
+  // CLI reports tagged running (pick-held.ts heldMenuMarks, review round 5; effort-switch-pending.test.ts pins the
+  // convention across the menus); the side this box cannot bill stays greyed with its reason, held or not (2026-09-08:
+  // the unavailable side is greyed, never hidden)
+  assert.match(RENDER, /const current = heldAuth \? heldAuth\.current === c\.value : st\.auth === c\.value;/);
+  assert.match(RENDER, /el\("div", "ctx-item" \+ \(current \? " current" : ""\) \+ \(running \? " running" : ""\) \+ \(c\.why \? " disabled" : ""\)\)/);
   // a pick posts the same setAuth the badge used, and only a CHANGE posts (current = dismiss)
   assert.match(RENDER, /if \(st\.auth !== c\.value && vscodeApi\) vscodeApi\.postMessage\(\{ type: "setAuth", id, value: c\.value \}\);/);
   // the item's sub-line names the current billing, or the applying reconnect (billing-label.ts's words)

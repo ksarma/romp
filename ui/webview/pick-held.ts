@@ -20,7 +20,10 @@
 // the surfaces outside this module that name it (billing-label.ts's row and sub-line, render.ts's tooltip
 // rows through heldRowValue) take it from here (review round 4, 2026-09-10).
 
-export interface PickHeld { surfaces: string[]; subagents: number; tasks: number; inflight?: boolean }
+// `picked` (review round 5, 2026-09-10): the PICKED value of each held kind, by kind ("effort", "mode", "fast",
+// "auth"), since the status fields beside the marker report what the session RUNS; the badge menus check-mark it
+// and the tooltip rows name it. A payload from an older kernel has none, and the surfaces then name the pick by kind.
+export interface PickHeld { surfaces: string[]; subagents: number; tasks: number; inflight?: boolean; picked?: Record<string, string> }
 
 // Which turn's end applies the pick once the work is done: the open one, or the session's next when none is.
 function turnPhrase(h: PickHeld): string {
@@ -37,10 +40,27 @@ export function heldUntil(h: PickHeld): string {
 }
 
 // A status row's value while its kind is held (the tab tooltip's Mode and Effort rows): what the session runs
-// now, then when the picked value takes over, in the Billing row's shape ("API key until ..., then Login"). The
-// status carries no picked value for these kinds during a hold, so the pick is named by its kind.
-export function heldRowValue(now: string, kind: string, h: PickHeld): string {
-  return `${now} until ${heldUntil(h)}, then the picked ${pickKindName(kind)}`;
+// now, then when the picked value takes over, in the Billing row's shape ("API key until ..., then Login").
+// `picked` is the picked value as the row displays it (the caller reads pickHeld.picked and prettifies a mode;
+// review round 5); a payload without it names the pick by its kind, as every payload did before.
+export function heldRowValue(now: string, kind: string, h: PickHeld, picked?: string): string {
+  return `${now} until ${heldUntil(h)}, then ${picked || `the picked ${pickKindName(kind)}`}`;
+}
+
+// ONE convention for a menu's rows while a pick of its kind is HELD (review round 5, 2026-09-10): the check mark
+// stays on the PICKED value, what the session will run, and the value the session runs meanwhile wears a
+// "running" tag (RUNNING_TAG). The statusline's effort and mode menus and the tab menu's Billing flyout all take
+// their marks from here; until round 5 the badge menus checked the running value (they never read the hold) while
+// the Billing flyout checked the pick, so the same hold read two ways on one screen. Returns null when the kind is
+// not held, and the menu marks its current value as it always did. A payload without the picked value (an older
+// kernel) checks no row rather than a wrong one, and still tags the running value.
+export interface HeldMenuMarks { current: string; running: string }
+
+export const RUNNING_TAG = "running";
+
+export function heldMenuMarks(kind: string, h: PickHeld | null | undefined, running: string): HeldMenuMarks | null {
+  if (!h || !(h.surfaces || []).includes(kind)) return null;
+  return { current: (h.picked || {})[kind] || "", running: running || "" };
 }
 
 // The kind names in the user's words; a surface this build does not know is named as the kernel sent it.

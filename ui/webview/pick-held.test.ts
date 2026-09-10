@@ -8,7 +8,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { pickHeldLine, pickHeldTitle, pickHeldSubject, badgeHeldTip, workPhrase, pickKindName, heldUntil, heldRowValue } from "./pick-held";
+import { pickHeldLine, pickHeldTitle, pickHeldSubject, badgeHeldTip, workPhrase, pickKindName, heldUntil, heldRowValue, heldMenuMarks, RUNNING_TAG } from "./pick-held";
 
 const WEBVIEW = path.resolve(process.cwd(), "..", "ui", "webview");
 
@@ -148,8 +148,41 @@ test("one 'until' clause for every surface that says when a held pick applies, a
   const BILLING = fs.readFileSync(path.join(WEBVIEW, "billing-label.ts"), "utf8");
   const RENDER = fs.readFileSync(path.join(WEBVIEW, "render.ts"), "utf8");
   assert.match(BILLING, /import \{ heldUntil, type PickHeld \} from "\.\/pick-held";/);
-  assert.match(BILLING, /const until = heldUntil\(f\.pickHeld!\);\s*\n\s*return now \? `\$\{now\} until \$\{until\}, then \$\{then\}` : `\$\{then\} applies when \$\{until\}`;/);
+  assert.match(BILLING, /const until = heldUntil\(f\.pickHeld!\);\s*\n\s*if \(now && f\.authLive === f\.auth\) return `\$\{then\} \(the reload waits until \$\{until\}\)`;\s*\n\s*return now \? `\$\{now\} until \$\{until\}, then \$\{then\}` : `\$\{then\} applies when \$\{until\}`;/);
   assert.match(BILLING, /if \(billingHeld\(f\)\) return `waiting until \$\{heldUntil\(f\.pickHeld!\)\}`;/);
   assert.doesNotMatch(BILLING, /until the background work finishes|waiting for background work/, "the old fixed wording is gone");
-  assert.match(RENDER, /heldRowValue\(now, kind, held\)/);
+  assert.match(RENDER, /heldRowValue\(now, kind, held, pickedOf\(kind\)\)/);
+});
+
+test("the tooltip rows name the PICKED value when the status carries it, and fall back to the kind when it does not", () => {
+  // the status reports what the session RUNS beside the hold, so until review round 5 no payload carried the picked
+  // strings and the rows said "then the picked effort"; pickHeld.picked names it now ("high until ..., then max"), and
+  // a payload from an older kernel keeps the kind
+  const h = { surfaces: ["effort"], subagents: 2, tasks: 0, picked: { effort: "max" } };
+  assert.equal(heldRowValue("high", "effort", h, h.picked.effort), "high until the background work finishes, then max");
+  assert.equal(heldRowValue("Normal", "mode", { surfaces: ["mode"], subagents: 0, tasks: 0, inflight: true, picked: { mode: "bypassPermissions" } }, "Bypass"),
+    "Normal until this turn finishes, then Bypass", "the caller prettifies the mode, as it does the running one");
+  assert.equal(heldRowValue("high", "effort", { surfaces: ["effort"], subagents: 2, tasks: 0 }), "high until the background work finishes, then the picked effort");
+  assert.equal(heldRowValue("high", "effort", h, undefined), "high until the background work finishes, then the picked effort");
+  assert.equal(heldRowValue("high", "effort", h, ""), "high until the background work finishes, then the picked effort");
+});
+
+test("one menu convention while a pick is held: the check on the picked value, a running tag on the value the session runs", () => {
+  // the statusline's effort and mode menus check-marked the RUNNING value during a hold (they never read the hold) while
+  // the tab menu's Billing flyout check-marked the PICKED side (review round 5, ui-2): one hold, two readings on one
+  // screen. heldMenuMarks is the one rule for every menu: not held, null (the menu marks its current value as before)
+  const held = { surfaces: ["effort", "mode", "auth"], subagents: 1, tasks: 0, picked: { effort: "max", mode: "bypassPermissions", auth: "key" } };
+  assert.deepEqual(heldMenuMarks("effort", held, "high"), { current: "max", running: "high" });
+  assert.deepEqual(heldMenuMarks("mode", held, "default"), { current: "bypassPermissions", running: "default" });
+  assert.deepEqual(heldMenuMarks("auth", held, "login"), { current: "key", running: "login" });
+  assert.equal(heldMenuMarks("fast", held, "off"), null, "a kind not held: the menu's own current rule");
+  assert.equal(heldMenuMarks("effort", null, "high"), null);
+  assert.equal(heldMenuMarks("effort", undefined, "high"), null);
+  assert.equal(heldMenuMarks("effort", { surfaces: [], subagents: 0, tasks: 0 }, "high"), null);
+  // the picked side can equal the running side (a billing pick the CLI already bills): the same row wears both marks
+  assert.deepEqual(heldMenuMarks("auth", { surfaces: ["auth"], subagents: 1, tasks: 0, picked: { auth: "key" } }, "key"), { current: "key", running: "key" });
+  // an older kernel's payload carries no picked value: no row is checked, the running one is still tagged
+  assert.deepEqual(heldMenuMarks("effort", { surfaces: ["effort"], subagents: 1, tasks: 0 }, "high"), { current: "", running: "high" });
+  assert.deepEqual(heldMenuMarks("auth", { surfaces: ["auth"], subagents: 1, tasks: 0, picked: {} }, ""), { current: "", running: "" }, "no report yet: nothing runs to tag");
+  assert.equal(RUNNING_TAG, "running");
 });

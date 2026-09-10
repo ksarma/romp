@@ -544,7 +544,11 @@ turn. While the pick is held the chat says so in place of the reloading line
 ("The effort pick is waiting on 2 subagents and 1 background task", then "The
 effort pick applies when this turn finishes" once the work is done, or "applies
 when the next turn finishes" when no turn is open at that point), and the badge
-keeps showing the value the session runs with a small mark beside it.
+keeps showing the value the session runs with a small mark beside it. Its menu,
+the tab menu's Billing flyout and the tab tooltip's rows all read the hold the
+same way: the check mark stays on the value you picked, the value the session
+runs meanwhile is tagged "running", and a tooltip row reads "high until the
+background work finishes, then max".
 The same hold and the same line apply to a permission-mode pick into bypass,
 the first fast-mode opt-in and a billing switch. When the CLI refuses that
 opt-in, the reload that takes the flag back off is held the same way, and the

@@ -88,7 +88,7 @@ import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle } from "./billing-label";
-import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips and the tab tooltip's held rows (pick-held.ts)
+import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows and the menus' marks (pick-held.ts)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
 import { setTip, pruneTip } from "./tip";
@@ -5489,7 +5489,10 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   // rows showed the running value flat while the Billing row beside them explained its hold, and for a tab
   // that is not the active one this tooltip is the only place its mode and effort can be read
   const held = s.status.pickHeld;
-  const heldRow = (kind: string, now: string) => held && held.surfaces.includes(kind) ? heldRowValue(now, kind, held) : now;
+  // the picked value as the row displays it (pickHeld.picked, review round 5; a mode prettified like the running
+  // one), so the row says "high until ..., then max" rather than naming the pick by its kind
+  const pickedOf = (kind: string) => { const p = ((held && held.picked) || {})[kind]; return p ? (kind === "mode" ? prettyMode(p) : p) : undefined; };
+  const heldRow = (kind: string, now: string) => held && held.surfaces.includes(kind) ? heldRowValue(now, kind, held, pickedOf(kind)) : now;
   if (s.status.mode) rows.push(["Mode", heldRow("mode", prettyMode(s.status.mode))]);
   if (s.status.model) rows.push(["Model", s.status.model]);
   if (s.status.effort) rows.push(["Effort", heldRow("effort", s.status.effort)]);
@@ -7148,10 +7151,18 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       const open = menu.querySelector(".ctx-sub");
       if (open) { open.remove(); return; }                       // second click folds the flyout
       const sub = el("div", "ctx-menu ctx-sub");
+      // while the billing pick is HELD for live work the check stays on the pick and the side the CLI reports
+      // (what bills meanwhile) wears the running tag: the one menu convention the badge menus follow too
+      // (pick-held.ts heldMenuMarks, review round 5); not held, the check marks the intent as before. The side
+      // this box cannot bill (c.why, from st.authAvail) stays greyed with its reason, held or not (2026-09-08)
+      const heldAuth = heldMenuMarks("auth", st.pickHeld, st.authLive || "");
       for (const c of [{ label: st.authAcct ? `Login (${st.authAcct})` : "Login", value: "login", why: avail.login ? "" : (avail.loginWhy || "no Claude login signed in on this machine") },
                        { label: "API key", value: "key", why: avail.key ? "" : (avail.keyWhy || "no apiKeyHelper configured") }]) {
-        const opt = el("div", "ctx-item" + (st.auth === c.value ? " current" : "") + (c.why ? " disabled" : ""));
+        const current = heldAuth ? heldAuth.current === c.value : st.auth === c.value;
+        const running = !!heldAuth && heldAuth.running === c.value;
+        const opt = el("div", "ctx-item" + (current ? " current" : "") + (running ? " running" : "") + (c.why ? " disabled" : ""));
         opt.textContent = c.label;
+        if (running) opt.appendChild(runningTag());
         if (c.why) {   // unavailable here: greyed, the reason on hover, inert (the user 2026-09-08)
           opt.title = c.why;
           opt.setAttribute("aria-disabled", "true");
@@ -14606,17 +14617,45 @@ function metaCurrent(kind: MetaKind, st: Status): string {
     : st.mode) || "";
 }
 
-// Is this menu entry the session's current value? Effort matches exactly; the
-// model var holds a display name ("Opus 4.8"), so match on the leading word.
-function isCurrentMeta(kind: MetaKind, st: Status, value: string): boolean {
-  if (kind === "effort") return (st.effort || "").toLowerCase() === value;
-  if (kind === "fast") return (st.fast || "").toLowerCase() === value;   // "cooldown" marks neither entry
+// Does a menu entry name this value of its kind? Effort and fast match exactly ("cooldown" marks neither fast
+// entry); the mode entry's default aliases '' / default / normal; the model var holds a display name
+// ("Opus 4.8"), so match on the leading word. The value compared is the session's current one (isCurrentMeta)
+// or, while a pick of the kind is held, the picked and the running values (metaRowMarks).
+function matchesMeta(kind: MetaKind, current: string, value: string): boolean {
+  const m = (current || "").toLowerCase();
+  if (kind === "effort" || kind === "fast") return m === value;
   if (kind === "mode") {
-    const m = (st.mode || "").toLowerCase();
     if (value === "default") return m === "" || m === "default" || m === "normal";
     return m === value.toLowerCase();                                          // auto / acceptEdits / plan match exactly
   }
-  return (st.model || "").toLowerCase().startsWith(value);
+  return m.startsWith(value);
+}
+// Is this menu entry the session's current value? (the model rule spelled out on st.model: the version rows
+// and the comment popover's parity test read it here)
+function isCurrentMeta(kind: MetaKind, st: Status, value: string): boolean {
+  if (kind === "model") return (st.model || "").toLowerCase().startsWith(value);
+  return matchesMeta(kind, metaCurrent(kind, st), value);
+}
+// A menu row's marks (review round 5, 2026-09-10): the check on the current value, or, while a pick of this kind
+// is HELD for the session's live work, the check on the PICKED value and a "running" tag on the value the session
+// runs meanwhile (the status reports the running one; pickHeld.picked carries the pick), the one convention the
+// tab menu's Billing flyout follows too (pick-held.ts heldMenuMarks). Until round 5 the effort and mode menus
+// check-marked the running value during a hold, so the menu disagreed with the flyout and with the tab tooltip's
+// held rows in the same popover.
+function metaRowMarks(kind: MetaKind, st: Status, value: string): { current: boolean; running: boolean } {
+  const held = heldMenuMarks(kind, st.pickHeld, metaCurrent(kind, st));
+  if (!held) return { current: isCurrentMeta(kind, st, value), running: false };
+  // the running value is compared as it stands, an empty mode included ('' aliases default, as in isCurrentMeta);
+  // a payload without the picked value checks no row
+  return { current: !!held.current && matchesMeta(kind, held.current, value),
+           running: matchesMeta(kind, held.running, value) };
+}
+// The "running" tag a held menu's running row wears: the menu sub-line vocabulary (0.82em at 0.6 opacity, the
+// one sub-line size across every romp menu), never a size of its own
+function runningTag(): HTMLElement {
+  const tag = el("span", "meta-item-sub running-tag");
+  tag.textContent = " " + RUNNING_TAG;
+  return tag;
 }
 
 // "<sessionId>:<kind>" → set when the user picks a value, cleared when the tmux
@@ -14850,7 +14889,10 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     loadModelChoices();
   }
   for (const c of rows) {
-    const item = el("div", "meta-item" + (isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
+    // the check on the current value, or during a hold on the PICKED one with the running value tagged
+    // (metaRowMarks, review round 5)
+    const marks = metaRowMarks(kind, s.status, c.value);
+    const item = el("div", "meta-item" + (marks.current ? " current" : "") + (marks.running ? " running" : ""));
     item.tabIndex = 0;
     const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;
     if (rowIco) rowIco.innerHTML = modeIconSvg(c.value);
@@ -14865,6 +14907,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
       const head = el("div");
       if (rowIco) head.appendChild(rowIco);
       head.appendChild(document.createTextNode(c.label));
+      if (marks.running) head.appendChild(runningTag());
       const sub = el("div", "meta-item-sub");
       sub.textContent = c.sub;
       item.appendChild(head);
@@ -14872,8 +14915,10 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     } else if (rowIco) {
       item.appendChild(rowIco);
       item.appendChild(document.createTextNode(c.label));
+      if (marks.running) item.appendChild(runningTag());
     } else {
       item.textContent = c.label;
+      if (marks.running) item.appendChild(runningTag());
     }
     // A model family with more than one live version wears the side-submenu affordance (the user
     // 2026-08-25): hover or an arrow key reveals every version, each directly pickable with the ✓

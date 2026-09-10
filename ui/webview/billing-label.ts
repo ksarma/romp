@@ -139,9 +139,15 @@ export function billingRowText(f: BillingFacts): string {
   if (billingHeld(f)) {
     // the running side leads when the CLI reported one (the report still describes the running process:
     // the kernel keeps it through the hold and clears it at the arm); the pick is named as what waits, and
-    // when it applies is the one clause every held surface shares (heldUntil)
+    // when it applies is the one clause every held surface shares (heldUntil). The picked side can EQUAL the
+    // side the CLI reports (review round 5, 2026-09-10): the kernel compares a billing pick against the side
+    // that LAUNCHED, never against the CLI's report, so a key pick on a process that launched plain and found
+    // the helper's key is held with authLive already "key"; the row then says the side once and that the
+    // reload waits, never "API key until ..., then API key". Not the "(applying, not confirmed yet)" wording:
+    // nothing is applying during a hold (round 2 retired it for holds; billing-label.test.ts records why)
     const now = billingSide(f.authLive || "", f.authAcct), then = billingSide(f.auth || "", f.authAcct);
     const until = heldUntil(f.pickHeld!);
+    if (now && f.authLive === f.auth) return `${then} (the reload waits until ${until})`;
     return now ? `${now} until ${until}, then ${then}` : `${then} applies when ${until}`;
   }
   if (f.authPending) return billingSide(f.auth || "") + " (applying, not confirmed yet)";

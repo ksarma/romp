@@ -1729,6 +1729,11 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
   width: 13px; height: 13px; font-size: 9px; font-weight: 900;
   display: inline-flex; align-items: center; justify-content: center; line-height: 1;
 }
+/* the "running" tag a menu row wears while a pick of its kind is HELD for the session's live work (review
+   round 5, 2026-09-10): the check stays on the PICKED row, and the row the session runs meanwhile says so. It
+   is a .meta-item-sub span (the one sub-line size across every romp menu), inline after the label, in the
+   statusline meta menus and the tab menu's Billing flyout alike; this rule only spaces it from the label. */
+.running-tag { margin-left: 6px; }
 /* context "battery": a bar that FILLS with the context-used %, recolors as it
    fills (green → amber → red), with the % written inside it. Clickable: /compact. */
 .ctx-bar {
