@@ -738,16 +738,23 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         """A syntax error, and a missing RELATIVE module (`require("./gone")`: MODULE_NOT_FOUND too, but for a
         file of this checkout, so the config is what is wrong, not the environment): node exits nonzero and the
         error carries its stderr and the config's path. The bare-package shape of the same error code is the
-        environment's and skips instead (the served-caller tests below)."""
+        environment's and skips instead (the served-caller tests below); the relative half here catches SkipTest
+        first and fails on it, so a reader that skipped every MODULE_NOT_FOUND fails here instead of skipping (a
+        SyntaxError has no such code and cannot take that door)."""
         _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts"] } };\nconst broken = [;\n')
         with self.assertRaises(ValueError) as cm:
             lab_dist.esbuild_roots(self.root, self.ext)
         self.assertIn("SyntaxError", str(cm.exception))
         self.assertIn(self.config, str(cm.exception))
         _write(self.config, 'const gone = require("./gone");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
-        with self.assertRaises(ValueError) as cm:
+        try:
             lab_dist.esbuild_roots(self.root, self.ext)
-        self.assertIn("Cannot find module './gone'", str(cm.exception))
+        except unittest.SkipTest as e:
+            self.fail("a missing relative module is an error, never a skip: %r" % e)
+        except ValueError as e:
+            self.assertIn("Cannot find module './gone'", str(e))
+        else:
+            self.fail("a missing relative module raised nothing")
 
     def test_a_config_that_logs_at_require_time_is_read_whole(self):
         """The reader writes the JSON to a file node is handed, never to stdout, so a console.log in the config
@@ -774,11 +781,11 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         """A config that wedges at require time (a BOUNDED busy loop: 4 s, then a valid export, so a mutant that
         dropped the timeout finishes instead of hanging the run) under a 1 s bound injected for the test: a
         ValueError, never a SkipTest, naming the config, the bound and the stderr tail node had written before
-        the loop, raised from the TimeoutExpired, inside a few seconds (the bound cut the require, not the
-        fixture's own 4 s)."""
+        the loop, raised from the TimeoutExpired, whose `timeout` is the bound as handed to subprocess.run (an
+        exact pin: a bound dropped, tripled or padded by a second shows there, where a wall-clock assertion let a
+        2 s bound through and added load sensitivity)."""
         _write(self.config, 'process.stderr.write("spinning\\n");\nconst end = Date.now() + 4000;\nwhile (Date.now() < end) {}\n'
                             'module.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
-        started = time.monotonic()
         with patch.object(lab_dist, "_EXPORTS_TIMEOUT", 1):
             try:
                 lab_dist.esbuild_roots(self.root, self.ext)
@@ -790,9 +797,9 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
                 self.assertIn("in 1 s", msg)
                 self.assertIn("stderr tail: spinning", msg)
                 self.assertIsInstance(e.__cause__, subprocess.TimeoutExpired)
+                self.assertEqual(e.__cause__.timeout, 1, "the bound handed to subprocess.run is _EXPORTS_TIMEOUT itself")
             else:
                 self.fail("a require past its bound raised nothing")
-        self.assertLess(time.monotonic() - started, 3, "the bound cut the require")
 
     def test_a_missing_extension_dir_is_an_error_naming_it_not_node(self):
         """A missing cwd raises the same FileNotFoundError as a missing node, and round 6 reported both as "node is
@@ -1169,9 +1176,12 @@ class Packaging(unittest.TestCase):
 _ESBUILD_TEXT_READERS = {
     # these two drive the harness, which requires the config under node through lab_dist (the reader writes
     # module.exports to a file; require.main is not the module, so nothing builds): the derivation tests and the
-    # real-config pin here, the kernel parity pin there, the two real-config reads under the esbuild stand-in
+    # real-config pin here, the kernel parity pin there, the two real-config reads under the package stand-in
     "test_lab_dist.py", "test_kernel_bundle_staleness.py",
-    # source pins over esbuild.js's text; neither runs it
+    # test_bundle_build_mode.py, a source pin over esbuild.js's and the kernel's text;
+    # test_kernel_bundle_vendor_inputs.py, a kernel pin over a synthetic checkout (a stand-in esbuild.js written
+    # there, the argv the kernel passes to a recording fake matched); neither reads the real file past build_mode,
+    # neither runs it
     "test_bundle_build_mode.py", "test_kernel_bundle_vendor_inputs.py",
 }
 _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py"}            # test_github_repo copies a repo, never dist
@@ -1216,9 +1226,9 @@ class ServedModulesUseTheHelper(unittest.TestCase):
             found = offences(name, _read(path))
             if found:
                 offenders.append((name, found))
-        self.assertEqual(offenders, [], "build and copy dist through lab_dist.copy_dist; a module that reads "
-                                        "esbuild.js as text or copies a tree that is not dist is added to the "
-                                        "allowlists in test_lab_dist.py, with its reason")
+        self.assertEqual(offenders, [], "build and copy dist through lab_dist.copy_dist; a module that names "
+                                        "esbuild.js or copies a tree that is not dist is added to the allowlists "
+                                        "in test_lab_dist.py, with its reason")
 
     def test_the_ratchet_catches_every_shape_of_the_old_block(self):
         """The shapes a copy-paste or a rewrite could take, each flagged: the base shape the served modules
