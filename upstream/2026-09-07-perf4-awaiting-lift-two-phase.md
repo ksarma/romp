@@ -1,11 +1,11 @@
 ---
 title: Perf P16: the awaiting lift decides on the shared read-only goal store and loads the writer's copy only when a lift is due; `_bg_placed_tops` reads the shared store and memoizes per (parse object, store object) with a placement index
-status: offered
+status: merged
 where: fork PR `perf4-lift` (stacked on `perf4-readers`; number pending): `kernel/kernel.py` (`_lift_spent_awaiting`, `_lift_candidates`, `_lift_decisions`, `_bg_placed_tops`, `_placement_index`, `_placed_via_index`, `_BG_TOPS_CACHE`, `_PLACEMENT_IDX`, `/perf memos.lift_gate` gains `shared`/`writer`/`noop`, new `memos.bg_tops`), `docs/reference.md`; tests `tests/test_kernel_awaiting_lift.py::LiftGate` (the two loaders counted apart, the poison canary, the two races), `tests/test_kernel_bg_placed_tops.py` (14), `tests/test_kernel_goal_cache_wiring.py`, `tests/test_perf_stats.py`
 added: 2026-09-07
 pr:
 tier: fix
 offered: their PR #1230
-closed:
+closed: 2026-09-10
 ---
 Upstream's `_lift_spent_awaiting` loads the writer's goal store (a full read plus the journal replay) for every stamped alive session every pusher cycle, and nearly every load decides nothing because the dispatch is still out: 5.1% of the pusher thread in the 2026-09-07 profile (11.1% at boot), 429 loads per 120 s, with `_bg_placed_tops` (330 of those samples) loading the store again on every miss of a one-slot cache the lift's all-ids ask and the feed's live-ids ask evicted from each other every cycle. The lift now reads in two phases behind the unchanged identity gate: every rule is decided on the shared read-only view (`_lift_decisions`, which asks the verdict gate read-only through `may_apply` and writes nothing), and the writer's copy is loaded only when that decision found a lift due, decided on again, and only that second decision is filed, so the frozen store never reaches `record_verdict` or `save_goals` and a writer publishing between the probe and the load costs one writer load that files nothing (`noop`), never a lift from a stale decision. `_bg_placed_tops` reads the caller's store or the shared view and keeps one per-session map of every launch id asked under one (parse object, store object) pair, keyed on identity rather than a stat taken after the read, with placements read from a per-store index that answers exactly what `_placement_of`'s scan answered for each suffix; a private copy is computed on and never published, and entries are evicted when a session with no live launches asks after its transcript was re-parsed and when its sid leaves the alive set. Offline on a 31-session state copy with 3 stamped sessions: the tick's steady per-cycle cost fell from 20.8 ms with 3 writer loads to 6.5 ms with none (one writer load per session-tick that files).
