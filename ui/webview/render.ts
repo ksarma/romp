@@ -6952,6 +6952,25 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       if (heldCopy(held)) return;
       copyNow = held.length === 1 && !held[0].pending ? sectionRef(held[0]) : refOf(name);
     };
+    // THE CLICK ACTS ON THE LIVE UNION (round 7). A row is built from a union, and the flyout's signature rebuilds the rows when the
+    // unions change; but the rebuild a push asks for is parked while the pointer is pressed (the menu's hold), so a push that lands
+    // between the pointerdown and the click leaves the pressed row's handler holding the union it was built from. A remote same-named
+    // tag joining that union with the session, or an already-joined one taking the session, was then unknown to the x and to Move to,
+    // whose remove walks the union's remote tags (applyUnionEdit): the local half went, the remote copy kept the session, the row stood
+    // after the click and the Hide tab row still named the group (the x's tooltip promises everywhere). Every mutating handler names
+    // its union by the ref it was built from (the local id when the union has one, else its name, as heldCopy matches) and resolves it
+    // from unionFor() at the click, the live store, never the build-time union. A union no longer there at the click (its tag deleted,
+    // or replaced under a new id) takes the refused click's cue on the row the click landed on (refuse: the Hide tab row's
+    // acknowledgement, the sheet's pulse off on the animation's own end and a tooltip note) and writes nothing; the parked rebuild lands
+    // on the release and the rows say what is there
+    const liveUnion = (ref: SectionRef): TagUnion | undefined => unionFor().find((g) => (ref.localId !== null ? g.localId === ref.localId : g.name === ref.name));
+    const refuse = (row: HTMLElement, words: string) => {
+      row.title = `${words}. The tags changed just before your click, so it did nothing; click again.`;
+      row.classList.remove("romp-acted");
+      void row.offsetWidth;   // a reflow between the remove and the add, so a second refusal pulses again
+      row.classList.add("romp-acted");
+      row.addEventListener("animationend", () => row.classList.remove("romp-acted"), { once: true });
+    };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
     // wait. Click still opens instantly (and focuses the input; a hover-open must NOT steal the
@@ -6976,8 +6995,11 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       // Round 5 listed the unions alone, so a store event delivered by the notifier re-dressed the Hide tab row and left an open
       // flyout stale (Move to rows where + rows belonged, the pin row's words and mark). A views arrival or a store event rebuilds
       // the flyout only when the string changed (rebuildFly, below): a change that touched nothing here leaves the rows alone, and
-      // one that did rebuilds them in front of the New tag… input, which stays as it is
-      const flySig = () => { const h = homeNow(); return JSON.stringify([unionFor().map((g) => [g.name, g.localId, g.color, !!g.pending, g.members.includes(id)]), h ? [h.name, h.localId, isPinned(tabGroups(), sectionRef(h), id)] : null]); };
+      // one that did rebuilds them in front of the New tag… input, which stays as it is. Per union, every constituent tag's id and
+      // its own hold on this session as well (round 7): the x and Move to act on every tag of the union's name (applyUnionEdit walks
+      // the remote tags), so a remote same-named tag joining the union with the session, or an already-joined one taking the
+      // session, changes what the rows act on while the union's own tuple stood, and round 6 left the rows unbuilt
+      const flySig = () => { const h = homeNow(); return JSON.stringify([unionFor().map((g) => [g.name, g.localId, g.color, !!g.pending, g.members.includes(id), [...g.locals, ...g.remotes].map((t) => [t.id, (t.members || []).includes(id)])]), h ? [h.name, h.localId, isPinned(tabGroups(), sectionRef(h), id)] : null]); };
       let builtSig = "";
       // THE NEW TAG… INPUT IS ONE NODE (round 5): built once per flyout and never moved, so a rebuild keeps its text, caret, selection,
       // focus, undo stack and IME composition with no restore code (round 4 built a new input on every build and copied the value and
@@ -7033,7 +7055,8 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           }
           const x = el("button", "ctx-tag-x") as HTMLButtonElement;
           x.type = "button"; x.textContent = "✕"; x.title = "remove this tag from the session — everywhere it holds it";
-          x.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { remove: [id] }); build(); sb.textContent = subText(); });
+          const ref = sectionRef(g);   // this row's union by its ref; the click resolves it again (round 7)
+          x.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse(row, g.name); return; } editUnion(live, { remove: [id] }); build(); sb.textContent = subText(); });
           row.appendChild(x);
           add(row);
         }
@@ -7056,18 +7079,20 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label");
+          const ref = sectionRef(g);   // this row's union by its ref; the click resolves it again (round 7)
           if (home) {
+            const from = sectionRef(home);   // the copy's group as this build read it; the move resolves it again too
             lb.textContent = "Move to " + g.name; bodyE.appendChild(lb);
             row.appendChild(bodyE);
             const plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;
             plus.type = "button"; plus.textContent = "+"; plus.title = "add this tag too — the session keeps its other tags";
-            plus.addEventListener("click", (e2) => { e2.stopPropagation(); aimAdd(g.name); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+            plus.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse(row, lb.textContent ?? ""); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });
             row.appendChild(plus);
-            row.addEventListener("click", (e2) => { e2.stopPropagation(); moveUnion(home, g); build(); sb.textContent = subText(); });
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); const to = liveUnion(ref), fromNow = liveUnion(from); if (!to || !fromNow) { refuse(row, lb.textContent ?? ""); return; } moveUnion(fromNow, to); build(); sb.textContent = subText(); });
           } else {
             lb.textContent = "+ " + g.name; bodyE.appendChild(lb);
             row.appendChild(bodyE);
-            row.addEventListener("click", (e2) => { e2.stopPropagation(); aimAdd(g.name); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse(row, lb.textContent ?? ""); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });
           }
           row.title = lb.textContent ?? "";   // the whole label as the row's tooltip (round 6): a 40-character destination elides at the cap and was readable nowhere in the menu; the + keeps its own title
           add(row);
@@ -7103,8 +7128,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           // the click SETS the state this row showed (!on): a toggle would flip whatever a re-render stored between the render and the click.
           // The write dispatches TABGROUPS_EVENT, whose listener runs the notifier, and the pin bit is in flySig (round 6), so the flyout is
           // rebuilt inside the write; the build() after it is a second pass over the same blob, kept so this row's refresh does not hang on
-          // the event's delivery (writeTabGroups dispatches inside a try, and a page with no window has no listener)
-          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroupsPruned(setPinned(tabGroups(), sec, id, !on)); build(); });
+          // the event's delivery (writeTabGroups dispatches inside a try, and a page with no window has no listener). The section is the
+          // home's as it stands at the click (round 7: liveUnion by the ref this build read, so a rename under the press pins the new
+          // name with the id, and a home gone by the click refuses with the cue)
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(sec); if (!live) { refuse(row, sb2.textContent ?? ""); return; } writeTabGroupsPruned(setPinned(tabGroups(), sectionRef(live), id, !on)); build(); });
           add(row);
         }
         if (holding().length || others.length) add(el("div", "ctx-sep"));

@@ -836,7 +836,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // add gesture runs it, the "+" beside a Move to row included, so an add from the fallback is an add and the row stays
   assert.match(MENU, /const aimAdd = \(name: string\) => \{\s*\n\s*const held = holding\(\);\s*\n\s*if \(heldCopy\(held\)\) return;\s*\n\s*copyNow = held\.length === 1 && !held\[0\]\.pending \? sectionRef\(held\[0\]\) : refOf\(name\);\s*\n\s*\};/);
   assert.equal(MENU.split("aimAdd(").length - 1, 4, "the four adds aim: the + beside a Move to row, the + <name> row, an existing name typed, a new tag");
-  assert.match(MENU, /lb\.textContent = "\+ " \+ g\.name; bodyE\.appendChild\(lb\);\s*\n\s*row\.appendChild\(bodyE\);\s*\n\s*row\.addEventListener\("click", \(e2\) => \{ e2\.stopPropagation\(\); aimAdd\(g\.name\); editUnion\(g, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); \}\);/, "the no-group row: the add is the move");
+  assert.match(MENU, /lb\.textContent = "\+ " \+ g\.name; bodyE\.appendChild\(lb\);\s*\n\s*row\.appendChild\(bodyE\);\s*\n\s*row\.addEventListener\("click", \(e2\) => \{ e2\.stopPropagation\(\); const live = liveUnion\(ref\); if \(!live\) \{ refuse\(row, lb\.textContent \?\? ""\); return; \} aimAdd\(live\.name\); editUnion\(live, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); \}\);/, "the no-group row: the add is the move, on the union resolved at the click (round 7)");
   assert.match(MENU, /if \(existing\) \{ aimAdd\(existing\.name\); editUnion\(existing, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); return; \}/, "an existing name typed");
   assert.match(MENU, /delete nv\.groups;\s*\n\s*aimAdd\(name\);[^\n]*\n\s*\/\/ ONE targeted create/, "a new tag: the copy goes under it (no row until the ack, which re-dresses the menu through the views hook)");
   // round 4: THE OPEN MENU FOLLOWS A VIEWS ARRIVAL. One module-level hook, set once the menu is on the page (after the ctxMenuEl
@@ -860,7 +860,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.match(RENDER, /document\.body\.appendChild\(menu\);\s*\n\s*ctxMenuEl = menu;\s*\n\s*tabMenuViewsHook = \(\) => \{ void hold\.defer\(\(\) => \{ if \(gone\(\)\) return; refreshHideRow\(\); refreshTags\(\); \}\); \};[^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "set once the menu is on the page, before the seat: one run through the menu's hold (round 5), the row's refresh and the Tags block's, dropped once the menu is dismissed");
   assert.equal(RENDER.split("tabMenuViewsHook = ").length - 1, 2, "assigned by showTabMenu and cleared by dismissTabMenu; nowhere else (the declaration reads `let tabMenuViewsHook:`)");
   assert.match(MENU, /sb\.textContent = subText\(\);\s*\n\s*tagsItem\.title = sb\.textContent;[^\n]*\n(?:\s*\/\/[^\n]*\n)+\s*let rebuildFly = \(\) => \{\};\s*\n\s*refreshTags = \(\) => \{ sb\.textContent = subText\(\); tagsItem\.title = sb\.textContent; rebuildFly\(\); \};/, "the Tags block's refresh: the sub-line re-read and the row's title with it (round 5), then the flyout's rebuild (a no-op while it is closed)");
-  assert.match(MENU, /const flySig = \(\) => \{ const h = homeNow\(\); return JSON\.stringify\(\[unionFor\(\)\.map\(\(g\) => \[g\.name, g\.localId, g\.color, !!g\.pending, g\.members\.includes\(id\)\]\), h \? \[h\.name, h\.localId, isPinned\(tabGroups\(\), sectionRef\(h\), id\)\] : null\]\); \};\s*\n\s*let builtSig = "";\s*\n(?:\s*\/\/[^\n]*\n)+\s*const nrow = el\("div", "ctx-item ctx-item-newtag"\);\s*\n\s*const inp = el\("input", "ctx-tag-input"\) as HTMLInputElement;[\s\S]{0,2200}?\n\s*nrow\.appendChild\(inp\);\s*\n\s*tagsFlyNewInput = inp; syncNewTagInput\(\);\s*\n\s*sub\.appendChild\(nrow\);[^\n]*\n\s*const add = \(n: HTMLElement\) => sub\.insertBefore\(n, nrow\);[^\n]*\n\s*const build = \(\) => \{\s*\n\s*while \(sub\.firstChild && sub\.firstChild !== nrow\) sub\.firstChild\.remove\(\);[^\n]*\n\s*builtSig = flySig\(\);/, "the New tag… input is ONE node per flyout (round 5), on the flyout before the first build; the rows go in front of it and a build clears only what stands above it; what the rows show is stamped at every build");
+  assert.match(MENU, /const flySig = \(\) => \{ const h = homeNow\(\); return JSON\.stringify\(\[unionFor\(\)\.map\(\(g\) => \[g\.name, g\.localId, g\.color, !!g\.pending, g\.members\.includes\(id\), \[\.\.\.g\.locals, \.\.\.g\.remotes\]\.map\(\(t\) => \[t\.id, \(t\.members \|\| \[\]\)\.includes\(id\)\]\)\]\), h \? \[h\.name, h\.localId, isPinned\(tabGroups\(\), sectionRef\(h\), id\)\] : null\]\); \};\s*\n\s*let builtSig = "";\s*\n(?:\s*\/\/[^\n]*\n)+\s*const nrow = el\("div", "ctx-item ctx-item-newtag"\);\s*\n\s*const inp = el\("input", "ctx-tag-input"\) as HTMLInputElement;[\s\S]{0,2200}?\n\s*nrow\.appendChild\(inp\);\s*\n\s*tagsFlyNewInput = inp; syncNewTagInput\(\);\s*\n\s*sub\.appendChild\(nrow\);[^\n]*\n\s*const add = \(n: HTMLElement\) => sub\.insertBefore\(n, nrow\);[^\n]*\n\s*const build = \(\) => \{\s*\n\s*while \(sub\.firstChild && sub\.firstChild !== nrow\) sub\.firstChild\.remove\(\);[^\n]*\n\s*builtSig = flySig\(\);/, "the New tag… input is ONE node per flyout (round 5), on the flyout before the first build; the rows go in front of it and a build clears only what stands above it; what the rows show is stamped at every build, each constituent tag's id and hold included (round 7: a remote same-named tag joining with the session, or an already-joined one taking it, left the union's tuple unchanged and the rows unbuilt)");
   const flyBlock = MENU.slice(MENU.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), MENU.indexOf("const armHoverClose = "));
   assert.doesNotMatch(flyBlock.replace(/\/\/[^\n]*/g, ""), /replaceChildren|sub\.appendChild\(row\)/, "no rebuild sweeps the input or the foot: every row goes through add");
   assert.equal(flyBlock.split("add(").length - 1, 7, "four rows and three dividers go in front of the input");
@@ -868,7 +868,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.match(MENU, /reseatFly = \(\) => \{ if \(sub\.isConnected\) place\(\); \};\s*\n(?:\s*\/\/[^\n]*\n)+\s*rebuildFly = \(\) => \{ if \(!sub\.isConnected \|\| flySig\(\) === builtSig\) return; build\(\); \};/, "the rebuild, run inside the hook's one deferred run (round 5), its two checks inside that parked run: only while the flyout is on the menu and the blob changed what the rows show; nothing is carried, since the input is one node that never moves");
   assert.doesNotMatch(flyBlock, /typed|focused/, "no value or focus copied back: the round-4 restore is gone with the node it restored");
   assert.match(RENDER, /type TabGroupsState, type SectionRef \} from "\.\/tab-groups";/, "SectionRef reaches render.ts");
-  assert.match(MENU, /plus\.addEventListener\("click", \(e2\) => \{ e2\.stopPropagation\(\); aimAdd\(g\.name\); editUnion\(g, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); \}\);/, "the + beside a Move to row aims too (round 5): from the one-holder fallback it confirms that holder as the copy, so the add is an add and the row stays");
+  assert.match(MENU, /plus\.addEventListener\("click", \(e2\) => \{ e2\.stopPropagation\(\); const live = liveUnion\(ref\); if \(!live\) \{ refuse\(row, lb\.textContent \?\? ""\); return; \} aimAdd\(live\.name\); editUnion\(live, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); \}\);/, "the + beside a Move to row aims too (round 5), on the union resolved at the click (round 7): from the one-holder fallback it confirms that holder as the copy, so the add is an add and the row stays");
   // round 3: THE MENU'S SEAT. One seat for the menu (the cursor's corner clamped inside the pane; the emoji picker's anchor follows),
   // re-run from the menu's own corner by the row's refresh, and the open flyout re-placed after it; the seat runs once the menu is on
   // the page (the lift's anchor)
@@ -1792,6 +1792,118 @@ test("executed: A RENAME PUSHED WHILE THE MENU IS OPEN (menu review rounds 4 and
       assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "ops", id: "g1" }]], "and the click hides that copy (round 5 wrote {api, infra} with no id, the remote section)");
       writeTabGroups(d);
     }
+  });
+});
+
+test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review round 7). A remote same-named tag joining the copy's union with the session, or an already-joined one taking the session, rebuilds the open flyout's rows, and the x then clears every tag of the name; under a pressed pointer the rebuild is parked and the x and Move to resolve the union again at the click, so the remote copy is cleared too; a union gone by the click refuses with the cue and writes nothing", async () => {
+  // Round 6's signature listed each union's name, id, colour, pending state and hold on the session, so a remote infra tag arriving
+  // with the session (the union already held it through the local tag) or an already-joined remote infra taking the session changed
+  // nothing in the string: rebuildFly was a no-op, the x's handler kept the union it was built from (remotes empty, or the remote's
+  // members without the session), applyUnionEdit walked those, and the x removed the local half alone: the remote copy kept the
+  // session, the infra row stood and the Hide tab row still read infra; Move to left the remote copy behind the same way. The
+  // per-constituent list in the signature covers the push that lands unpressed (A, B); the click-time resolution covers the push that
+  // lands under the press, where the rebuild is parked and the rows are the old ones by design (C, C2); a union gone by the click takes
+  // the cue (D)
+  type Views = { active: string; tags: Array<{ id: string; name: string; color: string; members: string[] }>; remoteTags?: Array<{ id: string; host: string; name: string; color: string; members: string[] }>; seq: number };
+  const hooks = menuHooks();
+  const rowOf = (menu: FakeEl) => menu.children.find((it) => it.has("ctx-item-hide"));
+  const heldRow = (fly: FakeEl, name: string) => fly.children.find((it) => it.label() === name);
+  const xOf = (fly: FakeEl, name: string) => heldRow(fly, name)!.all().find((n) => n.has("ctx-tag-x") && !n.has("ctx-tag-plus"))!;
+  const moveRow = (fly: FakeEl, name: string) => fly.children.find((it) => it.label() === "Move to " + name)!;
+  const sameNodes = (a: FakeEl[], b: FakeEl[]) => a.length === b.length && a.every((n, i) => n === b[i]);
+  const R1 = { id: "TESTHOST:r1", host: "TESTHOST", name: "infra", color: "#123456", members: ["api"] };
+  const holders = (v: Views) => ({ local: (v.tags.find((t) => t.id === "g1")?.members ?? []).slice(), remote: (v.remoteTags || []).map((t) => t.members.slice()) });
+  const V_QA: Views = { ...V_API_BOTH, tags: [...V_API_BOTH.tags, { id: "g5", name: "qa", color: "#7aa2f7", members: [] as string[] }], seq: 6 };
+  await withStore(async () => {
+    const api = liftShowTabMenu()(hooks);
+    const win = hooks.window!;
+    const press = (menu: FakeEl) => menu.fire("pointerdown", { button: 0 });
+    // A: api under infra and archived, the menu on the infra copy, the flyout open; the push brings a remote infra tag holding api into
+    // the union (a host attaching, or its tag taking api). The rows are rebuilt (round 6 left them: the union's tuple was unchanged), and
+    // the x on infra clears the local tag and the remote mirror alike: api is under archived alone, the infra row is gone and the Hide
+    // tab row names archived
+    hooks.views = V_API_BOTH; hooks.writes = [];
+    let menu = api.open("api", "infra");
+    let fly = flyOf(menu);
+    let rows = fly.children.slice();
+    const V_A: Views = { ...V_API_BOTH, remoteTags: [R1], seq: 5 };
+    api.push(V_A);
+    assert.ok(!sameNodes(fly.children, rows), "the rows are rebuilt: a constituent joined with the session (round 6: the same nodes, the union's tuple unchanged)");
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"), "the row still names infra: the union holds api");
+    xOf(fly, "infra").click();
+    let after = hooks.views as Views;
+    assert.deepEqual(holders(after), { local: ["web", "tests"], remote: [[]] }, "the x cleared both halves (round 6 cleared the local tag alone, and the remote infra kept api)");
+    assert.equal(heldRow(fly, "infra"), undefined, "the infra row is gone");
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("archived"), "and the Hide tab row names the one holder left");
+    // B: the remote infra already in the union without api; the push gives it api. The union's hold on api was already true through
+    // the local tag, so round 6's string stood and the stale x skipped the remote tag (its members, as built, held no api)
+    const V_B0: Views = { ...V_API_BOTH, remoteTags: [{ ...R1, members: ["web"] }], seq: 5 };
+    hooks.views = V_B0; hooks.writes = [];
+    menu = api.open("api", "infra");
+    fly = flyOf(menu);
+    rows = fly.children.slice();
+    const V_B1: Views = { ...V_B0, remoteTags: [{ ...R1, members: ["web", "api"] }], seq: 6 };
+    api.push(V_B1);
+    assert.ok(!sameNodes(fly.children, rows), "the rows are rebuilt: a constituent took the session");
+    xOf(fly, "infra").click();
+    after = hooks.views as Views;
+    assert.deepEqual(holders(after), { local: ["web", "tests"], remote: [["web"]] }, "both halves: the remote infra keeps web and lets api go");
+    assert.equal(heldRow(fly, "infra"), undefined);
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("archived"));
+    // C: under a PRESSED pointer the rebuild is parked (the menu's hold), so the click lands on the rows built before the push. api under
+    // infra, archived and an empty qa; the press; the push brings the remote infra holding api; the release; Move to qa: the move resolves
+    // the copy's group again at the click and clears the remote infra too (round 6 moved the local half: the remote infra kept api, so
+    // api stood under infra, archived and qa)
+    hooks.views = V_QA; hooks.writes = [];
+    menu = api.open("api", "infra");
+    fly = flyOf(menu);
+    rows = fly.children.slice();
+    const mv = moveRow(fly, "qa");
+    press(menu);
+    const V_C: Views = { ...V_QA, remoteTags: [R1], seq: 7 };
+    api.push(V_C);
+    assert.ok(sameNodes(fly.children, rows), "under the press the rows stand (the rebuild is parked)");
+    win.fire("pointerup");
+    mv.click();
+    after = hooks.views as Views;
+    assert.deepEqual(holders(after), { local: ["web", "tests"], remote: [[]] }, "Move to cleared the remote infra as well as the local tag (round 6: the remote infra kept api)");
+    assert.deepEqual(viewTagUnion(after).filter((g) => g.members.includes("api")).map((g) => g.name), ["archived", "qa"], "api is under archived and qa: infra let it go everywhere");
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("qa"), "the row names the destination");
+    await tick();
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("qa"), "the parked run landed and found the same");
+    // C2: the same press and push, the x on infra after the release: both halves
+    hooks.views = V_API_BOTH; hooks.writes = [];
+    menu = api.open("api", "infra");
+    fly = flyOf(menu);
+    const xInfra = xOf(fly, "infra");
+    press(menu);
+    api.push(V_A);
+    win.fire("pointerup");
+    xInfra.click();
+    after = hooks.views as Views;
+    assert.deepEqual(holders(after), { local: ["web", "tests"], remote: [[]] }, "the x under the parked rebuild cleared both halves (round 6: the local half alone)");
+    await tick();
+    assert.equal(heldRow(fly, "infra"), undefined);
+    // D: the union gone by the click (its tag deleted under the press, no remote): the x refuses with the cue on its row and writes
+    // nothing; the release's rebuild then takes the row off
+    hooks.views = V_API_BOTH; hooks.writes = [];
+    menu = api.open("api", "infra");
+    fly = flyOf(menu);
+    const infraRow = heldRow(fly, "infra")!;
+    press(menu);
+    const V_D: Views = { ...V_API_BOTH, tags: [V_API_BOTH.tags[1]], seq: 8 };   // infra deleted
+    api.push(V_D);
+    win.fire("pointerup");
+    assert.ok(!infraRow.has("romp-acted"), "no cue before the click");
+    xOf(fly, "infra").click();
+    assert.equal(hooks.views, V_D, "nothing posted: the union is gone");
+    assert.ok(infraRow.has("romp-acted"), "the row pulses (the refused click's cue)");
+    assert.equal(infraRow.title, "infra. The tags changed just before your click, so it did nothing; click again.", "and the tooltip says why and what to do");
+    infraRow.fire("animationend");
+    assert.ok(!infraRow.has("romp-acted"), "the pulse class leaves on the animation's end");
+    await tick();
+    assert.equal(heldRow(fly, "infra"), undefined, "the parked rebuild took the row off");
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("archived"));
   });
 });
 
