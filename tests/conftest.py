@@ -127,11 +127,15 @@ os.environ["CLAUDE_CONFIG_DIR"] = _CLAUDE_CONFIG
 # "the manager" through the inherited value restarts the ACTUAL deployment — the serve-layer
 # restart test's pop-then-restore raced the /restart handler's post-ack env read and took a
 # self-hosted instance down mid-suite, repeatedly. POISONED to a dead port, never popped. Every
-# consumer treats an absent variable as "no manager" since 2026-09-10 (_manager_port: before that
-# _run_main_update, and for one review round the banner's registry read, mapped absent to the
-# DEFAULT port, the live one, and a probe run with the variable absent restarted every session on a
-# development box through the drift door); a dead value is the one state safe against every
-# consumer, present and future, so the floor stays. Import-time, so collection-time code is floored too.
+# consumer in kernel/ treats an absent or empty variable as "no manager" since 2026-09-10
+# (_manager_port: _manager_kernels, _run_main_update, _restart_this_kernel and _run_update; before that
+# _run_main_update, and for one review round the banner's registry read, mapped absent to the DEFAULT
+# port, the live one, and a probe run with the variable absent restarted every session on a development
+# box through the drift door); bin/romp-manager still falls back to 7432 on absent or empty (its status,
+# down, restart-all and ensure verbs, which `romp down` and the remote update script dial through), and
+# vscode-extension/src/extension.ts defaults to 7432 too, one more reason the floor stays: a dead value
+# is the one state safe against every consumer, present and future. Import-time, so collection-time code
+# is floored too.
 os.environ["ROMP_MANAGER_PORT"] = "1"
 # ...and no test may reach the REAL kernel either (2026-09-06): a shell of a romp session inherits the
 # live kernel's ROMP_KERNEL_PORT (and ROMP_SERVE_PORT, the same value under the manager's name), so
