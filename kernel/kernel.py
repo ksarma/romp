@@ -18407,8 +18407,9 @@ def _unreadable_record_text(sid, who=None, named=False):
     name once no torn record bears it, since the doors' resolution reads the names registry first and a torn
     record of the name is refused ahead of any live namesake bearing it, a tmux pane or a dormant SDK
     generation (round 10: resolved through the live map, the by-name verdict was the cache's, the namesake
-    cold and the record warm; a generation the SDK backend runs is reached by the name ahead of the torn
-    record, round 11). Said whether or not a namesake runs, since that is the live map's answer and this text
+    cold and the record warm; a live generation of the name, one the gate admits by id and its backend
+    lists live, is reached by the name ahead of the torn record, rounds 11 and 12). Said whether or not a
+    namesake runs, since that is the live map's answer and this text
     reads no map, which is why the wording is conditional: for a lone dormant torn generation the next
     by-name request after the repair or removal is the dormant rule's 404, and several torn generations of
     one name are refused one file at a time (round 11; round 10 said "reachable by that name again once the
@@ -18498,8 +18499,9 @@ def _session_gate(sid, live=None, who=None):
                   (`romp resume <id>` sets a pane's @romp-session-id to an SDK sid): the reg is the SDK
                   backend's record and only that backend's flip rewrites it, so a pane is no writer for the
                   damage, which must be surfaced whatever tmux says. By NAME the same: the doors' resolution
-                  reads the on-disk names registry first (_resolve_sid's door read), which answers a generation
-                  of the name the SDK backend runs ahead of a torn one (round 11), so a torn record of the name
+                  reads the on-disk names registry first (_resolve_sid's door read), which answers a live
+                  generation of the name, one this gate admits by id and its own backend lists live, ahead of a
+                  torn one (rounds 11 and 12), so a torn record of the name
                   is this verdict ahead of any live tmux namesake bearing the name and whatever the list_regs
                   cache holds, and the text says that if a live session of the name runs it is reachable by it
                   once no torn record bears the name (round 10, the wording conditional since round 11: for a
@@ -18793,9 +18795,10 @@ def _drive(msg, client):
         # the timeline keys these by session NAME (the tuple the records writer keeps the name under `target`
         # for). The routes' own resolution (_resolve_sid, the doors' read): a spelling outside NAME_RE's
         # alphabet handed back unchanged with nothing read, the on-disk names registry's answer for the name
-        # ahead of any scan (a generation the SDK backend runs, else a torn record, so the gate below admits
-        # the running one or gives the record's verdict whatever the list_regs cache and tmux hold, rounds 10
-        # and 11), else the map it scanned and what it could not read handed back, so the
+        # ahead of any scan (a live generation of the name, ranked by the gate's own by-id verdict and its
+        # backend's liveness, else a torn record, so the gate below admits the live one or gives the record's
+        # verdict whatever the list_regs cache and tmux hold, rounds 10 to 12), else the map it scanned and
+        # what it could not read handed back, so the
         # gate reads that one scan and the miss path (_named_miss) can say a read failed. _sid_of dropped
         # both: this door read a failed tmux probe as "no session with id" from the base on, and round 6 left
         # the torn dormant record's by-name 503 to the HTTP routes alone, so the two doors disagreed on the
@@ -27091,40 +27094,83 @@ def _parse_send_body(raw):
     return {"who": who, "text": text}
 
 
+def _named_generation_live(sid, cx=None):
+    """Is `sid`, a generation the gate admits by id, live by its own backend's read, the liveness a NAME
+    addresses (a dormant session is addressed by id and is 404 by name, the round-5 rule)? The SDK backend
+    runs it (_backend_reports_running: a session thread in running_sids, whatever its record reads); or its SDK
+    registry entry reads and says alive (_thread_reg: the row the SDK half of Sessions.live() lists for it,
+    which is a conserve-closed session, or one idle at the last kernel restart and not yet driven, the reg
+    alive and no thread); or the Codex backend owns it (CodexBackend.owns: a lock-guarded in-memory lookup and
+    not dead, the predicate Sessions.backend_for routes by, so ranking and routing agree). None of these is
+    the live map: the map's SDK row for a torn reg is the list_regs cache's (round 9), and its tmux half is a
+    fork, so a tmux-backed generation is not live here (see _unreadable_dormant_named for what that costs and
+    why). `cx` is the Codex backend the caller resolved (_codex()), or None for none. Asked by the by-name
+    walk alone (review round 12, 2026-09-10)."""
+    if _backend_reports_running(sid):
+        return True
+    reg = _thread_reg(sid)
+    if not isinstance(reg, _UnreadableReg) and reg.get("alive"):
+        return True
+    try:
+        return cx is not None and bool(cx.owns(sid))
+    except Exception:
+        return False
+
+
 def _unreadable_dormant_named(name):
     """The sid the on-disk names registry answers for `name` at the client doors, or None. The registry
     (_names_snapshot, read directly, never the live map or its list_regs cache) is walked in sorted order over
-    the entries bearing the name: the first sid the SDK backend RUNS now (_backend_reports_running) wins; else
-    the first sid whose SDK registry entry exists but will not read (_reg_unreadable); else None, and the
-    resolution goes on to the live map. The client doors' by-name resolution reads this FIRST (_resolve_sid's
-    door read, for _control_target and the WS compact and sendCommand arm), ahead of the live map, so the
-    by-name verdict depends on neither the list_regs cache nor tmux: a name the SDK backend runs a session
-    under reaches that session whether its own record is torn or a dead older generation's is (review round
-    11, 2026-09-10; round 10 answered a torn generation ahead of a running one, so a dead generation's torn
-    file refused a live session by name while the by-id path reached it, where the base reached the running
-    generation in every state; the live map is not the fallback for this, since at a warm cache two rows bear
-    the name and _live_names picks by os.scandir order, the cache dependence round 10 removed); a name whose
-    generations are all dormant and one of them torn is that record's verdict at the gate (the record's 503)
-    in every list_regs cache state and every tmux state, a live tmux namesake bearing the name included, and
-    the text says so (review round 10, 2026-09-09: resolved through the live map, the by-name verdict was the
-    cache's, the namesake cold and the record warm, and with the probe down the scan's verdict cold and the
-    record's warm). A READABLE dormant generation of the name is deliberately outside this lookup: a dormant
-    session is addressed by id and is 404 by name, the round-5 rule (test_a_dormant_sessions_record_that_
-    will_not_read_is_a_503_by_name_too in tests/test_kernel_headless_ops.py), so the walk answers a running
-    sid or a torn one and nothing else. "Dormant" in the name is history: round 5 read this inside the
-    resolution for every _sid_of caller, and the PR-watch contact then took a torn older generation for the
-    live session of the name; round 6 moved it to the doors' miss path, behind the gate's unknown verdict
-    and, from round 7, behind the failed scan. _sid_of's callers never read it (the input unchanged on a
-    miss, round 6)."""
+    the entries bearing the name, and each generation is ranked by the verdict the gate gives it BY ID
+    (_session_gate: admitted, unreadable, unknown), never by a predicate of this walk's own: the first
+    generation the gate admits by id and that is live by its own backend's read (_named_generation_live: an
+    SDK session thread in running_sids, a readable SDK registry entry that says alive, a Codex session the
+    Codex backend owns) wins; else the first generation the gate reads as unreadable (its SDK registry entry
+    exists but will not read, _reg_unreadable, and the SDK backend is not running it); else None, and the
+    resolution goes on to the live map. The principle is the doors': by name they answer as the by-id path
+    would for the generation the name means, the live one (review round 12, 2026-09-10; round 11 asked the
+    SDK backend's running set alone, so a live Codex-backed generation and a conserved SDK generation, its reg
+    alive and no thread after the idle sweep or a restart, ranked below a dead generation's torn record, which
+    refused the live session by name at every door while by id the gate admitted it and the board listed it;
+    round 10 answered a torn generation ahead of a running one). The gate's admitted verdict by id is wider
+    than what a name addresses: a readable DORMANT generation (alive false) is admitted by id through the
+    names door of _kernel_knows (a dormant session is addressed by id, its end idempotent) and is 404 by name,
+    the round-5 rule (test_a_dormant_sessions_record_that_will_not_read_is_a_503_by_name_too in
+    tests/test_kernel_headless_ops.py), so the admitted arm here asks the liveness a name has always required,
+    and reads it from the backends' own state (a thread set, a registry entry, an in-memory session), never
+    from the live map, whose row for a torn reg is the list_regs cache's (round 9) and whose tmux half is a
+    fork. A tmux-backed generation is therefore not ranked here: a live tmux namesake of a name no torn record
+    bears is reached through the live map when this walk answers None, as it always was, and beside a torn
+    record of the name it is the refused class (round 10; the pane can carry the torn sid itself, `romp
+    resume <id>` sets a pane's @romp-session-id, and a fork per by-name request would put the torn verdict
+    behind the probe again). The sorted order decides only between two generations of one rank, the lower sid
+    first (pinned; an unsorted walk would answer by os.scandir order). The gate never scans for a generation
+    ranked here: every entry is names-registered, so _kernel_knows answers through its names door before any
+    map read (an entry unregistered between the snapshot and the gate's read is the one exception, and it no
+    longer bears the name). The client doors' by-name resolution reads this FIRST (_resolve_sid's door read,
+    for _control_target and the WS compact and sendCommand arm), ahead of the live map, so the by-name verdict
+    depends on neither the list_regs cache nor tmux: a name whose generations are all dormant and one of them
+    torn is that record's verdict at the gate (the record's 503) in every list_regs cache state and every
+    tmux state, a live tmux namesake bearing the name included, and the text says so (review round 10,
+    2026-09-09: resolved through the live map, the by-name verdict was the cache's, the namesake cold and the
+    record warm, and with the probe down the scan's verdict cold and the record's warm; the live map is not
+    the fallback for a name with a torn record, since at a warm cache two rows bear the name and _live_names
+    picks by os.scandir order). "Dormant" in the name is history: round 5 read this inside the resolution for
+    every _sid_of caller, and the PR-watch contact then took a torn older generation for the live session of
+    the name; round 6 moved it to the doors' miss path, behind the gate's unknown verdict and, from round 7,
+    behind the failed scan; round 10 moved it ahead of the map. _sid_of's callers never read it (the input
+    unchanged on a miss, round 6)."""
     torn = None
     try:
+        cx = _codex()
         for sid, parts in sorted(_names_snapshot().items()):
             if not parts or parts[0] != name:
                 continue
-            if _backend_reports_running(sid):
+            verdict, _text = _session_gate(sid)               # the by-id verdict for this generation
+            if verdict == _GATE_UNREADABLE:
+                if torn is None:
+                    torn = sid
+            elif verdict == _GATE_ADMITTED and _named_generation_live(sid, cx):
                 return sid
-            if torn is None and _reg_unreadable(sid):
-                torn = sid
     except Exception as e:
         # said, never a silent fall to the live map (the fail-loudly rule; review round 11, 2026-09-10: a
         # RuntimeError from the memo's eviction landed here with nothing logged and the map decided the name)
@@ -27136,8 +27182,8 @@ def _unreadable_dormant_named(name):
 def _resolve_sid(who, door=False):
     """_sid_of with what the resolution read handed back: (sid, live, store_unreadable, scan_failed), where
     live is the Sessions.live() map the resolution scanned, or None when nothing was scanned (the names
-    registry answered first: a registered sid, or, at a door, a generation of the name the SDK backend runs
-    or a torn record of the name); store_unreadable
+    registry answered first: a registered sid, or, at a door, a live generation of the name, one the gate
+    admits by id and its own backend lists live, or a torn record of the name); store_unreadable
     says the comment threads' store could not be read when the resolution got as far as asking it
     (_thread_names answered None); and scan_failed says the tmux probe THAT map rides did not answer
     (live.tmux_failed: an exec error, a timeout, an unrecognised nonzero exit; the no-server exit and a
@@ -27155,16 +27201,19 @@ def _resolve_sid(who, door=False):
     host:name) is the input unchanged before any path is built from it, so the gate's unknown verdict follows
     with no file read (round 10: `../palette` was admitted through the names door). Inside, between the
     registered-sid check and the live scan: a bare name is looked up in the on-disk names registry
-    (_unreadable_dormant_named) ahead of any scan, and the first generation of the name the SDK backend runs,
-    else a generation whose SDK registry entry will not read, is that sid with no map read: a running session
-    is reached by its name whether its own record is torn or a dead generation's is (round 11), and a torn
+    (_unreadable_dormant_named) ahead of any scan, each generation of the name ranked by the gate's own by-id
+    verdict, and the first the gate admits that its own backend lists live (an SDK session thread, a readable
+    SDK registry entry that says alive, a Codex session), else the first whose SDK registry entry will not
+    read, is that sid with no map read: a live SDK or Codex session is reached by its name whether its own
+    record is torn or a dead generation's is (rounds 11 and 12), and a torn
     dormant record is the gate's verdict in every list_regs cache state and every tmux state, ahead of a live
     tmux namesake bearing the name that the live map would have resolved (review round 10, 2026-09-09:
     resolved through the map, a torn generation's verdict by name was the cache's, the namesake cold and the
     record warm, and with the probe down the scan's verdict cold and the record's warm; round 10 also
-    answered a torn generation ahead of a running one, reversed in round 11). A readable dormant generation
-    of the name is deliberately outside that lookup, so a dormant session stays addressed by id and 404 by
-    name (round 5). The rest is the plain read's order: a registered sid as is (checked before the registry
+    answered a torn generation ahead of a running one, reversed in round 11; round 11 ranked a running SDK
+    generation alone, widened in round 12). A readable dormant generation of the name is admitted by id and
+    not live, so the lookup passes it over and a dormant session stays addressed by id and 404 by name (round
+    5). The rest is the plain read's order: a registered sid as is (checked before the registry
     lookup, so a name spelled like another session's sid is that sid); a live session of the name through
     the map; the comment threads' store; else the input unchanged, for the doors' miss path (_named_miss:
     the failed scan, the store).
@@ -27179,7 +27228,7 @@ def _resolve_sid(who, door=False):
     if _name_of(who):
         return who, None, False, False
     if door:
-        registered = _unreadable_dormant_named(who)       # a running generation of the name, else a torn one
+        registered = _unreadable_dormant_named(who)       # a live generation of the name, else a torn one
         if registered:
             return registered, None, False, False
     live = Sessions.live()
@@ -27268,8 +27317,8 @@ def _control_target(who, route=""):
     resolution's own scan rides did not answer, live.tmux_failed), the comment threads' store
     (_thread_names answered None while resolving a name) or the sid's own registry entry
     (_unknown_session_refusal's unreadable verdict). `live` is the map the resolution scanned, else None (the
-    names registry answered and nothing was scanned: a registered sid, a generation of the name the SDK
-    backend runs, or a torn record of the name); handed
+    names registry answered and nothing was scanned: a registered sid, a live generation of the name, or a
+    torn record of the name); handed
     out so the /send arm's dead-pane guard reads the one scan this request made instead of forking a second
     probe (round 7). A request forks tmux at most once: in the resolution, or in the /send arm's alive_sids
     read when nothing was scanned (by id to a tmux-backed sid, or a name that is itself a registered sid; a
@@ -27283,7 +27332,7 @@ def _control_target(who, route=""):
     reported as a session that does not exist (review rounds 4 and 5, 2026-09-09; the fail-loudly rule).
     Order: the doors' resolution (_resolve_sid's door read: a spelling outside NAME_RE's alphabet unchanged
     with nothing read, a registered sid as is, the on-disk names registry's answer for a bare name ahead of
-    any scan (a generation the SDK backend runs, else a torn record, round 11), then a local session wins
+    any scan (a live generation of the name, else a torn record, rounds 11 and 12), then a local session wins
     through the live map, then the comment threads' store), the
     roster by sid, the gate with the live map the resolution read (so a refused request scans once; a torn
     registry entry is the gate's 503 in every tmux state and at every cache state, by id and by name), and,
