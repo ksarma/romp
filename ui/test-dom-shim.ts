@@ -2,10 +2,13 @@
 // panel on a fake DOM and by ui/webview/tab-color-picker.test.ts (sixteen files at 2026-09-10; the other fourteen
 // ui/timeline-*.test.ts fake no DOM), in place of the sixteen near-copies those files carried (the fifteen siblings'
 // and the tags-scale test's own: nine textual variants of one shape, unified 2026-09-10), and taken outright by
-// ui/webview/timeline-boot.test.ts. Every other file the ratchet's detector finds (ui/test-dom-shim.test.ts; 145
-// ui/webview test files at 2026-09-10) keeps its own node classes, window stand-ins or node literals and reaches this
-// module through hideEdges and staysEnumerable, so one rule covers them all, and through sameNodes for its assertions
-// over node lists. A factory node is a plain object the real TimelinePanel drives:
+// ui/webview/timeline-boot.test.ts. Every other file that fakes a DOM (the 153 ui/webview test files that call
+// hideEdges at 2026-09-10, every one in the ratchet's detector's view, which ui/test-dom-shim.test.ts pins) keeps its
+// own node classes, window stand-ins or node literals and reaches this module through hideEdges and staysEnumerable,
+// so one rule covers them all, through assertHiddenEvent for the pin on its event class where it has one, and through
+// sameNodes for its assertions over node lists; this module's own test pins the rule on factory nodes and scratch
+// objects, and the two files the ratchet's NON_DOM_EDGES lists reach it through nothing. A factory node is a plain
+// object the real TimelinePanel drives:
 // children, parentNode, attributes, classList, style, dataset, text, listeners, geometry, focus and the caret. A test
 // installs its own fake `document` and window on globalThis around it, as before.
 //
