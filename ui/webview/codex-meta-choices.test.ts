@@ -1,7 +1,8 @@
 // A CODEX session's statusline menus speak Codex's vocabulary (docs/codex.md): the model/effort
 // pickers read the /models payload's codex section, and its mode picker offers Sandboxed and
 // Auto without exposing unsupported Claude modes. Source-pin over render.ts, the same style
-// as picker-backend.test.ts.
+// as picker-backend.test.ts; the rules for a Codex menu with no list are also lifted from
+// render.ts and executed over a small DOM stand-in (below).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -38,25 +39,25 @@ test("Codex offers only its supported modes and opens the mode picker", () => {
   assert.match(RENDER, /case "sandboxed": return "Sandboxed";/);
 });
 
-// The owner's Codex picker (2026-09-09) opened on a BLANK menu while the session's default badge showed:
-// the kernel's codex section had `models: []` and no reason (a client in retry backoff, a failed
-// model_list, or the /models gate closed when the tab loaded). The section now carries `error`, and a
-// Codex menu with nothing to offer shows one non-clickable row naming it, re-reads /models on the open
-// itself, and rebuilds when the list lands. Source-pinned, and the loader's slice is EXECUTED below.
+// A Codex session's model or effort menu opened BLANK when the kernel's codex section had `models: []`
+// and no reason (the app-server client not up yet, a failed model list, no live Codex session when the
+// tab loaded), with the session's default badge showing above it. The section now carries `error`, and
+// a Codex menu with no list shows one non-clickable row naming it, re-reads /models on the open
+// itself, and rebuilds when the list lands. Source-pinned here; the loader and the menu are EXECUTED below.
 test("a Codex menu with no list says why and re-reads /models instead of opening blank", () => {
   assert.match(RENDER, /let CODEX_MODELS_ERROR = "";/);
   assert.match(RENDER, /if \(d\.codex\) CODEX_MODELS_ERROR = typeof d\.codex\.error === "string" \? d\.codex\.error : "";/);
   assert.match(RENDER, /if \(onModelChoicesLoaded\) onModelChoicesLoaded\(\);/);
   assert.match(RENDER, /if \(!rows\.length && s\.status\.backend === "codex" && \(kind === "model" \|\| kind === "effort"\)\) \{/);
   assert.match(RENDER, /el\("div", "meta-item meta-empty"\)/);
-  assert.match(RENDER, /"No model list from Codex"/);
-  assert.match(RENDER, /sub\.textContent = CODEX_MODELS_ERROR \|\| "asking the Codex app-server for it now";/);
+  assert.match(RENDER, /"No model list from Codex" : "No effort list from Codex"/);
+  assert.match(RENDER, /sub\.textContent = CODEX_MODELS_ERROR \|\| "asking for the list now";/);
   // the open is the event: one fetch, and the hook rebuilds the SAME open menu when a list arrives
   const block = RENDER.slice(RENDER.indexOf("const empty = el(\"div\", \"meta-item meta-empty\")"), RENDER.indexOf("for (const c of rows) {"));
   assert.match(block, /onModelChoicesLoaded = \(\) => \{/);
   assert.match(block, /if \(metaMenuEl !== menu\) return;/);
   // a chat menu whose tab was dismissed under it closes on the landing (executed below): the chat's badges
-  // carry no session, so the re-anchor could not tell its badge from the MRU survivor's
+  // carry no session, so the re-anchor could not tell its badge from the surviving tab's
   assert.match(block, /if \(!forThread && activeId !== opSid\) \{ closeMetaMenu\(\); return; \}/);
   assert.match(block, /loadModelChoices\(\);/);
   // the rebuild anchors on the badge as it stands NOW, never the one captured at open (executed below)
@@ -64,13 +65,13 @@ test("a Codex menu with no list says why and re-reads /models instead of opening
   assert.doesNotMatch(block, /toggleMetaMenu\(kind, btn, forSid\)/, "the captured button is never the rebuild's anchor");
   assert.match(RENDER, /function metaAnchor\(kind: MetaKind, forSid: string \| null \| undefined, btn: HTMLElement\): HTMLElement \| null \{\n\s+if \(btn\.isConnected\) return btn;/);
   assert.match(RENDER, /if \(forSid\) btn\.dataset\.sid = forSid;/, "the popover's badges name their thread so the anchor resolves per session");
-  // the wait wears the romp loader's dots beside its text (ui/CLAUDE.md), which the reason replaces
+  // the wait wears the loader's dots beside its text, which the reason replaces
   assert.match(block, /if \(!CODEX_MODELS_ERROR\) sub\.appendChild\(metaDots\(\)\);/);
-  assert.match(block, /if \(!now\.length\) \{ sub\.textContent = CODEX_MODELS_ERROR \|\| "no model list yet"; return; \}/);
+  assert.match(block, /if \(!now\.length\) \{ sub\.textContent = CODEX_MODELS_ERROR \|\| \(kind === "model" \? "no model list yet" : "no effort list yet"\); return; \}/);
   assert.doesNotMatch(block, /sent no list/, "the post-read fallback never attributes an answer to the app-server");
   // a FAILED re-read tells the waiting menu (fail loudly): the row would otherwise promise an answer forever
-  assert.match(RENDER, /\}\)\.catch\(\(e\) => \{\n(?:[^\n]*\n){1,4}?\s+if \(!onModelChoicesLoaded\) return;\n\s+CODEX_MODELS_ERROR = "could not read \/models: " \+ /);
-  // a non-2xx names its status (the MCP panel's idiom) instead of the parse message .json() gives an empty body
+  assert.match(RENDER, /\}\)\.catch\(\(e\) => \{\n(?:[^\n]*\n){0,4}?\s+if \(!onModelChoicesLoaded\) return;\n\s+CODEX_MODELS_ERROR = "could not read the model list: " \+ /);
+  // a non-2xx names its status instead of the parse message .json() gives an empty body
   assert.match(RENDER, /fetch\(kernelUrl\("\/models"\), \{ cache: "no-store" \}\)\.then\(\(r\) => \{ if \(!r\.ok\) throw new Error\("HTTP " \+ r\.status\); return r\.json\(\); \}\)/);
   // the hook dies with its menu, so a late response never rebuilds a menu the user closed
   assert.match(RENDER, /metaMenuEl = null;\n  onModelChoicesLoaded = null;/);
@@ -116,15 +117,16 @@ function liftLoader() {
   return { api: fn((p: string) => p, stub.fetch, () => {}), pending: stub.pending, failing: stub.failing, bad: stub.bad };
 }
 const tick = () => new Promise((r) => setImmediate(r));
+const REASON = "the Codex app-server client is unavailable: not started yet";
 
-test("executed: the codex section's error reaches the picker and the completion hook fires", async () => {
+test("executed: the codex section's error reaches the picker and the completion hook fires once per applied read", async () => {
   const { api, pending } = liftLoader();
   let fired = 0;
   api.hook = () => { fired++; };
   api.loadModelChoices();
-  pending[0]({ rev: 5, models: [], efforts: [], codex: { models: [], efforts: [], error: "model_list failed: app-server not ready" } });
+  pending[0]({ rev: 5, models: [], efforts: [], codex: { models: [], efforts: [], error: REASON } });
   await tick(); await tick();
-  assert.equal(api.error, "model_list failed: app-server not ready");
+  assert.equal(api.error, REASON);
   assert.deepEqual(api.CODEX_MODEL_CHOICES, []);
   assert.equal(fired, 1, "the open menu is told the read completed");
   api.loadModelChoices();
@@ -133,6 +135,13 @@ test("executed: the codex section's error reaches the picker and the completion 
   assert.equal(api.error, "", "a held list clears the reason");
   assert.deepEqual(api.CODEX_MODEL_CHOICES, [{ value: "gpt-5-test", label: "GPT-5 Test" }]);
   assert.equal(fired, 2);
+  // a response older than one already applied is dropped whole: no list, no reason, no hook
+  api.loadModelChoices();
+  pending[2]({ rev: 4, models: [], efforts: [], codex: { models: [], efforts: [], error: REASON } });
+  await tick(); await tick();
+  assert.equal(api.error, "", "a stale response writes no reason");
+  assert.deepEqual(api.CODEX_MODEL_CHOICES, [{ value: "gpt-5-test", label: "GPT-5 Test" }]);
+  assert.equal(fired, 2, "and does not tell the menu anything landed");
 });
 
 // A read that FAILS (the kernel restarting or unreachable when the empty menu re-reads /models) used to
@@ -151,7 +160,7 @@ test("executed: a failed re-read tells the waiting menu, and stays quiet with no
   api.loadModelChoices();                                  // the empty menu's own re-read
   failing[1](new Error("kernel unreachable"));
   await tick(); await tick();
-  assert.equal(api.error, "could not read /models: kernel unreachable");
+  assert.equal(api.error, "could not read the model list: kernel unreachable");
   assert.equal(fired, 1, "the waiting menu hears that the read failed");
   api.loadModelChoices();
   pending[2]({ rev: 7, models: [], efforts: [], codex: { models: [{ value: "gpt-5-test", label: "GPT-5 Test" }], efforts: [], error: null } });
@@ -171,7 +180,7 @@ test("executed: a non-2xx answer is recorded as its HTTP status, not as a JSON p
   api.loadModelChoices();
   bad[0](403);
   await tick(); await tick();
-  assert.equal(api.error, "could not read /models: HTTP 403");
+  assert.equal(api.error, "could not read the model list: HTTP 403");
   assert.equal(fired, 1);
 });
 
@@ -222,10 +231,16 @@ class FakeEl {
     return { ...r, width: r.right - r.left, height: r.bottom - r.top };
   }
   descendants(): FakeEl[] { const out: FakeEl[] = []; for (const c of this.children) if (c instanceof FakeEl) { out.push(c, ...c.descendants()); } return out; }
-  matches(sel: string): boolean {   // ".a.b", "[attr]" and "tag.a": what the lifted slices ask for
-    return sel.split(/(?=[.\[])/).every((part) => part.startsWith(".") ? this.classes().includes(part.slice(1))
-      : part.startsWith("[") ? (part.slice(1, -1) === "tabindex" ? this.tabIndex >= 0 : part.slice(1, -1) in this.dataset)
-      : this.tagName === part.toUpperCase());
+  matches(sel: string): boolean {   // ".a.b", "[tabindex]", "[data-x]" and "tag.a": what the lifted slices ask for
+    return sel.split(/(?=[.\[])/).every((part) => {
+      if (part.startsWith(".")) return this.classes().includes(part.slice(1));
+      if (part.startsWith("[")) {
+        const attr = part.slice(1, -1);
+        if (attr === "tabindex") return this.tabIndex >= 0;
+        return attr.startsWith("data-") && attr.slice(5).replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()) in this.dataset;
+      }
+      return this.tagName === part.toUpperCase();
+    });
   }
   querySelectorAll(sel: string): FakeEl[] { return this.descendants().filter((d) => d.matches(sel)); }
   querySelector(sel: string): FakeEl | null { return this.querySelectorAll(sel)[0] ?? null; }
@@ -275,27 +290,101 @@ function liftMenu(opts: { thread?: { th: unknown; status: any } } = {}) {
     () => (opts.thread ? { th: opts.thread.th } : null),
     () => { if (!opts.thread) throw new Error("no thread here"); return opts.thread.status; },
     () => "", new Map(), null, () => false, () => "", () => false, () => undefined, () => {});
-  return { api, sessions, skeleton: skeletonTabs.ids, body: BODY, win, pending: stub.pending, rectReads };
+  return { api, sessions, skeleton: skeletonTabs.ids, body: BODY, win, pending: stub.pending, failing: stub.failing, rectReads };
 }
 const SID = "11111111-2222-4333-8444-555555555555";
 const CODEX_READY = { state: "ready", sinceEpoch: null, backend: "codex", model: "gpt-5-test", effort: "medium" };
 const LIST = { rev: 3, models: [], efforts: [], codex: { models: [{ value: "gpt-5-test", label: "GPT-5 Test" }], efforts: [], error: null } };
-// a statusline holding one model badge, placed where a real one sits (bottom-right of a 1000x800 pane)
+// a statusline holding a mode, a model and an effort badge, in the order syncMetaControls appends them,
+// placed where a real one sits (bottom-right of a 1000x800 pane); `right` and `top` are the MODEL badge's,
+// and each badge has its own rect, so a rebuild that anchored on a badge of another kind is positioned
+// from the wrong rect
 function statusline(api: any, right: number, top: number) {
   const sl = new FakeEl("div"); sl.id = "statusline";
   const meta = new FakeEl("span"); meta.className = "spinner-meta"; meta.id = "spinner-meta";
+  const modeBtn = api.metaButton("mode", "Sandboxed") as FakeEl;
+  modeBtn.rect = { left: right - 150, top, right: right - 70, bottom: top + 16 };
   const btn = api.metaButton("model", "gpt-5-test") as FakeEl;
   btn.rect = { left: right - 60, top, right, bottom: top + 16 };
-  meta.appendChild(btn); sl.appendChild(meta);
-  return { sl, btn };
+  const effortBtn = api.metaButton("effort", "medium") as FakeEl;
+  effortBtn.rect = { left: right + 10, top, right: right + 70, bottom: top + 16 };
+  meta.append(modeBtn, btn, effortBtn); sl.appendChild(meta);
+  return { sl, btn, effortBtn };
 }
 const rows = (menu: FakeEl) => menu.querySelectorAll(".meta-item").filter((r) => !r.classes().includes("meta-empty")).map((r) => r.textContent);
 
-// The rebuild used to call toggleMetaMenu with the button captured at open. updateStatusline() rebuilds
-// the statusline on every kernel push, and the spawn that opens the gate also pushes, so by the time the
-// frame's re-read landed the captured button was often detached: its rect read all zeros and the rebuilt
-// menu sat beyond the pane's left edge and above its top (seen when the list landed after a kernel push).
-// Now the hook re-resolves the badge for the same kind and session.
+// The row's first job: the kernel's sentence, shown as it is. A reason held before the open (the page-load
+// read landed with an empty list and a reason) is shown at once, with no dots; the open re-reads all the
+// same, since a held reason may be stale. A reason landing on an open wait row replaces its text in place:
+// the same menu, no rebuild, no rect read. A read with neither list nor reason leaves the fallback that
+// names the kind.
+test("executed: the row shows the kernel's reason, held at open or landing on the open menu, in place", async () => {
+  // a reason held before the open
+  {
+    const { api, sessions, body, pending } = liftMenu();
+    sessions.set(SID, { status: CODEX_READY }); api.active = SID;
+    api.loadModelChoices();                                // the page-load read, no menu open
+    pending[0]({ rev: 3, models: [], efforts: [], codex: { models: [], efforts: [], error: REASON } });
+    await tick(); await tick();
+    const sl = statusline(api, 700, 760);
+    body.appendChild(sl.sl);
+    api.toggleMetaMenu("model", sl.btn, null);
+    const row = (api.menu as FakeEl).querySelector(".meta-empty")!;
+    assert.equal(row.firstElementChild!.textContent, "No model list from Codex");
+    const sub = row.querySelector(".meta-item-sub")!;
+    assert.equal(sub.textContent, REASON, "the kernel's sentence, verbatim");
+    assert.equal(sub.querySelector(".meta-dots"), null, "a reason is shown, not waited for");
+    assert.equal(pending.length, 2, "the open re-reads all the same: a held reason may be stale");
+  }
+  // a reason landing on an open wait row, on the effort menu (its head names the effort list)
+  {
+    const { api, sessions, body, pending, rectReads } = liftMenu();
+    sessions.set(SID, { status: CODEX_READY }); api.active = SID;
+    const sl = statusline(api, 700, 760);
+    body.appendChild(sl.sl);
+    api.toggleMetaMenu("effort", sl.effortBtn, null);
+    const waiting = api.menu as FakeEl;
+    const row = waiting.querySelector(".meta-empty")!;
+    assert.equal(row.firstElementChild!.textContent, "No effort list from Codex");
+    const sub = row.querySelector(".meta-item-sub")!;
+    assert.equal(sub.textContent, "asking for the list now");
+    assert.ok(sub.querySelector(".meta-dots"));
+    const reads = rectReads.length;
+    pending[0]({ rev: 3, models: [], efforts: [], codex: { models: [], efforts: [], error: REASON } });
+    await tick(); await tick(); await tick();
+    assert.equal(api.menu, waiting, "the same menu: the reason is written in place, not rebuilt");
+    assert.equal(sub.textContent, REASON);
+    assert.equal(sub.querySelector(".meta-dots"), null, "the dots went with the wait");
+    assert.equal(rectReads.length, reads, "nothing was positioned");
+    // a later read (the kernel's models frame) with neither list nor reason: the fallback names the kind
+    api.loadModelChoices();
+    pending[1]({ rev: 4, models: [], efforts: [], codex: { models: [], efforts: [], error: null } });
+    await tick(); await tick(); await tick();
+    assert.equal(api.menu, waiting);
+    assert.equal(sub.textContent, "no effort list yet");
+    assert.deepEqual(detachedRectReads, []);
+  }
+});
+
+// The row is a Codex menu's: an SDK session's menu with no rows (the stub's SDK lists are empty) opens on
+// nothing and asks for nothing, as before.
+test("executed: an SDK session's menu with no rows takes no reason row and issues no fetch", () => {
+  const { api, sessions, body, pending } = liftMenu();
+  sessions.set(SID, { status: { ...CODEX_READY, backend: "sdk" } }); api.active = SID;
+  const sl = statusline(api, 700, 760);
+  body.appendChild(sl.sl);
+  api.toggleMetaMenu("model", sl.btn, null);
+  const menu = api.menu as FakeEl;
+  assert.ok(menu, "the menu opens");
+  assert.equal(menu.querySelector(".meta-empty"), null, "no reason row");
+  assert.equal(menu.querySelectorAll(".meta-item").length, 0);
+  assert.equal(pending.length, 0, "and no re-read");
+});
+
+// updateStatusline() rebuilds the statusline on every kernel push, and the spawn that makes the list
+// readable also pushes, so by the time the re-read lands the button captured at open is often detached: a
+// rebuild from it read a rect of all zeros and the menu sat beyond the pane's left edge and above its top.
+// The hook re-resolves the badge for the same kind and session instead.
 test("executed: the list landing rebuilds the menu against the badge the statusline holds NOW, never a detached one", async () => {
   const { api, sessions, body, win, pending } = liftMenu();
   sessions.set(SID, { status: CODEX_READY }); api.active = SID;
@@ -303,8 +392,15 @@ test("executed: the list landing rebuilds the menu against the badge the statusl
   body.appendChild(first.sl);
   api.toggleMetaMenu("model", first.btn, null);
   const waiting = api.menu as FakeEl;
-  assert.ok(waiting && waiting.querySelector(".meta-empty"), "an empty Codex list opens the reason row");
+  const row = waiting && waiting.querySelector(".meta-empty");
+  assert.ok(row, "an empty Codex list opens the reason row");
   assert.equal(pending.length, 1, "the open re-reads /models");
+  // the row is a statement, not a choice: it takes no focus and answers no click or key
+  assert.equal(row!.tabIndex, -1);
+  assert.deepEqual(Object.keys(row!.listeners), []);
+  const sub = row!.querySelector(".meta-item-sub")!;
+  assert.equal(sub.textContent, "asking for the list now");
+  assert.ok(sub.querySelector(".meta-dots"), "the wait wears the loader's dots");
   assert.equal(waiting.style.right, (win.innerWidth - 700) + "px");
   assert.equal(waiting.style.bottom, (win.innerHeight - 760 + 6) + "px");
   // the kernel pushes: the statusline is rebuilt and the captured button is gone from the document
@@ -325,18 +421,20 @@ test("executed: the list landing rebuilds the menu against the badge the statusl
 });
 
 test("executed: with no badge to anchor to, the landing list leaves the menu closed and the next open shows it", async () => {
-  const { api, sessions, body, pending } = liftMenu();
+  const { api, sessions, body, pending, rectReads } = liftMenu();
   sessions.set(SID, { status: CODEX_READY }); api.active = SID;
   const first = statusline(api, 700, 760);
   body.appendChild(first.sl);
   api.toggleMetaMenu("model", first.btn, null);
   assert.ok(api.menu, "open on the reason row");
   first.sl.remove();                                       // the statusline emptied (a section view, a placeholder tab)
+  const reads = rectReads.length;
   pending[0](LIST);
   await tick(); await tick(); await tick();
   assert.equal(api.menu, null, "no live badge for the kind and session: the menu stays closed");
   assert.equal(body.querySelectorAll(".meta-menu").length, 0);
-  assert.deepEqual(detachedRectReads, [], "and nothing was positioned from the detached button");
+  assert.equal(rectReads.length, reads, "nothing was positioned: no rect read from any element");
+  assert.deepEqual(detachedRectReads, []);
   const next = statusline(api, 700, 760);
   body.appendChild(next.sl);
   api.toggleMetaMenu("model", next.btn, null);
@@ -394,11 +492,12 @@ test("executed: the anchor resolves per session: the chat's badge never stands i
 });
 
 // The chat's badges carry no session, so the hook's re-anchor cannot tell the dismissed tab's badge from the
-// survivor's: dismissSession moves activeId to the MRU survivor without setActive's closeMetaMenu (a kernel
-// omission, an end, a host drop; only the in-page tab close reaches the document closer), and the landing
-// then found a badge of the same kind on the survivor's tab, so a menu the user never opened there opened
-// with the survivor's list, or the stale reason row was written over the survivor's tab. Now a chat menu
-// whose session is no longer the active one closes on the landing: no re-anchor, no reason row, no rect read.
+// surviving tab's: dismissSession moves activeId to the most recent survivor without setActive's
+// closeMetaMenu (a kernel omission, an end, a host drop; only the in-page tab close reaches the document
+// closer), and the landing then found a badge of the same kind on the survivor's tab, so a menu the user
+// never opened there opened with the survivor's list, or the stale reason row was written over the
+// survivor's tab. A chat menu whose session is no longer the active one closes on the landing instead:
+// no re-anchor, no reason row, no rect read.
 test("executed: the landing closes a chat menu whose tab was dismissed under it, with no reason row and no rect read", async () => {
   const { api, sessions, body, pending, rectReads } = liftMenu();
   const SURVIVOR = "33333333-4444-4555-8666-777777777777";
@@ -408,7 +507,7 @@ test("executed: the landing closes a chat menu whose tab was dismissed under it,
   body.appendChild(gone.sl);
   api.toggleMetaMenu("model", gone.btn, null);
   const reason = (api.menu as FakeEl).querySelector(".meta-item-sub")!;
-  assert.equal(reason.textContent, "asking the Codex app-server for it now");
+  assert.equal(reason.textContent, "asking for the list now");
   assert.equal(pending.length, 1);
   // the kernel's push omits SID: dismissSession drops it, activeId moves to the survivor, the statusline repaints
   sessions.delete(SID); sessions.set(SURVIVOR, { status: CODEX_READY }); api.active = SURVIVOR;
@@ -416,11 +515,11 @@ test("executed: the landing closes a chat menu whose tab was dismissed under it,
   const kept = statusline(api, 720, 770);
   body.appendChild(kept.sl);
   let reads = rectReads.length;
-  pending[0]({ rev: 3, models: [], efforts: [], codex: { models: [], efforts: [], error: "model_list failed: app-server not ready" } });
+  pending[0]({ rev: 3, models: [], efforts: [], codex: { models: [], efforts: [], error: REASON } });
   await tick(); await tick(); await tick();
   assert.equal(api.menu, null, "the menu belonged to the dismissed tab: closed");
   assert.equal(body.querySelectorAll(".meta-menu").length, 0);
-  assert.equal(reason.textContent, "asking the Codex app-server for it now", "the reason row was not written after the tab went");
+  assert.equal(reason.textContent, "asking for the list now", "the reason row was not written after the tab went");
   assert.equal(rectReads.length, reads, "nothing was positioned: no rect read from any element");
   // the survivor's own open is the user's gesture; the same dismissal under it, and this time a list lands
   api.toggleMetaMenu("model", kept.btn, null);
@@ -475,6 +574,39 @@ test("executed: a thread popover's waiting menu still rebuilds on the landing wh
   assert.equal(rebuilt.style.bottom, (win.innerHeight - 510 + 6) + "px");
   assert.equal(body.querySelectorAll(".meta-menu").length, 1);
   assert.deepEqual(detachedRectReads, []);
+});
+
+// The hook belongs to the menu that set it and goes with it: a menu the user closed before the read lands
+// (Escape, a click elsewhere) must stay closed when it does, and a failed read after the close must not be
+// recorded as if a menu were still waiting on it.
+test("executed: a menu closed before the read lands stays closed, and a failure after the close is not recorded", async () => {
+  const { api, sessions, body, pending, failing, rectReads } = liftMenu();
+  sessions.set(SID, { status: CODEX_READY }); api.active = SID;
+  const sl = statusline(api, 700, 760);
+  body.appendChild(sl.sl);
+  api.toggleMetaMenu("model", sl.btn, null);
+  assert.ok((api.menu as FakeEl).querySelector(".meta-empty"), "open on the reason row");
+  assert.equal(pending.length, 1);
+  api.closeMetaMenu();                                    // the user closed it before the read landed
+  assert.equal(api.menu, null);
+  const reads = rectReads.length;
+  failing[0](new Error("kernel unreachable"));
+  await tick(); await tick(); await tick();
+  assert.equal(api.menu, null, "no menu reopened on the landing");
+  assert.equal(body.querySelectorAll(".meta-menu").length, 0);
+  assert.equal(rectReads.length, reads, "nothing was positioned");
+  assert.equal(api.error, "", "no menu was waiting, so the failure was not recorded");
+  // the badge is still in the document, so a list landing now must not reopen the menu either
+  api.toggleMetaMenu("model", sl.btn, null);                // the user's own open positions a menu: one rect read
+  assert.equal(pending.length, 2);
+  api.closeMetaMenu();
+  const reads2 = rectReads.length;
+  pending[1](LIST);
+  await tick(); await tick(); await tick();
+  assert.equal(api.menu, null, "the list landed for a menu the user had closed: it stays closed");
+  assert.equal(body.querySelectorAll(".meta-menu").length, 0);
+  assert.equal(rectReads.length, reads2, "nothing was positioned on the landing");
+  assert.deepEqual(api.CODEX_MODEL_CHOICES, [{ value: "gpt-5-test", label: "GPT-5 Test" }], "the list itself is held for the next open");
 });
 
 // Upstream's skeleton tabs (skeleton-tabs.ts): after a redial the kernel lists a tab but withholds its
