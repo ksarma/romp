@@ -25552,11 +25552,16 @@ def _recent_restart_audit(window=90, now=None, started=None):
         beneath it: neither is the request for a signal that arrives later;
       - a `manager-refused-restart-all` row (the manager answered the hop 4xx or 5xx) consumes the ONE
         request beneath it that the hop was made for, keyed on action and timestamp, never on a reason
-        (two of the three request rows carry none): the nearest `kernel-asks-manager-restart-all` or
-        `main-converge` row at or before its t, plus the `http-restart` row the kernel-asks row sits
-        directly on when the /restart door made the hop. Neither is the request for a signal that
-        arrives later, since the manager restarted nothing on it; a request further down (a parked
-        quiet converge under an unrelated refusal) stays visible (review round 2, 2026-09-10);
+        (two of the four request rows carry none): the nearest `kernel-asks-manager-restart-all`,
+        `main-converge` or `p2p-update` (the far-host apply's) row at or before its t. A consumed
+        kernel-asks row the /restart door wrote (any reason but a self-update's) also owes the ONE
+        `http-restart` row the door wrote before it: the next such row beneath, however many rows apart.
+        Adjacency was the key (review round 3, 2026-09-10): a Restart of every kernel writes http-restart,
+        runs its remote half for seconds of network, then writes the kernel-asks row for its local half,
+        and a local click refused in that gap sat between the two, so the broad click's own row outlived
+        its refusal. Neither is the request for a signal that arrives later, since the manager restarted
+        nothing on it; a request further down (a parked quiet converge under an unrelated refusal) stays
+        visible (review round 2, 2026-09-10);
       - a `manager-sigterm` row (bin/romp-manager auditSigterm, written before every SIGTERM it sends) is
         a mechanism note, not a request: it says the manager was the messenger, and its `trigger` names
         what set it off (`restart`, `restart-all`, `refresh`, `cli-down`, `stop`), so that is the label it
@@ -25580,7 +25585,7 @@ def _recent_restart_audit(window=90, now=None, started=None):
         down_superseded = False
         park_settled = False                                # a row above showed a parked quiet request delivered or dropped
         refused = []                                        # the t of each manager-refused row met, each owed one request beneath it
-        eat_http = False                                    # the request just consumed was the /restart door's hop: its own row is next
+        owed_http = 0                                       # http-restart rows owed, one per consumed kernel-asks row the /restart door wrote
         # a DEEP tail: every session self-close writes an end-on-idle row, and fifty of them inside a parked
         # quiet window pushed the live park's row out of a short tail and un-parked it (T240d review find);
         # the window and the start bound end the walk, not the tail
@@ -25601,18 +25606,23 @@ def _recent_restart_audit(window=90, now=None, started=None):
             win = max(window, RESTART_EXPECT_MAX_S) if quiet else window
             if t0 - rec["t"] > win:
                 break                                       # older rows are older still
-            if action in _MANAGER_REFUSED_REQUESTS and (eat_http or refused):
+            if action in _MANAGER_REFUSED_REQUESTS and (owed_http or refused):
                 # the request a refusal above was written for: the manager refused it, so it is not the
                 # request for this signal (review round 2, 2026-09-10). One request per refusal, keyed on
-                # action and timestamp: the kernel-asks row consumed here takes the http-restart row it
-                # sits directly on with it; an older request beneath an unrelated refusal stays visible.
-                if eat_http:
-                    eat_http = False
-                    if action == "http-restart":
-                        continue
+                # action and timestamp. A consumed kernel-asks row the /restart door wrote owes the one
+                # http-restart row the door wrote before it, the next one beneath however many rows apart
+                # (a count, not a flag: pairing on the row directly beneath left a broad Restart's row live
+                # when a local click's three rows landed inside its remote half; review round 3,
+                # 2026-09-10). A self-update's kernel-asks row (older builds wrote one) had no http-restart
+                # row, so it owes none. An older request beneath an unrelated refusal stays visible.
+                if action == "http-restart" and owed_http:
+                    owed_http -= 1
+                    continue
                 if refused and rec["t"] <= refused[-1]:
                     refused.pop()
-                    eat_http = action == "kernel-asks-manager-restart-all"
+                    if action == "kernel-asks-manager-restart-all" \
+                            and not str(rec.get("reason") or "").startswith("self-update"):
+                        owed_http += 1
                     continue
             spent = bool(consumed) and rec["t"] == consumed  # a cut row already joined it (auditT)
             if rec["t"] < born:

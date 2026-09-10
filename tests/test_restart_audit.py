@@ -182,5 +182,76 @@ class ARefusalConsumesItsRequest(unittest.TestCase):
         self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), note)
 
 
+class ABroadRestartsRowIsConsumedByItsOwnRefusal(unittest.TestCase):
+    """The /restart door's two writers (review round 3, 2026-09-10). A local-only click writes http-restart
+    and, in the same handler, kernel-asks-manager-restart-all; a click for every kernel writes http-restart,
+    runs the remote half for seconds of network, and only then writes its kernel-asks row for the local
+    half. The pairing that took the http-restart row along with a consumed kernel-asks row read only the
+    row directly beneath, so a local click refused in that gap left the broad click's own http-restart row
+    live for the 90 s window once its local half was refused too, and a later SIGTERM from another source
+    was attributed to a restart the manager refused. Each consumed kernel-asks row the door wrote now owes
+    one http-restart row, the next one beneath it however many rows apart, and no more."""
+    T = 1_800_000_000
+    # the two reasons the door files, read from the source so the pin follows a rename of either
+    DOOR_REASONS = re.findall(r'_restart_this_kernel\("([^"]+)"', KERNEL_SRC)
+
+    def setUp(self):
+        try:
+            _audit_path().unlink()
+        except OSError:
+            pass
+        self.assertEqual(len(self.DOOR_REASONS), 2, self.DOOR_REASONS)
+        self.local = [r for r in self.DOOR_REASONS if "local-only" in r][0]
+        self.broad = [r for r in self.DOOR_REASONS if "local-only" not in r][0]
+
+    def _write(self, rows):
+        _audit_path().parent.mkdir(parents=True, exist_ok=True)
+        with open(_audit_path(), "w") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+
+    def _click(self, t):
+        return {"t": t, "action": "http-restart", "addr": "127.0.0.1", "ua": "test-agent/1.0"}
+
+    def _asked(self, t, reason):
+        return {"t": t, "action": "kernel-asks-manager-restart-all", "reason": reason, "pid": os.getpid()}
+
+    def _refused(self, t, reason):
+        return {"t": t, "action": km._MANAGER_REFUSED_ACTION, "door": "/restart-all", "status": 401, "reason": reason}
+
+    def _interleaved(self):
+        # the broad click at T-12; a local click at T-6 refused inside its remote half; its own local half
+        # refused at T-1
+        return [self._click(self.T - 12),
+                self._click(self.T - 6), self._asked(self.T - 6, self.local), self._refused(self.T - 6, self.local),
+                self._asked(self.T - 1, self.broad), self._refused(self.T - 1, self.broad)]
+
+    def test_a_local_click_refused_inside_the_broad_clicks_remote_half_leaves_no_request(self):
+        self._write(self._interleaved())
+        self.assertIsNone(km._recent_restart_audit(now=self.T, started=self.T - 1000),
+                          "both clicks were refused: neither http-restart row is the request for a signal now")
+
+    def test_a_request_beneath_the_two_refused_clicks_stays_visible(self):
+        parked = {"t": self.T - 100, "action": "main-converge", "tag": "pull", "when": "quiet", "sha": "abcdef12"}
+        self._write([parked] + self._interleaved())
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), parked,
+                         "two refusals consume two clicks' rows and nothing older")
+
+    def test_the_broad_clicks_row_is_live_until_its_own_local_half_is_refused(self):
+        # the local click refused inside the remote half, the broad click's local half not yet written: the
+        # broad click's row is the live request (a restart of this kernel is still coming)
+        rows = self._interleaved()[:4]
+        self._write(rows)
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), rows[0])
+
+    def test_a_refused_row_beneath_the_refusals_beneath_is_not_taken_for_a_click(self):
+        # two refused local clicks back to back, then a third click whose ask is still out: only the third
+        # click's row is live, and the two consumed pairs take exactly their own http-restart rows
+        rows = [self._click(self.T - 9), self._asked(self.T - 9, self.local), self._refused(self.T - 9, self.local),
+                self._click(self.T - 5), self._asked(self.T - 5, self.local), self._refused(self.T - 5, self.local),
+                self._click(self.T - 1)]
+        self._write(rows)
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), rows[-1])
+
 if __name__ == "__main__":
     unittest.main()
