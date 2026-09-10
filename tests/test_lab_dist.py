@@ -2196,14 +2196,16 @@ class Packaging(unittest.TestCase):
 
 # The text ratchet's allowlists, each a deliberate exemption with its reason. A new module that legitimately
 # names esbuild.js, or copies a tree that is not the extension's dist, is added here on purpose. Three files upstream
-# carries trip the ratchet when the inbound fold brings them, and the plan for each is fixed here and in the ledger
-# entry (upstream/2026-09-09-lab-dist-copy-race.md): tests/test_perf_bench.py (romp-on/romp#1057) copies kernel/ into
-# a scratch checkout to plant one line in kernel.py, never dist, and is in _TREE_COPIERS already (the fork's copy calls
-# no copytree, so the entry is a no-op until the fold, which meets that file as an add/add conflict); tests/dist_copy.py
-# (upstream's copy_dist(src, dst), a lock-free copytree ignoring the staging names, whose docstring names esbuild.js)
-# and its guard tests/test_dist_copy_staging.py (a copytree over a scratch tree, never dist) are allowlisted by the fold
-# slice that brings them, in _ESBUILD_TEXT_READERS and _TREE_COPIERS, with the reason "upstream's copy primitive and
-# its guard, called by no fork class, kept side by side so later folds of both merge clean". lab_dist keeps its own
+# carries hold the shapes the ratchet reads, and the plan for each is fixed here and in the ledger entry
+# (upstream/2026-09-09-lab-dist-copy-race.md). This PR pre-allowlists one of them: tests/test_perf_bench.py
+# (romp-on/romp#1057) copies kernel/ into a scratch checkout to plant one line in kernel.py, never dist, and is in
+# _TREE_COPIERS below (the ratchet named it at b93c7a15, before the entry; the fork's copy calls no copytree, so the
+# entry is a no-op until the fold, which meets that file as an add/add conflict and finds it green). So when the fold
+# brings the three, the ratchet names exactly the other two: tests/dist_copy.py (upstream's copy_dist(src, dst), a
+# lock-free copytree ignoring the staging names, whose docstring names esbuild.js) and its guard
+# tests/test_dist_copy_staging.py (a copytree over a scratch tree, never dist), which the fold slice that brings them
+# allowlists in _ESBUILD_TEXT_READERS and _TREE_COPIERS, with the reason "upstream's copy primitive and its guard,
+# called by no fork class, kept side by side so later folds of both merge clean". lab_dist keeps its own
 # copy step (shutil.copytree with copy_ignore, which leaves out the lock and the marker as well as the staging names;
 # upstream's copy_dist takes no ignore and would copy both into every lab) and does not call the twin; a later offer
 # may add an ignore parameter to upstream's copy_dist, after which lab_dist can call it and the twin stops being a twin.

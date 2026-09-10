@@ -250,10 +250,11 @@ Module._load = function (request, parent, isMain) {
   } catch (e) {
     // name: the package the request names, null for a request that is not a package's (`./x`, an absolute path, `#x`,
     // a scoped request with fewer than two segments or an empty scope, a name segment that is empty, `.` or `..`; the
-    // rule above packageOf), where node's error stays whatever is installed (round 13 excluded `@scope` alone, before
-    // which rootPresent found the scope directory the sibling packages had created and rethrew, so the reader called
-    // the typo a package that does not load, and with no node_modules the miss was stood in; round 14 the rest; round
-    // 15 stopped judging the subpath, so `pkg/` is pkg's request again)
+    // rule above packageOf, which reads segments and never a name's characters, so a name npm would refuse for its
+    // spelling passes as a package), where node's error stays whatever is installed (round 13 excluded `@scope`
+    // alone, before which rootPresent found the scope directory the sibling packages had created and rethrew, so the
+    // reader called the typo a package that does not load, and with no node_modules the miss was stood in; round 14
+    // the rest; round 15 stopped judging the subpath, so `pkg/` is pkg's request again)
     const name = typeof request === "string" ? packageOf(request) : null;
     const hit = e && e.code === "MODULE_NOT_FOUND" && /^Cannot find module '([^']+)'/.exec(String(e.message));
     const from = parent && typeof parent.filename === "string" ? parent.filename : null;
@@ -285,7 +286,8 @@ def bare_package_stub():
     """A block in which `require()` of a package (`esbuild`, `@scope/pkg`, a subpath spelling of one, `pkg/`; never
     `./x`, an absolute path, a `#x` package-imports specifier, or a request whose name segments name no package: a
     scoped request with fewer than two segments or an empty scope, `@scope`, `@/x`, and a name segment that is empty,
-    `.` or `..`, `@scope/`, `@scope//pkg`, `@scope/./x`) that the config
+    `.` or `..`, `@scope/`, `@scope//pkg`, `@scope/./x`; the rule, `packageOf` in the preload above, reads segments
+    and never a name's characters, so a name npm would refuse for its spelling passes as a package) that the config
     itself requires (the requirer's filename,
     realpathed, is the config's realpath, which
     the harness publishes to every reader run in the environment variable lab_dist.CONFIG_ENV names), that node
