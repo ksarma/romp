@@ -1895,6 +1895,7 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
   const pinRow = (fly: FakeEl) => fly.children.find((it) => it.has("ctx-item-pin"));
   const cued = (fly: FakeEl) => fly.all().filter((n) => n.has("romp-acted"));
   const NOTE = (words: string) => `${words}. The tags changed just before your click, so it did nothing; click again.`;
+  const KEPT = (words: string, group: string) => `${words}. The tags changed just before your click, so it did nothing; the tab is already kept while ${group} is folded.`;   // the pin row rebuilt ON: no click to make (round 11)
   const sameNodes = (a: FakeEl[], b: FakeEl[]) => a.length === b.length && a.every((n, i) => n === b[i]);
   const renamed = (views: Views, i: number, name: string, seq: number): Views => ({ ...views, tags: views.tags.map((t, k) => (k === i ? { ...t, name } : t)), seq });
   const R1 = { id: "TESTHOST:r1", host: "TESTHOST", name: "infra", color: "#123456", members: ["api"] };
@@ -2102,7 +2103,7 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
     // F (round 8): MOVE TO'S SOURCE IS THE COPY'S HOME AT THE CLICK. api under infra, archived and qa, the flyout on the infra copy; the
     // press; a push takes api out of infra (infra stands, so round 7's guard, that the source union exist, passed, and the move's add posted
     // alone: api under archived and qa, the cue nowhere); the release; Move to qa refuses: nothing posted, api under archived alone, and the
-    // cue rides the rebuild: the rebuilt Move to qa row, connected, pulses with the note on it and on its +, the Hide tab row names
+    // cue rides the rebuild: the rebuilt Move to qa row, connected, pulses with the note on it (its + keeps its own title, round 11), the Hide tab row names
     // archived, the parked run leaves the pulsing row alone (the signature was built at the refusal), and the class leaves on animationend.
     // The re-home variant: the push moves api from infra to ops, so the copy has no home (two holders, neither its own) and the rows read
     // + <name>: the cue lands on the + qa row, and api ends under archived and ops, not qa (round 7: all three). infra deleted outright:
@@ -2124,7 +2125,8 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
     assert.equal(mvF.isConnected, false, "the row the click landed on is off the page");
     assert.ok(mvNew.has("romp-acted"), "the rebuilt row pulses (round 7 pulsed the detached one)");
     assert.equal(mvNew.title, NOTE("Move to qa"), "with the note");
-    assert.equal(plusOf(fly, "qa").title, NOTE("Move to qa"), "and the note on its + as well, the innermost title under the pointer");
+    const plusNew = plusOf(fly, "qa");
+    assert.ok(plusNew.title.startsWith("add this tag too") && !/click again|Move to/.test(plusNew.title), "the + keeps its own title, add this tag too (round 11; round 8 wrote the row's note there, so the + read the refused move and click again while its own click adds without moving and is never refused)");
     assert.equal(rowOf(menu)?.sub(), HIDE_SUB("archived"), "the Hide tab row names archived, the copy's home now");
     await tick();
     assert.ok(moveRow(fly, "qa") === mvNew && mvNew.has("romp-acted"), "the parked run found the signature built and left the pulsing row");
@@ -2299,6 +2301,52 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
     await tick();
     pinG9.click();
     assert.deepEqual(hooks.writes.map((w) => w.pinned), [[{ sid: "api", name: "infra", id: "g9" }]], "the second click pins the same-named tag under its new id");
+    await tick();
+    writeTabGroups(d);
+    // the pinned-elsewhere re-home (round 11): web under infra and archived, pinned under archived from another pane, the flyout on the infra
+    // copy, whose pin row reads keep (OFF); the press; a push takes web out of infra, so the home at the click is archived, the one holder;
+    // the release; the click refuses (nothing written) and the pin row rebuilt for archived is ON already: its note names the cause and says
+    // the tab is already kept while archived is folded, with no click to make, since a second click there unpins (round 10's note ended
+    // click again whatever the rebuilt row's state, so following it wrote the opposite of the first click's intent)
+    writeTabGroups(setPinned(d, { name: "archived", localId: "g2" }, "web", true));
+    hooks.views = V_WEB_BOTH; hooks.writes = [];
+    menu = api.open("web", "infra");
+    fly = flyOf(menu);
+    const pinG6 = pinRow(fly)!;
+    assert.deepEqual([pinG6.sub(), pinG6.has("current")], ["keep this tab on the strip while infra is folded", false], "OFF under infra");
+    press(menu);
+    api.push({ ...V_WEB_BOTH, tags: [{ ...V_WEB_BOTH.tags[0], members: ["api", "tests"] }, V_WEB_BOTH.tags[1]], seq: 8 });
+    win.fire("pointerup");
+    pinG6.click();
+    assert.equal(hooks.writes.length, 0, "nothing written: the home is archived where the row was built for infra");
+    const pinKept = pinRow(fly)!;
+    assert.ok(pinKept !== pinG6 && pinKept.isConnected && pinKept.has("romp-acted") && pinKept.has("current"), "the pin row rebuilt for archived, ON, with the cue");
+    assert.equal(pinKept.sub(), "stays on the strip while archived is folded");
+    assert.equal(pinKept.title, KEPT("stays on the strip while archived is folded", "archived"), "the note names the cause and the group the tab is already kept under, and asks for no click");
+    assert.doesNotMatch(pinKept.title, /click again/, "no click-again on a row already in the state the click asked for");
+    await tick();
+    pinKept.click();
+    assert.deepEqual(hooks.writes.map((w) => w.pinned), [[]], "a second click there UNPINS archived, which is why the note asks for none");
+    await tick();
+    writeTabGroups(d);
+    // the mirror (round 11): web pinned under infra (ON), the same push; the rebuilt row for archived is OFF and reads keep, so its note ends
+    // click again as before, and the second click pins archived, the group the row names
+    writeTabGroups(setPinned(d, { name: "infra", localId: "g1" }, "web", true));
+    hooks.views = V_WEB_BOTH; hooks.writes = [];
+    menu = api.open("web", "infra");
+    fly = flyOf(menu);
+    const pinG7 = pinRow(fly)!;
+    assert.deepEqual([pinG7.sub(), pinG7.has("current")], ["stays on the strip while infra is folded", true], "ON under infra");
+    press(menu);
+    api.push({ ...V_WEB_BOTH, tags: [{ ...V_WEB_BOTH.tags[0], members: ["api", "tests"] }, V_WEB_BOTH.tags[1]], seq: 9 });
+    win.fire("pointerup");
+    pinG7.click();
+    assert.equal(hooks.writes.length, 0, "nothing written");
+    const pinOff = pinRow(fly)!;
+    assert.ok(pinOff !== pinG7 && pinOff.has("romp-acted") && !pinOff.has("current") && pinOff.title === NOTE("keep this tab on the strip while archived is folded"), "the rebuilt row is OFF: its own sentence and click again");
+    await tick();
+    pinOff.click();
+    assert.deepEqual(hooks.writes.map((w) => w.pinned), [[{ sid: "web", name: "archived", id: "g2" }]], "the second click pins archived, what the row said");
     await tick();
     writeTabGroups(d);
     // H (round 8): THE + BESIDE MOVE TO and THE + <NAME> ROW resolve at the click. qa replaced under a new id (g5 by g55, both qa) under the

@@ -6978,12 +6978,13 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       return (ref.localId !== null ? all.find((g) => g.localId === ref.localId) : undefined) ?? all.find((g) => g.name === ref.name);
     };
     // the refused click's cue on a flyout row: the Hide tab row's acknowledgement (the sheet's pulse, off on the animation's own end) and
-    // a tooltip note, the row's own words with the click-again clause, on the row and on its button, the x or the +, since the innermost
-    // title is the one shown under the pointer (round 8)
-    const cue = (row: HTMLElement, btn: HTMLElement | null, words: string) => {
-      const note = `${words}. The tags changed just before your click, so it did nothing; click again.`;
-      row.title = note;
-      if (btn) btn.title = note;
+    // a tooltip note on the row: its own words, the cause, and what to do, click again unless the rebuilt row already shows what the click
+    // asked for (round 11: the pin row rebuilt ON under the tab's one remaining group, where a second click would unpin; the note then says
+    // the tab is already kept and asks for no click). The row's button, the x or the +, keeps its own title (round 11; round 8 wrote the
+    // note on the + as well, the innermost title under the pointer, so a refused Move to left click-again on a + whose click is never
+    // refused and adds without moving, and its own add-this-tag-too words were gone until the next build)
+    const cue = (row: HTMLElement, words: string, then = "click again") => {
+      row.title = `${words}. The tags changed just before your click, so it did nothing; ${then}.`;
       row.classList.remove("romp-acted");
       void row.offsetWidth;   // a reflow between the remove and the add, so a second refusal pulses again
       row.classList.add("romp-acted");
@@ -7009,8 +7010,8 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");
       // THE REFUSED CLICK'S CUE RIDES THE REBUILD (round 8). A refused click (Move to's source no longer the copy's home, or the pin row's
       // section no longer the home, round 9) is acknowledged the way the Hide tab row acknowledges one: the sheet's .romp-acted pulse, off
-      // on the animation's own end, and a tooltip note, on the row and on its button (the +: the innermost title is the one shown under the
-      // pointer). Round 7 put both on the row the click landed on, and the rebuild parked under the press took that row off one macrotask
+      // on the animation's own end, and a tooltip note on the row (its button, the x or the +, keeps its own title, round 11). Round 7 put
+      // both on the row the click landed on, and the rebuild parked under the press took that row off one macrotask
       // later: the class stood for a frame and animationstart never fired, the note sat on a detached node, and nothing reached the user.
       // The refusal is recorded instead (the row's kind and its section), the rows are rebuilt at once, and build() puts the cue
       // (above) on the new row of the same kind for the same section (sameSection, the click guards' comparison; the one pin row by its
@@ -7116,12 +7117,11 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label");
           const ref = sectionRef(g);   // this row's union by its ref; the click resolves it again (round 7)
-          let plus: HTMLButtonElement | null = null;   // the Move to row's +, which a carried cue notes as well as the row (round 8)
           if (home) {
             const from = sectionRef(home);   // the copy's group as this build read it; the move reads the copy's home again at the click
             lb.textContent = "Move to " + g.name; bodyE.appendChild(lb);
             row.appendChild(bodyE);
-            plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;
+            const plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;   // keeps its own title through a carried cue (round 11)
             plus.type = "button"; plus.textContent = "+"; plus.title = "add this tag too — the session keeps its other tags";
             plus.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { build(); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });   // the destination gone at the click: the rows rebuilt, its row's removal the answer (round 9)
             row.appendChild(plus);
@@ -7136,7 +7136,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
             row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { build(); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });   // the tag gone at the click: the rows rebuilt, this row's removal the answer (round 9)
           }
           row.title = lb.textContent ?? "";   // the whole label as the row's tooltip (round 6): a 40-character destination elides at the cap and was readable nowhere in the menu; the + keeps its own title
-          if (carried("other", ref)) cue(row, plus, lb.textContent ?? "");   // a refused click's cue, carried to this rebuild (round 8), in this row's own words (round 10): Move to <name>, or + <name> once the copy has no home, what the second click does
+          if (carried("other", ref)) cue(row, lb.textContent ?? "");   // a refused click's cue, carried to this rebuild (round 8), in this row's own words (round 10): Move to <name>, or + <name> once the copy has no home, what the second click does; the + keeps its own title (round 11)
           add(row);
         }
         // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
@@ -7177,7 +7177,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           // second click pins where the copy now sits. Round 7 asked only that the row's union still exist (liveUnion by the ref), so a
           // push that moved the copy out of its home while the home's tag stood wrote a pin the prune dropped, with no cue
           row.addEventListener("click", (e2) => { e2.stopPropagation(); const h = homeNow(); if (!h || !sameSection(sectionRef(h), sec)) { refuse("pin", sec); return; } writeTabGroupsPruned(setPinned(tabGroups(), sectionRef(h), id, !on)); build(); });
-          if (carried("pin", sec)) cue(row, null, sb2.textContent ?? "");   // a refused click's cue, carried to this rebuild (round 8), in this row's own sentence (round 10), so the tooltip names the group the second click pins
+          if (carried("pin", sec)) cue(row, sb2.textContent ?? "", on ? `the tab is already kept while ${home.name} is folded` : "click again");   // a refused click's cue, carried to this rebuild (round 8), in this row's own sentence (round 10), so the tooltip names the group the second click pins; a row rebuilt ON (the tab pinned under its one remaining group) asks for no click, since a second click there would unpin (round 11)
           add(row);
         }
         refused = null;   // a carried cue is placed by this build or by none (round 8)
