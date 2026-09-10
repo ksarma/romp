@@ -720,6 +720,7 @@ class CrashHeal(unittest.TestCase):
         self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE],
                          "the nudge is not stacked by the refused second heal")
         self.assertTrue(any("crash loop" in m for m in logs), "the give-up is loud")
+        self.assertFalse(any("queued text(s) wait" in m for m in logs), "nothing but the nudge is queued: no parked-text clause (round 5)")
         self.assertEqual(sb.last_state_value(Path(d), self.SID), "working",
                          "still cut — the next kernel restart's reconcile picks it up")
 
@@ -1375,6 +1376,16 @@ class CrashHeal(unittest.TestCase):
                           "%s: Failed with result 'oom-kill'." % self.UNIT])
         self.assertEqual(sb.journal_life(self.JOURNAL_STARTED, self.UNIT), [])
         self.assertEqual(sb.journal_life("", None), [])
+        # round 5 (fresh-4, kernel-4): the cut is at ANY `Started ` line of the window, whatever the manager's
+        # StatusUnitFormat= makes of the unit's name (`Started <unit>.` under name, `Started <description>.` under
+        # description, upstream's compiled default), since -u <unit> -t systemd already restricts the window to the
+        # manager's lines about this unit; a match on `Started <unit> ` was inert on both (verified on a scratch scope
+        # whose description equalled its unit id)
+        for started in ("Started %s.\n" % self.UNIT, "Started /usr/bin/claude.\n"):
+            self.assertEqual(sb.journal_life("%s%s: A process of this unit has been killed by the OOM killer.\n%s"
+                                             % (started, self.UNIT, started), self.UNIT), [],
+                             "the kill was the previous life's: %r" % started)
+            self.assertFalse(sb.journal_oom_kill(self.JOURNAL_KILL + started, self.UNIT), started)
         self.assertEqual(sb.SCOPE_JOURNAL_KILL_LINE, "A process of this unit has been killed by the OOM killer")
         self.assertEqual(sb.SCOPE_JOURNAL_STARTED, "Started ")
         # the loaded-unit cells the round-3 table names (round 4, rules-1): every cell has an assertion here
@@ -2276,6 +2287,9 @@ class CrashHeal(unittest.TestCase):
                 self.assertTrue(be.send(self.SID, "peer text"), "the send is accepted, and raises nothing on the closed loop")
                 self.assertIs(be.sessions.get(self.SID), s, "no replacement was spawned during the read")
                 self.assertEqual(s.pending(), ["peer text"], "the text went to the dying session's own queue")
+                self.assertNotIn("peer text", sb.read_reg(Path(d), self.SID).get("queue") or [],
+                                 "round 5 (D2): the mirror is sealed from the cut, so the send's own persist wrote nothing; the "
+                                 "heal's write carries the text")
                 sent.set()
                 s.thread.join(10)
                 self.assertFalse(s.thread.is_alive())
@@ -2287,11 +2301,230 @@ class CrashHeal(unittest.TestCase):
                 self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM, "peer text"],
                                  "the nudge survives the replacement's own persist")
                 self.assertEqual([c[0] for c in calls], ["systemctl", "journalctl"])
+                # round 5 (D2): the fold closed the dying session's queue: a late persist writes nothing over the heal's
+                # reg, a late enqueue is refused (send re-resolves), a cancel is a miss
+                s._persist_queue()
+                self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM, "peer text"],
+                                 "a late persist on the sealed session is a no-op")
+                self.assertIs(s.enqueue("late"), False)
+                self.assertFalse(s.enqueue_if_empty("late"))
+                self.assertIsNone(s.unqueue(0, "peer text"))
+                self.assertEqual(s.pending(), ["peer text"], "nothing appended, nothing popped")
+                self.assertEqual(rep.pending(), [sb.CRASH_RESUME_NUDGE_OOM, "peer text"])
             finally:
                 parked.set()
                 for t in (s.thread, getattr(be.sessions.get(self.SID), "thread", None)):
                     if t is not None and t.is_alive():
                         t.join(10)
+
+    @contextlib.contextmanager
+    def _heal_blocked_in_the_show(self, d, be, journal=None):
+        """The round-4 race scaffold as a context: a dying session (its loop closed by asyncio.run, its thread in
+        _run's finally running _on_session_gone) whose heal is blocked inside the fake systemctl show until `sent` is
+        set; the journal then answers `journal` (the kill line by default) and the replacement's _run parks. Yields
+        (s, sent, calls) once the heal is inside the show; joins every thread on exit."""
+        s = self._dead_session(be, d, exit_code=self.KILL, baseline=0)
+        loop = asyncio.new_event_loop()
+        loop.close()
+        s.loop, s._input_wake = loop, asyncio.Event()
+        be.sessions[self.SID] = s
+        in_show, sent, parked = threading.Event(), threading.Event(), threading.Event()
+        calls = []
+
+        def fake_run(argv, **kw):
+            calls.append(list(argv))
+            if argv[:1] == ["systemctl"]:
+                in_show.set()
+                sent.wait(10)
+                return mock.Mock(returncode=0, stdout=self._show(load="not-found", cgroup=""), stderr="")
+            return mock.Mock(returncode=0, stdout=self.JOURNAL_KILL if journal is None else journal, stderr="")
+        with mock.patch.object(sb.subprocess, "run", fake_run), \
+             mock.patch.object(sb.SdkSession, "_run", lambda self_: parked.wait(10)):
+            s.thread = threading.Thread(target=lambda: be._on_session_gone(s), daemon=True)
+            s.thread.start()
+            try:
+                self.assertTrue(in_show.wait(10), "the heal never read the scope")
+                yield s, sent, calls
+            finally:
+                sent.set()
+                parked.set()
+                for t in (s.thread, getattr(be.sessions.get(self.SID), "thread", None)):
+                    if t is not None and t.is_alive():
+                        t.join(10)
+
+    def test_a_send_that_enqueues_after_the_heals_write_goes_to_the_replacement(self):
+        # round 5 (D2: correctness-2, kernel-3): a send obtains the dying session from _ensure during the read and
+        # reaches its enqueue only after the heal folded the queue into the reg and popped the session (the send's
+        # own _ensure-to-persist gap, milliseconds under load). Before: the text was appended to the dead session's
+        # pending and its persist put ['peer text'] over the reg's [nudge], so the nudge was lost, or the text at
+        # the replacement's next persist. Now the fold CLOSES the queue: the enqueue is refused, send re-resolves
+        # the sid, and the replacement takes the text behind the nudge. The send blocks in _transcript_mark (between
+        # _ensure and enqueue) until the replacement exists.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        logs = []
+        be._log_cb = logs.append
+        with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
+            orig_mark, in_mark = be._transcript_mark, threading.Event()
+
+            def slow_mark(sid):
+                in_mark.set()
+                deadline = time.time() + 10
+                while time.time() < deadline and be.sessions.get(self.SID) in (s, None):
+                    time.sleep(0.005)
+                return orig_mark(sid)
+            be._transcript_mark = slow_mark
+            result = []
+            sender = threading.Thread(target=lambda: result.append(be.send(self.SID, "peer text")), daemon=True)
+            sender.start()
+            self.assertTrue(in_mark.wait(10), "the send never reached the transcript mark")   # _ensure handed it the dying session
+            sent.set()
+            s.thread.join(10)
+            sender.join(10)
+            self.assertFalse(sender.is_alive(), "the send returned")
+            self.assertEqual(result, [True], "the send is accepted")
+            rep = be.sessions.get(self.SID)
+            self.assertIsNotNone(rep)
+            self.assertIsNot(rep, s, "the heal spawned the replacement")
+            self.assertEqual(s.pending(), [], "the dying session's closed queue refused the text")
+            self.assertEqual(rep.pending(), [sb.CRASH_RESUME_NUDGE_OOM, "peer text"], "the replacement took it, behind the nudge")
+            self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM, "peer text"])
+            self.assertTrue(any("queue closed under the send" in m for m in logs), logs)
+            self.assertEqual(be.problems(), [], "the re-resolve is the designed path, not a problem")
+
+    def test_a_send_during_the_read_under_a_crash_loop_refusal_is_parked_in_the_reg(self):
+        # round 5 (fresh-2): with the one resume spent (_heal_attempts 1), a send that reaches the dying session during
+        # the read is accepted and its text folded into the reg by the refusal's own write (the mirror is sealed from
+        # the cut, so nothing else writes it); no session runs it now (no replacement, no nudge, no re-head), the
+        # crash-loop line says how many texts wait, and the next start (a later send, the boot reconcile) runs them
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        be._heal_attempts[self.SID] = 1
+        logs = []
+        be._log_cb = logs.append
+        with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
+            self.assertTrue(be.send(self.SID, "peer text"))
+            self.assertEqual(s.pending(), ["peer text"])
+            sent.set()
+            s.thread.join(10)
+        self.assertIsNone(be.sessions.get(self.SID), "the refusal spawns nothing")
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), ["peer text"], "parked in the reg, no nudge")
+        line = [m for m in logs if "crash loop" in m]
+        self.assertEqual(len(line), 1, logs)
+        self.assertIn("; 1 queued text(s) wait until the next start (a later send or the boot reconcile runs them in order)", line[0])
+        self.assertEqual(sb.last_state_value(Path(d), self.SID), "working", "still cut for the next kernel restart")
+        self.assertTrue(s._queue_closed, "the refusal's write closes the queue like the resume's")
+
+    def test_a_user_end_during_the_heals_scope_read_ends_the_session_without_a_raise(self):
+        # round 5 (D3: correctness-3, regression-1, kernel-2): be.kill (the endSession op, the /kill route, end-on-idle)
+        # reaches the dying session during the read; its shutdown scheduled on the closed loop and raised
+        # RuntimeError('Event loop is closed') out of kill, so the end landed but the op's tail was skipped and a
+        # traceback logged. Now every loop call is guarded (_call_on_loop): kill returns True, the session is ended,
+        # the reg says alive False, no heal runs (the session ended during the read) and no replacement is spawned
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        logs = []
+        be._log_cb = logs.append
+        with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
+            s.client = object()      # a connected session: shutdown schedules the interrupt too
+            self.assertTrue(be.kill(self.SID), "the end lands, and raises nothing")
+            self.assertTrue(s.ended)
+            sent.set()
+            s.thread.join(10)
+        self.assertIsNone(be.sessions.get(self.SID), "no replacement: the session was ended, not cut")
+        reg = sb.read_reg(Path(d), self.SID)
+        self.assertIs(reg.get("alive"), False, "kill's flip survives the heal thread's own write")
+        self.assertFalse(any(sb.is_crash_resume_nudge(sb._queue_text(e)) for e in reg.get("queue") or []), "no nudge: no heal ran")
+        self.assertFalse(any("died mid-turn" in m for m in logs), logs)
+        self.assertFalse(any("Event loop is closed" in m for m in logs), logs)
+
+    def test_every_kernel_thread_entry_point_tolerates_a_closed_loop(self):
+        # round 5 (D3): every call the kernel thread can make on a session whose loop asyncio.run has closed returns
+        # instead of raising RuntimeError('Event loop is closed'), and the ones that report an outcome report False
+        # (nothing ran on the closed loop). request_reconnect first: shutdown sets `ended`, which it returns on.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        s = sb.SdkSession(be, _reg(d, self.SID))
+        loop = asyncio.new_event_loop()
+        fut = loop.create_future()          # a live ask, waiting
+        loop.close()
+        s.loop, s._input_wake, s.client = loop, asyncio.Event(), object()
+        s._cur_ask_fut = fut
+        with s._sub_lock:
+            s._bg_tasks["t1"] = {"toolUseId": "t1", "desc": "a watcher"}
+        calls = (("request_reconnect", lambda: s.request_reconnect()),
+                 ("interrupt (the control request)", lambda: s.interrupt()),
+                 ("set_model_live", lambda: s.set_model_live("claude-x")),
+                 ("set_mode_live", lambda: s.set_mode_live("plan")),
+                 ("resolve_ask", lambda: self.assertFalse(s.resolve_ask("answer", 1), "a closed loop delivers nothing, and says so")),
+                 ("refresh_usage", lambda: self.assertFalse(s.refresh_usage())),
+                 ("request_stop_task", lambda: self.assertFalse(s.request_stop_task("t1"))),
+                 ("request_rewind_files", lambda: self.assertFalse(s.request_rewind_files("11111111-2222-3333-4444-555555555555"))),
+                 ("shutdown", lambda: s.shutdown()))
+        for name, call in calls:
+            with self.subTest(entry=name):
+                call()          # raises nothing
+        self.assertTrue(s.ended)
+        self.assertFalse(sb._call_on_loop(None, lambda: None))
+        self.assertFalse(sb._call_on_loop(loop, lambda: None))
+
+    def test_a_death_that_is_not_a_cut_never_reads_the_scope(self):
+        # round 5 (tests-1): the pre-pop scope read is gated on `cut` (a mid-turn death that is not a user interrupt and
+        # not our own shutdown). A user interrupt's death, an idle exit and an ended (drained) session run neither
+        # systemctl nor journalctl, log no scope-result line and seal nothing; an unconditional read left every module
+        # green before this test
+        for label, inflight, interrupted, ended in (("user interrupt", 1, True, False), ("idle exit", 0, False, False),
+                                                    ("ended", 1, False, True)):
+            with self.subTest(death=label):
+                d = tempfile.mkdtemp()
+                be = _backend(d)
+                be.cli_scope = True
+                logs = []
+                be._log_cb = logs.append
+                calls = []
+
+                def fake_run(argv, **kw):
+                    calls.append(list(argv))
+                    return mock.Mock(returncode=0, stdout=self._show(load="not-found", cgroup=""), stderr="")
+                s = self._dead_session(be, d, inflight=inflight, interrupted=interrupted, exit_code=self.KILL, baseline=0)
+                s.ended = ended
+                with mock.patch.object(sb.subprocess, "run", fake_run), mock.patch.object(be, "_ensure") as ens:
+                    be._on_session_gone(s)
+                self.assertEqual(calls, [], "a non-cut death ran the scope read: %r" % calls)
+                self.assertFalse(any("session scope result" in m for m in logs), logs)
+                ens.assert_not_called()
+                if not ended:
+                    self.assertEqual(sb.last_state_value(Path(d), self.SID), "waiting")
+                self.assertFalse(getattr(s, "_queue_sealed", False), "the mirror is sealed on a cut only")
+
+    def test_a_direct_heal_call_reads_the_scope_itself(self):
+        # round 5 (tests-2): _heal_cut_session's _UNREAD default hands a caller that did not read the scope (the only
+        # direct caller in the tree is a test) the read here, with the scopes on; the `oom = None` mutant left every
+        # module green before this test
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        logs = []
+        be._log_cb = logs.append
+        root = tempfile.mkdtemp()
+        Path(root, "fx.slice", self.UNIT).mkdir(parents=True)
+        Path(root, "fx.slice", self.UNIT, "memory.events").write_text(self.EVENTS(1))
+        calls = []
+
+        def fake_run(argv, **kw):
+            calls.append(list(argv))
+            return mock.Mock(returncode=0, stdout=self._show(), stderr="")
+        s = self._dead_session(be, d, exit_code=self.KILL, baseline=0)
+        with mock.patch.object(sb.subprocess, "run", fake_run), mock.patch.object(sb, "CGROUP_ROOT", root), \
+             mock.patch.object(be, "_ensure") as ens:
+            be._heal_cut_session(s)
+        self.assertEqual(calls, [self.SHOW_ARGV], "the direct caller's heal read the scope itself")
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
+        self.assertIn("the OOM killer took a process in its scope", self._died_line(logs))
+        ens.assert_called_once_with(self.SID)
 
     def test_the_three_forms_share_the_lead_and_the_bare_one_is_unchanged(self):
         # CRASH_RESUME_NUDGE is what every existing reader matched on: its text is the same to the byte
