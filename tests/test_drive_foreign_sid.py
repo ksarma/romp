@@ -135,6 +135,36 @@ class RefusesForeignDriveOps(unittest.TestCase):
         self.assertEqual(rows[0]["sid"], THEIRS)
         self.assertEqual(rows[0]["op"], "sendMessage")
 
+    def test_a_refused_text_less_gesture_files_a_row_with_no_text(self):
+        # the Continue button (askFollowUp with cont:true and no text), interrupt and endSession carry no text,
+        # and the records writer appends their undelivered.jsonl row all the same: a durable record of op, sid
+        # and item that the stderr line does not keep across a log rotation. The error center's tooltip said a
+        # refused card gesture writes nothing there, which is true only of the goals-file gesture refusals
+        # (clear, drop, undo); it now says a refused reply, interrupt or end files a row with no text, and the
+        # modal promises the verbatim text only when there is one (review round 7, 2026-09-09).
+        import pathlib
+        with tempfile.TemporaryDirectory() as d:
+            saved = km.jd.STATE
+            km.jd.STATE = pathlib.Path(d)
+            try:
+                for msg in ({"type": "askFollowUp", "itemId": THEIRS + ":g4", "cont": True},
+                            {"type": "interrupt", "id": THEIRS}, {"type": "endSession", "id": THEIRS}):
+                    self.assertTrue(km._drive(msg, self.client), msg)
+                rows = [json.loads(x) for x in (pathlib.Path(d) / "undelivered.jsonl").read_text().splitlines()]
+            finally:
+                km.jd.STATE = saved
+        self.assertEqual([(r["op"], r["sid"], r["what"], r["itemId"], r["text"]) for r in rows],
+                         [("askFollowUp", THEIRS, "reply", THEIRS + ":g4", ""), ("interrupt", THEIRS, "interrupt", "", ""),
+                          ("endSession", THEIRS, "end", "", "")], "one row per refused gesture, with no text")
+        self.assertEqual(self.reached, [])
+        self.assertEqual(len(self.sent), 3)
+        for msg in self.sent:
+            self.assertEqual(msg["type"], "err")
+            self.assertIn("Nothing was sent", msg["text"])
+            self.assertIn("The refusal is recorded in undelivered.jsonl", msg["text"])
+            self.assertNotIn("Your text is saved verbatim", msg["text"], "no text was typed, so none is promised")
+            self.assertEqual(msg["copy"], "")
+
     def test_a_record_that_will_not_read_refuses_the_typed_text_into_the_same_three_records(self):
         # _session_gate's unreadable verdict (a NOT-running session whose SDK registry entry exists but will not
         # read) refuses through _refuse_drive_unreadable, the sibling of the unknown refusal above, and the two

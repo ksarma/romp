@@ -18570,8 +18570,13 @@ def _refuse_drive_records(client, op, sid, msg, what, cause, lead):
     except OSError:
         pass
     sys.stderr.write("undeliverable %s: %s; %r\n" % (op, cause, text[:200]))
-    detail = ("Nothing was sent. %s Your text is saved verbatim in undelivered.jsonl under romp's state "
-              "directory." % lead)
+    # the row is written for a text-less op too (interrupt, end, the Continue button): a durable record of
+    # op, sid and item the stderr line does not keep across a log rotation. The modal says what the row
+    # holds, so it promises the text only when there is one (review round 7, 2026-09-09)
+    detail = ("Nothing was sent. %s %s" % (lead, "Your text is saved verbatim in undelivered.jsonl under romp's "
+                                                 "state directory." if text else
+                                                 "The refusal is recorded in undelivered.jsonl under romp's state "
+                                                 "directory."))
     try:
         # `sid` rides along so the shell's error-center entry carries the session it was meant for, the way
         # every card-badge entry does — the bell is a log you read later, and "which one?" is the first thing
@@ -52706,7 +52711,7 @@ sync:"romp moved commits between your machines by itself \u2014 a push to a remo
 locate:"a click that should have jumped to a message in the chat couldn't find it. Usually the chat is missing part of its history; reload the pane if it keeps happening",
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
 refused:"a setting that could not be saved, or a state file that could not be read. A change you made \u2014 a lane or tab setting, a card bell, a lane order \u2014 was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults",
-undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp; a refused card gesture writes nothing there"};
+undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read the live session list (tmux did not answer; the same send works once it does), or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a refused reply, interrupt or end files a row there with no text; a clear, drop or undo refused over the goals file writes nothing there"};
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
 if(filtBar)KINDS.forEach(function(k){var b=document.createElement('span');
