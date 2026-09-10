@@ -9994,6 +9994,10 @@ _DEPLOY_RESTART_REASONS = ("main-converge", "p2p-update", "self-update",   # led
                            "kernel-asks-manager-restart-all: self-update")   # deploy restart of this kernel
 _MANAGER_REFUSED_ACTION = "manager-refused-restart-all"   # the manager answered a hop 4xx/5xx: nothing restarted
 _NO_RESTART_ACTIONS = {"main-converge-skip", "bus-converge", "end-on-idle", _MANAGER_REFUSED_ACTION}
+# The request rows a refused hop was written for, which the refusal consumes in _recent_restart_audit's walk
+# (review round 2, 2026-09-10): the dashboard's Restart writes http-restart and then, through
+# _restart_this_kernel, kernel-asks-manager-restart-all; the converge writes main-converge and hops itself.
+_MANAGER_REFUSED_REQUESTS = ("kernel-asks-manager-restart-all", "http-restart", "main-converge")
 #                                                        # audit rows that restart no kernel (in-place converges;
 #                                                        # a session's own self-close ask; a refused manager hop)
 
@@ -25519,6 +25523,13 @@ def _recent_restart_audit(window=90, now=None, started=None):
         `signal` row of its own (review round 2: two stray kills within 90 seconds left one row);
       - a `down-failed` row (bin/romp, when a `romp down` did not stop the kernel) supersedes the `down`
         beneath it: neither is the request for a signal that arrives later;
+      - a `manager-refused-restart-all` row (the manager answered the hop 4xx or 5xx) consumes the ONE
+        request beneath it that the hop was made for, keyed on action and timestamp, never on a reason
+        (two of the three request rows carry none): the nearest `kernel-asks-manager-restart-all` or
+        `main-converge` row at or before its t, plus the `http-restart` row the kernel-asks row sits
+        directly on when the /restart door made the hop. Neither is the request for a signal that
+        arrives later, since the manager restarted nothing on it; a request further down (a parked
+        quiet converge under an unrelated refusal) stays visible (review round 2, 2026-09-10);
       - a `manager-sigterm` row (bin/romp-manager auditSigterm, written before every SIGTERM it sends) is
         a mechanism note, not a request: it says the manager was the messenger, and its `trigger` names
         what set it off (`restart`, `restart-all`, `refresh`, `cli-down`, `stop`), so that is the label it
@@ -25541,6 +25552,8 @@ def _recent_restart_audit(window=90, now=None, started=None):
         via_manager = None                                  # the newest manager-sigterm note about us, if any
         down_superseded = False
         park_settled = False                                # a row above showed a parked quiet request delivered or dropped
+        refused = []                                        # the t of each manager-refused row met, each owed one request beneath it
+        eat_http = False                                    # the request just consumed was the /restart door's hop: its own row is next
         # a DEEP tail: every session self-close writes an end-on-idle row, and fifty of them inside a parked
         # quiet window pushed the live park's row out of a short tail and un-parked it (T240d review find);
         # the window and the start bound end the walk, not the tail
@@ -25552,12 +25565,28 @@ def _recent_restart_audit(window=90, now=None, started=None):
             if not (isinstance(rec, dict) and isinstance(rec.get("t"), int)):
                 continue
             action = str(rec.get("action") or "")
+            if action == _MANAGER_REFUSED_ACTION:
+                refused.append(rec["t"])                    # restarted no kernel, and its request beneath it did not either
+                continue
             if action in _NO_RESTART_ACTIONS:
                 continue                                    # restarted no kernel; says nothing about this cut
             quiet = rec.get("when") == "quiet"
             win = max(window, RESTART_EXPECT_MAX_S) if quiet else window
             if t0 - rec["t"] > win:
                 break                                       # older rows are older still
+            if action in _MANAGER_REFUSED_REQUESTS and (eat_http or refused):
+                # the request a refusal above was written for: the manager refused it, so it is not the
+                # request for this signal (review round 2, 2026-09-10). One request per refusal, keyed on
+                # action and timestamp: the kernel-asks row consumed here takes the http-restart row it
+                # sits directly on with it; an older request beneath an unrelated refusal stays visible.
+                if eat_http:
+                    eat_http = False
+                    if action == "http-restart":
+                        continue
+                if refused and rec["t"] <= refused[-1]:
+                    refused.pop()
+                    eat_http = action == "kernel-asks-manager-restart-all"
+                    continue
             spent = bool(consumed) and rec["t"] == consumed  # a cut row already joined it (auditT)
             if rec["t"] < born:
                 # a predecessor's row; only a parked quiet request survives the kernel that filed it

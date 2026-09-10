@@ -99,5 +99,60 @@ class RestartAudit(unittest.TestCase):
         self.assertEqual(recs[0]["reason"], "unit-test reason")
         self.assertEqual(recs[0]["pid"], os.getpid())
 
+
+class ARefusalConsumesItsRequest(unittest.TestCase):
+    """The manager answered a hop 4xx or 5xx (review round 2, 2026-09-10). The request row written before
+    the hop (http-restart and kernel-asks-manager-restart-all for the dashboard's Restart, main-converge for
+    the converge) stayed live for the 90 s window: the refusal row was walked past, but it did not
+    supersede the request beneath it, so a later SIGTERM from another source was attributed to a request
+    the manager had refused. The walk now lets a refusal consume the one request it was written for,
+    keyed on action and timestamp (two of the three request rows carry no reason), and no more."""
+    T = 1_800_000_000
+
+    def setUp(self):
+        try:
+            _audit_path().unlink()
+        except OSError:
+            pass
+
+    def _write(self, rows):
+        _audit_path().parent.mkdir(parents=True, exist_ok=True)
+        with open(_audit_path(), "w") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+
+    def _http_restart_refused(self, t):
+        return [{"t": t, "action": "http-restart", "addr": "127.0.0.1", "ua": "test-agent/1.0"},
+                {"t": t, "action": "kernel-asks-manager-restart-all", "reason": "http /restart (local-only)", "pid": os.getpid()},
+                {"t": t, "action": km._MANAGER_REFUSED_ACTION, "door": "/restart-all", "status": 401,
+                 "reason": "http /restart (local-only)", "tokenSrc": "ROMP_SERVE_TOKEN"}]
+
+    def test_the_three_row_ledger_of_a_refused_dashboard_restart_names_no_request(self):
+        self._write(self._http_restart_refused(self.T - 1))
+        self.assertIsNone(km._recent_restart_audit(now=self.T, started=self.T - 1000),
+                          "the request the manager refused restarted nothing, so a signal now is anonymous")
+
+    def test_a_refused_converge_row_names_no_request(self):
+        self._write([{"t": self.T - 2, "action": "main-converge", "tag": "pull", "when": "now", "sha": "abcdef12"},
+                     {"t": self.T - 1, "action": km._MANAGER_REFUSED_ACTION, "door": "/restart-all", "status": 503,
+                      "reason": "main-converge: pull"}])
+        self.assertIsNone(km._recent_restart_audit(now=self.T, started=self.T - 1000))
+
+    def test_a_parked_quiet_converge_under_an_unrelated_refusal_stays_visible(self):
+        parked = {"t": self.T - 100, "action": "main-converge", "tag": "pull", "when": "quiet", "sha": "abcdef12"}
+        self._write([parked] + self._http_restart_refused(self.T - 1))
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), parked,
+                         "one request per refusal: the older parked request beneath was not the one refused")
+
+    def test_a_managers_note_above_a_refused_request_still_answers(self):
+        note = {"t": self.T, "action": "manager-sigterm", "trigger": "restart-all", "pid": os.getpid()}
+        self._write(self._http_restart_refused(self.T - 1) + [note])
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), note)
+
+    def test_two_refusals_consume_two_requests_and_a_third_request_stays(self):
+        first = {"t": self.T - 30, "action": "kernel-asks-manager-restart-all", "reason": "fleet-restart: the local half", "pid": os.getpid()}
+        self._write([first] + self._http_restart_refused(self.T - 20) + self._http_restart_refused(self.T - 1))
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), first)
+
 if __name__ == "__main__":
     unittest.main()
