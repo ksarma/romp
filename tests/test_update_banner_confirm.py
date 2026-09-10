@@ -64,6 +64,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -756,14 +757,20 @@ out(state());""")
 
 
 class DeadPorts(unittest.TestCase):
-    """Every process this module runs is handed a dead manager port and a dead kernel port (the module
-    docstring's last paragraph says why). Pinned in the child's own environment, not this one's: a run
-    under pytest inherits the conftest floor, so only the child's view says whether run_banner passes the
-    ports itself. The drivers' view is in Browser.test_the_drivers_carry_dead_manager_and_kernel_ports."""
+    """Every process this module runs is handed a dead manager port, a dead kernel port and a dead serve port
+    (the module docstring's last paragraph says why), explicitly, not by inheritance. The module floors its
+    own process at import (DEAD_PORTS above) and pytest floors it again (tests/__init__.py, conftest.py), so
+    a child inherits "1" under every runner whether or not run_banner hands the ports over; the pin
+    therefore sets this process's three variables to ANOTHER dead value around the call and asserts the
+    child still reports "1": only the explicit hand-off can put it there. Never popped: a pop would leave
+    this process with no floor while the child runs. Verified (review round 5, 2026-09-10): green as
+    written, red with the explicit env removed from run_banner, and every process carried a closed port
+    throughout. The drivers' view is in Browser.test_the_drivers_carry_dead_manager_and_kernel_ports."""
 
-    def test_the_node_scenarios_carry_dead_manager_and_kernel_ports(self):
-        s = run_banner("out({ manager: process.env.ROMP_MANAGER_PORT || '', kernel: process.env.ROMP_KERNEL_PORT || '' });")
-        self.assertEqual(s, {"manager": "1", "kernel": "1"})
+    def test_the_node_scenarios_carry_dead_manager_kernel_and_serve_ports(self):
+        with mock.patch.dict(os.environ, {k: "2" for k in DEAD_PORTS}):
+            s = run_banner("out({ manager: process.env.ROMP_MANAGER_PORT || '', kernel: process.env.ROMP_KERNEL_PORT || '', serve: process.env.ROMP_SERVE_PORT || '' });")
+        self.assertEqual(s, {"manager": "1", "kernel": "1", "serve": "1"})
 
 
 class Wiring(unittest.TestCase):
@@ -910,7 +917,7 @@ let browser;
 try { browser = await pw[cfg.engine].launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const R = { engine: cfg.engine, leg: cfg.leg, err: {}, pageErrors: [],
-            ports: { manager: process.env.ROMP_MANAGER_PORT || "", kernel: process.env.ROMP_KERNEL_PORT || "" } };
+            ports: { manager: process.env.ROMP_MANAGER_PORT || "", kernel: process.env.ROMP_KERNEL_PORT || "", serve: process.env.ROMP_SERVE_PORT || "" } };
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
 const page = await ctx.newPage();
 page.on("pageerror", (e) => { R.pageErrors.push(String((e && e.message) || e)); });
@@ -1337,12 +1344,16 @@ class Browser(unittest.TestCase):
         with open(driver, "w") as f:
             f.write(DRIVER)
         page = _scratch_page()
+        # the drivers' environment: this process's dead ports set to ANOTHER dead value as the base, so the
+        # "1" a driver reports can only have come from the explicit hand-off (DeadPorts says why; the
+        # drivers are spawned once here, before any test method, so the base is built here)
+        base = dict(os.environ, **{k: "2" for k in DEAD_PORTS})
         for leg, engine, launch in cls.LEGS:
             cfg = os.path.join(lab, leg + ".json")
             with open(cfg, "w") as f:
                 json.dump({"leg": leg, "engine": engine, "launch": launch, "page": page, "pane": PANE, "checks": CHECKS, "labels": LABELS}, f)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=600,
-                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg, **DEAD_PORTS))
+                               env=dict(base, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg, **DEAD_PORTS))
             if p.returncode == 3:
                 cls.skipped[leg] = "no playwright %s on this box (CI installs none): %s" % (engine, p.stderr.strip()[:200])
                 continue
@@ -1362,10 +1373,12 @@ class Browser(unittest.TestCase):
                 self.assertEqual((r["err"], r["pageErrors"]), ({}, []), engine)
 
     def test_the_drivers_carry_dead_manager_and_kernel_ports(self):
-        # the driver's own view of its environment (DeadPorts says why the child's view is the one pinned)
+        # the driver's own view of its environment, spawned from a base whose three ports read "2": the "1"
+        # is the explicit hand-off's (DeadPorts says why the child's view is the one pinned, and why the
+        # parent's floor is moved rather than popped)
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
-                self.assertEqual(r["ports"], {"manager": "1", "kernel": "1"}, engine)
+                self.assertEqual(r["ports"], {"manager": "1", "kernel": "1", "serve": "1"}, engine)
 
     def test_firefox_ran(self):
         # the pane and the Tab-into-pane cases are Firefox's: a press in a same-origin frame fires no top-window
