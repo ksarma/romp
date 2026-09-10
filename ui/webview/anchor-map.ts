@@ -634,6 +634,54 @@ export function locateComment(source: string, anchor: Anchor, hintOffset?: numbe
 
 class Refusal extends Error {}
 
+/** The noun a refusal names a token by, in the person's terms (plans/markdown-viewer.md, Slice 5: "no token names in
+ *  refusals"): the Slice 4 constructs (md-config.ts) by what they show, "a footnote definition" and never `footnoteDef`,
+ *  marked's built-ins as they read, each with its article, and "content" for a kind the map has no name for. A refusal's
+ *  sentence names what the person selected, and a camelCase token name is the lexer's word, not theirs. `inline` tells an
+ *  inline `html` token (a tag in a line of text) from an html block, the one type both levels share. Every registered token
+ *  has a case, so the default is for a future extension. The message sites below (a token whose raw the walk could not
+ *  place, emphasis whose marks did not tile) are its callers; exported for the test that pins the catalogue and the
+ *  sentence a misplaced construct reads (anchor-map-obsidian.test.ts), which no input the lexer accepts today reaches. */
+export function refusalNoun(type: string, inline = false): string {
+  switch (type) {
+    // marked's block tokens
+    case "paragraph": return "a paragraph";
+    case "heading": return "a heading";
+    case "list": return "a list";
+    case "list_item": return "a list item";
+    case "table": return "a table";
+    case "code": return "a code block";
+    case "blockquote": return "a quote";
+    case "hr": return "a rule";
+    case "space": return "blank lines";
+    case "def": return "a link definition";
+    case "html": return inline ? "an HTML tag" : "an HTML block";
+    // marked's inline tokens (`text` is block text in a tight list item too)
+    case "text": return "text";
+    case "escape": return "an escaped character";
+    case "codespan": return "an inline code span";
+    case "em": return "emphasis";
+    case "strong": return "strong emphasis";
+    case "del": return "a strikethrough";
+    case "link": return "a link";
+    case "image": return "an image";
+    case "br": return "a line break";
+    // the Slice 4 constructs (md-config.ts, math.ts)
+    case "frontMatter": return "the front matter";
+    case "footnoteDef": return "a footnote definition";
+    case "footnoteRef": return "a footnote reference";
+    case "callout": return "a callout";
+    case "mark": return "a highlight";
+    case "wikilink": return "a wikilink";
+    case "mathBlock": return "a display formula";
+    case "mathInline": return "a formula";
+    default: return "content";
+  }
+}
+/** The refusal for a token of a kind the walk has no case for: a future extension's (every registered token has one). The
+ *  kind is not named: the sentence is the person's, and a token type is not their word (refusalNoun). */
+const NOT_HANDLED = "content of a kind the mapping does not handle";
+
 /** A window onto N: `str` is the text the tokens tile; n(i) is the N index of str[i] (i may equal length). */
 class View {
   constructor(readonly str: string, private readonly base: number | null, private readonly map: number[] | null) {}
@@ -837,7 +885,7 @@ function plainInline(tokens: Token[]): string {
       case "footnoteRef": out += String((t as FootnoteRefToken).n); break;   // the number the reference shows
       case "wikilink": { const w = t as WikilinkToken; if (!w.image) out += w.text; break; }   // an image embed shows no text
       case "image": case "br": case "html": case "mathInline": break;   // a formula's glyphs are skipped as a control (isControl)
-      default: throw new Refusal(`content of a kind the mapping does not handle (${t.type})`);
+      default: throw new Refusal(NOT_HANDLED);
     }
   }
   return out;
@@ -847,7 +895,7 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
   let p = 0;
   for (const t of tokens) {
     const raw = t.raw;
-    if (!view.str.startsWith(raw, p)) throw new Refusal(`a ${t.type} the mapping could not place`);
+    if (!view.str.startsWith(raw, p)) throw new Refusal(refusalNoun(t.type, true) + " the mapping could not place");
     switch (t.type) {
       case "text": {
         const tt = t as Tokens.Text;
@@ -865,7 +913,7 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
       case "em": case "strong": case "del": case "mark": {
         const tt = t as Tokens.Em | Tokens.Strong | Tokens.Del | MarkToken;
         const d = t.type === "em" ? 1 : t.type === "strong" || t.type === "mark" ? 2 : (/^~+/.exec(raw) || [""])[0].length;
-        if (!d || raw.slice(d, raw.length - d) !== tt.text) throw new Refusal(`${t.type} marks the mapping could not place`);
+        if (!d || raw.slice(d, raw.length - d) !== tt.text) throw new Refusal(refusalNoun(t.type, true) + " whose marks the mapping could not place");
         walkInline(tt.tokens, view.sub(p + d, p + d + tt.text.length), em);
         break;
       }
@@ -907,7 +955,7 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
         break;
       }
       case "image": case "br": case "html": break;   // no rendered text
-      default: throw new Refusal(`content of a kind the mapping does not handle (${t.type})`);
+      default: throw new Refusal(NOT_HANDLED);
     }
     p += raw.length;
   }
@@ -956,7 +1004,7 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         if (view.str.startsWith(raw, q)) break;
       }
       if (view.str.startsWith(raw, q)) p = q;
-      else throw new Refusal(`a ${t.type} the mapping could not place`);
+      else throw new Refusal(refusalNoun(t.type) + " the mapping could not place");
     }
     switch (t.type) {
       case "space": case "hr": break;
@@ -1039,7 +1087,7 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         break;
       }
       case "html": throw new Refusal("an HTML block");
-      default: throw new Refusal(`content of a kind the mapping does not handle (${t.type})`);
+      default: throw new Refusal(NOT_HANDLED);
     }
     p += raw.length;
   }
@@ -1253,7 +1301,7 @@ function placeTokens(N: string): { placed: Placed[]; lexError: string | null } {
       }
       if (!N.startsWith(raw, pos)) {
         const j = N.indexOf(raw, pos);
-        if (j >= 0) pos = j; else broken = `a ${t.type} the mapping could not place`;
+        if (j >= 0) pos = j; else broken = refusalNoun(t.type) + " the mapping could not place";
       }
     }
     if (t.type === "space") { if (broken === null) pos += raw.length; continue; }
@@ -1530,23 +1578,36 @@ function formulaElements(n: DNode, out: DNode[] = []): DNode[] {
  *  the nearest node above the formula that a block renders as (a top-level node, or a paragraph the browser nested inside
  *  an html wrapper, whose block is then the paragraph's and not the wrapper's), and the hole the element stands for, the
  *  k-th formula hole of the block for the k-th formula element under the node (the walk pushes holes in source order and
- *  the renderer emits elements in the same order); the block's own start when the count disagrees (a placeholder an author
- *  typed by hand renders a formula the walk never saw). The same fields blockExtra gives a hole touched through its
- *  characters. */
+ *  the renderer emits elements in the same order). The Raw view opens at the hole and preselects it: the formula with its
+ *  delimiters, `$E = mc^2$` or the `$$` block through its closing line (the hole's span less the line feeds a display
+ *  block's raw carries after it, and any indent before it), so the composer quotes the formula (the owner's ruling 7: the
+ *  whole formula, not the TeX between the delimiters). KaTeX's glyphs are not the source's text, so the offer every other
+ *  refusal makes, the selected text's occurrence (rawExtra), is the answer only where the hole is not found: the block's
+ *  own start when the count disagrees (a placeholder an author typed by hand renders a formula the walk never saw), or a
+ *  formula under no block. The same fields blockExtra gives a hole touched through its characters. */
 function formulaExtra(idx: RenderedIndex, root: DNode, control: DNode, gs: number, ge: number): Partial<MapRefusal> {
-  let selected = "";
-  for (const n of idx.topNodes) { selected += isText(n) ? n.data : textOf(n); }
-  const rawRange = srcRangeOf(idx, selected.slice(gs, ge).trim());
-  const raw: Partial<MapRefusal> = rawRange ? { rawHasQuote: true, rawRange } : { rawHasQuote: false };
+  const selectedRaw = (): Partial<MapRefusal> => {
+    let selected = "";
+    for (const n of idx.topNodes) { selected += isText(n) ? n.data : textOf(n); }
+    const rawRange = srcRangeOf(idx, selected.slice(gs, ge).trim());
+    return rawRange ? { rawHasQuote: true, rawRange } : { rawHasQuote: false };
+  };
   let top: DNode = control;
   while (top !== root && idx.nodeBlock.get(top) === undefined && top.parentNode) top = top.parentNode;
   const b = top === root ? undefined : idx.nodeBlock.get(top);
-  if (b === undefined) return raw;
+  if (b === undefined) return selectedRaw();
   const blk = idx.blocks[b];
   const k = formulaElements(top).indexOf(control);
   const holes = blk.holes.filter((h) => h.reason === FORMULA_HOLE);
-  const startN = k >= 0 && k < holes.length ? holes[k].startN : blk.startN;
-  const off = nOf(idx, startN);
+  const hole = k >= 0 && k < holes.length ? holes[k] : null;
+  const off = nOf(idx, hole ? hole.startN : blk.startN);
+  let raw: Partial<MapRefusal>;
+  if (hole) {
+    let s = hole.startN, e = hole.endN;
+    while (s < e && isWs(idx.N[s])) s++;
+    while (e > s && isWs(idx.N[e - 1])) e--;
+    raw = { rawHasQuote: true, rawRange: { start: nOf(idx, s), end: nOf(idx, e) } };
+  } else raw = selectedRaw();
   return { blockStartLine: rawOffsetToLine(idx.source, off), blockStartOffset: off, ...raw };
 }
 
@@ -1668,22 +1729,30 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   if (idx.blocks[bs].refused === null && ks >= idx.blocks[bs].chars.length) { bs = nextBlock(bs + 1); ks = 0; }
   if (be >= 0 && idx.blocks[be].refused === null && ke === 0) { be = prevBlock(be - 1); if (be >= 0) ke = idx.blocks[be].chars.length; }
   if (bs < 0 || be < 0) return refuse("The selection is only whitespace.", rawExtra());
-  // a refused block anywhere in the span comes first: its text is what the person selected, whatever
-  // the mapping knows about it
-  for (let b = Math.min(bs, be); b <= Math.max(bs, be); b++) {
+  // The obstacles in the span, in document order, the first one named: a refused block with an element on the page (an html
+  // block, a mismatch) refuses when the pass reaches it, and a mapped block's selected characters are read for a hole (a
+  // table, a code block, a footnote's number) before the block after it is looked at, so a selection from a table cell into
+  // an html block after it is refused as touching the table, the obstacle the person's eye meets first (before this, every
+  // refused block in the span was named ahead of any hole, and a span from a table into a `<details>` summary named the
+  // HTML block). A refused block that rendered nothing (a comment, a closing tag alone) is never in the way: its source
+  // travels inside the quote. The span's characters are read only when the endpoints stand in order (bs <= be): a
+  // selection of the whitespace between two blocks lands its start on the block after and its end on the block before, and
+  // that block's text, which the person did not select, is not scanned for a hole.
+  const lo = Math.min(bs, be), hi = Math.max(bs, be);
+  for (let b = lo; b <= hi; b++) {
     const blk = idx.blocks[b];
-    if (blk.refused !== null && visible(blk)) return refuse(`This selection touches ${blk.refused}; comment on it from the Raw view.`, blockExtra(blk));
-  }
-  if (bs > be || (bs === be && ks >= ke)) return refuse("The selection is only whitespace.", rawExtra());
-  for (let b = bs; b <= be; b++) {
-    const blk = idx.blocks[b];
-    if (blk.refused !== null) continue;   // invisible (nothing rendered): its source travels inside the quote
+    if (blk.refused !== null) {
+      if (visible(blk)) return refuse(`This selection touches ${blk.refused}; comment on it from the Raw view.`, blockExtra(blk));
+      continue;
+    }
+    if (bs > be) continue;
     const from = b === bs ? ks : 0, to = b === be ? ke : blk.chars.length;
     for (let k = from; k < to; k++) {
       const p = blk.pos[k];
       if (p < 0) { const h = blk.holes[-p - 1]; return refuse(`This selection touches ${h.reason}; comment on it from the Raw view.`, blockExtra(blk, h.startN)); }
     }
   }
+  if (bs > be || (bs === be && ks >= ke)) return refuse("The selection is only whitespace.", rawExtra());
   const start = nOf(idx, idx.blocks[bs].pos[ks]);
   const end = nOf(idx, idx.blocks[be].pos[ke - 1]) + 1;
   return { ok: true, range: { start, end }, quote: source.slice(start, end) };

@@ -34,6 +34,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { MATH_TEX_MAX_CHARS } from "./math";
+import { inBrowser as inRealViewer, openViewer, openPanel, frames as viewerFrames, REPORT as VIEWER_REPORT, type Mode } from "./real-viewer-leg";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 // resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
@@ -475,6 +476,114 @@ test("the reader's place under a display formula the fill could not render: para
       assert.equal(raw.top?.text, "Filler paragraph 20", name + ": the Raw view opens on paragraph 20's row: " + JSON.stringify(raw));
       assert.deepEqual(errors, [], name + ": no page errors");
       await page.context().close();
+    }
+  });
+});
+
+// ── Slice 5, item 3: the Raw offer at a formula preselects the formula, over the REAL viewer and the REAL Comments panel ──
+// A selection that touched a formula was refused with the Raw view offered at the formula's line and nothing selected there
+// (the slice's probe (c)): the map took the Raw range from the selected rendered text, and KaTeX's glyphs are not in the source,
+// so the switch preselected the prose the drag ran into (`math and`) or, for a formula selected alone, nothing, the button reading
+// "scrolled to the block; select the passage there", and the person had to find the formula in the Raw view themselves. Now the map answers the formula's hole (formulaExtra: rawHasQuote with the hole's span), so the button
+// reads "with this passage selected", the switch preselects the formula with its delimiters and the composer quotes it, with
+// Save (the owner's ruling 7: the whole formula, not the TeX between the delimiters). Read through real-viewer-leg.ts (the panel
+// registered by the viewer's own module) under the Files pane's sheet and the chat modal's, with real gestures: a drag begun at
+// the inline formula's left edge into the prose after it (a drag begun at the centre of a lone glyph collapses to a caret in
+// Chromium, whatever the harness; probed over five formula shapes), and a triple-click on the display formula (Chromium anchors
+// it on the formula's first glyph and ends it at the next paragraph's start). Each gesture runs on a fresh page.
+const PRESEL_NOTE = "# Title\n\nInline $E = mc^2$ math and after.\n\n$$\n\\sum_i i\n$$\n\nPara after display.\n";
+const INLINE_Q = "$E = mc^2$", DISPLAY_Q = "$$\n\\sum_i i\n$$";
+const REFUSAL = "This selection touches a formula; comment on it from the Raw view.";
+type ComposerState = { open: boolean; refused: string | null; rawTitle: string | null; quote: string | null; save: boolean | null; raw: boolean };
+/** The composer as the panel shows it: the refusal line, the Raw button's title, the quote, whether Save is offered. */
+const composerState = (page: any): Promise<ComposerState> => page.evaluate(() => {
+  const box = document.querySelector(".fc-composer") as HTMLElement | null;
+  if (!box || !document.contains(box) || box.getClientRects().length === 0) return { open: false, refused: null, rawTitle: null, quote: null, save: null, raw: false };
+  const sw = box.querySelector('[data-act="fcraw"]') as HTMLElement | null;
+  const save = box.querySelector('[data-act="fcsave"]') as HTMLButtonElement | null;
+  return { open: true, refused: box.querySelector(".fc-refused")?.textContent ?? null, rawTitle: sw ? sw.title : null, quote: box.querySelector(".fc-quote")?.textContent ?? null, save: save ? !save.disabled : null, raw: !!sw };
+});
+/** The Raw view's preselection: the marks' text in order, and whether the first sits inside the body's box (the view scrolled to it). */
+const preselRead = (page: any): Promise<{ text: string; rows: number; inView: boolean }> => page.evaluate(() => {
+  const body = document.querySelector(".fileview-body") as HTMLElement;
+  const marks = Array.from(body.querySelectorAll(".fc-presel")) as HTMLElement[];
+  const rows = new Set(marks.map((m) => m.closest(".fv-cl")));
+  const b = body.getBoundingClientRect(), r = marks.length ? marks[0].getBoundingClientRect() : null;
+  return { text: marks.map((m) => m.textContent).join(""), rows: rows.size, inView: !!r && r.top >= b.top - 1 && r.bottom <= b.bottom + 1 };
+});
+const squash = (s: string): string => s.replace(/\s+/g, "");
+/** The float's click, the refusal, the Raw switch, the preselection and the composer's quote; the box cancelled at the end. */
+async function throughRaw(page: any, what: string, quote: string, rows: number): Promise<void> {
+  await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
+  await page.click(".fc-float");
+  await viewerFrames(page, 2);
+  const c1 = await composerState(page);
+  assert.equal(c1.open, true, what + ": the composer opens");
+  assert.equal(c1.refused, REFUSAL, what + ": the refusal, as before");
+  assert.equal(c1.rawTitle, "Raw view, with this passage selected", what + ": the Raw button promises the passage (before: 'Raw view, scrolled to the block; select the passage there')");
+  await page.click('.fc-composer [data-act="fcraw"]');
+  await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+  await viewerFrames(page, 3);
+  const p = await preselRead(page);
+  assert.equal(squash(p.text), squash(quote), what + ": the Raw view preselects the formula with its delimiters (before: the prose beside it, or nothing): " + JSON.stringify(p));
+  assert.equal(p.rows, rows, what + ": over the formula's rows");
+  assert.equal(p.inView, true, what + ": the view scrolled to it");
+  const c2 = await composerState(page);
+  assert.equal(c2.refused, null, what + ": the refusal is answered");
+  assert.equal(c2.raw, false, what + ": no Switch to Raw left");
+  assert.equal(c2.quote, quote.replace(/\s+/g, " ").trim(), what + ": the composer quotes the formula");
+  assert.equal(c2.save, true, what + ": Save is offered");
+  await page.click('.fc-composer [data-act="fccancel"]');
+  await viewerFrames(page, 2);
+  assert.equal((await composerState(page)).open, false, what + ": Cancel closes the box");
+}
+/** A page of the surface with the note open and filled, the panel open. KaTeX's own sheet is added to the page: real-viewer-leg.ts
+ *  drops the sheet's `@import` (no bundler resolves it in the page), where the viewer's own page carries it through styles.css,
+ *  and without it KaTeX's MathML copy is laid out beside the HTML one and a drag that starts on a glyph selects nothing (probed). */
+async function openPresel(browser: any, mode: Mode, width: number): Promise<{ page: any; errors: string[] }> {
+  const { page, errors } = await openViewer(browser, mode, width, 900, { docs: { [VIEWER_REPORT]: PRESEL_NOTE } });
+  await page.addStyleTag({ content: KATEX_CSS });
+  await page.waitForFunction(() => !document.querySelector(".fileview-md .md-math-inline, .fileview-md .md-math-display"), null, { timeout: 15000 });   // the fill ran
+  await viewerFrames(page, 2);
+  await openPanel(page);
+  return { page, errors };
+}
+
+test("Switch to Raw at a formula preselects the formula with its delimiters over the real viewer and panel, on the Files pane and in the chat modal: a real drag from the inline formula's edge into the prose, and a real triple-click on the display formula, each refused as touching a formula with the Raw button promising the passage; the Raw view opens on `$E = mc^2$` (or the `$$` block over its three rows) selected, and the composer quotes it with Save (before: the prose the drag ran into was selected, or nothing for the display formula alone)", { timeout: 240000 }, async (t) => {
+  await inRealViewer(t, async (browser) => {
+    for (const [mode, width] of [["pane", 900], ["chat", 1000]] as [Mode, number][]) {
+      // the inline formula: a drag from its left edge into the prose after it
+      let { page, errors } = await openPresel(browser, mode, width);
+      const kbox = await page.locator(".fileview-md p .katex").first().boundingBox();
+      const to = await page.evaluate(() => {
+        const md = document.querySelector(".fileview-md")!;
+        const w = document.createTreeWalker(md, NodeFilter.SHOW_TEXT);
+        for (let n = w.nextNode() as Text | null; n; n = w.nextNode() as Text | null) {
+          const i = n.data.indexOf(" math and");
+          if (i >= 0) { const r = document.createRange(); r.setStart(n, i + " math and".length); r.setEnd(n, i + " math and".length); const b = r.getBoundingClientRect(); return { x: b.x - 1, y: b.y + b.height / 2 }; }
+        }
+        throw new Error("no prose after the formula");
+      });
+      await page.mouse.move(kbox.x + 2, kbox.y + kbox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(to.x, to.y, { steps: 8 });
+      await page.mouse.up();
+      await viewerFrames(page, 2);
+      const drag = await page.evaluate(() => { const s = getSelection()!; const el = s.anchorNode && (s.anchorNode.nodeType === 3 ? s.anchorNode.parentElement : s.anchorNode as Element); return { text: String(s), inKatex: !!el && !!el.closest(".katex") }; });
+      assert.equal(drag.inKatex, true, mode + ": the drag anchored inside the formula: " + JSON.stringify(drag));
+      await throughRaw(page, mode + " " + width + "px, inline drag", INLINE_Q, 1);
+      assert.deepEqual(errors, [], mode + ": no script error");
+      await page.close();
+      // the display formula: a triple-click on it
+      ({ page, errors } = await openPresel(browser, mode, width));
+      const box = await page.locator(".fileview-md .katex-display").first().boundingBox();
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { clickCount: 3 });
+      await viewerFrames(page, 2);
+      const triple = await page.evaluate(() => { const s = getSelection()!; const el = s.anchorNode && (s.anchorNode.nodeType === 3 ? s.anchorNode.parentElement : s.anchorNode as Element); return { text: String(s), inDisplay: !!el && !!el.closest(".katex-display") }; });
+      assert.equal(triple.inDisplay, true, mode + ": the triple-click anchored in the display formula: " + JSON.stringify(triple));
+      await throughRaw(page, mode + " " + width + "px, display triple-click", DISPLAY_Q, 3);
+      assert.deepEqual(errors, [], mode + ": no script error");
+      await page.close();
     }
   });
 });

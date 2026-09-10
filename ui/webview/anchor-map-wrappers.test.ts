@@ -318,7 +318,31 @@ test("a div never closed, and one closed by the document's last block: the neste
     const touched = bad(mapRenderedSelection(sel(point(box, "with a formula"), { node: glyph.node, offset: glyph.offset + 2 }), El(box), src), what + ": into the formula");
     assert.match(touched.reason, /touches a formula/);
     assert.equal(touched.blockStartOffset, at(src, "$a^2 + b^2$"), what + ": the formula's own offset");
+    // ...and preselects the nested formula with its delimiters (Slice 5, item 3: formulaExtra's rawRange is the hole's span)
+    assert.equal(touched.rawHasQuote, true, what + ": the Raw view has the formula to preselect");
+    assert.equal(src.slice(touched.rawRange!.start, touched.rawRange!.end), "$a^2 + b^2$", what + ": the formula with its delimiters");
   }
+});
+
+// ── Slice 5, item 4: the first obstacle in document order, over the wrappers (the slice's probe (d), d10 and d11) ──
+test("the first obstacle in document order is the one named over the plain fixture: a drag from a table cell to the `Click me` summary after it, and one from the math paragraph to the summary, refuse as touching the table (the probe's d10 and d11; before: an HTML block at the details' offset, the refused block named ahead of the table's hole); from the code line past the div wrapper as the code block; from the paragraph before the div into the div's nested paragraph still as an HTML block, the wrapper's block being the first obstacle", () => {
+  const box = buildRendered(PLAIN);
+  const lineOf = (needle: string) => PLAIN.slice(0, PLAIN.indexOf(needle)).split("\n").length - 1;
+  for (const [what, from] of [["d10, a table cell", "cell one"], ["d11, the math paragraph", "Paragraph with inline math"]] as const) {
+    const r = bad(mapSpan(box, PLAIN, from, "Click me"), what + " to the summary");
+    assert.match(r.reason, /^This selection touches a table; comment on it from the Raw view\.$/, what + ": the table comes first (before: an HTML block): " + r.reason);
+    assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| Col A"), at(PLAIN, "| Col A")], what + ": the Raw offer is the table's");
+  }
+  const code = bad(mapSpan(box, PLAIN, "total = a", "Paragraph after the div"), "the code line past the div wrapper");
+  assert.match(code.reason, /a code block/, "the code block comes first (before: an HTML block): " + code.reason);
+  assert.equal(code.blockStartOffset, at(PLAIN, "```python"));
+  const div = bad(mapSpan(box, PLAIN, "Final paragraph", "inside the div."), "the paragraph before the div into its nested paragraph");
+  assert.match(div.reason, /an HTML block/, "the wrapper's block is the first obstacle, as before: " + div.reason);
+  assert.equal(div.blockStartOffset, at(PLAIN, "<div align"));
+  // a span ending in the table names it, one starting in the code names it, as before
+  assert.match(bad(mapSpan(box, PLAIN, "Intro paragraph", "cell two"), "the intro into the table").reason, /a code block/, "the code block stands between them");
+  assert.match(bad(mapSpan(box, PLAIN, "Paragraph with inline math", "cell two"), "the math paragraph into the table").reason, /a table/);
+  assert.match(bad(mapSpan(box, PLAIN, "total = a", "around it."), "the code into the math paragraph").reason, /a code block/);
 });
 
 test("two html `<p>` blocks a blank line apart own one element each (before: nothing and both); a closed `<div>x</div>` stays refused with its one element; two sibling tags in one block own both; a `<style>` block the sanitizer dropped owns nothing and the paragraph after it maps; a stray `</p>` is the parser's empty `<p>`; a `<p>` the block leaves open is closed by the next block's tag and is no wrapper", () => {

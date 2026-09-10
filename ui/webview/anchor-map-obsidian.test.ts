@@ -15,11 +15,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Lexer, marked } from "marked";
 import { applyMdConfig, resolveWikilink } from "./md-config";
-import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, type SelLike, type MapResult } from "./anchor-map";
+import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, refusalNoun, type SelLike, type MapResult } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
 applyMdConfig();
 const FIX = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map-fixtures", "obsidian.md"), "utf8");
+const REFUSALS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map-fixtures", "refusals.md"), "utf8");
 
 // ── a DOM stand-in: the structural surface anchor-map.ts walks, plus an HTML fragment parser (anchor-map.test.ts's) ──
 // Nodes hide their edges at construction (hideEdges, ui/test-dom-shim.ts), so a failing assertion's dump shows a node's primitives
@@ -822,4 +823,181 @@ test("a tab after a quote's marker maps: the nested block lexer expands the lead
   assert.match(marked.parse(listed) as string, /<li><pre><code>code here/, "the lexer's reading: indented code inside the item");
   assert.match(bad(mapIn(lb, listed, "code here"), "the item's code block").reason, /an indented code block/);
   for (const s of ["plain item", "After para."]) assert.deepEqual(ok(mapIn(lb, listed, s), s).range, { start: listed.indexOf(s), end: listed.indexOf(s) + s.length });
+});
+
+// ── Slice 5, item 3: the Raw offer at a formula preselects the formula, and no refusal names a token type ──
+// A boundary inside a formula's glyphs refused "touches a formula" with the Raw view opened at the formula's line and
+// nothing preselected: formulaExtra took the Raw range from the selected RENDERED text, and KaTeX's glyphs are not in the
+// source, so the offer was the prose the selection ran into, or nothing for the formula alone, and the person had to find and
+// select the formula themselves (the slice's probe (c)).
+// Now the offer is the hole's span, the formula with its delimiters, so Switch to Raw preselects `$x^2$` (or the `$$`
+// block) and the composer quotes it (the owner's ruling 7: the whole formula, not the TeX between the delimiters). And
+// the refusals that carried a token type (`a ${t.type} the mapping could not place`, `${t.type} marks ...`, the defaults'
+// `(${t.type})`) read a noun instead (refusalNoun): footnoteDef and mathInline are the lexer's words, not the person's.
+// The browser leg (md-config-math-map-browser.test.ts) runs the Raw switch over the real viewer and panel.
+
+test("a selection endpoint inside a formula offers the Raw view with the FORMULA preselected: rawHasQuote is true and rawRange is the formula with its delimiters (`$x^2$`; the `$$` block through its closing line, not the line feeds after it), blockStartOffset unchanged, in each of the fill's three shapes (before: the offer was the selected RENDERED text's occurrence, the prose the selection ran into, `math and`, or nothing for the formula alone)", () => {
+  for (const [name, tex] of [["rendered", "x^2"], ["katex-error", "x^2\\BROKEN"], ["md-math-src", "\\HUGE" + "x".repeat(40)]] as const) {
+    const src = "Inline $" + tex + "$ math and after.\n\n$$\n" + tex + "\n$$\n\nPara after display.\n";
+    const box = buildRendered(src);
+    const inlineFormula = byClass(topEl(box, 0), name === "rendered" ? "katex" : name);
+    const displayFormula = byClass(topEl(box, 1), name === "rendered" ? "katex" : name);
+    const glyphs = allText(inlineFormula)[0], dglyphs = allText(displayFormula)[0];
+    const offer = (r: MapResult, what: string, quote: string, start: number) => {
+      const b = bad(r, name + ": " + what);
+      assert.match(b.reason, /touches a formula/, name + ": " + what);
+      assert.equal(b.rawHasQuote, true, name + ": " + what + ": the Raw view has a passage to preselect (before: false for the formula alone)");
+      assert.ok(b.rawRange, name + ": " + what + ": the range");
+      assert.equal(src.slice(b.rawRange!.start, b.rawRange!.end), quote, name + ": " + what + ": the formula with its delimiters");
+      assert.equal(b.blockStartOffset, start, name + ": " + what + ": the Raw view opens at the formula, as before");
+      assert.equal(b.rawRange!.start, start, name + ": " + what + ": the preselection starts where the view opens");
+    };
+    // the inline formula: from inside its glyphs out, from the prose in, the formula alone, from its first glyph out
+    const inl = "$" + tex + "$", at$ = src.indexOf("$");
+    offer(mapRenderedSelection(sel({ node: glyphs, offset: 1 }, point(box, " math and", true)), El(box), src), "from inside", inl, at$);
+    offer(mapRenderedSelection(sel(point(box, "Inline "), { node: glyphs, offset: 1 }), El(box), src), "into it", inl, at$);
+    offer(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, { node: glyphs, offset: glyphs.data.length }), El(box), src), "alone", inl, at$);
+    offer(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, point(box, " math and", true)), El(box), src), "from its start", inl, at$);
+    // the display formula: the triple-click's shape (its first glyph to the next paragraph's start) and a boundary inside its glyphs; the
+    // block's raw carries the line feeds after `$$`, which are no part of the formula
+    const nextP = topEl(box, 2);
+    const disp = "$$\n" + tex + "\n$$", at$$ = src.indexOf("$$");
+    offer(mapRenderedSelection(sel({ node: dglyphs, offset: 0 }, { node: nextP, offset: 0 }), El(box), src), "display, selected whole", disp, at$$);
+    offer(mapRenderedSelection(sel({ node: dglyphs, offset: 1 }, { node: nextP, offset: 0 }), El(box), src), "display, from inside", disp, at$$);
+    assert.equal(src.slice(at$$ + disp.length, at$$ + disp.length + 2), "\n\n", name + ": the line feeds after the block are outside the range");
+  }
+});
+
+test("a formula the walk never saw (an empty `.katex` span an author typed by hand as inline html before the real formula) makes the count disagree: the Raw view opens at the block's start and the offer falls back to the selected text's occurrence as before (none for the formula alone, whose glyphs are not the source's; the prose beside it for a selection running into it)", () => {
+  const src = 'Hand <span class="katex"></span> then $x^2$ real.\n\nNext para.\n';
+  const box = buildRendered(src);
+  const roots: FakeElement[] = [];
+  const collect = (n: FakeNode) => { for (const c of n.childNodes) { if (c.nodeType === 1 && (c as FakeElement).getAttribute("class") === "katex") roots.push(c as FakeElement); collect(c); } };
+  collect(topEl(box, 0));
+  assert.equal(roots.length, 2, "the hand-typed span and the fill's root");
+  const glyphs = allText(roots[1])[0];
+  assert.equal(glyphs.data, "x2", "the real formula's glyphs");
+  const alone = bad(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, { node: glyphs, offset: glyphs.data.length }), El(box), src), "the real formula alone");
+  assert.match(alone.reason, /touches a formula/);
+  assert.equal(alone.blockStartOffset, 0, "the second formula element has no second hole: the block's own start");
+  assert.equal(alone.rawHasQuote, false, "the selected text is KaTeX's glyphs, which the source does not hold");
+  assert.equal(alone.rawRange, undefined);
+  const into = bad(mapRenderedSelection(sel({ node: glyphs, offset: 1 }, point(box, " real.", true)), El(box), src), "from inside the real formula into the prose");
+  assert.match(into.reason, /touches a formula/);
+  assert.equal(into.blockStartOffset, 0);
+  assert.equal(into.rawHasQuote, true, "the prose beside the formula is the selected text's occurrence, as before");
+  assert.equal(src.slice(into.rawRange!.start, into.rawRange!.end), "real.");
+  // the prose around both still maps
+  assert.equal(ok(mapIn(box, src, "then"), "the prose between").range.start, src.indexOf("then"));
+  assert.equal(ok(mapIn(box, src, "Next para."), "the next paragraph").range.start, src.indexOf("Next para."));
+});
+
+/** Every element under `root` in document order, the root excluded. */
+function allElements(n: FakeNode, out: FakeElement[] = []): FakeElement[] {
+  for (const c of n.childNodes) if (c.nodeType === 1) { out.push(c as FakeElement); allElements(c, out); }
+  return out;
+}
+/** Odd shapes of the Slice 4 constructs (nested, adjacent, malformed, tabbed, CRLF), each mapped element by element for the refusals it produces. */
+const ODD_NOTES = [
+  "[^1]: def\n\nA ref[^1] here.\n", "> [^1]: quoted def\n\nA ref[^1].\n", "- [^1]: listed def\n\nA ref[^1].\n", "[^1]: first line\n    continued\n\nRef[^1].\n",
+  "[^1]: a\n[^2]: b\n\nRef[^1] and [^2].\n", "Text with ==mark\nacross== lines.\n", "Text ==a *b* c== end.\n", "$$\nx\n$$ trailing\n\nAfter.\n",
+  "> $$\n> y\n> $$\n\nAfter.\n", "- $$\n  z\n  $$\n\nAfter.\n", "> [!note] T\n> body $a$ math\n\nAfter.\n", "- > [!tip]- F\n  > hidden\n\nAfter.\n",
+  "---\ntitle: x\n---\nNo blank after.\n", "[[Note|alias|extra]] and [[]] and [[Note#]] here.\n", "A footnote ref[^missing] with no def.\n",
+  "[^1]:\n\nEmpty def.\n", "\\(inline paren\\) and \\[bracket\\] math.\n", "[^1]: def with $m$ math and ==mark== and [[wl]].\n\nRef[^1].\n",
+  "# Heading with $h$ math and ==mark== and ref[^1]\n\n[^1]: d\n", "1. item with ==m==\n   [^1]: def in item\n\nRef[^1].\n", "> [!note]\n\nEmpty callout body.\n",
+  "<div>\n\n[^1]: def in div\n\n</div>\n\nRef[^1].\n", "Tab\tin ==mark\ttext== here.\n", "[^1]: def\n[^1]: dup def\n\nRef[^1].\n", "A [link with ==mark== inside](http://x) here.\n",
+  "==**bold mark**== and **==mark bold==** here.\n", "$a$$b$ adjacent formulas.\n", "Ref[^1][^2] adjacent.\n\n[^1]: a\n[^2]: b\n", "| a | b |\n|---|---|\n| $m$ | ==k== |\n",
+  "```\n[^1]: not a def\n```\n\n[^1]: real\n\nRef[^1].\n", "[^1]: def\r\n\r\nRef[^1].\r\n", "\t[^1]: tabbed def\n\nRef[^1].\n", "[^1]: def\n\tcontinued with tab\n\nRef[^1].\n",
+  "> [!note] Title with ==mark== and $m$\n> body\n\nAfter.\n", "[^1]: def ending in footnote ref[^2]\n[^2]: two\n\nRef[^1].\n", "Para\n[^1]: def right after para\n\nRef[^1].\n",
+  "- item\n\n  [^1]: def as list child\n\nRef[^1].\n", "==a==b and a==b== and ==\n\nAfter.\n", "[^1]: def\n\n    indented after def\n\nRef[^1].\n",
+  "> [!warning]+ Open\n> line one\n> > nested quote in callout\n\nAfter.\n", "Ref[^1]\n\n[^1]: def\n  lazy two-space continuation\n",
+  "Inline \\[bracket display\\] and $$dollar display$$ inline.\n", "==mark with `code==` inside== here.\n", "* [^1]: def in star list\n* second\n\nRef[^1].\n",
+  "<!-- c -->\n[^1]: def after comment\n\nRef[^1].\n", "[^1]: def **bold\nacross** lines\n\nRef[^1].\n",
+];
+/** A note holding every construct marked's lexer and the Slice 4 extensions emit a token for, for the catalogue of types. */
+const KITCHEN = "---\nkey: v\n---\n\n# H1\n\nSetext\n===\n\nPara *em* **strong** ~~del~~ `code` [link](http://x) ![img](y.png) <b>tag</b> \\* esc  \nbr line <http://auto.test> and [^1] and ==hl== and [[Wiki]] and $m$.\n\n[^1]: def\n\n> quote\n\n> [!note] T\n> body\n\n- item\n- [ ] task\n\n1. one\n\n```\nfence\n```\n\n    indented\n\n| a | b |\n|---|---|\n| c | d |\n\n***\n\n<div>html</div>\n\n[ref]: http://ref.test\n\n$$\nd\n$$\n\nEnd.\n";
+
+test("no refusal names a token type: over every element of the obsidian and refusals fixtures and a battery of odd constructs each refusal reads in the person's terms (no camelCase name, no `token`, no marked type in parentheses); the noun map has a case for every token the lexer and the extensions emit, each with its article; a misplaced footnote definition reads by its noun; and no message in the source interpolates a type", () => {
+  const BAN = /[a-z][A-Z]|\btoken\b|\b(?:codespan|list_item|blockquote|frontMatter|footnote(?:Ref|Def)|math(?:Inline|Block))\b|\(\w+\)\.?$/;
+  const refusals: string[] = [];
+  for (const src of [FIX, REFUSALS, ...ODD_NOTES]) {
+    const box = buildRendered(src);
+    for (const el of allElements(box)) {
+      const ts = allText(el).filter((t) => t.data.trim() !== "");
+      if (!ts.length) continue;
+      const r = mapRenderedSelection(sel({ node: ts[0], offset: 0 }, { node: ts[ts.length - 1], offset: ts[ts.length - 1].data.length }), El(box), src);
+      if (!r.ok) refusals.push(r.reason);
+    }
+  }
+  assert.ok(refusals.length > 40, "the fixtures produce refusals to read: " + refusals.length);
+  for (const r of refusals) assert.doesNotMatch(r, BAN, "a token name in a refusal: " + r);
+  assert.ok(refusals.some((r) => /a footnote reference/.test(r)) && refusals.some((r) => /a formula/.test(r)) && refusals.some((r) => /the front matter/.test(r)), "the constructs' own refusals are among them");
+  // the catalogue: every type the lexer emits for the kitchen-sink note, nested tokens included, and the extensions' names
+  const types = new Set<string>();
+  const visit = (x: unknown): void => {
+    if (Array.isArray(x)) { for (const y of x) visit(y); return; }
+    if (!x || typeof x !== "object") return;
+    const o = x as Record<string, unknown>;
+    if (typeof o.type === "string") types.add(o.type);
+    for (const k of ["tokens", "items", "header", "rows"]) if (k in o) visit(o[k]);
+  };
+  visit(Lexer.lex(KITCHEN));
+  for (const t of ["frontMatter", "footnoteDef", "footnoteRef", "callout", "mark", "wikilink", "mathBlock", "mathInline"]) types.add(t);
+  assert.ok(types.size >= 25, "the kitchen-sink note lexes to the built-ins and the constructs: " + [...types].sort().join(" "));
+  for (const ty of types) {
+    const noun = refusalNoun(ty);
+    assert.notEqual(noun, "content", "a noun of its own for " + ty);
+    assert.doesNotMatch(noun, BAN, ty + ": " + noun);
+    assert.match(noun, /^(?:an? |the )?[a-z]/, ty + ": an article, or a bare plural or mass noun: " + noun);
+  }
+  assert.equal(refusalNoun("footnoteDef") + " the mapping could not place", "a footnote definition the mapping could not place", "the sentence a misplaced definition reads");
+  assert.deepEqual([refusalNoun("mathInline"), refusalNoun("mathBlock"), refusalNoun("footnoteRef"), refusalNoun("frontMatter"), refusalNoun("mark"), refusalNoun("callout"), refusalNoun("wikilink")],
+    ["a formula", "a display formula", "a footnote reference", "the front matter", "a highlight", "a callout", "a wikilink"], "the constructs' nouns");
+  assert.deepEqual([refusalNoun("html"), refusalNoun("html", true), refusalNoun("someFutureKind")], ["an HTML block", "an HTML tag", "content"], "the one type both levels share, and the default for a kind the map has no name for");
+  // the sites this closes are reached by no input the lexer accepts today (every raw tiles the source), so the pin is on the text:
+  // no refusal message interpolates a token type any more
+  const am = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
+  assert.doesNotMatch(am, /\$\{t\.type\}/, "a message in anchor-map.ts interpolating a token type");
+  assert.doesNotMatch(am, /does not handle \(/, "the default names the kind");
+});
+
+// ── Slice 5, item 4: the first obstacle in document order ──
+// mapRenderedSelection ran a loop over the blocks in the span for a REFUSED block and only then read the characters for a
+// hole, so a visible html block anywhere in the span was named over an earlier table or code block: a span from a table
+// cell to a `<details>` summary after it read "an HTML block" at the summary's offset where the table came first (the
+// slice's probe (d), d10 and d11; the plan's Low defect). Now one pass over the blocks in document order names the first
+// obstacle it meets, a refused block or a hole; the Raw offer for each refusal is what it was.
+const OBSTACLES = "Intro para.\n\n```\ncode line one\ncode line two\n```\n\nMiddle para.\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n\nBetween para.\n\n<div class=\"note\">Html block text</div>\n\nAfter para.\n";
+
+test("the first obstacle in document order is the one named: a selection from a table cell into an html block after it refuses as touching the table, one from a code line across the table into the html block as the code block, each with its own Raw offer (before: the HTML block, the refused block named ahead of any hole in the span); a span with no hole before the html block still names it, one ending in the table or starting in the code names them as before, and the whitespace between two blocks is still only whitespace", () => {
+  const src = OBSTACLES;
+  const box = buildRendered(src);
+  const span = (from: string, to: string) => mapRenderedSelection(sel(point(box, from), point(box, to, true)), El(box), src);
+  const lineOf = (needle: string) => src.slice(0, src.indexOf(needle)).split("\n").length - 1;
+  let r = bad(span("cell one", "Html block text"), "a table cell to the html block");
+  assert.match(r.reason, /^This selection touches a table; comment on it from the Raw view\.$/, "the table comes first (before: an HTML block): " + r.reason);
+  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| Col A"), src.indexOf("| Col A")], "the Raw offer is the table's");
+  r = bad(span("code line one", "Html block text"), "a code line across the table to the html block");
+  assert.match(r.reason, /a code block/, "the code block comes first (before: an HTML block): " + r.reason);
+  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("```"), src.indexOf("```")], "the Raw offer is the code block's");
+  assert.equal(r.rawHasQuote, false, "text spanning blocks is not one source passage");
+  // as before: a span with no hole before the html block names it; one ending in the table or starting in the code names them
+  r = bad(span("Between para.", "Html block text"), "the paragraph before the html block into it");
+  assert.match(r.reason, /an HTML block/, r.reason);
+  assert.equal(r.blockStartOffset, src.indexOf("<div"));
+  assert.match(bad(span("Middle para.", "Html block text"), "prose across the table to the html block").reason, /a table/, "the table stands between them");
+  assert.match(bad(span("Middle para.", "cell two"), "prose into the table").reason, /a table/);
+  assert.match(bad(span("code line one", "cell two"), "code across the table").reason, /a code block/);
+  assert.match(bad(span("Intro para.", "code line two"), "prose into the code").reason, /a code block/);
+  assert.match(bad(span("cell one", "cell two"), "two cells").reason, /a table/);
+  // the whitespace node between the middle paragraph and the table: its start snaps to the table and its end to the paragraph, and
+  // the table's text, which the person did not select, is not read for its hole
+  const middle = allText(box).find((t) => t.data === "Middle para.")!;
+  const gap = (middle.parentNode as FakeNode).parentNode!.childNodes[(middle.parentNode as FakeNode).parentNode!.childNodes.indexOf(middle.parentNode!) + 1];
+  assert.equal(gap.nodeType, 3); assert.equal((gap as FakeText).data.trim(), "", "a whitespace node between the blocks");
+  r = bad(mapRenderedSelection(sel({ node: gap, offset: 0 }, { node: gap, offset: (gap as FakeText).data.length }), El(box), src), "the whitespace between the blocks");
+  assert.equal(r.reason, "The selection is only whitespace.");
+  // the prose maps around all of it
+  assert.equal(ok(span("Intro", "para."), "the intro").quote, "Intro para.");
+  assert.equal(ok(span("After", "After para."), "the last paragraph").quote, "After para.");
 });
