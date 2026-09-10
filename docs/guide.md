@@ -140,13 +140,16 @@ again to fold the tab with the rest. A tab set to show when folded keeps that se
 group is renamed. The `archived` section starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
-adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. If the
-tab left that group just before you clicked, or the group is the same one under a new tag (its tag
-removed and made again under the same name), a change from another pane or another dashboard, the
-click moves nothing: the row flashes and its tooltip says to click again. **Show when folded** refuses
-the same way, and so does **Hide tab** on a re-created tag; the **✕** beside a tag and the row's **+**
-act on the re-created tag at once. The row's
-**+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
+adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. A
+change from another pane or another dashboard can take the tab out of that group just before you click,
+or remove the group's tag and make it again under the same name: the click then moves nothing, the row
+flashes, and its tooltip says to click again. If the change put the tab into the group you picked, that
+row is gone instead: the tag is one of the tab's own now, with a **✕** beside it. **Show when
+folded** refuses the same way while the tab is still in that group or has left it for exactly one other
+group. When the tab has left for no group, or for two or more (the menu cannot tell which copy you
+mean), there is nothing to pin: its row leaves the flyout and the menu stays open. **Hide tab** refuses
+the same way on a re-created tag, while the **✕** beside a tag and the row's **+** act on the re-created
+tag at once. The row's **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser. The groups follow one another across the
 strip and wrap as they need; the gear's **One tag group per row in the tab strip** starts every
 group on its own row instead.

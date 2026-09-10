@@ -394,10 +394,12 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.doesNotMatch(flat, /While the \*\*Tags\*\* flyout is open, the row follows/, "round 4: the flyout is no longer the only path the row follows");
   assert.match(flat, /Removing one of the session's other tags leaves the line alone\. If the group changes under the menu just before you click, the click hides nothing\. While the tab is still in the group the line named, or has left it for exactly one other group, the line redraws for the group the tab is in now, the menu stays open, and a second click acts on what it says; when the words would not change \(the same group under a new tag\), the line flashes instead and its tooltip says to click again\. If the tab has left that group and is under none, or under two or more \(the menu cannot tell which copy you mean\), or the tabs were ungrouped from another pane, the menu closes and nothing is hidden\. The menu has \*\*Hide tab\*\* only while/, "round 5: the refused click is visible (the guard runs before the dismissal); round 6: the sentence covers the three outcomes the code has (a redraw while the tab resolves to one group, the flash when the words would not change, the dismissal under none, two or more, or the strip ungrouped elsewhere), as C3, C4, K4 and K8 execute them");
   assert.doesNotMatch(flat, /once the session is in no group, the row goes away/, "round 3: the sentence the code did not implement is gone");
-  // THE MOVE TO SENTENCE (round 9), whole, against the guide flattened: it stands outside the Hiding paragraph, so `flat` cannot reach it,
-  // and no test pinned it before. Both refusing cases (the tab left the group; the group is the same one under a new tag), the pin row
-  // refusing the same way (round 9's home guard), Hide tab's own refusal on a re-created tag, and the x and the + acting on it at once
-  assert.match(GUIDE.replace(/\s+/g, " "), /To move a tab into another group, right-click it and pick \*\*Move to <tag>\*\* under \*\*Tags\*\*: one click adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone\. If the tab left that group just before you clicked, or the group is the same one under a new tag \(its tag removed and made again under the same name\), a change from another pane or another dashboard, the click moves nothing: the row flashes and its tooltip says to click again\. \*\*Show when folded\*\* refuses the same way, and so does \*\*Hide tab\*\* on a re-created tag; the \*\*✕\*\* beside a tag and the row's \*\*\+\*\* act on the re-created tag at once\. The row's \*\*\+\*\* adds the tag without moving the tab\./, "round 9: the Move to sentence names both refusing cases (F executes the tab that left, E4 the re-created tag), the pin row beside it (G2), Hide tab's (K8) and the x and + acting at once (E4, H); round 8 named the first case alone and no test pinned the sentence");
+  // THE MOVE TO SENTENCE (rounds 9 and 10), whole, against the guide flattened: it stands outside the Hiding paragraph, so `flat` cannot
+  // reach it, and no test pinned it before round 9. The cause (a change from elsewhere) once, both refusing cases (the tab left the group;
+  // the group is the same one under a new tag), the destination that now holds the tab (its Move to row gone, no flash), the pin row's
+  // condition (the flash while the tab is still in the group or left it for exactly one other; its row gone under none or two or more,
+  // the menu open), Hide tab's own refusal on a re-created tag, and the x and the + acting on it at once
+  assert.match(GUIDE.replace(/\s+/g, " "), /To move a tab into another group, right-click it and pick \*\*Move to <tag>\*\* under \*\*Tags\*\*: one click adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone\. A change from another pane or another dashboard can take the tab out of that group just before you click, or remove the group's tag and make it again under the same name: the click then moves nothing, the row flashes, and its tooltip says to click again\. If the change put the tab into the group you picked, that row is gone instead: the tag is one of the tab's own now, with a \*\*✕\*\* beside it\. \*\*Show when folded\*\* refuses the same way while the tab is still in that group or has left it for exactly one other group\. When the tab has left for no group, or for two or more \(the menu cannot tell which copy you mean\), there is nothing to pin: its row leaves the flyout and the menu stays open\. \*\*Hide tab\*\* refuses the same way on a re-created tag, while the \*\*✕\*\* beside a tag and the row's \*\*\+\*\* act on the re-created tag at once\. The row's \*\*\+\*\* adds the tag without moving the tab\./, "round 10: the Move to sentence names the cause once and both refusing cases (F executes the tab that left, E4 the re-created tag), the destination the change put the tab in (F's into-qa variant: that row gone, no cue), the pin row's condition (G2: the cue on the one-holder re-home and under the re-created tag, the row gone under none or two or more, the menu standing), Hide tab's own refusal (K8) and the x and + acting at once (E4, H); round 9 said the pin row refuses the same way in every case and hung the cause on the re-created tag alone; round 8 named the first case alone and no test pinned the sentence");
   assert.doesNotMatch(GUIDE, /If the\s+tab left that group just before you clicked \(a change from/, "round 8's one-cause sentence is gone");
   assert.match(flat, /The menu has \*\*Hide tab\*\* only while the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip, on a phone, or for the untagged sessions after the divider\. A tag that is still being created \(its row under \*\*Tags\*\* says creating\) has no \*\*Hide tab\*\* yet; the row appears once the tag exists\. A hidden session has no tab to right-click, so this view's \*\*Show\*\* button puts it back\./, "round 1: the whole condition (the untagged sessions and the create in flight had no row and no sentence); round 3: the row appeared on the next open, since nothing in the open menu received the create's ack; round 4: the ack runs the open menu's views hook, so the row appears once the tag exists (N5 of the rename test executes it) and the next-open clause is gone");
   assert.doesNotMatch(flat, /it comes a moment later|the next time you open the menu/, "round 3: no promise the code does not keep; round 4: no wait the code no longer imposes");
@@ -2152,6 +2154,25 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
     assert.ok(plusQa && plusQa.has("romp-acted") && plusQa.title === NOTE("+ qa"), "the cue on the + qa row, the row of the refused section now that the copy has no home, in its own words (round 10: the second click adds; rounds 8 and 9 carried Move to qa, the clicked row's)");
     assert.equal(rowOf(menu), undefined, "no Hide tab row: two holders, neither the copy's own");
     await tick();
+    // The destination-holds variant (round 10, the guide's clause): the push moves api out of infra INTO qa, the very destination, so at
+    // the click the copy has no home (archived and qa, neither its own) and qa holds the session: refused, nothing posted, and the rows
+    // rebuilt with qa among the held rows (its x) and no Move to qa row, so no row carries the cue (it rides only to a Move to or + row of
+    // the refused section, and qa has none now)
+    const V_INTO: Views = { ...V_QA, tags: [{ ...V_QA.tags[0], members: ["web", "tests"] }, V_QA.tags[1], { ...V_QA.tags[2], members: ["api"] }], seq: 17 };
+    hooks.views = V_QA; hooks.writes = [];
+    menu = api.open("api", "infra");
+    fly = flyOf(menu);
+    const mvInto = moveRow(fly, "qa");
+    press(menu);
+    api.push(V_INTO);
+    win.fire("pointerup");
+    mvInto.click();
+    assert.equal(hooks.views, V_INTO, "nothing posted: the copy left infra just before the click, into qa itself");
+    assert.ok(heldRow(fly, "qa")?.isConnected && xOf(fly, "qa"), "qa is a held row now, with its x");
+    assert.deepEqual(joinRows(fly), ["+ infra"], "no Move to qa row to carry the cue: the rows read + <name>, the copy having no home");
+    assert.equal(cued(fly).length, 0, "no cue anywhere: the row the click asked for is the held one");
+    assert.ok(menu.isConnected && rowOf(menu) === undefined, "the menu stands, with no Hide tab row (two holders, neither the copy's own)");
+    await tick();
     const V_DEL: Views = { ...V_QA, tags: [V_QA.tags[1], V_QA.tags[2]], seq: 15 };
     hooks.views = V_QA; hooks.writes = [];
     menu = api.open("api", "infra");
@@ -2241,6 +2262,22 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
     assert.equal(pinRow(fly), undefined, "no pin row: the copy has no home");
     assert.equal(cued(fly).length, 0, "no cue anywhere");
     assert.equal(rowOf(menu), undefined, "and no Hide tab row");
+    await tick();
+    // the no-holder re-home (round 10, the guide's clause): web pushed out of every group under the press; the copy has no home, so no pin
+    // row is rebuilt: nothing written, no row, no cue, the rows read + <name> and the menu stands
+    hooks.views = V; hooks.writes = [];
+    menu = api.open("web", "infra");
+    fly = flyOf(menu);
+    const pinG4b = pinRow(fly)!;
+    press(menu);
+    api.push({ ...V, tags: [{ ...V.tags[0], members: ["api", "tests"] }, V.tags[1]], seq: 7 });
+    win.fire("pointerup");
+    pinG4b.click();
+    assert.equal(hooks.writes.length, 0, "no holder: nothing written");
+    assert.equal(pinRow(fly), undefined, "no pin row: the copy has no home, so there is nothing to pin");
+    assert.equal(cued(fly).length, 0, "no cue anywhere");
+    assert.deepEqual(joinRows(fly), ["+ infra", "+ archived"], "the rows read + <name>");
+    assert.ok(menu.isConnected && rowOf(menu) === undefined, "the menu stands, with no Hide tab row");
     await tick();
     // the words-unchanged variant: infra (g1) renamed away from under api while a new tag named infra (g9) takes api, so the rebuilt pin
     // row reads the same sentence; the home at the click is g9 where the row was built for g1: refused once with the cue (the words alone
