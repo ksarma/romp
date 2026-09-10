@@ -24,17 +24,15 @@
 //    too, 0 px, so a nest goes in that same pass), and the sweep unwraps something at some width (which widths break the line at a
 //    space between two links rather than inside a link's text is the font's: 800 px is the widest of the wrap widths, not a
 //    wrap-free layout). The fixpoint's price, recorded and bounded: a blank unwrapped as collapsed can render once a later unwrap
-//    on its line moves the
-//    wrap point back, and it is never re-wrapped (a mark at a line's last inch would flip with every pass), so a rendered space may
-//    stand unmarked, a ring gap of the space's width; the price is bimodal by width, none at most widths and a cascade through the
-//    lines below at a width where a line's slack falls inside the marks' padding (on the build box the list item here shows, under
-//    one comment, one of eleven at 240 px and four of ten at 220; a list item of 120 links 80 of 90 at 240 px and none at 25 of 31
-//    widths sampled every 20 px; the paragraph of 5,000 links 341 to 2,095 of about 4,400 at seven of eleven widths and none at
-//    four, once the fixpoint completes; plan item 10 (a) has the figures and, since round 14, the nest figures: overlapping comments
-//    nest one mark per comment, 4 px a level, so the widths at which the flip happens move with the count); never more such blanks
-//    than marks unwrapped, and none at all where nothing was
-//    unwrapped. The layout-neutral mark (`margin: 0 -2px` beside the padding) removes the shape and is the owner's call
-//    (plans/markdown-viewer.md, item 10).
+//    on its line moves the wrap point back, and it is never re-wrapped (a mark at a line's last inch would flip with every pass),
+//    so a rendered space may stand unmarked, a ring gap of the space's width; the price is bimodal by width, none at most widths
+//    and a cascade through the lines below at a width where a line's slack falls inside the marks' padding (on the build box the
+//    list item here shows, under one comment, one of eleven at 240 px and four of ten at 220; a list item of 120 links 80 of 90 at
+//    240 px and none at 25 of 31 widths sampled every 20 px; the paragraph of 5,000 links 341 to 2,095 of about 4,400 at seven of
+//    eleven widths and none at four, once the fixpoint completes; plan item 10 (a) has the figures and, since round 14, the nest
+//    figures: overlapping comments nest one mark per comment, 4 px a level, so the widths at which the flip happens move with the
+//    count); never more such blanks than marks unwrapped, and none at all where nothing was unwrapped. The layout-neutral mark
+//    (`margin: 0 -2px` beside the padding) removes the shape and is the owner's call (plans/markdown-viewer.md, item 10).
 // 3. The reflow: marks painted at 800 px and the root narrowed to 300 px with no repaint (the panel does not repaint on a reflow)
 //    show padding-only marks at the new wrap points until trimCollapsedMarks runs over them again, the panel's re-trim
 //    (file-comments.ts trimBlanks on the seam's "reflow"); after it none stands, at any depth of nesting. A blank trimmed at 800 px
@@ -100,19 +98,19 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
-/** The page's own helpers. BLANK is the trim's candidate alphabet (anchor-map.ts TRIM_CANDIDATE): no letter, digit, punctuation
- *  or symbol, or the hangul fillers. `width` is a Range over a node's contents with the rects' widths summed, round 12's reading of a
+/** The page's own helpers. BLANK is the trim's candidate alphabet (anchor-map.ts TRIM_CANDIDATE): no letter, digit, punctuation or
+ *  symbol, or the hangul fillers. `width` is a Range over a node's contents with the rects' widths summed, round 12's reading of a
  *  mark, kept for the messages (over a mark holding another mark it reads the inner mark's padding as width: point 5); `textWidth`
  *  sums `width` over the TEXT NODES under an element, the trim's own reading since round 13 (anchor-map.ts contentWidth) and the
- *  oracle's. `__paint` paints the whole range with or without the trim, once
- *  per comment (`k` comments nest, the later inside the earlier; two or more are painted as the panel's pass paints them, every
- *  paint with `trim: false` and one trimCollapsedMarks over all of them), and reads each mark's text, both widths, whether it has a
- *  box of its own, how many marks it holds and whether it is a top-level node; `__bare` lists the blank text nodes below the top
- *  level that render with a width and carry no mark, inside the top-level blocks the paint reached (a block the pairing refused
- *  holds no mark and is no unmarked blank of the trim's: the union holds one such scene, REFUSED, an html block followed by a list
- *  item whose source text the sanitizer shortens, a stripped style, the pairing's own recorded defect, plan item 10 (d); every other
- *  scene's paint must reach the closing paragraph, test 1); `__unpaint` is the panel's (children back, the parent normalized) and
- *  returns the HTML; `__nest` hand-wraps a collapsed blank mark of an untrimmed paint in two more marks and reads all three. */
+ *  oracle's. `__paint` paints the whole range with or without the trim, once per comment (`k` comments nest, the later inside the
+ *  earlier; two or more are painted as the panel's pass paints them, every paint with `trim: false` and one trimCollapsedMarks
+ *  over all of them), and reads each mark's text, both widths, whether it has a box of its own, how many marks it holds and
+ *  whether it is a top-level node; `__bare` lists the blank text nodes below the top level that render with a width and carry no
+ *  mark, inside the top-level blocks the paint reached (a block the pairing refused holds no mark and is no unmarked blank of the
+ *  trim's: the union holds one such scene, REFUSED, an html block followed by a list item whose source text the sanitizer
+ *  shortens, a stripped style, the pairing's own recorded defect, plan item 10 (d); every other scene's paint must reach the
+ *  closing paragraph, test 1); `__unpaint` is the panel's (children back, the parent normalized) and returns the HTML; `__nest`
+ *  hand-wraps a collapsed blank mark of an untrimmed paint in two more marks and reads all three. */
 const HELPERS = `
 const BLANK = /^(?:[^\\p{L}\\p{N}\\p{P}\\p{S}]|[\\u115f\\u1160\\u3164\\uffa0])*$/u;
 const md = () => document.getElementById("md");

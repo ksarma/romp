@@ -976,7 +976,8 @@ class Panel {
   marks = new WeakSet<Element>();           // the highlights and picture frames THIS panel painted into the body (owns)
   /** The Rendered marks of the last paint pass (the highlights, the change marks, the pending target), the layout-time trim's
    *  subjects (anchor-map.ts trimCollapsedMarks): trimmed once after the pass, again on every reflow, and again when the pending
-   *  target alone is painted or unpainted (trimBlanks; repaintPresel, whose marks join the pass's). */
+   *  target alone is painted or unpainted (trimBlanks; repaintPresel, whose marks join the pass's: the target's, and the marks it
+   *  paints again in the line boxes the target enters and leaves). */
   passMarks: Element[] = [];
   /** The pass's change marks by change id (paintChanges under the deferred trim), read once the pass has trimmed: a change whose
    *  every mark the trim removed is filed as not shown (paintAll), as the unbatched paint would have filed it. */
@@ -1329,7 +1330,8 @@ class Panel {
     // would be the sheet's padding around nothing, a ringed 4 x 18 px box at the end of the line until the next paint pass or
     // width change (the Slice 4 review, round 13; md-config-paint-retrim-events-browser.test.ts). The third such change is the
     // panel's own paint: the pending target painted or unpainted alone (repaintPresel), whose 2 px side padding moves the wrap
-    // points of the lines it shares with a highlight; that one is a paint pass and trims at once, in the same call (round 14;
+    // points of the lines it shares with a highlight; that one is a paint pass over the line boxes the target enters and leaves,
+    // the highlights there painted again with the target inside them and trimmed at once, in the same call (rounds 14 and 15;
     // md-config-paint-presel-retrim-browser.test.ts). Here at the mount and not with the margin layout's listeners (installLayout,
     // wired at the first open), since the highlights stand while the panel is closed too. The fonts' listener hangs on the
     // document, which outlives the viewer: dispose removes it.
@@ -3137,15 +3139,18 @@ class Panel {
   }
   /** The composer's pending target, painted with the trim deferred (`trim: false`) like every mark of a pass and added to the pass's
    *  standing marks: the caller trims once after it (paintAll's pass and repaintPresel, trimBlanks), so the target's own collapsed
-   *  blanks and a standing highlight's blanks that its padding moved to a wrap point are measured in one layout. Until the Slice 4
-   *  review's round 14 the repaint alone trimmed the target's own marks and left the highlight's (repaintPresel says what stood). */
-  private paintPresel(root: Element, src: string, rendered: boolean): void {
+   *  blanks and a standing highlight's blanks that its padding moved to a wrap point are measured in one layout. Returns the
+   *  Rendered marks it added (none in the Raw view, for a composer of another kind, or for a target the text no longer matches):
+   *  repaintPresel reads their line boxes. Until the Slice 4 review's round 14 the repaint alone trimmed the target's own marks and
+   *  left the highlight's (repaintPresel says what stood). */
+  private paintPresel(root: Element, src: string, rendered: boolean): Element[] {
     const c = this.composer;
-    if (!c || c.kind !== "comment" || !c.range || c.text !== src) return;   // the range indexes c.text; over other bytes it would paint the wrong span
-    if (!rendered) { paintRaw(root, src, c.range, "fc-presel"); return; }
+    if (!c || c.kind !== "comment" || !c.range || c.text !== src) return [];   // the range indexes c.text; over other bytes it would paint the wrong span
+    if (!rendered) { paintRaw(root, src, c.range, "fc-presel"); return []; }
     const out = paintRendered(root, src, c.range, "fc-presel", undefined, { trim: false });
     if (out) this.passMarks.push(...out);
     if (!out || !out.length) { const img = imgForRange(root, src, c.range, this.ctx.path); if (img) frameImage(img, "fc-presel"); }
+    return out || [];
   }
   /** Unwrap painted marks: the text nodes go back in place and the parent is normalized. A framed
    *  picture is stripped of its marks instead — unwrapping an <img> would remove the picture. */
@@ -3158,20 +3163,100 @@ class Panel {
       p.removeChild(n); p.normalize();
     }
   }
-  /** The pending target repainted alone (a composer opened, closed or moved: startComment, closeComposer and the other sites): a
-   *  paint pass over the target's marks, trimmed after the paint over the standing marks as paintAll's pass is. The target's 2 px
-   *  side padding is in the layout, so painting it moves the wrap points of the lines it shares with a highlight, and a blank of
-   *  the highlight that is the wrap point now would stand as the sheet's padding around nothing, a ringed 4 x 18 px box at the
-   *  end of the line, until a reflow or the next pass (two to four of them on the list item of fourteen links at 300 to 600 px
-   *  with the item selected over its comment, the Slice 4 review's round 14; md-config-paint-presel-retrim-browser.test.ts);
-   *  unpainting the target moves the wrap points back, and the same trim covers that. One measurement over the standing marks
-   *  per repaint (trimBlanks: realistic shapes under 10 ms; the paragraph of 5,000 links pays the paint's recorded cost). A
-   *  highlight's blank trimmed while the target stood that renders once the target is gone stays bare until the next paint pass,
-   *  the recorded shape under one more trigger (plans/markdown-viewer.md, the Slice 4 build note's item 10 (b)). */
+  /** The box whose line boxes hold `m`: its nearest ancestor that is not an inline (a computed display other than `inline` or
+   *  `contents`: the paragraph, the list item, the table cell, an inline-block of its own), the root when none is found below
+   *  it. A mark's 2 px side padding moves the wrap points of that box's lines and of no other box's, so this is the scope of
+   *  the repaint the pending target's paint and unpaint run (repaintPresel). `memo` is per call, keyed on the parent: the marks
+   *  of one passage share a few. A document with no computed style (a stand-in) answers the parent. */
+  private lineBoxOf(m: Element, root: Element, memo: Map<Element, Element>): Element {
+    const p = m.parentNode as Element | null;
+    if (!p || p === root || p.nodeType !== 1) return root;
+    const hit = memo.get(p);
+    if (hit) return hit;
+    const d = typeof getComputedStyle === "function" ? getComputedStyle(p).display : "block";
+    const box = d === "inline" || d === "contents" ? this.lineBoxOf(p, root, memo) : p;
+    memo.set(p, box);
+    return box;
+  }
+  /** Unwrap these marks: the text nodes go back in place and each parent is normalized (unpaint's own step, over elements the
+   *  caller holds rather than a selector). */
+  private unwrap(marks: Element[]): void {
+    for (const n of marks) {
+      const p = n.parentNode; if (!p) continue;
+      while (n.firstChild) p.insertBefore(n.firstChild, n);
+      p.removeChild(n); p.normalize();
+    }
+  }
+  /** The pending target repainted alone (a composer opened, closed or moved: startComment, closeComposer and the other sites), as
+   *  a paint pass over the LINE BOXES the target leaves and enters (lineBoxOf). The target's 2 px side padding is in the layout,
+   *  so painting it moves the wrap points of the lines it shares with a highlight, and unpainting it moves them back; the trim
+   *  (anchor-map.ts trimCollapsedMarks) unwraps a blank mark that collapses at a wrap point and never re-wraps one, so a trim
+   *  alone leaves the highlight's ring gapped at every blank that renders again once the wrap points moved: the Slice 4 review's
+   *  round 14 trimmed the standing marks after the target's paint and left, on the list item of fourteen links selected whole
+   *  over its comment, 2 to 4 of the highlight's spaces bare after Cancel for as long as the file stayed open, and with four of
+   *  the links selected 3 bare while the composer stood (39 of the 120-link item's 119 spaces at 800 px). So the target's arrival
+   *  and departure are paint events for the marks whose lines they move: the panel's own highlights and change marks standing in
+   *  those boxes are unpainted and painted again, with the same range, classes and attributes, in the pass's order (paintAll's:
+   *  the highlights, the changes, the target inside them), then the one batched trim over the standing marks; the target is
+   *  painted once before, so its boxes can be read, and again in its place. A repaint that adds and removes no Rendered mark (a
+   *  reply, a change reply, a re-place, a comment on the file, a region, a refusal, the Raw view's row mark) changes no line and
+   *  measures nothing (md-config-paint-presel-kinds-browser.test.ts: zero Range measurements for those kinds). After the
+   *  repaint the boxes' marks are what a paint pass leaves under the same target: no padding-only mark and no bare rendered blank
+   *  beyond the pass's own recorded shape, pending and after Cancel alike (md-config-paint-presel-retrim-browser.test.ts, the
+   *  item of fourteen links at 300 to 600 px, the whole item and four of its links). The price is a fresh paint of the boxes'
+   *  marks to the trim's fixpoint, one layout a pass (round 15's measurements in the real Files pane at 1000 px, headless Chromium,
+   *  three runs each, the round 14 tree measured in the same run): the item of fourteen links 5 to 6.5 ms an open and 2.2 to 2.5
+   *  ms a Cancel (two passes; 3.7 to 5 and 1.4 to 2.1 before), the 120-link item 27 to 39 and 14 to 22 ms (three passes; 14 to 16
+   *  and 4.4 to 5.1 before), forty comments over sixty paragraphs 3 to 5 and 1.4 to 1.7 ms (no blank candidate, so a trim that
+   *  measures nothing); one comment across the paragraph of 5,000 links (9,511 marks) 6.0 to 6.2 s an open (three passes, 13,821
+   *  Range.getClientRects calls) and 3.2 to 3.3 s a Cancel (two, 9,510), against 2.7 to 2.8 and 1.3 s for round 14's trim of the
+   *  standing marks (two passes and one) and about 1.3 s for main's untrimmed paint, the recorded shape (plan item 2, the paint's
+   *  cost) and not optimised; the passes are the fixpoint's, so no reordering makes them fewer. A composer that paints no target
+   *  costs the render alone (a reply on that paragraph 20 to 28 ms, a comment on the file 1.5; 38 to 42 and 18 to 22 with round
+   *  14's trim of 4,260 measurements). */
   private repaintPresel(): void {
-    this.unpaint(".fc-presel");
     const src = this.ctx.text(); const root = this.contentRoot();
-    if (src !== null && root) { this.paintPresel(root, src, this.ctx.mode() === "rendered"); this.trimBlanks(); }
+    if (src === null || !root || this.ctx.mode() !== "rendered") {   // a media body, or the Raw view (a row mark, no layout-time trim)
+      this.unpaint(".fc-presel");
+      if (src !== null && root) this.paintPresel(root, src, false);
+      this.paintRegions();
+      return;
+    }
+    const isMark = (m: Element): boolean => m.tagName.toUpperCase() === "MARK";
+    const memo = new Map<Element, Element>(); const boxes = new Set<Element>();
+    for (const m of Array.from(root.querySelectorAll(".fc-presel"))) if (isMark(m)) boxes.add(this.lineBoxOf(m, root, memo));
+    this.unpaint(".fc-presel");
+    for (const m of this.paintPresel(root, src, true)) boxes.add(this.lineBoxOf(m, root, memo));
+    if (!boxes.size) { this.paintRegions(); return; }   // no Rendered mark came or went: the layout is the one the last trim measured
+    const held = this.heldMark();
+    // the panel's own marks standing in those boxes: the highlights by card, and whether a change mark is among them
+    const ids = new Set<string>(); let changes = false;
+    for (const b of boxes) {
+      for (const m of Array.from(b.querySelectorAll('[data-act="fcopen"]'))) { const id = (m as HTMLElement).dataset.id; if (id && isMark(m) && this.marks.has(m)) ids.add(id); }
+      if (!changes) for (const m of Array.from(b.querySelectorAll('[data-act="fcchange"]'))) if (isMark(m) && this.marks.has(m)) { changes = true; break; }
+    }
+    const again: Array<{ id: string; range: SourceRange; own: HTMLElement[] }> = [];
+    for (const id of ids) {
+      const loc = this.located.get(id); const own = this.ownMarks("fcopen", id).filter(isMark);
+      if (loc && loc.range && own.length) again.push({ id, range: loc.range, own });
+    }
+    if (again.length || changes) {
+      this.unpaint(".fc-presel");
+      for (const a of again) this.unwrap(a.own);
+      if (changes) { unpaintChanges(this.ctx.body()); this.passChanges = []; }
+      for (const a of again) {
+        const like = a.own[0];
+        const out = paintRendered(root, src, a.range, like.className, { act: "fcopen", id: a.id }, { trim: false }) || [];
+        this.passMarks.push(...out);
+        for (const m of out) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = like.title; if (like.dataset.new) (m as HTMLElement).dataset.new = like.dataset.new; this.mark(m); }
+      }
+      if (changes) this.paintChanges(root, src, true, true);
+      this.paintPresel(root, src, true);
+    }
+    this.trimBlanks();
+    for (const a of again) { const l = this.located.get(a.id); if (l) this.located.set(a.id, { ...l, painted: this.ownMarks("fcopen", a.id).length > 0 }); }
+    if (changes) for (const c of this.passChanges) if (!c.marks.some(standing)) this.paintedChanges.delete(c.id);
+    if (held) this.refocusMark(held);
     this.paintRegions();                               // the composer's pending region and the re-place cue live on the overlays
   }
   /** The body was repainted, possibly over NEW text (the poll saw the file move and reloaded it; Reload;

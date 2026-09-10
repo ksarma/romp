@@ -1847,17 +1847,26 @@ const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 // hide and the show as reflows, the show's report re-trimming (file-comments.ts trimBlanks and scheduleRetrim;
 // md-config-paint-retrim-events-browser.test.ts legs 4 and 5). Since round 14 the panel's own repaint of the pending target alone
 // (file-comments.ts repaintPresel: a composer opened, closed or moved), whose 2 px side padding moves the wrap points of the lines
-// it shares with a highlight, trims the standing marks at once in the same call, a paint pass like paintAll's
-// (md-config-paint-presel-retrim-browser.test.ts); a highlight blank unwrapped while the target stood stays bare once it is gone,
-// the shape above under one more trigger. The re-trim's price per reflow: realistic shapes under 10 ms (200 comments over 300
+// it shares with a highlight, trims at once in the same call; since round 15 that repaint is a paint pass over the line boxes the
+// target enters and leaves (the highlights and change marks standing there are painted again with the target inside them, then the
+// one trim), since a trim alone left the highlight's blanks trimmed at the old wrap points bare where they rendered at the new ones,
+// while the composer stood and after Cancel; a repaint that adds and removes no Rendered mark (a reply, a re-place, a comment on
+// the file, a region, the Raw view) trims nothing (md-config-paint-presel-retrim-browser.test.ts, the item of fourteen links at 300
+// to 600 px, no padding-only mark and no bare blank pending or after Cancel; md-config-paint-presel-kinds-browser.test.ts, zero
+// measurements for those kinds). Its price is a fresh paint of the boxes' marks to the fixpoint, one layout a pass, in the real pane
+// at 1000 px: the fourteen-link item 5 to 6.5 ms an open and 2.2 to 2.5 ms a Cancel, the 120-link item 27 to 39 and 14 to 22 ms,
+// forty comments over sixty paragraphs 3 to 5 and 1.4 to 1.7 ms; one comment across the paragraph of 5,000 links 6.0 to 6.2 s an
+// open (three passes, 13,821 Range.getClientRects calls) and 3.2 to 3.3 s a Cancel (two passes, 9,510), against 2.7 to 2.8 and 1.3 s
+// for round 14's trim of the standing marks and about 1.3 s for main's untrimmed paint, recorded and not optimised (the passes are
+// the fixpoint's). The re-trim's price per reflow: realistic shapes under 10 ms (200 comments over 300
 // paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to 11 ms); one comment across the paragraph of 5,000 links 1 to 13 s in the real
 // pane under the convergence loop (round 14's measurements, three runs agreeing on every call count: a window-resize step 1.0 to
 // 1.1 s and 1,457 Range.getClientRects calls, a divider release narrowing 1000 to 700 px 2.1 to 2.4 s and 8,079, widening back 5.1
-// to 5.6 s and 11,514, a text-size step 12.4 to 13.3 s and 14,244, nine passes, each pass after one that unwrapped laying the
-// mutated paragraph out again at 1.0 to 1.3 s a layout; round 13 recorded 1.5 to 4.6 s, measured under the three-pass cap the same
-// round replaced, which left 51 padding-only marks standing on the text-size step where the loop leaves none), recorded beside the
-// paint's cost and not optimised. The divider's drag itself fires one reflow, at release (the shell moves a ghost line and lays the
-// pane out once); a window-edge resize reflows every frame and pays the price per frame.
+// to 5.6 s and 11,514, a text-size step 12.4 to 13.3 s and 14,244, ten passes, nine that unwrapped and the tenth confirming, each
+// pass after one that unwrapped laying the mutated paragraph out again at 1.0 to 1.3 s a layout; round 13 recorded 1.5 to 4.6 s,
+// measured under the three-pass cap the same round replaced, which left 51 padding-only marks standing on the text-size step where
+// the loop leaves none), recorded beside the paint's cost and not optimised. The divider's drag itself fires one reflow, at release
+// (the shell moves a ghost line and lays the pane out once); a window-edge resize reflows every frame and pays the price per frame.
 // In node the stand-ins offer no layout, so the trim measures nothing and every blank the DOM-side skips leave is a mark; the
 // node tests pin the DOM shape and the two skips, the browser legs the trimmed result (md-config-paint-trim.test.ts and
 // md-config-paint-trim-browser.test.ts, over anchor-map-fixtures/blank-scenes.json, the scenes the review rounds 7 to 13 collected).

@@ -1,24 +1,28 @@
-// The Comments panel's re-trim when the pending target alone is painted or unpainted (file-comments.ts repaintPresel, paintPresel
-// and trimBlanks; the Slice 4 review's round 14), in headless Chromium over the REAL viewer and panel (real-viewer-leg.ts: file-view.ts
-// bundled as the webview build bundles it, the Files pane under styles.css and files-pane.css, the kernel's status answered from the
-// page). One comment across a list item of fourteen links, which wraps at every pane width the leg opens; the panel opened, so its
-// pass has painted the highlight and trimmed the wrap points' blanks (no padding-only mark). Then a passage is selected the way a
-// person selects it (a Range over the item and a mouseup on it: the seam's selection hooks show the panel's float) and the float's
-// Comment is clicked: startComment paints the pending target (`.fc-presel`) over the item's text, inside the highlight's marks.
-// 1. The target's 2 px side padding is in the layout, so its paint moves the item's wrap points, and a blank of the HIGHLIGHT that
-//    is the wrap point now lays out at zero width inside a mark with a box of its own, the sheet's 4 px of padding around nothing,
-//    a ringed 4 x 18 px box at the end of the line. Before round 14 repaintPresel trimmed the target's own marks alone and nothing
-//    measured the highlight's again until a reflow, a figure's load, a font's arrival or the next paint pass: with the whole item
-//    selected over its comment, two such marks stood at 600 px, three at 500, four at 400 and four at 300 for as long as the
-//    composer was pending (round 14's probe). Since round 14 the repaint is a paint pass like paintAll's: the target is painted with
-//    the trim deferred and the panel's one trim runs after it over every standing mark (trimBlanks), so no padding-only mark stands
-//    after the click, the highlight's blank marks are fewer than before it (the collapsed ones unwrapped), the target's own marks
-//    hold none either, and the seam reported neither a paint nor a reflow (the path was the repaint, not the hooks).
-// 2. Cancel unpaints the target (closeComposer runs the same repaint) and the wrap points move back: no padding-only mark stands
-//    after it either. A blank of the highlight trimmed while the target stood that renders once it is gone is not re-wrapped (the
-//    trim never re-wraps: anchor-map.ts's header), and stays bare until the next paint pass, the recorded shape of plan item 10 (b)
-//    under one more trigger; the leg bounds the item's bare rendered blanks after the close by the ones before the click plus the
-//    marks the target's stand unwrapped, never more.
+// The Comments panel's repaint when the pending target alone is painted or unpainted (file-comments.ts repaintPresel, paintPresel,
+// lineBoxOf and trimBlanks; the Slice 4 review's rounds 14 and 15), in headless Chromium over the REAL viewer and panel
+// (real-viewer-leg.ts: file-view.ts bundled as the webview build bundles it, the Files pane under styles.css and files-pane.css, the
+// kernel's status answered from the page). One comment across a list item of fourteen links, which wraps at every pane width the leg
+// opens; the panel opened, so its pass has painted the highlight and trimmed the wrap points' blanks (no padding-only mark). Then a
+// passage is selected the way a person selects it (a Range over the links and a mouseup on the item: the seam's selection hooks show
+// the panel's float) and the float's Comment is clicked: startComment paints the pending target (`.fc-presel`) over the selected
+// links, inside the highlight's marks. Two selections: the whole item (Link0 to Link13), and four of its links (Link2 to Link5).
+// 1. The target's 2 px side padding is in the layout, so its paint moves the item's wrap points. Before round 14 nothing measured the
+//    highlight's marks again, and a blank of the highlight that was the wrap point now stood as the sheet's 4 px of padding around
+//    nothing, a ringed 4 x 18 px box at the end of the line (two to four of them at 600 to 300 px with the whole item selected).
+//    Round 14 trimmed the standing marks after the target's paint, which unwrapped those; but the trim never re-wraps
+//    (anchor-map.ts's header), so a blank of the highlight trimmed at the OLD wrap points that renders at the new ones stood bare
+//    (3 of the item's spaces with four links selected at 600 px; 39 of the 120-link item's 119 at 800 px), a gap in the ring while
+//    the person typed. Since round 15 the repaint is a paint pass over the line boxes the target enters and leaves: the highlights
+//    standing in them are unpainted and painted again with the target inside them, then the one trim runs (lineBoxOf; repaintPresel's
+//    docblock). So while the composer is pending: no padding-only mark of either class, no bare rendered blank in the item, the
+//    target's marks nested inside the highlight's (the pass's order), and the marks are what a paint pass leaves under the same
+//    target (the settings signal runs paintAll with the composer standing: the same blank-mark counts), with the seam reporting
+//    neither a paint nor a reflow (the path was the repaint, not the hooks).
+// 2. Cancel unpaints the target (closeComposer runs the same repaint) and the wrap points move back: round 14's trim left the blanks
+//    its stand had unwrapped bare, 4, 4, 3 and 2 of them at 300 to 600 px with the whole item selected, until the next paint pass (a
+//    status move, a reload), the ring gapped for as long as a quiet file stayed open. Since round 15 the highlight is painted again
+//    at the unpaint too: no padding-only mark, no bare blank, and the highlight's blank marks are the ones the panel's own pass
+//    painted before the click, the same count.
 // The Comments panel polls every 2.5 s and HEADs the sidecar and the config through fetch; the harness's stub answers those paths
 // 404, a move against the status's mtimes, so a tick during a scene would refresh and repaint the marks, a paint pass that would
 // hide the path under test: the page answers those two HEADs with the status's own mtimes, as the kernel would (quietPoll). Legs
@@ -49,11 +53,11 @@ const quietPoll = (page: any, status: any): Promise<void> => page.evaluate((st: 
 }, status);
 
 type Marks = { n: number; blank: number; paddingOnly: string[] };
-type Read = { paints: number; reflows: number; hl: Marks; presel: Marks; stood: boolean; bare: string[]; column: boolean };
+type Read = { paints: number; reflows: number; hl: Marks; presel: Marks; nested: number; inverted: number; bare: string[]; column: boolean };
 /** The probe's counts and, per class, the marks, the blank marks and the padding-only ones (the trim's own oracle: every text node
  *  of the mark lays out at zero width and the mark has a box of its own; the text measured node by node, as the trim reads it);
- *  whether the highlight's non-blank marks recorded before still stand; and the item's blank text nodes that render with a width
- *  and carry no mark of either class (bare). */
+ *  the target's marks nested inside a highlight's (the pass's order) and the inverse (a highlight painted inside the target, which
+ *  no pass produces); and the item's blank text nodes that render with a width and carry no mark of either class (bare). */
 const read = (page: any): Promise<Read> => page.evaluate(() => {
   const w = window as any; const body = document.querySelector(".fileview-body") as HTMLElement;
   const BLANK = /^(?:[^\p{L}\p{N}\p{P}\p{S}]|[\u115f\u1160\u3164\uffa0])*$/u;
@@ -68,9 +72,15 @@ const read = (page: any): Promise<Read> => page.evaluate(() => {
   const bare: string[] = [];
   const walk = document.createTreeWalker(document.querySelector(".fileview-md > ul")!, NodeFilter.SHOW_TEXT);
   for (let t = walk.nextNode(); t; t = walk.nextNode()) if (BLANK.test((t as Text).data) && width(t) > 0 && !(t.parentElement && t.parentElement.closest("mark"))) bare.push(t.parentNode!.nodeName + " " + JSON.stringify((t as Text).data));
-  return { paints: w.__paints, reflows: w.__reflows, hl: scan("fc-hl"), presel: scan("fc-presel"), stood: (w.__kept as Element[] || []).every((m) => m.isConnected), bare, column: getComputedStyle(body.parentElement!).flexDirection === "column" };
+  return { paints: w.__paints, reflows: w.__reflows, hl: scan("fc-hl"), presel: scan("fc-presel"), nested: body.querySelectorAll("mark.fc-hl > mark.fc-presel").length, inverted: body.querySelectorAll("mark.fc-presel > mark.fc-hl").length, bare, column: getComputedStyle(body.parentElement!).flexDirection === "column" };
 });
-const keepMarks = (page: any): Promise<void> => page.evaluate(() => { (window as any).__kept = Array.from(document.querySelectorAll(".fileview-body mark.fc-hl")).filter((k) => !/^\s*$/.test(k.textContent || "")); });
+/** A paint pass with everything as it stands, the composer included: the shared settings signal (settings.ts onExternalSettingsChange,
+ *  the `romp:settings` event) flips Show changes inline off and back on, and the panel answers each change it sees with paintAll. The
+ *  note carries no change, so the marks the pass paints are the highlight's and the target's alone. */
+const paintPass = (page: any): Promise<void> => page.evaluate(() => {
+  const cur = JSON.parse(localStorage.getItem("romp:settings") || "{}");
+  for (const v of [false, true]) { localStorage.setItem("romp:settings", JSON.stringify({ ...cur, changesInline: v })); window.dispatchEvent(new Event("romp:settings")); }
+});
 /** Every card has its place (style.top written): the margin layout's pass ran. */
 const placed = (page: any): Promise<unknown> => page.waitForFunction(() => {
   const cards = Array.from(document.querySelectorAll(".fc-sec-cards .fc-card[data-id]"));
@@ -111,42 +121,49 @@ const select = (page: any, from: string, to: string): Promise<string> => page.ev
   return sel.toString();
 }, [from, to]);
 
-test("in a browser, the real panel: the pending target painted over a standing comment's lines (the float's Comment on a selection of the whole item, at 300 and 500 px) re-trims the standing marks in the same repaint, so no padding-only highlight mark stands while the composer is pending, and none after Cancel unpaints it; the seam reported no paint and no reflow for either", { timeout: 180000 }, async (t) => {
+const SHAPES: Array<[string, string, string]> = [["the whole item", "Link0 docs", "Link13 docs"], ["four of its links", "Link2 docs", "Link5 docs"]];
+test("in a browser, the real panel: the pending target painted over a standing comment's lines (the float's Comment on the whole item and on four of its links, at 300, 400, 500 and 600 px) repaints the highlight with the target inside it and trims once, so no padding-only mark and no bare rendered blank stands while the composer is pending or after Cancel unpaints it, the marks being a paint pass's under the same target; the seam reported no paint and no reflow for either", { timeout: 300000 }, async (t) => {
   await inBrowser(t, async (browser) => {
-    for (const width of [300, 500]) {
-      const at = "@" + width + "px: ";
+    for (const width of [300, 400, 500, 600]) for (const [shape, from, to] of SHAPES) {
+      const at = "@" + width + "px, " + shape + ": ";
       const { page, errors } = await openWith(browser, width);
-      await keepMarks(page);
       const r0 = await read(page);
       assert.ok(r0.column, at + "the narrow fold (the aside under the body), the layout the scene wraps in");
       assert.ok(r0.hl.blank >= 6, at + "the comment's marks over the spaces between the links stand after the pass: " + r0.hl.blank);
       assert.deepEqual(r0.hl.paddingOnly, [], at + "the pass left no padding-only mark");
+      assert.deepEqual(r0.bare, [], at + "the pass left no bare rendered blank in the item (the shape's precondition: one comment over the item shows none fresh)");
       assert.equal(r0.presel.n, 0, at + "no pending target before the selection");
-      // (1) the whole item selected, the float's Comment clicked: the target painted inside the highlight, the standing marks re-trimmed
-      const selected = await select(page, "Link0 docs", "Link13 docs");
-      assert.ok(selected.startsWith("Link0 docs") && selected.endsWith("Link13 docs"), at + "the selection spans the item: " + JSON.stringify(selected.slice(0, 12) + ".." + selected.slice(-12)));
+      // (1) the links selected, the float's Comment clicked: the highlight repainted with the target inside it, one trim
+      const selected = await select(page, from, to);
+      assert.ok(selected.startsWith(from) && selected.endsWith(to), at + "the selection spans the links: " + JSON.stringify(selected.slice(0, 12) + ".." + selected.slice(-12)));
       await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
       await page.click(".fc-float");
       await page.waitForFunction(() => document.querySelectorAll(".fileview-body mark.fc-presel").length > 0, null, { timeout: 5000 });
       await frames(page, 2);
       const r1 = await read(page);
-      assert.ok(r1.presel.n >= 14 && r1.presel.blank >= 6, at + "the target paints the links and the spaces between them: " + r1.presel.n + " marks, " + r1.presel.blank + " blank");
+      assert.ok(r1.presel.n >= 4 && r1.presel.blank >= 3, at + "the target paints the links and the spaces between them: " + r1.presel.n + " marks, " + r1.presel.blank + " blank");
       assert.equal(r1.paints, r0.paints, at + "no paint pass and no reflow for the click: the repaint's own path");
-      assert.ok(r1.stood, at + "the highlight's non-blank marks stand as the same nodes");
       assert.deepEqual(r1.hl.paddingOnly, [], at + "no padding-only highlight mark stands while the composer is pending (before round 14 the target's padding moved the wrap points and the highlight's blanks there stood as ringed 4 x 18 px boxes)");
-      assert.ok(r1.hl.blank < r0.hl.blank, at + "the repaint's trim unwrapped the highlight's blanks the moved wrap points collapsed: " + r1.hl.blank + " blank marks against " + r0.hl.blank);
       assert.deepEqual(r1.presel.paddingOnly, [], at + "the target's own marks hold no padding-only one");
-      // (2) Cancel: the target unpainted, the wrap points back; the same trim runs; a blank unwrapped meanwhile is not re-wrapped (item 10 (b))
-      const unwrapped = r0.hl.blank - r1.hl.blank;
+      assert.deepEqual(r1.bare, [], at + "no bare rendered blank in the item while the composer is pending (round 14's trim left the highlight's blanks trimmed at the old wrap points bare where they render at the new ones)");
+      assert.equal(r1.inverted, 0, at + "no highlight mark is painted inside the target: the pass's order, the target inside the highlight");
+      assert.equal(r1.nested, r1.presel.n, at + "every mark of the target sits inside a highlight mark (the links are all under the comment): " + r1.nested + " of " + r1.presel.n);
+      // the exact form: a paint pass under the same target paints the same marks
+      await paintPass(page);
+      await frames(page, 2);
+      const r1b = await read(page);
+      assert.equal(r1b.presel.n, r1.presel.n, at + "the target's marks are what a paint pass under it paints: " + r1b.presel.n + " against the repaint's " + r1.presel.n);
+      assert.equal(r1b.hl.blank, r1.hl.blank, at + "the highlight's blank marks are what a paint pass under the same target leaves: " + r1b.hl.blank + " against the repaint's " + r1.hl.blank);
+      assert.deepEqual([r1b.hl.paddingOnly, r1b.bare], [[], []], at + "the pass leaves no padding-only mark and no bare blank either");
+      // (2) Cancel: the target unpainted, the wrap points back, the highlight painted again and trimmed: the pass's marks before the click
       await page.click('.fileview-aside [data-act="fccancel"]');
       await page.waitForFunction(() => document.querySelectorAll(".fileview-body mark.fc-presel").length === 0, null, { timeout: 5000 });
       await frames(page, 2);
       const r2 = await read(page);
-      assert.equal(r2.paints, r0.paints, at + "no paint pass and no reflow for the cancel either");
-      assert.ok(r2.stood, at + "the highlight's non-blank marks stand after the cancel");
+      assert.equal(r2.paints, r1b.paints, at + "no paint pass and no reflow for the cancel either");
       assert.deepEqual(r2.hl.paddingOnly, [], at + "no padding-only highlight mark stands after the cancel");
-      assert.equal(r2.hl.blank, r1.hl.blank, at + "the cancel re-wraps nothing and unwraps nothing more: " + r2.hl.blank + " blank marks");
-      assert.ok(r2.bare.length <= r0.bare.length + unwrapped, at + "a bare rendered blank of the item after the cancel is one the target's stand unwrapped (the recorded shape, plan item 10 (b)), never more: " + JSON.stringify(r2.bare) + " against " + r0.bare.length + " before and " + unwrapped + " unwrapped");
+      assert.deepEqual(r2.bare, [], at + "no bare rendered blank in the item after the cancel (round 14 left the blanks the target's stand had unwrapped bare, 4, 4, 3 and 2 of them at 300 to 600 px with the whole item selected, until the next paint pass)");
+      assert.equal(r2.hl.blank, r0.hl.blank, at + "the highlight's blank marks after the cancel are the pass's before the click: " + r2.hl.blank + " against " + r0.hl.blank);
       assert.deepEqual(errors, [], at + "no script error");
       await page.close();
     }
