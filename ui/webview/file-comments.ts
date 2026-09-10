@@ -3163,18 +3163,26 @@ class Panel {
       p.removeChild(n); p.normalize();
     }
   }
-  /** The box whose line boxes hold `m`: its nearest ancestor that is not an inline (a computed display other than `inline` or
-   *  `contents`: the paragraph, the list item, the table cell, an inline-block of its own), the root when none is found below
-   *  it. A mark's 2 px side padding moves the wrap points of that box's lines and of no other box's, so this is the scope of
-   *  the repaint the pending target's paint and unpaint run (repaintPresel). `memo` is per call, keyed on the parent: the marks
-   *  of one passage share a few. A document with no computed style (a stand-in) answers the parent. */
+  /** The box whose line boxes hold `m`: its nearest ancestor whose width does not follow its content, so that a mark's 2 px side
+   *  padding inside it moves the wrap points of that box's lines and of no other box's. That is a block (the paragraph, the list
+   *  item, the table element, which the sheet lays out as a block of its content's width capped at the pane's), found by climbing
+   *  past every inline-level box (a computed display of `inline`, `contents`, `ruby` or an `inline-*` box: the embed chip
+   *  `a.fv-embed` is an inline-block whose width is its text's, so a mark inside it grows the chip by the padding and moves the
+   *  wrap points of the paragraph around it; taken as the box, the chip held no highlight, the paragraph's went unrepainted, and
+   *  its blanks trimmed at the pending wrap points stood bare after Cancel, round 14's symptom in a shape the constructs note
+   *  ships, the Slice 4 review's round 16) and every table part (a `table-*` display: a cell's width is its column's, shared with
+   *  the cells of the other rows, and the auto layout redistributes the columns when a cell's content grows); the root when none
+   *  is found below it. This is the scope of the repaint the pending target's paint and unpaint run (repaintPresel). `memo` is
+   *  per call, keyed on the parent: the marks of one passage share a few. A document with no computed style (a stand-in)
+   *  answers the parent. */
   private lineBoxOf(m: Element, root: Element, memo: Map<Element, Element>): Element {
     const p = m.parentNode as Element | null;
     if (!p || p === root || p.nodeType !== 1) return root;
     const hit = memo.get(p);
     if (hit) return hit;
     const d = typeof getComputedStyle === "function" ? getComputedStyle(p).display : "block";
-    const box = d === "inline" || d === "contents" ? this.lineBoxOf(p, root, memo) : p;
+    const follows = d === "contents" || d.startsWith("inline") || d.startsWith("ruby") || d.startsWith("table-");   // a box whose width follows its content, or none of its own
+    const box = follows ? this.lineBoxOf(p, root, memo) : p;
     memo.set(p, box);
     return box;
   }
@@ -3193,27 +3201,43 @@ class Panel {
    *  (anchor-map.ts trimCollapsedMarks) unwraps a blank mark that collapses at a wrap point and never re-wraps one, so a trim
    *  alone leaves the highlight's ring gapped at every blank that renders again once the wrap points moved: the Slice 4 review's
    *  round 14 trimmed the standing marks after the target's paint and left, on the list item of fourteen links selected whole
-   *  over its comment, 2 to 4 of the highlight's spaces bare after Cancel for as long as the file stayed open, and with four of
-   *  the links selected 3 bare while the composer stood (39 of the 120-link item's 119 spaces at 800 px). So the target's arrival
-   *  and departure are paint events for the marks whose lines they move: the panel's own highlights and change marks standing in
-   *  those boxes are unpainted and painted again, with the same range, classes and attributes, in the pass's order (paintAll's:
-   *  the highlights, the changes, the target inside them), then the one batched trim over the standing marks; the target is
-   *  painted once before, so its boxes can be read, and again in its place. A repaint that adds and removes no Rendered mark (a
-   *  reply, a change reply, a re-place, a comment on the file, a region, a refusal, the Raw view's row mark) changes no line and
-   *  measures nothing (md-config-paint-presel-kinds-browser.test.ts: zero Range measurements for those kinds). After the
-   *  repaint the boxes' marks are what a paint pass leaves under the same target: no padding-only mark and no bare rendered blank
-   *  beyond the pass's own recorded shape, pending and after Cancel alike (md-config-paint-presel-retrim-browser.test.ts, the
-   *  item of fourteen links at 300 to 600 px, the whole item and four of its links). The price is a fresh paint of the boxes'
-   *  marks to the trim's fixpoint, one layout a pass (round 15's measurements in the real Files pane at 1000 px, headless Chromium,
-   *  three runs each, the round 14 tree measured in the same run): the item of fourteen links 5 to 6.5 ms an open and 2.2 to 2.5
-   *  ms a Cancel (two passes; 3.7 to 5 and 1.4 to 2.1 before), the 120-link item 27 to 39 and 14 to 22 ms (three passes; 14 to 16
-   *  and 4.4 to 5.1 before), forty comments over sixty paragraphs 3 to 5 and 1.4 to 1.7 ms (no blank candidate, so a trim that
-   *  measures nothing); one comment across the paragraph of 5,000 links (9,511 marks) 6.0 to 6.2 s an open (three passes, 13,821
-   *  Range.getClientRects calls) and 3.2 to 3.3 s a Cancel (two, 9,510), against 2.7 to 2.8 and 1.3 s for round 14's trim of the
-   *  standing marks (two passes and one) and about 1.3 s for main's untrimmed paint, the recorded shape (plan item 2, the paint's
-   *  cost) and not optimised; the passes are the fixpoint's, so no reordering makes them fewer. A composer that paints no target
-   *  costs the render alone (a reply on that paragraph 20 to 28 ms, a comment on the file 1.5; 38 to 42 and 18 to 22 with round
-   *  14's trim of 4,260 measurements). */
+   *  over its comment, 2 to 4 of the highlight's spaces bare after Cancel for as long as the file stayed open, and while the
+   *  composer stood 4 and 2 of them at 300 and 400 px, 2 and 1 with four of the links selected (39 of the 120-link item's 119
+   *  spaces at 800 px). So the target's arrival and departure are paint events for the marks whose lines they move, and the repaint
+   *  is the pass over them, in three parts. The boxes are closed under the highlights standing in them: a highlight found in one is
+   *  unwrapped whole and painted again over its full range, so every box its own marks stand in is one the repaint changes too, and
+   *  the highlights standing THERE go with it, until no highlight is new (round 15 read the target's boxes alone, and a highlight
+   *  painted again in a box the target never touched landed inside the highlight or change mark standing there, a deletion point
+   *  between two of its marks, the nesting the pass gives them inverted). The highlights of that set are then unpainted and painted
+   *  again, with the same range, classes and attributes, in the pass's order, cards() (the model's order by time, so the later
+   *  comment nests inside the earlier where two overlap, and a click on the overlap opens the innermost mark's card, the later
+   *  comment's); round 15 painted them in the order of their first marks, so two overlapping comments whose order by time was not
+   *  their order in the text swapped nesting at every open and close and back at the next pass, the click on the overlap opening
+   *  the other card meanwhile. The change marks are unpainted and painted again WHOLE-DOCUMENT, through paintChanges, when one
+   *  stands in any of the boxes: paintChanges paints every hunk of the status and has no per-change scope, and an unpaint of one
+   *  box's change marks alone would split a change that spans boxes (a deletion point is placed against its new text's first mark).
+   *  Its price, on a note of a hundred paragraphs with an insertion in each (100 change marks painted again; round 16's measurement
+   *  in the real Files pane at 1000 px, headless Chromium, three runs): an open 12 to 14.5 ms and a Cancel 11 to 12 ms, against 1.7
+   *  to 3.6 and 1.1 to 1.6 ms with the target in a paragraph no change mark shares. Then the one batched trim over the standing
+   *  marks; the target is painted once before, so its boxes can be read, and again in its place, inside the highlights as the pass
+   *  paints it. A repaint that adds and removes no Rendered mark (a reply, a change reply, a re-place, a comment on the file, a
+   *  region, a refusal, the Raw view's row mark) changes no line and measures nothing
+   *  (md-config-paint-presel-kinds-browser.test.ts: zero Range measurements for those kinds). After the repaint the boxes' marks
+   *  are what a paint pass leaves under the same target: no padding-only mark and no bare rendered blank beyond the pass's own
+   *  recorded shape, pending and after Cancel alike (md-config-paint-presel-retrim-browser .test.ts, the item of fourteen links at
+   *  300 to 600 px, the whole item and four of its links), the nesting of overlapping comments and of a highlight over a change
+   *  mark the pass's, and a target inside the embed chip repainting the paragraph around it
+   *  (md-config-paint-presel-scope-browser.test.ts, round 16). The price is a fresh paint of the boxes' marks to the trim's
+   *  fixpoint, one layout a pass (round 15's measurements in the real Files pane at 1000 px, headless Chromium, three runs each,
+   *  the round 14 tree measured in the same run): the item of fourteen links 5 to 6.5 ms an open and 2.2 to 2.5 ms a Cancel (two
+   *  passes; 3.7 to 5 and 1.4 to 2.1 before), the 120-link item 27 to 39 and 14 to 22 ms (three passes; 14 to 16 and 4.4 to 5.1
+   *  before), forty comments over sixty paragraphs 3 to 5 and 1.4 to 1.7 ms (no blank candidate, so a trim that measures nothing);
+   *  one comment across the paragraph of 5,000 links (9,511 marks) 6.0 to 6.2 s an open (three passes, 13,821 Range.getClientRects
+   *  calls) and 3.2 to 3.3 s a Cancel (two, 9,510), against 2.7 to 2.8 and 1.3 s for round 14's trim of the standing marks (two
+   *  passes and one) and about 1.3 s for main's untrimmed paint, the recorded shape (plan item 2, the paint's cost) and not
+   *  optimised; the passes are the fixpoint's, so no reordering makes them fewer. A composer that paints no target costs the
+   *  render alone (a reply on that paragraph 20 to 28 ms, a comment on the file 1.5; 38 to 42 and 18 to 22 with round 14's trim of
+   *  4,260 measurements). */
   private repaintPresel(): void {
     const src = this.ctx.text(); const root = this.contentRoot();
     if (src === null || !root || this.ctx.mode() !== "rendered") {   // a media body, or the Raw view (a row mark, no layout-time trim)
@@ -3229,14 +3253,27 @@ class Panel {
     for (const m of this.paintPresel(root, src, true)) boxes.add(this.lineBoxOf(m, root, memo));
     if (!boxes.size) { this.paintRegions(); return; }   // no Rendered mark came or went: the layout is the one the last trim measured
     const held = this.heldMark();
-    // the panel's own marks standing in those boxes: the highlights by card, and whether a change mark is among them
-    const ids = new Set<string>(); let changes = false;
-    for (const b of boxes) {
-      for (const m of Array.from(b.querySelectorAll('[data-act="fcopen"]'))) { const id = (m as HTMLElement).dataset.id; if (id && isMark(m) && this.marks.has(m)) ids.add(id); }
-      if (!changes) for (const m of Array.from(b.querySelectorAll('[data-act="fcchange"]'))) if (isMark(m) && this.marks.has(m)) { changes = true; break; }
+    // the panel's highlights standing in those boxes, by card, and the boxes closed under them (the docblock): each highlight found
+    // adds the boxes of its own marks, read in their turn, until none is new
+    const ids = new Set<string>(); const queue = Array.from(boxes);
+    while (queue.length) {
+      const b = queue.shift()!;
+      for (const m of Array.from(b.querySelectorAll('[data-act="fcopen"]'))) {
+        const id = (m as HTMLElement).dataset.id;
+        if (!id || !isMark(m) || !this.marks.has(m) || ids.has(id)) continue;
+        ids.add(id);
+        for (const own of this.ownMarks("fcopen", id)) if (isMark(own)) { const bx = this.lineBoxOf(own, root, memo); if (!boxes.has(bx)) { boxes.add(bx); queue.push(bx); } }
+      }
     }
+    // ...and whether a change mark of ours stands in any of them: a tinted mark or a deletion point (the `span.fc-del` the pass puts
+    // inside the highlight it falls in; a highlight painted again around a standing point lands split on either side of it)
+    let changes = false;
+    for (const b of boxes) { if (Array.from(b.querySelectorAll('[data-act="fcchange"]')).some((m) => this.marks.has(m))) { changes = true; break; } }
+    // the highlights in the pass's order: cards(), and after them any mark whose card the model no longer lists, in document order
+    const order = this.cards().map((c) => c.id).filter((id) => ids.has(id));
+    for (const id of ids) if (!order.includes(id)) order.push(id);
     const again: Array<{ id: string; range: SourceRange; own: HTMLElement[] }> = [];
-    for (const id of ids) {
+    for (const id of order) {
       const loc = this.located.get(id); const own = this.ownMarks("fcopen", id).filter(isMark);
       if (loc && loc.range && own.length) again.push({ id, range: loc.range, own });
     }

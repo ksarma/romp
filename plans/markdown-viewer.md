@@ -1318,50 +1318,65 @@ as built departs from the text above, why, and which test holds each rule:
    trimmed the standing marks at once in the same call (the item of fourteen links selected whole over its comment had
    left two, three, four and four padding-only highlight marks at 600, 500, 400 and 300 px for as long as the composer
    was pending), and since round 15 the repaint is a paint pass over the line boxes the target enters and leaves
-   (lineBoxOf: the panel's highlights and change marks standing there are unpainted and painted again with the target
-   inside them, then the one trim), since a trim alone left the highlight's blanks trimmed at the old wrap points bare
-   where they rendered at the new ones, 3 of the item's spaces with four links selected at 600 px and 39 of the
-   120-link item's 119 at 800 px while the composer stood, and 4, 4, 3 and 2 after Cancel at 300 to 600 px until the
-   next paint pass; a repaint that adds and removes no Rendered mark (a reply, a change reply, a re-place, a comment
-   on the file, a region, a refusal, the Raw view) trims nothing (md-config-paint-presel-retrim-browser.test.ts, the
-   real panel at 300 to 600 px, the whole item and four of its links: no padding-only mark and no bare blank pending
-   or after Cancel, the marks a paint pass's under the same target; md-config-paint-presel-kinds-browser.test.ts: zero
-   Range measurements for the kinds that paint no target, where round 14 measured 4,260 on the 5,000-link paragraph,
-   22 to 27 ms a click). The repaint's price is a fresh paint of the boxes' marks to the fixpoint, one layout a pass,
-   in the real pane at 1000 px: the fourteen-link item 5 to 6.5 ms an open and 2.2 to 2.5 ms a Cancel, the 120-link
-   item 27 to 39 and 14 to 22 ms, forty comments over sixty paragraphs 3 to 5 and 1.4 to 1.7 ms; one comment across
-   the paragraph of 5,000 links 6.0 to 6.2 s an open (three passes, 13,821 Range.getClientRects calls) and 3.2 to 3.3
-   s a Cancel (two passes, 9,510), against 2.7 to 2.8 and 1.3 s for round 14's trim of the standing marks and about
-   1.3 s for main's untrimmed paint, recorded beside the paint's cost below and not optimised (the passes are the
-   fixpoint's). The panel does not repaint on a reflow, a load or a face's arrival, so a blank trimmed at the old
-   layout that renders at the new one stays bare until the next paint pass (item 10). The re-trim's price per reflow:
-   realistic shapes under 10 ms (200 comments over 300 paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to 11 ms); one
-   comment across the 5,000-link paragraph 1 to 13 s in the real pane under the convergence loop (round 14's
-   measurements, three runs agreeing on every call count: a window-resize step 1.0 to 1.1 s, a divider release 2.1 to
-   2.4 s narrowing 1000 to 700 px and 5.1 to 5.6 s widening back, a text-size step 12.4 to 13.3 s over ten passes,
-   nine that unwrapped and the tenth confirming, each pass after one that unwrapped laying the mutated paragraph out
-   again at 1.0 to 1.3 s a layout; round 13's 1.5 to 4.6 s was measured under the three-pass cap the same round
-   replaced, which left 51 padding-only marks on the text-size step where the loop leaves none), recorded beside the
-   paint's cost below and not optimised. The divider's drag itself fires one reflow, at release (the shell moves a
-   ghost line and lays the pane out once); a window-edge resize reflows every frame and pays the price per frame. The
-   cost, measured on the build box in headless Chromium under feed.css at 800 px: one comment across a paragraph of
-   5,000 links (4,999 blank marks, 324 wrap points) paints trimmed in 300 ms against 269 untrimmed once the layout the
-   panel reads next is counted on both sides (323 against 45 measured alone, the difference being that layout), two
-   passes of 9,674 Range.getClientRects calls in all, 324 marks unwrapped, one per line break of the painted
-   paragraph; a 200-comment pass over 300 paragraphs 21.1 ms batched against 20.3 untrimmed and 20.6 unbatched,
-   Chromium laying the mutated paragraph out incrementally, so the batching bounds the cost rather than saving much
-   here. In node the stand-ins offer no layout, so the trim measures nothing and the node tests pin the DOM shape and
-   the two skips: md-config-paint-trim.test.ts over a stand-in that measures (the rule, the hidden-ancestor guard,
-   two-phase as one layout per pass, the fixpoint to convergence, a five-blank cascade unwrapped whole with one layout
-   per pass, every pass over the marks the last one kept and a confirming pass when candidates remain, the batching
-   option, the candidate alphabet, the root guard and the pre-skip), md-config-paint-trim-fixpoint.test.ts (round 13,
-   over a stand-in whose Range reads an element the Range selects whole as its box, as CSSOM does: the cascade to
-   convergence and TRIM_STATS, the safety cap, a nest of marks measured by its text and dropped in one pass, the pre
-   exemption of the pre-skip), md-config-paint-collapsed-blank.test.ts (no top-level mark, no empty mark, the content
-   marks exact, unpaint and repaint exact, over 66 scenes plus the top-level zero-width one, with pointers and on the
-   index path) and md-config-blank-scenes-fixture.test.ts (the union fixture's shape: the two paragraphs in every
-   scene, a CR always the CRLF pair, since a lone CR had split a scene's html block and left it exercising nothing).
-   The browser legs pin the trimmed result over the union of every blank scene rounds 7 to 13 collected
+   (lineBoxOf: the box is the block whose width does not follow its content, past the embed chip's inline-block and a
+   table's parts, round 16; the boxes are closed under the highlights standing in them, every box a repainted
+   highlight's own marks stand in read too until no highlight is new; those highlights are unpainted and painted again
+   in cards() order, the pass's, and the change marks whole-document through paintChanges when one stands in any of
+   the boxes, since paintChanges has no per-change scope and a per-box unpaint would split a change spanning boxes, at
+   a price on a note of a hundred paragraphs with an insertion in each of 12 to 14.5 ms an open and 11 to 12 ms a
+   Cancel against 1.7 to 3.6 and 1.1 to 1.6 ms with no change mark in the target's paragraph; the target inside them,
+   then the one trim; round 15 read the target's boxes alone and painted the highlights in the order of their first
+   marks, so two overlapping comments whose order by time was not their order in the text swapped nesting at every
+   open and close and back at the next pass, the click on the overlap opening the other card meanwhile, a highlight
+   painted again in a box the target never touched landed inside the marks standing there, and a target on the chip's
+   text moved the paragraph's wrap points while no highlight of it was repainted), since a trim alone left the
+   highlight's blanks trimmed at the old wrap points bare where they rendered at the new ones, 4 and 2 of the item's
+   spaces at 300 and 400 px selected whole, 2 and 1 with four links selected, and 39 of the 120-link item's 119 at 800
+   px while the composer stood, and 4, 4, 3 and 2 after Cancel at 300 to 600 px until the next paint pass; a repaint
+   that adds and removes no Rendered mark (a reply, a change reply, a re-place, a comment on the file, a region, a
+   refusal, the Raw view) trims nothing (md-config-paint-presel-retrim-browser.test.ts, the real panel at 300 to 600
+   px, the whole item and four of its links: no padding-only mark and no bare blank pending or after Cancel, the marks
+   a paint pass's under the same target; md-config-paint-presel-kinds-browser.test.ts: zero Range measurements for the
+   kinds that paint no target, where round 14 measured 4,260 on the 5,000-link paragraph, 22 to 27 ms a click;
+   md-config-paint-presel-scope-browser.test.ts, round 16: two overlapping comments at 300 and 800 px, a comment
+   across two paragraphs with the target in the second, an insertion and a deletion point in a paragraph the target
+   never touches, and a target on the embed chip's text at 385 to 725 px, the nesting, the click target and the marks
+   the pass's pending, after Cancel and after the next pass). The repaint's price is a fresh paint of the boxes' marks
+   to the fixpoint, one layout a pass, in the real pane at 1000 px: the fourteen-link item 5 to 6.5 ms an open and 2.2
+   to 2.5 ms a Cancel, the 120-link item 27 to 39 and 14 to 22 ms, forty comments over sixty paragraphs 3 to 5 and 1.4
+   to 1.7 ms; one comment across the paragraph of 5,000 links 6.0 to 6.2 s an open (three passes, 13,821
+   Range.getClientRects calls) and 3.2 to 3.3 s a Cancel (two passes, 9,510), against 2.7 to 2.8 and 1.3 s for round
+   14's trim of the standing marks and about 1.3 s for main's untrimmed paint, recorded beside the paint's cost below
+   and not optimised (the passes are the fixpoint's). The panel does not repaint on a reflow, a load or a face's
+   arrival, so a blank trimmed at the old layout that renders at the new one stays bare until the next paint pass
+   (item 10). The re-trim's price per reflow: realistic shapes under 10 ms (200 comments over 300 paragraphs 0.6 to
+   1.2 ms, a 120-link item 0.6 to 11 ms); one comment across the 5,000-link paragraph 1 to 13 s in the real pane under
+   the convergence loop (round 14's measurements, three runs agreeing on every call count: a window-resize step 1.0 to
+   1.1 s, a divider release 2.1 to 2.4 s narrowing 1000 to 700 px and 5.1 to 5.6 s widening back, a text-size step
+   12.4 to 13.3 s over ten passes, nine that unwrapped and the tenth confirming, each pass after one that unwrapped
+   laying the mutated paragraph out again at 1.0 to 1.3 s a layout; round 13's 1.5 to 4.6 s was measured under the
+   three-pass cap the same round replaced, which left 51 padding-only marks on the text-size step where the loop
+   leaves none), recorded beside the paint's cost below and not optimised. The divider's drag itself fires one reflow,
+   at release (the shell moves a ghost line and lays the pane out once); a window-edge resize reflows every frame and
+   pays the price per frame. The cost, measured on the build box in headless Chromium under feed.css at 800 px: one
+   comment across a paragraph of 5,000 links (4,999 blank marks, 324 wrap points) paints trimmed in 300 ms against 269
+   untrimmed once the layout the panel reads next is counted on both sides (323 against 45 measured alone, the
+   difference being that layout), two passes of 9,674 Range.getClientRects calls in all, 324 marks unwrapped, one per
+   line break of the painted paragraph; a 200-comment pass over 300 paragraphs 21.1 ms batched against 20.3 untrimmed
+   and 20.6 unbatched, Chromium laying the mutated paragraph out incrementally, so the batching bounds the cost rather
+   than saving much here. In node the stand-ins offer no layout, so the trim measures nothing and the node tests pin
+   the DOM shape and the two skips: md-config-paint-trim.test.ts over a stand-in that measures (the rule, the
+   hidden-ancestor guard, two-phase as one layout per pass, the fixpoint to convergence, a five-blank cascade
+   unwrapped whole with one layout per pass, every pass over the marks the last one kept and a confirming pass when
+   candidates remain, the batching option, the candidate alphabet, the root guard and the pre-skip),
+   md-config-paint-trim-fixpoint.test.ts (round 13, over a stand-in whose Range reads an element the Range selects
+   whole as its box, as CSSOM does: the cascade to convergence and TRIM_STATS, the safety cap, a nest of marks
+   measured by its text and dropped in one pass, the pre exemption of the pre-skip),
+   md-config-paint-collapsed-blank.test.ts (no top-level mark, no empty mark, the content marks exact, unpaint and
+   repaint exact, over 66 scenes plus the top-level zero-width one, with pointers and on the index path) and
+   md-config-blank-scenes-fixture.test.ts (the union fixture's shape: the two paragraphs in every scene, a CR always
+   the CRLF pair, since a lone CR had split a scene's html block and left it exercising nothing). The browser legs pin
+   the trimmed result over the union of every blank scene rounds 7 to 13 collected
    (anchor-map-fixtures/blank-scenes.json, 95 scenes: folds, an author's figure, details, dl and center, badge rows,
    br pairs, wrap points at several widths, nbsp and U+3000, U+FEFF, every zero-width character of round 11's
    alphabet, the bidi marks and the soft hyphen, svg icons, audio with and without controls, an author pre with br and
@@ -1383,35 +1398,49 @@ as built departs from the text above, why, and which test holds each rule:
    re-trim with no reflow, a change of one zero-width space filed as not shown with Reveal, a paint made in a hidden
    pane re-trimmed on the show: in the same task by the frame the hidden trim armed, leg 4, and across frames by the
    seam's reflow report with the trim twice per event while hidden and never per frame, leg 5),
-   md-config-paint-presel-retrim-browser.test.ts (round 14, the real panel: the whole item selected over its comment
-   at 300 and 500 px, the float's Comment then Cancel, no padding-only highlight mark while the composer is pending or
-   after it, the seam reporting neither a paint nor a reflow), md-config-paint-collapsed-blank-browser.test.ts (every
-   whitespace-only node held across the paint and read node by node: a mark exactly when it renders with a width),
-   md-config-paint-whitespace-browser.test.ts leg 4 (the 5,000-link paragraph: one blank mark unwrapped per line break
-   at 800 px, no zero-width blank mark, no rendered blank unmarked, the passes read off the getClientRects and
-   removeChild calls, the first over every blank mark, each later one over exactly the marks the last kept, ending in
-   a pass that unwraps nothing or in no candidate left, at 800 px and at 700 px, where the cascade takes eight passes,
-   with no zero-width blank mark at either, the trimmed paint within a same-run bound of the untrimmed one) and
-   md-config-paint-rendered-space-browser.test.ts (a form feed leading a block renders a 14 px glyph inside the mark
-   where the bare node collapses, so the highlighted paragraph shows the glyph; item 10). History, for the reader of
-   the rounds' records: main skipped any whitespace-only node under one of twelve block containers (UL, OL, LI,
-   BLOCKQUOTE, DIV, TABLE, THEAD, TBODY, TR, SECTION, ARTICLE, BODY; TD never among them, which is why the `&nbsp;`
-   spacer cell painted on main) whatever its neighbours, so the rendered space between two inline children of a list
-   item or a centred badge row was never painted and the ring broke at it, and it painted every other blank as a
-   ringed box around nothing. Round 8 read the node's neighbours (the "\n" between a folded callout's paragraphs,
-   DETAILS not being on the list); round 9 derived BLOCK_BOXES, read a block-box parent's edge and a `<br>` as a line
-   edge, and made the neighbour reads constant time over the DOM's sibling pointers (one mark across 3,000 links 850
-   ms indexed against 32 with the pointers; md-config-paint-whitespace.test.ts counts the child-list reads and its
-   browser leg times equal work); round 10 restricted the readings to the collapsible five and retired main's
-   container list (md-config-paint-rendered-space.test.ts and its browser leg); round 11 read each side's rendered
-   content through empty inlines, hidden elements, atomic inlines and text ending in a space, and skipped a zero-width
-   run wherever it stood. Round 12's fresh reading found the next shapes that prediction got wrong (an inline svg
-   looked past as rendering nothing, an audio element without controls read as a box, a floated image, a picture
-   without an image, a form feed read as collapsible, the bidi marks and the soft hyphen outside the zero-width
-   alphabet, a space inside an inline-block, and the line wrap no reading of the DOM can see), and the prediction gave
-   way to the trim: the repo's rule is an exact mechanism over a heuristic that approximates it, and the exact answer
-   is the browser's own layout. A passage that is one zero-width character alone still gets a card and no highlight
-   (its one mark is trimmed and paintRendered returns null; md-config-paint-collapsed-blank-browser.test.ts).
+   md-config-paint-presel-retrim-browser.test.ts (rounds 14 and 15, the real panel: the whole item and four of its
+   links selected over the item's comment at 300, 400, 500 and 600 px, the float's Comment then Cancel; no
+   padding-only mark of either class and no bare rendered blank in the item while the composer is pending or after
+   Cancel, the target's marks nested inside the highlight's and never the inverse, the marks a paint pass's under the
+   same target and the highlight's blank marks after Cancel the pass's before the click, the seam reporting neither a
+   paint nor a reflow), md-config-paint-presel-kinds-browser.test.ts (round 15, the real panel over the 120-link
+   item's comment and a change card: Comment on this file, Reply on the comment and Reply on the change each opened
+   and cancelled with zero Range measurements and zero trims, where the float's Comment on a run of the links and its
+   Cancel each trim once with measurements), md-config-paint-presel-scope-browser.test.ts (round 16, the real panel:
+   two overlapping comments whose order by time is not their order in the text, at 300 and 800 px, keep the pass's
+   nesting, click target over the overlap and ring of marks while the composer stands, after Cancel and after the next
+   pass; a comment across two paragraphs overlapped in the first by a later one keeps them with the target in the
+   second; with the target in the other paragraph an insertion inside the highlight opens the change on a click and a
+   deletion point stays inside one highlight mark; a target on the embed chip's text at 385, 500, 605 and 725 px
+   repaints every mark of the paragraph's highlight, its blank marks and the paragraph's bare blanks after Cancel the
+   pass's before the click and pending a pass's under the same target),
+   md-config-paint-collapsed-blank-browser.test.ts (every whitespace-only node held across the paint and read node by
+   node: a mark exactly when it renders with a width), md-config-paint-whitespace-browser.test.ts leg 4 (the
+   5,000-link paragraph: one blank mark unwrapped per line break at 800 px, no zero-width blank mark, no rendered
+   blank unmarked, the passes read off the getClientRects and removeChild calls, the first over every blank mark, each
+   later one over exactly the marks the last kept, ending in a pass that unwraps nothing or in no candidate left, at
+   800 px and at 700 px, where the cascade takes eight passes, with no zero-width blank mark at either, the trimmed
+   paint within a same-run bound of the untrimmed one) and md-config-paint-rendered-space-browser.test.ts (a form feed
+   leading a block renders a 14 px glyph inside the mark where the bare node collapses, so the highlighted paragraph
+   shows the glyph; item 10). History, for the reader of the rounds' records: main skipped any whitespace-only node
+   under one of twelve block containers (UL, OL, LI, BLOCKQUOTE, DIV, TABLE, THEAD, TBODY, TR, SECTION, ARTICLE, BODY;
+   TD never among them, which is why the `&nbsp;` spacer cell painted on main) whatever its neighbours, so the
+   rendered space between two inline children of a list item or a centred badge row was never painted and the ring
+   broke at it, and it painted every other blank as a ringed box around nothing. Round 8 read the node's neighbours
+   (the "\n" between a folded callout's paragraphs, DETAILS not being on the list); round 9 derived BLOCK_BOXES, read
+   a block-box parent's edge and a `<br>` as a line edge, and made the neighbour reads constant time over the DOM's
+   sibling pointers (one mark across 3,000 links 850 ms indexed against 32 with the pointers;
+   md-config-paint-whitespace.test.ts counts the child-list reads and its browser leg times equal work); round 10
+   restricted the readings to the collapsible five and retired main's container list
+   (md-config-paint-rendered-space.test.ts and its browser leg); round 11 read each side's rendered content through
+   empty inlines, hidden elements, atomic inlines and text ending in a space, and skipped a zero-width run wherever it
+   stood. Round 12's fresh reading found the next shapes that prediction got wrong (an inline svg looked past as
+   rendering nothing, an audio element without controls read as a box, a floated image, a picture without an image, a
+   form feed read as collapsible, the bidi marks and the soft hyphen outside the zero-width alphabet, a space inside
+   an inline-block, and the line wrap no reading of the DOM can see), and the prediction gave way to the trim: the
+   repo's rule is an exact mechanism over a heuristic that approximates it, and the exact answer is the browser's own
+   layout. A passage that is one zero-width character alone still gets a card and no highlight (its one mark is
+   trimmed and paintRendered returns null; md-config-paint-collapsed-blank-browser.test.ts).
    anchor-map-obsidian.test.ts and the browser leg select across the formula and get the TeX between. The fill's two
    fallback shapes, KaTeX's `span.katex-error` on TeX it cannot parse and the belt's `code.md-math-src` past a bound,
    are controls like `.katex` (anchor-map.ts FORMULA_CLASSES), so a display fallback keeps the 1:1 pairing and an
@@ -1843,97 +1872,124 @@ as built departs from the text above, why, and which test holds each rule:
    the padding alone at the end of the line before the wrap, on main too) is fixed by the layout-time trim (item 2),
    which measures the mark in the browser's layout and unwraps it. Open after the review round 12, the trim's
    recorded shapes: (a) the fixpoint's price: a blank unwrapped as collapsed that renders once a later unwrap moves
-   its line's wrap point back stays unmarked until the next paint pass, since a mark is never re-wrapped (a blank at
-   a line's last inch would flip with every pass), a ring gap of the space's width (3.89 px at 14px sans-serif) at
-   each such blank. Its size, measured in round 13 on the build box (headless Chromium, the trim leg's page under
-   feed.css at 14px sans-serif, one comment across the passage; a bare blank is a whitespace-only text node below the
-   top level with a Range width above zero and no mark ancestor, the browser legs' reading), is bimodal by width: none
-   at most widths, and at a width where a line's slack falls inside the marks' side padding (4 px a mark; the Comments
-   panel nests one mark per overlapping comment, so k comments over one passage put 4k px around every link and every
-   blank of it, and the widths at which the flip happens move with the count: the nest figures below) the unwraps pull
-   a word up onto line after line and the flip cascades through the lines below. The list item of fourteen links
-   under one comment shows one bare blank of eleven rendered at 240 px and four of ten at 220, none at the legs' six
-   other widths; a list item of 120 links, sampled every 20 px from
-   800 to 200, shows none at 25 of the 31 widths, 14 of 116 at 660, 1 at 640, 3 at 360, 13 of 94 at 260, 80 of 90 at
-   240 (the 212 px content width takes two links a line untrimmed; the unwraps pull a third up on most lines, 50
-   against 59, and the ring breaks at every space from the fifteenth link on) and 4 of 63 at 220, with 2 each at 550
-   and 450 off that grid; a list item of 120 links of varied lengths 1 to 28 of 83 to 117 at 15 of the 31 widths;
-   the paragraph of 5,000 links none at 800, 650, 600 and 500 px and 341 to 2,095 of 4,162 to 4,653 at 750, 700,
-   550, 450, 400, 350 and 300 once the fixpoint completes (round 12's three-pass cap stopped short at five of these
-   widths, with 271 to 533 padding-only marks left and 1,111 to 2,095 bare). Overlapping comments (round 14, measured
-   in the real Files pane, the panel leg's page under styles.css and files-pane.css, where the item's content box is
-   the viewport less 66 px and the pane's 14.95px type makes a bare blank 4.75 px): the fourteen-link item under one
-   to four comments at viewports from 200 to 420 px in 20 px steps shows bare blanks in 8 of the 48 cells and none in
-   the other 40 (none at any count from 240 to 300 px, at 380 or at 400): under one comment 6 of 6 at 200 px and 1 of
-   11 at 320 (under two to four comments at 200 px the item lays out one link a line and renders no blank); under two
-   2 of 12 at 420; under three 8 of 8 at 220 and 4 of 10 at 320; under four 6 of 6 at 220, 4 of 10 at 340 and 1 of 11
-   at 360. At 220 px under three or four comments every blank mark of the nest measures zero in the untrimmed layout
-   (12 or 16 px of padding around each link's 79.5 px of text in a 154 px content box puts every space at a wrap
-   point, where under two comments 5 of the 13 are), so the pass's trim unwraps all 39 or 52 of them in one pass, the
-   freed padding repacks the lines, and every one of the 8 (three comments) or 6 (four) blanks that then render stands
-   bare: the highlight is a ringed box per link with a gap at every space, where under two comments at the same width
-   16 blank marks stay and none is bare, and at 300 px the spaces are marked at every count. No padding-only mark
-   stands in any of the 48 cells, so the property round 13 pinned holds where the ring's continuity does not;
-   md-config-paint-trim-panel-browser.test.ts's nest leg runs at 300 px, a width where no blank flips at any count,
-   and pins the padding-only count and not this shape's size, as every leg does. md-config-paint-trim-browser.test.ts
-   bounds such blanks by the marks unwrapped and holds zero where nothing was unwrapped: a bound on the count, never
-   a claim about its size. The layout-neutral mark, `.fc-hl` and `.fc-presel` with `margin: 0 -2px` beside their 2
-   px side padding in both sheets (a fileview-parity head), would keep the paint from moving any wrap point and
-   remove the shape; it is a design call about main's comments feature for its owner, recorded and not applied. (b)
-   A blank trimmed at one layout that renders at another stays unmarked until the next paint pass: the panel re-trims
-   its standing marks on the seam's reflow, on a figure's load and on a font face's arrival (round 13's two triggers,
-   item 2), after a paint made in a hidden pane once the pane shows, and never re-wraps (the pending target's paint
-   and unpaint, round 14's fifth trigger, are since round 15 a paint pass over the line boxes the target enters and
-   leaves, item 2: round 14's trim alone had left 2, 3, 4 and 4 of the fourteen-link item's blanks bare after Cancel
-   at 600 to 300 px and 3 while four links were selected at 600 px, where the leg now holds zero bare and zero
-   padding-only, pending and after Cancel; md-config-paint-trim-panel-browser.test.ts bounds the rendered blanks left
-   bare after its paint by the marks the trim unwrapped, shape (a)'s bound, and asserts nothing about them after a
-   reflow; its pass unwraps something, an assertion of the leg, so the exact form, none where nothing was unwrapped,
-   is md-config-paint-trim-browser.test.ts's, keyed on the event), so a blank trimmed before a figure or a face landed
-   that renders after it is this shape under a new trigger. Its size, measured the same way: the 120-link item painted
-   at 800 px (17 lines) and narrowed in one step shows 12 bare blanks of 113 rendered at 700, 11 of 108 at 600, 44 of
-   110 at 500, 10 of 91 at 400 and 12 of 83 at 300, of which 9 to 12 are the blanks trimmed at 800 that render at the
-   new width and the rest, 35 at 500, the re-trim's own unwraps pulling words up, shape (a) run during the re-trim;
-   the varied list 12 to 19 of 104 to 116; the paragraph of 5,000 links (328 lines at 800) 295 to 3,267 of 4,110 to
-   4,627 once the re-trim's fixpoint completes (295 to 1,858 when round 12's cap stopped it short at 400 and 300 px);
-   and a drag from 800 to 300 px in 10 px steps with a re-trim at each step (a window-edge resize's shape; the divider
-   re-trims once, at release) leaves 115 of 118 rendered blanks bare on the 120-link item and 95 of 97 on the varied
-   one, since a blank that collapsed at any width on the way stays unwrapped: after a drag, nearly every space of an
-   inline-heavy highlight is a ring gap until the next paint pass. (c) A form feed leading a block collapses as a bare
-   text node (0 px) and renders as a 14 px glyph once it stands in an inline box of its own, a span or the mark alike
-   (Chromium, both probed), so the trimmed paint keeps that mark and the highlighted paragraph shows the glyph where
-   the unpainted one shows nothing (md-config-paint-rendered-space-browser.test.ts pins it; a form feed leading a
-   block is written by no author). (d) A highlight from an html block into a markdown block after it is cut off and
-   mislocated when the later block's whitespace-stripped text equals the html block's rendered text (a list item
-   `**a**` after a block rendering `a`: the broken-img scene of anchor-map-fixtures/blank-scenes.json before round 13
-   re-lettered it, which had left that scene painting nothing past the html block) or when the sanitizer shortens the
-   later block's source text (a stripped `<style>` in the list item, scene 86, whose letters differ from the html
-   block's; round 13's probes over the real bundle, in which a plain `- b` after a block rendering `a b` pairs and `-
-   <b>a</b> <i>b</i>` does not), the pairing defect Slice 5's list records (the resync across an html block,
-   `runFits`); pre-existing on main and untouched by the slice. Scene 86 hits it, the union's one recorded case, so
-   md-config-paint-trim-browser.test.ts confines its rendered-blank oracle to the top-level blocks the paint reached
-   and holds that every other scene's paint reaches the closing paragraph (round 13 found two scenes passing every
-   oracle vacuously: the broken-img scene above and a CRLF scene written with a lone CR, which marked reads as a blank
-   line ending the html block; md-config-blank-scenes-fixture.test.ts pins the fixture's shape). Closed after the
-   review round 13: the three-pass cap (the fixpoint runs to convergence, TRIM_PASSES_MAX a safety cap counted when
-   reached; item 2); a nest of overlapping comments' marks peeled one level per pass (the trim measures each mark's
-   text nodes); the pre-skip deciding a rendered blank under an author pre (a `pre` ancestor exempts the node and the
-   trim measures it); a paint made while the pane was hidden left untrimmed on the show (the trim re-arms the panel's
-   layout frame when the body has no box, which re-trims the show when the hide and the show fall in one task; a hide
-   that outlasts a frame is re-trimmed by the seam's reflow report of the show, round 14's measurement); a figure's
-   load or a font face's arrival re-wrapping the lines with no width report and leaving padding-only marks (the panel
-   re-trims on both events); and a change whose every mark the pass's trim removed filed as shown (re-filed as not
-   shown, its card offering Reveal). Closed after the review round 14: the pending target repainted alone over a
-   highlight's lines (a composer opened or closed) leaving the highlight's wrap-point blanks as padding-only marks
-   until a reflow or the next pass (the repaint trims the standing marks in the same call, item 2). Closed after the
-   review round 15: that trim alone leaving the highlight's blanks trimmed at the old wrap points bare where they
-   rendered at the new ones, while the composer stood and after Cancel (the repaint is a paint pass over the line
-   boxes the target enters and leaves, item 2 and (b) above), and the same trim measuring every standing mark when a
-   composer that paints no target opened or closed (a repaint that adds and removes no Rendered mark trims nothing).
-   Recorded and not changed after rounds 13 to 15: the re-trim's price per reflow on the 5,000-link paragraph (item 2,
-   re-measured under the convergence loop in round 14), the pending target's repaint on it (item 2, round 15's
-   measurement) and shapes (a) to (d) above, (a) re-measured under overlapping comments in round 14 (its nest figures
-   above).
+   its line's wrap point back stays bare while the pane keeps the width: a mark is never re-wrapped (a blank at a
+   line's last inch would flip with every pass), and the next paint pass at the same width paints the blank again and
+   runs the same cascade over the same layout, so it unwraps the same marks in the same passes and leaves the same
+   blanks bare (round 16; md-config-paint-trim-fixpoint-browser.test.ts leg 1 holds a second pass at each of its
+   widths equal to the first in passes, blank marks kept and bare blanks), a ring gap of the space's width (3.89 px at
+   14px sans-serif) at each such blank. The shape follows the pass count: in every cell round 16 measured, a trim that
+   converged in two passes left none and one of three or more left tens to hundreds (the leg's own widths under
+   feed.css: the 5,000-link paragraph 2,005 bare at 700 px in eight passes, 1,884 at 400 in six and 2,095 at 300 in
+   five, none at 800 and 500 in two; the 120-link item two passes and none at all five). In the real Files pane (round
+   16, by content width): the 120-link item under one comment shows 24 of its 119 spaces bare at 420 px, 13 at 660 and
+   5 at 460, none at thirteen other widths sampled between 220 and 660; a paragraph of 600 links 167 at 220 px, 116 at
+   300, 83 at 380, 81 at 420 and 460, 71 at 400 and 49 at 560, none at nine others; the panel's own pass at the pane's
+   opening width, 460 px, leaves 5 and 81, and a second pass at every width the same counts. The shape's size,
+   measured in round 13 on the build box (headless Chromium, the trim leg's page under feed.css at 14px sans-serif,
+   one comment across the passage; a bare blank is a whitespace-only text node below the top level with a Range width
+   above zero and no mark ancestor, the browser legs' reading), is bimodal by width: none at most widths, and at a
+   width where a line's slack falls inside the marks' side padding (4 px a mark; the Comments panel nests one mark per
+   overlapping comment, so k comments over one passage put 4k px around every link and every blank of it, and the
+   widths at which the flip happens move with the count: the nest figures below) the unwraps pull a word up onto line
+   after line and the flip cascades through the lines below. The list item of fourteen links under one comment shows
+   one bare blank of eleven rendered at 240 px and four of ten at 220, none at the legs' six other widths; a list item
+   of 120 links, sampled every 20 px from 800 to 200, shows none at 25 of the 31 widths, 14 of 116 at 660, 1 at 640, 3
+   at 360, 13 of 94 at 260, 80 of 90 at 240 (the 212 px content width takes two links a line untrimmed; the unwraps
+   pull a third up on most lines, 50 against 59, and the ring breaks at every space from the fifteenth link on) and 4
+   of 63 at 220, with 2 each at 550 and 450 off that grid; a list item of 120 links of varied lengths 1 to 28 of 83 to
+   117 at 15 of the 31 widths; the paragraph of 5,000 links none at 800, 650, 600 and 500 px and 341 to 2,095 of 4,162
+   to 4,653 at 750, 700, 550, 450, 400, 350 and 300 once the fixpoint completes (round 12's three-pass cap stopped
+   short at five of these widths, with 271 to 533 padding-only marks left and 1,111 to 2,095 bare). Overlapping
+   comments (round 14, measured in the real Files pane, the panel leg's page under styles.css and files-pane.css,
+   where the item's content box is the viewport less 66 px and the pane's 14.95px type makes a bare blank 4.75 px):
+   the fourteen-link item under one to four comments at viewports from 200 to 420 px in 20 px steps shows bare blanks
+   in 8 of the 48 cells and none in the other 40 (none at any count from 240 to 300 px, at 380 or at 400): under one
+   comment 6 of 6 at 200 px and 1 of 11 at 320 (under two to four comments at 200 px the item lays out one link a line
+   and renders no blank); under two 2 of 12 at 420; under three 8 of 8 at 220 and 4 of 10 at 320; under four 6 of 6 at
+   220, 4 of 10 at 340 and 1 of 11 at 360. At 220 px under three or four comments every blank mark of the nest
+   measures zero in the untrimmed layout (12 or 16 px of padding around each link's 79.5 px of text in a 154 px
+   content box puts every space at a wrap point, where under two comments 5 of the 13 are), so the pass's trim unwraps
+   all 39 or 52 of them in one pass, the freed padding repacks the lines, and every one of the 8 (three comments) or 6
+   (four) blanks that then render stands bare: the highlight is a ringed box per link with a gap at every space, where
+   under two comments at the same width 16 blank marks stay and none is bare, and at 300 px the spaces are marked at
+   every count. No padding-only mark stands in any of the 48 cells, so the property round 13 pinned holds where the
+   ring's continuity does not; md-config-paint-trim-panel-browser.test.ts's nest leg runs at 300 px, a width where no
+   blank flips at any count, and pins the padding-only count and not this shape's size, as every leg does.
+   md-config-paint-trim-browser.test.ts bounds such blanks by the marks unwrapped and holds zero where nothing was
+   unwrapped: a bound on the count, never a claim about its size. The layout-neutral mark, `.fc-hl` and `.fc-presel`
+   with `margin: 0 -2px` beside their 2 px side padding in both sheets (a fileview-parity head), would keep the paint
+   from moving any wrap point and remove the shape; it is a design call about main's comments feature for its owner,
+   recorded and not applied. (b) A blank trimmed at one layout that renders at another stays unmarked until the next
+   paint pass: the panel re-trims its standing marks on the seam's reflow, on a figure's load and on a font face's
+   arrival (round 13's two triggers, item 2), after a paint made in a hidden pane once the pane shows, and never
+   re-wraps (the pending target's paint and unpaint, round 14's fifth trigger, are since round 15 a paint pass over
+   the line boxes the target enters and leaves, closed since round 16 under the highlights standing in them, item 2:
+   round 14's trim alone had left 2, 3, 4 and 4 of the fourteen-link item's blanks bare after Cancel at 600 to 300 px
+   and 4 and 2 while the composer stood at 300 and 400 px, 2 and 1 with four links selected, where the leg now holds
+   zero bare and zero padding-only, pending and after Cancel; md-config-paint-trim-panel-browser.test.ts bounds the
+   rendered blanks left bare after its paint by the marks the trim unwrapped, shape (a)'s bound, and asserts nothing
+   about them after a reflow; its pass unwraps something, an assertion of the leg, so the exact form, none where
+   nothing was unwrapped, is md-config-paint-trim-browser.test.ts's, keyed on the event), so a blank trimmed before a
+   figure or a face landed that renders after it is this shape under a new trigger. Its size, measured the same way:
+   the 120-link item painted at 800 px (17 lines) and narrowed in one step shows 12 bare blanks of 113 rendered at
+   700, 11 of 108 at 600, 44 of 110 at 500, 10 of 91 at 400 and 12 of 83 at 300, of which 9 to 12 are the blanks
+   trimmed at 800 that render at the new width and the rest, 35 at 500, the re-trim's own unwraps pulling words up,
+   shape (a) run during the re-trim; the varied list 12 to 19 of 104 to 116; the paragraph of 5,000 links (328 lines
+   at 800) 295 to 3,267 of 4,110 to 4,627 once the re-trim's fixpoint completes (295 to 1,858 when round 12's cap
+   stopped it short at 400 and 300 px); and a drag from 800 to 300 px in 10 px steps with a re-trim at each step (a
+   window-edge resize's shape; the divider re-trims once, at release) leaves 115 of 118 rendered blanks bare on the
+   120-link item and 95 of 97 on the varied one, since a blank that collapsed at any width on the way stays unwrapped:
+   after a drag, nearly every space of an inline-heavy highlight is a ring gap until the next paint pass. (c) A form
+   feed leading a block collapses as a bare text node (0 px) and renders as a 14 px glyph once it stands in an inline
+   box of its own, a span or the mark alike (Chromium, both probed), so the trimmed paint keeps that mark and the
+   highlighted paragraph shows the glyph where the unpainted one shows nothing
+   (md-config-paint-rendered-space-browser.test.ts pins it; a form feed leading a block is written by no author). (d)
+   A highlight from an html block into a markdown block after it is cut off and mislocated when the later block's
+   whitespace-stripped text equals the html block's rendered text (a list item `**a**` after a block rendering `a`:
+   the broken-img scene of anchor-map-fixtures/blank-scenes.json before round 13 re-lettered it, which had left that
+   scene painting nothing past the html block) or when the sanitizer shortens the later block's source text (a
+   stripped `<style>` in the list item, scene 86, whose letters differ from the html block's; round 13's probes over
+   the real bundle, in which a plain `- b` after a block rendering `a b` pairs and `- <b>a</b> <i>b</i>` does not),
+   the pairing defect Slice 5's list records (the resync across an html block, `runFits`); pre-existing on main and
+   untouched by the slice. Scene 86 hits it, the union's one recorded case, so md-config-paint-trim-browser.test.ts
+   confines its rendered-blank oracle to the top-level blocks the paint reached and holds that every other scene's
+   paint reaches the closing paragraph (round 13 found two scenes passing every oracle vacuously: the broken-img scene
+   above and a CRLF scene written with a lone CR, which marked reads as a blank line ending the html block;
+   md-config-blank-scenes-fixture.test.ts pins the fixture's shape). Closed after the review round 13: the three-pass
+   cap (the fixpoint runs to convergence, TRIM_PASSES_MAX a safety cap counted when reached; item 2); a nest of
+   overlapping comments' marks peeled one level per pass (the trim measures each mark's text nodes); the pre-skip
+   deciding a rendered blank under an author pre (a `pre` ancestor exempts the node and the trim measures it); a paint
+   made while the pane was hidden left untrimmed on the show (the trim re-arms the panel's layout frame when the body
+   has no box, which re-trims the show when the hide and the show fall in one task; a hide that outlasts a frame is
+   re-trimmed by the seam's reflow report of the show, round 14's measurement); a figure's load or a font face's
+   arrival re-wrapping the lines with no width report and leaving padding-only marks (the panel re-trims on both
+   events); and a change whose every mark the pass's trim removed filed as shown (re-filed as not shown, its card
+   offering Reveal). Closed after the review round 14: the pending target repainted alone over a highlight's lines (a
+   composer opened or closed) leaving the highlight's wrap-point blanks as padding-only marks until a reflow or the
+   next pass (the repaint trims the standing marks in the same call, item 2). Closed after the review round 15: that
+   trim alone leaving the highlight's blanks trimmed at the old wrap points bare where they rendered at the new ones,
+   while the composer stood and after Cancel (the repaint is a paint pass over the line boxes the target enters and
+   leaves, item 2 and (b) above), and the same trim measuring every standing mark when a composer that paints no
+   target opened or closed (a repaint that adds and removes no Rendered mark trims nothing). Closed after the review
+   round 16: the repaint painting the highlights in the order of their first marks where the pass paints them in
+   cards() order (two overlapping comments whose order by time was not their order in the text swapped nesting at
+   every open and close and back at the next pass, a click on the overlap opening the other card meanwhile), the
+   repaint reading the target's boxes alone (a highlight painted again whole in a box the target never touched landed
+   inside the highlight or change mark standing there), and lineBoxOf stopping at an inline-block (the embed chip's,
+   whose width follows its text, so a target on its text moved the paragraph's wrap points while no highlight of the
+   paragraph was repainted; item 2). Pre-existing on main, found by round 16's review and left to the focus follow-on
+   of plans/file-review.md (card-layout.ts and placeCards are byte-identical to 5917393e): the margin layout's pass is
+   not a fixed point under a focus when two cards' marks share a line, since card-layout.ts breaks the tie on
+   `desired` by the list's order and placeCards feeds a non-render pass the DOM order it wrote in placement order, so
+   when the tied pair straddles the focus's spill boundary each observer pass (a resize, a card's growth, a composer's
+   open or Cancel) swaps the pair and moves the cards below by their height difference, and a render pass, the model's
+   order, swaps them back; the fix is the pass fed the render's order, or an input-independent tie-break, with a
+   card-layout test that feeds the placement order back under a focus. Recorded and not changed after rounds 13 to 16:
+   the re-trim's price per reflow on the 5,000-link paragraph (item 2, re-measured under the convergence loop in round
+   14), the pending target's repaint on it (item 2, round 15's measurement), the change marks' whole-document repaint
+   when one stands in a box (item 2, round 16's measurement) and shapes (a) to (d) above, (a) re-measured under
+   overlapping comments in round 14 (its nest figures above) and at a standing width in the real pane in round 16 (its
+   counts by content width above).
 
 ### Slice 5: comments anchor on real notes
 

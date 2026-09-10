@@ -455,11 +455,10 @@ gear's **Pictures from the web in files** list (github.com and its image hosts, 
 place, and makes no request until you click the box; the click loads every figure from that
 host in the file, and the host stays loaded until the page reloads. An inline `<svg>` whose
 `fill`, `stroke`, `filter`, `clip-path`, `mask` or marker attribute points at another host
-with `url(...)` is a figure from the web too, and waits behind the same box. Edit the list in the gear,
-one host per line: an address pasted whole is stored as its host alone, a line that is not a
-host name is pointed out under the list, and an emptied list loads nothing from the web without
-a click. A figure path
-that starts with `~/` is not expanded to your
+with `url(...)` is a figure from the web too, and waits behind the same box. Edit the list
+in the gear, one host per line: an address pasted whole is stored as its host alone, a line
+that is not a host name is pointed out under the list, and an emptied list loads nothing
+from the web without a click. A figure path that starts with `~/` is not expanded to your
 home folder: it names a folder called `~` next to the file, as other markdown viewers read it,
 while a link that starts with `~/` does open under your home folder. A comment on an embedded
 figure is stored on its embed line,

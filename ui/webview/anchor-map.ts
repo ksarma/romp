@@ -1829,44 +1829,59 @@ const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 //   re-trim after a narrowing from 800 to 400 px left 266 (twelve passes to converge) and 800 to 300 px 652 (eleven); 800, 600
 //   and 500 px happened to converge in two passes, and 800 px was the one width the tests pinned (the Slice 4 review, round 13;
 //   md-config-paint-trim-fixpoint-browser.test.ts holds zero padding-only marks at five widths, fresh and after a narrowing).
-//   The reverse, a blank unwrapped as collapsed that renders once a later unwrap moved the wrap point, stays unpainted until the
-//   next paint pass: a mark is never re-wrapped, since a blank at a line's last inch can flip with every pass
-//   (plans/markdown-viewer.md, the Slice 4 build note's item 10, records the shape with the layout-neutral mark as the option
-//   that removes it).
+//   The reverse, a blank unwrapped as collapsed that renders once a later unwrap moved the wrap point, stays bare while the pane
+//   keeps the width: a mark is never re-wrapped, since a blank at a line's last inch can flip with every pass, and the next paint
+//   pass at the same width paints the blank again and runs the same cascade over the same layout, so it unwraps the same marks in
+//   the same number of passes and leaves the same blanks bare (md-config-paint-trim-fixpoint-browser.test.ts leg 1 holds a second
+//   pass at each of its widths equal to the first in passes, blank marks kept and bare blanks); a pass at another width runs that
+//   width's cascade, with its own gaps or none. The shape follows the pass count: in every cell the Slice 4 review's round 16
+//   measured, a trim that converged in two passes (the first unwrapped the wrap points' blanks, the second found nothing more
+//   collapsed) left no blank bare, and one that took three or more left tens to hundreds. In the real pane, one comment across the
+//   120-link item leaves 24 of its 119 spaces bare at a content width of 420 px, 13 at 660 and 5 at 460, none at the thirteen
+//   other widths sampled between 220 and 660; across a paragraph of 600 links 167 at 220 px, 116 at 300, 83 at 380, 81 at 420 and
+//   460, 71 at 400 and 49 at 560, none at nine others; the panel's own pass at the pane's opening width, 460 px, leaves 5 and 81,
+//   and a second pass at every width the same counts (plans/markdown-viewer.md, the Slice 4 build note's item 10 (a), records the
+//   shape, its counts under feed.css and under overlapping comments, and the layout-neutral mark as the option that removes it).
 // Event-based: the measurement is taken at paint time, and the panel runs the trim again over its standing marks when the seam
-// reports a reflow (file-comments.ts, onRendered "reflow": the body's width changed, a text-size step), so a blank that
-// collapses at the new width loses its mark in the frame the cards are re-placed; a blank trimmed at the old width that renders
-// at the new one stays unpainted until the next paint pass (the panel repaints on new nodes, never on a reflow, since 2026-09-09).
-// Since the Slice 4 review's round 13 the panel re-trims on two layout changes the seam never reports as well, the body's captured
-// `load` (a figure's bytes landing) and the document's FontFaceSet `loadingdone` (a face arriving under font-display: swap), each
-// re-wrapping the lines with no width report, folded into its layout frame (one trim per frame); and a trim that finds the body
-// without a box (a display:none pane, where every blank mark measures nothing and is kept) asks for a frame and measures the marks
-// again there, once per event and never per frame: when the hide and the show fall in one task that frame is the first after the
-// show and re-trims it; when a frame runs while the pane is hidden (Chromium runs a display:none frame's requestAnimationFrame, so
-// every hide that outlasts a frame) the armed frame runs hidden and keeps every mark, and the seam's width observer reports the
-// hide and the show as reflows, the show's report re-trimming (file-comments.ts trimBlanks and scheduleRetrim;
-// md-config-paint-retrim-events-browser.test.ts legs 4 and 5). Since round 14 the panel's own repaint of the pending target alone
-// (file-comments.ts repaintPresel: a composer opened, closed or moved), whose 2 px side padding moves the wrap points of the lines
-// it shares with a highlight, trims at once in the same call; since round 15 that repaint is a paint pass over the line boxes the
-// target enters and leaves (the highlights and change marks standing there are painted again with the target inside them, then the
-// one trim), since a trim alone left the highlight's blanks trimmed at the old wrap points bare where they rendered at the new ones,
-// while the composer stood and after Cancel; a repaint that adds and removes no Rendered mark (a reply, a re-place, a comment on
-// the file, a region, the Raw view) trims nothing (md-config-paint-presel-retrim-browser.test.ts, the item of fourteen links at 300
-// to 600 px, no padding-only mark and no bare blank pending or after Cancel; md-config-paint-presel-kinds-browser.test.ts, zero
-// measurements for those kinds). Its price is a fresh paint of the boxes' marks to the fixpoint, one layout a pass, in the real pane
-// at 1000 px: the fourteen-link item 5 to 6.5 ms an open and 2.2 to 2.5 ms a Cancel, the 120-link item 27 to 39 and 14 to 22 ms,
-// forty comments over sixty paragraphs 3 to 5 and 1.4 to 1.7 ms; one comment across the paragraph of 5,000 links 6.0 to 6.2 s an
-// open (three passes, 13,821 Range.getClientRects calls) and 3.2 to 3.3 s a Cancel (two passes, 9,510), against 2.7 to 2.8 and 1.3 s
-// for round 14's trim of the standing marks and about 1.3 s for main's untrimmed paint, recorded and not optimised (the passes are
-// the fixpoint's). The re-trim's price per reflow: realistic shapes under 10 ms (200 comments over 300
-// paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to 11 ms); one comment across the paragraph of 5,000 links 1 to 13 s in the real
-// pane under the convergence loop (round 14's measurements, three runs agreeing on every call count: a window-resize step 1.0 to
-// 1.1 s and 1,457 Range.getClientRects calls, a divider release narrowing 1000 to 700 px 2.1 to 2.4 s and 8,079, widening back 5.1
-// to 5.6 s and 11,514, a text-size step 12.4 to 13.3 s and 14,244, ten passes, nine that unwrapped and the tenth confirming, each
-// pass after one that unwrapped laying the mutated paragraph out again at 1.0 to 1.3 s a layout; round 13 recorded 1.5 to 4.6 s,
-// measured under the three-pass cap the same round replaced, which left 51 padding-only marks standing on the text-size step where
-// the loop leaves none), recorded beside the paint's cost and not optimised. The divider's drag itself fires one reflow, at release
-// (the shell moves a ghost line and lays the pane out once); a window-edge resize reflows every frame and pays the price per frame.
+// reports a reflow (file-comments.ts, onRendered "reflow": the body's width changed, a text-size step), so a blank that collapses
+// at the new width loses its mark in the frame the cards are re-placed; a blank trimmed at the old width that renders at the
+// new one stays unpainted until the next paint pass, which paints it and trims at the new width (the fixpoint's shape above; the
+// panel repaints on new nodes, never on a reflow, since 2026-09-09). Since the Slice 4 review's round 13 the panel re-trims on
+// two layout changes the seam never reports as well, the body's captured `load` (a figure's bytes landing) and the document's
+// FontFaceSet `loadingdone` (a face arriving under font-display: swap), each re-wrapping the lines with no width report, folded
+// into its layout frame (one trim per frame); and a trim that finds the body without a box (a display:none pane, where every blank
+// mark measures nothing and is kept) asks for a frame and measures the marks again there, once per event and never per frame:
+// when the hide and the show fall in one task that frame is the first after the show and re-trims it; when a frame runs while
+// the pane is hidden (Chromium runs a display:none frame's requestAnimationFrame, so every hide that outlasts a frame) the armed
+// frame runs hidden and keeps every mark, and the seam's width observer reports the hide and the show as reflows, the show's
+// report re-trimming (file-comments.ts trimBlanks and scheduleRetrim; md-config-paint-retrim-events-browser.test.ts legs 4 and 5).
+// Since round 14 the panel's own repaint of the pending target alone (file-comments.ts repaintPresel: a composer opened, closed
+// or moved), whose 2 px side padding moves the wrap points of the lines it shares with a highlight, trims at once in the same
+// call; since round 15 that repaint is a paint pass over the line boxes the target enters and leaves, since round 16 closed under
+// the highlights standing in them (every box a repainted highlight's own marks stand in is read too, until no highlight is new; the
+// highlights are painted again in cards() order, the pass's, the change marks whole-document through paintChanges when one stands in
+// any of the boxes, the target inside them, then the one trim; lineBoxOf climbs past inline-level boxes, the embed chip's
+// inline-block among them, and table parts to the block whose width does not follow its content), since a trim alone left the
+// highlight's blanks trimmed at the old wrap points bare where they rendered at the new ones, while the composer stood and after
+// Cancel; a repaint that adds and removes no Rendered mark (a reply, a re-place, a comment on the file, a region, the Raw view)
+// trims nothing (md-config-paint-presel-retrim-browser.test.ts, the item of fourteen links at 300 to 600 px, no padding-only mark
+// and no bare blank pending or after Cancel; md-config-paint-presel-kinds-browser.test.ts, zero measurements for those kinds;
+// md-config-paint-presel-scope-browser.test.ts, two overlapping comments' nesting and click target the pass's, a highlight across
+// two paragraphs, a change mark in an untouched paragraph, a target on the embed chip). Its price is a fresh paint of the boxes'
+// marks to the fixpoint, one layout a pass, in the real pane at 1000 px: the fourteen-link item 5 to 6.5 ms an open and 2.2 to 2.5
+// ms a Cancel, the 120-link item 27 to 39 and 14 to 22 ms, forty comments over sixty paragraphs 3 to 5 and 1.4 to 1.7 ms; one
+// comment across the paragraph of 5,000 links 6.0 to 6.2 s an open (three passes, 13,821 Range.getClientRects calls) and 3.2 to 3.3
+// s a Cancel (two passes, 9,510), against 2.7 to 2.8 and 1.3 s for round 14's trim of the standing marks and about 1.3 s for main's
+// untrimmed paint, recorded and not optimised (the passes are the fixpoint's). The re-trim's price per reflow: realistic shapes
+// under 10 ms (200 comments over 300 paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to 11 ms); one comment across the paragraph of
+// 5,000 links 1 to 13 s in the real pane under the convergence loop (round 14's measurements, three runs agreeing on every call
+// count: a window-resize step 1.0 to 1.1 s and 1,457 Range.getClientRects calls, a divider release narrowing 1000 to 700 px 2.1 to
+// 2.4 s and 8,079, widening back 5.1 to 5.6 s and 11,514, a text-size step 12.4 to 13.3 s and 14,244, ten passes, nine that
+// unwrapped and the tenth confirming, each pass after one that unwrapped laying the mutated paragraph out again at 1.0 to 1.3 s a
+// layout; round 13 recorded 1.5 to 4.6 s, measured under the three-pass cap the same round replaced, which left 51 padding-only
+// marks standing on the text-size step where the loop leaves none), recorded beside the paint's cost and not optimised. The
+// divider's drag itself fires one reflow, at release (the shell moves a ghost line and lays the pane out once); a window-edge resize
+// reflows every frame and pays the price per frame.
 // In node the stand-ins offer no layout, so the trim measures nothing and every blank the DOM-side skips leave is a mark; the
 // node tests pin the DOM shape and the two skips, the browser legs the trimmed result (md-config-paint-trim.test.ts and
 // md-config-paint-trim-browser.test.ts, over anchor-map-fixtures/blank-scenes.json, the scenes the review rounds 7 to 13 collected).

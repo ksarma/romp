@@ -14,9 +14,9 @@
 //    and cancelled: zero measurements and zero trims for each of the six clicks. A re-place and a region composer take the same
 //    branch (the composer's kind is not "comment", paintPresel paints nothing); they need a drawable pointer and a figure in view,
 //    which this page does not carry.
-// 2. The float's Comment on a selection of ten of the links, then Cancel: the target's marks come and go, the highlight is repainted
-//    with them (the presel-retrim leg pins the marks), and each click trims once with measurements, so the count is the event's and
-//    not a count of zero everywhere.
+// 2. The float's Comment on a selection of eleven of the links, then Cancel: the target's marks come and go, the highlight is
+//    repainted with them (the presel-retrim leg pins the marks), and each click trims once with measurements, so the count is the
+//    event's and not a count of zero everywhere.
 // The panel's poll is answered quietly (quietPoll, as the presel-retrim leg does). Legs await the DOM's own states and frames, never
 // a timer. Skips LOUDLY without a playwright browser (CI installs none). Synthetic values only: an invented report, /repo/notes-api
 // paths, the placeholder sid.
@@ -116,7 +116,7 @@ test("in a browser, the real panel: a composer that paints no target (Comment on
     }
     // (2) the target's paint and unpaint: the event, each with one trim and its measurements
     const selected = await select(page, "Link50 docs", "Link60 docs");
-    assert.ok(selected.startsWith("Link50 docs") && selected.endsWith("Link60 docs"), "the selection spans ten links: " + JSON.stringify(selected.slice(0, 12) + ".." + selected.slice(-12)));
+    assert.ok(selected.startsWith("Link50 docs") && selected.endsWith("Link60 docs"), "the selection spans eleven links: " + JSON.stringify(selected.slice(0, 12) + ".." + selected.slice(-12)));
     await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
     const open = await clickCount(page, ".fc-float");
     assert.ok(open.presel >= 11 && open.composer, "the float's Comment paints the target over the links and opens the box: " + JSON.stringify(open));

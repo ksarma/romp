@@ -11,18 +11,23 @@
 //    nothing, a ringed 4 x 18 px box at the end of the line (two to four of them at 600 to 300 px with the whole item selected).
 //    Round 14 trimmed the standing marks after the target's paint, which unwrapped those; but the trim never re-wraps
 //    (anchor-map.ts's header), so a blank of the highlight trimmed at the OLD wrap points that renders at the new ones stood bare
-//    (3 of the item's spaces with four links selected at 600 px; 39 of the 120-link item's 119 at 800 px), a gap in the ring while
-//    the person typed. Since round 15 the repaint is a paint pass over the line boxes the target enters and leaves: the highlights
-//    standing in them are unpainted and painted again with the target inside them, then the one trim runs (lineBoxOf; repaintPresel's
-//    docblock). So while the composer is pending: no padding-only mark of either class, no bare rendered blank in the item, the
-//    target's marks nested inside the highlight's (the pass's order), and the marks are what a paint pass leaves under the same
-//    target (the settings signal runs paintAll with the composer standing: the same blank-mark counts), with the seam reporting
-//    neither a paint nor a reflow (the path was the repaint, not the hooks).
+//    (in this scene on the round 14 tree: 4 and 2 of the item's spaces at 300 and 400 px with the whole item selected, 2 and 1 with
+//    four links selected, none at 500 and 600 px; 39 of the 120-link item's 119 at 800 px), a gap in the ring while the person typed.
+//    The 3 at 600 px with four links selected that round 15's records give is the round 15 review probe's figure, not this scene's:
+//    that probe served the Inter face and selected the four links after a whole-item Comment and Cancel on the same page (on the
+//    round 14 tree the face alone reads 2 there, the face and the prior Cancel 3). This leg's page loads no face (openWith answers
+//    every request, the font files included, with the page HTML) and opens a fresh page per scene, so its counts are the fallback
+//    face's; the real pane wraps the item elsewhere. Since round 15 the repaint is a paint pass over the line boxes the target
+//    enters and leaves: the highlights standing in them are unpainted and painted again with the target inside them, then the one
+//    trim runs (lineBoxOf; repaintPresel's docblock). So while the composer is pending: no padding-only mark of either class, no
+//    bare rendered blank in the item, the target's marks nested inside the highlight's (the pass's order), and the marks are what a
+//    paint pass leaves under the same target (the settings signal runs paintAll with the composer standing: the same blank-mark
+//    counts), with the seam reporting neither a paint nor a reflow (the path was the repaint, not the hooks).
 // 2. Cancel unpaints the target (closeComposer runs the same repaint) and the wrap points move back: round 14's trim left the blanks
-//    its stand had unwrapped bare, 4, 4, 3 and 2 of them at 300 to 600 px with the whole item selected, until the next paint pass (a
-//    status move, a reload), the ring gapped for as long as a quiet file stayed open. Since round 15 the highlight is painted again
-//    at the unpaint too: no padding-only mark, no bare blank, and the highlight's blank marks are the ones the panel's own pass
-//    painted before the click, the same count.
+//    its stand had unwrapped bare, 4, 4, 3 and 2 of them at 300 to 600 px with the whole item selected and 3 and 2 at 300 and 400 px
+//    with four links selected, until the next paint pass (a status move, a reload), the ring gapped for as long as a quiet file
+//    stayed open. Since round 15 the highlight is painted again at the unpaint too: no padding-only mark, no bare blank, and the
+//    highlight's blank marks are the ones the panel's own pass painted before the click, the same count.
 // The Comments panel polls every 2.5 s and HEADs the sidecar and the config through fetch; the harness's stub answers those paths
 // 404, a move against the status's mtimes, so a tick during a scene would refresh and repaint the marks, a paint pass that would
 // hide the path under test: the page answers those two HEADs with the status's own mtimes, as the kernel would (quietPoll). Legs

@@ -11,7 +11,10 @@
 //    and narrowed from 800 px with one re-trim (the panel's reflow shape), and holds zero padding-only marks at every width, no call
 //    reaching the safety cap (TRIM_STATS), and that the paragraph's cascade does run past three passes here. A rendered blank left
 //    unmarked (the fixpoint's recorded price, plan item 10 (a)) is counted and reported, not bounded: the cost of the pathological
-//    paragraph is recorded, not optimised (the plan).
+//    paragraph is recorded, not optimised (the plan). A second pass at the same width (the marks unpainted, the passage painted and
+//    trimmed again: the panel's next paint pass with the pane's width unchanged) is held equal to the first in its pass count, the
+//    blank marks it keeps and the rendered blanks it leaves bare, since the same layout runs the same cascade: the price is not one
+//    a later pass repays, and a gap stands while the pane keeps the width (the Slice 4 review, round 16; anchor-map.ts's header).
 // 2. Overlapping comments. k comments over one passage nest their marks (the later paint wraps the text node where it stands, inside
 //    the earlier comment's mark); a Range over an outer mark's contents reads the inner MARK element's border box, 4 px a level, so
 //    round 12's measurement peeled a nest one level per pass and four or more comments over a wrap point left ringed boxes inside
@@ -122,6 +125,7 @@ const paint = (page: any, src: string, k: number): Promise<Paint> => page.evalua
 const narrow = (page: any, w: number): Promise<number> => page.evaluate((x: number) => (window as any).__width(x), w);
 const retrim = (page: any): Promise<{ trimMs: number; passes: number }> => page.evaluate(() => (window as any).__retrim());
 const read = (page: any): Promise<Read> => page.evaluate(() => (window as any).__read());
+const unpaint = (page: any): Promise<void> => page.evaluate(() => { (window as any).__unpaint(); });
 const wrap = (block: string): string => "Intro para.\n\n" + block + "\n\nAfter para.";
 /** A mark's text for a message, every character past ASCII spelt as its escape (the blanks are invisible otherwise). */
 const show = (s: string): string => JSON.stringify(s).replace(/[^\x00-\x7f]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
@@ -131,7 +135,7 @@ const PARA = wrap(Array.from({ length: 5000 }, (_, i) => "[w" + i + "](#a" + i +
 const ITEM = wrap("- " + Array.from({ length: 120 }, (_, i) => "[Link" + i + " docs](#l" + i + ")").join(" "));
 const WIDTHS = [800, 700, 500, 400, 300];
 
-test("the fixpoint runs to convergence: one comment across the 120-link item and across the 5,000-link paragraph leaves no padding-only mark at 800, 700, 500, 400 or 300 px, fresh or narrowed from 800 px with one re-trim; the paragraph's cascade runs past three passes; no call reaches the safety cap", { timeout: 900000 }, async (t) => {
+test("the fixpoint runs to convergence: one comment across the 120-link item and across the 5,000-link paragraph leaves no padding-only mark at 800, 700, 500, 400 or 300 px, fresh or narrowed from 800 px with one re-trim; the paragraph's cascade runs past three passes; no call reaches the safety cap; a second pass at the same width takes the same passes, keeps the same blank marks and leaves the same rendered blanks bare", { timeout: 900000 }, async (t) => {
   await inBrowser(t, async (page) => {
     for (const [why, src] of [["the list item of 120 links", ITEM], ["the paragraph of 5,000 links", PARA]] as Array<[string, string]>) {
       let maxPasses = 0;
@@ -145,6 +149,19 @@ test("the fixpoint runs to convergence: one comment across the 120-link item and
         assert.equal(r.capped, 0, what + ": no call reached the cap of " + r.cap);
         maxPasses = Math.max(maxPasses, p.passes);
         t.diagnostic(what + ": " + p.passes + " passes, paint " + p.paintMs + " ms, trim " + p.trimMs + " ms, " + p.untrimmedBlank.length + " blank marks painted, " + r.blankMarks + " kept, " + r.bare.length + " rendered blanks bare (the recorded price)");
+        // the next paint pass at the same width: the marks unpainted (the panel's unpaint normalizes the text nodes too), the passage
+        // painted and trimmed again over the same layout. The same cascade runs, so a blank the first pass left bare is bare after the
+        // second as well: the recorded price is the width's, not the pass's, and nothing short of a layout change or the layout-neutral
+        // mark mends it (anchor-map.ts's header, the fixpoint bullet; the counts are diagnostics, the equality is the assertion)
+        await unpaint(page);
+        const p2 = await paint(page, src, 1);
+        const r2 = await read(page);
+        assert.equal(p2.passes, p.passes, what + ": a second pass at the same width takes the same passes");
+        assert.equal(r2.blankMarks, r.blankMarks, what + ": a second pass keeps the same blank marks");
+        assert.deepEqual(r2.bare, r.bare, what + ": a second pass leaves the same rendered blanks bare (" + r.bare.length + " after the first)");
+        assert.equal(r2.paddingOnly, 0, what + ": no padding-only mark after the second pass: " + JSON.stringify(r2.sample));
+        assert.equal(r2.capped, 0, what + ": the second pass did not reach the cap");
+        t.diagnostic(what + ", second pass: " + p2.passes + " passes, trim " + p2.trimMs + " ms, " + r2.blankMarks + " kept, " + r2.bare.length + " bare");
       }
       for (const w of WIDTHS.slice(1)) {
         await render(page, src, 800);
