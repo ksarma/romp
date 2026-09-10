@@ -367,12 +367,22 @@ type RawIndex = { source: string; shape: Shape; rows: RawRow[]; els: DElement[];
  *  layer wraps a top-level picture in a span of its own while the panel is open (file-comments-regions.ts), which
  *  changes none of the three, so the rendered table kept pairing the picture, by then a grandchild, and its wrapper
  *  stood for no block (the Slice 2 review: a reader partway into the figure was thrown to the document's top on a
- *  view switch). A hit costs one pointer compare per child. */
-type Shape = { source: string; children: DNode[] };
-const shapeOf = (root: DNode, source: string): Shape => ({ source, children: Array.from(root.childNodes) });
+ *  view switch). A hit costs one pointer compare per child. The Rendered index's shape holds the children of every
+ *  element the pairing read nested blocks out of as well (a wrapper, analyzeRendered): a nested block's node is that
+ *  element's child, so the same layer wrapping a picture INSIDE a wrapper changes the wrapper's children and nothing
+ *  of the root's (Slice 5 of plans/markdown-viewer.md). */
+type Shape = { source: string; parents: DNode[]; children: DNode[][] };
+const shapeOf = (root: DNode, source: string, wrappers: DNode[] = []): Shape => {
+  const parents = [root, ...wrappers];
+  return { source, parents, children: parents.map((p) => Array.from(p.childNodes)) };
+};
 const sameShape = (a: Shape, root: DNode, source: string): boolean => {
-  if (a.source !== source || a.children.length !== root.childNodes.length) return false;
-  for (let i = 0; i < a.children.length; i++) if (a.children[i] !== root.childNodes[i]) return false;
+  if (a.source !== source || a.parents[0] !== root) return false;
+  for (let p = 0; p < a.parents.length; p++) {
+    const was = a.children[p], now = a.parents[p].childNodes;
+    if (was.length !== now.length) return false;
+    for (let i = 0; i < was.length; i++) if (was[i] !== now[i]) return false;
+  }
   return true;
 };
 
@@ -1055,6 +1065,12 @@ type Block = {
    *  (before this, an html block right before one lost its nodes to it: the resync accepted the comment block at once) */
   blank: boolean;
   tag: string | null;   // the element the token renders to, for resyncing past an html block
+  /** an html block's top-level tags as the tag scan reads its raw (topTags), in order; null for every other block */
+  tags: TopTag[] | null;
+  /** the elements of this block whose children the pairing took into the table: a tag the raw leaves open (`<div
+   *  align="center">`, `<details><summary>x</summary>`), which the browser nests the markdown after the block inside,
+   *  so the blocks after it pair against that element's children (Slice 5's flattened walk); renderedBlockWrappers */
+  wrap: DNode[];
 };
 /** Whether an html token's raw is comments alone, whitespace between them, read left to right one comment at a time:
  *  each `<!--` is closed by the first `-->` after it (or is one of marked's two-character forms `<!-->` and `<!--->`),
@@ -1078,11 +1094,103 @@ function commentsOnly(raw: string): boolean {
     i = close + 3;
   }
 }
+/** A tag of an html token's raw, as topTags reads it: the element's name, upper case, and whether the raw leaves it OPEN. The
+ *  browser nests the markdown after the block inside an element the block left open (`<div align="center">`, a
+ *  `<details><summary>x</summary>` with a blank line after it), and closes the rest with the block (`<p>Alpha</p>`, a void
+ *  element, a `<p>` whose end tag is missing: see topTags). `depth` is 0 for a top-level tag; an element left open INSIDE
+ *  the open one before it (`<div><div>`, the second the last element child of the first) is listed after it at depth 1, 2,
+ *  and so on, since the markdown after the block nests in the innermost. `empty` marks the `<p></p>` the parser mints for a
+ *  stray `</p>`: an element with no text. */
+type TopTag = { tag: string; open: boolean; depth: number; empty?: boolean };
+const VOID_TAGS = new Set(["AREA", "BASE", "BR", "COL", "EMBED", "HR", "IMG", "INPUT", "LINK", "META", "PARAM", "SOURCE", "TRACK", "WBR"]);
+/** The elements whose start tag closes an open `<p>` (the HTML parser's rule for a `p` in button scope, "in body"). */
+const CLOSES_P = new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DETAILS", "DIALOG", "DIV", "DL", "FIELDSET", "FIGCAPTION", "FIGURE", "FOOTER", "FORM",
+                          "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "HGROUP", "HR", "MAIN", "MENU", "NAV", "OL", "P", "PRE", "SEARCH", "SECTION", "SUMMARY", "TABLE", "UL"]);
+/** The elements whose content the parser reads as text up to their own end tag, tags inside it and all. */
+const RAW_TEXT = new Set(["SCRIPT", "STYLE", "TEXTAREA", "TITLE", "XMP", "IFRAME", "NOEMBED", "NOFRAMES"]);
+const isTagNameChar = (c: string): boolean => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "-" || c === ":" || c === "_";
+/** The top-level tags an html token's raw opens, in order, each CLOSED within the raw or left OPEN: what the pairing reads the
+ *  block's rendered nodes by (analyzeRendered). A linear scan, left to right, one tag at a time, in the style of commentsOnly
+ *  (no regex): a comment is skipped to its `-->`, a doctype or processing instruction to its `>`, a tag's attributes to the
+ *  `>` outside their quotes, and a script's, style's or textarea's content to its own end tag. An element opened at depth 0
+ *  is a top-level tag: closed when its end tag comes (the stack pops to it) or, for a void element or a `/>`, at once. Two of
+ *  the parser's implied ends are read, because they decide what the block's nodes are: a `<p>` closes when a block-level
+ *  start tag (CLOSES_P) follows it, and a top-level `<p>` the raw leaves open is CLOSED, since every block marked renders
+ *  after it opens with a tag that closes a `p` (the paragraph's own `<p>`, a heading, a list, a `<pre>`, a table), so no
+ *  markdown nests in it, where it nests in an open `<div>` or `<details>`; and a stray `</p>` at depth 0 is an empty `<p>`
+ *  the parser mints, one node. An end tag with no open element of its name is dropped, as the parser drops it: a block that is
+ *  `</div>` alone opens nothing. Where this reading and the DOM disagree (the sanitizer dropped a `<style>` with its text or
+ *  unwrapped a `<form>`, the parser split a `<p>` around a `<div>`), the pairing's resync from the following blocks stands. */
+function topTags(raw: string): TopTag[] {
+  const out: TopTag[] = [];
+  const stack: string[] = [];   // the open elements, outermost first; stack[0] is out[top]'s
+  let top = -1;
+  const n = raw.length;
+  let lower: string | null = null;   // the raw lower-cased once, for a raw-text element's end tag
+  let i = 0;
+  const closeTo = (k: number): void => { stack.length = k; if (k === 0 && top >= 0) { out[top].open = false; top = -1; } };
+  const openTop = (name: string): void => { out.push({ tag: name, open: true, depth: 0 }); top = out.length - 1; };
+  while (i < n) {
+    const lt = raw.indexOf("<", i);
+    if (lt < 0) break;
+    i = lt + 1;
+    const c = raw[i];
+    if (c === "!") {
+      if (raw.startsWith("--", i + 1)) {
+        i += 3;
+        if (raw[i] === ">") { i++; continue; }
+        if (raw.startsWith("->", i)) { i += 2; continue; }
+        const close = raw.indexOf("-->", i);
+        i = close < 0 ? n : close + 3;
+      } else { const gt = raw.indexOf(">", i); i = gt < 0 ? n : gt + 1; }
+      continue;
+    }
+    if (c === "?") { const gt = raw.indexOf(">", i); i = gt < 0 ? n : gt + 1; continue; }
+    const end = c === "/";
+    let j = end ? i + 1 : i;
+    if (j >= n || !((raw[j] >= "a" && raw[j] <= "z") || (raw[j] >= "A" && raw[j] <= "Z"))) continue;   // a bare `<`: text
+    let k = j;
+    while (k < n && isTagNameChar(raw[k])) k++;
+    const name = raw.slice(j, k).toUpperCase();
+    // to the tag's `>`, outside quoted attribute values; a `/` right before it self-closes
+    let selfClosing = false;
+    for (i = k; i < n; i++) {
+      const ch = raw[i];
+      if (ch === '"' || ch === "'") { const q = raw.indexOf(ch, i + 1); if (q < 0) { i = n; break; } i = q; continue; }
+      if (ch === ">") { selfClosing = raw[i - 1] === "/" && i - 1 >= k; i++; break; }
+    }
+    if (end) {
+      let at = stack.length - 1;
+      while (at >= 0 && stack[at] !== name) at--;
+      if (at >= 0) closeTo(at);
+      else if (name === "P" && stack.length === 0) out.push({ tag: "P", open: false, depth: 0, empty: true });   // the parser's empty `<p></p>`
+      continue;
+    }
+    if (CLOSES_P.has(name) && stack.length && stack[stack.length - 1] === "P") closeTo(stack.length - 1);
+    const leaf = selfClosing || VOID_TAGS.has(name);
+    if (stack.length === 0) { if (leaf) out.push({ tag: name, open: false, depth: 0 }); else openTop(name); }
+    if (!leaf) stack.push(name);
+    if (!leaf && RAW_TEXT.has(name)) {
+      lower = lower || raw.toLowerCase();
+      const close = lower.indexOf("</" + name.toLowerCase(), i);
+      i = close < 0 ? n : close;   // the end tag is read by the next turn
+    }
+  }
+  // an open `<p>`: the next block's tag closes it (above), with whatever is open inside it; the elements still open after that
+  // are the chain the markdown after the block nests in, the innermost last
+  if (stack.length && stack[0] === "P") closeTo(0);
+  else if (stack.length > 1 && stack[stack.length - 1] === "P") stack.pop();
+  for (let d = 1; d < stack.length; d++) out.push({ tag: stack[d], open: true, depth: d });
+  return out;
+}
 type RenderedIndex = {
   source: string; shape: Shape; N: string; nStart: Int32Array | null;
   blocks: Block[];
   topNodes: DNode[]; topStart: number[]; total: number;   // every top-level child node with text, and its global index
+  /** every node a block renders as, top-level or nested in a wrapper, to its block (the pairing's one table) */
   nodeBlock: Map<DNode, number>;
+  /** the elements whose children the pairing took into the table (Block.wrap, over every block), for the shape */
+  wrappers: DNode[];
 };
 
 const nOf = (idx: { nStart: Int32Array | null }, n: number): number => (idx.nStart ? idx.nStart[n] : n);
@@ -1146,7 +1254,7 @@ function placeTokens(N: string): { placed: Placed[]; lexError: string | null } {
 // ── the source half of the rendered index, kept for the last source ──────────────────────────────────
 /** A block as the walk over the source alone answers it, before any root's pairing: everything in Block but `dom`
  *  (`refused` here is the walk's own, which the pairing may overwrite per root). */
-type Walked = Omit<Block, "dom">;
+type Walked = Omit<Block, "dom" | "wrap">;
 /** What the rendered index reads from the source alone: N and its offset map, marked's top-level tokens placed over N
  *  and the block table they make (sourceBlockSpans), and, once a Rendered root has asked for it, each block's walk
  *  (Walked). One entry, keyed on the source string: the viewer shows one text at a time and paints it many times over
@@ -1181,7 +1289,7 @@ function walkedBlocks(table: SourceTable): Walked[] {
       catch (e) { if (e instanceof Refusal) refused = e.message; else throw e; }
     }
     const isHtml = t.type === "html";
-    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, isHtml, blank: isHtml && commentsOnly(t.raw), tag: tagOf(t) });
+    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, isHtml, blank: isHtml && commentsOnly(t.raw), tag: tagOf(t), tags: isHtml ? topTags(t.raw) : null });
   }
   if (table.lexError !== null) out.length = 0;
   table.walked = out;
@@ -1193,7 +1301,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   const { N, nStart, lexError } = table;
   // one Block per walked block for THIS root: the pairing below writes `dom`, and `refused` for an html block or a
   // mismatch, and another root over the same source starts from the walk's own answers
-  const blocks: Block[] = walkedBlocks(table).map((w) => ({ ...w, dom: [] }));
+  const blocks: Block[] = walkedBlocks(table).map((w) => ({ ...w, dom: [], wrap: [] }));
   // ── the DOM's top-level nodes and their text
   const topNodes: DNode[] = [];
   const topStart: number[] = [];
@@ -1204,30 +1312,50 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
     topNodes.push(c); topStart.push(total);
     total += isText(c) ? c.data.length : textLenUnder(c, true, null);
   }
-  const content = topNodes.filter((n) => isElement(n) || stripWs((n as DText).data) !== "");
+  // the nodes the blocks pair against: the root's children with text, and, spliced in after an element an html block leaves
+  // open, that element's own children (below), so the blocks the browser nested inside it pair against them
+  let content = topNodes.filter((n) => isElement(n) || stripWs((n as DText).data) !== "");
   const nodeText = new Map<DNode, string>();
-  for (const n of content) nodeText.set(n, stripWs(isText(n) ? n.data : textOf(n)));
+  const textKey = (n: DNode): string => stripWs(isText(n) ? n.data : textOf(n));
+  for (const n of content) nodeText.set(n, textKey(n));
   if (lexError !== null) {
     blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], refused: `markdown the lexer could not parse (${lexError})`,
-                  dom: content.slice(), isHtml: false, blank: false, tag: null });
+                  dom: content.slice(), isHtml: false, blank: false, tag: null, tags: null, wrap: [] });
   }
   // ── pair blocks with nodes, in order. Every token but `html` renders as exactly one element, so the
   //    pairing is 1:1 except across an html block, whose node count is unknown (zero for a comment, several
-  //    for sibling tags, none of its text if DOMPurify dropped it). There the walk resyncs: it tries each
-  //    candidate end and accepts the first from which the following blocks line up again — by text for a
-  //    block the walk mapped, by element tag for one it refused — up to the next mapped block.
+  //    for sibling tags, none of its text if DOMPurify dropped it, and, for a tag the block leaves open, the
+  //    browser nests every block after it inside that one element). There the tag scan's reading of the raw
+  //    (topTags) goes first: each top-level tag takes the next node when that node is its element, and a tag left
+  //    OPEN takes its element's children into `content` right after it, so the blocks after the wrapper pair against
+  //    the nodes the browser nested in it (Slice 5 of plans/markdown-viewer.md, the flattened walk: before this the
+  //    wrapper took every node to the end of the document and every later selection was refused as an HTML block).
+  //    Then the walk resyncs from there: it tries each candidate end and accepts the first from which the following
+  //    blocks line up again, by text AND element tag for a block the walk mapped (a kept `<div>Go</div>` or a `Go` the
+  //    sanitizer hoisted out of a dropped `<form>` carries the next paragraph's text and is not its `<p>`), by element
+  //    tag alone for one it refused, up to the second mapped block with text where two exist before the end or the
+  //    next html block (an html `<p>Go</p>` before the paragraph `Go` fits the first and not the second; a note whose
+  //    final paragraph follows a text-alike node keeps the one-block rule). So a wrapper's own child in the raw (a
+  //    summary) goes to the html block through the resync, and where the scan and the DOM disagree (a dropped or
+  //    unwrapped element, a hoisted text) the resync decides as it always did.
   const nodeBlock = new Map<DNode, number>();
+  const wrappers: DNode[] = [];
+  const tagIs = (node: DNode, tag: string): boolean => isElement(node) && node.tagName.toUpperCase() === tag;
   const fits = (blk: Block, node: DNode): boolean => {
-    if (blk.refused !== null) return blk.tag === null || (isElement(node) && node.tagName.toUpperCase() === blk.tag);
-    return nodeText.get(node) === blk.chars;
+    if (blk.refused !== null) return blk.tag === null || tagIs(node, blk.tag);
+    if (nodeText.get(node) !== blk.chars) return false;
+    // an image paragraph pairs by its empty text alone: the regions layer wraps a top-level picture in a span while the
+    // Comments panel is open (file-comments-regions.ts), and its block must go on pairing with that span
+    return blk.chars.length === 0 || blk.tag === null || tagIs(node, blk.tag);
   };
   const runFits = (b: number, k: number): boolean => {
+    let confirmed = 0;
     for (; b < blocks.length; b++, k++) {
       const blk = blocks[b];
       if (blk.isHtml) { if (blk.blank) { k--; continue; } return true; }   // a comment block has no node; the next html block resyncs on its own
-      if (k >= content.length) return blk.refused !== null && blk.chars.length === 0 ? true : false;
+      if (k >= content.length) return confirmed > 0 || (blk.refused !== null && blk.chars.length === 0);
       if (!fits(blk, content[k])) return false;
-      if (blk.refused === null && blk.chars.length > 0) return true;   // a mapped block with text confirms the run
+      if (blk.refused === null && blk.chars.length > 0 && ++confirmed === 2) return true;   // two mapped blocks with text confirm the run
     }
     return true;
   };
@@ -1238,8 +1366,40 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
     if (blk.isHtml) {
       blk.refused = blk.refused || "an HTML block";
       if (!blk.blank) {
-        let jj = content.length;
-        for (let k = j; k <= content.length; k++) if (runFits(b + 1, k)) { jj = k; break; }
+        // an element the raw leaves open: its children (elements, and text that is not blank, as at the top level) join the
+        // pairing right after it, and it is one of the block's wrappers
+        const splice = (node: DNode, at: number): void => {
+          const kids: DNode[] = [];
+          for (let i = 0; i < node.childNodes.length; i++) {
+            const c = node.childNodes[i];
+            if (isElement(c) || (isText(c) && stripWs(c.data) !== "")) { kids.push(c); nodeText.set(c, textKey(c)); }
+          }
+          content = content.slice(0, at).concat(kids, content.slice(at));
+          blk.wrap.push(node); wrappers.push(node);
+        };
+        let k = j;
+        let holder: DNode | null = null;   // the open element the next deeper open tag's element is the last element child of
+        for (const tt of blk.tags || []) {
+          if (tt.depth > 0) {
+            let inner: DNode | null = null;
+            const kids: ArrayLike<DNode> = holder ? holder.childNodes : [];
+            for (let i = kids.length - 1; i >= 0; i--) { const c: DNode = kids[i]; if (isElement(c)) { inner = tagIs(c, tt.tag) ? c : null; break; } }
+            if (inner) splice(inner, content.indexOf(inner, k) + 1);
+            holder = inner;
+            continue;
+          }
+          // dropped, unwrapped or reshaped between the raw and the DOM: the resync below decides
+          if (k >= content.length || !tagIs(content[k], tt.tag) || (tt.empty && nodeText.get(content[k]) !== "")) { holder = null; continue; }
+          const node = content[k++];
+          holder = tt.open ? node : null;
+          if (tt.open) splice(node, k);
+        }
+        let jj = -1;
+        for (let kk = k; kk <= content.length; kk++) if (runFits(b + 1, kk)) { jj = kk; break; }
+        // no end lines the following blocks up (the block after this one is a mismatch: a list item whose source text the
+        // sanitizer shortened, blank-scenes.json's stripped-style scene): the scan's answer stands where it took an element,
+        // and the mismatch is refused with its own node; where the scan took nothing the block takes every node, as before
+        if (jj < 0) jj = k > j ? k : content.length;
         blk.dom = content.slice(j, jj);
         j = jj;
       }
@@ -1255,7 +1415,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
     }
     for (const n of blk.dom) nodeBlock.set(n, b);
   }
-  return { source, shape: shapeOf(root, source), N, nStart, blocks, topNodes, topStart, total, nodeBlock };
+  return { source, shape: shapeOf(root, source, wrappers), N, nStart, blocks, topNodes, topStart, total, nodeBlock, wrappers };
 }
 
 const renderedCache = new WeakMap<object, RenderedIndex>();
@@ -1268,12 +1428,13 @@ function renderedIndex(root: DElement, source: string): RenderedIndex {
 }
 
 // ── the block table, for the reader's place (reader-place.ts) ─────────────────────────────────────────
-// Three reads over the private table: the top-level blocks of a source as spans (sourceBlockSpans), which block a
-// top-level rendered node stands for (renderedBlockIndex), and which elements a block renders as
-// (renderedBlockElements). A REFUSED block answers all three (its node is paired by tag, and the reader's place
-// needs an element to measure, not text to quote), where renderedSpot, built for a point inside the prose, answers
-// null for one. A node the pairing could not place (whitespace between blocks, a node an html block's resync left
-// over) is no block's, and the caller reads the next node.
+// Four reads over the private table: the top-level blocks of a source as spans (sourceBlockSpans), which block a
+// rendered node stands for (renderedBlockIndex), which elements a block renders as (renderedBlockElements), and which
+// of a block's elements hold the blocks the browser nested in them (renderedBlockWrappers). A REFUSED block answers all
+// four (its node is paired by tag, and the reader's place needs an element to measure, not text to quote), where
+// renderedSpot, built for a point inside the prose, answers null for one. A node the pairing could not place (whitespace
+// between blocks, a node an html block's resync left over, at the top level or inside a wrapper) is no block's, and the
+// caller reads the next node.
 
 /** The top-level blocks of `source` in order, each its source span (first character to the end of its text, the blank
  *  lines a token swallows after it excluded), from the same placement the rendered index pairs elements by, so block b
@@ -1283,20 +1444,37 @@ function renderedIndex(root: DElement, source: string): RenderedIndex {
  *  The last source's table is kept (sourceTable): the viewer reads the same text once per scroll frame. */
 export function sourceBlockSpans(source: string): SourceRange[] { return sourceTable(source).spans; }
 
-/** The index, into sourceBlockSpans(source), of the top-level block that renders `node`, a child of `renderedRoot`;
- *  -1 when `node` is no block's (whitespace between blocks, a node an html block's resync left over). */
+/** The index, into sourceBlockSpans(source), of the block that renders `node`: a child of `renderedRoot`, or a child of
+ *  an element renderedBlockWrappers names (a paragraph the browser nested inside an unclosed `<div>`); -1 when `node` is
+ *  no block's (whitespace between blocks, a node an html block's resync left over). */
 export function renderedBlockIndex(renderedRoot: Element, source: string, node: Node): number {
   const idx = renderedIndex(renderedRoot as unknown as DElement, source);
   const b = idx.nodeBlock.get(node as unknown as DNode);
   return b === undefined ? -1 : b;
 }
 
-/** The elements block `b` renders as, in order: one for most blocks, several for an html block of sibling tags, none
- *  for a comment or a block the sanitizer dropped. */
+/** The elements block `b` renders as, in order: one for most blocks (a paragraph nested inside an html wrapper included:
+ *  its own `<p>`), several for an html block of sibling tags, the wrapper and its summary for an html block that leaves a
+ *  `<details>` open, none for a comment, a block the sanitizer dropped or a closing tag alone (`</div>`). */
 export function renderedBlockElements(renderedRoot: Element, source: string, b: number): Element[] {
   const idx = renderedIndex(renderedRoot as unknown as DElement, source);
   const blk = idx.blocks[b];
   return blk ? (blk.dom.filter((n) => isElement(n)) as unknown as Element[]) : [];
+}
+
+/** The elements of block `b` whose children the pairing took into the block table, in order: an element the html block's
+ *  raw leaves open (`<div align="center">`, `<details><summary>x</summary>` with a blank line after it), which the browser
+ *  nests the markdown after the block inside, so the blocks after it render as that element's children and pair with them
+ *  (analyzeRendered, the tag scan topTags); two for `<div><div>` in one block. Empty for every other block, so a non-empty
+ *  answer says block `b` is a wrapper's. For the reader's place (reader-place.ts), which reads the Rendered view's blocks
+ *  through the top-level elements: an element in this answer stands for the blocks nested in it, and the reader reads its
+ *  element children in its place; an element paired to the same block that is NOT in it (the wrapper's own summary) is a
+ *  row of the block's own. A child no block took (a node the resync left over) answers -1 from renderedBlockIndex as a
+ *  top-level leftover does. */
+export function renderedBlockWrappers(renderedRoot: Element, source: string, b: number): Element[] {
+  const idx = renderedIndex(renderedRoot as unknown as DElement, source);
+  const blk = idx.blocks[b];
+  return blk ? (blk.wrap.slice() as unknown as Element[]) : [];
 }
 
 /** The top-level node holding global index g, and the index within it. */
@@ -1335,18 +1513,20 @@ function formulaElements(n: DNode, out: DNode[] = []): DNode[] {
   return out;
 }
 /** The Raw offer for a selection that touched a formula through its ELEMENT (a boundary inside it): the block that renders
- *  the top-level node holding it, and the hole the element stands for, the k-th formula hole of the block for the k-th
- *  formula element under the node (the walk pushes holes in source order and the renderer emits elements in the same
- *  order); the block's own start when the count disagrees (a placeholder an author typed by hand renders a formula the
- *  walk never saw). The same fields blockExtra gives a hole touched through its characters. */
+ *  the nearest node above the formula that a block renders as (a top-level node, or a paragraph the browser nested inside
+ *  an html wrapper, whose block is then the paragraph's and not the wrapper's), and the hole the element stands for, the
+ *  k-th formula hole of the block for the k-th formula element under the node (the walk pushes holes in source order and
+ *  the renderer emits elements in the same order); the block's own start when the count disagrees (a placeholder an author
+ *  typed by hand renders a formula the walk never saw). The same fields blockExtra gives a hole touched through its
+ *  characters. */
 function formulaExtra(idx: RenderedIndex, root: DNode, control: DNode, gs: number, ge: number): Partial<MapRefusal> {
   let selected = "";
   for (const n of idx.topNodes) { selected += isText(n) ? n.data : textOf(n); }
   const rawRange = srcRangeOf(idx, selected.slice(gs, ge).trim());
   const raw: Partial<MapRefusal> = rawRange ? { rawHasQuote: true, rawRange } : { rawHasQuote: false };
   let top: DNode = control;
-  while (top.parentNode && top.parentNode !== root) top = top.parentNode;
-  const b = idx.nodeBlock.get(top);
+  while (top !== root && idx.nodeBlock.get(top) === undefined && top.parentNode) top = top.parentNode;
+  const b = top === root ? undefined : idx.nodeBlock.get(top);
   if (b === undefined) return raw;
   const blk = idx.blocks[b];
   const k = formulaElements(top).indexOf(control);
@@ -1398,25 +1578,74 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   const visible = (b: Block): boolean => b.chars.length > 0 || (b.refused !== null && b.dom.length > 0);
   const nextBlock = (from: number): number => { for (let b = from; b < idx.blocks.length; b++) if (visible(idx.blocks[b])) return b; return -1; };
   const prevBlock = (from: number): number => { for (let b = from; b >= 0; b--) if (visible(idx.blocks[b])) return b; return -1; };
+  // the block at a node's edge: the node's own, or, for a wrapper (an element whose children the pairing took, Block.wrap),
+  // the first or last nested block's, down through nested wrappers, so a boundary snapping onto a wrapper's box lands on
+  // the prose inside it and not on the wrapper's own refused block
+  const edgeBlock = (n: DNode, isStart: boolean): number => {
+    let node = n;
+    for (;;) {
+      if (idx.wrappers.indexOf(node) < 0) return idx.nodeBlock.get(node) as number;
+      const kids = node.childNodes;
+      let hit: DNode | null = null;
+      for (let u = isStart ? 0 : kids.length - 1; isStart ? u < kids.length : u >= 0; isStart ? u++ : u--) if (idx.nodeBlock.get(kids[u]) !== undefined) { hit = kids[u]; break; }
+      if (!hit) return idx.nodeBlock.get(node) as number;
+      node = hit;
+    }
+  };
+  // whitespace between blocks snaps to the next block for a start and the previous for an end: among the siblings of the
+  // whitespace node first (the top level's, or a wrapper's children), then at each level above it
+  const snapFrom = (from: DNode, isStart: boolean): { b: number; k: number } | null => {
+    for (let n: DNode = from; n.parentNode; n = n.parentNode) {
+      const kids = n.parentNode.childNodes;
+      let i = 0;
+      while (i < kids.length && kids[i] !== n) i++;
+      for (let u = isStart ? i + 1 : i - 1; isStart ? u < kids.length : u >= 0; isStart ? u++ : u--) {
+        if (idx.nodeBlock.get(kids[u]) === undefined) continue;
+        const bb = edgeBlock(kids[u], isStart);
+        return { b: bb, k: isStart ? 0 : idx.blocks[bb].chars.length };
+      }
+      if (n.parentNode === root) break;
+    }
+    return null;
+  };
+  // the deepest node under `top` holding index `c` of its text that a block renders as, and the index inside it: the
+  // pairing maps the blocks the browser nested inside an html wrapper (analyzeRendered), so a top-level node's block may
+  // be the wrapper's while the character belongs to a nested paragraph's. Whitespace between nested blocks snaps as the
+  // top level's does; a descendant with no block under a wrapper (a node the resync left over) is no block's, as at the
+  // top level; one under any other node (a paragraph's own text) keeps that node's block, and so does a summary, whose
+  // block is the wrapper's, refused.
+  const descend = (top: DNode, c: number, isStart: boolean): { b: number; k: number } | null => {
+    let node = top, b = idx.nodeBlock.get(top) as number;
+    for (;;) {
+      if (!isElement(node) || isControl(node)) break;
+      let off = 0, hit: DNode | null = null, hitOff = 0;
+      for (let i = 0; i < node.childNodes.length; i++) {
+        const ch = node.childNodes[i];
+        if (!isElement(ch) && !isText(ch)) continue;
+        const len = isText(ch) ? ch.data.length : textLenUnder(ch, true, null);
+        if (c < off + len) { hit = ch; hitOff = off; break; }
+        off += len;
+      }
+      if (!hit) break;
+      const hb = idx.nodeBlock.get(hit);
+      if (hb === undefined) {
+        if (idx.wrappers.indexOf(node) < 0) break;   // a node's own text
+        return isText(hit) && stripWs(hit.data) === "" ? snapFrom(hit, isStart) : null;
+      }
+      b = hb; node = hit; c -= hitOff;
+    }
+    return { b, k: nonWsBefore(node, c) };
+  };
   const locate = (g: number, isStart: boolean): { b: number; k: number } | null => {
     if (g >= idx.total) { const b = prevBlock(idx.blocks.length - 1); return b < 0 ? null : { b, k: idx.blocks[b].chars.length }; }
     const { t, c } = topAt(idx, g);
     const node = idx.topNodes[t];
     const b = idx.nodeBlock.get(node);
     if (b === undefined) {
-      if (isText(node) && stripWs(node.data) === "") {
-        // whitespace between blocks: the next block for a start, the previous for an end
-        let nb = -1;
-        for (let u = isStart ? t + 1 : t - 1; isStart ? u < idx.topNodes.length : u >= 0; isStart ? u++ : u--) {
-          const bb = idx.nodeBlock.get(idx.topNodes[u]);
-          if (bb !== undefined) { nb = bb; break; }
-        }
-        if (nb < 0) return null;
-        return { b: nb, k: isStart ? 0 : idx.blocks[nb].chars.length };
-      }
+      if (isText(node) && stripWs(node.data) === "") return snapFrom(node, isStart);   // whitespace between blocks
       return null;   // a node no block accounts for
     }
-    return { b, k: nonWsBefore(node, c) };
+    return descend(node, c, isStart);
   };
   const S = locate(gs, true), E = locate(ge, false);
   if (!S || !E) return refuse("The selection could not be matched to the file text.", rawExtra());
