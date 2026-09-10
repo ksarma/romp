@@ -2,11 +2,12 @@
 // panel on a fake DOM and by ui/webview/tab-color-picker.test.ts (sixteen files at 2026-09-10; the other fourteen
 // ui/timeline-*.test.ts fake no DOM), in place of the sixteen near-copies those files carried (the fifteen siblings'
 // and the tags-scale test's own: nine textual variants of one shape, unified 2026-09-10), and taken outright by
-// ui/webview/timeline-boot.test.ts. Every other ui/webview test file that fakes a DOM (140 at 2026-09-10) keeps its
-// own node classes and reaches this module through hideEdges and staysEnumerable in their constructors, so one rule
-// covers them all, and through sameNodes for its assertions over node lists. A factory node is a plain object the real
-// TimelinePanel drives: children, parentNode, attributes, classList, style, dataset, text, listeners, geometry, focus
-// and the caret. A test installs its own fake `document` and window on globalThis around it, as before.
+// ui/webview/timeline-boot.test.ts. Every other file the ratchet's detector finds (ui/test-dom-shim.test.ts; 145
+// ui/webview test files at 2026-09-10) keeps its own node classes, window stand-ins or node literals and reaches this
+// module through hideEdges and staysEnumerable, so one rule covers them all, and through sameNodes for its assertions
+// over node lists. A factory node is a plain object the real TimelinePanel drives:
+// children, parentNode, attributes, classList, style, dataset, text, listeners, geometry, focus and the caret. A test
+// installs its own fake `document` and window on globalThis around it, as before.
 //
 // A NODE INSPECTS AS ITS OWN PROJECTION, never as the tree. At creation, hideEdges makes every own property that holds
 // an object (children, parentNode, the listener tables, classList, the attribute, style and dataset records, every
@@ -48,8 +49,8 @@
 // over a live dialog at scale; ui/test-dom-shim.test.ts pins the rule, the serial and sameNodes, and keeps a ratchet
 // over the other test files' node factories. Compare one node's identity with `a === b` behind a message (the tests'
 // `same()` helper) and a node list with sameNodes, never assert.equal or deepEqual: a deepEqual of two nodes compares
-// projections, and since the serial fails for distinct nodes, but with a diff of two projections where sameNodes
-// names the index and the tags.
+// projections, which the serial makes unequal for distinct nodes, but its failure is a diff of two projections;
+// sameNodes names the index and both tags and serials instead.
 import * as assert from "node:assert/strict";
 
 export type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
