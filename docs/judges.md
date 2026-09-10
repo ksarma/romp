@@ -484,8 +484,10 @@ permission/API-error floors: one interrupt at a time, the present event first.
   `_plan_session`: a session whose inputs have not moved since a pass that
   placed nothing, left the store's key where it was and ran to completion
   returns before the store read. The evidence gate keys on the same inputs
-  (the reg by its `spawnedAt` and backend values rather than by identity) and
-  on `cleared.jsonl`, the death marker and the stall records besides, so an
+  (the reg by its `spawnedAt` and backend values rather than by identity)
+  and, like the inner key on this fork, on `cleared.jsonl`, the death marker
+  and the stall records (an input only one gate keyed would let an outer
+  re-arm be swallowed by an inner skip), so an
   idle session stops at the evidence gate; the inner gate's counters
   (`memos.plannerSkip` on `GET /perf`, see `docs/reference.md`) count only
   the sessions the evidence gate ran. Outside
@@ -513,9 +515,13 @@ permission/API-error floors: one interrupt at a time, the present event first.
   stage, so the run is marked incomplete and stamps nothing, one row per
   failure episode; the index tier's own readers write two more under the
   same rule, session-archive-unreadable and units-cache-unreadable, and its
-  publishes two kinds of their own: unread-store-save, a publish refused
-  over a cleared-card archive that did not read (the `_unread` shape), and
-  units-cache-write-failed, a unit-cache publish that did not land).
+  unit-cache publish writes units-cache-write-failed when it did not land;
+  unread-store-save is `save_goal_archive`'s refusal to publish over a
+  cleared-card archive that did not read (the `_unread` shape), reached by
+  the rewind archivers (`archive_goal_nodes`, from the rewind take
+  `drop_goals_after` and the dead-branch reconciliation
+  `reconcile_rewound_goals`); the kernel's compaction sweep and undo-clear
+  read the mark first and stand down without a row).
   A file that does not parse is never deleted: it is moved beside its path as
   `<file>.corrupt-<utc stamp>` (a `-n` suffix when two land in the same second)
   before a fresh one is written, so the bytes survive for inspection, and the

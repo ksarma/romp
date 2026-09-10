@@ -2755,9 +2755,10 @@ _COURIER_SEEN = {}         # fsid -> the scan key of its last pass that found no
 # placements, a moved store or that bit is planned again next pass whatever the key says. A parse the cache
 # does not hold is never keyed, nor is an expiry view that cannot be computed. Pruned to the sessions the
 # pass discovered; a rebound root clears. This gate sits INSIDE _plan_session; the evidence gate
-# (GATED_TIERS, _gate_check and _gated in run_plan) sits around it and keys on a superset of these inputs
-# (cleared.jsonl, the death marker, the reg's spawnedAt value and the stall slice as well), so most skips
-# happen there and this table sees the sessions it let through.
+# (GATED_TIERS, _gate_check and _gated in run_plan) sits around it and keys on these same inputs (on this
+# fork the key below carries cleared.jsonl, the death marker and the stall slice too); the outer key's only
+# terms of its own are the reg's by-value ones, spawnedAt and _sdk_owned, where this key stats the reg. So
+# most skips happen there, and this table sees the sessions it let through.
 _PLANNER_SEEN = {}         # fsid -> the plan key of its last pass that had nothing to do
 _PLANNER_STATS = {"skipped": 0, "planned": 0, "recorded": 0}
 
@@ -5583,6 +5584,15 @@ def load_goal_archive(fsid):
     file answers unmarked: empty IS its content, and absence ends a failure episode (_read_ok)."""
     path_s = str(GOALARCHDIR / (fsid + ".json"))
     fresh = {"rompUuid": fsid, "nodes": {}, "status": {}}
+
+    def _unread(e):
+        # the read and parse handlers below share it: one archive-unreadable row per failure episode and the
+        # running stage marked incomplete (_read_failed), then the marked empty shape
+        _read_failed(path_s, "archive-unreadable", fsid, e,
+                     note="cleared-card archive unreadable: %r; nothing is archived or restored for this session "
+                          "until it reads" % (e,))
+        return dict(fresh, _unread="archive")
+
     try:
         text = Path(path_s).read_text()
     except (FileNotFoundError, NotADirectoryError):
@@ -5591,17 +5601,11 @@ def load_goal_archive(fsid):
     except (OSError, UnicodeDecodeError) as e:         # unreadable, or bytes that do not decode: read_text()
         #                                                decodes here, so a non-UTF-8 archive is marked like an
         #                                                unreadable one instead of raising past both handlers
-        _read_failed(path_s, "archive-unreadable", fsid, e,
-                     note="cleared-card archive unreadable: %r — nothing is archived or restored for this session "
-                          "until it reads" % (e,))
-        return dict(fresh, _unread="archive")
+        return _unread(e)
     try:
         arch = _guard_nodes(json.loads(text))
     except Exception as e:                             # not a JSON document, or not a store shape
-        _read_failed(path_s, "archive-unreadable", fsid, e,
-                     note="cleared-card archive unreadable: %r — nothing is archived or restored for this session "
-                          "until it reads" % (e,))
-        return dict(fresh, _unread="archive")
+        return _unread(e)
     _read_ok(path_s)
     return arch
 
