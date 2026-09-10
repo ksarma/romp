@@ -17,9 +17,11 @@ Every bug fix or feature change lands with a test (repo rule). Four suites:
   (the extension's node_modules absent, or esbuild failing) skips the served labs
   with the reason; the harness's own failures raise. The two pins that compare the
   derivation against the real tree run without node_modules too, through
-  `tests/lab_dist_stub.py` (a node preload that stands in for every bare package
-  node cannot resolve, a dependency of the build and not of the exported data;
-  a skip inside its block is a failure). `tests/test_lab_dist.py`
+  `tests/lab_dist_stub.py` (a node preload that stands in for a bare package the
+  config itself requires and node cannot find, on a checkout with no node_modules
+  beside the config, a dependency of the build and not of the exported data; a
+  node_modules that exists and lacks the package makes it throw, and a skip
+  inside its block is a failure). `tests/test_lab_dist.py`
   refuses a module that builds or copies dist on its own.
   Golden transcript fixtures: `test_romp_events_golden.py` + `fixtures/`.
   Run: `python3 -m pytest tests/ -q` (~20s; a stalled run is a hang, not slow).

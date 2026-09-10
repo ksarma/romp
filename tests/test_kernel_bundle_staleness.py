@@ -104,16 +104,21 @@ class ServedLabsKeyTheSameInputs(unittest.TestCase):
     dependency of the BUILD and not of the exported data (nothing the config exports comes from that module,
     and nothing reads it at require time). CI's Python job runs no `npm ci`, so the pin ran only where a
     developer had installed the extension's dependencies until round 7 of the harness review; it now runs on
-    both kinds of checkout through tests/lab_dist_stub.py, a node preload that stands in for every bare
-    package node cannot resolve and loads the real module wherever one resolves, so the run with node_modules
-    present reads the real package (round 7 stood in for the one name esbuild, and a second bare require in
-    esbuild.js would have put this pin back to skipping on CI in silence). A config that read a stood-in
-    package at load fails loudly (every read of the stand-in throws), and the failure names the stand-in. A
-    skip raised inside the stand-in's block is a FAILURE naming tests/lab_dist_stub.py as the file to extend:
-    it means a bare package went uncovered, so on a checkout whose node_modules predate a newly added
-    dependency this pin goes red instead of skipping, while the served labs themselves still skip there (the
-    harness stays strict: nothing in tests/lab_dist.py knows the stand-in exists). The one skip left is node
-    itself missing from PATH."""
+    both kinds of checkout through tests/lab_dist_stub.py, a node preload that stands in for a bare package
+    esbuild.js itself requires and node cannot find, on a checkout with no node_modules beside it, and loads
+    the real module wherever one resolves, so the run with node_modules present reads the real package (round
+    7 stood in for the one name esbuild, and a second bare require in esbuild.js would have put this pin back
+    to skipping on CI in silence; round 8 covered every bare specifier; round 9 narrowed the stand-in to the
+    config's own requires, so a miss inside an installed package or a subpath into one stays node's error).
+    A config that read a stood-in package at load fails loudly (every read of the stand-in throws), and the
+    failure names the stand-in. On a checkout whose node_modules predate a newly added dependency the preload
+    declines (a node_modules that exists and lacks the package is a stale install, not the environment) and
+    throws naming tests/lab_dist_stub.py, the package and the directory, so this pin goes red there instead of
+    skipping, while the served labs themselves still skip there (the harness stays strict: nothing in
+    tests/lab_dist.py knows the stand-in exists). A skip raised inside the stand-in's block is a FAILURE naming
+    tests/lab_dist_stub.py: it means the preload did not take effect (a node wrapper or a policy dropping
+    NODE_OPTIONS) or the reader filed as the environment a request the preload declined. The one skip left is
+    node itself missing from PATH."""
 
     def test_every_kernel_bundle_input_is_keyed_by_the_served_labs_build(self):
         cv = km.ROOT / "vscode-extension"
