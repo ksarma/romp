@@ -5522,8 +5522,9 @@ class SdkSession:
                 self._reconnect_when_idle = True
                 self._arm_reconnect_if_quiet("request")
                 return
-            self._reconnect = True
-            self._wake_set()
+            # a pending rewind's request, or the immediate-only form: the one arm routine, so the picks riding
+            # this reconnect get their flips here too (review round 4, 2026-09-10; _arm_reconnect says why)
+            self._arm_reconnect()
         elif defer:
             self._reconnect_when_idle = True   # the settle that finds the session quiet arms it
             #   (_arm_reconnect_if_quiet); a removal from the live sets only logs (_note_work_ended)
@@ -5599,6 +5600,38 @@ class SdkSession:
             busy = self._busy_under_lock()
         return "reconnect deferred to the end of the open turn" if busy else "reconnecting to apply"
 
+    def _arm_reconnect(self) -> list:
+        """THE ONE ARM ROUTINE (review round 4, 2026-09-10): schedule the reconnect and do what every arm owes
+        the picks riding it, whichever request arms: the settle's arm for a held or deferred pick and the
+        immediate arm for an idle one (both through _arm_reconnect_if_quiet), a pending rewind's request and
+        the immediate-only form (_do_request_reconnect). Sets _reconnect and wakes the loop; opens the spawn
+        window (_launching, when no connect is in progress; _launch_shape says why); and flips the surfaces
+        of the picks riding it, since no setter flips at pick time (review round 3: flipped at the pick, a
+        mid-turn pick whose turn then spawned work began its hold with the picked value in place, the fast
+        badge reading on under the held mark and the billing row losing the report it names as what bills
+        until the work finishes): fast to on when the flag rides this connect (the badge's optimism; the next
+        init re-asserts), auth_live cleared since the CLI's report described the process this reconnect
+        replaces (set_auth). Until round 4 the rewind's request set _reconnect itself, so an auth or fast
+        pick riding a rewind never got its flips: after the landing the Billing row showed the contradiction
+        warning (the key picked, the login reported) until the new process's first init, which for a bare
+        rollback is the user's next message. Returns the names riding, for the caller's log line; clears
+        neither the surfaces nor the flags (the settle arm clears its own; the rewind's ride is logged and
+        cleared at the loop top, _reset_reconnect_state). Loop thread only."""
+        self._reconnect = True
+        self._wake_set()
+        if self._launching is None:
+            # THE SPAWN WINDOW OPENS HERE: from this arm to the landing a connect is in progress, and every
+            # pick made meanwhile compares against the shape it will run, not the process it replaces
+            # (_launch_shape). Never over a stamp already standing: a connect composed by _options runs that
+            # shape whatever a later pick asks, and the landing must stamp it as launched
+            self._launching = self.backend._launch_shape(self)
+        names = self._pick_names()
+        if self.fast_opt and "fast" in names:
+            self.fast = "on"
+        if "auth" in names:
+            self.auth_live = ""
+        return names
+
     def _arm_reconnect_if_quiet(self, reason: str, queued_ok: bool = False) -> bool:
         """Arm the pending reconnect (_reconnect_when_idle) if the session is quiet NOW, and say so once
         when it is not. Quiet: no turn in flight, no fed text the CLI still holds (_untaken), no queued
@@ -5639,39 +5672,22 @@ class SdkSession:
                                   % (self.name, self._work_phrase(n_sub, n_task), reason))
             return False
         self._reconnect_when_idle = False
-        self._reconnect = True
-        self._wake_set()
-        if self._launching is None:
-            # THE SPAWN WINDOW OPENS HERE (review round 4, 2026-09-10): from this arm to the landing a connect
-            # is in progress, and every pick made meanwhile compares against the shape it will run, not the
-            # process it replaces (_launch_shape). Never over a stamp already standing: a connect composed by
-            # _options runs that shape whatever a later pick asks, and the landing must stamp it as launched
-            self._launching = self.backend._launch_shape(self)
-        names = self._pick_names()
-        # THE ARM is where a surface flips (review round 3, 2026-09-09), whether it is this immediate arm
-        # for an idle pick or the settle's for a deferred or held one; no setter flips at pick time. Flipped
-        # at the pick, a mid-turn pick whose turn then spawned work began its hold with the picked value in
-        # place: the fast badge read on under the held mark ("the badge shows what the session runs now",
-        # false) and the delivery turn's init flipped it back with the mark standing; the billing row lost
-        # the report it names as what bills until the work finishes
-        if self.fast_opt and "fast" in names:
-            self.fast = "on"   # the badge's optimism: the flag rides this connect; the next init re-asserts
-        if "auth" in names:
-            self.auth_live = ""   # the CLI's report described the process this reconnect replaces (set_auth)
+        names = self._arm_reconnect()
         names_line = self._held_pick_phrase()
         self._reconnect_surfaces.clear()
-        if self._reconnect_held_for_work:
-            self._reconnect_held_for_work = False
-            if rewind and (n_sub or n_task):
-                # the rewind, not the emptied sets, armed this reconnect (a pending rewind reached the
-                # settle over a hold): its own line, since "live work finished" would be false with the
-                # sets still populated (review round 2)
-                rides = (self._picks_phrase(names, "held", "held") + (" rides it" if len(names) == 1 else " ride it")
-                         if names else "the held reconnect rides it")
-                self._log_quietly("reconnect (%s): the rewind reconnects over %s; %s"
-                                  % (self.name, self._work_phrase(n_sub, n_task), rides))
-            else:
-                self._log_quietly("reconnect (%s): live work finished; %s" % (self.name, names_line))
+        held = self._reconnect_held_for_work
+        self._reconnect_held_for_work = False
+        if rewind and (n_sub or n_task):
+            # the rewind, not the emptied sets, armed this reconnect (a pending rewind reached the settle
+            # over live work): its own line, since "live work finished" would be false with the sets still
+            # populated (review round 2). Keyed on the rewind and the work, not on the hold (review round 4):
+            # a hold a revert ended leaves the rewind's arm standing, and the line then names no rider
+            rides = (self._picks_phrase(names, "held", "held") + (" rides it" if len(names) == 1 else " ride it")
+                     if names else ("the held reconnect rides it" if held else ""))
+            self._log_quietly("reconnect (%s): the rewind reconnects over %s%s"
+                              % (self.name, self._work_phrase(n_sub, n_task), ("; " + rides) if rides else ""))
+        elif held:
+            self._log_quietly("reconnect (%s): live work finished; %s" % (self.name, names_line))
         return True
 
     def _note_work_ended(self, what: str) -> None:
@@ -5711,7 +5727,8 @@ class SdkSession:
         asked for, since the reconnect would relaunch the very shape the process runs (until round 3 the
         revert left the arm standing, and the settle that found no work relaunched the identical shape); with
         a surface still recorded the arm stands for it. A pending rewind records no surface and depends on
-        the deferred arm, so its arm stands."""
+        the deferred arm, so its arm stands; the hold ends all the same (a rewind's reconnect is not a hold
+        for work)."""
         self._reconnect_surfaces.discard(surface)
         if self.loop is not None and not self.ended:
             self.loop.call_soon_threadsafe(self._settle_withdrawal, surface)
@@ -5733,10 +5750,17 @@ class SdkSession:
                                   % (self.name, surface, self._picks_phrase(self._pick_names(), "pending", "pending")))
             self.backend._poke()
             return
+        # no pick is held any more, whatever else waits: the hold ends here, so no surface reports a hold
+        # naming no pick (review round 4; until then a pending rewind kept the flag with an empty set, and
+        # the chat said the pending change was waiting on the work for nothing)
+        self._reconnect_held_for_work = False
         if self._rewind_to and not self._rewind_armed:
+            # the rewind's own reconnect depends on the deferred arm, so _reconnect_when_idle stands for it
+            self._log_quietly("reconnect (%s): the withdrawn %s pick was the only one pending; the rewind's "
+                              "reconnect stands" % (self.name, surface))
+            self.backend._poke()
             return
         self._reconnect_when_idle = False
-        self._reconnect_held_for_work = False
         self._log_quietly("reconnect (%s): the withdrawn %s pick was the only one pending; no reconnect"
                           % (self.name, surface))
         self.backend._poke()
@@ -13303,10 +13327,11 @@ class SdkBackend:
                 outcome = s._note_reconnect_ask("auth")
                 # auth_live is NOT cleared here on a live session: the last init's report describes the
                 # process that keeps running until the reconnect, and the Billing row names it as what bills
-                # until then. The ARM clears it (_arm_reconnect_if_quiet), at once for an idle pick and at
-                # the settle for a deferred or held one, so the row shows the plain intent from the moment
-                # the reconnect is due until the next init re-confirms (review round 3, 2026-09-09; round 2
-                # had kept the report on the held path only). A session request_reconnect will refuse (no
+                # until then. The ARM clears it (_arm_reconnect): at once for an idle pick, at the settle for
+                # a deferred or held one, and at a pending rewind's request when the pick rides the rewind's
+                # reconnect (the third path; review round 4), so the row shows the plain intent from the
+                # moment the reconnect is due until the next init re-confirms (review round 3, 2026-09-09;
+                # round 2 had kept the report on the held path only). A session request_reconnect will refuse (no
                 # loop yet, or ended) has no arm coming and no process running: the pick applies at the next
                 # connect, and the report is history, so it is cleared now
                 if s.loop is None or s.ended:

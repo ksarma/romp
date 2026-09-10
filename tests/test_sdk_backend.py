@@ -5674,6 +5674,37 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertFalse(out["deferred"])
         self.assertEqual(self._armed(), [], "no false 'live work finished' line")
 
+    def test_e5_a_pick_riding_a_rewind_gets_the_arms_flips_at_the_rewinds_request(self):
+        # a pending rewind's request set _reconnect itself, not through the arm, so a held auth or fast pick
+        # riding it never got the arm's flips: after the landing the Billing row showed the contradiction
+        # warning (the key picked, the login reported) until the new process's first init, which for a bare
+        # rollback is the user's next message, and the fast badge stayed off under a flagged relaunch. One arm
+        # routine now, whichever request arms (review round 4)
+        s = self._sess(auth="login")
+        s._launched_auth = "login"; s.auth_live = "login"
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = False
+        self._start(s, "a1")
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.backend.set_auth(self.SID, "key"))
+            self.assertTrue(s.backend.set_fast(self.SID, "on"))
+            self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+            self.assertEqual((s.auth_live, s.fast), ("login", "off"), "held: nothing flips before the arm")
+            s._rewind_to = "22222222-3333-4444-5555-666666666666"; s._rewind_armed = False
+            s.request_reconnect()                                # the rewind's request arms at once, over the work
+            self.assertTrue(s._reconnect)
+            self.assertEqual(s.auth_live, "", "the arm clears the report: it described the process this reconnect replaces")
+            self.assertEqual(s.fast, "on", "the arm's flip: the flag rides this connect")
+            self.assertIsNotNone(s._launching, "the spawn window opens at this arm as at every other")
+            self.assertEqual(s._launching["auth"], "key", "a keyed box: the helper bills the relaunch")
+            s._reset_reconnect_state()                           # the loop top: the picks ride this reconnect
+            self.assertTrue(any("the pending fast and auth picks ride" in str(m) for m in self.logs), self.logs)
+            s._connect_landed()
+        snap = s.snapshot()
+        self.assertEqual((snap["auth"], snap["authLive"], snap["authPending"]), ("key", "", False), "no contradiction")
+        self.assertEqual(snap["fast"], "on")
+        self.assertIsNone(s._launching)
+
     def test_e4_a_pick_the_session_cannot_reconnect_for_records_no_hold(self):
         # before the first connect (loop None) request_reconnect is a no-op and the reg carries the pick
         # to the connect; the setter's line says so, and neither the surface nor the hold is recorded
@@ -6500,6 +6531,36 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         armed = self._armed()
         self.assertEqual(len(armed), 1, self.logs)
         self.assertIn("the held auth pick reconnects now", armed[0])
+
+    def test_l5_a_revert_during_a_pending_rewind_ends_the_hold_and_leaves_the_rewinds_arm(self):
+        # the withdraw's early return on a pending unarmed rewind ran after the surface discard and before the
+        # flag clears, so the hold flag stood with an empty surface set: the chat said the pending change was
+        # waiting on 1 subagent for nothing, and the settle's arm said the held reconnect rode the rewind. The
+        # hold ends whenever no surface remains, rewind or not; the rewind keeps its deferred arm (review round
+        # 4). The reachable gesture is a message deleted on a busy session (_arm_rollback_busy: the rewind
+        # pending and unarmed, a turn in flight); its wait flag is left off here, since with no transcript on
+        # disk the settle's wait completion would restore the rewind before the arm it is about to test
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        self._start(s, "a1")
+        s.inflight = 1
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+        s._rewind_to = "22222222-3333-4444-5555-666666666666"; s._rewind_armed = False
+        self.assertTrue(s.backend.set_effort(self.SID, "high"))          # the revert, during the pending rewind
+        self.assertIsNone(s._pick_held()); self.assertFalse(s._reconnect_held_for_work)
+        self.assertIsNone(s.snapshot()["pickHeld"], "no hold naming no pick")
+        self.assertTrue(s._reconnect_when_idle, "the rewind's deferred arm stands"); self.assertFalse(s._reconnect)
+        self.assertTrue(any("the withdrawn effort pick was the only one pending; the rewind's reconnect stands" in str(m)
+                            for m in self.logs), self.logs)
+        self.assertEqual([m for m in self._withdrawn() if "no reconnect" in m], [])
+        out = self._settle(s)                                            # the turn ends: the rewind arms over the work
+        self.assertTrue(out["reconnect"]); self.assertFalse(out["deferred"])
+        self.assertEqual([m for m in self.logs if "rides it" in str(m)], [], "nothing is held, so nothing rides")
+        self.assertEqual(self._armed(), [], "no false 'live work finished' line")
+        rew = [str(m) for m in self.logs if "the rewind reconnects over" in str(m)]
+        self.assertEqual(len(rew), 1, self.logs)
+        self.assertTrue(rew[0].endswith("the rewind reconnects over 1 subagent and 0 background tasks"), rew)
 
     def test_m_a_pick_made_mid_turn_flips_nothing_until_the_arm(self):
         # a pick made during a turn with no live work flipped at pick time (fast to on, auth_live blanked);
