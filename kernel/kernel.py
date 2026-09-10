@@ -25630,9 +25630,11 @@ def _manager_refusal(door, status, body):
     and the cause; `fix` is the way out; `src` is where this kernel read the token it sent (ROMP_SERVE_TOKEN,
     or this kernel's token file). 401 is the write gate not holding the token this kernel sent (another
     state root, or a manager that is not this kernel's); 503 is a manager that cannot read its own token
-    file (it mints an absent one at its start, so this is a file that exists and cannot be read). `romp
-    refresh` from a terminal runs the manager's control client, which reads the token file under that
-    shell's own state root, so it lands where this kernel's hop did not once that root is the manager's.
+    file (it mints an absent one at its start, so this is a file that exists and cannot be read). The 401
+    remedy is `romp refresh` from a shell whose state root is the manager's: that verb runs the manager's
+    control client, which reads the token file under ITS OWN root (ROMP_STATE_DIR, else XDG_STATE_HOME),
+    or ROMP_SERVE_TOKEN when that is set, never "the manager's own file"; a shell under another root
+    sends a token the manager does not hold and meets the same 401 (review round 2, 2026-09-10).
     `why` and `fix` are FIXED texts with no path in them (review round 2, 2026-09-10): the bell shows a
     notice cut at SYNC_NOTICE_FIT, the state-root path is unbounded, and with it in the text the way out
     was what got cut; the stderr line and the audit row carry `src`."""
@@ -25644,7 +25646,7 @@ def _manager_refusal(door, status, body):
     src = "ROMP_SERVE_TOKEN" if (os.environ.get("ROMP_SERVE_TOKEN") or "").strip() else str(jd.STATE / "serve-token")
     if status == 401:
         why = "the manager refused (HTTP 401): it does not hold the serve token this kernel sent"
-        fix = "Run romp refresh from a terminal; it reads the manager's own token file"
+        fix = "Run romp refresh from a shell whose state root (ROMP_STATE_DIR or XDG_STATE_HOME) is the manager's"
     elif status == 503:
         why = "the manager refused (HTTP 503): it cannot read its own serve-token file"
         fix = "Make that file a regular 0600 file you own, under the manager's state root, then run romp refresh"

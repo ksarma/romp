@@ -221,6 +221,12 @@ class ManagerHopsCarryTheToken(unittest.TestCase):
                 self.assertIn("HTTP %d" % status, refused)
                 self.assertIn(tell, refused)
                 self.assertIn("romp refresh", refused)
+                if status == 401:
+                    # review round 2 (2026-09-10): the client behind `romp refresh` reads the token file under the
+                    # shell's OWN state root (or ROMP_SERVE_TOKEN), not "the manager's own file", so the remedy
+                    # names the root that has to match
+                    self.assertIn("Run romp refresh from a shell whose state root (ROMP_STATE_DIR or XDG_STATE_HOME) is the manager's", refused)
+                    self.assertNotIn("manager's own token file", refused)
                 self.assertEqual([m for m, ok in notices if not ok], [refused], "the same text reaches the bell")
                 self.assertEqual(kinds, ["refused"], "under the refused kind")
                 lines = [l for l in err.getvalue().splitlines() if "refused POST /restart-all" in l]
