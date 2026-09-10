@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""The kernel's call shape on a session backend equals every backend's signature (2026-09-09).
-CodexBackend.prune_live took three positional arguments from its birth (2026-09-02) while the kernel's
-_merge_live_atoms passed four, so every live merge of a Codex session holding an input echo raised
-TypeError: the chat build and the feed's merge of that session failed until the echo landed, and the
-timeline bars logged "live-merge failed". Nothing pinned the shape: the backends duck-type the
-SessionBackend ABC (only TmuxBackend subclasses it), so the ABC's own signature -- which also lagged -- was
-never enforced, and the conformance test checked that each method EXISTS, not what it accepts.
-Two ratchets, both static (AST over the sources, no kernel import, so a bare run touches no state):
+"""The kernel's call shape on a session backend equals every backend's signature.
+CodexBackend.prune_live took three positional arguments while the kernel's _merge_live_atoms passed four,
+so every live merge of a Codex session holding an input echo raised TypeError: the chat build and the
+feed's merge of that session failed until the echo landed, and the timeline bars logged a live-merge
+failure. Nothing pinned the shape: the backends duck-type the SessionBackend ABC (only TmuxBackend
+subclasses it), so the ABC's own signature, which also lagged, was never enforced, and the conformance
+test checked that each method EXISTS, not what it accepts.
+Two checks, both static (AST over the sources, no kernel import, so a bare run touches no state):
   1. every call kernel.py makes on a backend bound as `be = Sessions.backend_for(...)` binds against each
      backend class that defines the method (positional count and keyword names), so a caller that grows an
      argument fails here until every backend takes it (outside the scan: chained
-     `Sessions.backend_for(x).method(...)` calls and functions that take `be` as a parameter, each of
-     which a backend may lack only behind a hasattr/getattr guard today);
+     `Sessions.backend_for(x).method(...)` calls and functions that take `be` as a parameter);
   2. every method the SessionBackend ABC declares is accepted with at least the ABC's positional shape by
      each backend that defines it, so the ABC stays the contract it claims to be.
 Synthetic fixtures only; the scan reads this repo's own sources.
@@ -22,6 +21,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 KERNEL = os.path.join(os.path.dirname(HERE), "kernel")
+SESSION_BACKEND = os.path.join(KERNEL, "session_backend.py")
 BACKENDS = {   # class -> the source file defining it
     "SdkBackend": os.path.join(KERNEL, "sdk_backend.py"),
     "CodexBackend": os.path.join(KERNEL, "codex_backend.py"),
@@ -29,22 +29,27 @@ BACKENDS = {   # class -> the source file defining it
 }
 
 
-def _read(path):
+def _parse(path):
     with open(path, encoding="utf-8") as f:
-        return f.read()
+        return ast.parse(f.read(), filename=path)
 
 
-def _class_signatures(src, cls):
-    """{method: (min_positional, max_positional, has_varargs, keyword_names, has_varkw)} for `cls`, self
-    excluded; max_positional is None with *args."""
-    tree = ast.parse(src)
+def _is_static(fn):
+    return any(isinstance(d, ast.Name) and d.id == "staticmethod" for d in fn.decorator_list)
+
+
+def _class_signatures(tree, cls):
+    """{method: (min_positional, max_positional, has_varargs, keyword_names, has_varkw)} for `cls`, the
+    receiver (self, or cls) excluded; a staticmethod has none. max_positional is None with *args."""
     out = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == cls:
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     a = item.args
-                    positional = [x.arg for x in a.posonlyargs + a.args][1:]      # drop self
+                    positional = [x.arg for x in a.posonlyargs + a.args]
+                    if not _is_static(item):
+                        positional = positional[1:]                       # drop the receiver
                     required = len(positional) - len(a.defaults)
                     names = set(positional) | {k.arg for k in a.kwonlyargs}
                     out[item.name] = (required, None if a.vararg else len(positional),
@@ -63,11 +68,10 @@ def _binds(sig, npos, kws):
     return npos + len(kws) >= required
 
 
-def _backend_for_calls(src):
+def _backend_for_calls(tree):
     """Every `be.<method>(...)` call in a kernel function whose every `be` binding is
     Sessions.backend_for(...): [(method, lineno, npos, keyword names)]. Calls with *args are skipped
     (their count is dynamic)."""
-    tree = ast.parse(src)
     found = []
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -92,13 +96,14 @@ def _backend_for_calls(src):
 class CallShapeParity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.kernel_src = _read(os.path.join(KERNEL, "kernel.py"))
-        cls.sigs = {name: _class_signatures(_read(path), name) for name, path in BACKENDS.items()}
-        cls.abc = _class_signatures(_read(os.path.join(KERNEL, "session_backend.py")), "SessionBackend")
+        trees = {path: _parse(path) for path in set(BACKENDS.values()) | {SESSION_BACKEND}}   # each file once
+        cls.calls = _backend_for_calls(trees[BACKENDS["TmuxBackend"]])                     # kernel.py
+        cls.sigs = {name: _class_signatures(trees[path], name) for name, path in BACKENDS.items()}
+        cls.abc = _class_signatures(trees[SESSION_BACKEND], "SessionBackend")
 
     def test_the_live_merge_calls_prune_live_with_four_arguments_every_backend_takes(self):
         # the exact drift: pinned by name so a rename of the caller cannot pass this vacuously
-        calls = [c for c in _backend_for_calls(self.kernel_src) if c[0] == "prune_live"]
+        calls = [c for c in self.calls if c[0] == "prune_live"]
         self.assertTrue(calls, "kernel.py no longer calls be.prune_live on a backend_for backend; re-anchor")
         for _, lineno, npos, kws in calls:
             self.assertEqual((npos, kws), (4, []), "kernel.py:%d prune_live call shape" % lineno)
@@ -109,7 +114,7 @@ class CallShapeParity(unittest.TestCase):
 
     def test_every_backend_for_call_binds_on_every_backend_that_defines_the_method(self):
         bad = []
-        for method, lineno, npos, kws in _backend_for_calls(self.kernel_src):
+        for method, lineno, npos, kws in self.calls:
             for name, sigs in self.sigs.items():
                 if method in sigs and not _binds(sigs[method], npos, kws):
                     bad.append("kernel.py:%d be.%s(%d positional%s) does not bind on %s.%s"
@@ -121,14 +126,15 @@ class CallShapeParity(unittest.TestCase):
         for method, (req, maxpos, _, names, _) in self.abc.items():
             if method.startswith("__"):
                 continue
+            fullest = maxpos if maxpos is not None else req      # a *args method's fullest FIXED call
             for name, sigs in self.sigs.items():
                 sig = sigs.get(method)
                 if sig is None:
                     continue
                 # the ABC's fullest positional call must bind, and its required count must not be raised
-                if not _binds(sig, maxpos, []) or sig[0] > req:
-                    bad.append("%s.%s accepts %s but SessionBackend.%s declares %d..%d positional"
-                               % (name, method, "%d..%s" % (sig[0], sig[1]), method, req, maxpos))
+                if not _binds(sig, fullest, []) or sig[0] > req:
+                    bad.append("%s.%s accepts %d..%s but SessionBackend.%s declares %d..%s positional"
+                               % (name, method, sig[0], sig[1], method, req, maxpos))
         self.assertEqual(bad, [], "\n".join(bad))
 
     def test_the_abc_declares_prune_lives_floor(self):

@@ -51,8 +51,14 @@ test("no exit path can silently eat an edited buffer", () => {
 });
 
 test("a conflict keeps the buffer, says why, and Reload asks before discarding", () => {
+  // a child of the CARD between the title bar and the body row (noteBar), never the body's first child: inside
+  // the body it sat above an editor that is 100% of that same body, so the editor's bottom was cut off by
+  // the bar's height and the body's scroll carried the bar away (file-view-notice.test.ts runs the mount).
+  // The row is .fileview-main, which the body shares with the comments panel (Slice 2 of plans/markdown-viewer.md),
+  // so the bar goes before main; body is main's child and is no reference node of the card.
   assert.match(VIEW, /box\.insertBefore\(bar2, main\);/, "the error bar sits ABOVE the body row that holds the textarea (a child of the card since Slice 2 of plans/markdown-viewer.md), so the buffer survives");
-  assert.doesNotMatch(VIEW, /body\.prepend\(bar2\);/, "never inside the body, where a swap of its children took it");
+  assert.doesNotMatch(VIEW, /body\.prepend\(bar2\);/, "never inside the body, where the editor's 100% height leaves it no room");
+  assert.match(VIEW, /const bar2 = noteBar\(err\);/, "the refused-save notice goes through the one helper that mounts there");
   assert.match(VIEW, /if \(\/changed on disk\/\.test\(err\)\) \{/);
   assert.match(VIEW, /dirty = false;\s*\/\/ confirmed once — the replace guard must not ask twice/);
 });

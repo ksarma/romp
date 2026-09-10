@@ -29,7 +29,11 @@
 //      the kernel round-trip, so the user always sees the click registered — then
 //      any dialog / error / result follows. A button that "does nothing visible
 //      yet" is the other half of the multi-click problem: the user re-clicks
-//      because nothing told them the first one took.
+//      because nothing told them the first one took. The pulse precedes the
+//      handler, so a handler that DECLINES the click it was routed takes the pulse
+//      back itself, in the same task (delegate() below): a control that pulses and
+//      then does nothing is this rule inverted, an acknowledgement of a press that
+//      never took.
 //
 // delegate() does both: one listener per stable root, `data-act` dispatch, and an
 // automatic feedback flash on every matched activation.
@@ -61,6 +65,16 @@ export function flash(el: HTMLElement): void {
 // nearest ancestor WITH a data-act wins, so a control nested inside a larger
 // clickable row (e.g. a ✕ inside a tab) routes to its own action without needing
 // stopPropagation. Call once per root — never inside a render loop.
+// The pulse comes first, then the handler (click-safe.test.ts and tab-hide.test.ts pin
+// the order), and the helper stays generic: it cannot tell an activation the handler
+// will decline from one it will act on, and the handler's return value carries no
+// verdict. A handler that STANDS DOWN on a click it was routed — the second click of
+// one gesture (render.ts's `once` on the snapshot pane, 2026-09-08), the click that
+// ends a drag-selection across a control that is also text — removes `romp-acted`
+// from the element before it returns. The removal lands in the same task as the add,
+// before a frame paints, so the control never shows a press it ignored; flash's timer
+// then finds nothing to remove, and the next activation pulses as before
+// (actions.test.ts runs the three cases).
 export function delegate(root: HTMLElement | Document, handlers: Record<string, ActionHandler>): void {
   root.addEventListener("click", (ev) => {
     const start = ev.target as Element | null;

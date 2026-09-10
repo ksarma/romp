@@ -260,6 +260,7 @@ class AutoNudgeBundlesSameTick(unittest.TestCase):
             "_last_state", "_session_awaiting", "_turn_romp_injected", "_closer_settled",
             "_revivers_pending", "_pending_ops")}
         self._orig_jd = {n: getattr(jd, n) for n in ("parsed_session", "load_goals", "load_goals_shared",
+                                                     "load_goals_shared_or_fault",
                                                      "_segs", "plan_units")}
         self._orig_backend = km.Sessions.backend_for
         km._session_flag = lambda sid, flag: False
@@ -281,10 +282,15 @@ class AutoNudgeBundlesSameTick(unittest.TestCase):
         jd.parsed_session = lambda sid, paths, now: {"turns": self.turns}
         self.store = _store({G1: _node(G1, "Ship the auth refactor"),
                              G2: _node(G2, "Write the migration guide")})
+        # The walk's SNAPSHOT is the shared read-only view (2026-09-09); its writers and the fire list reload
+        # fresh through load_goals. Both are stubbed: with only load_goals stubbed, the shared read found no
+        # store file in a fresh process (and delegated to the stub), but under the parallel runner it read a
+        # store an earlier module had left at the shared placeholder sid, and nothing was due.
         jd.load_goals = lambda sid: self.store
-        # the walk decides on jd.load_goals_shared since performance round 5 (2026-09-08); the stub follows
-        # whatever jd.load_goals the test installs, so the walk's snapshot is the stub's first answer and a
-        # store file another test left under the shared GOALDIR is never read instead
+        jd.load_goals_shared_or_fault = lambda sid: (self.store, None)
+        # load_goals_shared is stubbed beside it: the judge's load_goals_shared_or_fault resolves that name at call
+        # time and the wake sweep reads it directly (2026-09-09), so the stub follows whatever jd.load_goals the
+        # test installs and a store file another test left under the shared GOALDIR is never read instead
         jd.load_goals_shared = lambda sid: jd.load_goals(sid)
         self.sent = []
         test = self
@@ -341,12 +347,8 @@ class AutoNudgeBundlesSameTick(unittest.TestCase):
         done = _store({G1: _node(G1, "Ship the auth refactor"),
                        G2: _node(G2, "Write the migration guide", nodeComplete=True)},
                       status={G1: "working", G2: "completed"})
-        calls = {"n": 0}
-
-        def load(sid):
-            calls["n"] += 1
-            return snap if calls["n"] == 1 else done
-        jd.load_goals = load
+        jd.load_goals_shared_or_fault = lambda sid: (snap, None)   # the tick's snapshot
+        jd.load_goals = lambda sid: done                            # the send-moment re-read
         self._tick()
         self.assertEqual(len(self.sent), 1)
         self.assertIn("<!-- romp-goal-id: %s -->" % G1, self.sent[0])
@@ -363,12 +365,8 @@ class AutoNudgeBundlesSameTick(unittest.TestCase):
         snap = self.store
         fresh = _store({G1: _node(G1, "Ship the auth refactor, retitled by the planner"),
                         G2: _node(G2, "Write the migration guide")})
-        calls = {"n": 0}
-
-        def load(sid):
-            calls["n"] += 1
-            return snap if calls["n"] == 1 else fresh
-        jd.load_goals = load
+        jd.load_goals_shared_or_fault = lambda sid: (snap, None)   # the tick's snapshot
+        jd.load_goals = lambda sid: fresh                           # the send-moment re-read
         self._tick()
         self.assertEqual(len(self.sent), 1)
         self.assertIn("retitled by the planner", self.sent[0],

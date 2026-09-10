@@ -111,7 +111,7 @@ test('the loose group\'s place stands under Open questions, named from the accou
   assert.ok(open.includes('The margin layout (the follow-on note under Slice 2) awaits the user\'s word: it is the build\'s reading of the ask, not a ruling, and the walk answers it'), 'the attribution test\'s sentence stands');
   assert.ok(open.includes('With it, the loose group\'s place: a card with no mark (a whole-file comment, a change the Rendered view cannot paint, a detached anchor, a region whose figure has not loaded) stands at the top of the track, which the lock keeps out of view for a reader anywhere but the top of the text'));
   assert.ok(open.includes('proposed a pinned band between the composer and the track for those cards, in the list\'s order, with its own scroll and a fold beyond a few — a new surface, so it waits for the same word rather than landing with the review\'s fixes'));
-  assert.ok(open.includes('(the save\'s scroll, `showLoose`, already brings a whole-file comment\'s card into view)'));
+  assert.ok(open.includes('(the saved line\'s click, through `showLoose`, brings a whole-file comment\'s card into view on request; the save itself moves nothing since decision 43)'));
   // the code the question describes: the pure rule puts the loose group first, from the top; the panel scrolls a saved
   // loose card into view; and no band exists — the day one does, this question is answered and belongs under Decisions
   assert.ok(/for \(const it of items\) if \(it\.desired === null\) put\(it, floor\);/.test(layout), 'card-layout.ts: the loose group first, from the top of the track');

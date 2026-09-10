@@ -72,10 +72,13 @@ For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
   Revising an earlier suggestion of your own? Running `track-edit` again does NOT
   create a revision step — the op-log has no revision chain, and adjacent
   same-author ops COALESCE, so a second edit over the same span silently rewrites
-  the existing suggestion instead of adding a turn the reviewer can see. The only
-  thing that produces a visible revision is `--thread <id>`, which folds the edit
-  into that thread's conversation. So when you're revising in answer to review,
-  pass the `--thread` id you were pinged with.
+  the existing suggestion instead of adding a turn the reviewer can see. That is
+  fine: the reviewer reads the suggestion as it stands now. Do NOT pass `--thread`
+  to `track-edit`, even when you are revising in answer to a comment you were
+  pinged about: an edit tied to a comment is shown inside that comment instead of
+  as its own change in the text, and the reviewer found that confusing. Make every
+  edit with plain `track-edit`; when the comment needs words, answer it with
+  `track-reply --thread <id>`.
 
 - **Comment on / highlight a span**:
 
@@ -131,15 +134,16 @@ for the file named here":
   decided.
 
 A thread ping can arrive in EITHER mode — answering a thread is a conversation,
-separate from how your edits land. Respond so it lands back in that same thread:
+separate from how your edits land. Words go back into the thread; edits go into
+the text, never linked to the thread:
 
 - **answer in words** with `track-reply --thread <id>` — always available, in
   tracked OR normal mode; it just appends your message to that thread.
-- **revise the text** if asked: in tracked (`on`) mode use `track-edit --thread
-  <id>` (the thread id folds your edit into the conversation as a revision step,
-  even when it lands away from the anchor); in normal (`off`) mode just edit the
-  file directly with Edit/Write, then optionally `track-reply --thread <id>` to note
-  what you changed so the thread keeps a record.
+- **revise the text** if asked: in tracked (`on`) mode use plain `track-edit`, with
+  no `--thread` (the edit shows as its own change in the text, where the reviewer
+  accepts or rejects it); in normal (`off`) mode just edit the file directly with
+  Edit/Write. Either way, when the comment needs words — to say what you changed,
+  or why you did not — `track-reply --thread <id>`.
 
 When you have addressed everything in a message, ask me for another look the same
 way you asked for this one, naming the file.

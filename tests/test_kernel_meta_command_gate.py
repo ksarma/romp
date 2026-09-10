@@ -1,58 +1,72 @@
 #!/usr/bin/env python3
 """_route_meta_command evaluates the drive-op gate (_ops_gate) exactly as often as the setter it calls
-does, and never on its own account: /effort and /fast take _gate_or_park (ONE evaluation, outside the
-queue lock, then the locked queue-presence check); /model takes _set_model_or_park's own rule (no
-_ops_gate at all). Upstream's #923 line re-read _ops_gate AFTER the setter to answer POST /send's
-`queued`: a tmux fork, a discover sweep and a usage read for a value each setter already returns. The
-2026-09-07 upstream fold dropped that read and takes the setter's own verdict (tests/test_model_live_midturn
-pins the value; this pins the cost). The gate is patched to a counter, so the counts are the gate's own
-evaluations and nothing underneath it runs. Synthetic only."""
+does, and never on its own account. /effort and /fast take _gate_or_park: ONE evaluation, outside the
+queue lock, then the locked queue-presence check. /model takes _set_model_or_park's own rule, which
+never calls _ops_gate. Each setter returns whether it parked, and that return is what POST /send
+answers as `queued`.
+
+The route used to evaluate _ops_gate once more itself, to answer `queued`, and then took the setter's
+return anyway: a tmux fork, a discover pass, the usage file and the backend's busy() on the handler
+thread, per command, for a value nothing read. The review of #954 (#986) removed that read on
+2026-09-07; the #923 merge the same day brought it back. tests/test_model_live_midturn pins the value
+of `queued`; this pins its cost. The gate is patched to a counter, so the counts are the gate's own
+evaluations and nothing underneath it runs. Synthetic only: a placeholder sid, invented values."""
 import os
 import tempfile
 import unittest
 from romp_load import load_source
+from unittest import mock
 
-os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # isolate: importing the kernel must not touch live state
-os.environ.pop("ROMP_STATE_DIR", None)
-os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
+# Hermetic state BEFORE the load: the kernel resolves its state root at import time, and only pytest
+# runs conftest's floor (a bare unittest run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
+os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+os.environ["ROMP_MANAGER_PORT"] = "1"             # a dead port, never an inherited live one
 km = load_source("romp_kernel_meta_gate", os.path.join(BIN, "romp-kernel"))
 
-SID = "11111111-2222-3333-4444-555555555555"
+SID = "11111111-2222-4333-8444-0a0a0a0a0a0a"      # private to this module: parked ops are keyed by sid
 
 
 class _Backend:
-    """A backend that takes every setter; records what fired."""
+    """A backend that takes every setter; records what fired. Only the three setters' calls: neither the
+    route nor a setter reaches any other method on the paths driven here."""
     def __init__(self): self.calls = []
-    def owns(self, sid): return True
-    def forwards_sends(self): return True
     def set_model(self, sid, v): self.calls.append(("model", v))
     def set_effort(self, sid, v): self.calls.append(("effort", v))
     def set_fast(self, sid, v): self.calls.append(("fast", v)); return True
+
+
+def _forget_queue():
+    """Drop the sid's parked ops from memory AND the disk mirror: a park writes pending-ops.json under this
+    module's state dir, and a kernel loaded later in the same process would restore the queue from it."""
+    km._pending_ops.pop(SID, None)
+    km._save_pending_ops()
 
 
 class MetaCommandGateCost(unittest.TestCase):
     def setUp(self):
         self.be = _Backend()
         self.gate_calls = []
-        km._pending_ops.pop(SID, None)
-        km._moving.discard(SID)
-        self._saved = (km._ops_gate, km._compacting_now, km._working_now, km._limit_hold,
-                       km._mark_model_pending, km._note_model_pick)
-        km._ops_gate = lambda sid: (self.gate_calls.append(str(sid)), self.verdict)[1]
-        km._compacting_now = lambda sid, **k: False     # the model setter's own gates, cheap here
-        km._working_now = lambda sid: False
-        km._limit_hold = lambda sid: None
-        km._mark_model_pending = lambda *a, **k: None
-        km._note_model_pick = lambda *a, **k: None
         self.verdict = False
-
-    def tearDown(self):
-        (km._ops_gate, km._compacting_now, km._working_now, km._limit_hold,
-         km._mark_model_pending, km._note_model_pick) = self._saved
-        km._pending_ops.pop(SID, None)
+        _forget_queue()
+        km._moving.discard(SID)
+        stubs = {
+            "_ops_gate": lambda sid: (self.gate_calls.append(str(sid)), self.verdict)[1],
+            "_compacting_now": lambda sid, **k: False,   # the model setter's own gates, quiet here
+            "_working_now": lambda sid: False,
+            "_limit_hold": lambda sid: None,             # the account gate is its own axis
+            "_mark_model_pending": lambda *a, **k: None,
+            "_note_model_pick": lambda *a, **k: None,
+        }
+        for name, stub in stubs.items():
+            p = mock.patch.object(km, name, stub)
+            p.start()
+            self.addCleanup(p.stop)
+        self.addCleanup(_forget_queue)
 
     def _route(self, text):
         self.gate_calls.clear()
@@ -68,22 +82,14 @@ class MetaCommandGateCost(unittest.TestCase):
         self.assertNotIn(SID, km._pending_ops)
 
     def test_the_counts_are_the_same_when_the_gate_parks(self):
-        # the verdict comes from the setter's own return, so a park costs the same single read: before the
-        # fold a parked /effort read the gate twice (the setter's, then the route's re-read for `queued`)
+        # `queued` comes from the setter's own return, so a park costs the same single evaluation
         self.verdict = True
         self.assertEqual(self._route("/effort high"), (1, True))
         self.assertEqual(self._route("/fast on"), (1, True))
-        km._compacting_now = lambda sid, **k: True       # the model setter parks on its own gates
-        self.assertEqual(self._route("/model opus"), (0, True))
+        with mock.patch.object(km, "_compacting_now", lambda sid, **k: True):   # the model setter's own park
+            self.assertEqual(self._route("/model opus"), (0, True))
         self.assertEqual(self.be.calls, [], "nothing fired: every op parked")
         self.assertEqual([op[0] for op in km._pending_ops[SID]], ["effort", "fast", "model"], "parked in press order")
-
-    def test_the_route_itself_never_names_the_gate(self):
-        # the source pin behind the counts: the route's body reads no _ops_gate (the setters do)
-        import inspect
-        src = inspect.getsource(km._route_meta_command)
-        body = src.split('"""', 2)[2]                    # past the docstring, which discusses the gate
-        self.assertNotIn("_ops_gate(", body)
 
 
 if __name__ == "__main__":

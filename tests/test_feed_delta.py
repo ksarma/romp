@@ -54,6 +54,33 @@ SID_B = "11111111-2222-3333-4444-666666666666"
 NOW = 1781100000
 
 
+class _DefaultPalette(unittest.TestCase):
+    """Every fixture here tints its cards with cm.DEFAULT (`_card`), and a served frame is stamped with the
+    PERSISTED pick: _tinted_asks reads _colormap(), STATE/colormap in the judge module every kernel-loading
+    test shares. A pick another module left there made the served tint differ from the fixture's in seven
+    tests, on the serial order only (test_colormap_aurora's cleanup wrote "hawaii" until 2026-09-09; a module
+    between the two happened to leave jd.STATE rebound to its own temp dir, which hid the file until the
+    2026-09-09 conftest fixture made it restore the shared one). So each test starts from no persisted pick,
+    the default palette, and puts back what it found; the mtime memo is reset with the file both times so a
+    same-tick rewrite cannot serve the stale name."""
+
+    def setUp(self):
+        super().setUp()
+        f = km.jd.STATE / "colormap"
+        prior = f.read_text() if f.exists() else None
+        f.unlink(missing_ok=True)
+        km._cmap_cache.update(name=km.cm.DEFAULT, mt=None)
+
+        def restore():
+            if prior is None:
+                f.unlink(missing_ok=True)
+            else:
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text(prior)
+            km._cmap_cache.update(name=km.cm.DEFAULT, mt=None)
+        self.addCleanup(restore)
+
+
 def _card(i, now=NOW, **over):
     # `trgb` is the kernel's age tint for the card at build time `now` — it STEPS with the clock, which is
     # exactly what the dedup and the delta path must see through
@@ -139,7 +166,7 @@ def _restore(saved):
     km._built_feed[:] = saved[1]
 
 
-class DeltaStream(unittest.TestCase):
+class DeltaStream(_DefaultPalette):
     def test_first_frame_is_full_then_changes_arrive_as_a_delta(self):
         c, sent = _client()
         _send(c, _feed())
@@ -245,7 +272,7 @@ class DeltaStream(unittest.TestCase):
             _restore(saved)
 
 
-class LedgerRemovals(unittest.TestCase):
+class LedgerRemovals(_DefaultPalette):
     """The ledger half of the delta contract, kernel side (the 2026-09-03 review found it unpinned, and
     found removals LOST across a ledger-less build: the pusher attaches `ledgers` only when a chat or
     Outline client is in the push, so a feed-only connect push — every page load, every shim reconnect's
@@ -298,7 +325,7 @@ class LedgerRemovals(unittest.TestCase):
             _restore(saved)
 
 
-class TintOnFullFramesOnly(unittest.TestCase):
+class TintOnFullFramesOnly(_DefaultPalette):
     """`trgb` stays on FULL frames — an older bundle (a stale tab; a federated dashboard on a host running
     the previous build) destructures `it.trgb` unguarded and would throw on the first card without it — but
     it is a function of the clock, so it is excluded from the dedup signature and from deltas: a colour
@@ -396,7 +423,7 @@ def _read_frame(s, buf):
     return buf[0] & 0x0F, buf[off:off + ln], buf[off + ln:]
 
 
-class ReadyHandshake(unittest.TestCase):
+class ReadyHandshake(_DefaultPalette):
     """The first frame waits for the bundle's `ready` (2026-09-03 review): the shim connects before
     federation.js and feed.js have loaded and has no inbound buffer, so a frame pushed at socket accept
     could land on a page with nobody listening and be lost — and the later `ready` push then sent nothing,
@@ -509,9 +536,11 @@ class ReadyHandshake(unittest.TestCase):
 
     def test_an_outline_client_on_the_view_delta_protocol_is_served_once_as_the_slots_base(self):
         # The Outline page's shim announces ?delta=1 (upstream's view-delta slots) but not feedDelta. Served
-        # through _send_client, its `ready` frame was unkeyed and left dstate["feed"] empty, so the connect
-        # push's _send_slot sent the WHOLE frame again, keyed: two full frames per `ready`. Served through
-        # _send_slot the frame is keyed, it is the slot's base, and the push that follows can delta.
+        # through _send_client, its `ready` frame left dstate["feed"] empty, so the connect push's _send_slot
+        # sent the WHOLE frame again: two full frames per `ready`. Served through _send_slot the frame is the
+        # slot's held base (dstate["feed"] at rev 0), and the push that follows can delta. Since T278c a full
+        # carries no key list (the shim derives every key from the frame itself), so "served as the base" is
+        # read off the slot state, never off the frame.
         f = _feed()
         saved, ms, parts = _warm(f)
         try:
@@ -523,9 +552,10 @@ class ReadyHandshake(unittest.TestCase):
             self.assertEqual(len(sent), 1)
             got = json.loads(sent[0])
             self.assertEqual(got["type"], "feed")
-            self.assertIn("_keys", got, "served keyed: the frame is the slot's base")
+            self.assertNotIn("_keys", got, "no full carries a key list (T278c): the shim derives the keys")
             self.assertGreaterEqual(got["now"], int(t0), "…stamped with the clock of the serve")
-            self.assertIn("feed", c.get("dstate") or {}, "…and the slot holds it")
+            self.assertIn("feed", c.get("dstate") or {}, "…and the slot holds it: served as the slot's base")
+            self.assertEqual(c["dstate"]["feed"]["rev"], 0, "…at rev 0, the start of this client's stream")
             self.assertNotIn("efeed", c, "the feed-delta protocol's base is not this client's")
             self.assertEqual(h.pushed, [c], "the Outline still gets its connect push (for the ledgers)")
             km._push([c])                                       # the real push: it attaches ledgers (none here)
@@ -534,10 +564,11 @@ class ReadyHandshake(unittest.TestCase):
             d = json.loads(sent[1])
             self.assertEqual(d["slot"], "feed")
             self.assertIn("ledgers", d.get("rest") or {}, "the ledgers attach is the change that rode it")
-            # a second `ready` is a re-base on this protocol too: the base is forgotten, the keyed full re-served
+            # a second `ready` is a re-base on this protocol too: the base is forgotten, the full re-served
             h._dispatch_ws({"type": "ready"}, c)
             self.assertEqual([json.loads(x)["type"] for x in sent], ["feed", "delta", "feed"])
-            self.assertIn("_keys", json.loads(sent[2]))
+            self.assertNotIn("_keys", json.loads(sent[2]), "no full carries a key list (T278c)")
+            self.assertEqual(c["dstate"]["feed"]["rev"], 0, "the re-base starts the stream afresh")
         finally:
             _restore(saved)
 
@@ -568,7 +599,8 @@ class ReadyHandshake(unittest.TestCase):
             frames = [fr for fr in frames if fr.get("type") != "caps"]   # the ready handler's caps frame: not a feed frame (test_tag_edit_ack.py pins it)
             types = [fr.get("type") for fr in frames]
             self.assertEqual(types.count("feed"), 1, "exactly one full frame per `ready`: %s" % types)
-            self.assertIn("_keys", frames[types.index("feed")], "…the keyed one, the slot's base")
+            self.assertNotIn("_keys", frames[types.index("feed")], "…no full carries a key list (T278c)")
+            self.assertIn("feed", client.get("dstate") or {}, "…and the slot holds it as the base the deltas rode on")
             self.assertTrue(set(types) <= {"feed", "delta"}, types)
             for fr in frames:
                 if fr.get("type") == "delta":
@@ -653,7 +685,7 @@ class ReadyHandshake(unittest.TestCase):
                         "the hold lifts BEFORE the frame is served")
 
 
-class ConnectTimeFrame(unittest.TestCase):
+class ConnectTimeFrame(_DefaultPalette):
     def test_a_fresh_socket_is_served_the_cached_frame_at_once(self):
         f = _feed()
         saved, ms, parts = _warm(f)
@@ -732,7 +764,7 @@ class ConnectTimeFrame(unittest.TestCase):
             _restore(saved)
 
 
-class ShimAnnouncesForTheFeedPage(unittest.TestCase):
+class ShimAnnouncesForTheFeedPage(_DefaultPalette):
     def test_every_feed_consumer_page_announces_the_delta_capability_and_every_pane_announces_the_hold(self):
         feed = km._shim("feed", 5, caps=km.FEED_DELTA_CAP + "," + km.READY_GATE_CAP)
         self.assertIn('var CAPS="feedDelta,readyGate";', feed)
@@ -758,7 +790,7 @@ class ShimAnnouncesForTheFeedPage(unittest.TestCase):
                          "c017b510, folded 2026-09-08) that slices the real shim for the node tests; another caller must announce too")
 
 
-class OutlineDeltaStream(unittest.TestCase):
+class OutlineDeltaStream(_DefaultPalette):
     """The Outline page (app=fleet) announces FEED_DELTA_CAP (2026-09-05). It rode full frames until then: one
     browser's Outline client fell 12.7 MB behind and the kernel dropped it seven times in a morning (ws drop,
     slot=feed, 6.3 MB frames), every frame a multi-megabyte json.dumps on the kernel's GIL. The page loads
@@ -874,7 +906,7 @@ def _registered(wid, deadline_s=5):
     raise AssertionError("the socket %s was not registered" % wid)
 
 
-class ReadyGate(unittest.TestCase):
+class ReadyGate(_DefaultPalette):
     """A page that announced READY_GATE_CAP is HELD: `ready` False at accept, and every push path skips it —
     the pusher's _push, the app/view broadcasts, a reveal — until the bundle's `ready` flips it. The
     2026-09-03 review found the first frame still lost after the accept-time push was removed: the pusher's
@@ -1001,7 +1033,7 @@ class ReadyGate(unittest.TestCase):
         self.assertNotIn("_client_ready", src)
 
 
-class FeedStateUnderTheSlotLock(unittest.TestCase):
+class FeedStateUnderTheSlotLock(_DefaultPalette):
     """The feed's per-client state (efeed, the ("feed",) dedup slot, the slot's dstate) is read and written
     on two threads: the pusher's _send_feed / the handler's _send_feed_now, and the handler's needFullFeed /
     `ready` re-base pops. Like _send_slot and _send_chat, the read-decide-send-write runs under the client's
@@ -1064,7 +1096,7 @@ class FeedStateUnderTheSlotLock(unittest.TestCase):
         self.assertEqual(json.loads(sent[-1])["type"], "feed", "a client that holds nothing gets the full frame")
 
 
-class StripTrgbIsExact(unittest.TestCase):
+class StripTrgbIsExact(_DefaultPalette):
     """`_strip_trgb` removes the tint and NOTHING else (the 2026-09-03 review: a strip that also dropped
     `summary` passed every test — a summary-only change then rode no delta and busted no dedup)."""
 
@@ -1111,7 +1143,7 @@ class StripTrgbIsExact(unittest.TestCase):
         self.assertEqual(km._feed_parts(f)[0], cards0)
 
 
-class TupleSignatureDedupsTheFeed(unittest.TestCase):
+class TupleSignatureDedupsTheFeed(_DefaultPalette):
     """P5 (2026-09-06): the pusher dedups the feed on _feed_sig — a tuple of the per-entry strings _feed_parts
     already made — not on a second sort_keys dump of the tint-stripped frame (_dedup_sig stays as the fallback
     for a caller that passes no sig; test_payload_dedup_invariant.py drives that path). Equal tuples mean equal

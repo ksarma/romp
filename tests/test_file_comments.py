@@ -843,7 +843,7 @@ THREE = ONE + [
 TAIL_TRACKED = (
     "To respond:\n"
     "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file %s --thread <id> --note \"<your reply>\"\n"
-    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file %s --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n"
+    "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file %s --old \"<exact text>\" --new \"<replacement>\"\n"
     "\n"
     "When you have addressed these, ask me for another look the same way you asked for this one,\n"
     "naming the file.\n")
@@ -895,7 +895,7 @@ class TheMessage(unittest.TestCase):
         # Slice 2's Send: the accept-pending-changes checkbox adds N to accepted with nothing rejected —
         # A + R > 0, so the line renders, blank line after (contract C3 / D3). With no comments the send
         # wears the DECISIONS-ONLY shape (the review, 2026-09-06): it never says "I left 0 comments" over
-        # two `--thread <id>` command lines with no thread to name. That shape is pinned byte for byte in
+        # a reply command line with no comment to name. That shape is pinned byte for byte in
         # tests/test_kernel_file_comments_decisions_send.py; this checks the line and its blank lines
         body = km._file_comments_message(REPORT, [], 3, 0, True, True)
         self.assertIn("[obsidian-diff] I went over %s.\n"
@@ -972,7 +972,7 @@ class TheMessage(unittest.TestCase):
                 "\n"
                 "To respond:\n"
                 "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread <id> --note \"<your reply>\"\n"
-                "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n"
+                "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/docs/<!- -romp-x-->/report.md' --old \"<exact text>\" --new \"<replacement>\"\n"
                 "\n"
                 "When you have addressed these, ask me for another look the same way you asked for this one,\n"
                 "naming the file.\n")
@@ -996,7 +996,7 @@ class TheMessage(unittest.TestCase):
                          "\n"
                          "To respond:\n"
                          "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file '/repo/notes-api/vault/Meeting notes.md' --thread <id> --note \"<your reply>\"\n"
-                         "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/vault/Meeting notes.md' --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n"
+                         "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file '/repo/notes-api/vault/Meeting notes.md' --old \"<exact text>\" --new \"<replacement>\"\n"
                          + tail)
         self.assertEqual(km._file_comments_message("/repo/notes-api/vault/it's here.md", one, 0, 0, False, True),
                          "[obsidian-diff] I left 1 comment on /repo/notes-api/vault/it's here.md.\n"

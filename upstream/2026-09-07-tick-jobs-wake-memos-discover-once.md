@@ -15,3 +15,5 @@ Top of the round-2 kernel stack (on P5+P8 #270, P9 #267, J4 #266, P6 #264). `rom
 OFFERED 2026-09-08: offered upstream inside bundle PR #1060 (Pusher: one build, one encode and one compare per change; the timeline's live tick translates the plot; label fix; branch pusher-timeline-offer; head 7da31ce9; a draft while the branch is rebased onto the moved upstream tip) with `view-delta-identity-short-circuit`, `timeline-skeleton-from-cache`, `tool-result-scan-no-dumps`, `one-encode-per-payload-per-build-on-the-pusher-thread-plan` and the timeline's live tick (P5) of `browser-round2-cuts`.
 
 MERGED 2026-09-08: merged upstream as their PR #1060 (merge dd310bb9, 2026-09-08T15:37:14Z) after the maintainer's own review commit.
+
+The interrupt tick's memo report (_intr_marks_memo_report) that their #1060 left out rides their PR #1228 (entry interrupt-tick-tail-memos, 2026-09-09).

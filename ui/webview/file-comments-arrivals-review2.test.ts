@@ -554,7 +554,7 @@ test("a panel opened for the first time after the probe shows no arrivals: the o
   assert.ok(!w.aside().querySelectorAll(".fc-card").some(isNew), "no dot on any card");
   assert.ok(w.card(CHG2) && w.card(line9.id), "the fixture: the session's change and comment are in the list");
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 2 pending changes", "the accept option names nothing arrived");
+  assert.equal(acceptLabel(w), "accept the 2 pending changes you have seen", "the first status's changes are seen: the accept option counts nothing unseen");
   actIn(w.aside(), "fcsendcancel")!.click();
   // the session's next answer, landing while the person looks: an arrival as before
   const later = arrived({ storeMtimeNs: "1757145600000000005", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findingsR, passageR, apiReply(closing, T0 + 40000, "Ended on the recommendation."), line9, mine2] } });
@@ -579,18 +579,19 @@ test("an open closed before its own status answered: that answer lands on a clos
 });
 
 // ── the accept option rewritten in place ──────────────────────────────────────────────────────────
-// the person's comment bound to the first change (suggestionId): the accept resolves it along with the change
+// the person's comment bound to the first change (suggestionId): the accept leaves it as it is (decision 42), so the option
+// says nothing about it
 const bound: StoreComment = { id: (T0 + 2000) + "-8", author: "you", ts: T0 + 2000, body: "Shorter, and say which cache.", suggestionId: "h1", replies: [], resolved: false };
 const storeWith = (comments: StoreComment[]): Status["store"] => ({ v: 3, path: "docs/report.md", suggestions: [], comments });
 
-test("the Send confirm's accept option, rewritten in place when a gesture marks an arrived change seen, keeps naming the comments the accept resolves", async (t) => {
+test("the Send confirm's accept option, rewritten in place when a gesture marks an arrived change seen, moves the change to the seen side and never names a resolve, bound comment or not", async (t) => {
   const { w, ok } = await open(t, textWorld(), status({ store: storeWith([whole, findings, passage, closing, bound]) }));
   await land(w, ok, arrived({ store: storeWith([whole, findingsR, passageR, closing, bound, line9, mine2]) }));
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (resolves 1 comment; 1 arrived since you last looked)", "renderSend's words: both clauses");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)", "renderSend's words: the unseen clause alone — the bound comment is not the accept's to resolve (decision 42)");
   const confirm = w.aside().querySelector(".fc-confirm");
   scrollBody(w, 340); gesture(w.body, "wheel");        // the arrived change's card (360) is in the box [340, 500): seen
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (resolves 1 comment)", "the arrived clause goes, the resolve clause stays (a regression of reflectSeen's third argument dropped it)");
+  assert.equal(acceptLabel(w), "accept the 2 pending changes you have seen", "the unseen clause goes with the look");
   assert.equal(w.aside().querySelector(".fc-confirm"), confirm, "rewritten in place: no render rebuilt the confirm");
   assert.ok(!isNew(w.card(CHG2)));
   w.close();
@@ -636,7 +637,8 @@ test("the confirm's Send button is a gesture of the person's too", async (t) => 
   actIn(w.aside(), "fcsend")!.click();
   assert.equal(lineOf(w)!.textContent, ARRIVED, "opening the confirm marked nothing");
   actIn(w.aside(), "fcsendgo")!.click(); await tick();
-  assert.equal(last().verb, "accept-all", "the send is under way (the accept-all first)");
+  assert.equal(last().verb, "accept", "the send is under way (the accept of the seen changes first)");
+  assert.deepEqual(last().args, { ids: ["h1"] }, "the first status's change alone: the arrived change's card is below the box at the press, so it is unseen and stays pending");
   assert.equal(lineOf(w)!.textContent, "api made 1 change, 1 comment and 1 reply since you last looked", "the findings' reply is seen by the send");
   assert.ok(!isNew(w.card(findings.id)));
   w.close();

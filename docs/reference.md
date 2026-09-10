@@ -30,7 +30,7 @@ update` starts a session called "update".
 
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
 `main`, for new commits, and offers each one once as a banner with an Update button. The gear's
-**Updates and update notices** control (under *Updates & debug*) decides what happens: *Check and
+**Automatic updates** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
 checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it
 and keeps running what it has until they restart Romp themselves. An automatic converge takes one
@@ -555,16 +555,39 @@ runs for that session.
 
 The new-session picker's **Billing** row states the case whenever the backend
 toggle says SDK: segmented buttons when the selected host offers both choices,
-and with only one real choice, the same spot writes out which applies, `Login
-(name@example.com)` or `API key`. The key choice exists when Claude Code's
-settings for the kernel's working directory carry a helper; romp reads the
-setting and never runs it for this. A live session's *switching* control is the
-Billing entry of the tab's right-click menu (it left the statusline on
-2026-08-09), and that control keeps the stricter rule: it exists only when both
-choices are real (a one-option selector is noise). Switching reconnects the
-session to apply; until that reconnect lands, the menu entry's sub-line reads
-`applying…` and the tab hover's Billing row says the pick is applying, not
-confirmed yet.
+and with only one real choice, the same spot writes out which applies,
+`Login (name@example.com)` or `API key`. The key choice exists when Claude
+Code's settings for the kernel's working directory carry a helper; romp reads
+the setting and never runs it for this. A live session's tab menu (the
+control left the statusline on 2026-08-09) carries a **Billing** submenu that
+lists BOTH choices on every box (since 2026-09-08; it used to exist only when
+both were real): the choice this machine cannot bill is greyed and inert, with
+the reason in its hover, `no Claude login signed in on this machine`, `no
+apiKeyHelper configured`, or `the apiKeyHelper is set in managed settings,
+login cannot apply`. The status payload carries the same availability as
+`authAvail` (`authBoth` rides beside it for older clients). Switching
+reconnects the session to apply; until that reconnect lands, the menu entry's
+sub-line reads `applying…` and the tab hover's Billing row says the pick is
+applying, not confirmed yet.
+
+On a one-auth box the picker never chooses the missing side. A remembered
+default that names the side this box cannot bill is set aside at spawn and the
+unpicked rule below decides instead, in both directions: a remembered login
+pick on a machine with no login seeds new sessions on the API key when a
+helper is configured, exactly as a remembered key pick on a helper-less machine
+already fell to the declared side, else the login, and the set-aside is said
+once per process as a problem row. An explicit pick that names the missing
+side (a session picked "login" on a box that later lost its login) launches on
+the other side when one exists and says so once per session start, on the tab
+menu's Billing sub-line as `⚠ login unavailable, billing API key` and in the
+log; the fall itself rides the status as `authPickFell`, so the hover
+and the sub-line never infer one. A pick with nothing to fall to (a box with
+neither side) launches as picked and the CLI decides; the sub-line then says
+the side is unavailable and claims no fall. A side whose availability cannot
+be read just now (the operator's settings file, or `~/.claude.json`, mid-rewrite
+or unreadable) is cannot-tell: the launch keeps the pick as is, says so once
+per session, and never falls on a read failure. `setAuth` refuses the
+missing side with that same reason in the toast.
 
 A pick reaches the CLI through the session's per-session settings layer, the
 file the SDK hands the CLI as its `--settings` argument. A login pick writes
@@ -593,17 +616,28 @@ covered by the picker: their CLI lives in the tmux server's environment, which
 the kernel does not control, and resolves its credential the way any `claude`
 in a terminal does.
 
-Each chat tab's hover tooltip carries the same fact as a `Billing` row,
-`API key`, or `Login (name@example.com)`, whenever the session's backend
-reports it, one-auth machines included; only tmux sessions, whose billing romp
-cannot know, show no row. Once the session's CLI has reported which credential
-it found (its init names the source), the row shows that side; before any
-report it shows the intent the session was launched with. A pick you made that
-the CLI contradicted is worded as one: `⚠ Login picked, but the CLI reports
-the API key; this session bills that`. A default nobody picked is never
-worded that way: a session started unpicked on a box whose `apiKeyHelper`
-supplies the key reads `API key`. The tab menu's Billing item carries
-the same decision in fewer words.
+An SDK session's chat tab carries the same fact as a `Billing` row in its hover
+tooltip, one-auth machines included; tmux sessions, whose billing romp cannot
+know, and Codex sessions, which bill no Claude account, show no row. The row
+has four readings. Unless one of the three cases below applies, it reads
+`API key` or `Login (name@example.com)` (`Login` alone when the account name is
+unknown): once the session's CLI has reported which credential it found (its
+init names the source), the row shows that side; before any report it shows
+the intent the session was launched with. While a switch is still reconnecting
+the session, the row appends `(applying, not confirmed yet)` to the side:
+`Login (applying, not confirmed yet)`. A pick naming a side this machine cannot
+bill leads with the warning, the reason, and the side the launch fell to:
+`⚠ Login picked, but no Claude login signed in on this machine — this session
+bills the API key`; with nothing to fall to, the tail says the launch went out
+as picked. A pick you made that the CLI's own report contradicts (a login pick
+whose CLI reports a key, a key pick whose CLI landed on the login) is worded as
+one: `⚠ Login picked, but the CLI reports the API key; this session bills
+that`, and, for a key pick, the same with the sides swapped. A default nobody
+picked is never worded that way: a session started unpicked on a box whose
+`apiKeyHelper` supplies the key reads `API key`. The tab menu's Billing
+sub-line says the same in fewer words: `API key` or `Login (name@example.com)`,
+`applying…`, `⚠ login unavailable, billing API key`, and `⚠ CLI reports API
+key`.
 
 Failures are loud rather than silent: a session that lands on the other auth
 than it was launched for is flagged in the Log panel, and a dead credential
@@ -1483,8 +1517,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   interval because a watched chat tab's live tail changed; a cycle released
   early from a hold counts in both), `cycle_ms_sum`, `cycle_ms_max` (since
   start), `cycle_ms_last`, `cycle_cpu_ms_sum` (the pusher thread's own CPU
-  time), and `cycle_ms_p50`, `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n`
-  from the last 256 cycles. The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in
+  time), `cycle_ms_p50`, `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n`
+  from the last 256 cycles, `sends` (every payload that went to a client; a
+  deduped frame the client already holds is not one), and `idle_cycles`,
+  `idle_ms_sum`, `idle_cpu_ms_sum` (cycles that set no wake, sent no payload
+  and saved no goal store: what a longer wait between cycles would have
+  skipped; a conservative undercount, since a wake set by another thread or a
+  periodic repost of an unchanged frame marks a cycle busy). The interval is
+  1.0 s (`PUSH_MIN_INTERVAL_S` in
   the kernel): a cycle starts no sooner than that after the previous one
   began unless the live tail of a chat tab a connected client is watching
   changed (an SDK session's streamed text, an echo, a turn's end, the
@@ -1571,7 +1611,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   episode log and so reads its lineage every pass (benign; one read per such
   session per pass); or the guard order in `_episode_boundary_check` regressed.
   `romp perf` prints the rate on the `goals` line.
-- `memos`: the three identity memos on the goal-store path. `pass` is the
+- `memos`: the identity memos on the goal-store path. `pass` is the
   judge pass's stat-keyed store memo (`hit`, `miss`, `fail`, `evict`, `punch`,
   `live`, `snap`, and its occupancy `entries`, `bytes`); `shared` is the
   pusher's shared read-only store cache (`hit`, `miss`, `compare_miss`,
@@ -1603,6 +1643,32 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   a rewound-away branch, a hit served a memoized check, a miss built one, a
   populate stored one (a build that failed is a miss with no populate), and a
   bypass built without memoizing because an input file could not be stat'd.
+  Five more are the judge's, since the 2026-09-09 fold. `courierSkip` is the
+  courier's change gate (`skipped`, `scanned`, `recorded`): a scan that placed
+  nothing and left nothing incomplete (an open link repair, a repair that
+  raised, a store that did not read) is recorded, and a session whose parse,
+  store, journal, archive and episode log have not moved since such a scan is
+  skipped whole; a raise inside one session's scan is that session's
+  `pass-crash` row, not the pass's. `plannerSkip` is the planner's change gate
+  (`skipped`, `planned`, `recorded`): a session whose parse, store, journal,
+  archive, episode log, its leaf's task store, captions file and reg have not
+  moved since a pass that had nothing to do, and none of whose running
+  background launches has crossed its deadline, is not planned again (this
+  fork's key also holds `cleared.jsonl`, the session's death marker and its
+  stall slice, inputs of the same decision path). `backref` is the
+  sender-board walk behind the courier's link repair, built once per state of
+  the sender stores and served while they stand (`served`, `built`; a sender
+  store that does not read is skipped, not every recipient). `captions` and
+  `goalArchive` are the per-file read memos behind the index tier's caption
+  readers and the re-plan's cleared context, each parsed once per file state
+  (`served`, `parsed` or `loaded`). `captions` keeps the index tier's
+  strictness: an absent captions file is empty and never cached; an existing
+  file that fails to read answers nothing to the index bodies (the stage is
+  marked incomplete and one `captions-unreadable` row is written per episode)
+  and is never cached either. `goalArchive` never holds a record that did not
+  read (the `_unread` shape), so a failed read is read again next time. Their
+  skips are why the `tiers` block's `plan` and `courier` counters read zero
+  since that fold.
   The rest are the kernel's own memos, each a flat map of counters. `lift_gate` is
   the awaiting-lift job's per-session identity gate: `skip` and `load`
   (session-cycles that took no store read against the ones that read it, a
@@ -1623,13 +1689,23 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   for every alive session every cycle, wake-only when the toggle is off):
   `walked` and `gated` (session-cycles visited, and the ones a session gate
   returned on), `loads` and `shared` (store reads taken for the decision, and
-  the ones the shared read-only cache answered), `plan_hit`, `plan_miss` and
-  `plan_bypass` (the planner-placement gate served from its memo, computed and
-  memoized, or computed uncached over a non-shared store), `deleg_hit` and
-  `deleg_miss` (the delegated-work check, same memo), `lifted` (lifts the
-  wake-only dead-man filed), `evict` (entries dropped for sessions that left
-  the alive set), `stale` (entries released because the parse cache no longer
-  holds the pinned turns) and the gauge `entries`.
+  the ones the shared read-only cache answered), `deleg_hit` and `deleg_miss`
+  (the delegated-work check served from its own memo, keyed on the shared
+  view's identity, or computed), `lifted` (lifts the wake-only dead-man
+  filed), `evict` (sessions that left the alive set, whose entries were
+  dropped from the placement-gate memo and the delegation memo) and the gauge
+  `entries` (sessions holding a placement-gate entry). `nudgeGate` is that
+  walk's planner-placement gate (upstream's memo since the 2026-09-09 fold; it
+  replaced this fork's own gate memo and the walk's counters for it): the
+  answer is derived once per (parse, shared view, episodes log, `cleared.jsonl`
+  state) and served while all four stand (`served`, `derived`; a healthy quiet
+  box serves almost every cycle). A parse the cache does not hold or a store
+  that is not the current shared view is derived every cycle and never
+  memoized, a failed derivation caches nothing, and the memo is bounded by the
+  alive set (the walk evicts the sessions that left it) and a 512-entry cap.
+  `cleared` is the feed's clear set, parsed once per state of `cleared.jsonl`
+  (its stat, taken before the read) and served while the file stands
+  (`served`, `derived`).
   `wire` is the pusher's per-build wire caches: `feed_cards_hit` and
   `feed_cards_miss` (the per-card encode served from its memo against run),
   `feed_body` and `bars_body` (whole frames serialized, at most once per build
@@ -1647,10 +1723,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cycle served from the cycle's rows against swept) and `wide_hit` and
   `wide_miss` (the wide walk taken for a live session idle longer than the
   caption window); the memo lives for one cycle, so it has no occupancy gauge.
-  `captions` is the memo behind the captioner-store reader every timeline lane,
-  the feed's held card and the postal join read, keyed on the file's identity
-  (inode, mtime, size) taken before the read: `hit` and `miss` (reads served
-  from memory against read and parsed), `fail` (reads that failed after a
+  `caps` is the memo behind the captioner-store reader every timeline lane,
+  the feed's held card and the postal join read (named `captions` until the
+  2026-09-09 fold, when the judge's file-read memo of that name arrived), keyed
+  on the file's identity (inode, mtime, size) taken before the read: `hit`
+  and `miss` (reads served from memory against read and parsed), `fail`
+  (reads that failed after a
   successful stat and were not memoized; the kernel's stderr names the file
   once per episode), `evict` (entries dropped: a lane that left the timeline,
   the 512-entry bound, or the pop of an entry whose file is now absent), and
@@ -1661,7 +1739,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   exists; the fold answered no overlay, memoized nothing, and the kernel's
   stderr names the file once per episode), `evict` (entries dropped for
   sessions that left the alive set), and `entries`. `thread_reg` is the SDK
-  registry reader's memo, keyed like `captions`, with the same `hit`, `miss`,
+  registry reader's memo, keyed like `caps`, with the same `hit`, `miss`,
   `fail` and `entries`; its `evict` counts the 512-entry bound and the pop of
   an absent file's entry.
   `feed_segs` is the feed build's per-session memo of the values that are pure
@@ -1741,15 +1819,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   counters are under `memos.chain`, not here). `tiers` holds
   the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
   `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
-  and archiver): `ran` (per-session stage
+  and archiver; since the 2026-09-09 fold the `plan` and `courier` rows read
+  zero, those two passes being skipped by the judge's own change gates,
+  `memos.plannerSkip` and `memos.courierSkip`, while the other six tiers run
+  on this gate unchanged): `ran` (per-session stage
   runs), `skipped` (runs the gate declined because nothing the tier reads had
   changed), `stamped` (runs that ended complete and recorded what they
   judged), `bypassed` (runs with no signature to record, or whose parse ran
   under a cut that moved after the gate looked), `incomplete` (runs a
-  deferral or a failed call left unfinished; for the courier, scans that
-  produced pending rows, or whose link repair found the sender's tracker
-  completed or the sender outside the discover window, so the next pass scans
-  the session again; for the index tier, sessions that had a caption or an
+  deferral or a failed call left unfinished; for the index tier, sessions
+  that had a caption or an
   archive to write this pass, or whose captions file, archive record or unit
   cache exists and did not read, or whose unit-cache publish failed; the
   read and publish failures each write one `judge-errors.jsonl` row per

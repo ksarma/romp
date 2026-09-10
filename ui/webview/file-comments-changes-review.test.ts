@@ -4,7 +4,8 @@
 // insertion painted and linked, a deletion a struck point since the inline-display follow-on), the file's own `data-act="fcchange"` markup
 // neither decorated nor owned, a bound comment's highlight opening its host change card, a painted change's reference
 // scrolling to its mark, the author's colour on a mark and the repaint when the colours arrive, no retry of the
-// id-less accept-all and reject-all after a moved fence, Send stating what the accept-all decided, the window between
+// id-less reject-all after a moved fence (the Send's accept, by id over the seen changes, retries once by the same
+// ids), Send stating what its accept decided, the window between
 // a reject's reply and its reload (no marks over the old bytes, no tag or Reveal flapping in), and the keyboard kept in
 // the panel through a decision's busy render and reply. The stand-in is the changes suite's, with the focus rules the
 // review-fixes suite has (a focusable enabled element takes focus; a removed one drops it to the body), a Rendered body
@@ -541,9 +542,11 @@ test("change marks carry the author's session colour as --fc-author; colours arr
 
 // ── the id-less verbs after a moved fence ──────────────────────────────────────────────────────────
 
-test("Reject all refused file-moved: status and the bytes are re-read, no second reject-all goes, and the row says nothing was decided; Send's accept-all refused store-moved sends nothing the same way", async (t: TestContext) => {
+test("Reject all refused file-moved: status and the bytes are re-read, no second reject-all goes, and the row says nothing was decided; Send's accept refused store-moved retries once by the same ids, and refused again sends nothing", async (t: TestContext) => {
   // the plan's fence rule retries by stable change or comment id; accept-all and reject-all carry none, so a retry
   // would decide the change that landed since the click. The list is re-read and the choice is the person's again.
+  // The Send's accept names the seen changes by id (decision 41), so it takes the by-id path: one retry over the same
+  // ids with the fresh fence; a second refusal is the row under Send, and nothing is sent.
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   act(aside, "fcrejectall")!.click();
@@ -568,53 +571,89 @@ test("Reject all refused file-moved: status and the bytes are re-read, no second
   assert.equal(act(err, "fcreload"), null, "no Reload: the re-read already happened");
   assert.equal(aside.querySelector(".fc-foot .fc-choice"), null, "the confirm is closed; a second Reject all asks again");
   assert.equal(act(aside, "fcrejectall")!.disabled, false); assert.equal(act(aside, "fcacceptall")!.disabled, false);
-  // Send with the accept box checked: the accept-all refused store-moved is not retried, and nothing is sent
+  // Send with the accept box checked: the accept names the two changes the person has seen — h9 arrived after the panel's
+  // first status and its card was never on screen at a gesture (the stand-in's boxes have no height), so it stays pending
   act(aside, "fcsend")!.click();
-  assert.ok(aside.querySelector('input[data-opt="accept"]')!.checked);
+  const cb = aside.querySelector('input[data-opt="accept"]')!;
+  assert.ok(cb.checked);
+  assert.equal(cb.parentNode!.textContent, "accept the 2 pending changes you have seen (1 unseen stays pending)");
   act(aside, "fcsendgo")!.click(); await flush();
-  const acc = lastOf(w, "fileComments", "accept-all");
-  assert.ok(acc, "accept-all goes first");
+  const acc = lastOf(w, "fileComments", "accept");
+  assert.ok(acc, "the accept goes first");
+  assert.deepEqual(acc.args, { ids: ["h1", "h3"] }, "by id: the seen two, not the arrival");
+  assert.equal(acc.fence.storeMtimeNs, "1757145600000000010");
   const asks2 = countOf(w, "fileComments", "status");
   refuse(w, acc, "store-moved", MOVED_STORE); await flush();
-  assert.equal(countOf(w, "fileComments", "status"), asks2 + 1);
+  assert.equal(countOf(w, "fileComments", "status"), asks2 + 1, "a moved fence re-issues status");
   answer(w, status({ fileMtimeNs: "1757145600000000009", storeMtimeNs: "1757145600000000013", hunks: [h1, h3, h9] })); await flush(); await flush();
-  assert.equal(countOf(w, "fileComments", "accept-all"), 1, "no retry");
+  const retry = lastOf(w, "fileComments", "accept");
+  assert.notEqual(retry.reqId, acc.reqId, "one retry, by the same stable ids: the re-read shows them as the cards did");
+  assert.deepEqual(retry.args, { ids: ["h1", "h3"] });
+  assert.equal(retry.fence.storeMtimeNs, "1757145600000000013", "…with the fresh sidecar fence");
+  assert.equal(countOf(w, "fileCommentsSend"), 0, "the send waits on the accept");
+  refuse(w, retry, "store-moved", MOVED_STORE); await flush(); await flush();
+  assert.equal(countOf(w, "fileComments", "accept"), 2, "no third try");
   assert.equal(countOf(w, "fileCommentsSend"), 0, "and no send: the message would claim decisions never made");
-  assert.ok(aside.querySelector(".fc-send .fc-err")!.textContent.startsWith("Nothing decided: " + MOVED_STORE), "the row under Send");
+  const row = aside.querySelector(".fc-send .fc-err")!;
+  assert.ok(row.textContent.startsWith(MOVED_STORE), "the second refusal verbatim, the row under Send");
+  assert.ok(act(row, "fcreload"), "a moved fence offers Reload");
+});
+
+test("Send's accept refused store-moved, and the re-read shows a seen change grown: no retry, nothing decided, nothing sent", async (t: TestContext) => {
+  // the by-id retry stands only over the change the card showed (DECIDE_VERBS): the session's edit coalesced into h1 gives
+  // the id a larger change than the person saw, and a retry would accept text they never looked at
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  act(aside, "fcsend")!.click();
+  act(aside, "fcsendgo")!.click(); await flush();
+  const acc = lastOf(w, "fileComments", "accept");
+  assert.deepEqual(acc.args, { ids: ["h1", "h3"] });
+  refuse(w, acc, "store-moved", MOVED_STORE); await flush();
+  const grown = { ...h1, newText: "cut sharply", curTo: h1.curTo + 8 };
+  answer(w, status({ storeMtimeNs: "1757145600000000013", hunks: [grown, h3] })); await flush(); await flush();
+  assert.equal(countOf(w, "fileComments", "accept"), 1, "no retry: h1 reads differently now");
+  assert.equal(countOf(w, "fileCommentsSend"), 0, "nothing sent");
+  const row = aside.querySelector(".fc-send .fc-err")!;
+  assert.ok(row.textContent.startsWith("Nothing decided: the session edited this change after you clicked"), "the row under Send says the change moved");
+  assert.equal(act(row, "fcreload"), null, "the re-read already happened: no Reload");
+  assert.ok(aside.querySelector(".fc-confirm"), "the confirm stands for another try");
 });
 
 // ── what Send states ───────────────────────────────────────────────────────────────────────────────
 
-test("Send states what the accept-all decided: a set grown by the set-tracked reply is counted from the accept-all's reply, not from the confirm; a reply that does not say sends nothing", async (t: TestContext) => {
+test("Send states what the accept decided: a change the set-tracked reply brought is not the accept's to take, and A is counted from the accept's reply; a reply that does not say sends nothing", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, status({ trackedBy: null, unsent: { comments: [passage.id], replies: [], accepted: 1, rejected: 0, watermark: null } }));
   act(aside, "fcsend")!.click();
   assert.ok(aside.querySelector('input[data-opt="track"]')!.checked, "untracked: the tracking box, checked");
-  assert.equal(aside.querySelector('input[data-opt="accept"]')!.parentNode!.textContent, "accept the 2 pending changes", "the confirm names the two on screen");
+  assert.equal(aside.querySelector('input[data-opt="accept"]')!.parentNode!.textContent, "accept the 2 pending changes you have seen", "the confirm names the two on screen");
   act(aside, "fcsendgo")!.click(); await flush();
   const tr = lastOf(w, "fileComments", "set-tracked");
   assert.deepEqual(tr.args, { on: true, scope: "file" });
   // the toggle's reply carries a third change: the session's track-edit landed between the confirm and the toggle
   const h9 = H("h9", "ins", DOC.length - 1, DOC.length + 3, "", " Ok.", T0);
   answer(w, status({ trackedBy: { kind: "file", entry: "docs/report.md" }, configMtimeNs: "1757145600000000014", storeMtimeNs: "1757145600000000015", hunks: [h1, h3, h9] }), tr); await flush(); await flush();
-  const acc = lastOf(w, "fileComments", "accept-all");
-  assert.ok(acc, "then the accept-all");
+  const acc = lastOf(w, "fileComments", "accept");
+  assert.ok(acc, "then the accept");
+  assert.deepEqual(acc.args, { ids: ["h1", "h3"] }, "the two the person has seen; the third the toggle's reply brought has not been on screen at a gesture, so it stays pending");
   assert.equal(acc.fence.storeMtimeNs, "1757145600000000015", "fenced on the sidecar the toggle's reply showed");
   assert.equal(countOf(w, "fileCommentsSend"), 0);
-  answer(w, status({ trackedBy: { kind: "file", entry: "docs/report.md" }, configMtimeNs: "1757145600000000014", storeMtimeNs: "1757145600000000016", hunks: [],
-    store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage] },
-    unsent: { comments: [passage.id], replies: [], accepted: 4, rejected: 0, watermark: null } }), acc, { accepted: ["h1", "h3", "h9"] }); await flush(); await flush();
+  answer(w, status({ trackedBy: { kind: "file", entry: "docs/report.md" }, configMtimeNs: "1757145600000000014", storeMtimeNs: "1757145600000000016", hunks: [h9],
+    store: { v: 3, path: "docs/report.md", suggestions: [{ id: "h9", author: "api", ts: T0, kind: "ins", from: h9.curFrom, oldText: "", newText: " Ok." }], comments: [passage] },
+    unsent: { comments: [passage.id], replies: [], accepted: 3, rejected: 0, watermark: null } }), acc, { accepted: ["h1", "h3"] }); await flush(); await flush();
   const send = lastOf(w, "fileCommentsSend");
   assert.ok(send, "then the send");
-  assert.equal(send.accepted, 4, "the log's 1 plus the THREE the accept-all decided — its reply's list, not the confirm's 2");
+  assert.equal(send.accepted, 3, "the log's 1 plus the TWO the accept's reply lists");
   assert.equal(send.rejected, 0); assert.equal(send.tracked, true);
+  assert.ok(card(aside, "chg:h9"), "the unseen change is still pending, its card on the list");
   w.close();
   // a reply that lists nothing: the count cannot be stated, so nothing is sent and the row says why
   const w2 = world(); t.after(() => w2.close());
   const { aside: a2 } = await openPanel(w2);
   act(a2, "fcsend")!.click();
   act(a2, "fcsendgo")!.click(); await flush();
-  const acc2 = lastOf(w2, "fileComments", "accept-all");
+  const acc2 = lastOf(w2, "fileComments", "accept");
+  assert.deepEqual(acc2.args, { ids: ["h1", "h3"] });
   answer(w2, status({ hunks: [], store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage] }, storeMtimeNs: "1757145600000000017",
     unsent: { comments: [passage.id], replies: [], accepted: 2, rejected: 0, watermark: null } }), acc2); await flush(); await flush();
   assert.equal(countOf(w2, "fileCommentsSend"), 0, "nothing sent");

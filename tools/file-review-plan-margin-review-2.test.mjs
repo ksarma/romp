@@ -114,15 +114,15 @@ test('the offset-free centering is stated and is the panel\'s: the scroll that s
   assert.ok(/if \(showCard > want\) want = Math\.min\(showCard, markY - CARD_GAP\);/.test(panel), 'as far as keeps the mark\'s top in view');
 });
 
-test('the save\'s scroll is stated and is the panel\'s: scrollToSaved before the composer closes, the comment read off the reply\'s store, a loose card shown by one write onto both scrollers', () => {
+test('the save\'s scroll is stated as the second review built it, and what remains of it is the panel\'s: landSaved before the composer closes (the scroll went with decision 43, the focus and the reading off the reply\'s store stayed), a loose card shown by one write onto both scrollers', () => {
   assert.ok(built.includes('A comment saved while the text is scrolled scrolls to the card the save landed in, before the composer closes (`scrollToSaved`'));
   assert.ok(built.includes('the host names no id in its reply, so the new comment is read off the reply\'s store as the one the status before the write did not hold, `savedCommentId`'));
   assert.ok(built.includes('a loose card (a whole-file comment\'s, at the top of the track, where the lock keeps it out of view for a reader anywhere but the top of the text) is brought into the track\'s box by the least scroll that shows it, written onto the body and the track at once (`showLoose`, `scrollBoth`)'));
   assert.ok(built.includes('since a track-only `scrollIntoView` moved the track alone and the frame\'s `followBody` pass pulled it back to the body'), 'why scrollIntoView could not do it');
   assert.ok(built.includes('before that the composer closed and no card appeared, and the save read as having done nothing'), 'what stood before');
   assert.ok(/function savedCommentId\(had: Set<string>, r: Status, note: string\): string \| null \{/.test(panel));
-  assert.ok(/private scrollToSaved\(c: Composer, had: Set<string>, r: Status, note: string, still: boolean\): void \{/.test(panel));
-  assert.ok(/if \(r\) this\.scrollToSaved\(c, had, r, note, pressed === this\.gestures\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/.test(panel), 'the scroll runs before the composer closes');
+  assert.ok(/private landSaved\(c: Composer, had: Set<string>, r: Status, note: string\): boolean \{/.test(panel), 'scrollToSaved became landSaved with decision 43: the focus and the line, no scroll');
+  assert.ok(/const lined = r !== null && this\.landSaved\(c, had, r, note\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/.test(panel), 'the landing runs before the composer closes, as the scroll did');
   assert.ok(/private showLoose\(key: string\): boolean \{/.test(panel));
   assert.ok(/private scrollBoth\(want: number\): void \{/.test(panel));
   assert.ok(/if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/.test(panel), 'scrollCard tries the mark first, then the loose group');
@@ -154,14 +154,14 @@ const MODULES = [
     'test("an opened card that fits the track is shown whole: the body scrolls the least that shows the card\'s end, and the card\'s head stays in the track\'s box',
     'test("a card taller than the track: brought in as far as its end, the clipping at its head the excess over the track\'s box alone',
     'test("a pass without a render un-pushes a card the pass no longer pushes: the leader\'s attribute and its length leave the reused node',
-    'test("a whole-file comment saved with the text scrolled down: the new card — loose, at the top of the track, where the lock keeps it out of view — is brought into the track\'s box by the least scroll that shows it, written onto both scrollers at once; the composer closes after',
-    'test("a reply saved on a card: the card is centered as an opened card is',
-    'test("the saved comment is read off the reply\'s store: the one comment the status before the write did not hold; among several new ones (a retry after a moved fence), the one whose body is the note; none identifiable, nothing scrolls"',
-    'test("at source: the scroll that shows a card\'s end is track content (no header term); the save scrolls to its card BEFORE the composer closes',
+    'test("a whole-file comment saved: the new card is loose at the top of the track, and the save moves nothing (decision 43',
+    'test("a reply saved on a card with the text scrolled away from it: nothing scrolls (decision 43',
+    'test("the saved comment is read off the reply\'s store: the one comment the status before the write did not hold; among several new ones (a retry after a moved fence), the one whose body is the note — the line\'s click goes to ours',
+    'test("at source: the scroll that shows a card\'s end is track content (no header term); the save sets the focus and raises the line BEFORE the composer closes',
   ] },
   { file: 'ui/webview/file-comments-margin-fixes-browser.test.ts', holds: [
     'an opened card that fits the track lands whole in the track\'s box — its head under the header no more — after its head is clicked and after its reference link; a card taller than the track is clipped at its head by the excess alone',
-    'a whole-file comment saved with the text scrolled far down brings its card into view (the track to the loose card at its top, the body with it); a reply saved brings the card to its mark; the composer closes after',
+    'a whole-file comment saved with the text scrolled far down moves nothing, and the line at the foot says the card is above; its click brings the card into view (the track to the loose card at its top, the body with it); a reply saved the same way, and its click brings the card to its mark; the composer closes after each',
   ] },
   { file: 'ui/webview/styles-fc-margin-attribution.test.ts', holds: [
     'the margin layout\'s comment opens by naming the layout as the build\'s reading of the ask, not the user\'s ruling',

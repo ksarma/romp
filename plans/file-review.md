@@ -188,7 +188,9 @@ the load-time rebase could not re-place, which a host preserves and shows rather
 a `fingerprint` over the current text. A file comment is a change comment when `suggestionId` is
 set (the README calls it the cross-editor key, and the Obsidian host classifies on it); a passage
 comment keeps its anchor and gains a `suggestionId` when the agent answers it with `track-edit
---thread`, and is then shown on the change's card. The VS Code host classifies on the absent
+--thread`, and is then shown on the change's card — a shape the format allows and romp's message
+no longer asks for (decision 42: the session makes edits with plain `track-edit` and answers a
+comment with `track-reply`). The VS Code host classifies on the absent
 anchor instead (`vscode/src/panel.ts:206`), so it shows such a comment as a passage comment; a
 comment written by the CLIs has exactly one of the two fields until then. The file on disk is
 always the current text with every change applied. The root is the nearest `.obsidian/`, `.git/`, or `.trackchanges/` ancestor; nothing reads git,
@@ -450,9 +452,12 @@ parents and returns null), `status` answers `root: null, storePath: null, tracke
 null` and the panel still offers Comment on this file and Track changes; `comment` and `set-tracked` then create `.trackchanges/` beside the file
 and call `findVaultRoot` again, which now returns the file's directory, and the CLIs resolve the
 same root from then on with no `TRACKCHANGES_ROOT`; `log-edit` never creates it. The host script's
-accept verbs never drop a comment bound by `suggestionId`;
-they set `resolved: true` on it, a stated divergence from the Obsidian host's accept-all, kept so
-the comment ids in a sent message stay addressable by `track-reply`.
+decisions never drop a comment bound by `suggestionId`, a stated divergence from the Obsidian host's
+accept-all, kept so the comment ids in a sent message stay addressable by `track-reply`; and since
+decision 42 (2026-09-09) they never resolve one either — before it, accept and a save's decisions set
+`resolved: true` on the bound comments. The comments a decision stages equal the loaded ones apart
+from `anchorAt`, and the host checks that on the staged sidecar, before every decision's rename lands it
+(`requireCommentsUntouched`).
 
 **`fileCommentsSend`**, the send op:
 
@@ -521,7 +526,7 @@ I accepted 4 of your changes and rejected 1.
 
 To respond:
   • reply in words:     node ~/.claude/hooks/track-reply.mjs --file <absPath> --thread <id> --note "<your reply>"
-  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file <absPath> --thread <id> --old "<exact text>" --new "<replacement>"
+  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file <absPath> --old "<exact text>" --new "<replacement>"
 
 When you have addressed these, ask me for another look the same way you asked for this one,
 naming the file.
@@ -542,8 +547,10 @@ exists (patch 0005).
 The format is modeled on the VS Code host's `buildThreadPing` (`vscode/src/dispatch.ts:519-533`)
 but is romp's own text. It keeps what the skill describes: the `[obsidian-diff]` prefix, the
 absolute path, a comment id per comment (the CLI flag is still `--thread`, the format's word),
-and the exact `track-reply` and `track-edit --thread` command lines. The tracking-on second
-bullet restates the skill's own instruction, since no host emits one today (the VS Code bullet
+and the exact `track-reply` and `track-edit` command lines — plain `track-edit`, with no `--thread`,
+since decision 42 (2026-09-09): the link that folded a revision into the comment's card confused the
+user, so the message no longer asks for it and the vendored skill's copy says the same (patch 0006).
+The tracking-on second bullet restates the skill's own instruction, since no host emits one today (the VS Code bullet
 says to edit normally, and the Obsidian host's message builder is a stub in its repo). With `tracked` false
 the second bullet becomes the VS Code host's wording: edit the file normally and note it with
 `track-reply`. For an image or PDF the second bullet says to regenerate the file with normal
@@ -705,7 +712,11 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   Changes** on the row under those toggles (the filter follow-on, 2026-09-07) narrows the list and
   the marks to one kind, Comments and Changes carrying their counts and All none, and is kept the
   same way; Send to session is not narrowed. An unpainted change
-  always has a card, so the compact view never dead-ends. Session colors come from one
+  always has a card, so the compact view never dead-ends. A comment can be made inside a change
+  without replying to it (2026-09-09): a click or a tap on a change mark or a comment highlight opens
+  its card, whatever selection stands elsewhere in the body, and a selection made by dragging inside
+  one leaves a comment on those words, since the click that ends a drag is not a tap (the panel's
+  `dragClick`, which reads the selection against the clicked mark alone; decision 44). Session colors come from one
   `GET /sessions` fetch per panel open, mapping `authorId` to name and color; an author with no
   live match gets a neutral chip with its label.
 - **Comment on a selection**: selecting a passage still seeds the quote chip when a chat composer
@@ -723,10 +734,17 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   "Queued for <session>" when the reply carries `queued: true`, and keeps polling while open. The
   confirm carries up to three checkboxes, all checked by default: **answer the todo** when the
   file was opened from one; **turn on tracking so the session's edits come back as changes** when
-  it is off (file scope); and, from Slice 2, **accept the N pending changes** when any exist, so
-  the session's later edits arrive as fresh changes rather than coalescing into an old one. The
-  sequence is fixed: the message is built from the current sidecar, then `set-tracked`, then
-  `accept-all`, then `fileCommentsSend` with `tracked` set to the post-toggle verdict; a refusal
+  it is off (file scope); and, from Slice 2, **accept the N pending changes you have seen** when any
+  pending change exists, so the session's later edits arrive as fresh changes rather than coalescing
+  into an old one — the SEEN ones only (decision 41, 2026-09-09): a change whose card was on screen at
+  one of the person's gestures (the card alone, as the arrivals follow-on's `entryShown` reads it: a mark
+  in the text on screen with its card out of the box marks nothing seen), or that the panel's first status
+  held; the option names
+  how many unseen ones stay pending, and with every pending change unseen the box is unchecked and
+  disabled and says nothing is accepted until they look. The sequence is fixed: the message is built
+  from the current sidecar, then `set-tracked`, then `accept` with the seen changes' ids (the card's
+  own accept, never an accept-all), then `fileCommentsSend` with `tracked` set to the post-toggle
+  verdict and the accepted count read from the accept's reply; a refusal
   at any step aborts the sequence before the send and shows the refusal; the log entry is appended
   after the send succeeds or queues. One send per file: when a todo names several files, the
   first send answers it and later sends for the other files show no todo checkbox.
@@ -1026,13 +1044,15 @@ for `files.ts` and the relay / ~160 / ~260, plus about 150 lines of tests on eac
 ### Slice 2: the session's changes as accept/reject cards and inline marks
 
 User-visible: change cards grouped by paragraph with Accept, Reject, Accept all, Reject all, and
-a Reply bound to the change so the agent's `track-edit --thread` revisions fold into it; inline
+a Reply bound to the change (a change comment, which the session answers in words with
+`track-reply`; the `track-edit --thread` link that folded its revisions into the card left the
+loop with decision 42); inline
 marks in Raw, highlights and deletion points in Rendered (the points since the inline-display
 follow-on, 2026-09-07), Reveal for a change the Rendered view cannot paint; Send to session states
 accepts and rejects and offers the accept-pending-changes checkbox.
 
-Acceptance: accept changes the sidecar only (the engine's `acceptSuggestions`) and marks bound
-comments resolved without dropping them; reject applies the engine's reverse edits to the file
+Acceptance: accept changes the sidecar only (the engine's `acceptSuggestions`) and leaves bound
+comments as they are, neither dropped nor resolved (decision 42; before it, marked resolved); reject applies the engine's reverse edits to the file
 and writes sidecar then file with rollback; both fence on the sidecar mtime and reject also on
 the file mtime; after a reject the owning session receives the trace; a `track-edit` landing
 mid-round makes the next Accept refuse and reload; accept-all on a file with no comments prunes
@@ -1211,7 +1231,10 @@ head (the fold control, the reference link) under the panel's header. A comment 
 scrolls to the card the save landed in, before the composer closes (`scrollToSaved`: the reply's render placed the
 cards under the composer's box and `centerOn` measures the header live, so the two agree; the host names no id in its
 reply, so the new comment is read off the reply's store as the one the status before the write did not hold,
-`savedCommentId`). A passage comment's or a reply's card is centered as an opened card is, and a loose card (a
+`savedCommentId`). That was this review's build; decision 43 (2026-09-09, the arrivals follow-on below) retired the scroll
+and `scrollToSaved` with it: `landSaved`, before the composer closes as well, makes the saved card the focus and moves
+nothing, and a line at the panel's foot says where the card is. A passage comment's or a reply's card is centered as an
+opened card is, and a loose card (a
 whole-file comment's, at the top of the track, where the lock keeps it out of view for a reader anywhere but the top
 of the text) is brought into the track's box by the least scroll that shows it, written onto the body and the track at
 once (`showLoose`, `scrollBoth`), since a track-only `scrollIntoView` moved the track alone and the frame's
@@ -1275,9 +1298,11 @@ heights nothing past the aside's edge, Send and the Log toggle in reach, the col
 a real Tab onto Send or the Log leaving the aside unscrolled and every card on its mark),
 `file-comments-margin-fixes.test.ts` (over the first review's stand-in with room for an open card: the opened card
 shown whole from its head and from its reference link, a card taller than the track clipped at its head by the excess
-alone, the un-push without a render, a whole-file comment saved while scrolled brought into the track's box by one
-write onto both scrollers with the composer closing after, a reply's save centering its card, the saved comment read
-off the reply's store, and at source the offset-free term and the save's scroll before the composer's close),
+alone, the un-push without a render, a whole-file comment saved while scrolled moving nothing, the line at the foot
+saying above and its click bringing the card into the track's box by one write onto both scrollers, the composer
+closing after (decision 43; before it, the save's own scroll), a reply's save scrolling nothing with the card the focus
+and its line's click centering the card, the saved comment read off the reply's store, and at source the offset-free
+term and the save's focus and line raised before the composer's close, with no scroll),
 `file-comments-margin-fixes-browser.test.ts` (the opening and the save in Chromium and Firefox over a rendered body),
 `styles-fc-margin-attribution.test.ts` (each sheet's margin comment held to the record
 `tools/file-review-plan-attribution.test.mjs` holds this note to) and
@@ -1349,7 +1374,9 @@ listener in `installLayout`; `focusOn`, which `goTo` and `scrollCard` call and w
 changed; the save's is the one on `scrollCard`'s path — `scrollToSaved` reaches it with no gesture before it, so a reply
 saved on an open card that is not the focus, pushed under a tall change card whose mark was clicked after the card
 opened, lands level with its mark and not where the push-down rule left it, a viewport below: the verification review,
-2026-09-09), and the mark is then centered (`centerOn`) so the mark and its card sit together mid-view; the least-scroll
+2026-09-09; since decision 43 the same day the save's setter is `landSaved`'s own call to `focusOn`, with no click on the
+card before it to set the focus and no scroll after it, and `scrollToSaved` is gone), and the mark is then centered
+(`centerOn`) so the mark and its card sit together mid-view; the least-scroll
 fallback stays for a focused card taller than the track has room for below the centered mark — the margin note's rule
 above: where the card's end would fall past the track's box with the mark at the body's center, the body scrolls the
 least that shows the card's end, and the mark lands above the center with the card whole and level beside it. That
@@ -1620,8 +1647,10 @@ closes, a later return to Changes does not bring it back, and the kept choice is
 made from a change card's Reply rides that card under Changes and gets no line. Under the margin layout
 (the margin-layout follow-on, above) the line is one of the list's rows and stands in the footer above Send
 with the foot and the folds (`moveRows`), in view wherever the text is scrolled, where a row at the top of the
-locked track is not; the margin's scroll to a saved card (`scrollToSaved`) finds no card for a comment the
-filter hides and moves nothing. The filter hides a card by leaving it out of the list (`renderCards`), never by
+locked track is not; the save's landing (`landSaved`) finds no card for a comment the filter hides and raises no
+line for it, since this row says where the comment is; and the save moves nothing, hidden card or not (decision 43;
+before it, the margin's scroll to a saved card, `scrollToSaved`, found no card for such a comment and moved nothing).
+The filter hides a card by leaving it out of the list (`renderCards`), never by
 styling it away, so the placement pass lays out the cards the chosen option shows and no other, and a pick
 repaints through `paintAll`, whose render ends in the pass (`afterRender`). The filter's row is a control row
 of the head, like the toggles' above it, not growth: the margin layout's two-tier rule leaves the head in the
@@ -1658,6 +1687,64 @@ any); `tools/file-review-plan.test.mjs`,
 `tools/file-review-plan-filter-fixes.test.mjs` and `tests/test_guide_files_filter.py` hold this note and
 the guide's paragraph to the source.
 
+The seen follow-on (2026-09-09): two rulings of the user's on what the arrivals follow-on surfaced. The first
+(decision 41): a Send had accepted eleven changes they had not looked at; they keep the box and its default, but an
+unseen change is never accepted by a send. Built: the panel splits the pending changes against the seen set
+(`partitionPending` in `file-comments-model.ts`, over the same entry keys `statusEntries` writes; `pendingSplit` in the
+panel, empty on both sides while the editor is up), and the confirm's accept option (`acceptOption`, `syncAcceptOption`)
+reads "accept the N pending changes you have seen" with, when K unseen exist, "(K unseen stay pending)"; the option no
+longer says "arrived since you last looked" itself (`acceptOptionLabel`), since every unseen pending change is among the
+arrivals the line under the header counts (that line's changes count takes in a detached arrival too, which
+`statusEntries` files as a change with pending off and the split, over the status's hunks, never sees, so the two numbers
+agree only while no detached change has arrived); with nothing seen it reads "accept the pending changes you have seen
+(all K pending changes are unseen; nothing is accepted until you look)" and the box is unchecked and disabled, the
+person's own choice
+(`sendOpts.accept`) kept for when a look brings a change to the seen side. `doSend` accepts the seen changes by id
+through the card's own accept (`mutate("accept", { ids })`, never an accept-all), over the seen set as the confirm SHOWED
+it (`confirmSeen`, written at the confirm's render and rewritten with the option's words after a gesture; `pendingSplit`
+reads it while a confirm is up), so what the option and the count row said when the person pressed Send is what goes,
+and states in the message the count the accept's reply lists (`accepted`), never the confirm's. The press is a gesture
+and marks a card on screen seen as any gesture does, for the NEXT confirm and not this send (`sendPress`: the send's own
+press, a pointer's or the key's, leaves the option and `confirmSeen` as the person read them; for a pointer press the
+row's hold, `pressHold`, parks the change in place until after the click as well). The review of 2026-09-09 found the
+send reading the live set after the press's own mark, and accepting a change while the box still read disabled and
+unchecked with "nothing is accepted until you look", words the hold had kept through the press. Any other gesture while
+the confirm is up moves a card it shows to the seen side in place (`reflectSeen`), rewriting the option's words and its
+checked and disabled state, the count row and `confirmSeen` through the same `syncAcceptOption` the render uses. Seen is
+keyed by the change's id and its texts (`seenTexts`, recorded with the seeds, at a gesture and for the person's own writes:
+`recordSeen`, `recordPending`): a same-author `track-edit` landing inside or beside a pending change is coalesced into it
+under the same id, so a status can bring a seen id with text the person has not read. A seen pending change that reads
+differently from its record leaves the set and is filed as an arrival again (`noteArrivals`, `grownSince`, the same
+comparison the decisions stand down on, `changedSince`): its dot, the line under the header and the unseen count name it,
+the next gesture with its card on screen sees it anew, and the person's own change stays seen whatever it reads (the
+review's third round, 2026-09-09: before it the send accepted a change grown under a seen id and the confirm counted it
+among the seen; `file-comments-seen-review3.test.ts` drives the case). The
+second ruling (decision 42): the message's `track-edit --thread <id>` line, which bound a revision to the comment so the
+card showed the edit inside it, confused them and is gone: both builders (`buildSendMessage`, the kernel's
+`_file_comments_message`) say plain `track-edit` for edits and `track-reply` for answering a comment in words, the
+vendored skill says the same (patch 0006), and the host's decisions never resolve a comment (`requireCommentsUntouched`
+holds the staged comments to the loaded ones apart from `anchorAt`). With nothing resolved by an accept, the confirm's
+"resolves M comments" clause and the acknowledgment line's tail are retired. Tests: `file-comments-model-seen.test.ts`
+(the split and the words), `file-comments-send-seen.test.ts` (the stand-in: two seen and one unseen accept the two by id
+and leave the third pending; all unseen make no accept call and a disabled box; the words follow a gesture in place and
+on the re-render; the message's count is the reply's), `file-comments-send-seen-browser.test.ts` (Chromium and Firefox,
+the two-seen-one-unseen scene), `tests/test_guide_files_seen.py` (the guide's sentence held to the panel) and
+`tools/file-review-plan-seen.test.mjs` (this note held to the code and the modules it names),
+`tools/file-review-plan-seen-review.test.mjs` (the review's plan fixes: the arrivals paragraph's retired option words and
+save scroll stated as history, the acknowledgment line named as CONTEXT.md names it, the contract paragraph's check held
+to the host's call sites, the margin-fixes and model-seen accounts held to their modules) and
+`tools/file-review-plan-seen-review-2.test.mjs` (the second round's: the send's split over the confirm's set and the
+press's mark for the next confirm, the seen rule as the card alone, the unseen count against the arrivals line's, and the
+save's retired scroll stated as history wherever this document names it, each held to the panel and the model),
+`tools/file-review-plan-seen-review-3.test.mjs` (the third round's: the saved line's place stated by layout, the keys that
+are no gesture against `NAV_KEYS`, the acknowledgment never a note across a wrap, the Tests bullet's modules against the
+tree) and the rounds' own modules (`file-comments-seen-fixes.test.ts`, `file-comments-seen-review2.test.ts`,
+`file-comments-seen-review2-browser.test.ts`, `file-comments-seen-review3.test.ts`,
+`file-comments-seen-review3-browser.test.ts`, `feed-css-saved-line-head-dress.test.ts`,
+`tests/test_guide_files_seen_definition.py`,
+`tests/test_guide_files_saved_line_layout.py`, `tools/file-comments-host-untouched.test.mjs`,
+`tools/file-comments-host-review-seen.test.mjs`; the Tests section says what each drives).
+
 The arrivals follow-on (2026-09-09): two rules, both from the user's reports of the day. The first report: the user
 sent comments, the session answered with eleven changes and seven replies while they kept commenting, and nothing in
 the panel said so; the first they knew of them was the next Send accepting the changes by default. Built: the panel keeps
@@ -1680,30 +1767,57 @@ track's box seen (`entryShown`: the placed top inside the box; the list layout r
 aside's and the window's), and the ones it scrolled into view are seen by the gesture that follows; a card not
 rendered, behind a fold or the filter, is not on screen and stays an arrival. A gesture is a pointer press or a key
 anywhere in the body row, a wheel or a touch move (the two events that begin a scroll of the person's: the scroll
-event itself is not one, since the lock's writes, a centering and the save's scroll fire it with no gesture behind
-them, and a wheel fires before the scroll it starts), a save, a send; never a timer. The line's own press marks
-nothing, so the click that shows an arrival does not mark it seen; the dots and the line change in place rather than by a
-render, the line through the row's press hold (`pressHold`), since a line removed during a press moves the list under
-the pointer. The Send confirm's accept option reads "accept the N pending changes (M arrived since you last looked)"
-when arrivals include pending changes (`acceptOptionLabel`); the default stays decision 8's; the same confirm lost its message preview to a box for the person's own words the same
-day (decision 40), which travel first in the message as `note`. From the lost-update probe of the same day: the accept
-resolves the comments bound to the changes it accepts (the host's rule), and in the incident seven comments the session's
-edits had answered folded under a collapsed Resolved with nothing said; the option now reads "(resolves M comments; K
-arrived since you last looked)" in one parenthesis (`resolvedByAccept`), and after a send whose accept-all resolved
-comments the Resolved fold opens before the renders that follow and the acknowledgment line after the send reads "Sent to <session> at <time> ·
-accepted N changes; M comments with the session's replies moved to Resolved" (`sentNoteWords`): nothing leaves the
-visible list without a visible word. The set lives with the
+event itself is not one, since the lock's writes and a centering fire it with no gesture behind them, as the save's
+scroll did while it stood (decision 43 retired it), and a wheel fires before the scroll it starts), a save, a send;
+never a timer. A Tab or a modifier pressed alone (Shift, Control, Alt, AltGraph, Meta: `NAV_KEYS`) is no gesture: it moves
+the keyboard or begins a chord and scrolls, edits or presses nothing, and the key or the click that follows is the gesture;
+counted as gestures they ended the saved line before the keyboard could reach it, a Tab from the Send button removing the
+line the focus was moving to (the review's first round, 2026-09-09; `file-comments-seen-review2.test.ts` drives the Tab
+and each modifier on both lines). The line's own press marks nothing, so the click that shows an arrival does not mark it
+seen; the dots and the line change in place rather than by a render, the line through the row's press hold (`pressHold`),
+since a line removed during a press moves the list under the pointer. The Send confirm's accept option read "accept the N pending
+changes (M arrived since you last looked)" when arrivals included pending changes, until decision 41 (the seen follow-on
+above, the same day) moved it to the seen split: it names the pending changes the person has seen and the unseen ones
+that stay pending, and says nothing of arrivals, which the line under the header counts (`acceptOptionLabel`; the seen
+follow-on's paragraph carries the words); the default stays decision 8's; the same confirm lost its message preview
+to a box for the person's own words the same day (decision 40), which travel first in the message as `note`. From the
+lost-update probe of the same day: the accept then resolved the comments bound to the changes it accepted (the host's
+rule at the time), and in the incident seven comments the session's edits had answered folded under a collapsed Resolved
+with nothing said; the option gained a
+"resolves M comments" clause and the acknowledgment line a tail naming what moved to Resolved. Decision 42 (the same
+day) ended the host's resolve-on-accept, so nothing leaves the visible list on a send any more and both went with it (the
+seen follow-on above). The set lives with the
 panel: a Raw/Rendered switch, a reload and a close and reopen of the aside keep it, and a new file is a new panel. The
 second report: they saved a reply, scrolled on while the host answered, and the reply's landing pulled the text back to
-the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built: `saveComposer` counts the
-save as a gesture and samples the count (`gestures`) when Save is pressed; when the reply lands, `scrollToSaved`
-scrolls only if the count stood (no gesture of theirs in between; the event is the person's own input, never a time
-window) AND the saved card is not already whole in the track's box (`cardWhole`: a card in view needs no scroll; a
-whole-file comment's card at the top of the track with the text scrolled down does); standing down, the card still
-becomes the focus for the layout (`focusOn`), so it lands level with its mark wherever that is, and nothing scrolls;
-the composer's acknowledgment is unchanged. Tests: `file-comments-model-arrivals.test.ts` (the pure half),
+the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built first: `saveComposer` counted
+the save as a gesture and sampled the count when Save was pressed, and when the reply landed the save scrolled only if
+the count stood (no gesture of theirs in between) and the saved card was not already whole in the track's box.
+Decision 43 (the seen follow-on, the same day) retired the scroll: a save never moves the view, the count went with the
+scroll it judged, and `landSaved` makes the saved card the focus for the layout (`focusOn`), so it lands level with its
+mark wherever that is. When the card is not whole in view once the save's status has landed (`cardWhere`: the placed
+top and height against the track's scroll and box in the margin layout, the card's box against the aside's in the
+list), in the margin layout the acknowledgment line's position at the panel's foot reads "Saved · the card is above" or
+"below" (`savedLine`; the words are the model's, `savedWhereWords`), a button whose click scrolls the card into view as the
+focus (`fcsavedgo`: `scrollCard`); in the list layout the same button stands under the header (`savedLineHead`, appended by
+`renderHead`), since the list's Send section is the scroller's foot, below the very card the line says is below, so a line
+there was never on screen when it was wanted, and an earlier send's acknowledgment keeps its place at the foot there where
+the margin layout's gives way to the line (the review's first round, 2026-09-09). The acknowledgment the margin layout's
+line displaces comes back in its place when the line ends (`sentAck`, set with the acknowledgment by `doSend`;
+`restoreSent`, from `reflectLines` at a gesture and at the settled re-read that finds the card in view, and from the
+panel's close), so the foot never shows neither; the next confirm's opening clears the acknowledgment and the copy it
+kept, and a line standing then comes down on nothing, the next send's acknowledgment taking the place (the review's third
+round, 2026-09-09: a reply's landing read its card, taller with the composer's box inside it, as below the box, the close
+re-laid the card whole in view, and the pass's re-read ended the line with the acknowledgment gone;
+`file-comments-seen-review3.test.ts` and its browser leg drive the scene). The side is latched at the landing
+(`savedOut`), since a render swaps in a card list the pass has not sized yet and the track's scroll reads 0 until it has,
+and re-read where the geometry is settled, at the end of a pass and at a scroll (`reflectLines`, through the row's press
+hold as the arrivals line is: a line leaving the Send section moves the Send button under a pointer); the line ends there
+when the card is in view, and at the person's
+next gesture (`gesture`; a press on the line itself excepted, its click being what it is for). No timer. The composer's
+acknowledgment is unchanged. Tests: `file-comments-model-arrivals.test.ts` (the pure half),
 `file-comments-arrivals.test.ts` (the stand-in: both rules driven), `file-comments-arrivals-browser.test.ts` (Chromium
-and Firefox), `tests/test_guide_files_arrivals.py` (the guide's two sentences held to the panel) and
+and Firefox), `tests/test_guide_files_arrivals.py` (the guide's two sentences held to the panel),
+`tests/test_guide_files_save_line.py` (the save sentences' gesture words derived from the listeners) and
 `tools/file-review-plan-arrivals.test.mjs` (this note held to the code and the modules it names).
 
 ### Slice 3: region comments on images
@@ -2226,11 +2340,13 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   first review's stand-in with room for an open card and pins the opened card shown whole (the least
   scroll that shows its end, with no header term, so its head stays in the track's box, from the head
   click and from the reference link), a card taller than the track clipped at its head by the excess
-  alone, a pass without a render un-pushing a card, a whole-file comment saved while scrolled brought into
-  the track's box by one write onto both scrollers with the composer closing after, a reply's save
-  centering its card, the saved comment read off the reply's store (one new comment; among several, the
-  one whose body is the note; none identifiable, nothing scrolls), and at source the offset-free term and
-  the save's scroll before the composer's close; `file-comments-margin-fixes-browser.test.ts` runs the
+  alone, a pass without a render un-pushing a card, a whole-file comment saved while scrolled moving
+  nothing, the line at the foot saying above and its click bringing the card into the track's box by one
+  write onto both scrollers, the composer closing after (decision 43; before it, the save's own scroll), a
+  reply's save scrolling nothing with the card the focus and its line's click centering the card, the saved
+  comment read off the reply's store (one new comment; among several, the one whose body is the note; none
+  identifiable, no line), and at source the offset-free term and the save's focus and line raised before the
+  composer's close, with no scroll; `file-comments-margin-fixes-browser.test.ts` runs the
   opening and the save in Chromium and Firefox over a rendered body;
   `styles-fc-margin-attribution.test.ts` holds each sheet's margin comment to the record
   `tools/file-review-plan-attribution.test.mjs` holds the note to (the layout as the build's reading, the
@@ -2320,18 +2436,70 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   on a status landing, none for the person's own writes or the first status; seen by a wheel, a key,
   a press and a touch move, in the track's box only, never by time; the line's click and its own
   press; the accept option's words; the set across a repaint, a status and a close and reopen; the
-  save's scroll standing down on each gesture kind, still scrolling when nothing happened and the
-  card is out of view, and not for a card whole in the box);
+  save moving nothing whatever came between Save and the reply, the saved card the focus, the line
+  at the foot for a card below or above the box, its words following the card between renders, its
+  click, its end at a gesture, under a held press at the release, and when the card comes into view,
+  and no line for a card in view or for one the reply's store cannot name);
   `file-comments-arrivals-browser.test.ts` measures both in Chromium and Firefox (the line in the
   accent with its dot, the dots on the cards' heads and the marks, a real wheel marking the arrival
-  in the box seen; a whole-file comment's save bringing the text to its card, and not after a
-  wheel); `tests/test_guide_files_arrivals.py` holds the guide's two sentences to the panel;
+  in the box seen; a whole-file comment's save moving nothing, the line at the foot in the
+  acknowledgment's green, a real wheel ending it, and its click bringing the text to the card);
+  `tests/test_guide_files_arrivals.py` holds the guide's two sentences to the panel;
+  `tests/test_guide_files_save_line.py` derives the save sentences' gesture words from the listeners;
   `tools/file-review-plan-arrivals.test.mjs` holds the follow-on's paragraph to the code and the
   modules it names; `tools/file-review-plan-send-note-close.test.mjs` holds decision 40's sentences on
   the viewer's close guard (the composer's comment and the Send box's note each asked about) to the panel's
   close asks and the viewer's close and replace-open paths. `tools/file-review-plan-arrivals-review.test.mjs`
   holds the review's three plan fixes (the request block's `note?` and the op prose to the kernel and
   the panel, the user ungendered, the Docs sentence's gestures to the guide).
+- The seen follow-on (2026-09-09): `file-comments-model-seen.test.ts` (the pending changes split against
+  the seen set; the accept option's words with seen and unseen counts and with nothing seen, and no resolve
+  clause, the option taking two counts since decision 42);
+  `file-comments-send-seen.test.ts` drives the panel over the review stand-in (two seen and one unseen:
+  the option's words, the accept by id for the two, the message's count from the reply, the third still
+  pending; all unseen: no accept call, the box unchecked and disabled; the person's own uncheck kept; a
+  gesture while the confirm is up moving a change to the seen side in place and on the re-render);
+  `file-comments-send-seen-browser.test.ts` measures the two-seen-one-unseen scene in Chromium and
+  Firefox; `tests/test_guide_files_seen.py` holds the guide's sentence to the panel;
+  `tools/file-review-plan-seen.test.mjs` holds the follow-on's paragraph and decisions 41 and 42 to the
+  code, the message builders and the modules they name; `tools/file-review-plan-seen-review.test.mjs`
+  holds the review's plan fixes (the arrivals paragraph's retired option words and save scroll as history,
+  the acknowledgment line named as CONTEXT.md names it, the contract paragraph's self-check to the host's
+  call sites, the margin-fixes and model-seen accounts to their modules) to the code;
+  `tools/file-review-plan-seen-review-2.test.mjs` holds the second round's (the send's split over the confirm's
+  set and the press's mark for the next confirm, the seen rule as the card alone, the unseen count against the
+  arrivals line's, the save's retired scroll as history wherever the plan names it) to the panel and the model.
+  The review rounds' own modules: `file-comments-seen-fixes.test.ts` drives the panel over the stand-in (the send
+  accepting what the confirm showed and the press's mark for the next confirm; the count row following a gesture; a
+  wheel over the saved line ending it, a press or a touch move on it not; the list layout re-reading the line's side at
+  the aside's scroll, at a render and after the composer's close; the line under the header in the list layout and in
+  the Send section in the margin layout; the panel's close ending the line; doSend's contract naming no accept-all);
+  `file-comments-seen-review2.test.ts` drives the second round's (the confirm's Send activated from the keyboard as the
+  send's own press; a key or a touch move ending the saved line; a Tab or a modifier alone no gesture, so the keyboard
+  reaches the line, whose activation leaves the keyboard on the card it showed; the margin layout's line stuck to the
+  Send section's bottom edge with the confirm up; the list layout's save leaving the acknowledgment in place; the
+  track-and-accept send standing down on a change grown between the press and set-tracked's reply), and
+  `file-comments-seen-review2-browser.test.ts` measures the stuck line and the keyboard's way to it in Chromium and
+  Firefox; `file-comments-seen-review3.test.ts` drives the third round's over the same stand-in, a reply's box measured
+  inside its card (the re-read at the end of the margin pass ending the line when the composer's close lays the card whole
+  in view; the acknowledgment the line displaced back at the foot at that re-read, at a gesture and at the panel's close,
+  and gone for good when Send to session is pressed with the line standing; a seen pending change grown under its id
+  unseen again, an arrival with its dot, counted among the unseen, left pending by the send and seen anew at the next
+  gesture that finds its card), `file-comments-seen-review3-browser.test.ts` measures the reply-box scene and the
+  returning acknowledgment in Chromium and Firefox, and `feed-css-saved-line-head-dress.test.ts` holds the list layout's
+  line under the header to the arrivals row's dress in both sheets and measures the two rows in both engines;
+  `tests/test_guide_files_seen_definition.py` holds the guide's definition of a seen change (the first status's
+  entries, a later change whose card was in view at a gesture, and a seen change the session edited again unseen until
+  the next look) to the panel;
+  `tests/test_guide_files_saved_line_layout.py` holds the guide's list-layout sentence to the panel's placement by
+  layout, the sheets and the panel's tests of both placements; `tools/file-comments-host-untouched.test.mjs` drives the
+  host's self-check end to end (a real stage, a comment changed in every way, the `anchorAt` carve-out, a check with
+  nothing staged throwing, the verbs); `tools/file-comments-host-review-seen.test.mjs` holds the host's account of
+  `suggestionId` to its code (every write of `resolved` the person's own `resolve` verb); and
+  `tools/file-review-plan-seen-review-3.test.mjs` holds the third round's plan fixes (the saved line's place stated by
+  layout in the arrivals paragraph, decision 43 and the Docs sentence; the keys that are no gesture named against
+  `NAV_KEYS`; the acknowledgment never a note, across a wrap either; this list against the tree) to the panel, the guide
+  and the tree.
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
@@ -2398,6 +2566,32 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tools/file-review-plan-filter-fixes.test.mjs` holds the note's second-round sentences to the panel
   and this inventory to the tree: every suite named `file-comments-filter…` under `ui/webview` is named
   here and in the note.
+- The marks' drag rule (2026-09-09, decision 44): `ui/webview/file-comments-markclick.test.ts` drives the
+  `fcchange` and `fcopen` handlers over the behavior suite's stand-in with the live selection faked per case
+  (inside the mark, elsewhere in the body with none of it in the mark, collapsed, none, in the aside, one end
+  out; the pointer's click with `detail` 1 and the keyboard's activation through the row's keydown with 0, as
+  browsers dispatch them);
+  `ui/webview/file-comments-markclick-browser.test.ts` drags a real mouse inside an insertion's mark over the
+  real viewer and panel in Chromium and Firefox, Rendered and Raw, the mark off the body's centre so the old
+  behaviour scrolled: no card opens, the body does not scroll, the float stands, the composer opens on the
+  selection, Save posts a passage comment the reply paints as its own card and highlight, a plain click on the
+  mark still opens its card and scrolls, and the keyboard's activation of the focused mark opens it with the
+  selection standing; its second test per engine selects words in another paragraph and clicks a deletion's
+  struck label, and in Rendered an insertion's mark and a comment highlight inside an author's link, marks whose
+  press collapses no selection: each opens its card and scrolls as with no selection (in Raw the link's label
+  is plain text, whose press collapses the selection, the control). `ui/webview/file-comments-markclick-controls.test.ts`
+  drives the guard as read against the clicked mark over the stand-in: a selection standing elsewhere in the body, or
+  spanning the mark from outside, leaves the click a click for a change mark, a deletion's point and a comment
+  highlight; the drag's own click still opens nothing and leaves no press pulse; a drag's end reported at the mark's
+  edge is the mark's and one past it is not; and with the panel closed a drag inside a mark opens no panel and no
+  card while a plain click opens both. `ui/webview/file-comments-markclick-controls-browser.test.ts` makes that state
+  with a real mouse over the real viewer and panel in Chromium and Firefox: with words selected in another paragraph a
+  click on a deletion's label, on a mark inside an author's link, on a region rectangle and on a framed figure opens
+  its card; a drag inside an insertion's mark opens nothing and leaves no pulse; a drag ending at the mark's last
+  character is the drag's; a tap on the deletion label with a selection standing opens the card (Chromium's touch);
+  and with the panel closed the label and the frame open the panel and the card, the drag neither.
+  `tools/file-review-plan-markclick.test.mjs` holds this bullet, the surface sentence and decision 44 to the panel,
+  the sheets, the overlay and the four modules.
 
 ## Docs
 
@@ -2416,9 +2610,15 @@ panel and both sheets); with the focus follow-on (2026-09-08), that the card you
 passage whatever stands above it and that a long card folds to a few lines with Show more at its foot
 (`tests/test_guide_files_focus.py` holds the sentence to the panel, the layout rule and the sheets).
 With the arrivals follow-on (2026-09-09), that a line under the panel's header counts what the session added since you
-last looked, with a dot on each until you scroll or click with it in view, and that a save brings the new card into
-view unless you scrolled, clicked, tapped, or pressed a key meanwhile (`tests/test_guide_files_arrivals.py` holds both
-sentences to the panel).
+last looked, with a dot on each until you scroll or click with it in view, and that a save leaves the text where it is,
+a line at the panel's foot saying whether the new card is above or below until your next scroll, click, tap, or key,
+its click bringing the card into view (`tests/test_guide_files_arrivals.py` holds both sentences to the panel), and that
+in the list under a narrow column the line stands under the panel's header instead
+(`tests/test_guide_files_saved_line_layout.py` holds that sentence to the panel's placement by layout, the sheets and the
+panel's tests of both placements). With the seen follow-on (2026-09-09), that the Send's checkbox accepts only the pending
+changes you have seen and says how many unseen ones stay pending, and that a change the session edits again after you
+looked at it is unseen until you look again (`tests/test_guide_files_seen.py` and `tests/test_guide_files_seen_definition.py`
+hold the sentence to the panel).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -2582,6 +2782,78 @@ document stands on its own, each with the reasoning it was given.
     panel's Log shows it. The acknowledgment line after a send (Sent to <session> at <time>) is unchanged. A kernel change: the panel and the kernel land together,
     and the kernel restarts to go live.
 
+41. **The Send's accept takes the changes you have seen, never an unseen one** (2026-09-09). The user's ruling on
+    what the arrivals follow-on surfaced (a Send had accepted eleven changes they had not looked at): the box stays,
+    and so does its default, but a send never accepts a change they have not seen. The option accepts the pending
+    changes the person has seen — a change whose card was on screen at one of their gestures, or that the panel's
+    first status held, the arrivals follow-on's rule (the card alone: a mark in the text on screen with its card
+    out of the box marks nothing seen) — by id, through the same accept the card's button uses, and says how many
+    unseen ones stay pending; with nothing seen the box is unchecked and disabled and says so. The send accepts the
+    seen set as the confirm showed it: the Send press is a gesture and marks a card on screen seen, for the next
+    confirm and not for this send. The message states the count the accept's reply lists. A seen change the session
+    edits again under the same id is unseen again until the person looks at it (the review's third round, 2026-09-09).
+    The seen follow-on under Slice 2 has the build.
+
+42. **The edit-to-comment link leaves the loop, and a decision never resolves a comment** (2026-09-09). The message
+    told the session to revise with `track-edit --thread <id>`, which binds the edit to the comment so its card shows
+    the edit inside the comment; the user found the link too confusing and asked for it to go. Both message builders
+    now say plain `track-edit` for edits and `track-reply <id>` for answering a comment in words, the vendored skill's
+    copy says the same (patch 0006), and the host's accept and save leave a comment bound to a decided change as it
+    was, open: resolving is the person's own act. Comments already bound stay as they are on disk and render as
+    before. With nothing resolved by an accept, the confirm's "resolves M comments" clause and the acknowledgment
+    line's "moved to Resolved" tail are retired.
+
+43. **A save never moves the view; a line says where the card is** (2026-09-09). The user's ruling on the save's
+    scroll, which the arrivals follow-on had stand down once they had moved on: no scroll after a save at all, even
+    when the new card lands out of view, because a scroll is disruptive; they accept that the person may then have to
+    look for the card. Built: the save makes the card the focus for the layout and scrolls nothing. When the card is
+    not whole in view once the save's status has landed, in the margin layout the acknowledgment line's position at the
+    panel's foot reads "Saved · the card is above" or "below", a button whose click scrolls the card into view, and in
+    the list under a narrow column the same button stands under the panel's header (the list's Send section is the
+    scroller's foot, below the very card the line says is below, so a line there was never on screen when it was
+    wanted; the review's first round, 2026-09-09); the line ends at the person's next gesture (a Tab or a modifier
+    pressed alone, the keyboard's way to the line, is none) or when the card comes into view, never on a timer. In the
+    margin layout the acknowledgment of the send before, which the line displaced, is back in its place when the line
+    ends (the review's third round, 2026-09-09). The arrivals follow-on under Slice 2 has the build.
+
+44. **A comment can be made inside a tracked change without replying to the change** (2026-09-09). The user wants
+    selecting words inside a change's new text and commenting on them to work as it does for any other passage;
+    Reply on the change's card must not be the only way to comment on a change. The mapping, the composer and the
+    save already accepted such a passage. The mark blocked it by mouse: a change mark and a comment highlight are
+    controls (`fcchange`, `fcopen`), a drag begun and ended inside one fires a click on it, the common ancestor of
+    the press and the release, and the card's open (`showCard`, `centerOn`) scrolled the mark to the body's centre
+    and hid the Comment float the same mouseup had offered beside the selection (`hideFloatOnScroll`). The rule is
+    event-based: the click that ends a drag is not a tap. In the `fcchange` and `fcopen` handlers a click arriving
+    with a non-collapsed selection whose anchor and focus both lie inside the clicked mark does nothing
+    (`dragClick`): no card, no scroll, no focus change; the float stands and the composer opens on the selection as
+    for any passage. A plain click or a tap on a mark opens the card as before: its click arrives with the selection
+    collapsed, or standing with no end inside the clicked mark, and the guard yields only to a selection whose ends
+    both lie inside that mark, whatever the control's press did to a standing selection; a selection elsewhere
+    (another paragraph, the aside, another pane) changes nothing; a click with no pointer behind it (`detail` 0: the
+    keyboard's activation of the focused mark) opens the card whatever selection stands. The guard reads the clicked
+    mark rather than the whole body since the slice's review (2026-09-09, with a real mouse in Chromium and Firefox,
+    Rendered and Raw). As first built it read any selection with both ends in the body as a drag's, on the premise
+    that a press collapses a standing selection, which holds only for a press on text the press can select: a press
+    on a deletion's struck label (generated text under `user-select: none`), on a region rectangle (the figure
+    overlay cancels its `pointerdown`, and with it the mousedown that would have collapsed one), on a mark inside an
+    author's link (a draggable anchor) or on a framed picture collapses nothing, so with words selected in another
+    paragraph a click on any of them opened nothing until the selection was dropped. Read against the mark, the guard
+    yields only to the drag's own selection: a drag that ends on the mark it began in puts both ends inside it, a
+    drag that leaves the mark fires its click on the common ancestor and never on the mark, a selection standing
+    elsewhere or spanning the mark from outside has no end inside it, and no selection end can lie inside a
+    deletion's point or a rectangle, so those clicks open the card whatever stands selected. An engine may report a
+    drag's end at the mark's edge as a point in the mark's parent or in the neighbouring text rather than in the mark;
+    `endInside` takes both as the mark's. The click stood down shows nothing: the press pulse the delegate put on the
+    mark before the handler ran comes off in the same task (`actions.ts`). With the panel closed the marks are painted
+    too, and a drag inside one behaves as a drag over any passage does then: no panel opens and no card, since the
+    Comment float is the open panel's; a plain click on the mark opens both. The comment saved is an ordinary passage
+    comment, its own card and highlight, no `suggestionId`. `file-comments-markclick.test.ts` and
+    `file-comments-markclick-controls.test.ts` drive the guard over the stand-in;
+    `file-comments-markclick-browser.test.ts` and `file-comments-markclick-controls-browser.test.ts` drag a real mouse
+    in Chromium and Firefox, Rendered and Raw: inside an insertion's mark, and, with words selected in another
+    paragraph, on a deletion's label, the marks inside a link, a region rectangle and a framed figure. Client-only; no
+    kernel change.
+
 ## Open questions for the user
 
 Every question raised by this document, by its reviews, or in the design interview has been ruled
@@ -2592,8 +2864,8 @@ anchor, a region whose figure has not loaded) stands at the top of the track, wh
 of view for a reader anywhere but the top of the text; the follow-on's third review confirmed that and
 proposed a pinned band between the composer and the track for those cards, in the list's order, with
 its own scroll and a fold beyond a few — a new surface, so it waits for the same word rather than
-landing with the review's fixes (the save's scroll, `showLoose`, already brings a whole-file comment's
-card into view). The focus follow-on (2026-09-08) adds to the question: the group joins the chain of cards
+landing with the review's fixes (the saved line's click, through `showLoose`, brings a whole-file comment's card into
+view on request; the save itself moves nothing since decision 43). The focus follow-on (2026-09-08) adds to the question: the group joins the chain of cards
 a focus moves up, as far as the track's start, and the cards at its end that do not fit above the focused
 card are laid below it — so a focus near the top of the text can put a whole-file comment's card under the
 focused card rather than at the top (as first built the group was moved above the start, where no scroll

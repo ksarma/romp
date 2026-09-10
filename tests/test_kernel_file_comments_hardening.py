@@ -317,7 +317,12 @@ class ACorruptSidecarWithTheRealHost(_World):
 class TheCommandLinesCarryThePathAsOneWord(unittest.TestCase):
     """The session runs the two command lines as written. A path is one shell word on them (shlex.quote's
     rule), so a space no longer splits --file's value and a metacharacter never runs; the prose keeps the
-    plain path. The webview's preview builder must port _sh_word byte for byte."""
+    plain path. The webview's preview builder must port _sh_word byte for byte.
+
+    The two lines differ after the path (decision 42, 2026-09-09): the track-reply line carries
+    `--thread <id>` because a reply answers a comment; the track-edit line carries `--old "<exact text>"`
+    and NEVER `--thread`, because an edit is a change in the text, not a link to a comment. Both pins
+    live in `assert_two_lines` so a path test cannot pass with the link put back on the edit line."""
 
     def lines(self, path, tracked=True, is_text=True):
         body = km._file_comments_message(path, ONE, 0, 0, tracked, is_text)
@@ -329,22 +334,28 @@ class TheCommandLinesCarryThePathAsOneWord(unittest.TestCase):
         words = shlex.split(line[line.index("node "):].replace("<id>", "ID"))
         return words[words.index("--file") + 1]
 
+    def assert_two_lines(self, cmd, word, path, msg=None):
+        """The reply line then the edit line, `--file <word>` on both, `--thread <id>` on the reply line
+        only, `--old "<exact text>"` on the edit line only; a shell hands each CLI the whole path."""
+        self.assertEqual(len(cmd), 2, msg)
+        reply, edit = cmd
+        self.assertIn("track-reply.mjs --file %s --thread <id> --note" % word, reply, msg)
+        self.assertIn("track-edit.mjs --file %s --old \"<exact text>\" --new" % word, edit, msg)
+        self.assertNotIn("--thread", edit, "plain track-edit, no comment link (decision 42)")
+        for l in cmd:
+            self.assertEqual(self.file_arg(l), path, msg)
+
     def test_an_ordinary_path_reads_as_the_plans_template(self):
         body, cmd = self.lines(REPORT)
-        self.assertEqual(len(cmd), 2)
-        for l in cmd:
-            self.assertIn("--file %s --thread <id>" % REPORT, l, "no quotes on a path that needs none")
-            self.assertEqual(self.file_arg(l), REPORT)
+        self.assert_two_lines(cmd, REPORT, REPORT, "no quotes on a path that needs none")
         self.assertNotIn("'", body)
 
     def test_a_space_in_the_name_stays_one_word(self):
         path = "/TESTDIR/vault/Meeting notes.md"
         body, cmd = self.lines(path)
         self.assertTrue(body.startswith("[obsidian-diff] I left 1 comment on %s.\n" % path), "prose: the plain path")
-        self.assertEqual(len(cmd), 2)
-        for l in cmd:
-            self.assertIn("--file '/TESTDIR/vault/Meeting notes.md' --thread <id>", l)
-            self.assertEqual(self.file_arg(l), path, "the CLI sees the whole name, not …/Meeting plus a stray word")
+        self.assert_two_lines(cmd, "'/TESTDIR/vault/Meeting notes.md'", path,
+                              "the CLI sees the whole name, not …/Meeting plus a stray word")
 
     def test_metacharacters_are_inert(self):
         names = ["notes; touch PWNED #.md", "a$(touch PWNED2).md", "b`touch PWNED3`.md", "it's here.md",
@@ -382,9 +393,7 @@ class TheCommandLinesCarryThePathAsOneWord(unittest.TestCase):
         body, cmd = self.lines(path)
         self.assertNotIn("<!-- romp-", body)
         self.assertIn("I left 1 comment on /TESTDIR/<!- - romp-x -->/a.md.", body)
-        for l in cmd:
-            self.assertIn("--file '/TESTDIR/<!- - romp-x -->/a.md' --thread <id>", l)
-            self.assertEqual(self.file_arg(l), "/TESTDIR/<!- - romp-x -->/a.md")
+        self.assert_two_lines(cmd, "'/TESTDIR/<!- - romp-x -->/a.md'", "/TESTDIR/<!- - romp-x -->/a.md")
 
     def test_the_other_bullets_are_untouched(self):
         for tracked, is_text, want in ((False, True, "edit the file normally"), (True, False, "regenerate the file")):

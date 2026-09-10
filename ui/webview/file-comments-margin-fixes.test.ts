@@ -3,9 +3,10 @@
 // a body whose content reflows without its box changing): the centering of a card that fits the track (the card's top
 // is TRACK content, which the lock scrolls with the body, so the scroll that shows the card's end has no header term —
 // one added on top put an opened card's head under the panel's header), a pass without a render un-pushing a card
-// (the leader's attribute and length leave the reused node), and a save scrolling to the card it landed in (a
-// whole-file comment's card is loose at the top of the track, out of view for a reader anywhere but the top of the
-// text). The numbers a real engine measures are file-comments-margin-fixes-browser.test.ts. The geometry here gives the
+// (the leader's attribute and length leave the reused node), and the card a save landed in (a whole-file comment's card
+// is loose at the top of the track, out of view for a reader anywhere but the top of the text: the save scrolled to it,
+// until decision 43 made a save move nothing and put a line at the panel's foot saying where the card is, whose click
+// scrolls to it). The numbers a real engine measures are file-comments-margin-fixes-browser.test.ts. The geometry here gives the
 // track room for an open card (BODY_VIEW 260: a 160px track under a 120px open card), where the review stand-in's 100px
 // track had none. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
@@ -491,6 +492,7 @@ const TRACK_BOX = { top: 100 + OFFSET, bottom: 100 + OFFSET + TRACK };
 const BODY_BOX = { top: 100, bottom: 100 + BODY_VIEW };
 /** The viewport box of a comment's highlight, as the stand-in measures it. */
 const markRect = (w: World, key: string): Rect => w.body.querySelectorAll(".fc-hl").find((m) => m.dataset.id === key)!.getBoundingClientRect();
+const savedLineOf = (w: World): El | null => actIn(w.aside(), "fcsavedgo");   // the line at the foot for a saved card out of view (decision 43)
 const inBox = (box: { top: number; bottom: number }, of: { top: number; bottom: number }): boolean => box.top >= of.top && box.bottom <= of.bottom;
 
 // ── centering a card that fits the track ──────────────────────────────────────────────────────────
@@ -615,49 +617,62 @@ async function saveFileComment(w: World, last: () => Posted): Promise<El> {
   return composer;
 }
 
-test("a whole-file comment saved with the text scrolled down: the new card — loose, at the top of the track, where the lock keeps it out of view — is brought into the track's box by the least scroll that shows it, written onto both scrollers at once; the composer closes after; a card already in view moves nothing", async (t) => {
+test("a whole-file comment saved: the new card is loose at the top of the track, and the save moves nothing (decision 43; before: the least scroll that showed it, on both scrollers) — landing in view from the top of the text, no line; with the text scrolled down, the line at the foot says above and its click brings the card in on both scrollers; from the top with its end past the box, below, and the click shows its end", async (t) => {
   const { w, ok, last } = await open(t, textWorld());
   const body = w.body, track = w.track();
-  body.scrollTop = 600; body.dispatchEvent(new Ev("scroll"));
-  assert.equal(track.scrollTop, 600, "the reader is well down the text");
-  const composer = await saveFileComment(w, last);
+  // the text at its top: the card lands whole in the track's box, and nothing is said
+  let composer = await saveFileComment(w, last);
   const fresh = fileComment(T0 + 5000 + "-0");
   await ok(withComments([whole, detached, replied, passage, closing, fresh]));
-  const card = w.card(fresh.id)!;
-  assert.ok(card, "the new card is rendered");
-  const top = 8 + 2 * (CARD + 8);
+  assert.ok(w.card(fresh.id), "the new card is rendered");
+  const top = 8 + 2 * (CARD + 8);                       // 104
   assert.equal(w.top(fresh.id), top, "loose: under the two loose cards at the top of the track, in the list's order");
-  // the card was above the track's box: the least scroll that shows it puts its top a gap under the box's top — on the BODY
-  // as well as the track, at once (a track-only scroll reached the body only on the track's scroll event, which the
-  // browser folded into the render's own write, so the body stayed and the next pass pulled the track back to it)
-  assert.equal(body.scrollTop, top - 8, "the body: the least scroll that shows the card");
-  assert.equal(track.scrollTop, top - 8, "the track with it, at once");
-  assert.ok(inBox(cardBox(w, fresh.id), TRACK_BOX), "the card is in the track's box: " + JSON.stringify(cardBox(w, fresh.id)));
-  assert.deepEqual(scrolledInto, [], "no scrollIntoView in the margin layout: the lock would not have carried it");
+  assert.ok(inBox(cardBox(w, fresh.id), TRACK_BOX), "the fixture: in view where it landed: " + JSON.stringify(cardBox(w, fresh.id)));
+  assert.equal(body.scrollTop, 0, "nothing moved"); assert.equal(track.scrollTop, 0);
   assert.equal(composer.hidden, true, "the composer closed");
-  // a second note with the text where the first left it: the new card lands in view, and nothing moves
-  await saveFileComment(w, last);
+  assert.equal(savedLineOf(w), null, "a card in view needs no line");
+  // well down the text: the new card is above the track's box
+  body.scrollTop = 600; body.dispatchEvent(new Ev("scroll"));
+  assert.equal(track.scrollTop, 600, "the reader is well down the text");
+  composer = await saveFileComment(w, last);
   const second = fileComment(T0 + 5500 + "-0", "And a glossary at the end.");
   await ok(withComments([whole, detached, replied, passage, closing, fresh, second]));
-  assert.equal(w.top(second.id), top + CARD + 8);
-  assert.ok(inBox(cardBox(w, second.id), TRACK_BOX), "in view where it landed");
-  assert.equal(body.scrollTop, top - 8, "nothing moved"); assert.equal(track.scrollTop, top - 8);
-  // a third, with the text at its top: the card's end is past the track's box, and the least scroll that shows the end wins
+  const secondTop = top + CARD + 8;                     // 152
+  assert.equal(w.top(second.id), secondTop);
+  assert.equal(body.scrollTop, 600, "the body stays (before: " + (secondTop - 8) + ", the least scroll that showed the card)");
+  assert.equal(track.scrollTop, 600, "and the track");
+  assert.deepEqual(scrolledInto, []);
+  assert.equal(composer.hidden, true, "the composer closed");
+  assert.equal(savedLineOf(w)!.textContent, "Saved · the card is above", "the line says where the card is");
+  savedLineOf(w)!.click(); await tick();
+  // the click: the least scroll that shows the card puts its top a gap under the box's top — on the BODY as well as the track,
+  // at once (a track-only scroll reached the body only on the track's scroll event, which the browser folded into the
+  // render's own write, so the body stayed and the next pass pulled the track back to it)
+  assert.equal(body.scrollTop, secondTop - 8, "the body: the least scroll that shows the card (showLoose)");
+  assert.equal(track.scrollTop, secondTop - 8, "the track with it, at once");
+  assert.ok(inBox(cardBox(w, second.id), TRACK_BOX), "the card is in the track's box: " + JSON.stringify(cardBox(w, second.id)));
+  assert.deepEqual(scrolledInto, [], "no scrollIntoView in the margin layout: the lock would not have carried it");
+  assert.equal(savedLineOf(w), null, "the line is over");
+  // the text at its top again: the fifth loose card's end is past the track's box
   body.scrollTop = 0; body.dispatchEvent(new Ev("scroll"));
   await saveFileComment(w, last);
   const third = fileComment(T0 + 5600 + "-0", "Number the figures.");
   await ok(withComments([whole, detached, replied, passage, closing, fresh, second, third]));
-  const thirdTop = top + 2 * (CARD + 8);
+  const thirdTop = top + 2 * (CARD + 8);                // 200
   assert.equal(w.top(third.id), thirdTop);
   assert.ok(thirdTop + CARD + 8 > TRACK, "the fixture: from the top of the text, the fifth loose card's end is past the track's box");
-  assert.equal(body.scrollTop, thirdTop + CARD + 8 - TRACK, "the least scroll that shows the card's end");
+  assert.equal(body.scrollTop, 0, "nothing moved (before: " + (thirdTop + CARD + 8 - TRACK) + ", the least scroll that showed the card's end)");
+  assert.equal(savedLineOf(w)!.textContent, "Saved · the card is below");
+  savedLineOf(w)!.click(); await tick();
+  assert.equal(body.scrollTop, thirdTop + CARD + 8 - TRACK, "the click: the least scroll that shows the card's end");
   assert.equal(track.scrollTop, body.scrollTop);
   assert.ok(inBox(cardBox(w, third.id), TRACK_BOX), "the card is in the track's box: " + JSON.stringify(cardBox(w, third.id)));
   assert.deepEqual(scrolledInto, []);
+  assert.equal(savedLineOf(w), null);
   w.close();
 });
 
-test("a reply saved on a card: the card is centered as an opened card is — the mark to the body's center, or the least scroll that shows the card's end — and the composer closes after", async (t) => {
+test("a reply saved on a card with the text scrolled away from it: nothing scrolls (decision 43; before: the card was centered as an opened card is), the card is the focus, level with its mark below the box, the composer closes, and the line says below — its click centers the card as an opened card is, the least scroll that shows its end", async (t) => {
   const { w, ok, last } = await open(t, textWorld());
   const body = w.body, track = w.track();
   headOf(w, passage.id).click(); await tick();          // the card opens (Reply stands in the open card) and the click centers it
@@ -677,16 +692,24 @@ test("a reply saved on a card: the card is centered as an opened card is — the
   const replied5: StoreComment = { ...passage, replies: [{ author: "you", ts: T0 + 6000, body: "Which cache do you mean?" }] };
   await ok(withComments([whole, detached, replied, replied5, closing], "reply"));
   assert.ok(w.card(passage.id)!.classList.contains("open"), "the card stays open with its reply");
-  assert.equal(body.scrollTop, showCard, "the save brought the text back to the card's mark: the least scroll that shows the card's end");
+  assert.equal(body.scrollTop, 0, "the text stays at its top (before: " + showCard + ", the least scroll that shows the card's end)");
+  assert.equal(track.scrollTop, 0);
+  assert.ok(!inBox(cardBox(w, passage.id), TRACK_BOX), "the card is past the track's box: " + JSON.stringify(cardBox(w, passage.id)));
+  assert.equal(cardBox(w, passage.id).top, markRect(w, passage.id).top, "level with its mark all the same: the focus");
+  assert.deepEqual(scrolledInto, []);
+  assert.equal(composer.hidden, true);
+  assert.equal(savedLineOf(w)!.textContent, "Saved · the card is below");
+  savedLineOf(w)!.click(); await tick();
+  assert.equal(body.scrollTop, showCard, "the click brought the text to the card's mark: the least scroll that shows the card's end");
   assert.equal(track.scrollTop, showCard);
   assert.ok(inBox(cardBox(w, passage.id), TRACK_BOX), "the whole card is in the track's box");
   assert.equal(cardBox(w, passage.id).top, markRect(w, passage.id).top, "level with its mark");
   assert.deepEqual(scrolledInto, [], "a marked card is centered, not scrollIntoView'd");
-  assert.equal(composer.hidden, true);
+  assert.equal(savedLineOf(w), null, "the line is over");
   w.close();
 });
 
-test("the saved comment is read off the reply's store: the one comment the status before the write did not hold; among several new ones (a retry after a moved fence), the one whose body is the note; none identifiable, nothing scrolls", async (t) => {
+test("the saved comment is read off the reply's store: the one comment the status before the write did not hold; among several new ones (a retry after a moved fence), the one whose body is the note — the line's click goes to ours, not to the peer's; none identifiable, no line, and the composer closes all the same", async (t) => {
   const { w, ok, last } = await open(t, textWorld());
   const body = w.body;
   body.scrollTop = 600; body.dispatchEvent(new Ev("scroll"));
@@ -696,15 +719,19 @@ test("the saved comment is read off the reply's store: the one comment the statu
   await ok(withComments([whole, detached, replied, passage, closing, peer, mine]));
   const mineTop = 8 + 3 * (CARD + 8), peerTop = 8 + 2 * (CARD + 8);   // the loose group by ts: whole, detached, the peer's, ours
   assert.equal(w.top(mine.id), mineTop); assert.equal(w.top(peer.id), peerTop);
-  assert.equal(body.scrollTop, mineTop - 8, "scrolled to ours, not to the peer's (" + (peerTop - 8) + ")");
+  assert.equal(body.scrollTop, 600, "nothing scrolled (decision 43)");
+  assert.equal(savedLineOf(w)!.textContent, "Saved · the card is above");
+  savedLineOf(w)!.click(); await tick();
+  assert.equal(body.scrollTop, mineTop - 8, "the click went to ours, not to the peer's (" + (peerTop - 8) + ")");
   assert.equal(w.track().scrollTop, mineTop - 8);
   body.scrollTop = 600; body.dispatchEvent(new Ev("scroll"));
-  // two new comments with the note's body (nothing tells them apart): no scroll, and the save is not in doubt
+  // two new comments with the note's body (nothing tells them apart): no line, and the save is not in doubt
   await saveFileComment(w, last);
   const twinA = fileComment(T0 + 7000 + "-0"), twinB = fileComment(T0 + 7001 + "-0");
   await ok(withComments([whole, detached, replied, passage, closing, peer, mine, twinA, twinB]));
-  assert.equal(body.scrollTop, 600, "no card named: nothing scrolled");
+  assert.equal(body.scrollTop, 600, "no card named: nothing scrolled, as ever");
   assert.equal(w.track().scrollTop, 600);
+  assert.equal(savedLineOf(w), null, "no card named: no line");
   assert.deepEqual(scrolledInto, []);
   assert.equal(w.aside().querySelector(".fc-composer")!.hidden, true, "the composer closed all the same");
   assert.ok(w.card(twinA.id) && w.card(twinB.id), "both cards are rendered");
@@ -713,11 +740,12 @@ test("the saved comment is read off the reply's store: the one comment the statu
 
 // ── at source ──────────────────────────────────────────────────────────────────────────────────────
 
-test("at source: the scroll that shows a card's end is track content (no header term); the save scrolls to its card BEFORE the composer closes, so the pass's header and centerOn's agree", () => {
+test("at source: the scroll that shows a card's end is track content (no header term); the save sets the focus and raises the line BEFORE the composer closes, and scrolls nothing (decision 43); the line's click reaches a loose card through both scrollers", () => {
   assert.match(SRC, /const showCard = p\.top \+ p\.height \+ CARD_GAP - track\.clientHeight;/, "the least scroll that shows the card's bottom, in the track's content");
   assert.doesNotMatch(SRC, /const showCard = [^;\n]*offset[^;\n]*;/, "no header term in it");
-  assert.match(SRC, /if \(r\) this\.scrollToSaved\(c, had, r, note, pressed === this\.gestures\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/, "scroll, then close");
-  assert.match(SRC, /const saved = c\.kind === "reply" \? c\.commentId : savedCommentId\(had, r, note\);\n\s*if \(saved === null\) return;\n\s*const key = this\.cardKey\(saved\);\n\s*if \(still && !this\.cardWhole\(key\)\) \{ this\.scrollCard\(key\); return; \}/, "a reply's card by its comment, a new comment's off the reply's store; scrolled to while the person has not moved on and it is not whole in view (the arrivals follow-on, 2026-09-09)");
-  assert.match(SRC, /if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/, "a loose card is scrolled to by both scrollers at once, never by scrollIntoView alone (the card the focus first: the focus follow-on, 2026-09-08)");
+  assert.match(SRC, /const lined = r !== null && this\.landSaved\(c, had, r, note\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/, "the landing, then the close");
+  assert.match(SRC, /const saved = c\.kind === "reply" \? c\.commentId : savedCommentId\(had, r, note\);\n\s*if \(saved === null\) return false;\n\s*const key = this\.cardKey\(saved\);\n\s*if \(this\.margin\) this\.focusOn\(key\);\n\s*const side = this\.cardWhere\(key\);/, "a reply's card by its comment, a new comment's off the reply's store; the focus and the card's side, never a scroll (decision 43, 2026-09-09)");
+  assert.doesNotMatch(SRC.slice(SRC.indexOf("private landSaved("), SRC.indexOf("private cardWhere(")), /scrollCard|scrollBoth|scrollIntoView|centerOn|showLoose/, "nothing in the landing scrolls");
+  assert.match(SRC, /if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/, "a loose card is scrolled to by both scrollers at once, never by scrollIntoView alone (the card the focus first: the focus follow-on, 2026-09-08) — the line's click comes through here");
   assert.match(SRC, /const had = new Set\(\(this\.status && this\.status\.store \? this\.status\.store\.comments : \[\]\)\.map\(\(x\) => x\.id\)\);/, "the baseline is the status the write is fenced on");
 });

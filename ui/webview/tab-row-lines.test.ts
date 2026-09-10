@@ -25,8 +25,8 @@ test("repaints are event-keyed: every strip rebuild, plus wrap changes via Resiz
 });
 
 test("full-bleed hairlines in the strip's own border color, Classic-scoped", () => {
-  assert.match(CSS, /body:not\(\.chat-theme-yatharth\) #tabs \.tab-row-line \{\n  position: absolute; left: -8px; right: -8px; height: 1px; background: var\(--box-border\); pointer-events: none; \}/,
-    "the negative bleed spans the bar's 8px side padding, like the outer close");
+  assert.match(CSS, /body:not\(\.chat-theme-yatharth\) #tabs \.tab-row-line \{\n  position: absolute; left: -8px; right: -18px; height: 1px; background: var\(--box-border\); pointer-events: none; \}/,
+    "the negative bleed spans the bar's 8px side padding and, on the right, its 10px scrollbar gutter, so each line meets the bar's edge like the outer close (review round 3 of the keep-with-next change; the right edge is measured in tab-row-keep-browser.test.ts)");
   assert.match(CSS, /body\.chat-theme-yatharth #tabs \.tab-row-line \{ display: none; \}/, "Yatharth keeps his merged look");
   assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; position: relative; \}/);
 });

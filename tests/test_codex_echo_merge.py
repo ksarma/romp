@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""A Codex input echo is an ECHO to the kernel's live merge (2026-09-09). CodexBackend.live_atoms emitted
-its echo atoms without `_echo_text`, the marker every kernel reader of an input echo keys on, so once the
-prune_live TypeError was fixed (tests/test_codex_backend.py PruneLive) the merge painted a Codex echo as a
-solid user atom beside its own queued bubble, painted it once more beside its landed record, and counted an
-echo-only merge as live ASSISTANT work, forcing the last turn open: a false "working" chip for a session
-whose only live item was a pending send (the round-1 verification). The atoms carry `_echo_text` now, and
-this module runs the REAL kernel merge (_merge_live_atoms) over the REAL backend (a scripted fake
-app-server client: no SDK, no network, no turn ever streams) to pin the consequences, and the batch case
-(round 3): a turn started from two queued sends lands one record with a text block per send, and the merge
-retires both echoes. The kernel is loaded the test_codex_models_route way. Synthetic fixtures only.
+"""A Codex input echo is an ECHO to the kernel's live merge. CodexBackend.live_atoms emitted its echo
+atoms without `_echo_text`, the marker every kernel reader of an input echo keys on, so with prune_live
+taking the kernel's four arguments (tests/test_codex_backend.py PruneLive) and nothing else changed, the
+merge would paint a Codex echo as a solid user atom beside its own queued bubble, paint it once more
+beside its landed record, and count an echo-only merge as live ASSISTANT work, forcing the last turn
+open: a false "working" chip for a session whose only live item is a pending send. The atoms carry
+`_echo_text` now, and this module runs the REAL kernel merge (_merge_live_atoms) over the REAL backend (a
+scripted fake app-server client: no SDK, no network, no turn ever streams) to pin the consequences, and
+the case of a turn started from two queued sends: the real normalizer lands it as one record with a text
+block per send, and the merge retires both echoes. The kernel is loaded the way
+tests/test_kernel_fed_echo_absorbed.py loads it. Synthetic fixtures only (the notes-api demo domain).
 """
 import os
 import tempfile
@@ -20,12 +21,14 @@ from romp_load import load_source
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
-# Hermetic state BEFORE the loads -- they resolve their state root at import time, and only
-# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+# Hermetic state BEFORE the loads: they resolve their state root at import time, and only pytest runs
+# conftest's floor (a bare unittest or script run otherwise writes REAL state, and a kernel module that
+# can reach a live manager port restarts the live kernel).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+os.environ["ROMP_MANAGER_PORT"] = "1"             # a dead port, never an inherited live one
 os.environ["ROMP_MODEL_CATALOG"] = "off"          # never the Models API from a test
 km = load_source("romp_kernel_codex_echo_merge", os.path.join(BIN, "romp-kernel"))
 cb = load_source("romp_codex_backend_echo_merge", os.path.join(ROOT, "kernel", "codex_backend.py"))
@@ -66,6 +69,9 @@ class CodexEchoMerge(unittest.TestCase):
         s = self.be._session(self.sid)
         with s.lock:
             s.turn_id = "t-live"          # an open turn: send() steers (nothing queues, no worker thread)
+        # the fork's per-sid merge-sets memo (_merge_tx_sets) is keyed on the parsed session object, so a
+        # test that swaps the backend under a sid must not be served another test's sets: saved, cleared,
+        # restored (a fork mechanism upstream's kernel does not carry)
         self._saved = (km.Sessions.__dict__["backend_for"], dict(km._merge_sets_memo))
         km._merge_sets_memo.clear()
         be = self.be
@@ -124,11 +130,10 @@ class CodexEchoMerge(unittest.TestCase):
 
     def test_a_two_block_record_in_the_sends_second_retires_both_echoes_and_paints_each_text_once(self):
         # Two sends queued before a turn starts go out as ONE turn (an input per send) and the app-server
-        # answers one userMessage item carrying both; the REAL normalizer writes it as one user record with a
-        # text block per input (codex_events._user_input_texts), the kernel's _atom_user_texts yields each
-        # block, and prune_live lands both echoes. Until 2026-09-09 the normalizer wrote one newline-joined
-        # block that matched neither echo: both stayed live for good and painted as user bubbles beside the
-        # record in every later build (the round-3 verification).
+        # answers one userMessage item carrying both; the REAL normalizer writes it as one user record with
+        # a text block per input (codex_events._user_input_texts), the kernel's _atom_user_texts yields each
+        # block, and prune_live lands both echoes. Joined into one block the record matches neither echo:
+        # both stay live for good and paint as user bubbles beside the record in every later build.
         self.assertTrue(self.be.send(self.sid, "first send"))
         self.assertTrue(self.be.send(self.sid, "second send"))
         self.assertEqual([a["_echo_text"] for a in self.be.live_atoms(self.sid)], ["first send", "second send"])

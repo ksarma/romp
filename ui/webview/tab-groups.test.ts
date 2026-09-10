@@ -309,12 +309,13 @@ test("a folded section renders its header alone with the folded-away count and o
   assert.match(CSS, /\.tab-group-pip\.retrying \{ background: #e67e22; \}/, "amber, the tab's .tab-retrying hue");
 });
 
-test("row hairlines count section headers as row members (T134's floating look must not return), never the row breaks", () => {
-  // a wrapped row made only of folded headers got no line: the painter grouped `.tab` children only
+test("row hairlines count section headers and the inline divider as row members (T134's floating look must not return), never the row breaks", () => {
+  // a wrapped row made only of folded headers got no line: the painter grouped `.tab` children only; then T264's
+  // exclusion of the breaks, which wear the divider's class, dropped the inline divider too, a visible 13px item
+  // of its row that the pre-T264 rule counted. tab-row-keep.test.ts executes the painter over both cases
   const painter = RENDER.slice(RENDER.indexOf("function paintTabRowLines("), RENDER.indexOf("let tabRowObserver"));
-  assert.match(painter, /if \(!\(t\.classList\.contains\("tab"\) \|\| t\.classList\.contains\("tab-group-head"\)\)\) continue;/);
-  // the zero-height row breaks (T264) are not rows: counting one drew a hairline at the strip's top edge
-  assert.doesNotMatch(painter, /tab-group-sep|tab-group-break/);
+  assert.match(painter, /if \(!\(t\.classList\.contains\("tab"\) \|\| t\.classList\.contains\("tab-group-head"\) \|\| \(t\.classList\.contains\("tab-group-sep"\) && !t\.classList\.contains\("tab-group-break"\)\)\)\) continue;/,
+    "tabs, headers and the inline divider; the zero-height row breaks (T264) are not rows: counting one drew a hairline at the strip's top edge");
 });
 
 test("the picker's Tags row is for SDK and Codex sessions: disabled behind a note on the tmux pick, and no `tags` ride a tmux create", () => {
@@ -434,7 +435,7 @@ test("under stripGroupRows, every group opens a new line: a zero-height full-wid
 });
 
 // ── the fork's default (the user 2026-09-08, whose strip of eleven tag groups became eleven rows): the strip flows inline ──
-test("executed + pinned: with stripGroupRows off (the fork default) the strip emits NO break, a group's head and tabs stay contiguous and the trail stands behind the inline divider; the gear offers the per-row layout", () => {
+test("executed + pinned: with stripGroupRows off (the fork default) the rebuild appends no setting break (the painter's keep breaks are tab-row-keep.test.ts's), a group's head and tabs stay contiguous and the trail stands behind the inline divider; the gear offers the per-row layout", () => {
   // the setting and its default (executed: the real defaults object)
   assert.equal(DEFAULT_SETTINGS.stripGroupRows, false, "off by default on the fork; upstream's default is the per-row layout");
   assert.match(SETTINGS, /stripGroupRows: boolean;/);
@@ -450,7 +451,8 @@ test("executed + pinned: with stripGroupRows off (the fork default) the strip em
   assert.deepEqual(heads.map((it, i) => breaks({ stripGroupRows: false }, it, { childElementCount: i })), [false, false, false], "off: no break ahead of any header, first or later, nor the trail's");
   assert.deepEqual(heads.map((it, i) => breaks({ stripGroupRows: true }, it, { childElementCount: i })), [false, true, false], "on: a break ahead of every header but the strip's first item; the trail's header is itself the break");
   // the plan's items are contiguous per group (executed on the pure module): a head, then its tabs, then the next
-  // head; with no break appended the DOM is the plan in order, so the groups flow inline and wrap as before T264
+  // head; with no break appended by the rebuild the DOM is the plan in order; the painter then places its keep breaks
+  // (tab-row-keep.test.ts) where a header's first tab wrapped
   const unions = viewTagUnion({ tags: [{ id: "t-infra", name: "infra", color: "#1EA1EB", members: ["web", "api"] },
                                        { id: "t-qa", name: "qa", color: "#54B204", members: ["tests"] }] });
   const plan = planStrip(["web", "api", "tests", "loose"], unions, parseTabGroups(null, unions), "web", false);
@@ -472,7 +474,8 @@ test("executed + pinned: with stripGroupRows off (the fork default) the strip em
   assert.match(GEAR, /if \(sr\) sr\.checked = s\.stripGroupRows === true;/);
   assert.doesNotMatch(GEAR, /stripGroupRows: true/, "the gear's defaults mirror agrees: off");
   // the guide says so in one sentence
-  assert.match(GUIDE, /The groups follow one another across the\s+strip and wrap as they need; the gear's \*\*One tag group per row in the tab strip\*\* starts every\s+group on its own row instead\./);
+  assert.match(GUIDE, /The groups follow one another across the\s+strip and wrap as they need \(a header left at a row's end with its first tab on the next row moves\s+down to join it, when the two fit on one row\); the gear's \*\*One tag group per row in the tab strip\*\*\s+starts every group on its own row instead\./,
+    "the guide says how the inline flow wraps (the keep-with-next rule, tab-row-keep.test.ts) and names the per-row setting");
 });
 
 test("the tab drag's virtual layout wraps where the strip wraps: headers after a break and the trail's break open rows (T264, under stripGroupRows; the inline divider measures its own box)", () => {
@@ -484,6 +487,8 @@ test("the tab drag's virtual layout wraps where the strip wraps: headers after a
   assert.match(over, /br: isBreak\(t\) \|\| isBreak\(before\(t\)\) \}\)\);/, "a header after a break, and the break itself, open a row");
   assert.match(over, /if \(ref && ref\.classList\.contains\("tab-group-head"\) && isBreak\(before\(ref as HTMLElement\)\)\) ref = before\(ref as HTMLElement\);/,
     "the slot before a header is the end of the previous row — never between the break and the chip");
+  assert.match(over, /if \(ref && ref\.classList\.contains\("tab-group-sep"\) && !isBreak\(ref\) && isBreak\(before\(ref as HTMLElement\)\)\) ref = before\(ref as HTMLElement\);/,
+    "and so is the slot before the inline divider behind the painter's keep break (review round 1 of the keep-with-next change; executed in tab-row-keep.test.ts)");
   const DS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "dragslot.ts"), "utf8");
   assert.match(DS, /const needsWrap = row !== null && cx > 0 && \(b\.br === true \|\| cx \+ b\.w > containerW\);/, "dragslot honours br (executed in dragslot.test.ts)");
 });

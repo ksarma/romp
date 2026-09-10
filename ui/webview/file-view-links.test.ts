@@ -850,7 +850,7 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(FILES, /openFile: \(p, sid, line, frag\) => openHere\(p, sid, null, null, line, frag\),/, "the Files pane: a linked file enters its Recent list, and lands on its line or its section");
   assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, line: number \| null = null, frag: string \| null = null\): void \{\n\s*if \(sid && identity\) identities\.set\(sid, identity\);\n\s*if \(!openFileView\(path, sid, \{ todoId, line, frag \}\)\) return;/);
   // the panel's change mark cancels the anchor's activation as its comment mark does; the keyboard route lands on the same handlers
-  assert.match(FC, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \},/);
+  assert.match(FC, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); if \(this\.dragClick\(ev\)\) return; this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \},/);
   assert.match(FC, /fcopen: \(x, ev\) => \{ ev\.preventDefault\(\);/);
   // a held Cmd/Ctrl rides from the keyboard into the click (path-links.ts)
   assert.match(LINKS, /if \(e\.metaKey \|\| e\.ctrlKey\) a\.dispatchEvent\(new MouseEvent\("click", \{ bubbles: true, cancelable: true, metaKey: e\.metaKey, ctrlKey: e\.ctrlKey \}\)\);\n\s*else a\.click\(\);/);

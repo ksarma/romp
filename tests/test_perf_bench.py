@@ -646,5 +646,58 @@ class Tripwire(unittest.TestCase):
         self.assertEqual(log, [])
 
 
+class CycleScopeParity(unittest.TestCase):
+    """The bench's scope() says it opens the pusher cycle's scope as _pusher_cycle opens it, so a build_session
+    or push sample pays each per-cycle memo once per cycle, as the pusher does. Pinned as source parity, not a
+    run: every `_live_scope.<slot> = ...` the kernel's _pusher_cycle sets inside its try block is set by the
+    bench's scope(), every slot its finally clears is cleared by the bench's unscope(), and every dict memo
+    scope() opens is reopened by new_cycle(). The 2026-09-09 fold added the cycle's billing-availability memo
+    (.auth, _auth_avail_status, upstream https://github.com/romp-on/romp/pull/1147) and the bench had not
+    followed, so its build_session rows paid the availability read per session where the pusher pays once per
+    cycle, and a before/after comparison across the fold would have charged that to the kernel."""
+
+    # The caption-map slot (_msg_summaries_scoped, the fork's perf4-chat change) is not mirrored by the bench
+    # yet: mirroring it changes what the chat push rows measure, which is the perf owner's call, not a fold's.
+    KNOWN_GAPS = {"msgsum"}
+
+    @staticmethod
+    def _slots(text, pattern):
+        return set(re.findall(pattern, text, re.M))
+
+    def setUp(self):
+        kernel = Path(ROOT, "kernel", "kernel.py").read_text()
+        body = kernel.split("\ndef _pusher_cycle(", 1)[1]
+        self.pusher_try = body.split("\n    try:\n", 1)[1].split("\n    finally:\n", 1)[0]
+        self.pusher_finally = body.split("\n    finally:\n", 1)[1].split("\n\n\n", 1)[0]
+        tool = Path(TOOL).read_text()
+        self.scope = tool.split("\n    def scope(tmux):", 1)[1].split("\n    def unscope():", 1)[0]
+        self.unscope = tool.split("\n    def unscope():", 1)[1].split("\n    def new_cycle():", 1)[0]
+        self.new_cycle = tool.split("\n    def new_cycle():", 1)[1].split("\n    def ", 1)[0]
+
+    def test_scope_opens_every_per_cycle_slot_the_pusher_opens(self):
+        opened = self._slots(self.pusher_try, r"^\s+_live_scope\.(\w+) = ")
+        self.assertIn("auth", opened, "the billing-availability memo this case was written for is a pusher slot")
+        self.assertIn("names", opened, "the try block was found (the names snapshot is set inside it)")
+        bench = self._slots(self.scope, r"km\._live_scope\.(\w+) = ")
+        self.assertEqual(opened - self.KNOWN_GAPS - bench, set(),
+                         "a per-cycle slot _pusher_cycle opens that the bench's scope() does not")
+        self.assertEqual(self.KNOWN_GAPS - opened, set(), "an excused slot the pusher no longer opens: drop it here")
+
+    def test_unscope_clears_every_slot_the_pusher_clears(self):
+        cleared = self._slots(self.pusher_finally, r"^\s+_live_scope\.(\w+) = None")
+        self.assertIn("auth", cleared)
+        bench = self._slots(self.unscope, r"km\._live_scope\.(\w+) = None")
+        self.assertEqual(cleared - self.KNOWN_GAPS - bench, set(),
+                         "a slot _pusher_cycle's finally clears that the bench's unscope() does not")
+        self.assertEqual(self._slots(self.scope, r"km\._live_scope\.(\w+) = ") - bench, set(),
+                         "every slot scope() sets, unscope() clears")
+
+    def test_new_cycle_reopens_every_dict_memo(self):
+        memos = self._slots(self.scope, r"km\._live_scope\.(\w+) = \{\}")
+        self.assertIn("auth", memos)
+        self.assertEqual(memos - self._slots(self.new_cycle, r"km\._live_scope\.(\w+) = \{\}"), set(),
+                         "a dict memo scope() opens that new_cycle() does not reopen between two cycles")
+
+
 if __name__ == "__main__":
     unittest.main()

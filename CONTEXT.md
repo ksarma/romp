@@ -84,7 +84,8 @@ The one gesture that hands a file's unsent comments, replies, and decisions to t
 owns the file, as a single message in the person's voice; it may also answer one of that session's
 open user todos: a todo that names the file, however the file was opened, or the todo the file was
 opened from. A note the person types in the confirm goes first in that message, after its header
-line and before the comments, and a note with nothing else unsent still sends.
+line and before the comments, and a note with nothing else unsent still sends. The accept it offers
+takes only the pending changes the person has seen; an unseen change stays pending.
 _Avoid_: send review, ping, submit
 
 **Note (of a send)**:

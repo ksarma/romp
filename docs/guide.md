@@ -143,8 +143,9 @@ a tab into another group, right-click it and pick **Move to <tag>** under **Tags
 adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. The row's
 **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser. The groups follow one another across the
-strip and wrap as they need; the gear's **One tag group per row in the tab strip** starts every
-group on its own row instead.
+strip and wrap as they need (a header left at a row's end with its first tab on the next row moves
+down to join it, when the two fit on one row); the gear's **One tag group per row in the tab strip**
+starts every group on its own row instead.
 
 **A section at a glance.** Clicking a header also shows the section in the transcript's place:
 one row per session, with its color and emoji, a dot for its state (yellow working, red stopped on a
@@ -421,7 +422,8 @@ passage in either view, Rendered or Raw, and press the **Comment** button that a
 hides when you scroll and appears again when you select); type the comment
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
-Saving brings the new card into view, unless you scrolled, clicked, tapped, or pressed a key while the save was under way; then the text stays where you left it.
+Saving leaves the text where it is. When the new card lands out of view, a line at the foot of the panel, **Saved · the card is above** (or **below**), says where it went; click the line to bring the card into view, or leave it: it goes with your next scroll, click, tap, or key, except Tab or a modifier key pressed on its own, so you can reach it from the keyboard.
+In the list under a narrow column, the line stands under the panel's header instead.
 **Comment on this file** leaves a comment on the file as a whole, which every file takes. When a passage cannot be mapped from the
 Rendered view (a table, a code block), the panel says so, keeps your comment, and offers the
 Raw view with the passage selected. Comments are stored beside the file, in the
@@ -501,7 +503,9 @@ text back in the file. **Accept all** and **Reject all** decide every change at 
 all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
 deletion, since a point is easy to miss; a change the current view does not mark, because it
 cannot or because the marks are hidden, offers it too. Reply on a change's card leaves a
-comment on the change itself, and the session's answer comes back to that card. A session's
+comment on the change itself, and the session's answer comes back to that card. You can also
+comment inside a change without replying to it: a click on a change mark or a comment highlight
+opens its card, and a selection made by dragging inside one leaves a comment on those words. A session's
 tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
@@ -525,11 +529,13 @@ todo under Waiting on you names this file, or you opened the file from a todo, a
 answers that todo with the same send; when several todos name the file, a row of choices
 picks the one to answer, or none. When tracking is off, another checkbox
 turns it on first, so the session's revisions come back as changes. When changes are pending,
-a third checkbox, **accept the pending changes**, accepts them all before the send, so the
-session's later edits arrive as new changes instead of folding into an old one; the message
-then says how many changes you accepted and rejected, and when accepting them resolves comments
-the session had answered, the checkbox says so beforehand and the panel opens **Resolved** and
-names them afterwards, so nothing leaves the list unannounced. All are checked by default. One send
+a third checkbox, **accept the pending changes you have seen**, accepts before the send the
+pending changes you have looked at: the ones already there when you first opened the panel, and
+any that arrived later whose card was in view when you scrolled, clicked, tapped, or pressed a
+key. That way the session's later edits arrive as new changes instead of folding into an old one.
+A change you have not seen stays pending, and the checkbox says how many do, or, when you have
+seen none of them, that nothing is accepted until you look, and is then off. A change the session edits again after you looked at it counts as unseen until you look again. The message then
+says how many changes you accepted and rejected. All are checked by default. One send
 answers one todo; a todo that named several files is answered by the first, and later sends
 no longer offer it. The panel then says **Sent to** the session and when, or **Queued for**
 it when the session has gone quiet, in which case the message goes when it wakes.

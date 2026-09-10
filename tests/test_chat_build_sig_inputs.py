@@ -55,6 +55,7 @@ CENSUS = {
     "_ask_fill_chosen": ("pure", "over a tool event's output string"),
     "_atom_md": ("pure", "over an atom"),
     "_atom_user_texts": ("pure", "over an atom"),
+    "_auth_avail_status": ("sig", "acct", "the availability half of _auth_avail (upstream #1147), memoized once per pusher cycle: the account's tri-state read, the key presence and the managed-helper flag, folded whole beside the login label and the both-bit (which alone missed every flip on a box with no labelled login)"),
     "_auth_both": ("sig", "acct", "the credential store's login and the manager's key presence"),
     "_awaiting_task_descs": ("sig", "bg", "the live task rows; the split reads the stamped tops (stamp), the store and the transcript"),
     "_awaiting_task_ids": ("sig", "bg", "as _awaiting_task_descs"),
@@ -748,6 +749,71 @@ class Differential(_World):
         self.assertEqual(self.moved(e, g), ("cleared",))
         os.environ["ROMP_HOST_NAME"] = "TESTHOST2"
         self.assertEqual(self.moved(g, self.sig()), ("host",))
+
+    def _auth_world(self, key, acct, managed=False):
+        """A box's billing sides, the way test_session_auth's picker tests stand them in: the key presence
+        (_auth_key_present), the account file's tri-state read (acct "" is none; "unreadable" is the rewrite
+        window) and its label, and which operator file defines the helper. Every read _auth_avail makes."""
+        jd = km.jd
+        km._auth_key_present = lambda: key
+        km._claude_account = lambda: ("" if acct in ("", "unreadable") else acct)
+        km._claude_account_label = lambda: ("" if acct in ("", "unreadable") else "user@example.com")
+        km._claude_account_state = lambda: ("unreadable" if acct == "unreadable" else ("ok" if acct else "none"))
+        jd._cred.helper_source = lambda: ("managed" if managed else ("user" if key else None))
+
+    def _auth_saved(self):
+        jd = km.jd
+        return (km._auth_key_present, km._claude_account, km._claude_account_state, jd._cred.helper_source,
+                getattr(km._live_scope, "auth", None))
+
+    def _auth_restore(self, saved):
+        jd = km.jd
+        (km._auth_key_present, km._claude_account, km._claude_account_state, jd._cred.helper_source,
+         km._live_scope.auth) = saved
+
+    def test_the_billing_availability_moves_acct_on_a_box_with_no_labelled_login(self):
+        """The acct component folds _auth_avail_status whole (upstream #1147's authAvail rides every session's
+        payload). With no labelled login the label is "" both ways and the both-bit stays False through every
+        flip below, so before the fold none of them moved the signature and a background tab's cached payload
+        kept a stale authAvail until some other component moved (fix3-sweep's probe, 2026-09-09)."""
+        saved = self._auth_saved()
+        try:
+            km._live_scope.auth = None                          # no pusher-cycle memo: every sig() reads afresh
+            self._auth_world(False, "")                         # a login-less, helper-less box
+            a = self.sig()
+            self.assertEqual(self.moved(a, self.sig()), (), "the same world twice is the same signature")
+            self._auth_world(True, "")                          # an apiKeyHelper appears (user settings)
+            b = self.sig()
+            self.assertEqual(self.moved(a, b), ("acct",),
+                             "a key appearing on a box with no login is a payload change (authAvail.key, keyWhy) "
+                             "with no label and no both-bit to move")
+            self._auth_world(True, "", managed=True)            # the same helper, now in managed settings
+            c = self.sig()
+            self.assertEqual(self.moved(b, c), ("acct",),
+                             "the helper turning managed changes only loginWhy: still a payload change")
+            self._auth_world(True, "")                          # back: a deterministic component, not a counter
+            self.assertEqual(self.moved(b, self.sig()), (), "the same world again is the same signature")
+            self._auth_world(True, "unreadable")                # the account file mid-rewrite: cannot tell
+            d = self.sig()
+            self.assertEqual(self.moved(b, d), ("acct",),
+                             "none -> unreadable flips authAvail.login with the label empty both ways")
+        finally:
+            self._auth_restore(saved)
+
+    def test_a_labelled_login_still_moves_acct_on_a_key_flip(self):
+        """The behaviour the component had before the fold, kept: on a box with a signed-in login a key flip
+        moves acct (the both-bit, and now the availability half with it), and the flip is attributed to acct
+        alone."""
+        saved = self._auth_saved()
+        try:
+            km._live_scope.auth = None
+            self._auth_world(False, "aaaaaaaaaaaa")
+            a = self.sig()
+            self.assertEqual(self.moved(a, self.sig()), ())
+            self._auth_world(True, "aaaaaaaaaaaa")
+            self.assertEqual(self.moved(a, self.sig()), ("acct",), "login and key: the both-bit flips, acct moves")
+        finally:
+            self._auth_restore(saved)
 
     def test_the_cwd_rows_and_the_claudemd_chain(self):
         a = self.sig()
