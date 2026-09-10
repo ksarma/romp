@@ -7,8 +7,13 @@
 // compares; `Path('x').open('w')` and `open(mode='w', file='x')` are writes. The verdict builds the
 // project's link closure once per call, not once per landing file, so a directory copy costs one
 // walk. And the branches no other test reached (the prefixes, pushd and popd, node -p and --print,
-// the NUL-byte rule, the directory walk cap) are pinned so removing one fails by name. Synthetic: a
-// project under os.tmpdir(), invented paths, no session data.
+// the NUL-byte rule) are pinned so removing one fails by name. The review's second round added:
+// `&&` and `||` inside `[[ ... ]]` stay in the test; a quoted `[[` is data; a brace list is expanded
+// before the operands are read; a wrapped `open(` call and a here-string script are scanned; a
+// process substitution is a word, not a segment break; a glob operand is expanded against the
+// filesystem; a directory source is walked to every file; a symlink to a tracked file is the
+// tracked file; and store-io's isTrackedFile is pinned to the steps the verdict copies. Synthetic:
+// a project under os.tmpdir(), invented paths, no session data.
 //
 // Run: node --test tools/romp-track-bash-guard-shapes.test.mjs
 import { test, beforeEach, afterEach } from 'node:test';
@@ -309,7 +314,7 @@ test('the refusal speaks of a change, the person\'s word, never a suggestion', (
   assert.ok(reason.includes('track-edit'));
 });
 
-// ── the tracked binary under a text name, and the walk cap ─────────
+// ── the tracked binary under a text name, and the directory walk ───
 
 test('a tracked file that is binary under a text-looking name passes: the NUL-byte rule', () => {
   const blob = path.join(proj, 'notes', 'blob.md');
@@ -319,13 +324,66 @@ test('a tracked file that is binary under a text-looking name passes: the NUL-by
   assert.ok(evaluate(payload('cp base/report.md notes/blob.md')), 'the same name as text is refused');
 });
 
-test('a directory source is walked to 500 files and no further', () => {
+// How many times `fn` lists directory `dir` (the source of a copy, or the project root).
+function countReaddirs(dir, fn) {
+  const real = fs.readdirSync;
+  let n = 0;
+  fs.readdirSync = function (p, ...rest) {
+    if (path.resolve(String(p)) === dir) n++;
+    return real.call(this, p, ...rest);
+  };
+  try { fn(); } finally { fs.readdirSync = real; }
+  return n;
+}
+
+test('a directory source is walked to every file it carries: past 500 entries, and into a subfolder behind them', () => {
+  // decision 47 says a directory source is walked to the files it carries, with no cap; the first
+  // version stopped after 500 directory entries, so a subfolder listed after 500 files was never
+  // descended and its landing on a tracked file passed (the review's second round)
   const big = path.join(proj, 'big');
   fs.mkdirSync(big);
   for (let k = 0; k < 600; k++) fs.writeFileSync(path.join(big, `f${String(k).padStart(3, '0')}.txt`), 'x');
   const { targets: t } = extractWriteTargets('cp -r big docs/new', proj);
-  assert.equal(t.length, 500, 'the cap');
+  assert.equal(t.length, 600, 'every file, not the first 500');
   assert.ok(t.every((x) => x.path.startsWith(path.join(proj, 'docs', 'new') + path.sep)));
+  // 500 plain files and a docs/ subfolder whose report.md lands on the tracked docs/report.md
+  const big2 = path.join(proj, 'big2');
+  fs.mkdirSync(path.join(big2, 'docs'), { recursive: true });
+  for (let k = 0; k < 500; k++) fs.writeFileSync(path.join(big2, `f${k}.txt`), 'x');
+  fs.writeFileSync(path.join(big2, 'docs', 'report.md'), 'lands on the tracked file\n');
+  const reason = evaluate(payload('cp -r big2/. .'));
+  assert.ok(reason && reason.includes(report), `the landing in the subfolder is seen: ${reason}`);
+  assert.ok(evaluate(payload('cp -r big2/docs .')), 'the control: the subfolder alone');
+  assert.equal(evaluate(payload('cp -r big2 base/')), null, 'the same tree into an untracked folder passes');
+});
+
+test('a directory copied into a folder that does not exist yet, under no project that tracks anything, is not walked', () => {
+  // the walk is the one cost that grows with the source, so it is skipped when nothing under the landing
+  // directory can be tracked: the directory is absent (so no project is nested under it) and its nearest
+  // existing ancestor is under no project, or under one whose tracked list is empty
+  const src = path.join(proj, 'base', 'tree');
+  fs.mkdirSync(path.join(src, 'sub'), { recursive: true });
+  for (let k = 0; k < 20; k++) fs.writeFileSync(path.join(src, `n${k}.md`), 'x');
+  fs.writeFileSync(path.join(src, 'sub', 'report.md'), 'x');
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-elsewhere-'));
+  try {
+    fs.mkdirSync(path.join(elsewhere, '.trackchanges'));
+    fs.writeFileSync(path.join(elsewhere, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: [] }));
+    let t;
+    let walks = countReaddirs(src, () => { ({ targets: t } = extractWriteTargets(`cp -r base/tree ${elsewhere}/new`, proj)); });
+    assert.equal(walks, 0, 'a project that tracks nothing: no walk');
+    assert.deepEqual(t, []);
+    fs.mkdirSync(path.join(elsewhere, 'new'));
+    walks = countReaddirs(src, () => { ({ targets: t } = extractWriteTargets(`cp -r base/tree ${elsewhere}/new`, proj)); });
+    assert.equal(walks, 0, 'the files land under new/tree, still absent: no walk');
+    walks = countReaddirs(src, () => { ({ targets: t } = extractWriteTargets(`cp -r base/tree/. ${elsewhere}/new`, proj)); });
+    assert.ok(walks >= 1, 'landing in an existing directory, which may hold a project of its own below it: walked');
+    assert.equal(t.length, 21, 'every file, the subfolder included');
+    walks = countReaddirs(src, () => { ({ targets: t } = extractWriteTargets('cp -r base/tree notes/new', proj)); });
+    assert.ok(walks >= 1, 'a new folder under the project that tracks: walked');
+    assert.ok(t.some((x) => x.path === path.join(proj, 'notes', 'new', 'sub', 'report.md')));
+    assert.ok(evaluate(payload('cp -r base/tree notes/new')), 'and its landing files are tracked by the folder entry');
+  } finally { fs.rmSync(elsewhere, { recursive: true, force: true }); }
 });
 
 // ── one closure per call ───────────────────────────────────────────
@@ -386,6 +444,285 @@ test('the per-call closure agrees with store-io\'s isTrackedFile on every kind o
   assert.equal(evaluate(payload('echo x > docs/vetoed.md')), null, 'the veto wins');
 });
 
+// ── the review's second round: [[ ]] with && and ||, a quoted [[ ──
+
+test('&& and || inside [[ ... ]] stay in the test: a > after them compares; after ]] they end it and a > redirects', () => {
+  // before the fix && and || ended the segment inside the test, so `[[ -n a && b > docs/report.md ]]` had
+  // its > read as a redirection onto the tracked file and the command was refused though bash writes nothing
+  for (const cmd of [
+    '[[ -n "$x" && "$y" > docs/report.md ]] && echo newer',
+    '[[ -z "$x" || "$y" > docs/report.md ]]',
+    '[[ -n a && b > docs/report.md ]]',
+    '[[ ( a > docs/report.md ) ]]',
+    '[[ -n "$x" && ( "$y" > docs/report.md || -z "$z" ) ]]',
+    'if [[ -f base/report.md && base/report.md > docs/report.md ]]; then echo newer; fi',
+    'while [[ -n a || b > docs/report.md ]]; do break; done',
+    '[[ "$x" == "]]" && a > docs/report.md ]]',
+  ]) {
+    assert.deepEqual(targets(cmd), [], cmd);
+    assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
+  }
+  assert.deepEqual(targets('[[ -n a && b ]] && echo x > docs/report.md'), [report], 'after ]] the && ends the test and the > writes');
+  assert.deepEqual(targets('[[ -n a ]] || echo x > docs/report.md'), [report]);
+  const { segments } = lex('[[ -n a && b > c ]] && echo done');
+  assert.deepEqual(segments.map((s) => [s.words.map((w) => w.text).join(' '), s.op]),
+    [['[[ -n a && b > c ]]', '&&'], ['echo done', '']], 'one segment for the test, its && a word of it');
+});
+
+test('a quoted or escaped [[ is data, as is [[ in operand position: a > after it redirects', () => {
+  // before the fix the quote-removed text `[[` switched the lexer into the test, whatever its spelling or
+  // position, and every > to the end of the segment was read as a comparison: `echo "[[" > docs/report.md`
+  // passed and wrote the tracked file
+  for (const cmd of [
+    'echo "[[" > docs/report.md',
+    "printf '%s\\n' '[[' > docs/report.md",
+    'echo \\[\\[ > docs/report.md',
+    'echo "[[" >> docs/report.md',
+    'echo [[ > docs/report.md',
+    'echo "[[ a > b ]]" > docs/report.md',
+    'echo "[[" ; echo x > docs/report.md',
+    'echo "[[" | tee docs/report.md',
+  ]) {
+    assert.deepEqual(targets(cmd), [report], cmd);
+    assert.ok(evaluate(payload(cmd)), `refused: ${cmd}`);
+  }
+  const { segments } = lex('echo "[[" > docs/report.md');
+  assert.deepEqual(segments[0].redirects.map((r) => r.target.text), ['docs/report.md'], 'the > is a redirection');
+});
+
+// ── brace expansion ────────────────────────────────────────────────
+
+test('a brace list is expanded before the operands are read: mv x{.new,}, cp {a,b}/x, tee and sed -i lists, nested lists and sequences', () => {
+  // before the fix `docs/report.{md,bak}` was one literal word, a name with braces in it, never tracked
+  fs.writeFileSync(path.join(proj, 'docs', 'report.md.new'), 'the replacement\n');
+  const bak = path.join(proj, 'docs', 'report.bak');
+  for (const [cmd, expected] of [
+    ['mv docs/report.md{.new,}', [report]],
+    ['cp {base,docs}/report.md', [report]],
+    ['tee docs/report.{md,bak} < base/report.md', [bak, report].sort()],
+    ["sed -i 's/a/b/' docs/report.{md,bak}", [bak, report].sort()],
+    ['cp base/{report,other}.md docs/', [path.join(proj, 'docs', 'other.md'), report].sort()],
+    ['echo x | tee docs/{re{p,q}ort,other}.md', [path.join(proj, 'docs', 'other.md'), report, path.join(proj, 'docs', 'reqort.md')].sort()],
+    ['tee notes/n{1..3}.md', [1, 2, 3].map((k) => path.join(proj, 'notes', `n${k}.md`))],
+    ['tee notes/n{01..03}.md', ['01', '02', '03'].map((k) => path.join(proj, 'notes', `n${k}.md`))],
+    ['tee notes/{a..c}.md', ['a', 'b', 'c'].map((k) => path.join(proj, 'notes', `${k}.md`))],
+    [`tee ${proj}/notes/{x,y}.md`, ['x', 'y'].map((k) => path.join(proj, 'notes', `${k}.md`))],
+  ]) {
+    assert.deepEqual(targets(cmd), expected, cmd);
+    assert.ok(evaluate(payload(cmd)), `refused: ${cmd}`);
+  }
+  const { segments } = lex('mv docs/report.md{.new,}');
+  assert.deepEqual(segments[0].words.map((w) => w.text), ['mv', 'docs/report.md.new', 'docs/report.md'], 'two operands');
+  assert.ok(segments[0].words.every((w) => w.literal));
+});
+
+test('what a brace list does not write: three operands and no directory, an ambiguous redirect, {x}, a quoted brace, a list past the cap', () => {
+  assert.deepEqual(targets('cp base/report.md docs/report.{md,bak}'), [], 'cp stops: the last operand is not a directory');
+  assert.equal(evaluate(payload('cp base/report.md docs/report.{md,bak}')), null);
+  assert.deepEqual(targets('mkdir -p docs/{a,b}; cp base/report.md docs/{a,b}/report.md'), []);
+  assert.deepEqual(targets('echo x > docs/{report,other}.md'), [], 'an ambiguous redirect: the shell writes nothing');
+  assert.equal(evaluate(payload('echo x > docs/{report,other}.md')), null);
+  assert.deepEqual(targets('echo x > docs/{report}.md'), [path.join(proj, 'docs', '{report}.md')], 'no comma: text');
+  assert.deepEqual(targets("echo x > 'docs/{report,other}.md'"), [path.join(proj, 'docs', '{report,other}.md')], 'quoted: text');
+  assert.deepEqual(targets('echo x > docs/\\{report,other\\}.md'), [path.join(proj, 'docs', '{report,other}.md')], 'escaped: text');
+  assert.deepEqual(targets('echo x > "docs/${d}.md"'), [], 'a parameter expansion is not a brace list');
+  assert.deepEqual(targets('tee notes/n{1..1000}.md'), [], 'past the cap the word is unresolvable and passes');
+  assert.deepEqual(targets('{ echo x; } > docs/report.md'), [report], 'a brace group is a group, and its redirection writes');
+  assert.deepEqual(targets("awk '{print}' base/report.md > docs/report.md"), [report]);
+});
+
+// ── the python scan across lines, and a here-string script ─────────
+
+test('a python open( call whose arguments span lines is read: a formatter wraps a heredoc script that way', () => {
+  // before the fix the argument class excluded newlines, so the wrapped call matched nothing and the
+  // write landed raw while the one-line spelling was refused
+  const wrapped = "with open(\n    'docs/report.md',\n    'w',\n) as f:\n    f.write('x')";
+  assert.deepEqual(scriptWriteTargets('python', wrapped), ['docs/report.md']);
+  assert.deepEqual(scriptWriteTargets('python', "open(\n    'docs/report.md',\n    mode='w',\n)"), ['docs/report.md']);
+  assert.deepEqual(scriptWriteTargets('python', "Path(\n    'docs/report.md'\n).open(\n    'w'\n)"), ['docs/report.md']);
+  assert.deepEqual(scriptWriteTargets('python', "open('docs/report.md',\n     'w')"), ['docs/report.md']);
+  assert.deepEqual(scriptWriteTargets('python', "open(\n    'docs/report.md',\n    'r',\n)"), [], 'a read mode, wrapped');
+  assert.deepEqual(scriptWriteTargets('python', "open(\n    os.path.join(d, 'report.md'),\n    'w',\n)"), [], 'a nested call, wrapped');
+  assert.deepEqual(targets(`python3 - <<'EOF'\n${wrapped}\nEOF`), [report]);
+  assert.ok(evaluate(payload(`python3 - <<'EOF'\n${wrapped}\nEOF`)));
+});
+
+test('a here-string is a script on stdin like a heredoc: python3 - <<< "...", node <<< "...", bash <<< "..."', () => {
+  // before the fix the <<< word was dropped as data and never reached the stdin scans, while the same
+  // script as -c or as a heredoc was refused
+  for (const cmd of [
+    `python3 - <<< "${PY_WRITE}"`,
+    `python3 <<< "${PY_WRITE}"`,
+    `python3 -u - <<< "${PY_WRITE}"`,
+    `node <<< "require('fs').writeFileSync('docs/report.md', 'x')"`,
+    `node - <<< "require('fs').writeFileSync('docs/report.md', 'x')"`,
+    'bash <<< "cp base/report.md docs/report.md"',
+    "sh -s <<< 'cp base/report.md docs/report.md'",
+    `cat <<< "${PY_WRITE}" | python3 -`,
+  ]) {
+    assert.deepEqual(targets(cmd), [report], cmd);
+    assert.ok(evaluate(payload(cmd)), `refused: ${cmd}`);
+  }
+  assert.deepEqual(targets('cmd <<< docs/report.md'), [], 'the here-string operand is data, not a write target');
+  assert.deepEqual(targets(`python3 - <<< "print(open('docs/report.md').read())"`), [], 'a read');
+  assert.deepEqual(targets('python3 - <<< "$SCRIPT"'), [], 'a script in a variable names nothing');
+  assert.deepEqual(targets(`cat <<< "${PY_WRITE}" && python3 -`), [], 'after && the string is not python\'s stdin');
+  assert.deepEqual(targets('cat < base/report.md > docs/other.md'), [path.join(proj, 'docs', 'other.md')], 'a < operand is a file read, not data');
+});
+
+// ── process substitution ───────────────────────────────────────────
+
+test('a process substitution is a word, not a segment break: tee >(cat) file names file, and the command inside is read', () => {
+  // before the fix >( was read as a > redirection whose target the ( then dropped, and the words after the )
+  // began a new segment headed by the path itself, so tee's operand was never seen
+  for (const cmd of [
+    'echo x | tee >(cat) docs/report.md',
+    'echo x | tee -a >(wc -l) docs/report.md',
+    'tee >(cat) >(cat) docs/report.md',
+    'cp <(cat base/report.md) docs/report.md',
+    'sort <(cat base/report.md) -o docs/report.md',
+    'echo hi > >(tee docs/report.md)',
+    'diff <(cat a) <(tee docs/report.md < base/report.md)',
+  ]) {
+    assert.deepEqual(targets(cmd), [report], cmd);
+    assert.ok(evaluate(payload(cmd)), `refused: ${cmd}`);
+  }
+  for (const cmd of ['cat <(echo hi) > docs/other.md', 'diff <(cat docs/report.md) <(cat base/report.md)', 'tee >(cat) report.md']) {
+    assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
+  }
+  assert.deepEqual(targets('cat <(echo hi) > docs/other.md'), [path.join(proj, 'docs', 'other.md')]);
+  assert.deepEqual(targets('tee >(cat) report.md'), [rootFile]);
+  const { segments } = lex('tee >(cat) docs/report.md');
+  assert.equal(segments.length, 1, 'one segment');
+  assert.deepEqual(segments[0].words.map((w) => w.text), ['tee', '>(cat)', 'docs/report.md']);
+  assert.deepEqual(segments[0].subs, ['cat'], 'the command inside is read like a $(...)');
+  assert.ok(!segments[0].words[1].literal, 'the word stands for a /dev/fd path the hook cannot resolve');
+});
+
+// ── pathname expansion ─────────────────────────────────────────────
+
+test('a glob operand is expanded against the filesystem as the shell expands it: a glob source into a tracked folder is refused', () => {
+  // before the fix a landing word took the SOURCE's literal flag, so `cp drafts/*.md notes/` named nothing and
+  // each file landed raw under the tracked folder, while `cp drafts/a.md notes/` was refused
+  fs.mkdirSync(path.join(proj, 'drafts', 'sub'), { recursive: true });
+  for (const [f, text] of [['a.md', 'a'], ['b.md', 'b'], ['c.txt', 'c'], [path.join('sub', 'd.md'), 'd']]) fs.writeFileSync(path.join(proj, 'drafts', f), text + '\n');
+  fs.writeFileSync(path.join(proj, 'docs', 'other.md'), 'untracked prose\n');
+  const inNotes = (...names) => names.map((n) => path.join(proj, 'notes', n)).sort();
+  assert.deepEqual(targets('cp drafts/*.md notes/'), inNotes('a.md', 'b.md'));
+  assert.deepEqual(targets('cp -r drafts/* notes/'), inNotes('a.md', 'b.md', 'c.txt', path.join('sub', 'd.md')), 'a directory matched by the glob is walked like a directory source');
+  assert.deepEqual(targets('cp drafts/* notes'), inNotes('a.md', 'b.md', 'c.txt', path.join('sub', 'd.md')), 'the walk does not read -r (cp without it skips the directory: a miss on the safe side)');
+  assert.deepEqual(targets('cp -t notes drafts/*.md'), inNotes('a.md', 'b.md'));
+  assert.deepEqual(targets('mv drafts/?.md notes/'), inNotes('a.md', 'b.md'));
+  assert.deepEqual(targets('cp drafts/[ab].md notes/'), inNotes('a.md', 'b.md'));
+  assert.deepEqual(targets('cp drafts/[!a]*.md notes/'), inNotes('b.md'));
+  assert.deepEqual(targets('cp drafts/a*.md docs/report.md'), [report], 'a glob source and a file destination');
+  for (const cmd of ['cp drafts/*.md notes/', 'cp -t notes drafts/*', 'mv drafts/* notes/', 'cp drafts/a*.md docs/report.md', 'install -m 644 drafts/*.md notes/']) {
+    assert.ok(evaluate(payload(cmd)), `refused: ${cmd}`);
+  }
+  // the other operands a glob can name
+  assert.deepEqual(targets("sed -i 's/a/b/' docs/*.md"), [path.join(proj, 'docs', 'other.md'), report].sort());
+  assert.deepEqual(targets('cat x | tee docs/rep*.md'), [report]);
+  assert.deepEqual(targets("perl -pi -e 's/a/b/' docs/*"), [path.join(proj, 'docs', 'other.md'), report].sort());
+  assert.deepEqual(targets('echo x > docs/rep*.md'), [report], 'one match for a redirection: the shell writes it');
+  assert.deepEqual(targets('cp base/report.md docs/rep*.md'), [report], 'one match for the destination');
+  assert.deepEqual(targets('tee */report.md'), [path.join(proj, 'base', 'report.md'), report].sort(), 'a glob directory and a literal tail that must exist');
+  assert.deepEqual(targets('cd doc* && echo x > report.md'), [report], 'a cd through a glob with one match moves there');
+  assert.deepEqual(targets('cd */ && echo x > report.md'), [], 'several matches: the cwd is unknown');
+  assert.ok(evaluate(payload("sed -i 's/a/b/' docs/*.md")));
+});
+
+test('what a glob does not write: several destination matches, no match, a quoted glob, a glob after a cd the lexer cannot read, dotfiles', () => {
+  fs.writeFileSync(path.join(proj, 'docs', 'other.md'), 'untracked prose\n');
+  fs.writeFileSync(path.join(proj, 'notes', '.hidden.md'), 'h\n');
+  assert.deepEqual(targets('cp base/report.md docs/*.md'), [], 'two matches for the destination: cp stops, target is not a directory');
+  assert.equal(evaluate(payload('cp base/report.md docs/*.md')), null);
+  assert.deepEqual(targets('cp base/report.md report.md docs/report.md'), [], 'the same without a glob: three operands and no directory');
+  assert.deepEqual(targets('cp base/*.rst notes/'), [], 'no match: zsh runs nothing, bash names a file the session did not mean');
+  assert.equal(evaluate(payload('cp base/*.rst notes/')), null);
+  assert.deepEqual(targets('echo x > docs/*.md'), [], 'two matches for a redirection: ambiguous, the shell writes nothing');
+  assert.deepEqual(targets("cp base/report.md 'notes/*.md'"), [path.join(proj, 'notes', '*.md')], 'a quoted glob is a name');
+  assert.ok(evaluate(payload("cp base/report.md 'notes/*.md'")), 'and under the tracked folder that name is tracked');
+  assert.deepEqual(targets('cp base/report.md notes/\\*.md'), [path.join(proj, 'notes', '*.md')], 'escaped: a name');
+  assert.deepEqual(targets('cd "$D" && cp *.md notes/'), [], 'a relative glob after a cd the lexer cannot read is unresolvable');
+  assert.deepEqual(targets('tee notes/*'), [], 'a * does not match a name starting with a dot');
+  assert.deepEqual(targets('tee notes/.*'), [path.join(proj, 'notes', '.hidden.md')], 'a pattern starting with a dot does');
+  assert.deepEqual(targets('tee notes/[.]hidden.md'), [], 'nor does a class');
+  const { segments } = lex('cp drafts/*.md "notes/*.md"');
+  assert.ok(segments[0].words[1].glob && !segments[0].words[1].literal, 'the unquoted glob is marked so');
+  assert.ok(!segments[0].words[2].glob && segments[0].words[2].literal, 'the quoted one is a literal name');
+  assert.ok(!extractWriteTargets('cp drafts/*.md notes/', proj).opaque, 'a glob is not an opaque command');
+});
+
+// ── the name the kernel opens ──────────────────────────────────────
+
+test('a symlink to a tracked file is the tracked file: a write through it, inside or outside the project, is refused; a tracked name that is itself a link stays refused', () => {
+  // before the fix the path was judged by its spelling alone, so `echo x > free.md` with free.md a link to
+  // the tracked docs/report.md passed and rewrote the tracked file
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-links-'));
+  try {
+    fs.symlinkSync(report, path.join(proj, 'free.md'));
+    fs.mkdirSync(path.join(elsewhere, 'o'));
+    fs.symlinkSync(report, path.join(elsewhere, 'o', 'l.md'));
+    fs.symlinkSync(path.join(proj, 'docs'), path.join(proj, 'linkdir'));
+    fs.symlinkSync(path.join(proj, 'notes'), path.join(proj, 'linked'));
+    fs.symlinkSync(path.join(proj, 'notes', 'newer.md'), path.join(proj, 'dangling'));
+    fs.symlinkSync(rootFile, path.join(proj, 'tolink.md'));
+    for (const cmd of [
+      'echo x > free.md',
+      'cp base/report.md free.md',
+      "sed -i 's/a/b/' free.md",
+      `echo x > ${path.join(elsewhere, 'o', 'l.md')}`,
+      'echo x > linkdir/report.md',
+      'echo x > linked/new.md',
+      'echo x > dangling',
+    ]) {
+      assert.ok(evaluate(payload(cmd)), `refused: ${cmd}`);
+    }
+    for (const cmd of ['echo x > tolink.md', 'echo x > linkdir/new.md', 'cat free.md', `cp free.md ${elsewhere}/copy.md`]) {
+      assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
+    }
+    assert.equal(isGuardedPath(path.join(proj, 'free.md')), true, 'through store-io directly');
+    assert.equal(isGuardedPath(path.join(elsewhere, 'o', 'l.md'), new Map()), true, 'and through the per-call closure');
+    assert.equal(isGuardedPath(path.join(proj, 'dangling'), new Map()), true, 'a dangling link into the tracked folder');
+    assert.equal(isGuardedPath(path.join(proj, 'tolink.md')), false, 'a link to an untracked file');
+    // the tracked file itself a link out of the project: its name is tracked, so the write is refused as before
+    fs.rmSync(report);
+    fs.writeFileSync(path.join(elsewhere, 'ext.md'), 'outside\n');
+    fs.symlinkSync(path.join(elsewhere, 'ext.md'), report);
+    assert.ok(evaluate(payload('echo x > docs/report.md')));
+  } finally { fs.rmSync(elsewhere, { recursive: true, force: true }); }
+});
+
+// ── the steps the verdict copies from store-io ─────────────────────
+
+test('store-io\'s isTrackedFile has the three steps trackedIn copies, in that order, so a vendored change to them fails here by name', () => {
+  // the verdict runs isTrackedFile's steps with the link closure memoised per call (one walk for a directory
+  // copy, not one per landing file); the copy holds only while store-io's own function keeps these steps
+  const storeIo = fs.readFileSync(fileURLToPath(new URL('../vendor/track-changents/store-io.mjs', import.meta.url)), 'utf8');
+  const m = storeIo.match(/export function isTrackedFile\(vaultRoot, file\) \{\n([\s\S]*?)\n\}/);
+  assert.ok(m, 'store-io exports isTrackedFile(vaultRoot, file)');
+  const steps = m[1].split('\n').map((l) => l.replace(/\s*\/\/.*$/, '').trim()).filter(Boolean);
+  assert.deepEqual(steps, [
+    'const rel = relPathFor(vaultRoot, file);',
+    'if (engine.isTracked(untrackedPaths(vaultRoot), rel)) return false;',
+    'const list = trackedPaths(vaultRoot);',
+    'if (engine.isTracked(list, rel)) return true;',
+    'if (!list.length) return false;',
+    'return trackedClosure(vaultRoot).has(rel);',
+  ], 'store-io\'s isTrackedFile changed: mirror the change in trackedIn (hooks/romp-track-bash-guard.mjs), then update this pin');
+  const hook = fs.readFileSync(HOOK, 'utf8');
+  const body = hook.match(/function trackedIn\(root, file, closures\) \{\n([\s\S]*?)\n\}/);
+  assert.ok(body, 'the hook has trackedIn(root, file, closures)');
+  for (const line of [
+    'const rel = relPathFor(root, file);',
+    'if (engine.isTracked(untrackedPaths(root), rel)) return false;',
+    'const list = trackedPaths(root);',
+    'if (engine.isTracked(list, rel)) return true;',
+    'if (!list.length) return false;',
+    'return closure.has(rel);',
+  ]) assert.ok(body[1].includes(line), `trackedIn keeps the step: ${line}`);
+});
+
 // ── the hook as a process, on the shapes above ─────────────────────
 
 test('the hook process rules the same way on a subshell cd, a chained heredoc and a heredoc-fed shell', () => {
@@ -404,4 +741,12 @@ test('the hook process rules the same way on a subshell cd, a chained heredoc an
   assert.equal(run('[[ a > docs/report.md ]]').status, 0);
   assert.equal(run('sudo -n cp base/report.md docs/report.md').status, 2);
   assert.equal(run("python3 -u <<'EOF'\n" + PY_WRITE + '\nEOF').status, 2);
+  // the second round's shapes
+  assert.equal(run('[[ -n "$x" && "$y" > docs/report.md ]] && echo newer').status, 0, 'a comparison after && inside [[ ]]');
+  assert.equal(run('echo "[[" > docs/report.md').status, 2, 'a quoted [[ is data');
+  assert.equal(run(`python3 - <<< "${PY_WRITE}"`).status, 2, 'a here-string script');
+  assert.equal(run('echo x | tee >(cat) docs/report.md').status, 2, 'an operand after a process substitution');
+  assert.equal(run('mv docs/report.md{.new,}').status, 2, 'a brace list');
+  assert.equal(run('cp base/*.md notes/').status, 2, 'a glob source into the tracked folder');
+  assert.equal(run('cp base/report.md docs/report.{md,bak}').status, 0, 'three operands and no directory: cp writes nothing');
 });

@@ -2607,12 +2607,30 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   perl -i, python and node inline scripts and a script on stdin, cd and ~/ and an absolute path, the opaque forms
   allowed, a tracked image passing by name and a new file under a tracked folder refused, the refusal's voice) and
   the hook as a process (exit 0 at once without ROMP_SID with stdin held open; exit 2 with the reason on stderr
-  with it); `tests/install-sh.bats` the Bash-side guard's registration on its own `Bash` group, once, with the
+  with it); from the review's first round (2026-09-10), `tools/romp-track-bash-guard-shapes.test.mjs` pins the
+  shapes the round found misread, each in both directions where it has two, the write the hook missed and the
+  ordinary command it refused for a file the command never touches: a cd inside `( ... )` ending at the `)`, and
+  in an if, loop or case body leaving the cwd unknown once the body closes; a heredoc body kept by the command
+  that opened it through a following `&&`, `|`, `;` or `&`, or piped into python or node; a shell fed its script
+  by heredoc (`bash <<EOF`, `bash -s`, `sh -`) read like `sh -c`; `-c` in an option cluster (`bash -lc`,
+  `sh -ec`); python and node options before a heredoc on stdin; a prefix with options (`sudo -u`, `env -u`,
+  `timeout -s`, `exec -a`); pushd moving the cwd and popd leaving it unknown; `[[ a > b ]]` and `(( a > b ))`
+  comparing while `[ a > b ]` redirects; a function body moving nothing after it; `Path(x).open('w')`, `open()`
+  with keyword arguments and `fs.openSync` with a write flag; node `-p` and `--print`; the refusal's word (a
+  change, never a suggestion); the NUL-byte rule; the 500-file cap on a directory source; one link closure per
+  call over a directory copy and over five redirect targets, agreeing with store-io's `isTrackedFile` on every
+  kind of path; and the hook process on a subshell cd, a chained heredoc and a heredoc-fed shell;
+  `tests/install-sh.bats` the Bash-side guard's registration on its own `Bash` group, once, with the
   vendored guard's group beside it and a user's own Bash group kept; `tests/romp-uninstall.bats` its removal;
   `tools/file-review-plan-bash-guard.test.mjs` holds decision 47, the Vendoring paragraph and this bullet to the
   hook, the installer and the uninstaller; `tools/file-review-plan-dry-run-record.test.mjs` holds decision 47's
   record of the dry run to the form every other record of it takes, a dry run and its date, with no project
-  named. Sessions commit the folder (decision 48): `tests/test_session_prompt.py`
+  named; `tools/file-review-plan-bash-guard-review.test.mjs` holds decision 47's cost sentence to the hook (the
+  closure built after the veto and the explicit list, never with an empty list, once per call and shared by the
+  command's targets) and the inventory to the tree: every `romp-track-bash-guard…` module under `tools/` is
+  named in decision 47 and in this bullet, and every `file-review-plan-bash-guard…` module in this bullet, so a
+  later round's module cannot land unrecorded. Sessions commit the folder (decision 48):
+  `tests/test_session_prompt.py`
   pins the prompt's sentence; `tools/vendor-patches.test.mjs` (P7) pins patch 0007's two rules in the skill;
   `tests/test_guide_files_commit_folder.py` holds the prompt, the skill, the guide's Files sentence and decision 25
   to one another; `tests/test_guide_files_bash_guard.py` holds the guide's Track changes sentence on the refusal
@@ -2911,10 +2929,23 @@ document stands on its own, each with the reasoning it was given.
     cannot read, is unresolvable and passes, since a silent block of ordinary work would cost more than a missed
     write; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked file
     is a read. Not read: rm, a mv of the tracked file elsewhere (a rename the store heals by content hash),
-    find -exec, rsync and patch. Without ROMP_SID it exits 0 before reading stdin (decision 24). About 60 ms per
-    Bash call. `tools/romp-track-bash-guard.test.mjs` drives the grammar and the process, `tests/install-sh.bats`
-    the registration, and `tools/file-review-plan-bash-guard.test.mjs` holds this decision to the hook and the
-    installer.
+    find -exec, rsync and patch. Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
+    per Bash call when no target needs the link closure (a read, a target outside any project, an explicit hit on
+    the project's tracked list, an empty list); a write to a file inside a tracking project that the list does not
+    name (the common write in a project that tracks anything) adds one walk of the project's markdown tree per
+    call, store-io's `trackedClosure`, a listing of every .md under the root and a read of every tracked note, the
+    same walk the vendored guard pays on every such Write, built once and shared by all the command's targets, so
+    a directory copy pays it once: measured at 80 to 100 ms on a 3000-note tree and 130 to 170 ms on a 12000-note
+    one, more under load, growing with the project's markdown count and well under the installer's 10 s timeout.
+    `tools/romp-track-bash-guard.test.mjs` drives the grammar and the process;
+    `tools/romp-track-bash-guard-shapes.test.mjs`, from the review's first round (2026-09-10), the shapes that
+    round found misread, each in both directions where it has two (a cd inside a subshell or a body, a heredoc
+    followed by `&&`, a heredoc-fed shell, `bash -lc`, a prefix with options, pushd and popd, `[[ a > b ]]`, a
+    function body, keyword and `Path(x).open()`, node `-p`, the NUL-byte rule, the walk cap, the one closure per
+    call); `tests/install-sh.bats` the registration; `tools/file-review-plan-bash-guard.test.mjs` holds this
+    decision to the hook and the installer, and `tools/file-review-plan-bash-guard-review.test.mjs` its cost
+    sentence to the hook's closure and every `romp-track-bash-guard…` module under `tools/` to this decision and
+    the Tests bullet.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

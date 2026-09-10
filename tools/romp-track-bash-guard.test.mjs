@@ -2,7 +2,8 @@
 // a PreToolUse hook on the Bash tool that refuses a shell command which would write a tracked
 // file, the way the vendored guard refuses a raw Write or Edit on one. Driven here two ways: the
 // exported evaluate() over synthetic PreToolUse payloads against a scratch project (the
-// .trackchanges/config.json the CLIs read), and the hook as a process, with and without ROMP_SID.
+// .trackchanges/config.json the CLIs read), and the hook as a process, with and without ROMP_SID, by its real
+// path and through the ~/.claude/hooks/ symlink install.sh registers (the entry guard's realpathSync).
 // The grammar is pinned through extractWriteTargets, so a construct the hook stops reading fails
 // here by name. Synthetic: a project under os.tmpdir(), invented paths, no session data.
 //
@@ -222,12 +223,27 @@ test('a command the lexer cannot see through is allowed: variables, eval, xargs,
     'eval "$CMD"',
     'ls docs/*.md | xargs -I{} cp base/{} {}',
     'bash -c "$SCRIPT"',
-    'cp base/report.md docs/*.md',
   ]) {
     assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
   }
   assert.ok(extractWriteTargets('eval "$CMD"', proj).opaque);
   assert.ok(!extractWriteTargets('cp a b', proj).opaque);
+});
+
+test('a glob is expanded as the shell expands it: a glob source into the tracked folder is refused, and a glob that names no write passes', () => {
+  // the review's second round: a landing word took the source's literal flag, so `cp base/*.md notes/` named
+  // nothing and each file landed raw under the tracked folder while `cp base/report.md notes/` was refused
+  assert.deepEqual(targets('cp base/*.md notes/'), [path.join(proj, 'notes', 'report.md')]);
+  assert.ok(evaluate(payload('cp base/*.md notes/')), 'each match lands raw under the tracked folder');
+  assert.ok(evaluate(payload('mv base/* notes')));
+  assert.ok(evaluate(payload('cp -t notes base/*.md')));
+  assert.deepEqual(targets("sed -i 's/a/b/' docs/*.md"), [other, report].sort(), 'every file the glob names');
+  assert.deepEqual(targets('cp base/report.md docs/rep*.md'), [report], 'one match for the destination: that file');
+  assert.deepEqual(targets('cp base/report.md docs/*.md'), [], 'two matches for the destination: cp stops with "target is not a directory" and writes nothing');
+  assert.equal(evaluate(payload('cp base/report.md docs/*.md')), null);
+  assert.deepEqual(targets('cp base/report.md docs/other.md docs/report.md'), [], 'the same without a glob: three operands and no directory');
+  assert.deepEqual(targets('cp base/*.rst notes/'), [], 'no match: nothing the shell writes as the session meant');
+  assert.equal(evaluate(payload('cp base/*.rst notes/')), null);
 });
 
 test('a shell -c with a literal script, a command substitution and a loop body are read through', () => {
@@ -329,6 +345,45 @@ test('the hook process with ROMP_SID denies a cp onto a tracked file with exit 2
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.equal(allowed.stderr, '');
   assert.equal(run('cp base/report.md docs/other.md').status, 0);
+});
+
+test('the hook run through its installed symlink, as the registered command runs it, still recognises itself and rules the same way', () => {
+  // install.sh links ~/.claude/hooks/romp-track-bash-guard.mjs at the file in hooks/ and registers that tilde path as
+  // the command, so in production a shell execs the LINK through the shebang: process.argv[1] is the link and
+  // import.meta.url the real file, and the entry guard matches them only through realpathSync. Spawned by its real
+  // path alone (the tests above), the suite would stay green with that call gone while the installed hook, which
+  // exits 0 with no output whenever it does not recognise itself, let every Bash write to a tracked file through.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-home-'));
+  try {
+    const hooksDir = path.join(home, '.claude', 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    const link = path.join(hooksDir, 'romp-track-bash-guard.mjs');
+    fs.symlinkSync(HOOK, link);
+    // HOME is the scratch home so ~ expands to the link's directory; PATH leads with this node so `#!/usr/bin/env node` runs it.
+    const env = (extra) => ({ ...hookEnv(extra), HOME: home, PATH: [path.dirname(process.execPath), process.env.PATH || ''].join(path.delimiter) });
+    const viaShell = (command, extra) => spawnSync('/bin/sh', ['-c', '~/.claude/hooks/romp-track-bash-guard.mjs'], {
+      input: payload(command), encoding: 'utf8', env: env(extra),
+    });
+    const viaNode = (command) => spawnSync(process.execPath, [link], { input: payload(command), encoding: 'utf8', env: env({ ROMP_SID }) });
+
+    const denied = viaShell('cp base/report.md docs/report.md', { ROMP_SID });
+    assert.equal(denied.status, 2, `the registered command, exec'd through the link: ${denied.stderr || denied.error}`);
+    assert.ok(denied.stderr.includes(report), denied.stderr);
+    assert.match(denied.stderr, /track-edit/);
+    assert.equal(denied.stdout, '');
+    const allowed = viaShell('cat docs/report.md', { ROMP_SID });
+    assert.equal(allowed.status, 0, allowed.stderr);
+    assert.equal(allowed.stderr, '');
+
+    const deniedByNode = viaNode('cp base/report.md docs/report.md');
+    assert.equal(deniedByNode.status, 2, `node <link>: ${deniedByNode.stderr}`);
+    assert.ok(deniedByNode.stderr.includes(report), deniedByNode.stderr);
+    assert.equal(viaNode('cp base/report.md docs/other.md').status, 0);
+
+    const noSid = viaShell('cp base/report.md docs/report.md', {});
+    assert.equal(noSid.status, 0, 'through the link too, no ROMP_SID means not a romp session');
+    assert.equal(noSid.stderr, '');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test('the hook is executable with a node shebang, as the settings.json command runs it', () => {

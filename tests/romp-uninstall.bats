@@ -155,6 +155,81 @@ print('preserved')
     [[ "$output" == *"preserved"* ]]
 }
 
+# ── one group, two owners ────────────────────────────────────────────────────
+# install.sh keys hook groups by matcher: romp's own hooks go in an event's matcher-less group, and the
+# Bash-side track guard in the group whose matcher is exactly `Bash`, so on a machine whose settings.json
+# already had such a group romp's entry is appended INTO it, after the user's hook (tests/install-sh.bats
+# pins both merges). The inverse has to be the same per-entry filter: romp's entry goes, the user's stays,
+# and the group stays with it. The test above adds the user's hook AFTER install.sh, in a group of its own,
+# and every other test here removes whole groups, so an uninstaller that emptied any group it touched
+# passed all of them while dropping the user's hook: the collateral damage the header says this file
+# exists to prevent. These two put the user's hook in place FIRST, once per shape.
+
+@test "romp-uninstall: takes the Bash-side guard out of a user's OWN Bash group and leaves the group standing" {
+    mkdir -p "$HOME/.claude"
+    cat > "$HOME/.claude/settings.json" <<'JSON'
+{
+  "hooks": {
+    "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "my-bash-check.sh" } ] } ]
+  }
+}
+JSON
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    # The shape under test: the user's hook and romp's guard share the one Bash group. Asserted, so a
+    # merge that stopped sharing would fail here instead of turning the test below into a no-op.
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+groups = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]
+bash = [g for g in groups if g.get("matcher") == "Bash"]
+assert [h["command"] for g in bash for h in g["hooks"]] == ["my-bash-check.sh", "~/.claude/hooks/romp-track-bash-guard.mjs"], groups
+PY
+
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]
+    [ "$(cmd_count romp-track-bash-guard.mjs)" = "0" ]
+    [ "$(hook_count)" -eq 0 ]
+    # One group left, the user's, exactly as it was before install.sh ran. The vendored guard's own
+    # Write|Edit|MultiEdit group was romp's alone, so it was emptied and pruned.
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+groups = (s.get("hooks") or {}).get("PreToolUse")      # .get: a pruned event must read as None, not a KeyError
+assert groups == [{"matcher": "Bash", "hooks": [{"type": "command", "command": "my-bash-check.sh"}]}], s.get("hooks")
+PY
+}
+
+@test "romp-uninstall: takes romp's Stop hooks out of a user's OWN matcher-less Stop group and leaves the group standing" {
+    mkdir -p "$HOME/.claude"
+    cat > "$HOME/.claude/settings.json" <<'JSON'
+{
+  "hooks": {
+    "Stop": [ { "hooks": [ { "type": "command", "command": "~/.claude/hooks/my-own-notify.sh", "timeout": 5 } ] } ]
+  }
+}
+JSON
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    # The shape under test: romp's Stop hooks joined the user's group, after the user's hook.
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+groups = json.load(open(sys.argv[1]))["hooks"]["Stop"]
+assert len(groups) == 1, groups
+cmds = [h["command"] for h in groups[0]["hooks"]]
+assert cmds[0] == "~/.claude/hooks/my-own-notify.sh" and len(cmds) > 1, cmds
+PY
+
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]
+    [ "$(hook_count)" -eq 0 ]
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+groups = (s.get("hooks") or {}).get("Stop")
+assert groups == [{"hooks": [{"type": "command", "command": "~/.claude/hooks/my-own-notify.sh", "timeout": 5}]}], s.get("hooks")
+PY
+}
+
 @test "romp-uninstall: keeps recorded state by default, deletes it only with --purge" {
     echo '{"synthetic": "record"}' > "$ROMP_STATE_DIR/serve-token"
     mkdir -p "$ROMP_STATE_DIR/sdkvenv/bin"
