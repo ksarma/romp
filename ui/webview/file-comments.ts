@@ -431,6 +431,23 @@ function unframeImage(img: HTMLElement, marks: string[]): void {
   img.style.outline = ""; img.style.outlineOffset = "";
   delete img.dataset.act; delete img.dataset.id;
 }
+/** The unpaint step over `marks` (Panel.unpaint over a selector's matches, Panel.unwrap over elements the repaint holds; the
+ *  whitespace leg times the panel's unpaint through it, md-config-paint-whitespace-browser.test.ts): each mark's children go back
+ *  in its place and the mark comes out, then each parent is normalized ONCE, after the loop (plans/markdown-viewer.md Slice 5,
+ *  section 2 (d)). Normalizing the parent per mark cost the square of a paragraph's inline children where the paint costs their
+ *  count: 9,999 marks over a paragraph of 5,000 links painted in 33 ms and unwrapped in 469 (the Slice 4 review, round 9);
+ *  normalized once per parent they unwrap in 11 ms. Nested marks (two comments over one passage) come in document order, the
+ *  outer first, so the inner's parent is read after the outer went and the set holds the block once; given inner first (an
+ *  order a caller might hold), the inner's parent is the outer, detached by then, and its normalize is a no-op. */
+export function unwrapMarks(marks: Iterable<Element>): void {
+  const parents = new Set<Node>();
+  for (const n of marks) {
+    const p = n.parentNode; if (!p) continue;
+    while (n.firstChild) p.insertBefore(n.firstChild, n);
+    p.removeChild(n); parents.add(p);
+  }
+  for (const p of parents) p.normalize();
+}
 /** Whether a selection end (`node`, `offset`) lies inside the mark `x`, or at one of its edges (Panel.dragClick). A drag
  *  that ends at the mark's boundary may be reported by the engine not as a point inside the mark but as one in the mark's
  *  parent, at the mark's index (its start) or the next (its end), or at the end of the text node before the mark or the
@@ -3505,16 +3522,15 @@ class Panel {
     if (!out || !out.length) { const img = imgForRange(root, src, c.range, this.ctx.path); if (img) frameImage(img, "fc-presel"); }
     return out || [];
   }
-  /** Unwrap painted marks: the text nodes go back in place and the parent is normalized. A framed
+  /** Unwrap painted marks: the text nodes go back in place and each parent is normalized, once (unwrapMarks). A framed
    *  picture is stripped of its marks instead — unwrapping an <img> would remove the picture. */
   private unpaint(selector: string): void {
     const marks = selector.split(",").map((s) => s.trim().replace(/^\./, ""));
+    const held: Element[] = [];
     for (const n of Array.from(this.ctx.body().querySelectorAll(selector))) {
-      if (n.classList.contains("fc-img")) { unframeImage(n as HTMLElement, marks); continue; }
-      const p = n.parentNode; if (!p) continue;
-      while (n.firstChild) p.insertBefore(n.firstChild, n);
-      p.removeChild(n); p.normalize();
+      if (n.classList.contains("fc-img")) unframeImage(n as HTMLElement, marks); else held.push(n);
     }
+    unwrapMarks(held);
   }
   /** The box whose line boxes hold `m`: its nearest ancestor whose width does not follow its content, so that a mark's 2 px side
    *  padding inside it moves the wrap points of that box's lines and of no other box's. That is a block (the paragraph, the list
@@ -3539,14 +3555,10 @@ class Panel {
     memo.set(p, box);
     return box;
   }
-  /** Unwrap these marks: the text nodes go back in place and each parent is normalized (unpaint's own step, over elements the
-   *  caller holds rather than a selector). */
+  /** Unwrap these marks: the text nodes go back in place and each parent is normalized once (unpaint's own step, unwrapMarks, over
+   *  elements the caller holds rather than a selector). */
   private unwrap(marks: Element[]): void {
-    for (const n of marks) {
-      const p = n.parentNode; if (!p) continue;
-      while (n.firstChild) p.insertBefore(n.firstChild, n);
-      p.removeChild(n); p.normalize();
-    }
+    unwrapMarks(marks);
   }
   /** The pending target repainted alone (a composer opened, closed or moved: startComment, closeComposer and the other sites), as
    *  a paint pass over the LINE BOXES the target leaves and enters (lineBoxOf). The target's 2 px side padding is in the layout,
