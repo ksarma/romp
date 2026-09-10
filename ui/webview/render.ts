@@ -6617,24 +6617,28 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // that holder, so the "+" beside a Move to row, an existing name typed and a new tag typed from there keep the row on
   // it, an add being an add; from no group, the tag the add puts the copy under, so with no tag the add is the move).
   // THE COPY IS A SECTION REF (round 4): copyNow holds the copy's tag as a pin addresses its section (tab-groups.ts SectionRef:
-  // the local tag's id when the frame carries one, and its name), and a held union is the copy's by the ids when both are
-  // local, else by the names (sameSection, round 5, which the click's guard shares: a comparison that tested the ids alone
-  // took two remote-only sections, both without a local id, for one section, and a hide went through for a copy the row
-  // never named). The id keeps the copy through a rename pushed while the menu is open (the same tag under a new name;
-  // before, the name-matched copy was lost on a session under two tags, and the click wrote nothing while the row still read
-  // the old name); the name carries it where the id cannot: a tag claimed at its create wears the placeholder id the ack
-  // replaces, and a union only remote hosts' tags make has no local id (so a rename of a remote-only group loses the copy,
-  // the one limit; a tag claimed at its create is known by its name alone the same way until an add gesture aims the ref
-  // at it with the ack's id). Not either alone: a rename beside a new tag under the old name would match two unions.
+  // the local tag's id when the frame carries one, and its name). IDENTITY FIRST, THE NAME AS THE FALLBACK (round 6): a held
+  // union is the copy's by its local id, and by its name only when no held union carries the ref's id (heldCopy's two passes).
+  // The id keeps the copy through a rename pushed while the menu is open (the same tag under a new name; before, the name-matched
+  // copy was lost on a session under two tags, and the click wrote nothing while the row still read the old name), and a rename
+  // beside a new tag under the old name resolves to the renamed tag; the id pass runs over every held union before the name is
+  // tried, so a remote-only union under the old name cannot take the copy by coming first in the drag order (round 5 took the
+  // first union either comparison matched, and the copy depended on tagOrder). The name carries the copy where the id cannot:
+  // a tag claimed at its create wears the placeholder id the ack replaces; a union only remote hosts' tags make has no local id
+  // (so a rename of a remote-only group loses the copy, the one limit); and a local tag deleted and created again under the same
+  // name has a new id, so the same-named union holds the copy, as the strip's section, keyed by the name, still shows it. The
+  // click's guard compares the row's section and the resolution through sameSection (the ids when both are local, else the
+  // names, so two remote-only sections are two), so a copy re-identified under the same words refuses the click once, with the
+  // row's cue, and the second click writes for the new id.
   const unionFor = () => viewTagUnion(effViews());
   const holding = () => unionFor().filter((g) => g.members.includes(id));
   const refOf = (name: string): SectionRef => { const g = unionFor().find((u) => u.name === name); return g ? sectionRef(g) : { name, localId: null }; };   // a tag not yet created: its name alone
   let copyNow: SectionRef | undefined = copy ? refOf(copy) : undefined;
-  const sameSection = (a: SectionRef, b: SectionRef) => (a.localId !== null && b.localId !== null ? a.localId === b.localId : a.name === b.name);   // the ids when both are local, else the names (round 5; the click's guard shares it)
+  const sameSection = (a: SectionRef, b: SectionRef) => (a.localId !== null && b.localId !== null ? a.localId === b.localId : a.name === b.name);   // the ids when both are local, else the names (round 5): the click's guard
   const heldCopy = (held: TagUnion[]): TagUnion | undefined => {
     const c = copyNow;
     if (!c) return undefined;
-    return held.find((g) => sameSection(sectionRef(g), c));
+    return (c.localId !== null ? held.find((g) => g.localId === c.localId) : undefined) ?? held.find((g) => g.name === c.name);   // the id first, the name when no id matches (round 6)
   };
   const homeNow = (): TagUnion | undefined => {
     if (!readTabGroups().on) return undefined;

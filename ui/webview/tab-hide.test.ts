@@ -799,9 +799,9 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // copy's section tracked (round 2: copyNow, which the move writes; round 3: "" is no copy, an add from no group claims the copy, and
   // the resolution is the copy's own group, else the one remaining holder, else nothing; round 4: the copy is a SectionRef, its tag's
   // local id and name, matched by the id first and the name second, and every resolution latches what it found), and three callers
-  assert.match(MENU, /const unionFor = \(\) => viewTagUnion\(effViews\(\)\);\s*\n\s*const holding = \(\) => unionFor\(\)\.filter\(\(g\) => g\.members\.includes\(id\)\);\s*\n\s*const refOf = \(name: string\): SectionRef => \{ const g = unionFor\(\)\.find\(\(u\) => u\.name === name\); return g \? sectionRef\(g\) : \{ name, localId: null \}; \};[^\n]*\n\s*let copyNow: SectionRef \| undefined = copy \? refOf\(copy\) : undefined;\s*\n\s*const sameSection = \(a: SectionRef, b: SectionRef\) => \(a\.localId !== null && b\.localId !== null \? a\.localId === b\.localId : a\.name === b\.name\);[^\n]*\n\s*const heldCopy = \(held: TagUnion\[\]\): TagUnion \| undefined => \{\s*\n\s*const c = copyNow;\s*\n\s*if \(!c\) return undefined;\s*\n\s*return held\.find\(\(g\) => sameSection\(sectionRef\(g\), c\)\);\s*\n\s*\};\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;\s*\n\s*const held = holding\(\);\s*\n\s*const home0 = heldCopy\(held\) \?\? \(held\.length === 1 && !held\[0\]\.pending \? held\[0\] : undefined\);[^\n]*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};\s*\n\s*let refreshHideRow = \(\) => \{\};[^\n]*\n\s*let refreshTags = \(\) => \{\};/,
-    "the copy as a section ref (round 4): refOf resolves a name to its union's ref, or the name alone for a tag not yet created; heldCopy matches through sameSection (round 5: the ids when both are local, so a pushed rename keeps the copy, else the names, so the ack replaces a placeholder id and a remote-only group is known by its name; two remote-only sections are two); homeNow is a pure function of the ref and the views (round 5): the copy's own group, else the one remaining holder, nothing latched");
-  assert.equal(MENU.split("sameSection(").length - 1, 2, "used by heldCopy and by the click's guard (round 5): one comparison of two sections (the declaration reads `sameSection = (`)");
+  assert.match(MENU, /const unionFor = \(\) => viewTagUnion\(effViews\(\)\);\s*\n\s*const holding = \(\) => unionFor\(\)\.filter\(\(g\) => g\.members\.includes\(id\)\);\s*\n\s*const refOf = \(name: string\): SectionRef => \{ const g = unionFor\(\)\.find\(\(u\) => u\.name === name\); return g \? sectionRef\(g\) : \{ name, localId: null \}; \};[^\n]*\n\s*let copyNow: SectionRef \| undefined = copy \? refOf\(copy\) : undefined;\s*\n\s*const sameSection = \(a: SectionRef, b: SectionRef\) => \(a\.localId !== null && b\.localId !== null \? a\.localId === b\.localId : a\.name === b\.name\);[^\n]*\n\s*const heldCopy = \(held: TagUnion\[\]\): TagUnion \| undefined => \{\s*\n\s*const c = copyNow;\s*\n\s*if \(!c\) return undefined;\s*\n\s*return \(c\.localId !== null \? held\.find\(\(g\) => g\.localId === c\.localId\) : undefined\) \?\? held\.find\(\(g\) => g\.name === c\.name\);[^\n]*\n\s*\};\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;\s*\n\s*const held = holding\(\);\s*\n\s*const home0 = heldCopy\(held\) \?\? \(held\.length === 1 && !held\[0\]\.pending \? held\[0\] : undefined\);[^\n]*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};\s*\n\s*let refreshHideRow = \(\) => \{\};[^\n]*\n\s*let refreshTags = \(\) => \{\};/,
+    "the copy as a section ref (round 4): refOf resolves a name to its union's ref, or the name alone for a tag not yet created; heldCopy matches in two passes (round 6): by the local id over every held union first, then by the name when no union carries the ref's id, so a pushed rename keeps the copy whatever the drag order, the ack replaces a placeholder id, a remote-only group is known by its name, and a same-named tag under a new id keeps the copy the strip still shows; homeNow is a pure function of the ref and the views (round 5): the copy's own group, else the one remaining holder, nothing latched");
+  assert.equal(MENU.split("sameSection(").length - 1, 1, "used by the click's guard alone since round 6 (heldCopy resolves in its own two passes, id then name; round 5 shared the comparison, so a same-named union under a new id was no match and the copy fell through): one comparison of two sections (the declaration reads `sameSection = (`)");
   assert.equal(MENU.split("const sameSection = ").length - 1, 1, "declared once");
   assert.equal(MENU.split("homeNow()").length - 1, 3, "the row's gate (rowHome, which its refresh and its click share, round 6), the flyout's per-build read, and the flyout's signature (round 6: the home resolution is an input its rows read; grouping is read through it, never bare)");
   assert.equal(MENU.split("readTabGroups().on").length - 1, 1, "one bare read in the menu, inside homeNow");
@@ -908,7 +908,8 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /The resolution \(round 3\): the named copy's own group while it still holds the session; else the session's ONE remaining holder, the unambiguous case \(an x on the copy's tag on a two-tag session leaves one copy; a caller naming no copy on a one-tag session has one\), which speaks for the copy while its own tag is away; else nothing, so with two or more other holders there is no copy to hide, move or pin/, "the resolution is stated where the computation is (round 3: the one-holder return, the ambiguous case; round 5: the holder speaks for the copy, it does not become it)");
   assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /THE RESOLUTION IS A PURE FUNCTION of the right-clicked copy and the current views \(round 5\): homeNow reads copyNow and writes nothing, so a tag that comes back from elsewhere \(a remove the kernel refused, another pane's add\) makes the menu speak for the copy the user right-clicked again\..*copyNow changes at the user's own gestures alone: a move aims it at the destination \(moveUnion\), and an add aims it at the copy the menu speaks for at that moment \(aimAdd:/, "round 5: the rule and the gestures that write the ref are stated at the computation");
   assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /a tab in the untagged trail carries "" there, which names no group, so it reads as no copy/, "the trail caller is described as it is (round 3: the comment had said the flat strip names none)");
-  assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /THE COPY IS A SECTION REF \(round 4\): copyNow holds the copy's tag as a pin addresses its section \(tab-groups\.ts SectionRef: the local tag's id when the frame carries one, and its name\), and a held union is the copy's by the ids when both are local, else by the names \(sameSection, round 5, which the click's guard shares: a comparison that tested the ids alone took two remote-only sections, both without a local id, for one section, and a hide went through for a copy the row never named\)\..*a union only remote hosts' tags make has no local id \(so a rename of a remote-only group loses the copy, the one limit; a tag claimed at its create is known by its name alone the same way until an add gesture aims the ref at it with the ack's id\)\. Not either alone: a rename beside a new tag under the old name would match two unions\.\s*$/, "round 4: the tracking is stated where it is computed, its limit included; round 5: no latch sentence closes it");
+  assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /THE COPY IS A SECTION REF \(round 4\): copyNow holds the copy's tag as a pin addresses its section \(tab-groups\.ts SectionRef: the local tag's id when the frame carries one, and its name\)\. IDENTITY FIRST, THE NAME AS THE FALLBACK \(round 6\): a held union is the copy's by its local id, and by its name only when no held union carries the ref's id \(heldCopy's two passes\)\..*so a remote-only union under the old name cannot take the copy by coming first in the drag order.*a union only remote hosts' tags make has no local id \(so a rename of a remote-only group loses the copy, the one limit\); and a local tag deleted and created again under the same name has a new id, so the same-named union holds the copy, as the strip's section, keyed by the name, still shows it\. The click's guard compares the row's section and the resolution through sameSection \(the ids when both are local, else the names, so two remote-only sections are two\), so a copy re-identified under the same words refuses the click once, with the row's cue, and the second click writes for the new id\.\s*$/, "round 4: the tracking is stated where it is computed, its limit included; round 5: no latch sentence closes it; round 6: the id first and the name as the fallback, the drag-order case and the same-named re-create named, and no claim that an add gesture re-aims a name-only ref (aimAdd returns while the copy's tag holds the session, so none does)");
+  assert.doesNotMatch(homeComment, /until an add gesture aims the ref at it/, "round 6: the clause was false (heldCopy matches the created tag by its name, so aimAdd returns and no add re-aims the ref)");
   assert.ok(!homeComment.includes("\u2014"));
   // the glyph: a new ctxIcon kind, a tab on the strip's baseline, slashed by the helper's own `off` when hidden
   assert.match(RENDER, /function ctxIcon\(kind: "feed" \| "mail" \| "bell" \| "bill" \| "folder" \| "tag" \| "pencil" \| "smile" \| "tab", off: boolean\): HTMLElement \{/);
@@ -1663,7 +1664,7 @@ test("executed: THE STORE'S OWN EVENTS AND THE CAPS FRAME REACH THE MENU (menu r
   assert.deepEqual([quiet.changed, quiet.renders], [0, 0], "nothing in flight, nothing adopted: the frame returns before the notifier and the render");
 });
 
-test("executed: A RENAME PUSHED WHILE THE MENU IS OPEN (menu review round 4). The copy is tracked as a section ref (its tag's local id and name), so a rename of its tag pushed while the menu is open keeps the row on the same copy: the row names the new name, the Hide click writes for that tag under it, and the flyout keeps its Move to and Show when folded rows; the same on a one-tag session, by the id alone when the row was not re-dressed, and with a new tag under the old name beside the rename; the other tag renamed leaves the row; a tag claimed at its create resolves through the ack that replaces its placeholder id; a remote-only group's rename loses the copy (name-matched: the one limit)", () => {
+test("executed: A RENAME PUSHED WHILE THE MENU IS OPEN (menu review rounds 4 and 6). The copy is tracked as a section ref (its tag's local id and name), so a rename of its tag pushed while the menu is open keeps the row on the same copy: the row names the new name, the Hide click writes for that tag under it, and the flyout keeps its Move to and Show when folded rows; the same on a one-tag session, by the id alone when the row was not re-dressed, and with a new tag under the old name beside the rename; the other tag renamed leaves the row; a tag claimed at its create resolves through the ack that replaces its placeholder id; a remote-only group's rename loses the copy (name-matched: the one limit); a remote-only union under the old name beside the rename never takes the copy, in either drag order (the id pass runs first)", () => {
   // before: copyNow was the tag's NAME, so a pushed rename (same id, new name) on a session under two tags made homeNow find no held
   // union of that name, and the fallback did not apply (two holders): the click dismissed and wrote nothing, and the flyout's next
   // build had no Move to and no Show when folded rows. On a one-tag session the fallback hid the defect
@@ -1754,6 +1755,22 @@ test("executed: A RENAME PUSHED WHILE THE MENU IS OPEN (menu review round 4). Th
     api.push({ ...V_REMOTE, remoteTags: [{ ...V_REMOTE.remoteTags[0], name: "ops2" }], seq: 5 });
     assert.equal(rowOf(menu), undefined, "renamed remotely: no id to follow, two holders left, no row");
     assert.equal(hooks.writes.length, 0);
+    // N7 (round 6): the rename pushed beside a REMOTE-ONLY union under the OLD name that also holds the session (the kernel respells a
+    // remote tag's local member as the bare sid), in both drag orders. The copy is the renamed tag by its id whichever union comes first:
+    // heldCopy runs the id pass over every held union before it tries the name. Round 5 took the first union sameSection matched, so
+    // with infra dragged before ops the remote infra took the copy by its name: the row read infra and the click hid the remote section
+    for (const order of [["infra", "ops", "archived"], ["ops", "infra", "archived"]]) {
+      hooks.views = V_API_BOTH; hooks.writes = [];
+      menu = api.open("api", "infra");
+      const V_N7 = { ...renamed(V_API_BOTH, 0, "ops", 6), remoteTags: [{ id: "TESTHOST:r1", host: "TESTHOST", name: "infra", color: "#123456", members: ["api"] }], tagOrder: order };
+      api.push(V_N7);
+      assert.deepEqual(viewTagUnion(V_N7).filter((g) => g.members.includes("api")).map((g) => g.name), order, "three holders in the dragged order: " + order.join(", "));
+      assert.equal(rowOf(menu)?.sub(), HIDE_SUB("ops"), "the row names the renamed tag, by its id, in the order " + order.join(", ") + " (round 5: infra, the remote union, when it came first)");
+      assert.equal(tagsSub(menu), order.join(" · "));
+      rowOf(menu)!.click();
+      assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "ops", id: "g1" }]], "and the click hides that copy (round 5 wrote {api, infra} with no id, the remote section)");
+      writeTabGroups(d);
+    }
   });
 });
 
@@ -2009,6 +2026,35 @@ test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review rounds 5 and 6).
     row.click();
     assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "web", name: "infra", id: "g9" }]], "no press: the first click writes the new id");
     assert.ok(!row.has("romp-acted"), "and no cue was needed");
+    // K8b (round 6): the TWO-HOLDER form. api under infra and archived; the same press, the same replacement of infra's id, the release,
+    // the click. heldCopy finds no union under g1 and falls to the name, infra under g9, the copy the strip's infra section (keyed by the
+    // name) still shows: the guard refuses by the id with the cue, and the second click writes g9. Round 5 matched nothing (the ids
+    // differed and two holders defeat the one-holder fallback), so homeNow was undefined and the no-home branch dismissed the menu in
+    // silence with nothing written
+    const V_BOTH_G9 = { ...V_API_BOTH, tags: [{ ...V_API_BOTH.tags[0], id: "g9" }, V_API_BOTH.tags[1]], seq: 15 };
+    hooks.views = V_API_BOTH; hooks.writes = [];
+    menu = api.open("api", "infra");
+    row = rowOf(menu)!;
+    press(menu);
+    api.push(V_BOTH_G9);
+    win.fire("pointerup");
+    const d3 = hooks.dismissed;
+    row.click();
+    assert.deepEqual([hooks.writes.length, hooks.dismissed, menu.isConnected], [0, d3, true], "two holders: refused with the menu open (round 5 dismissed it, nothing written, no word)");
+    assert.ok(row.has("romp-acted") && row.title.endsWith("click again."), "the cue");
+    row.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "infra", id: "g9" }]], "the second click writes the new id for the infra copy");
+    assert.equal(hooks.dismissed, d3 + 1);
+    writeTabGroups(d);
+    // and with no press: the row stays, naming infra (round 5: the row left, the copy unresolved under two holders)
+    hooks.views = V_API_BOTH; hooks.writes = [];
+    menu = api.open("api", "infra");
+    row = rowOf(menu)!;
+    api.push(V_BOTH_G9);
+    assert.equal(rowOf(menu), row, "the row stands");
+    assert.equal(row.sub(), HIDE_SUB("infra"), "naming infra, the same-named tag under its new id");
+    row.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "infra", id: "g9" }]]);
   });
 });
 
