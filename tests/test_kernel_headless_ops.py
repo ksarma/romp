@@ -1128,9 +1128,13 @@ class UnknownSessionRefused(_RouteServer):
                         self.assertEqual((code, resp), (409, refusal), text)
                 with mock.patch.object(km._TMUX, "available", lambda: True), \
                      mock.patch.object(km._TMUX, "alive_sids", lambda *a, **k: None):
-                    code, resp = self._post("/send", {"id": "sid-x", "text": "hello"})
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        code, resp = self._post("/send", {"id": "sid-x", "text": "hello"})
                     self.assertEqual(code, 503, resp)
                     self.assertIn("tmux isn't answering", resp.get("error", ""))
+                    # and the kernel log says so, as every sibling stand-down on a failed probe does (round 6)
+                    self.assertIn("send sid-x: tmux probe failed; answered 503, nothing delivered", err.getvalue())
                     self.assertIn("'sid-x'", resp.get("error", ""))
                     self.assertIn("not delivered", resp.get("error", ""))
                 with mock.patch.object(km._TMUX, "available", lambda: False):
@@ -1374,8 +1378,15 @@ class UnknownSessionRefused(_RouteServer):
             self.assertIsNone(km._TMUX.alive_sids())
             for path, body in (("/end", {"name": "web"}), ("/end", {"name": "web", "when": "idle"}),
                                ("/interrupt", {"name": "web"}), ("/send", {"name": "web", "text": "hello"})):
-                code, resp = self._post(path, body)
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    code, resp = self._post(path, body)
                 self.assertEqual(code, 503, (path, body, resp))
+                # the refusal is in the kernel log too, as every sibling stand-down on a failed probe is; a
+                # substring, since the first request in a process also captures the SDK backend's boot lines
+                # (review round 6, 2026-09-09)
+                self.assertIn("control %s: tmux probe failed while resolving 'web'; answered 503, nothing done" % path,
+                              err.getvalue(), path)
                 self.assertIn("could not read the live session list", resp.get("error", ""), path)
                 self.assertIn("'web'", resp.get("error", ""), path)
                 self.assertIn("try again", resp.get("error", ""), "tmux answers again: this retry has a writer")

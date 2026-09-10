@@ -26987,9 +26987,11 @@ def _unknown_session_refusal(sid, who, live=None):
     return {"ok": False, "error": "no live session named '%s'" % who, "_status": 404}
 
 
-def _control_target(who):
+def _control_target(who, route=""):
     """Where a session-control request (/send, /interrupt, /end) goes, from the caller's spelling `who`:
-    (sid, remote, refusal). `remote` is the attached host's row when the roster lists the sid
+    (sid, remote, refusal). `route` is the caller's path, for the kernel-log line the failed-scan 503 writes
+    (every sibling stand-down on a failed probe logs; this one answered the caller and left the log silent,
+    review round 6, 2026-09-09). `remote` is the attached host's row when the roster lists the sid
     (_host_for_sid; the request forwards there with the far sid). `refusal` is the JSON body to answer,
     with its "_status", when the request can go nowhere: the 404 for a session nothing answers to, or a
     503 when the answer cannot be given because a read failed: the live session list (the tmux probe the
@@ -27042,6 +27044,8 @@ def _control_target(who):
             # SDK-only box keeps its 404s. Ahead of the store and the roster by name: with the local scan
             # failed, "a local session wins" cannot be evaluated and a forward could act on the wrong far
             # session. "Try again" is right here: tmux answers again (review rounds 5 and 6, 2026-09-09)
+            sys.stderr.write("control %s: tmux probe failed while resolving %r; answered 503, nothing done\n"
+                             % (route or "target", who))
             return sid, None, {"ok": False, "error": "could not read the live session list while resolving '%s' "
                                                      "(tmux did not answer); nothing was done, try again" % who,
                                "_status": 503}
@@ -52608,7 +52612,7 @@ sync:"romp moved commits between your machines by itself \u2014 a push to a remo
 locate:"a click that should have jumped to a message in the chat couldn't find it. Usually the chat is missing part of its history; reload the pane if it keeps happening",
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
 refused:"a setting that could not be saved, or a state file that could not be read. A change you made \u2014 a lane or tab setting, a card bell, a lane order \u2014 was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults",
-undelivered:"something you sent never reached a session — the kernel it was addressed to has no session by that id, which on a board showing more than one machine means the pane addressed the wrong one. Nothing was delivered. Your text is kept verbatim in undelivered.jsonl under ~/.local/state/romp"};
+undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp; a refused card gesture writes nothing there"};
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
 if(filtBar)KINDS.forEach(function(k){var b=document.createElement('span');
@@ -58166,7 +58170,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not body:
                     return self._send(400, json.dumps({"ok": False, "error":
                         "id and text required (optional tag: one word, letters/digits/dashes, <=24 chars)"}), "application/json")
-                sid, r, refusal = _control_target(body["who"])
+                sid, r, refusal = _control_target(body["who"], route=u.path)
                 # POSTAL ISOLATION holds on every sanctioned route (the user 2026-07-10): postal-SHAPED
                 # content to a mailbox-off session is agent mail arriving by the wrong door — refuse it
                 # here exactly like the bus does. Plain text still passes: /send is the HUMAN channel,
@@ -58222,6 +58226,8 @@ class Handler(BaseHTTPRequestHandler):
                     # the nudge callers arm _tmux_paste_mark on it (review round 5, 2026-09-09)
                     alive = _TMUX.alive_sids() if _TMUX.available() else set()
                     if alive is None:
+                        # said in the log too, as every sibling stand-down on a failed probe is (review round 6)
+                        sys.stderr.write("send %s: tmux probe failed; answered 503, nothing delivered\n" % sid)
                         return self._send(503, json.dumps({"ok": False, "error":
                             "tmux isn't answering, so '%s' could not be reached; nothing was done and the message "
                             "was not delivered; try again" % body["who"]}), "application/json")
@@ -58284,7 +58290,7 @@ class Handler(BaseHTTPRequestHandler):
                     who = ""
                 if not who:
                     return self._send(400, json.dumps({"ok": False, "error": "id or name required"}), "application/json")
-                sid, r, refusal = _control_target(who)
+                sid, r, refusal = _control_target(who, route=u.path)
                 if r is not None:                               # remote session → forward over its -L tunnel
                     # …and RELAY the remote's answer, like the /send twin (2026-08-18): the remote
                     # kernel's /end now refuses honestly (ok:false, "the kill didn't take"), and

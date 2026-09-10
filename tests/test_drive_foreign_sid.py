@@ -11,6 +11,7 @@ verbatim on disk so nothing typed is lost, and a line in the kernel log.
 import json
 import os
 import unittest
+from unittest import mock
 from romp_load import load_source
 import tempfile
 
@@ -133,6 +134,50 @@ class RefusesForeignDriveOps(unittest.TestCase):
         self.assertEqual(rows[0]["text"], "a paragraph I do not want to retype")
         self.assertEqual(rows[0]["sid"], THEIRS)
         self.assertEqual(rows[0]["op"], "sendMessage")
+
+    def test_a_record_that_will_not_read_refuses_the_typed_text_into_the_same_three_records(self):
+        # _session_gate's unreadable verdict (a NOT-running session whose SDK registry entry exists but will not
+        # read) refuses through _refuse_drive_unreadable, the sibling of the unknown refusal above, and the two
+        # write through one records writer: the same modal with the text offered back, the same undelivered.jsonl
+        # row with the text verbatim, the same stderr line, with the cause naming the record. Pinned with typed
+        # text: the two-doors table drives interrupt, which carries none, so a refusal that kept the modal and
+        # dropped the row and the line passed every test (review round 6, 2026-09-09).
+        import contextlib
+        import io
+        import pathlib
+        sid = "77777777-6666-5555-4444-333333333333"
+        typed = "a paragraph I typed for a session whose record broke"
+        with tempfile.TemporaryDirectory() as d:
+            saved = km.jd.STATE
+            km.jd.STATE = pathlib.Path(d)
+            reg = pathlib.Path(d) / "sdk" / (sid + ".json")
+            reg.parent.mkdir()
+            reg.write_bytes(b"{not json")
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+            err = io.StringIO()
+            try:
+                with mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), contextlib.redirect_stderr(err):
+                    handled = km._drive({"type": "sendMessage", "id": sid, "text": typed}, self.client)
+                rows = [json.loads(x) for x in (pathlib.Path(d) / "undelivered.jsonl").read_text().splitlines()]
+            finally:
+                km.jd.STATE = saved
+                km._thread_reg_memo.clear()
+                km._thread_reg_failed.clear()
+        self.assertTrue(handled, "the op is CONSUMED: refused, not passed on")
+        self.assertEqual(self.reached, [], "nothing was handed to a backend")
+        self.assertEqual([(r["op"], r["sid"], r["what"], r["text"]) for r in rows],
+                         [("sendMessage", sid, "message", typed)], "the typed text survives the refusal on disk")
+        self.assertIn("undeliverable sendMessage: the record for session %s will not read; %r" % (sid, typed),
+                      err.getvalue(), "the kernel log names the cause")
+        self.assertEqual(len(self.sent), 1)
+        msg = self.sent[0]
+        self.assertEqual(msg["type"], "err")
+        self.assertEqual(msg["copy"], typed, "the typed text rides back to the pane")
+        self.assertIn("could not read the record", msg["text"].lower())
+        self.assertIn("Nothing was sent", msg["text"])
+        self.assertNotIn("no session with id", msg["text"], "a record that will not read is never called foreign")
+        self.assertEqual((msg["sid"], msg["op"]), (sid, "sendMessage"))
 
 
 if __name__ == "__main__":
