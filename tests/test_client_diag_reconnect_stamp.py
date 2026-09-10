@@ -19,7 +19,8 @@ closes it is false. A ready that lands after onclose and before the redial leave
 reads as the gated pair (false, false), correctly.
 
 Three legs: the handler alone (a client dict with and without the dial record), the REAL shim core under node
-(the row's field in each shape, and the row's place ahead of the queued ready), and the two joined (the real
+(the row's field in each shape, and the row's place against the ready: ahead of the re-sent ready on the declared
+shape, behind the queued ready on the ready-during-close shape), and the two joined (the real
 handshake dialed with the URL the shim built, the shim's own row dispatched on that client, the pair read back
 from the file; a chat socket after the real strip's consumption and a feed socket, which has no strip, read alike). Synthetic only: placeholder UUIDs, TESTHOST. Never run raw: pytest's conftest poisons the live ports.
 """
