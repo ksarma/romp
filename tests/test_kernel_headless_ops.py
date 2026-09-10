@@ -3297,6 +3297,110 @@ class UnknownSessionRefused(_RouteServer):
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
 
+    def test_a_name_too_long_for_the_filesystem_is_the_unknown_refusal_not_a_torn_record(self):
+        # a spelling inside NAME_RE of 251 or more characters builds sdk/<who>.json past NAME_MAX: jd._file_key's
+        # stat raised ENAMETOOLONG and answered its sentinel, _thread_reg's open raised the same OSError into the
+        # unreadable arm, and every route answered 503 "exists but will not read; Repair or remove that file" for a
+        # file that does not exist, with a thread-reg log line claiming a successful stat; the WS doors filed an
+        # undelivered row for the record. No file can exist under such a name, so _file_key answers None (absent)
+        # for ENAMETOOLONG and the gate reads no record: the unknown refusal at both doors, no log line. The length
+        # is NOT a spelling rule (_local_spelling is unchanged): no name door caps it, tmux accepts a 300-character
+        # session name, and a live session registered under one is reached by it. The thread-reg line for a
+        # record that exists and will not read says the record did not read, and names the stat's error when the
+        # stat failed too (a symlink loop, ELOOP), never a successful stat it did not make (review round 11,
+        # 2026-09-10).
+        who = "a" * 300
+        sid = "abab6666-7777-8888-9999-000000000000"
+        reg_path = km.jd.STATE / "sdk" / (sid + ".json")
+        reg_path.parent.mkdir(parents=True, exist_ok=True)
+        long_path = km.jd.STATE / "sdk" / (who + ".json")
+        frames = []
+        client = {"send": lambda s: frames.append(json.loads(s))}
+        fake = mock.Mock()
+        ended = []
+        undelivered = km.jd.STATE / "undelivered.jsonl"
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        self.assertTrue(km._local_spelling(who), "the length is no spelling rule")
+        self.assertFalse(os.path.exists(str(long_path)))
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda s: fake)), \
+                 mock.patch.object(km, "_end_and_record", lambda s, be, now, via, fresh=False, why=None: ended.append(s) or True), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                for path, body in (("/end", {"id": who}), ("/end", {"name": who}), ("/end", {"name": who, "when": "idle"}),
+                                   ("/interrupt", {"id": who}), ("/interrupt", {"name": who}),
+                                   ("/send", {"id": who, "text": "hello"}), ("/send", {"name": who, "text": "hello"})):
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        code, resp = self._post(path, body)
+                    self.assertEqual(code, 404, (path, body, resp))
+                    self.assertIn("no live session named '%s'" % who, resp.get("error", ""), (path, body))
+                    self.assertNotIn("could not read", resp.get("error", ""), (path, body))
+                    self.assertNotIn("thread-reg:", err.getvalue(), (path, body))
+                before = len(undelivered.read_text().splitlines()) if undelivered.exists() else 0
+                for msg in ({"type": "compact", "name": who}, {"type": "sendCommand", "name": who, "cmd": "/model opus"},
+                            {"type": "endSession", "id": who}):
+                    del frames[:]
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        self.assertTrue(km._drive(msg, client), msg)
+                    errs = [f for f in frames if f.get("type") == "err"]
+                    self.assertEqual(len(errs), 1, (msg, frames))
+                    self.assertIn("has no session with id %s" % who, errs[0]["text"], msg)
+                    self.assertNotIn("could not read", errs[0]["text"].lower(), msg)
+                    self.assertNotIn("thread-reg:", err.getvalue(), msg)
+                rows = [json.loads(x) for x in undelivered.read_text().splitlines()][before:]
+                self.assertEqual([(r["op"], r["sid"]) for r in rows],
+                                 [("compact", who), ("sendCommand", who), ("endSession", who)],
+                                 "the unknown refusal is recorded as every unknown refusal is")
+                self.assertEqual(ended, [], "the end routine never ran")
+                self.assertEqual(fake.method_calls, [], "nothing reached a backend")
+                self.assertNotIn(who, km._end_on_idle_load(), "a refused deferred end records no wish")
+                self.assertIsNone(km.jd._file_key(str(long_path)), "no file can exist under the name: absent, not a failed stat")
+                self.assertFalse(km._reg_unreadable(who))
+                # a live session registered under the long name is reached by it: the length is not the line
+                _register(sid, who)
+                reg_path.write_text(json.dumps({"sid": sid, "alive": True, "name": who}))
+                km._thread_reg_memo.clear()
+                with mock.patch.object(km, "_sdk", lambda be=_sdk_reporting([sid]): be):
+                    code, resp = self._post("/interrupt", {"name": who})
+                    self.assertEqual((code, resp), (200, {"ok": True}))
+                    fake.interrupt.assert_called_once_with(sid)
+                    fake.reset_mock()
+            # the thread-reg line for a record that exists and will not read: the read's error, and the stat's
+            # only when the stat failed too
+            reg_path.write_bytes(b"{not json")
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertTrue(km._reg_unreadable(sid))
+            self.assertIn("thread-reg: %s.json did not read (JSONDecodeError(" % sid, err.getvalue())
+            self.assertNotIn("successful stat", err.getvalue())
+            self.assertNotIn("its stat failed", err.getvalue(), "the stat succeeded: no stat error to name")
+            reg_path.unlink()
+            os.symlink(reg_path.name, str(reg_path))              # a loop: the stat fails with ELOOP, and so does the open
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                key = km.jd._file_key(str(reg_path))
+                self.assertTrue(km._reg_unreadable(sid))
+            self.assertIsInstance(key, km.jd._StatFailed, "a failed stat other than no-such-file carries its error")
+            self.assertIn("thread-reg: %s.json did not read (" % sid, err.getvalue())
+            self.assertIn("its stat failed (", err.getvalue())
+            self.assertIn("Too many levels of symbolic links", err.getvalue())
+            self.assertNotIn("successful stat", err.getvalue())
+        finally:
+            _unregister(sid)
+            try:
+                reg_path.unlink()                                 # the file, or the dangling loop
+            except OSError:
+                pass
+            _forget_regs([reg_path])
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
 
 class NamesSnapshotMemoRace(unittest.TestCase):
     """_names_snapshot fills and evicts the module-level _names_entry_memo from the pusher thread and from every

@@ -16075,9 +16075,11 @@ def _comment_msg_text(rec):
 # new inode and an equal-size rewrite inside one mtime tick still changes the key (the round-3 review's
 # hazard with in-place rewrites; jd._reg_spawned_at and sdk_backend._REG_CACHE record the same rule; the
 # kernel's seed-pin migration rewrites regs through _atomic_write, also os.replace). An absent file is {}
-# and its entry is popped; a stat that fails otherwise is a sentinel key that matches nothing (read, not
-# memoized); a read or parse failure after a successful stat is not memoized (the `fail` counter, one
-# stderr line per episode), since a permission or descriptor failure is not a file version. Dict order is
+# and its entry is popped (a name too long for the filesystem is absent too: no file can exist under it);
+# a stat that fails otherwise (EACCES, ELOOP) is a sentinel key carrying the error that matches nothing
+# (read, not memoized); a read or parse failure is not memoized (the `fail` counter, one stderr line per
+# episode naming the read's error and the stat's when it failed too), since a permission or descriptor
+# failure is not a file version. Dict order is
 # LRU (a hit reinserts), one eviction per insert past the cap, never clear-at-cap: sweeps over dormant
 # sids read through this too, and a clear at the cap would drop the live sessions' entries every cycle
 # (the _JSONL_CACHE lesson, event_model.py). Callers read the returned dict and never write it (a
@@ -16087,13 +16089,14 @@ def _comment_msg_text(rec):
 _thread_reg_memo = {}
 _THREAD_REG_MEMO_MAX = 512
 _thread_reg_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
-_thread_reg_failed = set()      # paths whose last read after a good stat failed: one stderr line per episode
+_thread_reg_failed = set()      # paths whose last read failed (the file exists): one stderr line per episode
 _THREAD_REG_LOCK = threading.Lock()
 
 
 class _UnreadableReg(dict):
-    """_thread_reg's answer for a reg that EXISTS but will not read: an OSError after a successful stat, a
-    body that is not JSON, or JSON that is not an object. An empty mapping, so every `.get` caller reads it
+    """_thread_reg's answer for a reg that EXISTS but will not read: an OSError from the read (after a stat that
+    succeeded, or failed other than no-such-file), a body that is not JSON, or JSON that is not an object. An
+    empty mapping, so every `.get` caller reads it
     exactly as it read the {} it replaces (absent and unreadable were one answer, and a broken record read as
     no record), and a type, so a caller that must tell a failed read from no record can: `_reg_unreadable`,
     asked by the control gate (a 503 naming the read, never the 404 for a session that does not exist) and
@@ -16148,8 +16151,12 @@ def _thread_reg(tsid):
             first = p not in _thread_reg_failed
             _thread_reg_failed.add(p)
         if first:
-            sys.stderr.write("thread-reg: %s unreadable after a successful stat (%r); answered as a failed read and "
-                             "not memoized\n" % (os.path.basename(p), e))
+            # the read's error, and the stat's when the stat failed too (jd._file_key's _StatFailed carries it:
+            # EACCES, ELOOP); round 11 of the unknown-name PR: this line claimed a successful stat for every failed
+            # read, false for any failed stat other than no-such-file
+            stat_err = getattr(key, "error", None)
+            sys.stderr.write("thread-reg: %s did not read (%r)%s; answered as a failed read and not memoized\n"
+                             % (os.path.basename(p), e, "" if stat_err is None else "; its stat failed (%r)" % (stat_err,)))
         return _UnreadableReg()
     if not isinstance(d, dict):
         # JSON, but not an object: no writer produces this, so it is a broken record like the failed read
