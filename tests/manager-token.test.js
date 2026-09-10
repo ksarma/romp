@@ -13,7 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const http = require('node:http');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const MGR = path.join(__dirname, '..', 'bin', 'romp-manager');
 // The module's STATE_ROOT is fixed at require time: a private root, and no env spelling of the token, so
@@ -192,7 +192,21 @@ test('readTokenFile: a symlink at the path is refused, dangling or not, never re
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('mintServeTokenIfAbsent: the temp file is named outside the kernel\'s sweep glob (serve-token.*.tmp), so a locked minter\'s sweep cannot unlink it mid-mint', () => {
+// The kernel's own mint, loaded the way the Python suite loads it (tests/romp_load.py through bin/romp-kernel), run
+// over a scratch directory: the REAL sweep, not a copy of its glob (review round 3, 2026-09-10). A private state
+// root and closed ports, so the load touches nothing live.
+const KERNEL_SWEEP_PROBE = `
+import os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from romp_load import load_source
+load_source("romp_event_model", os.path.join(sys.argv[3], "romp-event-model"))
+load_source("romp_judge", os.path.join(sys.argv[3], "romp-judge"))
+km = load_source("romp_kernel_sweep_probe", os.path.join(sys.argv[3], "romp-kernel"))
+km._serve_token_read_or_mint(Path(sys.argv[1]) / "serve-token", "probe")
+`;
+
+test('mintServeTokenIfAbsent: the temp file is named outside the kernel\'s sweep, so a locked minter\'s sweep cannot unlink it mid-mint', () => {
   // review round 2 (2026-09-10): the manager takes no lock, and its temp `serve-token.<pid>.tmp` matched
   // the glob the kernel's and the bus's mints sweep under their lock. fs.openSync is the mint's first
   // touch of the temp; the manager and this test share the one fs module object, so the patch reaches it.
@@ -200,16 +214,34 @@ test('mintServeTokenIfAbsent: the temp file is named outside the kernel\'s sweep
   const realOpen = fs.openSync;
   const opened = [];
   fs.openSync = function (p, flags, mode) { if (flags === 'wx') opened.push(String(p)); return realOpen.call(fs, p, flags, mode); };
+  let name;
   try {
     assert.equal(mintServeTokenIfAbsent(root).minted, true);
     assert.equal(opened.length, 1, 'one temp, opened exclusively');
-    const name = path.basename(opened[0]);
+    name = path.basename(opened[0]);
     assert.equal(path.dirname(opened[0]), root, 'beside the token file, so the link is on one filesystem');
     assert.match(name, /^serve-token-mgr\.\d+\.tmp$/, name);
-    // fnmatch('serve-token.*.tmp') as a regex: the kernel's _serve_token_read_or_mint sweep (and the bus's copy)
-    assert.doesNotMatch(name, /^serve-token\..*\.tmp$/, `${name} would be swept by the kernel's mint`);
     assert.deepEqual(fs.readdirSync(root), ['serve-token'], 'and it is gone once linked');
   } finally { fs.openSync = realOpen; fs.rmSync(root, { recursive: true, force: true }); }
+  // the kernel's real sweep over a directory holding the name the manager just used and a crashed kernel temp,
+  // beside no token (review round 3, 2026-09-10; a hand-copied regex of the glob stood here, which a widened glob
+  // in the kernel would not have failed): the kernel's own temp goes, the manager's stays, whatever the glob says
+  const sweep = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-token-sweep-'));
+  try {
+    fs.writeFileSync(path.join(sweep, name), 'a-managers-mint-in-progress');
+    fs.writeFileSync(path.join(sweep, 'serve-token.424242.tmp'), 'half-written');
+    const env = Object.assign({}, process.env, { XDG_STATE_HOME: path.join(sweep, 'xdg'), ROMP_MANAGER_PORT: '1',
+      ROMP_KERNEL_PORT: '1', ROMP_SERVE_PORT: '1' });
+    delete env.ROMP_STATE_DIR;
+    delete env.ROMP_SERVE_TOKEN;
+    const py = spawnSync('python3', ['-c', KERNEL_SWEEP_PROBE, sweep, __dirname, path.join(__dirname, '..', 'bin')],
+      { encoding: 'utf8', env, timeout: 60_000 });
+    assert.equal(py.status, 0, `the kernel's mint did not run: ${py.stderr}`);
+    assert.ok(fs.existsSync(path.join(sweep, 'serve-token')), 'the kernel minted its token');
+    assert.ok(!fs.existsSync(path.join(sweep, 'serve-token.424242.tmp')), 'and swept its own crashed temp');
+    assert.ok(fs.existsSync(path.join(sweep, name)), `${name} was swept by the kernel's mint`);
+    assert.equal(fs.readFileSync(path.join(sweep, name), 'utf8'), 'a-managers-mint-in-progress', 'untouched');
+  } finally { fs.rmSync(sweep, { recursive: true, force: true }); }
 });
 
 test('serveToken: the env spelling first, else the file under the state root, else why', () => {
