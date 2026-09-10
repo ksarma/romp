@@ -5315,6 +5315,83 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         uuid = "r1"
         num_turns = 1
 
+    class _ParkingSet(set):
+        """The surface set with ONE read parked (the race tests, review round 5): the first call matching `where`
+        ("any" for the first read of any kind, a method name, or ("__contains__", x) for the check of x) computes
+        its value, signals `parked` and waits for `resume`, so the test can run the other thread between the parked
+        thread's reads. The value is computed BEFORE the park, so what the parked thread has already read stands
+        and what it reads next sees the other thread's write (or, under the lock, never sees it)."""
+        def __init__(self, items, where, parked, resume):
+            super().__init__(items)
+            self._where, self._parked, self._resume, self._armed = where, parked, resume, True
+
+        def _park(self, name, arg=None):
+            if self._armed and self._where in ("any", name, (name, arg)):
+                self._armed = False
+                self._parked.set()
+                self._resume.wait(5)
+
+        def __len__(self):
+            n = super().__len__()
+            self._park("__len__")
+            return n
+
+        def __contains__(self, x):
+            r = super().__contains__(x)
+            self._park("__contains__", x)
+            return r
+
+    class _WatchedLock:
+        """The session's hold lock, wrapped so the test knows when thread `watch` reaches it: with the lock in
+        place the other thread's write blocks here while the parked read holds it; at a head without the lock
+        (the one these tests are red at) the write lands between the reads instead."""
+        def __init__(self, real, watch, reached):
+            self._real, self._watch, self._reached = real, watch, reached
+
+        def __enter__(self):
+            if threading.current_thread().name == self._watch:
+                self._reached.set()
+            self._real.acquire()
+            return self
+
+        def __exit__(self, *a):
+            self._real.release()
+
+    def _race(self, s, where, loop_side, kernel_side):
+        """Two threads sequenced through events (review round 5): L runs `loop_side` (a loop-thread routine) with
+        one read of the surface set parked at `where`; K then runs `kernel_side` (a kernel-thread pick or revert);
+        L resumes once K has FINISHED (no lock: K's write landed between L's reads) or is BLOCKED on the hold lock
+        (the lock made L's read sequence atomic, and K's write waits for it). Both worlds run to completion; what
+        differs is the state each leaves, which the caller asserts. Returns the exception L raised, or None."""
+        parked, resume, k_at_lock, k_done = [threading.Event() for _ in range(4)]
+        s._reconnect_surfaces = self._ParkingSet(s._reconnect_surfaces, where, parked, resume)
+        if hasattr(s, "_hold_lock"):
+            s._hold_lock = self._WatchedLock(s._hold_lock, "K", k_at_lock)
+        err = []
+
+        def run_l():
+            try:
+                loop_side()
+            except Exception as e:
+                err.append(e)
+
+        def run_k():
+            kernel_side()
+            k_done.set()
+
+        lt, kt = threading.Thread(target=run_l, name="L"), threading.Thread(target=run_k, name="K")
+        lt.start()
+        self.assertTrue(parked.wait(5), "the loop side never reached the parked read")
+        kt.start()
+        deadline = time.monotonic() + 5
+        while not (k_done.is_set() or k_at_lock.is_set()):
+            self.assertLess(time.monotonic(), deadline, "the kernel side neither finished nor reached the hold lock")
+            time.sleep(0.001)
+        resume.set()
+        lt.join(5); kt.join(5)
+        self.assertFalse(lt.is_alive() or kt.is_alive(), "a thread hung")
+        return err[0] if err else None
+
     def setUp(self):
         self._dirs = []
 
@@ -6941,6 +7018,146 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s.request_reconnect = lambda: asked.append(1)
         self.assertTrue(s.backend.set_env(self.SID, {}))
         self.assertEqual(asked, [])
+
+    def test_s_a_second_withdrawal_between_the_settles_reads_neither_raises_nor_skips_the_poke(self):
+        # _settle_withdrawal read the set three times (its truthiness, `surface in`, _pick_names for the line)
+        # while the kernel thread discards from it: two picks held and both reverted, with the second revert
+        # landing between the first settle's reads, emptied the set under the decision, and the line phrased an
+        # empty list (IndexError out of the loop callback, no poke, the hold standing). One snapshot under the
+        # one hold lock now, and the discard waits for it (review round 5). Two threads sequenced through
+        # events: L is the loop serving the first revert's settle, parked after its first read; K is the
+        # kernel thread making the second revert meanwhile
+        q = self._Queue()
+        s = self._sess(effort="high", auth="login")
+        s._launched_effort = sb.effort_launch_shape("high"); s._launched_auth = "login"
+        s.auth_live = "login"
+        s.loop = q
+        self._start(s, "a1")
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.backend.set_effort(self.SID, "max"))
+            self.assertTrue(s.backend.set_auth(self.SID, "key"))
+            q.flush()                                                        # the loop serves both requests
+            self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+            self.assertEqual(s._pick_names(), ["effort", "auth"])
+            self.assertTrue(s.backend.set_effort(self.SID, "high"))         # the first revert: discarded now, settled by L
+            self.assertEqual(s._pick_names(), ["auth"])
+            settle = [c for c in q.queued if c[0] == s._settle_withdrawal]
+            self.assertEqual(len(settle), 1); q.queued.remove(settle[0])
+            self.pokes.clear()
+            err = self._race(s, "any", lambda: s._settle_withdrawal("effort"),
+                             lambda: s.backend.set_auth(self.SID, "login"))   # the second revert, between L's reads
+        self.assertIsNone(err, "the settle raised: %r" % (err,))
+        self.assertTrue(any("the withdrawn effort pick leaves the pending auth pick pending; the reconnect stands" in str(m)
+                            for m in self.logs), self.logs)
+        self.assertGreaterEqual(len(self.pokes), 1, "the first settle poked")
+        self.assertTrue(any("auth (web): set to login; the pending key pick is withdrawn" in str(m) for m in self.logs), self.logs)
+        q.flush()                                                            # the second revert's settle
+        self.assertTrue(any("the withdrawn auth pick was the only one pending; no reconnect" in str(m) for m in self.logs), self.logs)
+        self.assertFalse(s._reconnect_when_idle); self.assertFalse(s._reconnect_held_for_work)
+        self.assertEqual(set(s._reconnect_surfaces), set()); self.assertIsNone(s._pick_held())
+        self.assertEqual(s.auth_live, "login", "the report is kept: the process bills the login")
+        self._stop(s, "a1")
+        self.assertFalse(self._settle(s)["reconnect"], "nothing relaunches the shape the process runs")
+        # and the phrase itself never raises on an empty list (a log line must not take a settle down)
+        self.assertEqual(sb.SdkSession._picks_phrase([], "pending", "pending"), "no pending pick")
+        self.assertEqual(sb.SdkSession._picks_phrase([], "held", "held"), "no held pick")
+
+    def test_s2_a_pick_landing_between_the_arms_read_and_its_clear_keeps_its_surface_and_its_flip(self):
+        # the settle's arm read the names (_pick_names inside _arm_reconnect) and then cleared the WHOLE set: a
+        # kernel-thread pick landing between the two was wiped, so its own queued request armed naming nothing
+        # and never flipped the fast badge on or cleared the billing report (the pick still rode the connect;
+        # the badge read off until the landing's re-assert, the Billing row contradicted itself until the first
+        # init). The arm, its read and the discard of exactly the names it read run in one hold of the one lock
+        # now (review round 5). L is the loop at the delivery turn's settle, parked after its read of the names;
+        # K is the kernel thread picking fast on and the key meanwhile
+        q = self._Queue()
+        s = self._sess(effort="high", auth="login")
+        s._launched_effort = sb.effort_launch_shape("high"); s._launched_auth = "login"
+        s.auth_live = "login"
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = False
+        s.loop = q
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        q.flush()
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+        self._stop(s, "a1")                                                  # the work ends; the settle arms
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+            def picks():
+                s.backend.set_fast(self.SID, "on")
+                s.backend.set_auth(self.SID, "key")
+            err = self._race(s, ("__contains__", "env"),                      # the last name _pick_names checks
+                             lambda: s._arm_reconnect_if_quiet("turn end", queued_ok=True), picks)
+        self.assertIsNone(err, "the arm raised: %r" % (err,))
+        self.assertTrue(s._reconnect, "the settle armed for the effort pick")
+        self.assertEqual(s._pick_names(), ["fast", "auth"], "the picks that landed during the arm keep their surfaces")
+        self.assertTrue(s.fast_opt); self.assertEqual(s._auth_pending, "key")
+        q.flush()                                                            # the two picks' own requests arm
+        self.assertEqual(s.fast, "on", "the fast pick's own arm flips the badge: the flag rides the connect")
+        self.assertEqual(s.snapshot()["fast"], "on")
+        self.assertEqual(s.auth_live, "", "the billing pick's own arm clears the report of the process this replaces")
+        self.assertEqual(set(s._reconnect_surfaces), set())
+        self.assertFalse(s._reconnect_when_idle)
+        # the arm's line names what it read, the effort pick alone: the two later picks were not riding it
+        self.assertIn("reconnect (web): live work finished; the held effort pick reconnects now", self._armed()[0])
+
+    def test_s3_the_fast_and_fast_reset_swap_from_both_threads_leaves_one_consistent_surface(self):
+        # set_fast's live path set the ask (fast_opt), sent the literal toggle (I/O on the kernel thread) and
+        # then swapped the pending relaunch's surface to "fast"; the refusal the loop adopts from a turn's init
+        # meanwhile answered that very ask (fast_opt False) and swapped the surface back to the restore. The two
+        # swaps on two threads left {"fast"} with the flag off: pickHeld named a fast pick, the arm's line said
+        # "the held fast pick reconnects now" and the relaunch ran flagless. Both swaps run under the one hold
+        # lock now, and set_fast re-reads the ask inside it: an ask the refusal answered flips nothing and says
+        # so (review round 5). K is the kernel thread inside set_fast, parked in the send; the refusal lands
+        # from this thread while it is parked
+        refusal = {"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"}
+        q = self._Queue()
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = True; s.fast_opt = False
+        s.loop = q
+        self._start(s, "a1")
+        parked, resume, sent = threading.Event(), threading.Event(), []
+
+        def send(sid, text, **kw):
+            sent.append(text)
+            parked.set()
+            resume.wait(5)
+            return True
+        s.backend.send = send
+        kt = threading.Thread(target=lambda: s.backend.set_fast(self.SID, "on"), name="K")
+        kt.start()
+        self.assertTrue(parked.wait(5), "set_fast never reached the send")
+        self.assertTrue(s.fast_opt, "the ask is armed before the send")
+        s._adopt_fast_state(refusal)                                        # the CLI answers the ask meanwhile
+        self.assertFalse(s.fast_opt); self.assertEqual(s._pick_names(), ["fast-reset"])
+        resume.set(); kt.join(5)
+        self.assertFalse(kt.is_alive())
+        self.assertEqual(sent, ["/fast on"])
+        self.assertEqual(s._pick_names(), ["fast-reset"], "the answered ask never re-makes the restore a fast pick")
+        self.assertFalse(s.fast_opt); self.assertFalse(sb.read_reg(s.backend.state_dir, self.SID).get("fast"))
+        self.assertEqual(s.fast, "off", "no optimistic flip for an ask the refusal answered")
+        self.assertEqual(s._fast_expect, "")
+        self.assertTrue(any("fast (web): set to on; the CLI refused the toggle meanwhile; the pick is back off" in str(m)
+                            for m in self.logs), self.logs)
+        self.assertFalse(any("applied live" in str(m) for m in self.logs), self.logs)
+        q.flush()                                                            # the refusal's request: held for the work
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+        self.assertEqual(s._pick_held()["surfaces"], ["fast-reset"])
+        self._stop(s, "a1")
+        self.assertTrue(self._settle(s)["reconnect"])
+        self.assertIn("the held fast mode restore reconnects now", self._armed()[0], self.logs)
+        self.assertEqual(s.fast, "off", "flagless: no flip")
+        # the other order, the refusal first and the pick after it, is the ordinary pick during the restore's
+        # hold (test_q); with no refusal in between the swap is as before
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = True; s.fast_opt = True
+        s.backend.send = lambda sid, text, **kw: True
+        self._start(s, "a1")
+        s._adopt_fast_state(refusal)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertEqual(s._pick_names(), ["fast"]); self.assertTrue(s.fast_opt); self.assertEqual(s.fast, "on")
 
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
