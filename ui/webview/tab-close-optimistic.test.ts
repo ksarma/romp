@@ -264,10 +264,13 @@ test("endFailed is wired: kernel sends it typed + sid-bearing, render toasts, re
   // the kernel's endSession refusal carries the sid (the closer must know WHICH suppression to lift)
   assert.ok(KERNEL.includes('"type": "endFailed", "id": sid'), "the kill-fail reply is typed and sid-bearing");
   // render.ts: toast once, release closingTabs BEFORE the re-ask (requestFullSession suppresses
-  // closing ids), then repaint so the tab is back in the same tick
+  // closing ids), then repaint so the tab is back in the same tick. The re-ask names its reason:
+  // requestFullSession takes a `why` (upstream's skeleton tabs), and the End dropped our copy, so the
+  // tab is a placeholder with no base, "nobase". The call may carry a trailing comment.
   assert.match(RENDER,
-    /m\.type === "endFailed"[\s\S]{0,200}?warnToast\(m\.text\);\s*\n\s*closingTabs\.delete\(m\.id\);\s*\n\s*requestFullSession\(m\.id\);\s*\n\s*renderTabs\(\);/,
+    /m\.type === "endFailed"[\s\S]{0,200}?warnToast\(m\.text\);\s*\n\s*closingTabs\.delete\(m\.id\);\s*\n\s*requestFullSession\(m\.id, "nobase"\);[^\n]*\n\s*renderTabs\(\);/,
     "the endFailed handler releases the suppression and heals the tab immediately");
+  assert.match(RENDER, /type NeedFullWhy = [^\n]*"nobase"/, "the re-ask's reason is a word of requestFullSession's own vocabulary");
   // the backstop's comment no longer claims a failed end has no event — the two must stay wired
   assert.match(RENDER, /typed[\s\S]{0,40}?endFailed/, "CLOSE_ACK_MS's comment names the evented path");
 });
