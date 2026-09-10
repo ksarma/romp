@@ -9269,18 +9269,24 @@ def _manager_port(value):
     label and the restart would agree; on 2026-09-10 a review probe run with the variable absent reached
     the live manager through the door and restarted every session on the box. Round 5 reversed the
     direction: both read no manager instead, and /update-check says so (`manager: false`), so the banner
-    words the click as the update on disk it is. Never raises: a value that is not all decimal digits (a
-    typo, reachable on a kernel started by hand) used to leave int() to the caller, so every
-    /update-check answered 500 and the click's converge thread died with a traceback; it reads as no
-    manager, said on stderr once per distinct value (_manager_port_fault). isdecimal, not isdigit: a
-    superscript digit passes isdigit and fails int()."""
+    words the click as the update on disk it is. Never raises: a value that is not all decimal digits
+    within the port range, 1 to 65535 (a typo, reachable on a kernel started by hand) used to leave int()
+    to the caller, so every /update-check answered 500 and the click's converge thread died with a
+    traceback; it reads as no manager, said on stderr once per distinct value (_manager_port_fault).
+    isdecimal, not isdigit: a superscript digit passes isdigit and fails int(). The range (review round 6
+    of the confirm step, 2026-09-10): getaddrinfo takes a port modulo 65536, so 0 and any value above
+    65535 dialled a port the operator never named; 72968, one digit off, is the manager's default 7432."""
     s = str(value).strip() if value is not None else ""
     if not s:
         return None
     if not s.isdecimal():
         _manager_port_fault(s)
         return None
-    return int(s)
+    n = int(s)
+    if not 1 <= n <= 65535:
+        _manager_port_fault(s)
+        return None
+    return n
 
 
 def _manager_port_fault(value):

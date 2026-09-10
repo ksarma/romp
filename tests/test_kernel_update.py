@@ -1696,7 +1696,12 @@ class Routes(Fresh):
         # no notice. Red at 5275a4d6 with 'abc' (ValueError from the route) and with '7_777' (int() accepts the
         # underscore, so the drift door dialled 7777). Now the value reads as no manager on every door, said on
         # stderr once per distinct value on a latch of its own (not the registry read's episode), and
-        # /update-check answers 200 with `manager: false`, no dial anywhere
+        # /update-check answers 200 with `manager: false`, no dial anywhere. Digits outside the port range read
+        # the same way (review round 6): getaddrinfo takes a port modulo 65536, so 0 and a value above 65535
+        # dialled a port the operator never named (72968, a typo of one digit, is the manager's default 7432;
+        # verified with a fake on P and the variable at P plus 65536: three of four doors reached it, the tag
+        # door's curl refused the value on its own). Red at fc912080e with '0' and '70000': the dials were
+        # made (and refused by the rail)
         import contextlib
         dials, notices, audits = [], [], []
         saved_port, saved_tried = os.environ.get("ROMP_MANAGER_PORT"), km._INPLACE_TRIED[0]
@@ -1707,7 +1712,9 @@ class Routes(Fresh):
             with contextlib.redirect_stderr(err):
                 self.assertEqual((km._manager_port(" 7777 "), km._manager_port("7_777"), km._manager_port("abc"), km._manager_port("\u00b2")),
                                  (7777, None, None, None), "decimal digits only: a superscript two passes isdigit and fails int()")
-            self.assertEqual(len(err.getvalue().splitlines()), 3, "one line per distinct non-port value")
+                self.assertEqual((km._manager_port("0"), km._manager_port("70000"), km._manager_port("65535"), km._manager_port("1")),
+                                 (None, None, 65535, 1), "within the port range: 0 and 70000 are not ports, the ends are")
+            self.assertEqual(len(err.getvalue().splitlines()), 5, "one line per distinct non-port value")
             err.seek(0); err.truncate()
             km._MANAGER_PORT_FAULT[0] = ""
             with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(-1, dials, allow={self.port})), \
@@ -1716,7 +1723,7 @@ class Routes(Fresh):
                  mock.patch.object(km, "_audit_restart_request", side_effect=lambda *a, **kw: audits.append(a[0])), \
                  mock.patch.object(km, "_sync_notice", side_effect=lambda *a, **kw: notices.append((a[0], kw.get("ok", True)))), \
                  contextlib.redirect_stderr(err):
-                for value in ("abc", "7_777"):
+                for value in ("abc", "7_777", "0", "70000"):
                     os.environ["ROMP_MANAGER_PORT"] = value
                     km._INPLACE_TRIED[0] = ""
                     for _ in range(2):
@@ -1735,12 +1742,14 @@ class Routes(Fresh):
                 lines = err.getvalue().splitlines()
             self.assertEqual(dials, [], "no door dialled anything on a value that is not a port")
             self.assertEqual(lines, ["ROMP_MANAGER_PORT is 'abc', not a port; read as no manager",
-                                     "ROMP_MANAGER_PORT is '7_777', not a port; read as no manager"],
+                                     "ROMP_MANAGER_PORT is '7_777', not a port; read as no manager",
+                                     "ROMP_MANAGER_PORT is '0', not a port; read as no manager",
+                                     "ROMP_MANAGER_PORT is '70000', not a port; read as no manager"],
                              "said once per distinct value, naming it, across every poll and door")
-            self.assertEqual([ok for _, ok in notices], [False] * 4, "each drift-door converge said what it did not do")
+            self.assertEqual([ok for _, ok in notices], [False] * 8, "each drift-door converge said what it did not do")
             for text, _ in notices:
                 self.assertIn("`romp up` starts one", text)
-            self.assertEqual(audits, ["kernel-asks-manager-restart-all"] * 4, "no main-converge row from the door: no request went out")
+            self.assertEqual(audits, ["kernel-asks-manager-restart-all"] * 8, "no main-converge row from the door: no request went out")
             self.assertEqual(km._MANAGER_READ_FAULT[0], "", "the registry read's episode latch is not the one used")
         finally:
             km._INPLACE_TRIED[0] = saved_tried
