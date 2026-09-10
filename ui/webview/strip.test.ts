@@ -90,11 +90,15 @@ class StubButton {
   title = "";
   classes = new Set<string>();
   classList = { add: (c: string) => { this.classes.add(c); }, remove: (c: string) => { this.classes.delete(c); } };
+  // the stand-in inspects as its primitives (hideEdges, ui/test-dom-shim.ts), the rule every fake in the ui tests keeps: a
+  // failing assertion's dump of the button is its disabled flag and its title, never the class set or the classList closures
+  constructor() { hideEdges(this); }
 }
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test("the strip's Restart reads the kernel's answer: a refusal re-enables the button at once and wears the kernel's words", async () => {
   const btn = new StubButton();
+  for (const k of Object.keys(btn)) assert.ok(staysEnumerable((btn as any)[k]), k + " is enumerable and holds a " + typeof (btn as any)[k]);
   const error = "The restart did not happen: the manager refused (HTTP 401): it does not hold the serve token this kernel sent. Run romp refresh from a shell whose state root (ROMP_STATE_DIR or XDG_STATE_HOME) is the manager's.";
   let posts = 0;
   const p = restartFromStrip(btn, () => { posts++; return Promise.resolve({ ok: false, status: 502, json: () => Promise.resolve({ ok: false, restarting: false, error }) }); }, 60_000);
