@@ -11586,7 +11586,7 @@ class SdkBackend:
 
     def interrupt(self, sid: str) -> bool:
         s = self.sessions.get(sid)
-        if not s or s._queue_sealed:
+        if not s or getattr(s, "_queue_sealed", False):    # getattr: the delete-while-busy doubles skip __init__
             # A stop click during the crash heal's scope reads (round 6, fresh-1): the CLI is already dead and
             # the heal is about to resume the session, so there is nothing to interrupt and no 'idle' record
             # belongs over the trailing 'working' cut marker; before the reads ran ahead of the pop (round 4)
