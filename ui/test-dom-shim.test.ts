@@ -219,22 +219,31 @@ const EDGE_INIT: Record<string, RegExp> = {
  *  lines): every line and block comment, and with `literals` the contents of every string, template and regex literal
  *  too. Delimiters stay, so a blanked string is still a quoted value to NOT_LITERAL and an import's specifier still
  *  reads when only comments go. A template's `${ }` holes are code and are lexed as such, braces nested. A `/` opens a
- *  regex when the code before it ends no operand (the previous significant character is an operator, an opener, a
- *  separator or nothing; a name is one only after return, typeof, case and the like) and a division otherwise; a
- *  regex that does not close on its line is read as a division, since a regex literal cannot span lines. A light
- *  lexer, not a parser: it knows the token kinds that hide shapes, not the grammar around them. */
+ *  regex when the code before it ends no operand and a division otherwise. The operand test reads the BLANKED text,
+ *  never the source, so a comment between the operand and the slash is skipped like whitespace (a regex pin on the
+ *  line after a trailing comment is a regex; a division after a block comment is a division). The previous
+ *  significant character decides: an operator, an opener, a separator or nothing opens a regex; a closing paren or
+ *  bracket, the second character of a postfix `++` or `--` (`x++ / 2`), or a name is a division, a name excepted
+ *  after return, typeof, case and the like. A regex that does not close on its line is read as a division, since a
+ *  regex literal cannot span lines. One paren the lexer cannot tell apart: a regex right after a condition's closing
+ *  paren (`if (x) /re/.test(y)`) is read as a division, so its text stays code (INDISTINGUISHABLE below pins the
+ *  shape it trips as), and a quote or a backtick inside it opens a string to the line end or a template to the next
+ *  backtick in the file, hiding an edge init there: a false negative the ratchet accepts (ACCEPTED_MISREADS below
+ *  pins it; the tree holds none, measured against a TypeScript-AST blanking of every UI test file). A light lexer,
+ *  not a parser: it knows the token kinds that hide shapes, not the grammar around them. */
 const REGEX_AFTER = new Set(["return", "typeof", "case", "do", "else", "in", "instanceof", "new", "throw", "void", "delete", "yield", "await", "of"]);
 function blank(s: string, literals: boolean): string {
   const out = s.split("");
   const wipe = (a: number, b: number) => { for (let k = a; k < b && k < out.length; k++) if (out[k] !== "\n") out[k] = " "; };
-  const regexStarts = (i: number): boolean => {
+  const regexStarts = (i: number): boolean => {   // reads `out`: everything before i is lexed, so a comment there is spaces
     let j = i - 1;
-    while (j >= 0 && /\s/.test(s[j])) j--;
+    while (j >= 0 && /\s/.test(out[j])) j--;
     if (j < 0) return true;
-    if (s[j] === ")" || s[j] === "]") return false;
-    if (!/[\w$]/.test(s[j])) return true;
-    let k = j; while (k >= 0 && /[\w$]/.test(s[k])) k--;
-    return REGEX_AFTER.has(s.slice(k + 1, j + 1));
+    if (out[j] === ")" || out[j] === "]") return false;
+    if (j >= 1 && ((out[j] === "+" && out[j - 1] === "+") || (out[j] === "-" && out[j - 1] === "-"))) return false;   // a postfix ++ or --
+    if (!/[\w$]/.test(out[j])) return true;
+    let k = j; while (k >= 0 && /[\w$]/.test(out[k])) k--;
+    return REGEX_AFTER.has(out.slice(k + 1, j + 1).join(""));
   };
   const regexEnd = (i: number): number => {   // the index after the closing slash, or -1 when the line ends first
     let inClass = false;
@@ -593,6 +602,12 @@ const POSITIVE: Array<[string, string, string]> = [   // [the shape it must trip
   ["object-literal key", "const n = { re: /x\\/y/g, EDGE: null };", "parentNode"],   // an escaped slash inside a regex
   ["object-literal key", "const n = { re: /[/]/, EDGE: [] };", "children"],   // a slash inside a regex's character class
   ["assignment", "const v = x ? `${a}` : `${b}`; n.EDGE = null;", "parentNode"],   // two templates on a line
+  // the operand test reads the blanked text: a comment before the slash is skipped, not read as an operand
+  ["assignment", "x = 1; // note\n/it's/.test(s); n.EDGE = null;", "parentNode"],   // a line-leading regex after a trailing comment: a regex, whose quote opens no string
+  ["assignment", "const q = x /* c */ / 2; n.EDGE = null; const r = y / 3;", "children"],   // a block comment between the operand and a division
+  // a slash after a postfix ++ or -- is a division: the code up to the next slash stays code
+  ["assignment", "const v = x++ / 2; n.EDGE = null; const w = y / 3;", "parentNode"],
+  ["assignment", "const v = x-- / 2; n.EDGE = null; const w = y / 3;", "nextSibling"],
 ];
 const NEGATIVE: Array<[string, string, string]> = [   // [what it is, scratch source, edge name]
   ["a comparison, not an assignment", "if (n.EDGE === null) n.appendChild(c); if (m.EDGE == null) return;", "parentNode"],
@@ -638,6 +653,10 @@ const NEGATIVE: Array<[string, string, string]> = [   // [what it is, scratch so
   ["a regex literal after return", "function f() { return /EDGE: null/.test(s); }", "parentNode"],
   ["a regex literal with a character class holding a slash", "const re = /[/]EDGE: null/; n.appendChild(c);", "parentNode"],
   ["a string holding a slash pair, then a shape in a comment", "const u = \"http://x\"; // n.EDGE = null", "parentNode"],
+  // the operand test reads the blanked text, so a comment's last word before a line-leading regex is no operand
+  ["a regex pin on the line after a trailing line comment", "const pins = [\n  /a/,   // one\n  /\\{ EDGE: null \\}/,   // two\n];", "parentNode"],
+  ["a cascade of regex pins, one per line, each with a trailing comment", "const pins = [\n  /x/,   // note\n  /class N { EDGE = []; }/,   // a class\n  /\\{ EDGE: undefined \\}/,   // a literal\n];", "children"],
+  ["a regex after the semicolon that follows a postfix increment (the ++ rule reads the two characters before the slash)", "i++; /\\{ EDGE: null \\}/.test(s);", "parentNode"],
 ];
 const INDISTINGUISHABLE: Array<[string, string, string, string]> = [   // [what it is, the shape it reads as, scratch source, edge name]
   // the forms a line start reaches: a destructuring default or a type literal's member on its own line
@@ -650,6 +669,15 @@ const INDISTINGUISHABLE: Array<[string, string, string, string]> = [   // [what 
   ["a statement reassigning a local of an edge name at line start", "class field", "let EDGE: N | null = null;\nfunction reset(other) {\n  EDGE = other;\n}", "parent"],
   ["a statement reassigning a local of an edge name after a semicolon", "class field", "x(); EDGE = []; y();", "children"],
   ["a class whose first member is an edge getter (on the prototype, no edge)", "accessor", "class N { get EDGE() { return this.kids[0] || null; } appendChild() {} }", "firstChild"],
+  // a condition's closing paren and an expression's are the same token to the lexer, so the regex is read as a division
+  ["a regex literal right after a condition's closing paren (read as a division: its text stays code)", "class field", "if (x) /class N { EDGE = null; }/.test(y);", "parentNode"],
+];
+// the misreads the lexer docstring accepts: a literal read as code whose quote or backtick then swallows the code after
+// it, HIDING a shape (a false negative, never a false positive). Each is pinned so a lexer that starts reading the write
+// moves the case to POSITIVE and the docstring's account with it.
+const ACCEPTED_MISREADS: Array<[string, string, string]> = [   // [what it is, scratch source, edge name]
+  ["a quote inside a regex right after a condition's closing paren opens a string to the line end", "if (x) /'/.test(y); const n = { EDGE: null };", "parentNode"],
+  ["a backtick inside such a regex opens a template to the next backtick in the file", "if (x) /`/.test(y);\nconst n = { EDGE: null };\nconst t = `z`;", "parentNode"],
 ];
 test("the detector: each shape trips on a scratch source, its near-misses do not, and the code this detector does not tell from a shape trips as the docstring says", () => {
   for (const [shape, src, edge] of POSITIVE) {
@@ -662,6 +690,7 @@ test("the detector: each shape trips on a scratch source, its near-misses do not
     const shapes = edgeShapes(scratch(src, edge));
     assert.ok(shapes.includes(shape), what + " reads as " + JSON.stringify(shape) + ": " + JSON.stringify(src) + "; got " + JSON.stringify(shapes) + " (if the detector now tells it apart, move the case to NEGATIVE and the docstring's account with it)");
   }
+  for (const [what, src, edge] of ACCEPTED_MISREADS) assert.ok(!initsEdge(scratch(src, edge)), what + ", a false negative the docstring names: " + JSON.stringify(src) + "; matched " + JSON.stringify(edgeShapes(scratch(src, edge))) + " (if the lexer now reads the write, move the case to POSITIVE and the docstring's account with it)");
   assert.equal(Object.keys(EDGE_INIT).length, 6, "six shapes, each with a positive above");
   for (const shape of Object.keys(EDGE_INIT)) assert.ok(POSITIVE.some(([s]) => s === shape), shape + " has a positive case");
 });
