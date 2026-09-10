@@ -2906,6 +2906,115 @@ class UnknownSessionRefused(_RouteServer):
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
 
+    def test_a_spelling_outside_the_name_alphabet_is_the_unknown_refusal_before_any_file_is_read(self):
+        # the gate asked _reg_unreadable for any spelling the resolution handed back unchanged, a path segment
+        # included, so `romp end ../<file>` built STATE/sdk/../<file>.json, read a file of the kernel's own under
+        # STATE (end-on-idle.json, a JSON list) as a torn registry entry and answered 503 telling the caller to
+        # repair or remove it, with a thread-reg log line per request; the names door read `../<file>.json` and
+        # `../palette` through NAMES / who as a registry entry and ADMITTED them (the /end route ran the end
+        # routine on the spelling); an absolute path replaced the base the same way. Every sid romp mints and
+        # every name its doors admit is NAME_RE's, so a spelling outside that alphabet can name nothing local: the
+        # unknown refusal at both doors, decided before any path is built from it. The fake open raises a
+        # BaseException on every read-mode open while the requests run (no read-swallowing `except Exception` can
+        # hide it); the WS door's append to undelivered.jsonl is a write and passes. The probe file is this
+        # test's own, so no live state file is written (review round 10, 2026-09-09).
+        import builtins
+        import io as iolib
+
+        class _Opened(BaseException):
+            pass
+        real_open = builtins.open
+        opened = []
+
+        def guard(file, mode="r", *a, **k):
+            if not any(c in str(mode) for c in "wax+"):
+                opened.append(str(file))
+                raise _Opened("a read-mode open of %s" % (file,))
+            return real_open(file, mode, *a, **k)
+
+        def rows_now():
+            # the test's own read of the records, through the real open: the fake watches the kernel, not this
+            if not undelivered.exists():
+                return []
+            with real_open(undelivered) as fh:
+                return [json.loads(x) for x in fh.read().splitlines()]
+        state = km.jd.STATE
+        km.NAMES.mkdir(parents=True, exist_ok=True)
+        (state / "sdk").mkdir(parents=True, exist_ok=True)      # the directory the record door traverses out of
+        probe = state / "r10-probe.json"
+        probe.write_text(json.dumps(["11111111-2222-3333-4444-555555555555"]))
+        spellings = ("../r10-probe", "../r10-probe.json", str(probe), "web/2", "web 2")
+        frames = []
+        client = {"send": lambda s: frames.append(json.loads(s))}
+        fake = mock.Mock()
+        ended = []
+        undelivered = state / "undelivered.jsonl"
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+
+        def refused(who, label):
+            for path, body in (("/end", {"id": who}), ("/end", {"name": who}), ("/end", {"name": who, "when": "idle"}),
+                                       ("/interrupt", {"id": who}), ("/interrupt", {"name": who}),
+                                       ("/send", {"id": who, "text": "hello"}), ("/send", {"name": who, "text": "hello"})):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    code, resp = self._post(path, body)
+                self.assertEqual(code, 404, (label, who, path, body, resp))
+                self.assertIn("no live session named '%s'" % who, resp.get("error", ""), (label, who, path, body))
+                self.assertNotIn("could not read", resp.get("error", ""), (label, who, path, body))
+                self.assertNotIn("thread-reg:", err.getvalue(), (label, who, path, body))
+                self.assertNotIn("owns(", err.getvalue(), (label, who, path, body))
+            before = len(rows_now())
+            for msg in ({"type": "interrupt", "id": who}, {"type": "sendMessage", "id": who, "text": "keep this"},
+                        {"type": "endSession", "id": who}, {"type": "compact", "name": who},
+                        {"type": "sendCommand", "name": who, "cmd": "/model opus"}):
+                del frames[:]
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertTrue(km._drive(msg, client), (label, who, msg))
+                errs = [f for f in frames if f.get("type") == "err"]
+                self.assertEqual(len(errs), 1, (label, who, msg, frames))
+                self.assertIn("has no session with id %s" % who, errs[0]["text"], (label, who, msg))
+                self.assertNotIn("could not read", errs[0]["text"].lower(), (label, who, msg))
+                self.assertEqual(errs[0]["sid"], who, (label, who, msg))
+                self.assertIn("undeliverable %s: this kernel has no session %s" % (msg["type"], who), err.getvalue(), (label, who, msg))
+                self.assertNotIn("thread-reg:", err.getvalue(), (label, who, msg))
+            rows = rows_now()[before:]
+            self.assertEqual([(r["op"], r["sid"], r["text"], r["target"]) for r in rows],
+                             [("interrupt", who, "", ""), ("sendMessage", who, "keep this", ""), ("endSession", who, "", ""),
+                              ("compact", who, "", who), ("sendCommand", who, "/model opus", who)],
+                             (label, "the refusal is recorded, the typed text kept, the addressed spelling under target"))
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda s: fake)), \
+                 mock.patch.object(km, "_end_and_record", lambda sid, be, now, via, fresh=False, why=None: ended.append(sid) or True), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                # first with the real open, so the answer is asserted as the caller sees it (the archive's 503
+                # names the probe file here); then with the fake, so the answer is shown to cost no read
+                for who in spellings:
+                    refused(who, "plain")
+                with mock.patch("builtins.open", guard), mock.patch.object(iolib, "open", guard):
+                    for who in spellings:
+                        refused(who, "guarded")
+                    self.assertEqual(opened, [], "no file was opened for reading while the spellings were refused")
+                    # the fake bites: a spelling inside the alphabet reads the names registry at once
+                    with self.assertRaises(_Opened):
+                        km._resolve_sid(self.GHOST, door=True)
+            self.assertEqual(ended, [], "the end routine never ran on a spelling")
+            self.assertEqual(fake.method_calls, [], "nothing reached a backend at either door")
+            for who in spellings:
+                self.assertNotIn(who, km._end_on_idle_load(), "a refused deferred end records no wish")
+                self.assertFalse(km._local_spelling(who), who)
+            self.assertTrue(km._local_spelling(self.GHOST))
+            self.assertTrue(km._local_spelling("abab7777-8888-9999-0000-111111111111"))
+            self.assertTrue(probe.exists(), "the probe file is untouched")
+        finally:
+            try:
+                probe.unlink()
+            except OSError:
+                pass
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
 
 class CodexRuntimeSelection(unittest.TestCase):
     # The kernel loads codex_backend.py through load_source (kernel/loadsource.py), the fork's loader kept

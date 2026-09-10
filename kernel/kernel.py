@@ -18433,6 +18433,22 @@ def _refusal_cause(verdict, sid, who=None):
     return "the record for session %s will not read" % sid
 
 
+def _local_spelling(who):
+    """Can `who` name anything this kernel holds? Every sid romp mints is a UUID (both backends' and the CLI
+    launcher's) and every name its doors admit is NAME_RE's, so one test, NAME_RE over the whole spelling, says
+    whether a spelling can be a local sid or a local name at all. False for the roster's host:name (the colon:
+    that spelling is the roster's alone, _remote_session_named, which reads no file), for a path segment, and
+    for anything else. The client doors refuse such a spelling as unknown BEFORE any path is built from it:
+    `romp end ../end-on-idle` reached STATE/sdk/../end-on-idle.json through the gate's record read and answered
+    the record's 503 telling the caller to repair or remove the kernel's own state file, with a thread-reg log
+    line per request; `../palette` and `../session-flags` were ADMITTED through the names door (NAMES / who
+    read a file under STATE as a registry entry), and `../end-on-idle.json` was ended as a registered sid; an
+    absolute path replaces the base the same way (review round 10, 2026-09-09). Asked by _resolve_sid's door
+    read, _session_gate and _named_miss, so a refused spelling touches nothing. A tmux session the CLI named
+    outside this alphabet (bin/romp's `new -t` checks tmux alone) is addressed by id."""
+    return bool(NAME_RE.fullmatch(str(who or "")))
+
+
 def _session_gate(sid, live=None, who=None):
     """THE one verdict on whether a request that names a session may act here, for both client doors (the
     WS _drive gate and the HTTP control gate, _unknown_session_refusal, for /send, /interrupt and /end):
@@ -18460,7 +18476,10 @@ def _session_gate(sid, live=None, who=None):
                   live-map door (list_regs serves a torn reg's cached last good row while the kernel runs)
                   would admit a dormant session whose record will not read; owns() reads such a body as a
                   transient failure and answers from the live thread set alone.
-      unknown     no record of any kind: the routes' 404, the dashboard's modal.
+      unknown     no record of any kind: the routes' 404, the dashboard's modal. A spelling that can name
+                  nothing local (_local_spelling: not NAME_RE's alphabet, so a path segment, an absolute path,
+                  the roster's host:name) is this verdict at once, before any path is built from it and any
+                  file is read (round 10).
     The scan-failed verdict (_GATE_SCAN_FAILED) is the by-name miss path's alone (_named_miss): a NAME whose
     resolution missed while the tmux probe was down (no reg for the spelling, no row, the scan failed) may
     route to a running session the map could not list, so whether it does cannot be evaluated; a sid whose
@@ -18478,7 +18497,9 @@ def _session_gate(sid, live=None, who=None):
     the WS door's `name` for compact and sendCommand, and _named_miss's `who` on behalf of both doors); the WS
     door's by-id ops leave it None."""
     sid = str(sid or "")
-    if sid and _reg_unreadable(sid):
+    if not _local_spelling(sid):
+        return _GATE_UNKNOWN, None
+    if _reg_unreadable(sid):
         if _backend_reports_running(sid):
             return _GATE_ADMITTED, None
         return _GATE_UNREADABLE, _unreadable_record_text(sid, who)
@@ -18502,12 +18523,14 @@ def _named_miss(who, live, store_unreadable):
     the NAME routes to that record does); then a dormant names-registered session of the name whose SDK
     registry entry will not read (_unreadable_dormant_named: the gate's verdict on that sid, its 503, never
     "no session"); then the comment threads' store, when the resolution got as far as asking it and it would
-    not read. A spelling that carries a colon (the roster's host:name) is no local name and no thread's, so
-    neither read can be what fails it: None. Round 6 gave the torn lookup to _control_target alone and the WS
+    not read. A spelling that can name nothing local (_local_spelling: the roster's host:name with its colon,
+    a path segment, anything outside NAME_RE's alphabet) is no local name and no thread's, so neither read can
+    be what fails it: None, and no file is read for it (round 6 drew the line at the colon; round 10 at the
+    alphabet). Round 6 gave the torn lookup to _control_target alone and the WS
     compact and sendCommand door read the same name as unknown, and that door read a failed scan as a
     session that does not exist from the base on; one routine now, so the doors cannot drift again (review
     round 7, 2026-09-09). `cause` is the stderr cause the WS records writer logs (_refusal_cause)."""
-    if ":" in who:
+    if not _local_spelling(who):
         return None
     if live is not None and getattr(live, "tmux_failed", False):
         return who, _GATE_SCAN_FAILED, _scan_failed_text(who), _refusal_cause(_GATE_SCAN_FAILED, who)
@@ -18730,7 +18753,7 @@ def _drive(msg, client):
         # the HTTP routes alone, so the two doors disagreed on the same name at both states (review round 7,
         # 2026-09-09)
         named = str(msg["name"])
-        sid, live, store_unreadable, _scan_failed = _resolve_sid(named)
+        sid, live, store_unreadable, _scan_failed = _resolve_sid(named, door=True)
     elif t == "askFollowUp" and (msg.get("itemId") or msg.get("id")) and (msg.get("text") or msg.get("cont")):
         # cont:true is the Continue button (2026-08-08), which deliberately carries NO text — the kernel
         # supplies CONTINUE_TEXT in the handler body below. The old text-only guard turned every Continue
@@ -27039,7 +27062,7 @@ def _unreadable_dormant_named(name):
     return None
 
 
-def _resolve_sid(who):
+def _resolve_sid(who, door=False):
     """_sid_of with what the resolution read handed back: (sid, live, store_unreadable, scan_failed), where
     live is the Sessions.live() map the resolution scanned, or None when the names registry answered first
     and nothing was scanned; store_unreadable says the comment threads' store could not be read when the
@@ -27058,8 +27081,15 @@ def _resolve_sid(who):
     path and by the WS compact and sendCommand door on its would-be-unknown path), not this resolution's.
     Round 5 put it here, and every _sid_of caller (the PR-watch escalation contact, add_pr_watch and
     add_watch, which store the sid, /deliver and /compact) then took a torn older generation of a name for
-    the live session that bears it (round 6). Every other caller reads _sid_of, which keeps only the sid."""
+    the live session that bears it (round 6). Every other caller reads _sid_of, which keeps only the sid.
+    `door` is the client doors' read (_control_target and the WS compact and sendCommand arm): a spelling
+    that can name nothing local (_local_spelling: outside NAME_RE's alphabet, so a path segment, an absolute
+    path, the roster's host:name) is the input unchanged before any path is built from it, so the gate's
+    unknown verdict follows with no file read (round 10: `../palette` was admitted through the names door);
+    _sid_of's callers keep the plain read."""
     who = str(who)
+    if door and not _local_spelling(who):
+        return who, None, False, False
     if _name_of(who):
         return who, None, False, False
     live = Sessions.live()
@@ -27168,7 +27198,7 @@ def _control_target(who, route=""):
     where a hit forwards and a miss is the accurate 404, while the local probe is down (round 6: `romp end
     TESTHOST:far-web` was refused 503 by a failed LOCAL scan, though the same session by far sid forwarded
     at the same moment)."""
-    sid, live, store_unreadable, scan_failed = _resolve_sid(who)
+    sid, live, store_unreadable, scan_failed = _resolve_sid(who, door=True)
     r = _host_for_sid(sid)
     if r is not None:
         return sid, r, None, live
