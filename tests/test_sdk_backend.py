@@ -5698,12 +5698,54 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             self.assertIsNotNone(s._launching, "the spawn window opens at this arm as at every other")
             self.assertEqual(s._launching["auth"], "key", "a keyed box: the helper bills the relaunch")
             s._reset_reconnect_state()                           # the loop top: the picks ride this reconnect
-            self.assertTrue(any("the pending fast and auth picks ride" in str(m) for m in self.logs), self.logs)
+            rides = [str(m) for m in self.logs if " this reconnect" in str(m)]
+            self.assertEqual(len(rides), 1, self.logs)
+            self.assertIn("the pending fast and auth picks ride this reconnect", rides[0], "two picks: the plural verb")
             s._connect_landed()
         snap = s.snapshot()
         self.assertEqual((snap["auth"], snap["authLive"], snap["authPending"]), ("key", "", False), "no contradiction")
         self.assertEqual(snap["fast"], "on")
         self.assertIsNone(s._launching)
+
+    def test_e6_the_loop_tops_ride_line_agrees_in_number(self):
+        # the ride line was a fixed "rides this reconnect", so two picks read "the pending effort and auth picks
+        # rides this reconnect" while the arm's sibling line already agreed in number (review round 4). One pick
+        # rides; two ride; a lone restore rides; a pick and the restore ride; the no-names fallback rides
+        def ride(s):
+            s._rewind_to = "22222222-3333-4444-5555-666666666666"; s._rewind_armed = False
+            s.request_reconnect()
+            n0 = len(self.logs)
+            s._reset_reconnect_state()
+            lines = [str(m) for m in self.logs[n0:] if " this reconnect" in str(m)]
+            self.assertEqual(len(lines), 1, self.logs[n0:])
+            return lines[0]
+        s = self._sess(effort="high", auth="login")
+        s._launched_effort = sb.effort_launch_shape("high"); s._launched_auth = "login"
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "max")
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+            s.backend.set_auth(self.SID, "key")
+        self.assertIn("reconnect (web): the pending effort and auth picks ride this reconnect", ride(s))
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "max")
+        self.assertIn("reconnect (web): the pending effort pick rides this reconnect", ride(s))
+        s = self._sess()
+        s.fast_opt = True
+        self._start(s, "a1")
+        s._adopt_fast_state({"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"})
+        self.assertIn("reconnect (web): the pending fast mode restore rides this reconnect", ride(s))
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high"); s.fast_opt = True
+        self._start(s, "a1")
+        s._adopt_fast_state({"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"})
+        s.backend.set_effort(self.SID, "max")
+        self.assertIn("reconnect (web): the pending effort pick and fast mode restore ride this reconnect", ride(s))
+        s = self._sess()
+        self._start(s, "a1")
+        s._reconnect_when_idle = True                                # a request that recorded no surface
+        self.assertIn("reconnect (web): the pending reconnect rides this reconnect", ride(s))
 
     def test_e4_a_pick_the_session_cannot_reconnect_for_records_no_hold(self):
         # before the first connect (loop None) request_reconnect is a no-op and the reg carries the pick
@@ -7114,8 +7156,12 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertEqual(s._launched_effort, ("high", False), "the first landing stamped the launch shape")
         self.assertEqual(c1.options.effort, "high")
         self.assertTrue(self.be.set_effort(self.SID, "low"))
+        # the reg's effortPending is written one statement after the field this waits on (_connect_landed:
+        # the field, then _update_reg's locked read, temp file and replace), and the assertion below reads
+        # the reg: wait on the flag it asserts (review round 4; the test failed alone 2 of 20 runs)
         self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client
-                   and s._effort_pending == "", "the reconnect landed and cleared the pending pick")
+                   and s._effort_pending == "" and not (sb.read_reg(self.be.state_dir, self.SID) or {}).get("effortPending"),
+                   "the reconnect landed and cleared the pending pick")
         c2 = self._Client.instances[1]
         self.assertTrue(c1.torn_down, "the old client was abandoned")
         self.assertEqual(c2.options.effort, "low", "the new client launched the pick")
@@ -7152,8 +7198,8 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client
                    and s._effort_pending == "", "the reconnect at the settle that found no live work")
         self.assertTrue(any("live work finished; the held effort pick reconnects now" in l for l in self.lines), self.lines)
-        self.assertEqual([l for l in self.lines if "rides this reconnect" in l], [],
-                         "the loop top found the arm it was woken for, nothing else pending")
+        self.assertEqual([l for l in self.lines if " this reconnect" in l], [],
+                         "the loop top found the arm it was woken for, nothing else pending (either verb)")
         self.assertEqual(s._launched_effort, ("low", False))
         self.assertEqual(self._Client.instances[1].options.effort, "low")
         self.assertEqual(self._applied(), ["low"])
@@ -7191,8 +7237,10 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         asyncio.run(s._subagent_stop_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
         s._settled_msg = None
         self._turn(c1)
-        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client,
-                   "the reconnect at the settle that found no live work")
+        # self.client is set 17 lines before _connect_landed stamps the launched mode asserted below: wait for
+        # the landing itself, the end of the spawn window (review round 4)
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client
+                   and s._launching is None, "the reconnect at the settle that found no live work landed")
         c2 = self._Client.instances[1]
         self.assertEqual(c2.options.permission_mode, "bypassPermissions")
         self.assertEqual(s._launched_mode, "bypassPermissions", "the landing stamps the launched mode")

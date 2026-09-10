@@ -5781,7 +5781,10 @@ class SdkSession:
         if self._reconnect_when_idle:
             names = self._pick_names()
             what = self._picks_phrase(names, "pending", "pending") if names else "the pending reconnect"
-            self._log_quietly("reconnect (%s): %s rides this reconnect" % (self.name, what))
+            # the verb agrees in number, as the arm's line does (review round 4): two picks ride, one rides, and
+            # so does a lone restore or the no-names fallback
+            self._log_quietly("reconnect (%s): %s %s this reconnect"
+                              % (self.name, what, "ride" if len(names) > 1 else "rides"))
         self._reconnect = False
         self._reconnect_when_idle = False
         self._reconnect_held_for_work = False
