@@ -892,7 +892,10 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
         });
         // THE FOOT (round 7): the widths above are read unscrolled; then the flyout is scrolled to its end and the New tag input's and
         // Configure tags' rects read, and a REAL click on Configure tags is attempted (Playwright refuses a target it cannot hit-test:
-        // below the pane's edge on a fixed box with nothing to scroll, the round-6 diagnostic's state, the click timed out)
+        // below the pane's edge on a fixed box with nothing to scroll, the round-6 diagnostic's state, the click timed out). This leg
+        // builds the menu by hand with no window listener on the page, so the click proves the GEOMETRY alone: the foot is inside the
+        // pane and hit-testable once scrolled to. That the click reaches Configure tags through render.ts's own listeners, whose scroll
+        // dismissal must leave the flyout's scroll alone, is the fifth leg's M6 (round 8)
         const foot = await page.evaluate(() => {
           const fly = document.getElementById("fly")!;
           fly.scrollTop = fly.scrollHeight;
@@ -971,13 +974,22 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
 //   - a press on a Move to row's label in the flyout, a recolour pushed mid-press (a signature change, so the rows would have
 //     been rebuilt), the release: the move is posted;
 //   - the same on the Show when folded row: the pin is written;
-//   - a push that changes nothing the row shows leaves its label node in place (round 4 replaced it every time).
+//   - a push that changes nothing the row shows leaves its label node in place (round 4 replaced it every time);
+//   - at thirty tags (round 8) the flyout's own scroll, through render.ts's window listeners, leaves the menu standing: the
+//     click-open's focus scroll, a real wheel, the click's scroll into view; a scroll in a box outside the menu still dismisses.
 function menuProbeSource(): string {
   const a = RENDER.indexOf("function showTabMenu(e: MouseEvent, id: string, copy?: string) {");
   const end = RENDER.indexOf("seatMenu(e.clientX, e.clientY);", a);
   const b = RENDER.indexOf("\n}\n", end) + 3;
   assert.ok(a > 0 && end > a && b > end, "showTabMenu's anchors moved; re-anchor this probe");
   const MENU = RENDER.slice(a, b);
+  // THE MENU'S WINDOW LISTENERS (round 8), verbatim: the outside mousedown, Escape, the picker's two, the scroll and the blur. The scroll
+  // dismissal saw the Tags flyout's own scroll once the flyout was capped and scrolled within itself, so a real page closed the menu on
+  // the click that opened the flyout at thirty tags while the fourth leg, built by hand with no listener, stayed green (M6 below)
+  const wa = RENDER.indexOf('window.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target as Node)) dismissTabMenu(); }, true);');
+  const wb = RENDER.indexOf("\n", RENDER.indexOf('window.addEventListener("blur", () => dismissTabMenu());', wa)) + 1;
+  assert.ok(wa > 0 && wb > wa, "the menu's window listeners moved; re-anchor this probe");
+  const LISTENERS = RENDER.slice(wa, wb);
   return `
 import { readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden, TABGROUPS_KEY } from "./tab-groups";
 import { viewTagUnion } from "./session-views";
@@ -992,6 +1004,7 @@ let tabMenuViewsHook: () => void = () => {};
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function ctxIcon(kind: string, off: boolean): HTMLElement { const sp = el("span", "ctx-icon" + (off ? " off" : "")); sp.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; sp.dataset.kind = kind; return sp; }
 function dismissTabMenu() { H.dismissed++; ctxMenuEl?.remove(); ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; }
+let emojiPrompt: any = null;   // the picker's listeners read it (never open here)
 function closeEmojiPrompt() {}
 function setSessionFlag(id: string, k: string, v: boolean) { H.flags.push([id, k, v]); }
 function setSessionColor() {} function startTabRename() {} function showMovePrompt() {} function showEmojiPrompt() {}
@@ -1011,6 +1024,11 @@ function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
 function writeTabGroupsPruned(st: any) { const out = prunePinned(st, viewTagUnion(effViews()), knownTabIds(), reachableHosts()); H.hides.push(out.hidden); writeTabGroups(out); }
 function browseRouteNow() { return "pane"; } function openBrowse() {}
 ${MENU}
+${LISTENERS}
+// a scrolling box OUTSIDE the menu (round 8): the page's body never scrolls (styles.css), so the control that a scroll elsewhere still
+// dismisses the menu needs a box of its own, at the pane's far corner where no menu or flyout of these tests reaches
+const box = el("div"); box.id = "box"; box.style.cssText = "position:fixed;right:0;bottom:0;width:120px;height:120px;overflow:auto;background:transparent";
+const tall = el("div"); tall.style.height = "1000px"; box.appendChild(tall); document.body.appendChild(box);
 let marked: Element | null = null;
 const rowOf = () => ctxMenuEl?.querySelector(".ctx-item-hide") ?? null;
 const flyRow = (label: string) => Array.from(ctxMenuEl?.querySelectorAll(".ctx-sub-tags .ctx-item") ?? []).find((r) => r.querySelector(".ctx-item-label")?.textContent === label) ?? null;
@@ -1025,6 +1043,11 @@ const rect = (e: Element | null) => { if (!e) return null; const r = e.getBoundi
   mark() { marked = rowOf()?.querySelector(".ctx-item-label") ?? null; return !!marked; },
   sameLabel() { return !!marked && rowOf()?.querySelector(".ctx-item-label") === marked; },
   inputAt() { return rect(ctxMenuEl?.querySelector(".ctx-tag-input") ?? null); },
+  flyAt() { return rect(ctxMenuEl?.querySelector(".ctx-sub-tags") ?? null); },
+  flyScroll() { const f = ctxMenuEl?.querySelector(".ctx-sub-tags"); return f ? { top: f.scrollTop, height: f.scrollHeight, client: f.clientHeight } : null; },
+  cfgAt() { return rect(ctxMenuEl?.querySelector(".ctx-item-configtags") ?? null); },
+  boxAt() { return rect(document.getElementById("box")); },
+  boxScroll() { return document.getElementById("box")!.scrollTop; },
   markInput() { marked = ctxMenuEl?.querySelector(".ctx-tag-input") ?? null; return !!marked; },
   sel() { const i = ctxMenuEl?.querySelector(".ctx-tag-input") as HTMLInputElement | null; return i ? { value: i.value, start: i.selectionStart, end: i.selectionEnd, dir: i.selectionDirection, focused: document.activeElement === i, same: i === marked } : null; },
   state() {
@@ -1048,12 +1071,13 @@ function bundleMenu(): string {
 const MENU_PROBE_PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/styles.css><style>body{margin:0}</style></head><body><script src=/menu-probe.js></script></body></html>`;
 type MenuState = { menu: boolean; label: string | null; sub: string | null; hides: any[][]; edits: any[]; dismissed: number; flyRows: (string | null)[]; stored: any };
 type Sel = { value: string; start: number | null; end: number | null; dir: string | null; focused: boolean; same: boolean };
-test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer input (menu review round 5): a push between mousedown and mouseup on the Hide tab row, a Move to row or the Show when folded row waits for the release, so the click lands (the hide written by the copy's id, the move posted, the pin written) and the rebuild follows; a push that changes nothing the row shows leaves its label node; the New tag input keeps its text, caret, selection and focus through a rebuild, and Configure tags stays", async (t) => {
+test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer input (menu review round 5): a push between mousedown and mouseup on the Hide tab row, a Move to row or the Show when folded row waits for the release, so the click lands (the hide written by the copy's id, the move posted, the pin written) and the rebuild follows; a push that changes nothing the row shows leaves its label node; the New tag input keeps its text, caret, selection and focus through a rebuild, and Configure tags stays; at thirty tags the flyout's own scroll (the click-open's focus, a real wheel, the click's scroll into view) leaves the menu standing and a scroll outside it still dismisses (round 8)", async (t) => {
   let pw: any = null;
   try { pw = requireCjs("playwright"); } catch { pw = null; }
   if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
   const js = bundleMenu();
   const V_QA = { ...V, tags: [{ ...V.tags[0], members: ["web", "api", "tests"] }, { ...V.tags[1], members: ["old1", "api"] }, { id: "g5", name: "qa", color: "#7aa2f7", members: [] as string[] }], seq: 6 };   // api under infra and archived, qa empty
+  const V30 = { active: "all", tags: NAMES30.map((n, i) => ({ id: "t" + i, name: n, color: "#4EC9B0", members: i === 0 ? ["api"] : [] as string[] })), seq: 3 };   // thirty tags (the fourth leg's names), api under the first: a held row, 29 Move to rows, the pin row, the input and the foot
   const renamed = (v: typeof V_QA, name: string, seq: number) => ({ ...v, tags: v.tags.map((tg, i) => (i === 0 ? { ...tg, name } : tg)), seq });
   const recoloured = (v: typeof V_QA, seq: number) => ({ ...v, tags: v.tags.map((tg, i) => (i === 1 ? { ...tg, color: "#abcdef" } : tg)), seq });
   for (const engine of ["chromium", "firefox"] as const) {
@@ -1163,6 +1187,54 @@ test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer inp
       assert.deepEqual([sel.value, sel.start, sel.end, sel.dir, sel.focused, sel.same], ["billing-two", 4, 7, "forward", true, true], where("the selection survives the rebuild (round 4 collapsed it to the end)"));
       s = await state();
       assert.ok(s.flyRows.includes("Configure tags…"), where("the foot stands through the rebuilds: " + JSON.stringify(s.flyRows)));
+      // M6 (round 8): THIRTY TAGS, THE FLYOUT'S OWN SCROLL. The flyout is capped at the pane's height and scrolls within itself (round 7,
+      // styles.css .ctx-sub-tags), and the window's capture scroll listener, which closes the menu when the page moves under it, saw
+      // that scroll: the click on the Tags row closed the menu as the flyout opened (openTagsFly focuses the New tag input at the foot,
+      // and the focus scrolls the capped box to it), and a wheel over an open flyout closed it on the first tick, from 23 tags on. The
+      // listener leaves a scroll whose target the menu contains alone. Read here through render.ts's own listeners with real input: the
+      // menu survives the click-open, a real wheel over the flyout scrolls it and leaves the menu standing, a real click on Configure tags
+      // lands (Playwright scrolls the foot into view first, another scroll inside the menu), and a wheel in a scrolling box outside the
+      // menu still dismisses it (the control: the exemption is the menu's own scroll, not every scroll while a menu is open)
+      // the waits below key on the scroll having landed (Firefox applies a wheel asynchronously, about 110ms before scrollTop moves;
+      // Chromium about 30ms) or on the menu having gone, never on a fixed delay; a wait that runs out fails the step by name
+      const flyScrolledPast = (top: number) => page.waitForFunction((t: number) => { const f = document.querySelector(".ctx-sub-tags"); return !f || f.scrollTop > t; }, top, { timeout: 3000 });
+      await menu("setup", V30);
+      assert.ok(await menu("open", "api", NAMES30[0], 40, 40), where("the menu opened at thirty tags"));
+      const d6 = (await state()).dismissed;
+      assert.ok(await menu("openFly"), where("the flyout opened"));
+      await flyScrolledPast(0).catch(() => assert.fail(where("the click-open never scrolled the flyout (the New tag input's focus scrolls the capped box to it at thirty tags)")));
+      let fs = await menu("flyScroll") as { top: number; height: number; client: number } | null;
+      s = await state();
+      assert.deepEqual([s.menu, s.dismissed], [true, d6], where("the menu survives the click that opened the flyout (before: the New tag input's focus scrolled the capped box, and the window's scroll listener dismissed the menu)"));
+      assert.ok(fs && fs.height > fs.client && fs.top > 0, where("thirty tags: the flyout has rows past its cap, and the click-open scrolled it to the input: " + JSON.stringify(fs)));
+      const top0 = fs!.top;
+      const flyAt = await menu("flyAt") as { x: number; y: number };
+      await page.mouse.move(flyAt.x, flyAt.y);
+      await page.mouse.wheel(0, -240);   // back up: the input's focus scrolled to the foot, so the wheel has room to move the box the other way
+      await flyScrolledPast(-1).then(() => page.waitForFunction((t: number) => { const f = document.querySelector(".ctx-sub-tags"); return !f || f.scrollTop < t; }, top0, { timeout: 3000 })).catch(() => assert.fail(where("a real wheel over the flyout never moved it")));
+      fs = await menu("flyScroll") as { top: number; height: number; client: number } | null;
+      s = await state();
+      assert.deepEqual([s.menu, s.dismissed], [true, d6], where("a real wheel over the flyout leaves the menu standing (before: the first wheel tick dismissed it)"));
+      assert.ok(fs && fs.top < top0, where("and the wheel scrolled the flyout: " + JSON.stringify(fs) + " from " + top0));
+      let cfgClicked = false;
+      try { await page.click(".ctx-item-configtags", { timeout: 3000 }); cfgClicked = true; } catch { cfgClicked = false; }
+      s = await state();
+      assert.ok(cfgClicked, where("a real click on Configure tags lands through render.ts's listeners (the scroll into view is the menu's own)"));
+      assert.deepEqual([s.menu, s.dismissed], [false, d6 + 1], where("Configure tags dismissed the menu, once, as its handler does"));
+      // the control: a scroll OUTSIDE the menu still dismisses it
+      await menu("setup", V30);
+      assert.ok(await menu("open", "api", NAMES30[0], 40, 40));
+      assert.ok(await menu("openFly"));
+      await flyScrolledPast(0);
+      const d7 = (await state()).dismissed;
+      assert.equal((await state()).menu, true);
+      const boxAt = await menu("boxAt") as { x: number; y: number };
+      await page.mouse.move(boxAt.x, boxAt.y);
+      await page.mouse.wheel(0, 120);
+      await page.waitForFunction(() => document.getElementById("box")!.scrollTop > 0, null, { timeout: 3000 }).catch(() => assert.fail(where("the wheel never scrolled the outside box")));
+      await page.waitForFunction(() => !(window as any).__menu.state().menu, null, { timeout: 3000 }).catch(() => { /* judged below */ });
+      s = await state();
+      assert.deepEqual([s.menu, s.dismissed], [false, d7 + 1], where("a scroll outside the menu dismisses it, as before"));
       assert.deepEqual(errors, [], where("no page errors"));
       await page.close();
     } finally { await browser.close(); }

@@ -7239,12 +7239,18 @@ window.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contai
 // a later capture listener on this window, yields to a consumed Escape instead of also leaving the view
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && ctxMenuEl) { dismissTabMenu(); e.preventDefault(); } }, true);
 // The emoji picker (showEmojiPrompt) dismisses the way the menu it came from does: a mousedown outside it,
-// Escape, and the tab menu opening again (showTabMenu). Not on scroll, which the menu also takes: the
-// picker's own grid scrolls, and a window-level capture sees that. Not on blur either: its footer field
-// invites a paste, and a paste begins with a trip to another window.
+// Escape, and the tab menu opening again (showTabMenu). Not on scroll: the picker's own grid scrolls, and a
+// window-level capture sees that (the menu, below, takes a scroll outside itself alone). Not on blur either:
+// its footer field invites a paste, and a paste begins with a trip to another window.
 window.addEventListener("mousedown", (e) => { if (emojiPrompt && !emojiPrompt.card.contains(e.target as Node)) closeEmojiPrompt(); }, true);
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && emojiPrompt) { e.stopPropagation(); e.preventDefault(); closeEmojiPrompt(); } }, true);
-window.addEventListener("scroll", dismissTabMenu, true);
+// The menu leaves when the page moves under it, and not when it scrolls within itself (round 8 of the tab menu review): the
+// Tags flyout is capped at the pane's height and scrolls its own rows (.ctx-sub-tags), and a capture listener on the window
+// sees that scroll too, so from 23 tags on a click on the Tags row closed the menu as the flyout opened (openTagsFly focuses
+// the New tag input, which scrolls the capped box to it) and a wheel over a hover-opened flyout closed it on the first tick.
+// A scroll whose target the menu contains is the menu's own and is left alone; the document's scroll is not contained, and a
+// scroll in any other box on the page still dismisses. The selection menu shares this listener and the same rule
+window.addEventListener("scroll", (e) => { if (ctxMenuEl && e.target instanceof Node && ctxMenuEl.contains(e.target)) return; dismissTabMenu(); }, true);
 window.addEventListener("blur", () => dismissTabMenu());
 
 // "Rename" (tab context menu): swap the tab's label for an inline input. Enter

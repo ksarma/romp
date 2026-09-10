@@ -751,8 +751,12 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    the visible bottom by the browser chrome on the phone page); overflow-y auto is the pop-ups' idiom (.slash-pop, .mention-pop,
    .cite-preview) and overscroll-behavior contain the staged list's, so a wheel at the end does not scroll the page behind. The
    foot scrolls with the rows (the flat structure the rows' insertBefore(nrow) scheme relies on); place() reads the flyout's height
-   after layout, so the capped box is what it seats. tab-hide-browser.test measures the thirty-tag flyout inside the pane and reaches
-   Configure tags by scrolling. No structural rule (nothing holds the box open; the rows size its width, as before). */
+   after layout, so the capped box is what it seats. The capped box is usable because the window's scroll listener that dismisses
+   the menu when the page moves under it ignores a scroll whose target the menu contains (render.ts, beside dismissTabMenu's other
+   listeners; round 8): without that exemption the flyout's own scroll closed the menu, on the click that opened it (the New tag
+   input's focus scrolls the box) and on the first wheel tick. tab-hide-browser.test measures the thirty-tag flyout inside the pane,
+   reaches Configure tags by scrolling, and drives the scroll through render.ts's own listeners in both engines. No structural rule
+   (nothing holds the box open; the rows size its width, as before). */
 .ctx-sub-tags { max-height: calc(100dvh - 8px); overflow-y: auto; overscroll-behavior: contain; }
 /* identity-color swatches (the user 2026-06-29): the romp palette as circles, the current one ringed. A grid
    so 9 colors wrap to a tidy block instead of one long row. */
