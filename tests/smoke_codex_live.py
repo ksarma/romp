@@ -18,6 +18,7 @@ import os
 import sys
 import tempfile
 import time
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))   # tests/romp_load.py, for a load by spec with no tests/ on the path
 from romp_load import load_source
 from pathlib import Path
 

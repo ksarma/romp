@@ -161,10 +161,13 @@ test("requestFullSession(id, why): every ask names its why, from the fixed vocab
   assert.ok(addAt > 0 && postAt > addAt, "awaitingFull.add(id), then the needFull post carrying the why");
   assert.equal((rfs.match(/postMessage\(/g) || []).length, 1, "one post, the wire's");
   const calls = [...RENDER.matchAll(/requestFullSession\(([^()]*?)\)/g)].map((m) => m[1]).filter((a) => !a.startsWith("id: string"));
-  assert.ok(calls.length >= 6, "the gap, no-base ×3, skeleton-delta ×2, skeleton-click and prefetch sites");
+  assert.ok(calls.length >= 6, "the gap, no-base ×5, skeleton-delta ×2, skeleton-click and prefetch sites");
   for (const c of calls) assert.match(c, /, "(gap|nobase|skeleton-click|prefetch|skeleton-delta)"$/, `call site without a why: requestFullSession(${c})`);
   const why = (w: string) => RENDER.split(`, "${w}")`).length - 1;
-  assert.equal(why("gap"), 1); assert.equal(why("nobase"), 3); assert.equal(why("skeleton-delta"), 2);
+  assert.equal(why("gap"), 1);
+  assert.equal(why("nobase"), 5, "upstream's three (update, chatTail and statusOnly, a push for a session this page does not hold) "
+    + "plus this fork's two: the tabOrder teardown-then-relist re-ask (2026-08-18) and the endFailed arm, which re-asks for the tab the End dropped");
+  assert.equal(why("skeleton-delta"), 2);
   assert.equal(why("skeleton-click"), 1); assert.equal(why("prefetch"), 1);
 });
 

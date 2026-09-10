@@ -102,14 +102,14 @@ caret move away and back, do not reopen it. In the sent message, a name that mat
 session is shown as a chip in that session's color.
 
 **Sending while the session is working.** The session takes your message at its next
-step. In an SDK session the message stays where you sent it: it sits below everything that
-had already happened, the steps the session runs in the meantime appear below it, and when
+step. In a Claude Code session the message stays where you sent it: it sits below everything
+that had already happened, the steps the session runs in the meantime appear below it, and when
 the session takes it, it lands in that same place. Send several messages during one turn (a
 composer message, then a todo reply) and each reaches the session as its own message, in
 the order you sent them: the next one waits, shown as queued, until the session has taken
-the one before it, so two messages are never joined into one. A tmux session takes a
-message only while it is idle, so messages sent during its turn wait, shown as queued, and
-arrive together when the turn ends, as one message.
+the one before it, so two messages are never joined into one. A Claude Code (tmux) session
+takes a message only while it is idle, so messages sent during its turn wait, shown as queued,
+and arrive together when the turn ends, as one message.
 
 **While a message is on its way.** A message you have sent shows as a dashed bubble
 marked "sending…" until the session records it, however long that takes; the bubble

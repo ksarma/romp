@@ -2829,9 +2829,9 @@ _LAUNCH_LIMIT_RE = re.compile(
 # never happen). tmux sessions worked the whole time, which made it read as an Anthropic outage. The
 # remedy is one command, so the error names it rather than describing the symptom.
 SDK_MISSING_TEXT = (
-    "romp's Agent SDK backend isn't installed, so this session can't run — its messages are being kept, "
+    "the Claude Code backend's Agent SDK isn't installed, so this session can't run — its messages are being kept, "
     "not sent. Install it with bin/romp-sdk-setup (it prints the OS package to add if one is missing), "
-    "then restart romp. tmux-backed sessions are unaffected.")
+    "then restart romp. Claude Code (tmux) sessions are unaffected.")
 
 
 def running_python_tag() -> str:
@@ -2973,18 +2973,18 @@ def sdk_unavailable_text(state_dir, verdict=None, started_missing=True) -> str:
     text with its rebuild is right."""
     v = verdict or sdk_venv_verdict(state_dir)
     if v["kind"] == "present" and started_missing:
-        return ("romp's Agent SDK backend was set up for Python %s after romp started, so this session can't "
-                "run yet. Its messages are being kept, not sent. Restart romp to use it. tmux-backed sessions "
-                "are unaffected." % v["running"])
+        return ("the Claude Code backend's Agent SDK was set up for Python %s after romp started, so this session can't "
+                "run yet. Its messages are being kept, not sent. Restart romp to use it. Claude Code (tmux) "
+                "sessions are unaffected." % v["running"])
     if v["kind"] != "mismatch":
         return SDK_MISSING_TEXT
-    return ("romp's Agent SDK backend was set up for Python %s, but romp is running on Python %s, so this "
-            "session can't run. Its messages are being kept, not sent. %s tmux-backed sessions are unaffected."
+    return ("the Claude Code backend's Agent SDK was set up for Python %s, but romp is running on Python %s, so this "
+            "session can't run. Its messages are being kept, not sent. %s Claude Code (tmux) sessions are unaffected."
             % (" and ".join(v["built"]), v["running"], _mismatch_remedy(v)))
 
 
-SDK_SETUP_REFUSAL = ("Session not created: romp's Agent SDK backend isn't installed. "
-                     "Run bin/romp-sdk-setup, then try again. (tmux sessions still work.)")
+SDK_SETUP_REFUSAL = ("Session not created: the Claude Code backend's Agent SDK isn't installed. "
+                     "Run bin/romp-sdk-setup, then try again. (Claude Code (tmux) sessions still work.)")
 
 
 def sdk_creation_refusal(verdict, default=SDK_SETUP_REFUSAL) -> str:
@@ -2997,12 +2997,12 @@ def sdk_creation_refusal(verdict, default=SDK_SETUP_REFUSAL) -> str:
     same words) for the verdicts where the install remedy fits."""
     v = verdict
     if v["kind"] == "present":
-        return ("Session not created: romp's Agent SDK backend was set up for Python %s after romp started. "
-                "Restart romp, then try again. (tmux sessions still work.)" % v["running"])
+        return ("Session not created: the Claude Code backend's Agent SDK was set up for Python %s after romp started. "
+                "Restart romp, then try again. (Claude Code (tmux) sessions still work.)" % v["running"])
     if v["kind"] != "mismatch":
         return default
-    return ("Session not created: romp's Agent SDK backend was set up for Python %s, but romp is running on "
-            "Python %s. %s (tmux sessions still work.)"
+    return ("Session not created: the Claude Code backend's Agent SDK was set up for Python %s, but romp is running on "
+            "Python %s. %s (Claude Code (tmux) sessions still work.)"
             % (" and ".join(v["built"]), v["running"], _mismatch_remedy(v, then="restart romp and try again")))
 
 
@@ -8117,7 +8117,7 @@ class SdkBackend:
         # such rather than as a missing install, and a venv built AFTER this check names the restart.
         self._venv_verdict_cache = None
         if self._sdk_missing and log:
-            self._log("claude_agent_sdk is NOT importable — every SDK session will report itself unable to "
+            self._log("claude_agent_sdk is NOT importable — every Claude Code session will report itself unable to "
                       "start. %s" % self.unavailable_text(), problem=True)
         # Per-session transient scopes (see cli_scope_supported): ONE verdict per backend, cached here;
         # _options reads it at every connect. The probe runs here, never per session.
@@ -11738,12 +11738,12 @@ class SdkBackend:
 
     def mcp_status(self, sid: str):
         s = self.sessions.get(sid)
-        return s.mcp_status() if s else ([], "romp has no live SDK session for this tab")
+        return s.mcp_status() if s else ([], "romp has no live Claude Code session for this tab")
 
     def mcp_action(self, sid: str, name: str, action: str, enabled: bool = True) -> str:
         s = self.sessions.get(sid)
         if not s:
-            return "romp has no live SDK session for this tab"
+            return "romp has no live Claude Code session for this tab"
         if action == "reconnect":
             return s.mcp_reconnect(name)
         return s.mcp_toggle(name, enabled)

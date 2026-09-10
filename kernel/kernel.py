@@ -17418,7 +17418,7 @@ def _sdk_setup_hint():
     except Exception:
         pass
     if _SDK_VENV_BUILT_FOR:
-        return ("Session not created: romp's Agent SDK backend was set up for Python %s, but romp is running "
+        return ("Session not created: the Claude Code backend's Agent SDK was set up for Python %s, but romp is running "
                 "on Python %s. Re-run bin/romp-sdk-setup to rebuild it for Python %s, restart romp and try "
                 "again. (Claude Code (tmux) sessions still work.)"
                 % (" and ".join(_SDK_VENV_BUILT_FOR), _running_python_tag(), _running_python_tag()))
@@ -17558,7 +17558,7 @@ def _sdk_locked():
             #                                        construct above — the settle's other bookend
         except Exception:
             sys.stderr.write("sdk-backend unavailable: %s\n" % traceback.format_exc())
-            _sdk_problem("the SDK backend could not be built: %s" % traceback.format_exc())
+            _sdk_problem("the Claude Code backend could not be built: %s" % traceback.format_exc())
             _sdk_backend = False
             _mark_boot("reconcileDone")            # unavailable = the reconcile phase is over too
     return _sdk_backend or None
@@ -18703,7 +18703,7 @@ def _drive(msg, client):
         # the dialog is actually up in the pane, then sends Esc — cancel, never a billing change. A
         # refusal (already dismissed / SDK session) warn-toasts instead of pretending (fail loudly).
         ok, derr = (be.dismiss_dialog(sid) if hasattr(be, "dismiss_dialog")
-                    else (False, "only tmux sessions show a terminal dialog to dismiss"))
+                    else (False, "only Claude Code (tmux) sessions show a terminal dialog to dismiss"))
         if not ok:
             client["send"](json.dumps({"type": "warn", "text": derr}))
         _push_soon()
@@ -18756,7 +18756,7 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn",
                                        "text": ("Couldn't switch the account this session bills: %s." % why) if why
                                        else "Couldn't switch the account this session bills — "
-                                            "it isn't an SDK session, no API key is configured, "
+                                            "it isn't a Claude Code session, no API key is configured, "
                                             "or this machine has no Claude login to switch to."}))
         _push_soon()
     elif t == "stopTask" and msg.get("taskId"):
@@ -19236,7 +19236,7 @@ def _revive_session_inner(sid, client=None):
         cx = _codex()
         if be and be.owns(sid):
             ok = bool(be.resume(name, sid) and be.connect(sid))
-            detail = "" if ok else "the SDK backend could not resume it (see the kernel log)"
+            detail = "" if ok else "the Claude Code backend could not resume it (see the kernel log)"
         elif cx is not None and cx._session(sid) is not None:
             # a DEAD Codex session: owns() is live-only by design, so the tmux fallback would build
             # `claude --resume` for it — resume it through the Codex backend instead (docs/codex.md)
@@ -51999,7 +51999,7 @@ stalled:"romp itself is holding a working thread and nothing is moving it \u2014
 nudge:"romp's one automatic follow-up on a stalled thread didn't resolve it; the thread now needs you",
 retry:"a session is inside an API-error retry storm; auto-retry is already working on it",
 apierror:"a session stopped on an API error (rate limit, spend cap, or prompt too long) and its card is blocked",
-sdk:"romp's SDK backend, the machinery that actually runs your sessions, hit an error: a session thread that died, a stream that dropped, a setting the CLI refused. The session usually recovers on its own, and the full traceback is in the kernel log under ~/.local/state/romp",
+sdk:"romp's Claude Code backend, the machinery that actually runs your sessions, hit an error: a session thread that died, a stream that dropped, a setting the CLI refused. The session usually recovers on its own, and the full traceback is in the kernel log under ~/.local/state/romp",
 sync:"romp moved commits between your machines by itself \u2014 a push to a remote, a pull from one, or an ask that a peer fast-forward itself. Successes are logged as well as failures, so this is the record of what romp did to your machines; the network panel shows a sync while it is still running",
 locate:"a click that should have jumped to a message in the chat couldn't find it. Usually the chat is missing part of its history; reload the pane if it keeps happening",
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
@@ -52992,7 +52992,7 @@ var rows=m.sessions||[];
 if(rows.length){h+='<div class=ru-tip-win><div class=ru-tip-name><span>Sessions waiting</span></div>';
 rows.forEach(function(r){h+=rowHTML(r,full);});h+='</div>';}
 h+=histHTML();
-if(m.tmux>0)h+='<div class="ru-tip-win ah-line">'+(m.tmux===1?'1 tmux session is seen through its transcript only':m.tmux+' tmux sessions are seen through their transcripts only')
+if(m.tmux>0)h+='<div class="ru-tip-win ah-line">'+(m.tmux===1?'1 Claude Code (tmux) session is seen through its transcript only':m.tmux+' Claude Code (tmux) sessions are seen through their transcripts only')
 +', so a retry in progress there shows only when it fails or recovers.</div>';
 if(full)h+='<div class="ru-tip-row ah-foot"><span class=ah-link role=button tabindex=0 data-act=usage>Usage and spend</span><span class=ah-link role=button tabindex=0 data-act=log>Log</span></div>';
 return h;}
@@ -56920,7 +56920,7 @@ class Handler(BaseHTTPRequestHandler):
                 be = _sdk()
                 fn = getattr(be, "api_health_snapshot", None) if be else None
                 if fn is None:
-                    return self._send(503, json.dumps({"error": "the SDK backend is unavailable — no signal"}),
+                    return self._send(503, json.dumps({"error": "the Claude Code backend is unavailable — no signal"}),
                                       "application/json", cache="no-cache")
                 now = time.time()
                 out = fn(now, uptime_s=now - _STARTED)
