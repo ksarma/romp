@@ -18534,7 +18534,16 @@ _FOREIGN_OP_VERB = {"sendMessage": "message", "askFollowUp": "reply", "askText":
                     "addCustomAsk": "answer", "answerAsk": "answer", "submitAsk": "answer",
                     "rewindSend": "edited message", "sendCommand": "command", "renameSession": "rename",
                     "endSession": "end", "interrupt": "interrupt", "compactSession": "compact",
-                    "moveSession": "move"}
+                    "compact": "compact", "moveSession": "move"}
+
+# The drive ops whose `name` is TYPED text (a title the user entered), the text a refusal's row and modal keep when
+# the op carries no `text` or `cmd`; compact and sendCommand carry `name` as the session they ADDRESS (the timeline
+# keys them by session name), which the row keeps under `target` and never offers back as the user's text (review
+# round 8, 2026-09-09: a compact refused by name filed the session name as its text, the modal promised it verbatim
+# and "Copy my text" copied it, under the title "That action was not delivered" since the verb table knew
+# compactSession only)
+_TYPED_NAME_OPS = ("renameSession", "forkSession", "commentPromote", "commentCreate")
+_TARGET_NAME_OPS = ("compact", "sendCommand")
 
 
 def _refuse_drive(client, op, sid, msg):
@@ -18571,16 +18580,22 @@ def _refuse_drive_unreadable(client, op, sid, msg, text, cause=None):
 def _refuse_drive_records(client, op, sid, msg, what, cause, lead):
     """The three records every refusal of a drive op writes (_refuse_drive's docstring says why each): the
     modal (`lead`, then where the text went), the text verbatim in undelivered.jsonl, and the stderr line
-    (`cause`). One writer, so the unknown and the unreadable refusals cannot drift in what they keep."""
+    (`cause`). One writer, so the unknown and the unreadable refusals cannot drift in what they keep. The text
+    is the op's typed text: `text`, `cmd`, or `name` for the ops whose name is a title the user typed
+    (_TYPED_NAME_OPS); compact and sendCommand address their session by `name`, which the row keeps under
+    `target`, so the row still says which session was addressed, and never as the text (round 8)."""
     text = ""
     for k in ("text", "cmd", "name"):
+        if k == "name" and op not in _TYPED_NAME_OPS:
+            continue
         if isinstance(msg.get(k), str) and msg[k]:
             text = msg[k]
             break
+    target = str(msg.get("name") or "") if op in _TARGET_NAME_OPS else ""
     try:
         with (jd.STATE / "undelivered.jsonl").open("a") as fh:
             fh.write(json.dumps({"at": int(time.time()), "op": op, "sid": sid, "what": what,
-                                 "itemId": msg.get("itemId") or "", "text": text}) + "\n")
+                                 "itemId": msg.get("itemId") or "", "text": text, "target": target}) + "\n")
     except OSError:
         pass
     sys.stderr.write("undeliverable %s: %s; %r\n" % (op, cause, text[:200]))
@@ -52743,7 +52758,7 @@ sync:"romp moved commits between your machines by itself \u2014 a push to a remo
 locate:"a click that should have jumped to a message in the chat couldn't find it. Usually the chat is missing part of its history; reload the pane if it keeps happening",
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
 refused:"a setting that could not be saved, or a state file that could not be read. A change you made \u2014 a lane or tab setting, a card bell, a lane order \u2014 was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults",
-undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read the live session list (tmux did not answer; the same send works once it does), or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a refused reply, interrupt or end files a row there with no text; a clear, drop or undo refused over the goals file writes nothing there"};
+undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read the live session list (tmux did not answer; the same send works once it does), or it could not read the comment threads' store while resolving a session name, or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a refused reply, interrupt, end or compact files a row there with no text; a clear, drop or undo refused over the goals file writes nothing there"};
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
 if(filtBar)KINDS.forEach(function(k){var b=document.createElement('span');

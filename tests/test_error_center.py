@@ -315,23 +315,28 @@ class ErrorCenterWiring(unittest.TestCase):
         # every kind's toggle AND entry chip explains itself (not just show/hide)
         self.assertIn("var DESC={conn:", html)
         self.assertIn("b.title='Show or hide these entries. '+KINDLBL[k]+': '+DESC[k]", html)
-        # the undelivered kind's description covers the whole kind, every cause the kind files: no session by
-        # that id, a record that would not read, a live session list the tmux probe did not answer for, a goals
-        # file that could not be read or written, with the dialog that announced the entry saying which. The
-        # on-disk row: a typed message is kept verbatim, and a refused reply, interrupt or end (the drive gate's
-        # refusals) files a row with no text; only the goals-file gesture refusals (clear, drop, undo) write
-        # nothing (review round 6 said a refused card gesture writes nothing there, which was false for every
-        # gesture refused at the drive gate; review round 7, 2026-09-09). The webview pin
+        # the undelivered kind's description covers the whole kind, the five causes the kind files, in the order
+        # the by-name miss path reads them: no session by that id, a record that would not read, a live session
+        # list the tmux probe did not answer for, a comment threads' store that would not read while a session
+        # name was resolved (the WS by-name door's refusal, round 7's addition, which the round-7 text missed),
+        # a goals file that could not be read or written, with the dialog that announced the entry saying which.
+        # The on-disk row: a typed message is kept verbatim, and a refused reply, interrupt, end or compact (the
+        # drive gate's refusals of the ops that carry no text; a compact by name carries its session's name as
+        # the target, never as text) files a row with no text; only the goals-file gesture refusals (clear, drop,
+        # undo) write nothing (review round 6 said a refused card gesture writes nothing there, which was false
+        # for every gesture refused at the drive gate; review rounds 7 and 8, 2026-09-09). The webview pin
         # (ui/webview/undelivered-err.test.ts) reads the same prefix off kernel.py
         self.assertIn('undelivered:"something you sent never reached a session. Either the kernel it was addressed '
                       'to has no session by that id', html)
         self.assertIn("or it holds a record for that session that would not read, or it could not read the live "
-                      "session list (tmux did not answer; the same send works once it does), or it could not read or "
-                      "write the session's goals file; the dialog that announced it says which", html)
+                      "session list (tmux did not answer; the same send works once it does), or it could not read the "
+                      "comment threads' store while resolving a session name, or it could not read or write the "
+                      "session's goals file; the dialog that announced it says which", html)
         self.assertIn("A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a "
-                      "refused reply, interrupt or end files a row there with no text; a clear, drop or undo refused "
-                      "over the goals file writes nothing there", html)
+                      "refused reply, interrupt, end or compact files a row there with no text; a clear, drop or undo "
+                      "refused over the goals file writes nothing there", html)
         self.assertNotIn("a refused card gesture writes nothing there", html)
+        self.assertNotIn("interrupt or end files a row", html, "the compact joined the list")
         # targeted entries jump: close, reveal the feed pane, post revealCard into the feed iframe
         self.assertIn("{romp:'revealCard',itemId:n.tgt.itemId||'',sid:n.tgt.sid||''}", html)
         # timestamps wear the SHARED recency ramp: the standalone dist bundle is loaded BEFORE the

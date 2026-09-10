@@ -165,6 +165,50 @@ class RefusesForeignDriveOps(unittest.TestCase):
             self.assertNotIn("Your text is saved verbatim", msg["text"], "no text was typed, so none is promised")
             self.assertEqual(msg["copy"], "")
 
+    def test_a_compact_or_command_refused_by_name_keeps_the_session_name_out_of_the_text(self):
+        # compact and sendCommand address their session by NAME (the timeline keys them so), and the records
+        # writer read ("text", "cmd", "name") for the text to keep, so a compact refused by name filed a row whose
+        # text was the session name, the modal promised "Your text is saved verbatim" and Copy my text copied the
+        # name, under "That action was not delivered" (the verb table knew compactSession, not compact). The name
+        # is typed text for renameSession, forkSession and commentPromote only; for compact and sendCommand it is
+        # the target, kept in the row under its own key so the row still says which session was addressed, and
+        # a sendCommand's text stays its cmd (review round 8, 2026-09-09). tmux is off, the comment threads' store
+        # empty and the roster clear, so the name resolves to nothing and the unknown refusal answers.
+        import pathlib
+        with tempfile.TemporaryDirectory() as d:
+            saved = km.jd.STATE
+            km.jd.STATE = pathlib.Path(d)
+            try:
+                with mock.patch.object(km._TMUX, "available", lambda: False), \
+                     mock.patch.object(km, "_thread_names", lambda: {}), \
+                     mock.patch.dict(km._remotes, {}, clear=True):
+                    for msg in ({"type": "compact", "name": "web-2"},
+                                {"type": "sendCommand", "name": "web-2", "cmd": "/model opus"},
+                                {"type": "renameSession", "id": THEIRS, "name": "a title I typed"}):
+                        self.assertTrue(km._drive(msg, self.client), msg)
+                rows = [json.loads(x) for x in (pathlib.Path(d) / "undelivered.jsonl").read_text().splitlines()]
+            finally:
+                km.jd.STATE = saved
+        self.assertEqual(self.reached, [])
+        self.assertEqual([(r["op"], r["sid"], r["what"], r["text"], r["target"]) for r in rows],
+                         [("compact", "web-2", "compact", "", "web-2"),
+                          ("sendCommand", "web-2", "command", "/model opus", "web-2"),
+                          ("renameSession", THEIRS, "rename", "a title I typed", "")],
+                         "the name is the target for compact and sendCommand, the text for a rename")
+        compact, command, rename = self.sent
+        self.assertEqual(compact["title"], "That compact was not delivered")
+        self.assertEqual(compact["copy"], "", "no text was typed, so none is offered back")
+        self.assertIn("The refusal is recorded in undelivered.jsonl", compact["text"])
+        self.assertNotIn("Your text is saved verbatim", compact["text"])
+        self.assertIn("has no session with id web-2", compact["text"])
+        self.assertEqual(compact["sid"], "web-2")
+        self.assertEqual(command["title"], "That command was not delivered")
+        self.assertEqual(command["copy"], "/model opus", "the cmd is the typed text")
+        self.assertIn("Your text is saved verbatim", command["text"])
+        self.assertEqual(rename["title"], "That rename was not delivered")
+        self.assertEqual(rename["copy"], "a title I typed", "a rename's name is typed text, kept as before")
+        self.assertIn("Your text is saved verbatim", rename["text"])
+
     def test_a_record_that_will_not_read_refuses_the_typed_text_into_the_same_three_records(self):
         # _session_gate's unreadable verdict (a NOT-running session whose SDK registry entry exists but will not
         # read) refuses through _refuse_drive_unreadable, the sibling of the unknown refusal above, and the two
