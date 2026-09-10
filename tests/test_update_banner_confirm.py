@@ -5,28 +5,35 @@ One click used to POST /update, which converges main, rebuilds the served bundle
 for a restart-all: every session on the box restarts and every turn in flight is cut. A click that only
 meant to focus the dashboard window landed on that button. Now the first click ARMS the banner: the
 Update button gives its place to a label that states the consequence, in counts (how many sessions the
-restart stops and how many of them it interrupts, and whether other kernels restart too), with a red
-confirm button and a Cancel beside it; only a click on the confirm posts, carrying {"confirmed": true}.
-One gesture never posts, by layout: the second activation of a double-click, a double-tap or a held key
-lands where the first did, on the label, which is not a control, whatever click count the engine
-reports. Belt and braces on top: the confirm ignores a click whose detail is above 1 (the browser's own
-click count) and the buttons ignore a repeated keydown (KeyboardEvent.repeat) for Enter and Space. The
-armed state is dropped by exact events, never a timer: Cancel (a click, Enter or Space on it), Escape
-through the shell's Escape chain, a press outside the banner in the shell document, a press or a focus in
-a pane iframe, focus leaving the banner (a move between the label, the confirm and Cancel keeps it), the
-window losing focus, a hidden tab, and every re-render of the banner. The click that focuses the window
-therefore never counts: the blur that took focus away disarmed the banner first. An answer without
-counts drops the counts the banner held, so the label never shows a previous kernel life's numbers.
+restart stops and how many of them it interrupts, and whether other kernels restart too, or may), with
+a red confirm button to the RIGHT of the label and a Cancel to its left, where Not now stood; only a
+click on the confirm posts, carrying {"confirmed": true}. One gesture never posts, by layout: the second
+activation of a double-click, a double-tap or a held key lands where the first did, on the label, which
+covers Update's whole footprint and is not a control, whatever click count the engine reports, and the
+confirm begins at least 24 px past Update's right edge, so a spread second tap misses it too. Belt and
+braces on top: the confirm ignores a click whose detail is above 1 (the browser's own click count) and
+the buttons ignore a repeated keydown (KeyboardEvent.repeat) for Enter and Space. The armed state is
+dropped by exact events, never a timer: Cancel (a click, Enter or Space on it), Escape through the
+shell's Escape chain, a press outside the banner in the shell document, a press or a focus in a pane
+iframe, focus leaving the banner (a move between the label, the confirm and Cancel keeps it, and so does
+a focusout to nothing under a press that began inside the box: WebKit does not focus a button on a
+press), the window losing focus, a hidden tab, and every re-render of the banner. The click that focuses
+the window therefore never counts: the blur that took focus away disarmed the banner first. An answer
+without counts drops the counts the banner held, so the label never shows a previous kernel life's
+numbers; an answer without a registry count says the other kernels may restart too.
 
 EXECUTED, not pinned: node runs the kernel's _UPD_JS (the served banner script, as the browser receives
 it) and the shell's Escape chain against fakes for document, window, location and fetch, one process per
 scenario, and the scenario reads the banner's state back by name. Then real engines (Playwright's
-Chromium and Firefox, skipped loudly where absent) drive the served CSS, markup and script with real
-input: a double-click, a held Enter, two taps at the Update button's point, a click on the confirm, a
-real click on Cancel, Tab and Enter on Cancel, Escape, a press inside a same-origin iframe, Tab out of
-the banner into the iframe, and the phone-width layout. The kernel side (the route's refusal of an
-unconfirmed body, the audit row, the counts and the registry read on /update-check) is in
-tests/test_kernel_update.py. Synthetic values only."""
+Chromium, Firefox and WebKit, plus Firefox under Gecko's switch for the WebKit focus rule, skipped
+loudly where absent) drive the served CSS, markup and script with real input: a double-click, a held
+Enter, two taps at the Update button's point, a spread second tap past its right edge, a click and a tap
+on the confirm, a real click on Cancel, a click and a drag on the banner's own text, Tab and Enter on
+Cancel, Escape, a press inside a same-origin iframe, Tab out of the banner into the iframe, the
+phone-width layout and the armed row's geometry against the plain row's at five widths. The kernel side
+(the route's refusal of an unconfirmed body, the audit row, the counts and the registry read on
+/update-check, with its timeout and its stderr line) is in tests/test_kernel_update.py. Synthetic values
+only."""
 import json
 import os
 import re
@@ -51,13 +58,15 @@ km = load_source("romp_kernel_upd_confirm", os.path.join(BIN, "romp-kernel"))
 # was registered with), an element's own listeners in its `listeners`, so a scenario can emit the
 # gesture events by name (with a relatedTarget, a key, a repeat flag), and every fetch is recorded with
 # its method and body. An element's focus() records itself as document.activeElement; a pane document
-# carries a window of its own (defaultView) with listeners of its own.
+# carries a window of its own (defaultView) with listeners of its own. There is no layout: elements have
+# a style object and no getBoundingClientRect, so the label's fit step (the Browser leg measures it)
+# does nothing here.
 HARNESS = r"""
 var LISTENERS = {}, WLISTENERS = {}, FETCHES = [], RELOADS = 0, FOCUS = [], PREVENTED = 0, STOPPED = 0;
 function capFlag(cap) { return cap === true || !!(cap && cap.capture); }
 function el(id) {
   var classes = {};
-  var e = { id: id, hidden: false, disabled: false, textContent: "", onclick: null, children: [], listeners: {},
+  var e = { id: id, hidden: false, disabled: false, textContent: "", onclick: null, children: [], listeners: {}, style: {},
     classList: { add: function (c) { classes[c] = 1; }, remove: function (c) { delete classes[c]; },
                  contains: function (c) { return !!classes[c]; } },
     addEventListener: function (t, f, cap) { (e.listeners[t] = e.listeners[t] || []).push({ f: f, cap: capFlag(cap) }); },
@@ -205,24 +214,32 @@ out({ atOnce: atOnce, after: state() });""")
     def test_the_label_says_the_counts_are_this_kernels_when_another_kernel_restarts_too(self):
         # _restart_impact counts this kernel's sessions; the manager's restart-all restarts every kernel
         # in its registry. /update-check's otherKernels (the registry entries that are not this kernel)
-        # decides the wording: with another kernel the label places the counts here and says the others
-        # restart too; with one kernel, or while the registry could not be read (null), the plain form
-        cases = ((1, 3, 1, "Restart 3 sessions here now, interrupting 1; the other kernels restart too"),
+        # decides the wording: with another kernel the label places the counts here and says the other
+        # restarts too (one kernel: singular; several: plural); with one kernel the plain form; and when
+        # the manager did not answer the read (null, or the field absent) the label says the other kernels
+        # MAY restart too, never the single-kernel form, since a manager that missed a 1 s read can still
+        # take the restart request
+        null_tail = "; the other kernels may restart too (the manager did not answer)"
+        cases = ((1, 3, 1, "Restart 3 sessions here now, interrupting 1; the other kernel restarts too"),
                  (2, 1, 1, "Restart 1 session here now, interrupting 1; the other kernels restart too"),
-                 (1, 4, 0, "Restart 4 sessions here now; the other kernels restart too"),
-                 (1, 0, 0, "Restart now, nothing to interrupt here; the other kernels restart too"),
+                 (5, 3, 0, "Restart 3 sessions here now; the other kernels restart too"),
+                 (1, 4, 0, "Restart 4 sessions here now; the other kernel restarts too"),
+                 (1, 0, 0, "Restart now, nothing to interrupt here; the other kernel restarts too"),
                  (0, 3, 1, "Restart 3 sessions now, interrupting 1"),
-                 (None, 3, 1, "Restart 3 sessions now, interrupting 1"))
+                 (None, 3, 1, "Restart 3 sessions here now, interrupting 1" + null_tail),
+                 (None, 0, 0, "Restart now, nothing to interrupt here" + null_tail))
         for others, sessions, mid, want in cases:
             s = run_banner("GO.onclick(); await tick(); await tick(); out(state());",
                            check={"otherKernels": others, "sessions": sessions, "midTurn": mid})
             self.assertEqual(s["label"], want, (others, sessions, mid))
             self.assertEqual(s["posts"], [])
+        s = run_banner("delete CHECK.otherKernels; GO.onclick(); await tick(); await tick(); out(state());")
+        self.assertEqual(s["label"], "Restart 3 sessions here now, interrupting 1" + null_tail, "the field absent: unknown, never 0")
         # the re-read's answer moves the wording too (a kernel added since the page loaded)
         s = run_banner("""
 CHECK.otherKernels = 1; GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: atOnce, after: state() });""")
         self.assertEqual(s["atOnce"]["label"], "Restart 3 sessions now, interrupting 1")
-        self.assertEqual(s["after"]["label"], "Restart 3 sessions here now, interrupting 1; the other kernels restart too")
+        self.assertEqual(s["after"]["label"], "Restart 3 sessions here now, interrupting 1; the other kernel restarts too")
 
     def test_unknown_counts_arm_with_the_label_without_counts_and_the_re_read_fills_them_in(self):
         # /update-check answers null while the kernel's SDK backend is still being built: the banner
@@ -400,6 +417,82 @@ out({ plain: plain, plainAfter: plainAfter, toConfirm: toConfirm, toCancel: toCa
         self.assertEqual(s["left"]["active"], "rupd-armed", "a focus leaving does not pull focus back")
         self.assertEqual((s["rearmed"]["armed"], s["rearmed"]["posts"]), (True, []), "the next click arms, never posts")
 
+    def test_a_press_that_blurs_the_label_to_nothing_still_confirms_and_still_cancels(self):
+        # WebKit (Safari, every iOS browser) does not focus a button on a press: the mousedown on the
+        # confirm or Cancel blurs the label to nothing, so the box's focusout fires with relatedTarget null
+        # BEFORE the click. The press began inside the box (the document's capture pointerdown records
+        # it), so that focusout disarms nothing and the click that ends the gesture decides: the confirm
+        # posts, Cancel's handler runs. A touch tap plays pointerup before the compatibility mousedown
+        # that moves focus, so the flag must outlive pointerup: the tap sequence emits it first
+        s = run_banner("""
+GO.onclick(); await tick(); await tick();
+emit('pointerdown', { target: CF }); eemit(BOX, 'focusout', { relatedTarget: null }); var midPress = state();
+emit('click', { target: CF }); CF.onclick({ detail: 1 }); var confirmed = state(); await tick();
+out({ midPress: midPress, confirmed: confirmed });""")
+        self.assertEqual((s["midPress"]["armed"], s["midPress"]["confirmHidden"], s["midPress"]["posts"]), (True, False, []),
+                         "the focusout under the press disarmed nothing")
+        self.assertEqual(len(s["confirmed"]["posts"]), 1, "the click that ended the press posted")
+        s = run_banner("""
+GO.onclick(); await tick(); await tick();
+emit('pointerdown', { target: CF }); emit('pointerup', { target: CF });
+eemit(BOX, 'focusout', { relatedTarget: null }); var midTap = state();
+emit('click', { target: CF }); CF.onclick({ detail: 1 }); var tapped = state(); await tick();
+out({ midTap: midTap, tapped: tapped });""")
+        self.assertTrue(s["midTap"]["armed"], "the press outlives pointerup: a tap's focus move comes after it")
+        self.assertEqual(len(s["tapped"]["posts"]), 1, "the tap posted")
+        s = run_banner("""
+GO.onclick(); await tick(); await tick();
+emit('pointerdown', { target: CX }); eemit(BOX, 'focusout', { relatedTarget: null }); document.activeElement = null; var midPress = state();
+emit('click', { target: CX }); CX.onclick(); var cancelled = state();
+out({ midPress: midPress, cancelled: cancelled });""")
+        self.assertTrue(s["midPress"]["armed"])
+        c = s["cancelled"]
+        self.assertEqual((c["armed"], c["shown"], c["active"], c["posts"]), (False, True, "rupd-go", []),
+                         "Cancel's own handler disarmed and handed focus back to Update, with nothing inside the banner focused")
+
+    def test_a_press_on_the_banners_own_text_keeps_the_armed_state(self):
+        # a press on the message text or the padding blurs the label to nothing in every engine (the text
+        # is not focusable); it began inside the box, so nothing disarms, and the click that ends it clears
+        # the press: the next focusout to nothing is focus leaving, and disarms
+        s = run_banner("""
+GO.onclick(); await tick(); await tick();
+emit('pointerdown', { target: MSG }); eemit(BOX, 'focusout', { relatedTarget: null }); emit('click', { target: MSG }); var afterText = state();
+eemit(BOX, 'focusout', { relatedTarget: null }); var afterLeave = state();
+out({ afterText: afterText, afterLeave: afterLeave });""")
+        self.assertEqual((s["afterText"]["armed"], s["afterText"]["posts"]), (True, []), "a click on the banner's own text disarms nothing")
+        self.assertFalse(s["afterLeave"]["armed"], "the press ended with the click: a focusout to nothing disarms again")
+
+    def test_a_focusout_to_nothing_without_a_press_inside_disarms(self):
+        # the control for the rule above: a window blur, a script's blur or an engine's window switch reach
+        # the box as a focusout with no relatedTarget and no press inside, and disarm. The flag never
+        # lingers: a press inside that ended in a click (here a swallowed multi-click), a pointercancel (a
+        # touch that became a scroll) or the window's blur is over, and the next focusout to nothing disarms
+        s = run_banner("""
+GO.onclick(); await tick(); await tick(); eemit(BOX, 'focusout', { relatedTarget: null }); var noPress = state();
+GO.onclick(); emit('pointerdown', { target: CF }); emit('click', { target: CF }); CF.onclick({ detail: 2 }); var swallowed = state();
+eemit(BOX, 'focusout', { relatedTarget: null }); var afterClick = state();
+GO.onclick(); emit('pointerdown', { target: CF }); emit('pointercancel', {}); eemit(BOX, 'focusout', { relatedTarget: null }); var afterCancel = state();
+GO.onclick(); emit('pointerdown', { target: CF }); wemit('blur'); var blurred = state();
+GO.onclick(); eemit(BOX, 'focusout', { relatedTarget: null }); var afterBlur = state();
+out({ noPress: noPress, swallowed: swallowed, afterClick: afterClick, afterCancel: afterCancel, blurred: blurred, afterBlur: afterBlur });""")
+        self.assertEqual((s["swallowed"]["armed"], s["swallowed"]["posts"]), (True, []), "a multi-click on the confirm is swallowed, still armed")
+        for k in ("noPress", "afterClick", "afterCancel", "blurred", "afterBlur"):
+            self.assertEqual((s[k]["armed"], s[k]["posts"]), (False, []), k)
+
+    def test_the_escape_chain_asks_the_banner_before_the_shortcuts_dialog(self):
+        # executed, not read: the shortcuts dialog's close is stubbed to claim every Escape, so the order
+        # of the two branches decides who gets it. Armed, the banner takes Escape and the dialog is not
+        # asked; plain, the dialog is next (its stub claims the press)
+        s = run_banner("""
+var KEYS = 0; window.__rompKeysClose = function () { KEYS++; return true; };
+GO.onclick(); await tick(); await tick(); emit('keydown', key('Escape')); var armedEsc = { armed: state().armed, keys: KEYS, prevented: PREVENTED };
+emit('keydown', key('Escape')); var plainEsc = { armed: state().armed, keys: KEYS, prevented: PREVENTED };
+out({ armedEsc: armedEsc, plainEsc: plainEsc });""")
+        self.assertEqual((s["armedEsc"]["armed"], s["armedEsc"]["keys"], s["armedEsc"]["prevented"]), (False, 0, 1),
+                         "Escape ended the armed state; the dialog was not asked")
+        self.assertEqual((s["plainEsc"]["armed"], s["plainEsc"]["keys"], s["plainEsc"]["prevented"]), (False, 1, 2),
+                         "with the banner plain, the dialog is asked next")
+
     def test_escape_disarms_through_the_shells_escape_chain(self):
         # the shell's Escape chain (_LANDING_ESC_JS, run here too) asks the banner first: an armed
         # banner is what Escape closes, the keydown is claimed (default prevented, propagation stopped)
@@ -502,12 +595,13 @@ class Wiring(unittest.TestCase):
 
     def test_the_markup_carries_the_armed_row_hidden_and_the_post_carries_the_confirmation(self):
         html = km._UPD_HTML
+        self.assertIn("<button class=rup-dismiss id=rupd-dismiss>Not now</button>", html)
+        self.assertIn("<button class=rup-cancel id=rupd-cancel hidden>Cancel</button>", html)
         self.assertIn("<button class=rup-go id=rupd-go>Update</button>", html)
         self.assertIn("<span class=rup-armed id=rupd-armed tabindex=-1 hidden></span>", html)
         self.assertIn("<button class=rup-confirm id=rupd-confirm hidden>Restart</button>", html)
-        self.assertIn("<button class=rup-cancel id=rupd-cancel hidden>Cancel</button>", html)
-        self.assertLess(html.index("rupd-go"), html.index("rupd-armed"), "the label takes Update's place: next in flow")
-        self.assertLess(html.index("rupd-armed"), html.index("rupd-confirm"), "the confirm stands beside the label")
+        order = [html.index(i) for i in ("rup-msg", "rupd-dismiss", "rupd-cancel", "rupd-go", "rupd-armed", "rupd-confirm")]
+        self.assertEqual(order, sorted(order), "the plain row reads Not now, Update; the armed row Cancel, label, Restart, in one flow")
         js = km._UPD_JS
         self.assertIn("body:JSON.stringify({confirmed:true})", js)
         self.assertIn("go.onclick=function(){if(!armed)arm();};", js, "Update only ever arms")
@@ -517,20 +611,28 @@ class Wiring(unittest.TestCase):
 
     def test_the_armed_state_ends_on_events_never_a_timer(self):
         js = km._UPD_JS
-        for ev in ("cx.onclick=function(){disarm(true);};",
+        for ev in ("cx.onclick=function(){disarm(true,true);};",
                    "window.__rompUpdDisarm=function(){if(!armed)return false;disarm(true);return true;};",
                    "d.addEventListener('pointerdown',function(){if(armed)disarm();},true);",
                    "var w=d.defaultView;if(w)w.addEventListener('focus',function(){if(armed)disarm();},true);}catch(e){}}",
-                   "box.classList.add('rup-arm');wireFrames();",
-                   "box.addEventListener('focusout',function(e){if(!armed)return;var t=e&&e.relatedTarget;if(t&&box.contains(t))return;disarm();});",
-                   "window.addEventListener('blur',function(){disarm();});",
+                   "box.classList.add('rup-arm');fit(g);wireFrames();",
+                   "function disarm(back,always){if(!armed)return;var a=document.activeElement,inside=back&&(always||(a&&box.contains(a)));",
+                   "document.addEventListener('pointerdown',function(e){var inside=!!(e&&e.target&&box.contains(e.target));press=inside;if(armed&&!inside)disarm();},true);",
+                   "document.addEventListener('click',function(){press=false;},true);",
+                   "document.addEventListener('pointercancel',function(){press=false;},true);",
+                   "box.addEventListener('focusout',function(e){if(!armed)return;var t=e&&e.relatedTarget;if(t&&box.contains(t))return;if(!t&&press)return;disarm();});",
+                   "window.addEventListener('blur',function(){press=false;disarm();});",
                    "document.addEventListener('visibilitychange',function(){if(document.hidden)disarm();});",
                    "function show(m){disarm();"):
             self.assertIn(ev, js)
         self.assertNotIn("readyState", js, "a parsing pane document is wired like any other, never skipped")
-        # the only timers in the script are the in-flight poll's, none of them touch the armed state
-        arm_to_disarm = js[js.index("function disarm("):js.index("function show(")]
-        self.assertNotIn("setTimeout", arm_to_disarm)
+        self.assertNotIn("'pointerup'", js, "the press is not cleared at pointerup: a tap's focus move comes after it")
+        # the only timers in the WHOLE served script are the in-flight poll's two setTimeout(poll,3000)
+        # calls, and no other clock: a new listener that disarmed on a timer, or a setInterval, adds a call
+        # and fails this
+        self.assertEqual(re.findall(r"set(?:Timeout|Interval)\([^)]*\)", js), ["setTimeout(poll,3000)"] * 2)
+        for banned in ("requestAnimationFrame", "requestIdleCallback", "Date.now", "performance.now"):
+            self.assertNotIn(banned, js)
 
     def test_the_shells_escape_chain_asks_the_banner_first(self):
         esc = km._LANDING_ESC_JS
@@ -544,6 +646,16 @@ class Wiring(unittest.TestCase):
         self.assertIn("#rupd .rup-confirm{background:var(--err,#c0392b);", css)
         self.assertNotIn("rup-confirm{background:#", css, "never the bare hex")
         self.assertIn("#rupd.rup-arm .rup-go{display:none}", css, "the armed class hides Update; its own hidden flag stays the offer's")
+        self.assertIn("#rupd .rup-armed{font-weight:500;user-select:none;-webkit-user-select:none}", css,
+                      "the double-click the layout routes onto the label paints no selection")
+        self.assertIn("border-color:rgba(0,0,0,0.25);margin-left:12px}", css, "the confirm's margin: with the box's gap, 24px past the label")
+        self.assertIn("#rupd.rup-arm .rup-armed{display:flex;align-items:center;align-self:stretch;padding:6px 0}", css,
+                      "the label is as tall as a button and the row, under the armed class only so hidden still hides it")
+        js = km._UPD_JS
+        self.assertIn("function arm(){var t=label(),g=rect(go);", js, "Update's footprint is measured before it hides")
+        self.assertIn("box.classList.add('rup-arm');fit(g);wireFrames();", js)
+        self.assertIn("var w=Math.max(l.width,g.width),d=g.right-l.right;if(d>0)w=Math.max(w,l.width+2*d);", js,
+                      "at least Update's width, and wide enough that its right edge reaches Update's")
         html = km._landing()
         html = html if isinstance(html, str) else html.decode("utf-8")
         self.assertIn(":root{--err:#c0392b}", html)
@@ -558,7 +670,9 @@ class Wiring(unittest.TestCase):
         self.assertIn("z-index:99999;display:none;flex-wrap:wrap;width:max-content;align-items:center;gap:12px;"
                       "max-width:92vw;box-sizing:border-box;", css)
         self.assertIn("@media (max-width:640px){#rupd{width:92vw;gap:10px 12px}"
-                      "#rupd .rup-msg,#rupd .rup-armed{flex:1 1 100%}#rupd button{flex:1 1 auto;white-space:normal}}", css)
+                      "#rupd .rup-msg,#rupd .rup-armed{flex:1 1 100%}#rupd button{flex:1 1 auto;white-space:normal}"
+                      "#rupd .rup-cancel,#rupd .rup-confirm{order:1}}", css,
+                      "on a phone Cancel and the confirm share the row beneath the label, never the row Not now and Update had")
         self.assertIn("#rupd .rup-confirm:hover:not(:disabled){background:var(--err,#c0392b);", css,
                       "the confirm's hover restates the red")
 
@@ -590,24 +704,26 @@ const require = createRequire(process.env.EXT_PKG);
 const pw = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 let browser;
-try { browser = await pw[cfg.engine].launch(); }
+try { browser = await pw[cfg.engine].launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
-const R = { engine: cfg.engine, err: {}, pageErrors: [] };
+const R = { engine: cfg.engine, leg: cfg.leg, err: {}, pageErrors: [] };
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
 const page = await ctx.newPage();
 page.on("pageerror", (e) => { R.pageErrors.push(String((e && e.message) || e)); });
-let posts = 0, dismisses = 0;
+let posts = 0, dismisses = 0, check = cfg.checks.std;
 await page.route("http://romp.test/**", (route) => {
   const u = new URL(route.request().url());
   const html = (body) => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body });
   if (u.pathname === "/shell") return html(cfg.page);
   if (u.pathname === "/pane") return html(cfg.pane);
-  if (u.pathname === "/update-check") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(cfg.check) });
+  if (u.pathname === "/update-check") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(check) });
   if (u.pathname === "/update") { posts++; return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, state: "running" }) }); }
   if (u.pathname === "/update-dismiss") { dismisses++; return route.fulfill({ status: 200, contentType: "application/json", body: "{}" }); }
   return route.fulfill({ status: 404, body: "" });
 });
-const load = async () => {
+// `variant` picks the /update-check answer, and with it the label: std, shortest or longest
+const load = async (variant) => {
+  check = cfg.checks[variant || "std"];
   await page.goto("http://romp.test/shell");
   await page.waitForFunction(() => document.getElementById("rupd").classList.contains("show"), null, { timeout: 15000 });
   await page.waitForFunction(() => document.getElementById("pane").contentDocument && document.getElementById("pane").contentDocument.getElementById("pane-btn"), null, { timeout: 15000 });
@@ -624,28 +740,39 @@ const st = () => page.evaluate(() => {
         msg = box.querySelector(".rup-msg");
   const r = (n) => { const b = n.getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width, height: b.height }; };
   const a = document.activeElement;
+  const cs = getComputedStyle(lbl);
   return { armed: box.classList.contains("rup-arm"), shown: box.classList.contains("show"), go: go.textContent, label: lbl.textContent,
            goVisible: go.getClientRects().length > 0, labelHidden: lbl.hidden, confirmHidden: cf.hidden, cancelHidden: cx.hidden,
            notNowHidden: dm.hidden, goDisabled: go.disabled,
            active: a ? (a.id || a.tagName) : "", cfBg: getComputedStyle(cf).backgroundColor,
-           box: r(box), goRect: r(go), lblRect: r(lbl), cf: r(cf), cx: r(cx), msg: r(msg), scrollWidth: box.scrollWidth, clientWidth: box.clientWidth,
+           userSelect: cs.userSelect || cs.webkitUserSelect || "", lblMinWidth: lbl.style.minWidth,
+           box: r(box), goRect: r(go), lblRect: r(lbl), cf: r(cf), cx: r(cx), dm: r(dm), msg: r(msg), scrollWidth: box.scrollWidth, clientWidth: box.clientWidth,
            vw: window.innerWidth, docWidth: document.documentElement.scrollWidth,
            clicks: window.__clicks.slice(), cxClicks: window.__cxClicks };
 });
 const center = async (sel) => page.evaluate((s) => { const b = document.querySelector(s).getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; }, sel);
 const settle = async (want) => { for (let i = 0; i < 100 && posts < want; i++) await new Promise((r) => setTimeout(r, 50)); return posts; };
 const step = async (name, fn) => { try { R[name] = await fn(); } catch (e) { R.err[name] = String((e && e.stack) || e); } };
+// the plain row's rects (Update, Not now) before the arm, then the armed row's after it
+const armAt = async (w) => {
+  await page.setViewportSize({ width: w, height: 800 });
+  const plain = await st();
+  const goPt = await center("#rupd-go");
+  await page.click("#rupd-go");
+  const s = await st();
+  s.goPt = goPt;
+  s.plain = { go: plain.goRect, dm: plain.dm, msg: plain.msg, box: plain.box };
+  return s;
+};
 
 await load();
-// 1. widths: armed at a phone width, the label and Cancel stay inside the viewport; a desktop keeps one
-// row; at every width the confirm is never where Update was, and a REAL click on Cancel disarms
+// 1. widths (the standard label): armed at a phone width, the label and Cancel stay inside the viewport; a
+// desktop keeps one row; at every width the confirm is never where Update was, the red resolves through
+// the token under the pointer, and a REAL click on Cancel disarms
 await step("widths", async () => {
   const out = {};
   for (const w of [390, 360, 700, 1000, 1280]) {
-    await page.setViewportSize({ width: w, height: 800 });
-    const goPt = await center("#rupd-go");
-    await page.click("#rupd-go");
-    const s = await st(); s.goPt = goPt;
+    const s = await armAt(w);
     await page.hover("#rupd-confirm"); s.cfBgHover = (await st()).cfBg;
     await page.mouse.move(5, 790);
     const p0 = posts, d0 = dismisses, c0 = s.cxClicks;
@@ -656,7 +783,57 @@ await step("widths", async () => {
   await page.setViewportSize({ width: 1280, height: 800 });
   return out;
 });
+// 1b. the armed row's geometry against the plain row's with the shortest and the longest label, at the
+// five widths (Escape disarms between widths)
+await step("geometry", async () => {
+  const out = {};
+  for (const variant of ["shortest", "longest"]) {
+    await load(variant);
+    out[variant] = {};
+    for (const w of [390, 360, 700, 1000, 1280]) {
+      out[variant][w] = await armAt(w);
+      await page.keyboard.press("Escape");
+    }
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  return out;
+});
+// 1c. a spread double-tap with the shortest label: a tap 2 px inside Update's right edge, then one 8 px
+// further right; the second must land on the label or the gap, never on the confirm
+await step("spreadTaps", async () => {
+  const out = {};
+  await load("shortest");
+  for (const w of [700, 1000, 1280]) {
+    await page.setViewportSize({ width: w, height: 800 });
+    await page.evaluate(() => { window.__clicks = []; });
+    const plainGo = (await st()).goRect;
+    const b = { right: plainGo.right, y: plainGo.top + plainGo.height / 2 };
+    const before = posts;
+    await page.touchscreen.tap(b.right - 2, b.y);
+    await page.touchscreen.tap(b.right + 6, b.y);
+    const s = await st();
+    const p = await settle(before + 1);
+    out[w] = { armed: s.armed, clicks: s.clicks, posts: p - before, active: s.active, cf: s.cf, lbl: s.lblRect, plainGo };
+    await page.keyboard.press("Escape");
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  return out;
+});
+// 1d. a click on the banner's own message text keeps the armed state, and a drag still selects the text
+await step("textPress", async () => {
+  await load();
+  await page.click("#rupd-go");
+  await page.click("#rupd .rup-msg");
+  const afterClick = await st();
+  const m = await page.evaluate(() => { const r = document.querySelector("#rupd .rup-msg").getBoundingClientRect(); return { l: r.left + 4, r: r.right - 4, y: r.top + r.height / 2 }; });
+  await page.mouse.move(m.l, m.y); await page.mouse.down(); await page.mouse.move(m.r, m.y, { steps: 5 }); await page.mouse.up();
+  const afterDrag = await st();
+  const selected = await page.evaluate(() => String(window.getSelection()).length);
+  await page.keyboard.press("Escape");
+  return { afterClick, afterDrag, selected, posts };
+});
 // 2. a press inside the pane iframe disarms (the pane document's own pointerdown; Chromium also blurs the top window)
+await load();
 await step("pane", async () => {
   await page.click("#rupd-go");
   const armed = await st();
@@ -674,6 +851,19 @@ await step("dbl", async () => {
   await page.click("#rupd-confirm");
   const postsConfirm = await settle(before + 1);
   return { afterDbl, postsDbl: postsDbl - before, postsConfirm: postsConfirm - before, after: await st() };
+});
+// 3b. a touch tap on the confirm posts once: the touch order (pointerup before the compatibility mousedown
+// that moves focus) is the one the press flag must outlive
+await load();
+await step("tapRestart", async () => {
+  const before = posts;
+  const pt = await center("#rupd-go");
+  await page.touchscreen.tap(pt.x, pt.y);
+  const armed = await st();
+  const c = await center("#rupd-confirm");
+  await page.touchscreen.tap(c.x, c.y);
+  const p = await settle(before + 1);
+  return { armed, posts: p - before, after: await st() };
 });
 // 4. a held Enter on the focused Update button: the first keydown arms, the repeat (repeat:true) lands
 // on the label and posts nothing; Enter on the focused confirm posts once
@@ -703,7 +893,9 @@ await step("taps", async () => {
   const postsTaps = await settle(before + 1);
   return { after, postsTaps: postsTaps - before };
 });
-// 6. Tab from the armed state reaches the confirm, then Cancel, without disarming; Enter on Cancel disarms
+// 6. Tab from the armed state reaches the confirm without disarming; Shift+Tab from it reaches Cancel (it
+// stands before the label, where Not now stood; the label, tabindex -1, is not in the Tab order); Enter
+// on Cancel disarms
 await load();
 await step("tab", async () => {
   const before = posts;
@@ -711,7 +903,7 @@ await step("tab", async () => {
   const armed = await st();
   await page.keyboard.press("Tab");
   const onConfirm = await st();
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
   const onCancel = await st();
   await page.keyboard.press("Enter");
   const after = await st();
@@ -731,19 +923,18 @@ await step("escape", async () => {
   await page.keyboard.press("Escape");
   return { armed, afterEsc, afterEnter, posts: postsAfter - before };
 });
-// 8. Tab from Cancel into the pane: focus enters the frame (no focusout in Firefox); the pane window's focus disarms
+// 8. Tab from the confirm into the pane: focus enters the frame (no focusout in Firefox); the pane window's focus disarms
 await step("tabIntoPane", async () => {
   const before = posts;
   await page.click("#rupd-go");
   await page.keyboard.press("Tab");
-  await page.keyboard.press("Tab");
-  const onCancel = await st();
+  const onConfirm = await st();
   await page.keyboard.press("Tab");
   const after = await st();
   // where focus landed inside the frame: Chromium's first Tab into a frame reaches its first control,
   // Firefox's reaches the frame's document (its body) and the next Tab the control
   const paneActive = await page.frameLocator("#pane").locator("body").evaluate((b) => (b.ownerDocument.activeElement || {}).id || "");
-  return { onCancel, after, paneActive, posts: posts - before };
+  return { onConfirm, after, paneActive, posts: posts - before };
 });
 await browser.close();
 process.stdout.write("RESULT:" + JSON.stringify(R) + "\n");
@@ -769,18 +960,45 @@ PANE = ("<!DOCTYPE html><html><head><meta charset=utf-8></head><body id=pane-bod
         "pane <button id=pane-btn style='margin-top:120px'>in the pane</button></body></html>")
 CHECK = {"cur": "v0.1.0", "tag": "v0.2.0", "mode": "ask", "state": "", "boot": "b1", "drift": "", "driftSha": "",
          "sessions": 32, "midTurn": 3, "otherKernels": 0}       # the long label, the width case that overflowed
-LABEL = "Restart 32 sessions now, interrupting 3"
+# the three labels the geometry is measured with: the standard one, the shortest form the script can
+# produce (one session, nothing interrupted, one kernel) and the longest (the manager did not answer)
+CHECKS = {"std": CHECK,
+          "shortest": dict(CHECK, sessions=1, midTurn=0),
+          "longest": dict(CHECK, sessions=32, midTurn=3, otherKernels=None)}
+LABELS = {"std": "Restart 32 sessions now, interrupting 3",
+          "shortest": "Restart 1 session now",
+          "longest": "Restart 32 sessions here now, interrupting 3; the other kernels may restart too (the manager did not answer)"}
+LABEL = LABELS["std"]
 
 
 def _contains(rect, pt):
     return rect["left"] <= pt["x"] <= rect["right"] and rect["top"] <= pt["y"] <= rect["bottom"]
 
 
+def _disjoint(a, b):
+    """No pixel in common (a hidden element's zero rect is disjoint from everything)."""
+    return (a["right"] <= b["left"] or b["right"] <= a["left"] or a["bottom"] <= b["top"] or b["bottom"] <= a["top"]
+            or not a["width"] or not b["width"])
+
+
+def _covers(a, b, tol=0.5):
+    """b lies inside a, to half a pixel (engines round the rects differently)."""
+    return (a["left"] <= b["left"] + tol and a["right"] >= b["right"] - tol
+            and a["top"] <= b["top"] + tol and a["bottom"] >= b["bottom"] - tol)
+
+
 class Browser(unittest.TestCase):
-    """One driver run per engine over the scratch page; each test reads one facet per engine that ran.
-    Skips loudly without playwright or a browser (CI installs none); an engine that fails to launch
-    skips its own leg and test_firefox_ran says so."""
-    ENGINES = ("chromium", "firefox")
+    """One driver run per leg over the scratch page; each test reads one facet per leg that ran. Skips
+    loudly without playwright or a browser (CI installs none); a leg that fails to launch skips its own
+    run and the *_ran tests say so. Four legs: Chromium, Firefox and WebKit as installed, and Firefox
+    under Gecko's own switch for the WebKit focus rule (a press does not focus a button, so the mousedown
+    on the confirm or Cancel blurs the armed label to nothing before the click: the value macOS Firefox
+    shipped until 2021 and Safari's rule to this day; Playwright's Linux WebKit is the GTK port, which
+    focuses buttons on a press and does not show it). The pref is an int32: a bool aborts the launch."""
+    LEGS = (("chromium", "chromium", {}),
+            ("firefox", "firefox", {}),
+            ("webkit", "webkit", {}),
+            ("firefox-mousefocus0", "firefox", {"firefoxUserPrefs": {"accessibility.mouse_focuses_formcontrol": 0}}))
     maxDiff = None
 
     @classmethod
@@ -793,21 +1011,21 @@ class Browser(unittest.TestCase):
         with open(driver, "w") as f:
             f.write(DRIVER)
         page = _scratch_page()
-        for engine in cls.ENGINES:
-            cfg = os.path.join(lab, engine + ".json")
+        for leg, engine, launch in cls.LEGS:
+            cfg = os.path.join(lab, leg + ".json")
             with open(cfg, "w") as f:
-                json.dump({"engine": engine, "page": page, "pane": PANE, "check": CHECK}, f)
-            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
+                json.dump({"leg": leg, "engine": engine, "launch": launch, "page": page, "pane": PANE, "checks": CHECKS}, f)
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=600,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if p.returncode == 3:
-                cls.skipped[engine] = "no playwright %s on this box (CI installs none): %s" % (engine, p.stderr.strip()[:200])
+                cls.skipped[leg] = "no playwright %s on this box (CI installs none): %s" % (engine, p.stderr.strip()[:200])
                 continue
             if p.returncode != 0:
-                raise AssertionError("%s driver failed:\n%s%s" % (engine, p.stdout[-3000:], p.stderr[-3000:]))
+                raise AssertionError("%s driver failed:\n%s%s" % (leg, p.stdout[-3000:], p.stderr[-3000:]))
             line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
             if line is None:
-                raise AssertionError("%s driver printed no result:\n%s%s" % (engine, p.stdout[-3000:], p.stderr[-3000:]))
-            cls.R[engine] = json.loads(line[len("RESULT:"):])
+                raise AssertionError("%s driver printed no result:\n%s%s" % (leg, p.stdout[-3000:], p.stderr[-3000:]))
+            cls.R[leg] = json.loads(line[len("RESULT:"):])
         shutil.rmtree(lab, ignore_errors=True)
         if not cls.R:
             raise unittest.SkipTest("; ".join(cls.skipped.values()))
@@ -823,6 +1041,20 @@ class Browser(unittest.TestCase):
         if "firefox" in self.skipped:
             self.skipTest(self.skipped["firefox"])
         self.assertIn("firefox", self.R)
+
+    def test_webkit_ran(self):
+        # the third engine; its Linux port focuses buttons on a press, so the WebKit focus rule itself is
+        # measured through the Gecko switch leg, not here
+        if "webkit" in self.skipped:
+            self.skipTest(self.skipped["webkit"])
+        self.assertIn("webkit", self.R)
+
+    def test_the_gecko_switch_for_the_webkit_focus_rule_ran(self):
+        # the leg where a press does not focus a button: the confirm and Cancel cases below are red on it
+        # without the press flag (the label's focusout to nothing disarmed under the mousedown)
+        if "firefox-mousefocus0" in self.skipped:
+            self.skipTest(self.skipped["firefox-mousefocus0"])
+        self.assertIn("firefox-mousefocus0", self.R)
 
     def test_a_press_inside_a_pane_iframe_disarms(self):
         for engine, r in self.R.items():
@@ -845,6 +1077,15 @@ class Browser(unittest.TestCase):
                 self.assertEqual(d["postsConfirm"], 1, engine + ": a click on the confirm posted once")
                 self.assertTrue(d["after"]["goDisabled"], engine + ": and the Update button came back disabled under the wait")
 
+    def test_a_touch_tap_on_the_confirm_posts_once(self):
+        # the touch order: pointerup before the compatibility mousedown that moves focus. Where a press does
+        # not focus a button (the Gecko switch leg) the label blurs to nothing under that mousedown, after
+        # pointerup; the press flag outlives pointerup, so the tap's click reaches the confirm
+        for engine, r in self.R.items():
+            with self.subTest(engine=engine):
+                t = r["tapRestart"]
+                self.assertEqual((t["armed"]["armed"], t["posts"]), (True, 1), (engine, t))
+
     def test_a_held_enter_arms_and_posts_nothing_and_enter_on_the_focused_confirm_posts_once(self):
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
@@ -863,9 +1104,35 @@ class Browser(unittest.TestCase):
                                  engine + ": two taps armed and posted nothing (clicks: %r)" % t["after"]["clicks"])
                 self.assertEqual([c[0] for c in t["after"]["clicks"]], ["rupd-go", "rupd-armed"], engine)
 
+    def test_a_spread_second_tap_past_updates_right_edge_never_reaches_the_confirm(self):
+        # the shortest label at the desktop widths: a tap 2 px inside Update's right edge arms; a second
+        # 8 px further right lands on the label (which reaches past that edge) or the gap before the
+        # confirm, never on the confirm; nothing posts
+        for engine, r in self.R.items():
+            with self.subTest(engine=engine):
+                for vw, s in r["spreadTaps"].items():
+                    self.assertEqual((s["posts"], s["armed"]), (0, True), (engine, vw, s))
+                    self.assertNotIn("rupd-confirm", [c[0] for c in s["clicks"]], (engine, vw, s["clicks"]))
+                    go = s["plainGo"]
+                    self.assertTrue(s["cf"]["left"] >= go["right"] + 24 - 0.5 or s["cf"]["top"] >= go["bottom"],
+                                    (engine, vw, "the confirm begins 24 px past Update's right edge, or on a row below it", s))
+
+    def test_a_click_on_the_banners_own_text_keeps_the_armed_state_and_the_text_still_selects(self):
+        # a press on the message text blurs the label to nothing in every engine; it began inside the box,
+        # so nothing disarms, and the text is not made unselectable to get there
+        for engine, r in self.R.items():
+            with self.subTest(engine=engine):
+                t = r["textPress"]
+                self.assertTrue(t["afterClick"]["armed"], (engine, "a click on the banner's text disarmed", t["afterClick"]))
+                self.assertTrue(t["afterDrag"]["armed"], (engine, "a drag over the banner's text disarmed", t["afterDrag"]))
+                self.assertGreater(t["selected"], 0, engine + ": the message text still selects")
+                self.assertEqual(t["posts"], 0, engine)
+
     def test_a_real_click_on_cancel_disarms_and_keeps_the_offer(self):
-        # Cancel's mousedown moves focus within the banner (relatedTarget inside), so the disarm waits
-        # for the click itself: the handler runs, nothing is posted or dismissed, the offer stays shown
+        # where the engine focuses a button on a press, Cancel's mousedown moves focus within the banner
+        # (relatedTarget inside); where it does not (the Gecko switch leg, Safari), the label blurs to
+        # nothing under a press that began inside the box: kept either way, so the disarm waits for the
+        # click itself: the handler runs, nothing is posted or dismissed, the offer stays shown
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
                 for vw, s in r["widths"].items():
@@ -876,13 +1143,16 @@ class Browser(unittest.TestCase):
                     self.assertEqual(a["cxClicks"], 1, (engine, vw, "Cancel's own click handler ran"))
                     self.assertEqual(a["active"], "rupd-go", (engine, vw, "focus back on Update"))
 
-    def test_tab_reaches_the_confirm_and_cancel_and_enter_on_cancel_disarms(self):
+    def test_tab_reaches_the_confirm_and_shift_tab_reaches_cancel_and_enter_on_cancel_disarms(self):
+        # the armed row's flow is Cancel, the label, the confirm: Tab from the label reaches the confirm,
+        # Shift+Tab from the confirm reaches Cancel (the label, tabindex -1, is skipped by Tab), and the
+        # banner stays armed throughout
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
                 t = r["tab"]
                 self.assertEqual((t["armed"]["armed"], t["armed"]["active"]), (True, "rupd-armed"), engine)
                 self.assertEqual((t["onConfirm"]["armed"], t["onConfirm"]["active"]), (True, "rupd-confirm"), engine + ": Tab to the confirm keeps the armed state")
-                self.assertEqual((t["onCancel"]["armed"], t["onCancel"]["active"]), (True, "rupd-cancel"), engine + ": Tab to Cancel too")
+                self.assertEqual((t["onCancel"]["armed"], t["onCancel"]["active"]), (True, "rupd-cancel"), engine + ": Shift+Tab to Cancel too")
                 self.assertEqual((t["after"]["armed"], t["after"]["shown"], t["after"]["active"], t["after"]["cxClicks"]),
                                  (False, True, "rupd-go", 1), engine + ": Enter on Cancel disarmed (state: %r)" % t["after"])
                 self.assertEqual((t["posts"], t["dismisses"]), (0, 0), engine)
@@ -896,11 +1166,11 @@ class Browser(unittest.TestCase):
                                  engine + ": Escape disarmed and put focus back on Update (state: %r)" % e["afterEsc"])
                 self.assertEqual((e["afterEnter"]["armed"], e["posts"]), (True, 0), engine + ": Enter after Escape armed again, no post")
 
-    def test_tab_from_cancel_into_the_pane_disarms(self):
+    def test_tab_from_the_confirm_into_the_pane_disarms(self):
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
                 t = r["tabIntoPane"]
-                self.assertEqual((t["onCancel"]["armed"], t["onCancel"]["active"]), (True, "rupd-cancel"), engine)
+                self.assertEqual((t["onConfirm"]["armed"], t["onConfirm"]["active"]), (True, "rupd-confirm"), engine)
                 self.assertEqual(t["after"]["active"], "pane", engine + ": the shell's focus is on the frame")
                 self.assertIn(t["paneActive"], ("pane-btn", "pane-body"), engine + ": focus went into the pane")
                 self.assertFalse(t["after"]["armed"], engine + ": focus entering the pane disarmed (state: %r)" % t["after"])
@@ -918,6 +1188,40 @@ class Browser(unittest.TestCase):
                     self.assertFalse(s["goVisible"], (engine, vw, "Update is not shown while armed"))
                     if vw in ("1000", "1280"):
                         self.assertTrue(_contains(s["lblRect"], s["goPt"]), (engine, vw, "the label took Update's place", s["lblRect"], s["goPt"]))
+
+    def test_the_armed_controls_never_share_a_pixel_with_a_plain_row_control(self):
+        # measured at 360, 390, 700, 1000 and 1280 with the standard label, the shortest and the longest:
+        # the confirm's rect is disjoint from Update's and Not now's plain rects, so no second activation
+        # of one gesture reaches it wherever the first landed, and a click meant for it after a disarm the
+        # user did not perform (a new offer pushed, a pane script's focus call) lands on no control;
+        # Cancel's rect is disjoint from Update's, so such a click meant for Cancel never arms. On a
+        # one-row layout (the label beside the message) the label covers Update's whole plain rect, is at
+        # least Update's width, and the confirm begins at least 24 px past both Update's right edge and
+        # the label's. The label does not select
+        for engine, r in self.R.items():
+            with self.subTest(engine=engine):
+                for variant, widths in (("std", r["widths"]), ("shortest", r["geometry"]["shortest"]), ("longest", r["geometry"]["longest"])):
+                    for vw, s in widths.items():
+                        where = (engine, variant, vw)
+                        self.assertTrue(s["armed"], where)
+                        self.assertEqual(s["label"], LABELS[variant], where)
+                        go, dm = s["plain"]["go"], s["plain"]["dm"]
+                        self.assertTrue(go["width"] and dm["width"], where + ("the plain row was measured",))
+                        self.assertTrue(_disjoint(s["cf"], go), where + ("the confirm over Update's plain rect", s["cf"], go))
+                        self.assertTrue(_disjoint(s["cf"], dm), where + ("the confirm over Not now's plain rect", s["cf"], dm))
+                        self.assertTrue(_disjoint(s["cx"], go), where + ("Cancel over Update's plain rect", s["cx"], go))
+                        self.assertGreaterEqual(s["lblRect"]["width"], go["width"] - 0.5, where + ("the label at least Update's width", s["lblRect"], go))
+                        self.assertEqual(s["userSelect"], "none", where)
+                        self.assertLessEqual(s["scrollWidth"], s["clientWidth"], where + ("the box does not overflow itself", s))
+                        self.assertLessEqual(s["docWidth"], s["vw"], where + ("no sideways scroll",))
+                        if s["cf"]["top"] < s["lblRect"]["bottom"] and s["cf"]["left"] > s["lblRect"]["left"]:   # the confirm on the label's row
+                            self.assertGreaterEqual(s["cf"]["left"], s["lblRect"]["right"] + 24 - 0.5, where + ("24 px past the label", s["cf"], s["lblRect"]))
+                        if s["lblRect"]["top"] < s["msg"]["bottom"]:      # the label beside the message: it took Update's place
+                            self.assertTrue(_covers(s["lblRect"], go), where + ("the label covers Update's plain rect", s["lblRect"], go))
+                            self.assertTrue(s["cf"]["left"] >= go["right"] + 24 - 0.5 or s["cf"]["top"] >= go["bottom"],
+                                            where + ("24 px past Update's right edge, or on a row below it", s["cf"], go))
+                        else:                                                # the label wrapped: the confirm is below Update's row too
+                            self.assertGreaterEqual(s["cf"]["top"], go["bottom"], where + ("the confirm on a row below Update's", s["cf"], go))
 
     def test_at_phone_widths_the_armed_row_stays_inside_the_viewport_and_a_desktop_keeps_one_row(self):
         for engine, r in self.R.items():

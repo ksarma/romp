@@ -9201,10 +9201,12 @@ def _user_todos_off_boot_notice():
 # (`git ls-remote --tags` — network read only, nothing local moves) and compares it against the
 # release this code descends from (_kernel_ver's VERSION file, "+" stripped). Three modes, persisted
 # in update-mode.json under STATE, "ask" by default — the check is ON out of the box:
-#   ask  — a newer release raises the shell's update banner; its Update button POSTs /update.
-#   auto — the kernel updates itself at boot, once per discovered version (update-attempted.json
-#          keeps a failing update from looping on every restart — that stall is logged, not silent).
-#   off  — never even checks.
+#   ask:  a newer release raises the shell's update banner. Its Update button arms a confirm step (the
+#         button gives its place to a label naming the restart, with a Restart and a Cancel beside it);
+#         only Restart POSTs /update, with confirmed:true, and the route refuses a body without it.
+#   auto: the kernel updates itself at boot, once per discovered version (update-attempted.json
+#         keeps a failing update from looping on every restart; that stall is logged, not silent).
+#   off:  never even checks.
 # The update itself (_run_update) runs DETACHED (start_new_session: install.sh reloads the manager
 # and the restart takes this kernel down, and the child must outlive both): fetch the tag, then
 # `git merge --ff-only <tag>` — the tree lands EXACTLY on the release commit, never the branch tip
@@ -9221,6 +9223,8 @@ _RESTART_REQUEST_MAX_S = 60   # curl --max-time on the script's restart request:
 #                                        answers ends in a report instead of a latch held for good
 _UPDATE_REPORT_FAULT = [""]   # the move-aside fault of a junk report still on disk, said once per episode (a move
 #                                        or a readable report ends it)
+_MANAGER_READ_FAULT = [""]    # why the manager's registry could not be read, said once per episode (a clean read
+#                                        ends it; a changed reason opens a new one): _manager_kernels
 _UPDATE_MODES = ("ask", "auto", "off")
 
 
@@ -9260,7 +9264,10 @@ def _manager_kernels(timeout=1.0):
     this kernel's sessions, the manager restarts each kernel it owns, so a box with more than one
     kernel loses more sessions than the count says, and the label says so when the registry holds
     another kernel. Never a read of kernels.json, which the manager parses on its own terms (it drops a
-    malformed entry) and which never lists a kernel /ensure spawned."""
+    malformed entry) and which never lists a kernel /ensure spawned. A manager on record that does not
+    answer well is said on stderr, once per episode (_manager_read_fault): the banner then says the other
+    kernels MAY restart too, never the single-kernel form, because a manager that missed this 1 s read
+    can still take the restart request, which waits up to _RESTART_REQUEST_MAX_S (review round 3)."""
     mport = os.environ.get("ROMP_MANAGER_PORT") or ""
     if not mport:
         return []
@@ -9271,14 +9278,30 @@ def _manager_kernels(timeout=1.0):
         body = resp.read()
         c.close()
         if resp.status != 200:
-            return None
-        d = json.loads(body)
-        ks = d.get("kernels") if isinstance(d, dict) else None
-        if not isinstance(ks, list):
-            return None
-        return [k for k in ks if isinstance(k, dict)]
-    except (OSError, ValueError, http.client.HTTPException):
-        return None
+            why = "GET /status answered %s" % resp.status
+        else:
+            d = json.loads(body)
+            ks = d.get("kernels") if isinstance(d, dict) else None
+            if isinstance(ks, list):
+                _MANAGER_READ_FAULT[0] = ""              # a clean read: any episode is over
+                return [k for k in ks if isinstance(k, dict)]
+            why = "GET /status answered without a kernels list"
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        why = "GET /status: %s" % (str(e) or type(e).__name__)
+    _manager_read_fault(mport, why)
+    return None
+
+
+def _manager_read_fault(mport, why):
+    """One plain line on stderr per episode of failed registry reads (the pattern of _UPDATE_REPORT_FAULT):
+    /update-check reads the registry at every page load, at every arm of the banner and every 3 s of an
+    in-flight wait, so a manager that stays silent would otherwise write a line per read. The first failed
+    read after a clean one says why; a changed reason says so again; a clean read ends the episode."""
+    if _MANAGER_READ_FAULT[0] == why:
+        return
+    _MANAGER_READ_FAULT[0] = why
+    sys.stderr.write("update check: the manager on port %s did not answer its registry read (%s); the update banner "
+                     "says the other kernels may restart too until it does\n" % (mport, why))
 
 
 def _other_kernels():
@@ -53380,10 +53403,12 @@ paint();})();
 # never crosses the iframe boundary). Same dual wiring as the palette (palette-main.ts) and the
 # Alt+Arrow nav (_LANDING_FOCUS_JS): capture on the shell document AND on every same-origin pane
 # document, re-attached on every iframe (re)load. Each panel exposes its OWN close (their state
-# cleanup lives in those closures); this block only decides which panel Escape means, topmost first
-# (shortcuts dialog z300 — whose close() first CANCELS an in-progress chord recording, one Escape
-# level at a time — then usage z300 > Log z210 > net z200). With no shell modal open it touches
-# nothing, so pane-local Escapes (dialogs, menus inside the chat) keep working.
+# cleanup lives in those closures); this block only decides which panel Escape means, topmost first:
+# the update banner's armed confirm step (window.__rompUpdDisarm, over everything at z99999; true only
+# when Escape ended an armed state), then the shortcuts dialog (z300, whose close() first CANCELS an
+# in-progress chord recording, one Escape level at a time), then usage z300 > Log z210 > net z200. With
+# no shell modal open and the banner plain it touches nothing, so pane-local Escapes (dialogs, menus
+# inside the chat) keep working.
 _LANDING_ESC_JS = """
 (function(){
 function onEsc(e){if(e.key!=='Escape')return;
@@ -55957,9 +55982,10 @@ def _stale_block(v):
 
 # UPDATE banner (the user 2026-08-09): a newer romp RELEASE exists (the boot check, _update_check) —
 # distinct from #rstale, which is about this tab running an older BUNDLE than the kernel serves. Same
-# top-center prompt vocabulary, offset below rstale so the two can stack. The Update button POSTs
-# /update and then polls /update-check: a changed `boot` means the new kernel is up → reload; a
-# `failed`/`updated` answer means the still-running kernel consumed the child's report → say so.
+# top-center prompt vocabulary, offset below rstale so the two can stack. Update arms a confirm step
+# (the label, Restart and Cancel below); only Restart POSTs /update, with confirmed:true, and then polls
+# /update-check: a changed `boot` means the new kernel is up (reload); a `failed`/`updated` answer
+# means the still-running kernel consumed the child's report (say so).
 # "Not now" is page-scoped on purpose — the next kernel start re-offers (what the user asked for).
 _UPD_CSS = (
     "#rupd{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:99999;display:none;flex-wrap:wrap;"
@@ -55974,18 +56000,34 @@ _UPD_CSS = (
     "#rupd .rup-go:hover:not(:disabled){background:#62c80a}"
     "#rupd .rup-dismiss,#rupd .rup-cancel{background:none;color:#9aa0a6;border-color:#4a4d51}"
     "#rupd .rup-dismiss:hover,#rupd .rup-cancel:hover{color:#e6e6e6}"
-    # the ARMED state (the confirm step, 2026-09-10; this layout since review round 2): the Update button
-    # gives its place to a LABEL, the restart the confirm is about to run, in counts, and the confirm
-    # button stands BESIDE it with Cancel, in the error red (--err, which the shell defines for both
-    # themes; the literal is the var() fallback for a page without the token): a shift off Update's green
-    # (#54B204, the brand green styles.css names --st-awaitbg-bg) so the eye sees the row change under
-    # the first click. The label is not a control, so a second activation at the Update button's point
-    # (a double-click's second click, a double-tap's second tap, a held key's repeat) lands on it and
-    # does nothing, whatever click count the engine reports; the confirm is never where Update was.
-    # The class on the box is the armed state: it hides Update while the offer's own hidden flag on the
-    # button (the in-flight wait sets it) stays untouched
-    "#rupd.rup-arm .rup-go{display:none}#rupd .rup-armed{font-weight:500}"
-    "#rupd .rup-confirm{background:var(--err,#c0392b);color:#fff;font-weight:600;border-color:rgba(0,0,0,0.25)}"
+    # the ARMED state (the confirm step, 2026-09-10; this layout since review round 3): the plain row
+    # reads Not now, Update; the armed row reads Cancel, the label, Restart. The Update button gives its
+    # place to a LABEL, the restart the confirm is about to run, in counts, and the confirm button stands
+    # to the RIGHT of the label, in the error red (--err, which the shell defines for both themes; the
+    # literal is the var() fallback for a page without the token): a shift off Update's green (#54B204,
+    # the brand green styles.css names --st-awaitbg-bg) so the eye sees the row change under the first
+    # click. The label is not a control, so a second activation at the Update button's point (a
+    # double-click's second click, a double-tap's second tap, a held key's repeat) lands on it and does
+    # nothing, whatever click count the engine reports. The gap before the confirm is 24px (the box's
+    # 12px gap plus this margin), so a second tap a few pixels past Update's right edge is off the
+    # confirm too; arm() widens the label until its right edge reaches where Update's was (the box is
+    # centred and sized to its content, so it grows both ways), which puts the confirm at least 24px
+    # past Update's whole footprint and Cancel, left of the label, left of where Not now stood. So the
+    # confirm never shares a pixel with a plain-row control, and after a disarm the user did not perform
+    # (a new offer pushed, a script's focus call) a click meant for the confirm lands on padding or
+    # nothing, never on Not now or Update. Cancel may then land on Not now's old footprint only when the
+    # shift is shorter than Cancel (it is not on any width measured; a dismissal is the lesser harm and
+    # the next release re-offers). The label does not select (user-select none): the double-click the
+    # layout routes onto it would otherwise paint a word. The class on the box is the armed state: it
+    # hides Update while the offer's own hidden flag on the button (the in-flight wait sets it) stays
+    # untouched
+    "#rupd.rup-arm .rup-go{display:none}#rupd .rup-armed{font-weight:500;user-select:none;-webkit-user-select:none}"
+    # the label is as tall as a button (6px of padding: a button's 5px and its 1px border) and stretches to
+    # the row, so Update's footprint is covered top to bottom too and, on a row of its own, the row beneath
+    # begins below that footprint; display is set under the armed class only, so the hidden attribute
+    # keeps hiding the label
+    "#rupd.rup-arm .rup-armed{display:flex;align-items:center;align-self:stretch;padding:6px 0}"
+    "#rupd .rup-confirm{background:var(--err,#c0392b);color:#fff;font-weight:600;border-color:rgba(0,0,0,0.25);margin-left:12px}"
     "#rupd .rup-confirm:hover:not(:disabled){background:var(--err,#c0392b);filter:brightness(1.1)}"
     # Widths (review round 1 of the confirm step). A fixed box with left:50% shrink-to-fits against the
     # HALF viewport, so a long armed label wrapped the message to two lines on a desktop and, on a phone,
@@ -55995,10 +56037,14 @@ _UPD_CSS = (
     # and the buttons drop beneath it, sharing its width for finger-sized targets; width is explicit
     # there so the row layout does not depend on the box's intrinsic size, and a button's text may wrap
     # (the armed label is wider than a 360px phone's box in Firefox's metrics; nowrap would overflow it).
-    # The armed label takes a full row of its own there too, so the confirm and Cancel drop beneath it and
-    # the confirm never sits on the row where Update was.
+    # The armed label takes a full row of its own there too, and Cancel and the confirm are ordered after
+    # it (they precede it in flow for the desktop row; alone on the row Not now and Update had, Cancel
+    # would span it), so they share the row beneath the label and the confirm never sits on the row where
+    # Update was; the label is as tall as a button (the padding rule above), so that row begins below
+    # Update's footprint.
     "@media (max-width:640px){#rupd{width:92vw;gap:10px 12px}"
-    "#rupd .rup-msg,#rupd .rup-armed{flex:1 1 100%}#rupd button{flex:1 1 auto;white-space:normal}}"
+    "#rupd .rup-msg,#rupd .rup-armed{flex:1 1 100%}#rupd button{flex:1 1 auto;white-space:normal}"
+    "#rupd .rup-cancel,#rupd .rup-confirm{order:1}}"
     # light theme (body.theme-light): white card, hairline border, warm dark text
     "body.theme-light #rupd{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
     "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
@@ -56006,18 +56052,20 @@ _UPD_CSS = (
     "body.theme-light #rupd .rup-dismiss:hover,body.theme-light #rupd .rup-cancel:hover{color:#1F1E1D}")
 _UPD_HTML = (
     "<div id=rupd role=alert><span class=rup-msg></span>"
-    "<button class=rup-go id=rupd-go>Update</button>"
-    # the armed row: the label (focusable by script only, so focus can rest on it and Tab moves on to
-    # the confirm), the confirm and Cancel
-    "<span class=rup-armed id=rupd-armed tabindex=-1 hidden></span>"
-    "<button class=rup-confirm id=rupd-confirm hidden>Restart</button>"
+    # the plain row: Not now, then Update on the right. The armed row, in the same order: Cancel where
+    # Not now stood, the label where Update stood (focusable by script only, so focus can rest on it;
+    # Tab moves on to the confirm, Shift+Tab back to Cancel, and Escape cancels), then the confirm to
+    # the right of the label, so it is never where a plain-row control is
+    "<button class=rup-dismiss id=rupd-dismiss>Not now</button>"
     "<button class=rup-cancel id=rupd-cancel hidden>Cancel</button>"
-    "<button class=rup-dismiss id=rupd-dismiss>Not now</button></div>")
+    "<button class=rup-go id=rupd-go>Update</button>"
+    "<span class=rup-armed id=rupd-armed tabindex=-1 hidden></span>"
+    "<button class=rup-confirm id=rupd-confirm hidden>Restart</button></div>")
 _UPD_JS = (
     "(function(){var box=document.getElementById('rupd');if(!box)return;"
     "var msg=box.querySelector('.rup-msg'),go=document.getElementById('rupd-go'),dm=document.getElementById('rupd-dismiss'),"
     "cx=document.getElementById('rupd-cancel'),lbl=document.getElementById('rupd-armed'),cf=document.getElementById('rupd-confirm');"
-    "var dismissedTag='',curTag='',waiting=false,bootNow='',armed=false,impact=null;"
+    "var dismissedTag='',curTag='',waiting=false,bootNow='',armed=false,impact=null,press=false;"
     # Two clicks, never one (2026-09-10): a single click POSTed /update, and a click that only meant to
     # focus the dashboard window landed on the button and restarted every session on the box, cutting
     # every turn in flight. The first click ARMS the banner: the Update button gives its place to a
@@ -56036,8 +56084,11 @@ _UPD_JS = (
     # shell document, and in Firefox fires neither the shell window's blur nor a focusout when Tab leaves
     # the banner into a frame, measured in the browser leg of tests/test_update_banner_confirm.py:
     # wireFrames below); focus leaving the banner (focusout on the box whose relatedTarget is not inside
-    # it: a move between the label, the confirm and Cancel keeps the armed state, so both are clickable
-    # and Tab-reachable); the window losing focus (blur; a tab hidden); and every re-render of the banner
+    # it: a move between the label, the confirm and Cancel keeps the armed state, and so does a focusout
+    # with NO relatedTarget while a press that began inside the box is under way, because an engine that
+    # does not focus a button on a press (WebKit: Safari, every iOS browser) blurs the label to nothing at
+    # the mousedown on the confirm or Cancel, before the click, and a press on the banner's own text does
+    # the same everywhere: `press` below); the window losing focus (blur; a tab hidden); and every re-render
     # (show(): a new offer, the running flip, a poll's verdict, the boot retire). So the click that
     # focuses the window never counts: focus left the window on a blur that already disarmed the banner,
     # and a focusing click finds a plain Update it can at most arm.
@@ -56045,39 +56096,64 @@ _UPD_JS = (
     # the sessions a restart interrupts, over every backend THIS kernel runs) and otherKernels (how many
     # other kernels the manager's restart-all restarts with this one): the arm shows the freshest answer
     # held and re-reads the route at once, so the label names the box as it stands at the click. When
-    # another kernel restarts too the label says so and that its counts are this kernel's. An answer
-    # without counts (the kernel does not know yet) drops the held counts, so the label falls back to
-    # its count-less form instead of showing a previous life's numbers; a failed read is no information
-    # and changes nothing. The kernel holds the same line: /update refuses a body without confirmed:true.
+    # another kernel restarts too the label says so (one kernel or several) and that its counts are this
+    # kernel's; when the manager did not answer the registry read (otherKernels null, or absent) the
+    # label says the other kernels MAY restart too, never the single-kernel form, since a manager that
+    # missed the read can still take the restart request. An answer without counts (the kernel does not
+    # know yet) drops the held counts, so the label falls back to its count-less form instead of showing
+    # a previous life's numbers; a failed read is no information and changes nothing. The kernel holds
+    # the same line: /update refuses a body without confirmed:true.
     "function label(){if(!impact)return 'Restart every session now';var n=impact.sessions,m=impact.midTurn,o=impact.others;"
-    "var here=o?' here':'',tail=o?'; the other kernels restart too':'';"
+    "var here=(o||o===null)?' here':'',tail=o===null?'; the other kernels may restart too (the manager did not answer)':"
+    "o?('; the other kernel'+(o===1?' restarts':'s restart')+' too'):'';"
     "if(!n)return 'Restart now, nothing to interrupt'+here+tail;"
     "return 'Restart '+n+' session'+(n===1?'':'s')+here+' now'+(m?', interrupting '+m:'')+tail;}"
-    "function note(d){if(!d)return;impact=(typeof d.sessions==='number')?{sessions:d.sessions,midTurn:d.midTurn||0,others:d.otherKernels||0}:null;}"
+    "function note(d){if(!d)return;impact=(typeof d.sessions==='number')?{sessions:d.sessions,midTurn:d.midTurn||0,"
+    "others:(typeof d.otherKernels==='number')?d.otherKernels:null}:null;}"
     # `back`: the gesture was the user's own cancel (Cancel, Escape) with focus inside the banner, so
     # focus returns to the Update button the armed row replaced; every other disarm leaves focus where
-    # the event that caused it put it (a pane, another control, nothing)
-    "function disarm(back){if(!armed)return;var inside=back&&document.activeElement&&box.contains(document.activeElement);"
+    # the event that caused it put it (a pane, another control, nothing). Cancel's click passes `always`:
+    # the press was on the banner whether or not the engine focused the button (WebKit blurs the label to
+    # nothing at the mousedown, so nothing inside the box is focused at the click), and focus returns to
+    # Update either way
+    "function disarm(back,always){if(!armed)return;var a=document.activeElement,inside=back&&(always||(a&&box.contains(a)));"
     "armed=false;box.classList.remove('rup-arm');lbl.hidden=true;cf.hidden=true;cx.hidden=true;dm.hidden=waiting;"
     "if(inside)try{go.focus({preventScroll:true});}catch(e){}}"
     # the label is computed before armed flips: a label that threw would otherwise leave a plain-looking
-    # Update armed. Focus moves to the label BEFORE Update hides (a focusout on Update whose relatedTarget
-    # is inside the banner, kept), so a held Enter's repeats land on the label, and Tab goes on to the
-    # confirm and Cancel
-    "function arm(){var t=label();armed=true;lbl.textContent=t;lbl.hidden=false;cf.hidden=false;cx.hidden=false;dm.hidden=true;"
-    "try{lbl.focus({preventScroll:true});}catch(e){}box.classList.add('rup-arm');wireFrames();"
+    # Update armed. Update's footprint is measured before it hides (fit below needs it). Focus moves to
+    # the label BEFORE Update hides (a focusout on Update whose relatedTarget is inside the banner, kept),
+    # so a held Enter's repeats land on the label, and Tab goes on to the confirm
+    "function arm(){var t=label(),g=rect(go);armed=true;lbl.textContent=t;lbl.style.minWidth='';lbl.hidden=false;cf.hidden=false;cx.hidden=false;dm.hidden=true;"
+    "try{lbl.focus({preventScroll:true});}catch(e){}box.classList.add('rup-arm');fit(g);wireFrames();"
     "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){note(d);if(armed)lbl.textContent=label();})"
     "['catch'](function(e){});}"
+    # the label covers the whole footprint the Update button had, so the second activation of one gesture
+    # lands on it wherever the first did (Update's right edge included), and the confirm begins at least
+    # 24px past that edge: measured at the arm, not assumed. The box is centred and sized to its content,
+    # so the armed row shifts left by half of what it adds (Cancel is narrower than Not now, the label
+    # wider than Update, the confirm and its gap are new), and with a short label the label's right edge
+    # stops short of Update's; widening the label by twice the shortfall moves that edge onto Update's.
+    # At least Update's own width in any case. Skipped when the label has a row of its own (the phone
+    # layout, or a long label that wrapped): the confirm is then on a row below the one Update was on.
+    # No measurement in a document without layout (the node harness): the label keeps its natural width
+    "function rect(n){try{return n.getBoundingClientRect();}catch(e){return null;}}"
+    "function fit(g){var l=rect(lbl),m=rect(msg);if(!g||!l||!m||!g.width||l.top>=m.bottom)return;"
+    "var w=Math.max(l.width,g.width),d=g.right-l.right;if(d>0)w=Math.max(w,l.width+2*d);"
+    "if(w>l.width)lbl.style.minWidth=Math.ceil(w)+'px';}"
     # every same-origin pane document hears presses and focus for the banner: wired now (the panes
     # precede this script in the body), on each (re)load of a frame (a pane that reloads while armed gets
     # a fresh, unwired document; the load handler wires it), and at every arm (a frame added since the
-    # page loaded). A document still parsing (readyState loading) is wired at once like any other: the
-    # document object is the one that finishes loading, its listeners hold, and a press during the parse
-    # must disarm like a press after it (the load handler finds it wired and does nothing; a skip here
-    # left a pane unwired until its load, and a press in it on a control that cancels mousedown kept the
-    # armed state). Idempotent per document; a cross-origin frame throws on contentDocument and is
-    # skipped (a residual: a press there disarms nothing). The pane WINDOW's focus, capture phase, is
-    # the disarm Firefox needs when Tab leaves Cancel into a frame (no focusout fires in the shell).
+    # page loaded). A document still parsing (readyState loading) at the arm or at the load is wired at
+    # once like any other: the document object is the one that finishes loading, its listeners hold, and
+    # a press during the parse must disarm like a press after it (the load handler finds it wired and does
+    # nothing; a skip here left a pane unwired until its load, and a press in it on a control that cancels
+    # mousedown kept the armed state). Idempotent per document. Two residuals: a cross-origin frame throws
+    # on contentDocument and is skipped (a press there disarms nothing); and a pane document that REPLACES
+    # the wired one after the arm (a navigation inside the frame) is unwired until its load event, so a
+    # press in it during its parse disarms nothing: the parent still sees the old document at pagehide
+    # and unload, so only the load can wire it without a timer (no shipped path navigates a pane in
+    # place; a pane reload reloads the top document). The pane WINDOW's focus, capture phase, is the
+    # disarm Firefox needs when Tab leaves the banner into a frame (no focusout fires in the shell).
     "function wireFrame(f){try{var d=f.contentDocument;if(!d||d.__rompUpdWired)return;"
     "d.__rompUpdWired=true;d.addEventListener('pointerdown',function(){if(armed)disarm();},true);"
     "var w=d.defaultView;if(w)w.addEventListener('focus',function(){if(armed)disarm();},true);}catch(e){}}"
@@ -56141,15 +56217,27 @@ _UPD_JS = (
     "if(window.__rompNotify)window.__rompNotify('sync','the update this prompt offered already ran \\u2014 nothing left to do');return;}"
     "go.disabled=false;dm.hidden=false;"
     "show('Could not start the update: '+em);});};"
-    "cx.onclick=function(){disarm(true);};"
+    "cx.onclick=function(){disarm(true,true);};"
     # the shell's Escape chain (_LANDING_ESC_JS) asks this first: true when Escape ended an armed state
     "window.__rompUpdDisarm=function(){if(!armed)return false;disarm(true);return true;};"
     # the disarms for attention moving off the banner, each covering a case the others miss (the comment
     # above says which): a press elsewhere in this document, a press or focus in a pane (wireFrames
-    # above), focus leaving the banner for anything outside it, the window losing focus
-    "document.addEventListener('pointerdown',function(e){if(armed&&!(e&&e.target&&box.contains(e.target)))disarm();},true);"
-    "box.addEventListener('focusout',function(e){if(!armed)return;var t=e&&e.relatedTarget;if(t&&box.contains(t))return;disarm();});"
-    "window.addEventListener('blur',function(){disarm();});"
+    # above), focus leaving the banner for anything outside it, the window losing focus. `press` is a
+    # press that began inside the box and has not ended: set by the document's capture-phase pointerdown
+    # (the same listener that disarms on a press outside, which also clears it), cleared by the click
+    # that ends the gesture, a pointercancel or the window's blur, and NOT by pointerup, because on a
+    # touch tap pointerup comes before the compatibility mousedown that moves focus (a flag cleared at
+    # pointerup left a tap on the confirm posting nothing where the engine does not focus buttons). While
+    # it is set, a focusout with no relatedTarget is that press blurring the label (WebKit does not focus a
+    # button on a press, so the label loses focus to nothing at the mousedown on the confirm or Cancel; a
+    # press on the message text does the same in every engine) and disarms nothing: the click that
+    # follows decides. Without it, the same focusout is focus leaving for nothing (a script's blur, an
+    # engine's window switch) and disarms
+    "document.addEventListener('pointerdown',function(e){var inside=!!(e&&e.target&&box.contains(e.target));press=inside;if(armed&&!inside)disarm();},true);"
+    "document.addEventListener('click',function(){press=false;},true);"
+    "document.addEventListener('pointercancel',function(){press=false;},true);"
+    "box.addEventListener('focusout',function(e){if(!armed)return;var t=e&&e.relatedTarget;if(t&&box.contains(t))return;if(!t&&press)return;disarm();});"
+    "window.addEventListener('blur',function(){press=false;disarm();});"
     "document.addEventListener('visibilitychange',function(){if(document.hidden)disarm();});"
     "dm.onclick=function(){dismissedTag=curTag;box.classList.remove('show');"
     # persist the Not-now (the user 2026-08-31): page loads and kernel restarts stop re-offering
@@ -58501,8 +58589,11 @@ class Handler(BaseHTTPRequestHandler):
                     "sessions": (None if imp is None else imp[0]),
                     "midTurn": (None if imp is None else imp[1]),
                     # how many OTHER kernels the manager's restart-all restarts with this one (the
-                    # counts above are this kernel's): the label says so when there is one. null while
-                    # the registry could not be read; the banner then words the label for this kernel
+                    # counts above are this kernel's): the label says so when there is one (singular for
+                    # one). null when the manager did not answer its registry read (_manager_kernels says
+                    # so on stderr once per episode); the banner then says the other kernels MAY restart
+                    # too, never the single-kernel form: a manager that missed a 1 s read can still take
+                    # the restart request, which waits up to _RESTART_REQUEST_MAX_S
                     "otherKernels": oth}), "application/json", cache="no-cache")
             if p == "/notify-all":
                 # the master bell's state (the user 2026-08-09): on = every task notifies when it

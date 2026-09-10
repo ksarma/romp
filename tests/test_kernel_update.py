@@ -910,8 +910,9 @@ class Routes(Fresh):
             self.assertEqual(km._manager_kernels(), [{"id": "k%d" % p, "port": p, "pid": 2, "restarts": 0, "upSec": 5}
                                                      for p in (km.PORT, 31111, 31112)], "the registry as the manager lists it")
             # unknown, never a guess: the manager answers something other than 200, or a body of another
-            # shape, or nothing at all (a dead port); the route says null and the banner words the label
-            # for this kernel
+            # shape, or nothing at all (a dead port); the route says null and the banner says the other
+            # kernels may restart too (the manager did not answer), never the single-kernel form. Each
+            # failed read is said on stderr once per episode: the next test
             answer["status"], answer["body"] = 500, "{}"
             self.assertIsNone(check(), "a status other than 200")
             answer["status"], answer["body"] = 200, "not json"
@@ -931,6 +932,124 @@ class Routes(Fresh):
                 os.environ.pop("ROMP_MANAGER_PORT", None)
             else:
                 os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MANAGER_READ_FAULT[0] = ""
+            mgr.shutdown()
+
+    def test_a_manager_that_accepts_and_never_answers_is_timed_out_and_said_once_per_episode(self):
+        # the registry read's 1 s timeout has to reach the connection: without it every /update-check
+        # handler thread hangs on a manager that accepts and never writes (the fake here: a raw listening
+        # socket whose accepted connections are never read or answered). The read runs on a daemon thread
+        # joined with a bound, so the regression it guards cannot hang the module; the elapsed time is at
+        # least the timeout, so the None is the timeout's, not a refusal's; no tight upper bound (the box
+        # runs sweeps under load). The kwarg itself is pinned on the default path through a recording
+        # connection class that fails at once, so nothing waits a real second. And the failure is said on
+        # stderr once per episode: the first failed read after a clean one, not the second; a clean read
+        # ends the episode, and the next failure is said again
+        import contextlib
+        import socket
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(5)
+        accepted = []
+
+        def acceptor():
+            while True:
+                try:
+                    c, _ = srv.accept()
+                except OSError:
+                    return
+                accepted.append(c)              # never read, never answered
+        threading.Thread(target=acceptor, daemon=True).start()
+        import http.server
+        from http.server import ThreadingHTTPServer
+
+        class FakeManager(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+        mgr = ThreadingHTTPServer(("127.0.0.1", 0), FakeManager)
+        threading.Thread(target=mgr.serve_forever, daemon=True).start()
+        saved_port = os.environ.get("ROMP_MANAGER_PORT")
+        km._MANAGER_READ_FAULT[0] = ""
+        err = io.StringIO()
+
+        def read(timeout):
+            got = []
+            t = threading.Thread(target=lambda: got.append(km._manager_kernels(timeout=timeout)), daemon=True)
+            t0 = time.monotonic()
+            t.start()
+            t.join(10)
+            self.assertFalse(t.is_alive(), "the registry read did not return within 10 s: the timeout did not reach the connection")
+            return got[0], time.monotonic() - t0
+        try:
+            os.environ["ROMP_MANAGER_PORT"] = str(srv.getsockname()[1])
+            with contextlib.redirect_stderr(err):
+                ks, took = read(0.2)
+            self.assertIsNone(ks)
+            self.assertGreaterEqual(took, 0.2, "the None came from the timeout, not from a refusal")
+            self.assertEqual(len(accepted), 1, "the connection reached the silent manager")
+            lines = err.getvalue().splitlines()
+            self.assertEqual(len(lines), 1, "the first failed read is said, once: %r" % lines)
+            self.assertIn("did not answer its registry read", lines[0])
+            self.assertIn("timed out", lines[0])
+            self.assertIn(str(srv.getsockname()[1]), lines[0])
+            self.assertNotIn("\u2014", lines[0])
+            with contextlib.redirect_stderr(err):
+                ks, _ = read(0.2)
+            self.assertIsNone(ks)
+            self.assertEqual(len(err.getvalue().splitlines()), 1, "the second failed read of the episode is not said again")
+            # a clean read ends the episode; the next failure opens a new one and is said
+            os.environ["ROMP_MANAGER_PORT"] = str(mgr.server_address[1])
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(km._manager_kernels(), [{"id": "k1", "port": km.PORT}])
+            self.assertEqual(km._MANAGER_READ_FAULT[0], "")
+            os.environ["ROMP_MANAGER_PORT"] = str(srv.getsockname()[1])
+            with contextlib.redirect_stderr(err):
+                ks, _ = read(0.2)
+            self.assertEqual(len(err.getvalue().splitlines()), 2, "said again after a clean read")
+            # a changed reason within an episode is said too: the dead port after the silent one
+            os.environ["ROMP_MANAGER_PORT"] = "1"
+            with contextlib.redirect_stderr(err):
+                self.assertIsNone(km._manager_kernels())
+                self.assertIsNone(km._manager_kernels())
+            lines = err.getvalue().splitlines()
+            self.assertEqual(len(lines), 3, lines)
+            self.assertIn("port 1", lines[2])
+            # the kwarg on the default path (the route passes nothing): a connection class that records
+            # its timeout and fails at once, so the pin costs no real second
+            seen = []
+            Real = km.http.client.HTTPConnection
+
+            class Recording(Real):
+                def __init__(self, *a, **kw):
+                    seen.append(kw.get("timeout"))
+                    super().__init__(*a, **kw)
+
+                def getresponse(self):
+                    raise socket.timeout("timed out")
+            os.environ["ROMP_MANAGER_PORT"] = str(mgr.server_address[1])
+            with mock.patch.object(km.http.client, "HTTPConnection", Recording), contextlib.redirect_stderr(err):
+                self.assertIsNone(km._manager_kernels())
+                _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+                self.assertIsNone(json.loads(body)["otherKernels"], "the route answers null for the timed-out read")
+                self.assertIsNone(km._manager_kernels(timeout=0.5))
+            self.assertEqual(seen, [1.0, 1.0, 0.5], "the default 1 s reaches the connection, from the route too")
+        finally:
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MANAGER_READ_FAULT[0] = ""
+            for c in accepted:
+                c.close()
+            srv.close()
             mgr.shutdown()
 
     def test_post_update_converges_main_drift_when_no_release_is_pending(self):

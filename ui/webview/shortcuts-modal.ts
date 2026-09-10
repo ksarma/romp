@@ -58,7 +58,8 @@ const CSS =
 export type ShortcutsModal = {
   open(): void;
   // One Escape level at a time: recording → cancel it (stay open); open → close. Returns whether
-  // it consumed the press — the shell's Escape chain (_LANDING_ESC_JS) calls this FIRST.
+  // it consumed the press. The shell's Escape chain (_LANDING_ESC_JS) asks the update banner's armed
+  // confirm step first (window.__rompUpdDisarm) and this dialog next, before every other panel.
   close(): boolean;
   isOpen(): boolean;
 };
