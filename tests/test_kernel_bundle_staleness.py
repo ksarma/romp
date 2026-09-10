@@ -23,6 +23,7 @@ from pathlib import Path
 from romp_load import load_source
 
 import lab_dist   # the served labs' build harness (tests/lab_dist.py); the parity and token pins at the end read it
+import lab_dist_stub   # the NODE_PATH stand-in for the esbuild package, so the parity pin runs without node_modules
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -91,15 +92,28 @@ class ServedLabsKeyTheSameInputs(unittest.TestCase):
     exported configs (read through node; then the trees their relative imports reach), not on this list. The
     two must agree at the file level: an input the kernel would rebuild for that the labs' key does not cover
     leaves them asserting against stale bundles with nothing saying so. Here, where the kernel is already
-    loaded under isolation, every path _bundle_inputs reads is checked against the harness's keyed set."""
+    loaded under isolation, every path _bundle_inputs reads is checked against the harness's keyed set.
+
+    What this catches, exactly: drift inside the trees the kernel's hand-maintained list names
+    (vscode-extension/src, ui/webview, ui/romp-timeline-view.js, vendor/) and nothing else. A tree reached
+    only through code in esbuild.js (a plugin body resolving into tools/ or docs/) is not exported data, so
+    the harness does not key it, and this pin does not see it either until someone adds the tree to the
+    kernel's list by hand (none today: esbuild.js has no plugins).
+
+    The derivation requires esbuild.js under node, and esbuild.js requires esbuild on its first line, a
+    dependency of the BUILD and not of the exported data (nothing the config exports comes from that module,
+    and nothing reads it at require time). CI's Python job runs no `npm ci`, so the pin ran only where a
+    developer had installed the extension's dependencies until round 7 of the harness review; it now runs on
+    both kinds of checkout through tests/lab_dist_stub.py, a NODE_PATH stand-in that node consults only where
+    the real package does not resolve, so the run with node_modules present reads the real package. A config
+    that read esbuild at load would fail loudly under the stub (its property reads throw), and the failure
+    names the stub. The harness itself stays strict: a served lab on a checkout without node_modules skips
+    there, as before. The one skip left is node itself missing from PATH."""
 
     def test_every_kernel_bundle_input_is_keyed_by_the_served_labs_build(self):
         cv = km.ROOT / "vscode-extension"
-        if not os.path.isdir(str(cv / "node_modules" / "esbuild")):
-            # the derivation requires esbuild.js under node, and esbuild.js requires esbuild at its top, so a
-            # checkout without the extension's deps (CI's pytest job) skips here as every served lab does
-            self.skipTest("extension deps absent (npm ci not run here): node cannot load esbuild.js's exports")
-        keyed = {os.path.realpath(p) for p in lab_dist.default()._input_files()}
+        with lab_dist_stub.esbuild_stub():
+            keyed = {os.path.realpath(p) for p in lab_dist.default()._input_files()}
         self.assertGreater(len(keyed), 100, "the harness keyed a real tree")
         missing = sorted(str(p) for p in km._bundle_inputs(cv) if os.path.realpath(str(p)) not in keyed)
         self.assertEqual(missing, [], "bundle inputs the kernel rebuilds for that tests/lab_dist.py does not key")

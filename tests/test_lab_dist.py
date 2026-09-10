@@ -12,20 +12,28 @@ does (holding the staging window open long enough to matter):
      change, a build by another command or a change of build command rebuilds; the marker records the key
      computed BEFORE the build, so a source edited mid-build is caught by the next call;
   4. the inputs are derived from esbuild.js's EXPORTS, never from its text (review round 6): node requires the
-     module (which builds only as a script) and prints module.exports as JSON, every string value in the
-     exported objects, at any depth, is a candidate, and a candidate naming a path on disk inside the checkout
-     contributes its top-level tree (one naming nothing on disk contributes nothing; an entry built from a
-     template literal at require time is keyed, a shape no text scan could see; a path in a comment or a code
-     body is not exported data; an existing path outside the checkout is an error; a module that exports
-     nothing, a module node cannot load and a missing node are errors carrying node's stderr, with no fallback
-     to the text; a top-level file is keyed as one file; then the trees their relative imports reach, one
-     executed test per import shape the scan follows), the dist being built is left out at the top level only,
-     and on the real config the derivation yields the kernel's trees (tests/test_kernel_bundle_staleness.py
-     pins file-level parity);
-  5. a build that fails skips the caller (the served labs' standing behaviour) and leaves no marker; a
-     build that exceeds its bound raises BuildTimeout, a RuntimeError and never a SkipTest, and releases the
-     lock (the bound itself is pinned to the kernel's figures in tests/test_kernel_bundle_vendor_inputs.py,
-     by running all three of the kernel's esbuild calls over a recording fake);
+     module (which builds only as a script) and writes module.exports as JSON to a file, never to stdout, so a
+     config that logs at require time is read whole; every string value in the exported objects, at any depth, is
+     a candidate (the values of an object, never its keys), and a candidate naming a path on disk inside the
+     checkout contributes its top-level tree, relative or absolute (one naming nothing on disk contributes
+     nothing; a directory value contributes its tree; an entry built from a template literal at require time is
+     keyed, a shape no text scan could see; a path in a comment or a code body is not exported data; an absolute
+     value outside the checkout is noise where a relative one that reaches outside is an error; a module that
+     exports nothing, a module node cannot load, a module that ends the process before the file is written, a
+     missing extension dir, a missing node and a require past its bound are errors carrying node's stderr and
+     stdout, with no fallback to the text; a top-level file is keyed as one file; the config's own tree is keyed
+     with no exported value inside it; then the trees their relative imports reach, one executed test per import
+     shape the scan follows), the dist being built is left out at the top level only, and on the real config the
+     derivation yields the kernel's trees, on a checkout without the extension's node_modules too, through a
+     NODE_PATH stand-in for the esbuild package (tests/lab_dist_stub.py; tests/test_kernel_bundle_staleness.py
+     pins file-level parity the same way);
+  5. the two environment failures skip the caller, with the reason, and every other failure raises: a build that
+     fails skips and leaves no marker, and a bare package the config requires that node cannot find skips from
+     the served modules' own call (review round 7, decision 2), while a config that does not load (a syntax
+     error, a missing relative module) raises from that call; a build that exceeds its bound raises BuildTimeout,
+     a RuntimeError and never a SkipTest, and releases the lock (the bound itself, and the bound on the require,
+     are pinned to the kernel's figures in tests/test_kernel_bundle_vendor_inputs.py, by running all three of
+     the kernel's esbuild calls over a recording fake);
   6. the copy leaves out a staging file the harness did not write, and survives a staged builder running
      outside the lock (the defence-in-depth half);
   7. the lock and the marker are left out of a VSIX (.vscodeignore) and of git (.gitignore);
@@ -34,7 +42,9 @@ Hermetic: the fake checkout lives under the run's temp root and no real esbuild 
 """
 import fcntl
 import fnmatch
+import functools
 import glob
+import json
 import os
 import re
 import shutil
@@ -47,6 +57,7 @@ import unittest
 from unittest.mock import patch
 
 import lab_dist
+import lab_dist_stub
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -405,10 +416,14 @@ class InputsDeriveFromEsbuild(unittest.TestCase):
     a path, a template-literal path, a quoted path with a space and one with an @ inside a component) and the
     header's claim that a stray quote before a path hides nothing; through the export there is no quoting to
     get wrong, and a path is a value or it is not. The checkout is `base/checkout`, so a path OUTSIDE the
-    checkout can exist inside the cleaned temp dir."""
+    checkout can exist inside the cleaned temp dir; the base is a realpath, because node's __dirname is one and
+    the absolute-value tests compare the two textually. Round 7 added the served-shaped caller (`served_call`:
+    the served modules' own `copy_dist`, with the harness's DistBuild bound to this checkout), over which the
+    environment skips and the config errors, and the NODE_PATH stand-in for the esbuild package the two
+    real-tree pins run under (tests/lab_dist_stub.py)."""
 
     def setUp(self):
-        self.base = tempfile.mkdtemp(prefix="lab-dist-inputs-")
+        self.base = os.path.realpath(tempfile.mkdtemp(prefix="lab-dist-inputs-"))
         self.addCleanup(shutil.rmtree, self.base, True)
         self.root = os.path.join(self.base, "checkout")
         self.ext = os.path.join(self.root, "ext")
@@ -460,6 +475,14 @@ module.exports = { extension, webview, testBuild };
         _write(path, text)
         return list(lab_dist._relative_imports(path))
 
+    def served_call(self):
+        """The served modules' own call, lab_dist.copy_dist, over this synthetic checkout: default() builds its
+        DistBuild on first use, so the derivation runs inside the call, where a served class's setUpClass meets
+        it. DistBuild is bound to this checkout for the call; _DEFAULT is cleared and restored around it."""
+        bound = functools.partial(lab_dist.DistBuild, ext=self.ext, root=self.root, cmd=[sys.executable, "x"])
+        with patch.object(lab_dist, "_DEFAULT", None), patch.object(lab_dist, "DistBuild", bound):
+            lab_dist.copy_dist(os.path.join(self.base, "lab", "dist"))
+
     def test_the_exported_configs_name_two_trees_and_both_are_keyed(self):
         """The export shape: module.exports holds two configs and a function (dropped, never called), their
         entryPoints reach two trees, and both are keyed with the extension's own. This one also held under the
@@ -467,8 +490,9 @@ module.exports = { extension, webview, testBuild };
         export read passes."""
         self.assertEqual(self.roots(), ["ext", "tools", "ui"],
                          "ext from src/extension.ts and dist, ui and tools from the webview entries; the object-form "
-                         "entry under node_modules is a dependency; outfile, outdir and the names in the comment "
-                         "resolve to nothing on disk or are not exported")
+                         "entry under node_modules is a dependency (keyed by the lock files, its files pruned from "
+                         "every walk); outfile, outdir and the names in the comment resolve to nothing on disk or "
+                         "are not exported")
 
     def test_an_entry_point_built_from_a_template_literal_at_require_time_is_keyed_a_shape_no_text_scan_could_see(self):
         """`../lib${major}/entry.ts` stands in the file in no piece a text scan could resolve (`../lib` and
@@ -487,6 +511,64 @@ module.exports = { extension, webview, testBuild };
         _write(self.config, 'module.exports = { webview: { entryPoints: [{ in: "../tools/extra/thing.ts", out: "thing" }, '
                             '"src/extension.ts"] } };\n')
         self.assertEqual(self.roots(), ["ext", "tools"])
+
+    def test_a_path_in_key_position_is_not_a_candidate(self):
+        """The walk yields the VALUES of an object, never its keys (option names: a loader suffix, an alias, a
+        define name). A mutant yielding keys too passes every other fixture and the real-config pin (none of the
+        real config's keys resolves on disk), so this one puts a real path in a key, an alias FROM a source path,
+        a shape no esbuild option takes in practice (invented for the mutant), and the tree it names stays out."""
+        _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts"], '
+                            'alias: { "../tools/extra/thing.ts": "nowhere" } } };\n')
+        self.assertEqual(self.roots(), ["ext"])
+
+    def test_an_absolute_value_inside_the_checkout_is_keyed(self):
+        """The `path.join(__dirname, ...)` idiom the real config uses for its node_modules paths, pointed at a
+        source tree instead: an inject file under checkout/shims, named by an absolute path. The round-6 code
+        dropped every absolute value before looking at it, so a tree reached only this way was keyed by nothing
+        (the parity pin sees the kernel's list alone). node's __dirname is a realpath, and so is this checkout
+        (setUp), so the textual comparison holds."""
+        _write(os.path.join(self.root, "shims", "p.js"), "globalThis.p = 1;\n")
+        _write(self.config, 'const path = require("path");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts"], '
+                            'inject: [path.join(__dirname, "..", "shims", "p.js")] } };\n')
+        self.assertEqual(self.roots(), ["ext", "shims"])
+
+    def test_an_absolute_value_outside_the_checkout_is_noise_where_a_relative_one_is_loud(self):
+        """The asymmetry, pinned: the same existing file outside the checkout, named absolutely, contributes
+        nothing (`/`, a system path and a realpath node resolved through a symlink all take this shape, and none
+        is a source here), while the relative spelling raises (the first of the loud cases below)."""
+        outside = os.path.join(self.base, "elsewhere", "x.ts")
+        _write(outside, "export const e = 1;\n")
+        _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts", %s] } };\n' % json.dumps(outside))
+        self.assertEqual(self.roots(), ["ext"])
+
+    def test_a_directory_valued_export_contributes_its_tree(self):
+        """A value naming a DIRECTORY on disk (an outbase, a nodePaths entry, an absWorkingDir, a tsconfig dir)
+        contributes the tree that holds it, as a file does. The tree here is reachable no other way, so the
+        one-token mutant `exists` to `isfile` fails this test (the only directory value on the real tree is dist,
+        whose tree src/extension.ts keys anyway)."""
+        _write(os.path.join(self.root, "assets", "a.css"), "a{}\n")
+        _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts"], outbase: "../assets" } };\n')
+        self.assertEqual(self.roots(), ["assets", "ext"])
+
+    def test_the_configs_own_tree_is_keyed_without_an_exported_value_inside_it(self):
+        """esbuild.js, package.json and tsconfig.json are inputs of the build whether or not the config names a
+        path in its own tree. A config naming only a ../ui entry, over an extension dir with no dist yet (setUp
+        writes ext/dist/render.js, which would key ext by accident through "dist"): the roots are ui alone, the
+        derived inputs still hold ext, esbuild.js is a keyed file, and an edit to it changes the key. Before the
+        seed, the key stood still through edits to all three config files in this shape, and a process that
+        started after dist existed keyed ext through "dist" while an earlier one had not."""
+        shutil.rmtree(os.path.join(self.ext, "dist"))
+        _write(self.config, 'module.exports = { webview: { entryPoints: ["../ui/webview/render.ts"], outdir: "dist" } };\n')
+        self.assertEqual(self.roots(), ["ui"])
+        self.assertEqual(self.rel(lab_dist.default_inputs(self.root, self.ext)),
+                         [("ext", True), ("tA", True), ("tB", True), ("tC", True), ("tD", True), ("tE", True),
+                          ("ui", True), ("vendor", True)])
+        build = lab_dist.DistBuild(ext=self.ext, cmd=[sys.executable, "x"], root=self.root)
+        self.assertIn(self.config, list(build._input_files()), "the config is a keyed input of its own build")
+        before = build.key()
+        _bump(self.config)
+        self.assertNotEqual(build.key(), before, "an edit to esbuild.js changes the key")
 
     def test_every_shape_that_broke_the_text_parsers_is_plain_data_through_the_export(self):
         """The shapes that made an array parser return a shorter list, or a text scan miss a path: a `//` inside
@@ -514,8 +596,11 @@ module.exports = { banner, entryPoints, record, picked, filter: m.source };
     def test_a_path_only_in_a_comment_or_a_code_body_is_not_exported_data(self):
         """The limit of the export, pinned so it is not mistaken for a drop: a comment naming a tree, and a plugin
         whose setup body returns a path, are code, not exported data (JSON.stringify drops the function), so
-        neither tree is keyed; the parity pin against the kernel's _bundle_inputs covers drift of that shape on
-        the real tree. The round-5 scans keyed both here (['data', 'ext', 'tools'])."""
+        neither tree is keyed (a comment is never a build input, so its path is harmless; the plugin's is the
+        real limit). The parity pin against the kernel's hand-maintained _bundle_inputs list catches drift inside
+        the trees that list names and nothing else, so a tree reached only through code (tools/ here) is pinned
+        by no test until someone adds it to the kernel's list by hand. The round-5 scans keyed both here
+        (['data', 'ext', 'tools'])."""
         _write(self.config, '''
 // the fixtures under "../data" are read by the tests, not bundled
 const relay = { name: "relay", setup(build) { build.onResolve({ filter: /^x$/ }, () => ({ path: "../tools/extra/thing.ts" })); } };
@@ -538,9 +623,10 @@ module.exports = { extension: { entryPoints: ["src/extension.ts"], plugins: [rel
 
     def test_a_value_naming_nothing_on_disk_contributes_nothing(self):
         """Noise a config is full of: formats, targets, a loader, globs, a message, an empty string, an absolute
-        path (the resolver paths under node_modules on the real config), the checkout root itself (".."), a
-        template literal computed to nothing on disk, a spread, a define value, and the non-strings around them
-        (a boolean, null, a number). None names a tree; the one real path does."""
+        path outside the checkout (`/`, the shape of a publicPath; the real config's absolute values are under
+        node_modules and skipped as dependencies), the checkout root itself (".."), a template literal computed to
+        nothing on disk, a spread, a define value, and the non-strings around them (a boolean, null, a number).
+        None names a tree; the one real path does."""
         _write(self.config, '''
 const more = ["../nowhere/x.ts"], dir = "gone", name = "x";
 module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${name}.ts`], format: "cjs", target: "node18",
@@ -555,8 +641,8 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
                          [("ext", True), ("tA", True), ("tB", True), ("tC", True), ("tD", True), ("tE", True),
                           ("tools", True), ("ui", True), ("vendor", True)],
                          "ext and ui and tools from the entries, vendor from render.ts's `from` import, tA to tE "
-                         "from the other four import shapes; data (a string that is not an import) and "
-                         "node_modules never")
+                         "from the other four import shapes; data (a string that is not an import) never, and "
+                         "node_modules never (a dependency: keyed by the lock files, pruned from every walk)")
 
     # One executed test per import shape _IMPORT_SHAPE follows, so the shape a regression stopped following is
     # the test that names it (the real trees' cross-tree imports are all `from`-shaped today, so the real-config
@@ -634,20 +720,160 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         with self.assertRaises(ValueError) as cm:
             lab_dist.esbuild_roots(self.root, self.ext)
         self.assertIn("exports no string value", str(cm.exception))
+        self.assertIn("prints as {}", str(cm.exception))
+        _write(self.config, 'module.exports = function () { return ["src/extension.ts"]; };\n')   # not JSON at all
+        with self.assertRaises(ValueError) as cm:
+            lab_dist.esbuild_roots(self.root, self.ext)
+        self.assertIn("prints as null", str(cm.exception))
 
     def test_a_module_node_cannot_load_is_an_error_carrying_the_stderr(self):
-        """A syntax error, and the shape of a checkout without the extension's node_modules (the real module's
-        top-line `require("esbuild")` failing): node exits nonzero and the error carries its stderr and the
-        config's path."""
+        """A syntax error, and a missing RELATIVE module (`require("./gone")`: MODULE_NOT_FOUND too, but for a
+        file of this checkout, so the config is what is wrong, not the environment): node exits nonzero and the
+        error carries its stderr and the config's path. The bare-package shape of the same error code is the
+        environment's and skips instead (the served-caller tests below)."""
         _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts"] } };\nconst broken = [;\n')
         with self.assertRaises(ValueError) as cm:
             lab_dist.esbuild_roots(self.root, self.ext)
         self.assertIn("SyntaxError", str(cm.exception))
         self.assertIn(self.config, str(cm.exception))
-        _write(self.config, 'const esbuild = require("esbuild");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        _write(self.config, 'const gone = require("./gone");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
         with self.assertRaises(ValueError) as cm:
             lab_dist.esbuild_roots(self.root, self.ext)
-        self.assertIn("Cannot find module 'esbuild'", str(cm.exception))
+        self.assertIn("Cannot find module './gone'", str(cm.exception))
+
+    def test_a_config_that_logs_at_require_time_is_read_whole(self):
+        """The reader writes the JSON to a file node is handed, never to stdout, so a console.log in the config
+        cannot corrupt the read (round 6 read stdout, and a logging config would have been "printed no JSON"). On
+        the real config nothing logs at require; this pins the day one starts to."""
+        _write(self.config, 'console.log("loading the config");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        self.assertEqual(self.roots(), ["ext"])
+
+    def test_a_config_that_ends_the_process_before_the_file_is_written_is_an_error_carrying_both_streams(self):
+        """The wrote-no-file branch: a config that calls process.exit(0) at require time leaves node's exit at 0 and
+        no file for the reader to have written. The error names the config and carries the stdout head and the
+        stderr tail, the two streams every derivation error attaches."""
+        _write(self.config, 'console.log("bye from the config");\nprocess.stderr.write("and on stderr\\n");\nprocess.exit(0);\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        with self.assertRaises(ValueError) as cm:
+            lab_dist.esbuild_roots(self.root, self.ext)
+        msg = str(cm.exception)
+        self.assertIn("wrote no JSON", msg)
+        self.assertIn(self.config, msg)
+        self.assertIn("stdout head: bye from the config", msg)
+        self.assertIn("stderr tail: and on stderr", msg)
+
+    def test_a_require_past_its_bound_is_an_error_naming_the_bound_and_the_stderr(self):
+        """A config that wedges at require time (a BOUNDED busy loop: 4 s, then a valid export, so a mutant that
+        dropped the timeout finishes instead of hanging the run) under a 1 s bound injected for the test: a
+        ValueError, never a SkipTest, naming the config, the bound and the stderr tail node had written before
+        the loop, raised from the TimeoutExpired, inside a few seconds (the bound cut the require, not the
+        fixture's own 4 s)."""
+        _write(self.config, 'process.stderr.write("spinning\\n");\nconst end = Date.now() + 4000;\nwhile (Date.now() < end) {}\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        started = time.monotonic()
+        with patch.object(lab_dist, "_EXPORTS_TIMEOUT", 1):
+            try:
+                lab_dist.esbuild_roots(self.root, self.ext)
+            except unittest.SkipTest as e:
+                self.fail("a require past its bound is a hard error, never a skip: %r" % e)
+            except ValueError as e:
+                msg = str(e)
+                self.assertIn(self.config, msg)
+                self.assertIn("in 1 s", msg)
+                self.assertIn("stderr tail: spinning", msg)
+                self.assertIsInstance(e.__cause__, subprocess.TimeoutExpired)
+            else:
+                self.fail("a require past its bound raised nothing")
+        self.assertLess(time.monotonic() - started, 3, "the bound cut the require")
+
+    def test_a_missing_extension_dir_is_an_error_naming_it_not_node(self):
+        """A missing cwd raises the same FileNotFoundError as a missing node, and round 6 reported both as "node is
+        not on PATH". The directory is checked before node runs, so the message names it, and an extension dir
+        that is a FILE takes the same door (it raised NotADirectoryError, uncaught)."""
+        for ext in (os.path.join(self.root, "nope"), self.config):
+            with self.assertRaises(ValueError) as cm:
+                lab_dist.esbuild_roots(self.root, ext)
+            self.assertIn("%s is not a directory" % ext, str(cm.exception))
+            self.assertNotIn("node is not on PATH", str(cm.exception))
+        os.remove(self.config)              # the dir exists and holds no config: loud, naming the absolute path,
+        try:                                # never the missing-package skip (the request is absolute, not bare)
+            lab_dist.esbuild_roots(self.root, self.ext)
+        except unittest.SkipTest as e:
+            self.fail("a missing config is an error, never a skip: %r" % e)
+        except ValueError as e:
+            self.assertIn("Cannot find module '%s'" % self.config, str(e))
+        else:
+            self.fail("a missing config raised nothing")
+
+    def test_a_relative_extension_dir_is_resolved_before_node_runs(self):
+        """node runs with the extension dir as its cwd, so a relative config path handed to require resolved
+        against that dir, one level too deep, and an existing config failed with "Cannot find module". The path
+        is made absolute first, in esbuild_exports itself (esbuild_roots does the same for its own joins, so the
+        read is called directly here too, or its own abspath would be masked): from the checkout, "ext" derives
+        the same trees as the absolute dir, and the config path the read returns is absolute."""
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(self.root)
+        try:
+            config, exports = lab_dist.esbuild_exports("ext")
+        except unittest.SkipTest as e:      # a relative config path reaches node as a bare specifier and reads as a
+            self.fail("a relative extension dir must not read as a missing package: %r" % e)   # missing package
+        self.assertEqual(config, self.config)
+        self.assertIn("extension", exports)
+        self.assertEqual([os.path.relpath(p, self.root) for p in lab_dist.esbuild_roots(self.root, "ext")],
+                         ["ext", "tools", "ui"])
+
+    # Decision 2 of review round 7, over the served modules' own call: the environment skips, the config errors.
+    def test_a_served_caller_skips_when_node_finds_no_package_the_config_requires(self):
+        """The real config's first line, `require("esbuild")`, on a checkout without the extension's node_modules:
+        the same precondition the build half skips on (esbuild cannot build there either), so copy_dist raises
+        SkipTest naming the package and the config, and no served class errors at setUpClass over an environment
+        it could not have built in. Round 6 raised ValueError here, and every served class ERRORed where it used
+        to skip. A scoped package takes the same door."""
+        _write(self.config, 'const esbuild = require("esbuild");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        with self.assertRaises(unittest.SkipTest) as cm:
+            self.served_call()
+        self.assertIn("no package 'esbuild'", str(cm.exception))
+        self.assertIn(self.config, str(cm.exception))
+        _write(self.config, 'const s = require("@scope/pkg");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        with self.assertRaises(unittest.SkipTest) as cm:
+            self.served_call()
+        self.assertIn("no package '@scope/pkg'", str(cm.exception))
+
+    def test_a_served_caller_errors_when_the_config_itself_does_not_load(self):
+        """Everything but the missing bare package stays loud from the served call: a syntax error, and a missing
+        relative module (MODULE_NOT_FOUND for a file of this checkout). SkipTest is caught first and fails, so a
+        harness that mapped every load failure to a skip fails here instead of skipping."""
+        for text, expect in (('module.exports = { x: { entryPoints: ["src/extension.ts"] } };\nconst broken = [;\n', "SyntaxError"),
+                             ('const gone = require("./gone");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n',
+                              "Cannot find module './gone'")):
+            _write(self.config, text)
+            try:
+                self.served_call()
+            except unittest.SkipTest as e:
+                self.fail("a config that does not load is an error, never a skip: %r" % e)
+            except ValueError as e:
+                self.assertIn(expect, str(e))
+            else:
+                self.fail("a config that does not load raised nothing")
+
+    def test_the_esbuild_stub_stands_in_for_the_build_dependency_and_refuses_a_read_at_load(self):
+        """tests/lab_dist_stub.py, the NODE_PATH stand-in the two real-tree pins run under where the extension's
+        node_modules are absent (this synthetic ext has a node_modules dir without esbuild in it, so node's walk
+        fails and NODE_PATH is consulted). Under it, a config that requires esbuild and reads nothing from it
+        derives its trees, where without the stub the same config skips (the test above); a config that reads
+        esbuild at require time fails loudly, the error naming the stub and the property: the stub stands in for a
+        dependency of the BUILD, not of the exported data, and a plain empty object would have let the read
+        through as undefined."""
+        _write(self.config, 'const esbuild = require("esbuild");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        with lab_dist_stub.esbuild_stub():
+            self.assertEqual(self.roots(), ["ext"])
+            _write(self.config, 'const esbuild = require("esbuild");\nconst v = esbuild.version;\n'
+                                'module.exports = { x: { entryPoints: ["src/extension.ts"], banner: { js: "// " + v } } };\n')
+            with self.assertRaises(ValueError) as cm:
+                lab_dist.esbuild_roots(self.root, self.ext)
+            self.assertIn("esbuild stub", str(cm.exception))
+            self.assertIn("esbuild.version", str(cm.exception))
 
     def test_a_missing_node_is_an_error(self):
         """Without node on PATH nothing is derived: the error names node and the config."""
@@ -666,19 +892,20 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
 
     def test_the_real_config_derives_the_kernel_trees(self):
         """On this checkout: the exported configs name ui/ and vscode-extension/ (the object-form entry under
-        node_modules is a dependency), the import follow adds vendor/, and the three are the trees the kernel's
-        _bundle_inputs reads (file-level parity, the guard against under-approximation, is pinned in
+        node_modules is a dependency, and so are the absolute nodePaths entry and the CodeMirror aliases), the
+        import follow adds vendor/, and the three are the trees the kernel's _bundle_inputs reads (file-level
+        parity, the guard against under-approximation inside those trees and nothing else, is pinned in
         tests/test_kernel_bundle_staleness.py, where the kernel is already loaded); the config and package files
         are keyed, the lock file is content-keyed instead, and nothing under the extension's dist, node_modules
-        or out-tests is. The read needs the extension's node_modules (esbuild.js requires esbuild at its top),
-        so a checkout without them skips here, as every served lab does."""
-        if not os.path.isdir(os.path.join(lab_dist.EXT, "node_modules", "esbuild")):
-            self.skipTest("extension deps absent (npm ci not run here): esbuild.js requires esbuild at its top, "
-                          "so node cannot load its exports")
-        self.assertEqual([os.path.relpath(p, lab_dist.ROOT) for p in lab_dist.esbuild_roots()], ["ui", "vscode-extension"])
-        self.assertEqual([(os.path.relpath(p, lab_dist.ROOT), r) for p, r in lab_dist.default_inputs()],
-                         [("ui", True), ("vendor", True), ("vscode-extension", True)])
-        files = set(lab_dist.default()._input_files())
+        or out-tests is. esbuild.js requires esbuild at its top, a dependency of the build and not of the
+        exported data, so the read runs under tests/lab_dist_stub.py's NODE_PATH stand-in and this pin runs on a
+        checkout without the extension's node_modules too (CI's Python job; round 6 skipped there). Where the
+        package is installed node never reaches NODE_PATH and the real package is read."""
+        with lab_dist_stub.esbuild_stub():
+            self.assertEqual([os.path.relpath(p, lab_dist.ROOT) for p in lab_dist.esbuild_roots()], ["ui", "vscode-extension"])
+            self.assertEqual([(os.path.relpath(p, lab_dist.ROOT), r) for p, r in lab_dist.default_inputs()],
+                             [("ui", True), ("vendor", True), ("vscode-extension", True)])
+            files = set(lab_dist.default()._input_files())
         for name in ("esbuild.js", "package.json", "tsconfig.json"):
             self.assertIn(os.path.join(lab_dist.EXT, name), files)
         self.assertNotIn(os.path.join(lab_dist.EXT, "package-lock.json"), files, "content-keyed, not stat-keyed")
@@ -838,9 +1065,15 @@ class Packaging(unittest.TestCase):
 
 
 # The text ratchet's allowlists, each a deliberate exemption with its reason. A new module that legitimately
-# reads esbuild.js as text, or copies a tree that is not the extension's dist, is added here on purpose.
-_ESBUILD_TEXT_READERS = {"test_lab_dist.py", "test_bundle_build_mode.py", "test_kernel_bundle_staleness.py",
-                         "test_kernel_bundle_vendor_inputs.py"}        # source pins over esbuild.js; none runs it
+# names esbuild.js, or copies a tree that is not the extension's dist, is added here on purpose.
+_ESBUILD_TEXT_READERS = {
+    # these two drive the harness, which requires the config under node through lab_dist (the reader writes
+    # module.exports to a file; require.main is not the module, so nothing builds): the derivation tests and the
+    # real-config pin here, the kernel parity pin there, the two real-config reads under the esbuild stand-in
+    "test_lab_dist.py", "test_kernel_bundle_staleness.py",
+    # source pins over esbuild.js's text; neither runs it
+    "test_bundle_build_mode.py", "test_kernel_bundle_vendor_inputs.py",
+}
 _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py"}            # test_github_repo copies a repo, never dist
 _KEY_READERS = {"test_kernel_bundle_staleness.py",                     # imports lab_dist for the input parity pin
                 "test_kernel_bundle_vendor_inputs.py"}                 # and for the BUILD_TIMEOUT pin; neither serves

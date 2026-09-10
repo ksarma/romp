@@ -28,7 +28,7 @@ import unittest
 from romp_load import load_source
 from pathlib import Path
 
-import lab_dist   # the served labs' build harness (tests/lab_dist.py); its BUILD_TIMEOUT is pinned below
+import lab_dist   # the served labs' build harness (tests/lab_dist.py); its two bounds are pinned below
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -176,7 +176,9 @@ class TheBootScanSeesAVendoredChange(_SyntheticCheckout):
     def test_the_served_labs_build_bound_is_the_larger_of_the_kernels_two(self):
         """tests/lab_dist.py bounds the served labs' build at BUILD_TIMEOUT, the kernel's own bound for the
         same command: the larger of _ensure_bundles's and _rebuild_dist's, so a build the kernel would still
-        wait for is never cut first by the labs. Both figures are read by RUNNING the kernel's build paths
+        wait for is never cut first by the labs; its _EXPORTS_TIMEOUT, the bound on requiring esbuild.js for
+        its exports, is the same figure (a require runs the file's top level, a prefix of what the build runs),
+        pinned here beside it. Both figures are read by RUNNING the kernel's build paths
         over the recording fake and taking the `timeout=` each passed for `node esbuild.js`, never from the
         kernel's text (a regex over the source took a named constant, an options dict or a class interposed
         before the next def as a reason to alarm or to find nothing). The success path: one esbuild call
@@ -191,6 +193,8 @@ class TheBootScanSeesAVendoredChange(_SyntheticCheckout):
         self.assertEqual(sorted(esbuild), [120, 180], "the kernel's two bounds")
         self.assertEqual(lab_dist.BUILD_TIMEOUT, max(esbuild),
                          "tests/lab_dist.py BUILD_TIMEOUT is the larger of the kernel's two esbuild bounds")
+        self.assertEqual(lab_dist._EXPORTS_TIMEOUT, max(esbuild),
+                         "the bound on requiring esbuild.js for its exports is the kernel's bound for running it")
 
     def test_the_bound_covers_all_three_of_the_kernels_esbuild_calls(self):
         """The kernel runs `node esbuild.js` from THREE call sites: _ensure_bundles's first build, its retry
@@ -214,6 +218,8 @@ class TheBootScanSeesAVendoredChange(_SyntheticCheckout):
         self.assertTrue(all(isinstance(t, (int, float)) for t in npm), "the npm install is bounded too: %r" % npm)
         self.assertEqual(lab_dist.BUILD_TIMEOUT, max(esbuild),
                          "tests/lab_dist.py BUILD_TIMEOUT is the largest of the kernel's three esbuild bounds")
+        self.assertEqual(lab_dist._EXPORTS_TIMEOUT, max(esbuild),
+                         "the exports bound moves with it: a require runs the file's top level, a prefix of the build")
 
 
 class TheConvergeScanSeesAVendoredChange(_SyntheticCheckout):
