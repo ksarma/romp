@@ -25,9 +25,9 @@ finger never begins one. One ending is missing: a Firefox press released outside
 delivers no leave beyond the box (seen under Playwright's synthetic mouse for a release past the right
 edge, level with the banner) leaves the flag set until the next press, click or blur, and until then a
 focusout to nothing disarms nothing; every gesture that leaves the banner still disarms it. An answer without counts drops the counts the banner held, so the label never
-shows a previous kernel life's numbers; an answer without a registry count says the other kernels may
-restart too, and a registry count without a session count says the other kernels restart too without
-naming this kernel's sessions. The armed row is laid over the plain row it replaced, measured: the label
+shows a previous kernel life's numbers; an answer without a registry count says other kernels may restart
+too (no article: whether there is another is the one thing the kernel does not know then), and a registry
+count without a session count says the other kernels restart too without naming this kernel's sessions. The armed row is laid over the plain row it replaced, measured: the label
 covers Update's footprint, Restart stands to its right on Update's row at every width from 640px up
 whatever the label says (its text wraps inside it where the row is short of room), and Cancel never
 shares a pixel with Not now; a resize while armed and the re-read's new text re-fit it.
@@ -248,10 +248,11 @@ out({ atOnce: atOnce, after: state() });""")
         # in its registry. /update-check's otherKernels (the registry entries that are not this kernel)
         # decides the wording: with another kernel the label places the counts here and says the other
         # restarts too (one kernel: singular; several: plural); with one kernel the plain form; and when
-        # the manager did not answer the read (null, or the field absent) the label says the other kernels
-        # MAY restart too, never the single-kernel form, since a manager that missed a 1 s read can still
-        # take the restart request
-        null_tail = "; the other kernels may restart too (the manager did not answer)"
+        # the manager did not answer the read (null, or the field absent) the label says other kernels MAY
+        # restart too (no article: whether there is another is the one thing the kernel does not know then),
+        # never the single-kernel form, since a manager that missed a 1 s read can still take the restart
+        # request. The 0 case is also a kernel no manager started: its registry read asks nothing
+        null_tail = "; other kernels may restart too (the manager did not answer)"
         cases = ((1, 3, 1, "Restart 3 sessions here now, interrupting 1; the other kernel restarts too"),
                  (2, 1, 1, "Restart 1 session here now, interrupting 1; the other kernels restart too"),
                  (5, 3, 0, "Restart 3 sessions here now; the other kernels restart too"),
@@ -1216,8 +1217,8 @@ CHECKS = {"std": CHECK,
           "unknown": dict(CHECK, sessions=None, midTurn=None, otherKernels=None)}
 LABELS = {"std": "Restart 32 sessions now, interrupting 3",
           "shortest": "Restart 1 session now",
-          "longest": "Restart 32 sessions here now, interrupting 12; the other kernels may restart too (the manager did not answer)",
-          "unknown": "Restart every session here now; the other kernels may restart too (the manager did not answer)"}
+          "longest": "Restart 32 sessions here now, interrupting 12; other kernels may restart too (the manager did not answer)",
+          "unknown": "Restart every session here now; other kernels may restart too (the manager did not answer)"}
 LABEL = LABELS["std"]
 GEOM_WIDTHS = (640, 660, 680, 700, 740, 800, 840, 1000, 1280, 1366)     # the desktop widths the driver measures (its own list matches)
 

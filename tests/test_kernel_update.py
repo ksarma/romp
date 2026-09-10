@@ -932,8 +932,8 @@ class Routes(Fresh):
                                                      for p in (km.PORT, 31111, 31112)], "the registry as the manager lists it")
             # unknown, never a guess: the manager answers something other than 200, or a body of another
             # shape, or nothing at all (a dead port); the route says null and the banner says the other
-            # kernels may restart too (the manager did not answer), never the single-kernel form. Each
-            # failed read is said on stderr once per episode: the next test
+            # kernels may restart too (the manager did not answer; no article), never the single-kernel form.
+            # Each failed read is said on stderr once per episode: the next test
             answer["status"], answer["body"] = 500, "{}"
             self.assertIsNone(check(), "a status other than 200")
             answer["status"], answer["body"] = 200, "not json"

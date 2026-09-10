@@ -35,8 +35,8 @@ red Restart button and a Cancel beside it; the second, on Restart, runs it. The 
 sessions the restart stops (every Claude and Codex session this kernel runs) and how many of them it
 interrupts, with a turn in flight or background work running; a tmux session survives a restart and is
 not counted. When the manager runs more than one kernel, the restart stops the other kernels' sessions
-too: the label says so, and does not count them; when the manager does not answer, the label says the
-other kernels may restart too. The gear's
+too: the label says so, and does not count them; when the manager does not answer, the label says other
+kernels may restart too. The gear's
 **Automatic updates** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
 checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it

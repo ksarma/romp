@@ -9284,7 +9284,7 @@ def _manager_kernels(timeout=1.0):
     kernel loses more sessions than the count says, and the label says so when the registry holds
     another kernel. Never a read of kernels.json, which the manager parses on its own terms (it drops a
     malformed entry) and which never lists a kernel /ensure spawned. A manager on record that does not
-    answer well is said on stderr, once per episode (_manager_read_fault): the banner then says the other
+    answer well is said on stderr, once per episode (_manager_read_fault): the banner then says other
     kernels MAY restart too, never the single-kernel form, because a manager that missed this 1 s read
     can still take the restart request, which waits up to _RESTART_REQUEST_MAX_S (review round 3)."""
     mport = _manager_port(os.environ.get("ROMP_MANAGER_PORT"))
@@ -9320,7 +9320,7 @@ def _manager_read_fault(mport, why):
         return
     _MANAGER_READ_FAULT[0] = why
     sys.stderr.write("update check: the manager on port %s did not answer its registry read (%s); the update banner "
-                     "says the other kernels may restart too until it does\n" % (mport, why))
+                     "says other kernels may restart too until it does\n" % (mport, why))
 
 
 def _other_kernels():
@@ -56148,13 +56148,14 @@ _UPD_JS = (
     # held and re-reads the route at once, so the label names the box as it stands at the click. When
     # another kernel restarts too the label says so (one kernel or several) and that its counts are this
     # kernel's; when the manager did not answer the registry read (otherKernels null, or absent) the
-    # label says the other kernels MAY restart too, never the single-kernel form, since a manager that
-    # missed the read can still take the restart request. An answer without counts (the kernel does not
+    # label says other kernels MAY restart too, never the single-kernel form, since a manager that
+    # missed the read can still take the restart request (no article: whether there is another kernel is
+    # the one thing the kernel does not know in that state). An answer without counts (the kernel does not
     # know yet) drops the held counts, so the label falls back to its count-less form instead of showing
     # a previous life's numbers; a failed read is no information and changes nothing. The kernel holds
     # the same line: /update refuses a body without confirmed:true.
     "function label(){if(!impact)return 'Restart every session now';var n=impact.sessions,m=impact.midTurn,o=impact.others;"
-    "var here=(o||o===null)?' here':'',tail=o===null?'; the other kernels may restart too (the manager did not answer)':"
+    "var here=(o||o===null)?' here':'',tail=o===null?'; other kernels may restart too (the manager did not answer)':"
     "o?('; the other kernel'+(o===1?' restarts':'s restart')+' too'):'';"
     "if(n===null)return 'Restart every session'+here+' now'+tail;"
     "if(!n)return 'Restart now, nothing to interrupt'+here+tail;"
@@ -58715,7 +58716,7 @@ class Handler(BaseHTTPRequestHandler):
                     # how many OTHER kernels the manager's restart-all restarts with this one (the
                     # counts above are this kernel's): the label says so when there is one (singular for
                     # one). null when the manager did not answer its registry read (_manager_kernels says
-                    # so on stderr once per episode); the banner then says the other kernels MAY restart
+                    # so on stderr once per episode); the banner then says other kernels MAY restart
                     # too, never the single-kernel form: a manager that missed a 1 s read can still take
                     # the restart request, which waits up to _RESTART_REQUEST_MAX_S. 0 with no manager
                     # port (no manager started this kernel: nothing restarts with it, and the drift
