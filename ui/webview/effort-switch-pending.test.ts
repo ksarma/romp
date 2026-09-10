@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { heldMenuMarks, badgeHeldTip, pickHeldLine, pickHeldTitle, reloadingTitle, switchingTitle, RUNNING_TAG } from "./pick-held";
+import { hideEdges } from "../test-dom-shim";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
@@ -173,11 +174,14 @@ test("executed: metaRowMarks checks the picked row and tags the running row whil
 });
 
 // A minimal element for the executed statusline slice below: the reads and writes syncMetaControls and metaButton
-// make (single-class selectors, dataset, the label's text and dots, the held mark's insertBefore); nothing more
+// make (single-class selectors, dataset, the label's text and dots, the held mark's insertBefore); nothing more.
+// hideEdges (ui/test-dom-shim.ts) runs at the end of the constructor, so a node inspects as its primitives alone
+// and a failing assertion over a tree never walks it (the fake-DOM ratchet in ui/test-dom-shim.test.ts; review
+// round 11, rules-1). The projection is pinned below the class.
 class FakeEl {
   tagName: string; className = ""; dataset: Record<string, string> = {}; style: Record<string, string> = {};
   children: FakeEl[] = []; parent: FakeEl | null = null; text = ""; html = ""; attrs: Record<string, string> = {};
-  constructor(tag: string, cls?: string) { this.tagName = tag.toUpperCase(); if (cls) this.className = cls; }
+  constructor(tag: string, cls?: string) { this.tagName = tag.toUpperCase(); if (cls) this.className = cls; hideEdges(this); }
   classes(): string[] { return this.className.split(/\s+/).filter(Boolean); }
   get classList() {
     const self = this;
@@ -208,6 +212,22 @@ class FakeEl {
   querySelectorAll(sel: string): FakeEl[] { return this.descendants().filter((d) => d.classes().includes(sel.slice(1))); }
   querySelector(sel: string): FakeEl | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
+
+test("executed: a FakeEl inspects as its own projection: the edges (children, parent) and the records are non-enumerable and still reachable", () => {
+  // the shim's rule, applied to this file's class (review round 11): node's failing-assertion diff inspects both
+  // operands with getters, and an enumerable parent or children list walks the whole tree (a 100 GB allocation off
+  // the V8 heap on 2026-09-09); a projection of the primitives alone keeps the dump to a few lines
+  const root = new FakeEl("div", "root"); const kid = root.appendChild(new FakeEl("span", "kid"));
+  root.dataset.k = "v"; root.style.color = "red"; root.setAttribute("title", "t");
+  for (const n of [root, kid]) {
+    const keys = Object.keys(n);
+    for (const k of ["children", "parent", "dataset", "style", "attrs"]) assert.ok(!keys.includes(k), n.className + ": " + k + " is hidden");
+    assert.deepEqual(keys.sort(), ["className", "html", "tagName", "text"], n.className + " enumerates its primitives alone");
+  }
+  assert.equal(kid.parent, root); assert.equal(root.children.length, 1);   // hidden, not gone
+  assert.equal(root.dataset.k, "v"); assert.equal(root.style.color, "red"); assert.equal(root.attrs.title, "t");
+  assert.equal(root.firstElementChild, kid); assert.equal(root.querySelector(".kid"), kid);
+});
 
 test("executed: the reloading line's hover title names the change the reload applies, per kind", () => {
   // round 7's gate emits the reloading element for a fast or mode reload too, and its title said "applying the effort
