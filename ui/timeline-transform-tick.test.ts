@@ -4,34 +4,16 @@
 // handler bracket. draw() now puts every time-positioned element in one plot group, and the tick writes one
 // translate on that group plus a width on each element whose right edge rides the live now (an open bar, an
 // open awaiting or compacting span, an open judging run); a full draw() stays only for what a translate cannot
-// express. Headless, on the DOM stand-in timeline-render.test.ts uses: the stand-in counts element creation,
+// express. Headless, on the shared fake DOM, ui/test-dom-shim.ts; the test's document counts element creation,
 // so a rebuild is observable. (ui/timeline-live-tick.test.ts pins the loop's pacing; this file pins the look.)
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { nodeFactory, hideEdges } from "./test-dom-shim";
 
-function makeNode(tag: string): any {
-  const n: any = {
-    tag, _attrs: {}, children: [] as any[], style: {}, dataset: {}, textContent: "", parentNode: null,
-    classList: { _s: new Set<string>(), add(...a: string[]) { a.forEach((c) => this._s.add(c)); },
-      remove(...a: string[]) { a.forEach((c) => this._s.delete(c)); },
-      toggle(c: string, f?: boolean) { f ? this._s.add(c) : this._s.delete(c); }, contains(c: string) { return this._s.has(c); } },
-    setAttribute(k: string, v: any) { this._attrs[k] = v; }, getAttribute(k: string) { return this._attrs[k]; },
-    setAttributeNS(_n: any, k: string, v: any) { this._attrs[k] = v; }, removeAttribute(k: string) { delete this._attrs[k]; },
-    appendChild(c: any) { c.parentNode = n; this.children.push(c); return c; },
-    insertBefore(c: any, ref: any) { c.parentNode = n; const i = this.children.indexOf(ref); i < 0 ? this.children.push(c) : this.children.splice(i, 0, c); return c; },
-    removeChild(c: any) { const i = this.children.indexOf(c); if (i >= 0) { this.children.splice(i, 1); c.parentNode = null; } return c; },
-    get firstChild() { return this.children[0] || null; },
-    addEventListener() {}, removeEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; },
-    getBoundingClientRect() { return { width: 1400, height: 420, left: 0, top: 0, right: 1400, bottom: 420 }; },
-    closest() { return null; }, focus() {},
-    createEl(t: string, o: any) { const e = makeNode(t); if (o && o.cls) e.classList.add(o.cls); if (o && o.text) e.textContent = o.text; this.appendChild(e); return e; },
-    createDiv(o: any) { return this.createEl("div", o); }, createSpan(o: any) { return this.createEl("span", o); },
-  };
-  return n;
-}
+const makeNode = nodeFactory({ rect: { width: 1400, height: 420, left: 0, top: 0, right: 1400, bottom: 420 } });
 let created = 0;   // every element the view creates: a full draw() makes hundreds, a tick must make none
 const g: any = global;
 g.document = {
@@ -379,7 +361,10 @@ test("sub-pixel looks add up: the drift is measured from the build, not the last
 test("the hover re-arms after a tick: the content moved under a pointer that did not", () => {
   const panel = livePanel(liveData(), 3600);
   const calls: any[] = [];
-  const target = { __tlHoverIn: (e: any) => calls.push(e), parentNode: null };   // what elementFromPoint finds under the tracked pointer
+  // what elementFromPoint finds under the tracked pointer; hideEdges, so the one object here that is not a factory node
+  // inspects as a projection too (the ratchet in ui/test-dom-shim.test.ts reads the file, not the object)
+  const target = hideEdges({ __tlHoverIn: (e: any) => calls.push(e), parentNode: null });
+  assert.deepEqual(Object.keys(target), [], "the hover target inspects as a projection: its handler and its parentNode are non-enumerable");
   panel._ptr = { x: 500, y: 40 };
   panel.svg.ownerDocument = { elementFromPoint: () => target };
   advance(panel, 10);

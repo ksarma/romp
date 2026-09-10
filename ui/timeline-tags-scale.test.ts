@@ -14,61 +14,20 @@
 // the inline swatches posted. Synthetic ids and names only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { inspect } from "node:util";
+import { nodeFactory, hideEdges } from "./test-dom-shim";
 
-// NEVER assert.equal / notEqual / deepEqual two shim nodes (or a node against null): on failure node's
-// assert appends an actual/expected diff that walks the node graph, and the parentNode/children cycles
-// make that walk grow without bound (a 30 GB stall and a nameless kill, review find 2026-09-09). Compare
-// identity with `same(a, b, msg)` below, or compare a projection (keys, text, attributes).
-function makeNode(tag: string): any {
-  const n: any = {
-    tag, _attrs: {}, children: [] as any[], style: {}, dataset: {}, _text: "", parentNode: null, value: "",
-    get textContent() { return this._text; },
-    set textContent(v: any) { this._text = v == null ? "" : String(v); for (const c of this.children) c.parentNode = null; this.children.length = 0; },
-    classList: { _s: new Set<string>(), add(...a: string[]) { a.forEach((c) => this._s.add(c)); },
-      remove(...a: string[]) { a.forEach((c) => this._s.delete(c)); },
-      toggle(c: string, f?: boolean) { f ? this._s.add(c) : this._s.delete(c); }, contains(c: string) { return this._s.has(c); } },
-    setAttribute(k: string, v: any) { this._attrs[k] = v; }, getAttribute(k: string) { return this._attrs[k]; },
-    setAttributeNS(_n: any, k: string, v: any) { this._attrs[k] = v; }, removeAttribute(k: string) { delete this._attrs[k]; },
-    appendChild(c: any) {
-      if (c.parentNode) { const i = c.parentNode.children.indexOf(c); if (i >= 0) c.parentNode.children.splice(i, 1); }
-      c.parentNode = n; this.children.push(c); return c;
-    },
-    insertBefore(c: any, ref: any) { c.parentNode = n; const i = this.children.indexOf(ref); i < 0 ? this.children.push(c) : this.children.splice(i, 0, c); return c; },
-    removeChild(c: any) { const i = this.children.indexOf(c); if (i >= 0) { this.children.splice(i, 1); c.parentNode = null; } return c; },
-    get firstChild() { return this.children[0] || null; },
-    remove() { if (n.parentNode) n.parentNode.removeChild(n); },
-    // `_listeners[t]` is the listener added LAST and still registered; removal is by function, so a listener
-    // hung under another for a while (the drag's scroll re-rank under the popover's scroll closer) gives the
-    // slot back to the one that stays when it comes down
-    _listeners: {} as any, _stacks: {} as any,
-    addEventListener(t: string, fn: any) { (n._stacks[t] = n._stacks[t] || []).push(fn); n._listeners[t] = fn; },
-    removeEventListener(t: string, fn?: any) {
-      const a = n._stacks[t] || []; const i = fn ? a.indexOf(fn) : a.length - 1;
-      if (i >= 0) a.splice(i, 1);
-      if (a.length) n._listeners[t] = a[a.length - 1]; else delete n._listeners[t];
-    },
-    setPointerCapture() {}, releasePointerCapture() {},
-    querySelector() { return null; }, querySelectorAll() { return []; },
-    // geometry is a test input: a node's own `_rect`, else the module-level `g.__rectOf(node)` hook (so a
-    // test can move a dot or a row without holding the node the rebuild will create), else one flat rect
-    getBoundingClientRect() { return n._rect || (g.__rectOf ? g.__rectOf(n) : null) || { width: 200, height: 20, left: 0, top: 0, right: 200, bottom: 20 }; },
-    // scrollTop clamps to `g.__scrollMax` (Infinity unless a test says the box no longer scrolls), as a
-    // browser clamps a write on a box whose content fits
-    _scrollTop: 0,
-    get scrollTop() { return this._scrollTop; },
-    set scrollTop(v: any) { const max = g.__scrollMax == null ? Infinity : g.__scrollMax; this._scrollTop = Math.max(0, Math.min(Number(v) || 0, max)); },
-    closest() { return null; },
-    // focus is OBSERVABLE: it records the active element on the fake document (the popover focuses the
-    // current swatch on open and the dot again on close)
-    focus() { g.document.activeElement = n; }, select() {},
-    setSelectionRange() {}, selectionStart: 0, selectionEnd: 0,
-    createEl(t: string, o: any) { const e = makeNode(t); if (o && o.cls) e.classList.add(o.cls); if (o && o.text) e.textContent = o.text; this.appendChild(e); return e; },
-    createDiv(o: any) { return this.createEl("div", o); }, createSpan(o: any) { return this.createEl("span", o); },
-  };
-  return n;
-}
+// The fake DOM is ui/test-dom-shim.ts, shared with the other timeline tests. A node INSPECTS AS ITS OWN PROJECTION
+// (its primitives), never as the tree: on 2026-09-09 the review's mutation runs of this file grew to 100 GB five
+// times before earlyoom killed them, because a failing strict assertion with a node on one side dumps both sides at
+// depth 1000 with getters on and then diffs the dumps with node's Myers algorithm, whose Int32Array trace costs
+// 8N^2 bytes outside the V8 heap (the module's header has the full account). The first test below pins the
+// projection over the dialog at scale. Still compare node identity with `same(a, b, msg)`: a deepEqual of two
+// nodes compares projections, not trees, and a short message beats a projection diff.
+const makeNode = nodeFactory();
 const g: any = global;
 g.document = {
   createElement(t: string) { return t === "canvas" ? { getContext() { return { font: "", measureText(s: string) { return { width: (s ? s.length : 0) * 6 }; } }; } } : makeNode(t); },
@@ -171,6 +130,55 @@ function openDialog(views: any = THREE, sessions: any[] = THREE_SESSIONS) {
   assert.ok(panel._viewsDialog, "the dialog opened");
   return panel;
 }
+
+// node's assert inspects the two sides of a failed strict assertion with these options
+// (lib/internal/assert/assertion_error.js, inspectValue) before it diffs them line by line
+const ASSERT_INSPECT = { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true };
+// the edges a dump would walk: the shared shim's, and the two members upstream's copy of the shim adds
+const EDGE_NAMES = ["parentNode", "children", "firstChild", "ownerDocument", "_ownerDoc"];
+test("executed: a shim node inspects as its own projection, never as the tree, so a failing assertion's diff stays small (the 100 GB runs of 2026-09-09)", () => {
+  const panel = openDialog(THIRTY, FORTY_SESSIONS);
+  try {
+    dotFor(panel, "g1")._listeners.click();
+    const pop = panel._tagColorPop;
+    assert.ok(pop, "the popover is open, the shape the review's mutations failed in");
+    // the swatch is taken explicitly and focus checked against it, so a focus regression fails here instead of
+    // handing the projection leg a null that inspects in one line (review round 1)
+    const sw = swatches(pop).find((s) => s._attrs["aria-checked"] === "true");
+    assert.ok(sw, "the current swatch");
+    same(g.document.activeElement, sw, "the popover focused the current swatch on open");
+    // upstream's variant of the shim (their copy of this file): every node carries an enumerable _ownerDoc and an
+    // ownerDocument accessor, which a key list of edges missed and the structural rule hides. Built here on a
+    // shared node, hung in the card with a child of its own, and shown to drag the document into its dump BEFORE
+    // the rule runs, so the leg below is known to bite
+    const up: any = makeNode("div");
+    Object.defineProperty(up, "_ownerDoc", { value: null, writable: true, enumerable: true, configurable: true });
+    Object.defineProperty(up, "ownerDocument", { get() { return this._ownerDoc || g.document; }, set(d: any) { this._ownerDoc = d; }, enumerable: true, configurable: true });
+    cardOf(panel).appendChild(up); up.ownerDocument = g.document; up.appendChild(makeNode("span"));
+    const raw = inspect(up, ASSERT_INSPECT);
+    assert.ok(raw.includes("ownerDocument") && raw.includes("_ownerDoc") && raw.includes("createElement"), "before the rule, the variant's members put the document in its dump: " + raw.split("\n").length + " lines");
+    hideEdges(up);
+    // the projection: a few lines, no edge, whatever the node's place in the tree (the dialog root would
+    // otherwise carry every row; a dot would climb to the body and back down through every row)
+    for (const [what, n] of [["a dot", dotFor(panel, "g1")], ["the dialog", panel._viewsDialog], ["the card", cardOf(panel)], ["the body", g.document.body], ["a swatch", sw], ["upstream's variant node", up]] as const) {
+      assert.ok(n && typeof n === "object", what + " is a node");
+      const dump = inspect(n, ASSERT_INSPECT);
+      const lines = dump.split("\n").length;
+      assert.ok(lines <= 60, what + " inspects in " + lines + " lines; the dump must not walk the tree: " + dump.slice(0, 300));
+      for (const e of EDGE_NAMES) assert.ok(!dump.includes(e), what + "'s dump names no edge, found " + e);
+    }
+    // and node's own failing diff, the two shapes the review's mutations produced (a node against null, the
+    // focused swatch against a dot): a short message, at once. Before the projection each was a 40 GB allocation.
+    const failing = (a: any, b: any) => { try { assert.equal(a, b, "the shape of a failing mutation"); } catch (e: any) { return String(e.message); } return ""; };
+    const m1 = failing(pop, null);
+    assert.ok(m1 && m1.split("\n").length <= 400, "node against null: a short diff, got " + m1.split("\n").length + " lines");
+    const m2 = failing(sw, dotFor(panel, "g2"));
+    assert.ok(m2 && m2.split("\n").length <= 120, "swatch against dot: a short diff, got " + m2.split("\n").length + " lines");
+  } finally {
+    panel._closeViewsDialog();   // takes the popover with it: the body is shared, and the next test expects it empty
+  }
+  assert.equal(popsInBody().length, 0, "the popover left with the dialog");
+});
 
 test("executed: lensSummary says what a pane shows, in the user's tag order, only tags that exist, cut with a count when long", () => {
   const order = ["alpha", "beta", "gamma"];
@@ -974,4 +982,21 @@ test("executed: thirty tags and forty sessions: every row, every chip and the se
   swatches(panel._tagColorPop)[0]._listeners.click();
   assert.deepEqual([tagOps()[0].op, tagOps()[0].tid, tagOps()[0].color], ["recolor", "g30", PALETTE[0]]);
   panel._closeViewsDialog();
+});
+
+// ── the runner cap: a source pin on vscode-extension/package.json's test script and CONTRIBUTING.md's passage ────
+test("source pin: npm test caps each worker's V8 heap at 2 GB and the workers at eight, and CONTRIBUTING.md carries the cap, its derivation and its limit", () => {
+  // npm test runs in vscode-extension/, so the package is the cwd's. --max-old-space-size=2048 caps each test child's V8
+  // heap (objects, strings, arrays): about 8x this file's peak (210 to 246 MB RSS over ten runs), so eight workers stay
+  // under 16 GB where V8's default takes up to about 4 GB each. It does not count ArrayBuffer or typed-array backing
+  // stores, so it would not have stopped the Myers trace of 2026-09-09 (the projection does; only a process or cgroup
+  // limit bounds that class). --test-concurrency=8 is the worker cap (2026-09-08); node v22 refuses it in NODE_OPTIONS,
+  // so both flags travel on the script line, and a fold that drops either fails here rather than in the next runaway.
+  const pkg = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"));
+  assert.equal(pkg.scripts.test, "node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=8 'out-tests/**/*.test.js'");
+  const doc = fs.readFileSync(path.resolve(process.cwd(), "..", "CONTRIBUTING.md"), "utf8").replace(/\s+/g, " ");
+  assert.ok(doc.includes("`--max-old-space-size=2048`"), "CONTRIBUTING.md names the heap cap");
+  for (const said of ["8x the largest DOM fixture", "V8 heap only", "typed-array backing stores", "node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=N 'out-tests/**/*.test.js'"]) {
+    assert.ok(doc.includes(said), "CONTRIBUTING.md says: " + said);
+  }
 });
