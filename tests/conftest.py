@@ -126,11 +126,12 @@ os.environ["CLAUDE_CONFIG_DIR"] = _CLAUDE_CONFIG
 # every shell the manager tree spawns inherits ROMP_MANAGER_PORT, and any test kernel that dials
 # "the manager" through the inherited value restarts the ACTUAL deployment — the serve-layer
 # restart test's pop-then-restore raced the /restart handler's post-ack env read and took a
-# self-hosted instance down mid-suite, repeatedly. POISONED to a dead port, never popped: an
-# absent var is the one unsafe state, because _restart_this_kernel treats absent as "no manager"
-# but _run_main_update and the banner's registry read (_manager_kernels, through _manager_port) map
-# absent to the DEFAULT port, the live one, so only a dead value is safe against every consumer.
-# Import-time, so collection-time code is floored too.
+# self-hosted instance down mid-suite, repeatedly. POISONED to a dead port, never popped. Every
+# consumer treats an absent variable as "no manager" since 2026-09-10 (_manager_port: before that
+# _run_main_update, and for one review round the banner's registry read, mapped absent to the
+# DEFAULT port, the live one, and a probe run with the variable absent restarted every session on a
+# development box through the drift door); a dead value is the one state safe against every
+# consumer, present and future, so the floor stays. Import-time, so collection-time code is floored too.
 os.environ["ROMP_MANAGER_PORT"] = "1"
 # ...and no test may reach the REAL kernel either (2026-09-06): a shell of a romp session inherits the
 # live kernel's ROMP_KERNEL_PORT (and ROMP_SERVE_PORT, the same value under the manager's name), so

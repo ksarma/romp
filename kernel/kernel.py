@@ -9226,19 +9226,22 @@ _UPDATE_REPORT_FAULT = [""]   # the move-aside fault of a junk report still on d
 #                                        or a readable report ends it)
 _MANAGER_READ_FAULT = [""]    # why the manager's registry could not be read, said once per episode (a clean read
 #                                        ends it; a changed reason opens a new one): _manager_kernels
-_MANAGER_DEFAULT_PORT = 7432  # the manager's control port when ROMP_MANAGER_PORT is absent or empty (bin/romp-manager's
-#                                        own default): _manager_port
 _UPDATE_MODES = ("ask", "auto", "off")
 
 
 def _manager_port(value):
-    """The manager control port the update's two doors dial, as an int: `value` (the ROMP_MANAGER_PORT a
-    caller read, at ack time or here) when set, else _MANAGER_DEFAULT_PORT. One resolution for the
-    banner's registry read (_manager_kernels) and the drift door's restart (_run_main_update), so the
-    label and the restart it describes agree on which manager is asked (review round 4 of the confirm
-    step, 2026-09-10: the read said "no manager" on an absent variable while the restart dialled 7432).
-    _restart_this_kernel and _run_update keep their own rule, absent meaning no manager to ask."""
-    return int(value or _MANAGER_DEFAULT_PORT)
+    """The manager control port a door dials, as an int, or None when there is no manager to dial. `value`
+    is the ROMP_MANAGER_PORT a caller read (at ack time, or here at use time); absent or empty means no
+    manager started this kernel. One rule for every door: the banner's registry read (_manager_kernels),
+    the drift door's restart (_run_main_update), and the rule _restart_this_kernel and _run_update always
+    had. Never a guess at bin/romp-manager's own default port: a kernel no manager started has no
+    business with whatever manager holds that port, and on a development box that is another operator's
+    live manager, whose restart-all restarts every session on the box. The drift door had guessed it
+    since before the confirm step, and review round 4 of that step made the registry read guess it too
+    so the label and the restart would agree; on 2026-09-10 a review probe run with the variable absent
+    reached the live manager through the door and restarted every session on the box. Round 5 reversed
+    the direction: both agree on no manager instead."""
+    return int(value) if value else None
 
 
 def _restart_impact():
@@ -9271,10 +9274,12 @@ def _manager_kernels(timeout=1.0):
     """The kernels the manager's restart-all restarts, as the manager's own registry lists them (its GET
     /status `kernels`, the live map restartAll loops: kernels.json profiles and /ensure kernels alike),
     or None when there is no answer to read (nothing answering within `timeout`, a status other than
-    200, a body of another shape). The port is ROMP_MANAGER_PORT, else the manager's default, the same
-    resolution the drift door's restart dials (_manager_port): the label describes the restart that
-    door runs, so a manager on the default port that the environment does not name is asked by both
-    or by neither, never by the restart alone. Read for the banner's confirm label (review round 2 of the confirm step, 2026-09-10): _restart_impact counts
+    200, a body of another shape). Without a manager (ROMP_MANAGER_PORT absent or empty: _manager_port)
+    the registry is empty: no restart-all reaches this kernel, nothing else restarts with it, and the
+    drift door's restart dials nothing on the same absence, so the label and the restart it describes
+    agree (review round 5 of the confirm step, 2026-09-10; round 4 had both dial the manager's default
+    port instead, and a probe with the variable absent reached a live manager through the restart).
+    Read for the banner's confirm label (review round 2 of the confirm step, 2026-09-10): _restart_impact counts
     this kernel's sessions, the manager restarts each kernel it owns, so a box with more than one
     kernel loses more sessions than the count says, and the label says so when the registry holds
     another kernel. Never a read of kernels.json, which the manager parses on its own terms (it drops a
@@ -9283,6 +9288,8 @@ def _manager_kernels(timeout=1.0):
     kernels MAY restart too, never the single-kernel form, because a manager that missed this 1 s read
     can still take the restart request, which waits up to _RESTART_REQUEST_MAX_S (review round 3)."""
     mport = _manager_port(os.environ.get("ROMP_MANAGER_PORT"))
+    if mport is None:
+        return []                                    # no manager started this kernel: nothing restarts with it
     try:
         c = http.client.HTTPConnection("127.0.0.1", mport, timeout=timeout)
         c.request("GET", "/status")
@@ -10326,9 +10333,10 @@ def _main_drift_check():
 # of its request — a test suite fencing off a live deployment does exactly this — could have the
 # RESTORED value read instead of the one in force when the kernel answered. The handlers now read
 # the env once, pre-ack, and hand the value down. _PORT_FROM_ENV keeps every non-HTTP caller
-# exactly as before: the env is read at use time, absent still meaning "no manager" in
-# _restart_this_kernel and "the default port" in _run_main_update (_manager_port, which the banner's
-# registry read shares, so the label and the restart agree).
+# exactly as before: the env is read at use time, absent meaning "no manager" in _restart_this_kernel
+# and, since 2026-09-10, in _run_main_update and the banner's registry read too (_manager_port: one rule
+# for every door; _run_main_update used to map absent to the manager's default port, and a probe run
+# with the variable absent restarted a live manager's every kernel through it).
 _PORT_FROM_ENV = object()
 
 
@@ -10438,6 +10446,18 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
                          "kernel rebuilds at boot" % err, ok=False)
     if manager_port is _PORT_FROM_ENV:
         manager_port = os.environ.get("ROMP_MANAGER_PORT")
+    mport = _manager_port(manager_port)
+    if mport is None:
+        # No manager started this kernel (review round 5 of the confirm step, 2026-09-10): nothing is
+        # dialled. This door used to dial bin/romp-manager's default port on the absence, a guess that
+        # on a development box is another operator's live manager; a probe with the variable absent
+        # restarted every session on the box through it. A kernel without a manager has nobody to
+        # restart it (the manager's exit handler is what spawns the fresh process), so the new code
+        # sits on disk and the sync surface says what to run, the tag door's wording for the same
+        # case (_NO_MANAGER_WHY, _update_restart_hint). No restart request, so no audit row for one.
+        _sync_notice("romp is updated on disk, but %s, so nothing restarted it: %s"
+                     % (_NO_MANAGER_WHY, _update_restart_hint({"why": _NO_MANAGER_WHY})), ok=False)
+        return
     try:
         # the reason joins the dying kernel's restart-cuts.jsonl row to WHO restarted it (see
         # _recent_restart_reason) — the auto converge used to leave the row anonymous
@@ -10446,7 +10466,7 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
         # http.client, the way _restart_this_kernel dials: urllib's default opener honours
         # HTTP_PROXY / http_proxy, so under a proxy environment this loopback POST went to the
         # proxy and the code on disk never restarted — reported only as "restart request failed"
-        c = http.client.HTTPConnection("127.0.0.1", _manager_port(manager_port), timeout=5)
+        c = http.client.HTTPConnection("127.0.0.1", mport, timeout=5)
         c.request("POST", "/restart-all%s" % ("" if immediate else "?when=quiet"), headers=_manager_headers())
         resp = c.getresponse()
         body = resp.read()
@@ -56144,7 +56164,8 @@ _UPD_JS = (
     # and either can be known without the other, so an answer without a session count keeps a numeric
     # registry count and the label says the other kernels restart too without naming this kernel's
     # sessions. label() tests the session count for null BEFORE its falsy test: null is falsy, and the
-    # 0 form ("nothing to interrupt") is a claim about a count the kernel has not made
+    # 0 form ("nothing to interrupt") is a claim about a count the kernel has not made. A kernel no
+    # manager started answers 0 other kernels (the registry read asks nothing), so its label is the plain form
     "function note(d){if(!d)return;impact={sessions:(typeof d.sessions==='number')?d.sessions:null,midTurn:d.midTurn||0,"
     "others:(typeof d.otherKernels==='number')?d.otherKernels:null};}"
     # `back`: the gesture was the user's own cancel (Cancel, Escape) with focus inside the banner, so
@@ -58696,7 +58717,9 @@ class Handler(BaseHTTPRequestHandler):
                     # one). null when the manager did not answer its registry read (_manager_kernels says
                     # so on stderr once per episode); the banner then says the other kernels MAY restart
                     # too, never the single-kernel form: a manager that missed a 1 s read can still take
-                    # the restart request, which waits up to _RESTART_REQUEST_MAX_S
+                    # the restart request, which waits up to _RESTART_REQUEST_MAX_S. 0 with no manager
+                    # port (no manager started this kernel: nothing restarts with it, and the drift
+                    # door's restart dials nothing on the same absence)
                     "otherKernels": oth}), "application/json", cache="no-cache")
             if p == "/notify-all":
                 # the master bell's state (the user 2026-08-09): on = every task notifies when it

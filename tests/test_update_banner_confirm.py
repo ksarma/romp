@@ -45,7 +45,14 @@ phone-width layout, the armed row's geometry against the plain row's at ten desk
 label forms, after a resize while armed and after the re-read replaced a long label with a short one. The kernel side
 (the route's refusal of an unconfirmed body, the audit row, the counts and the registry read on
 /update-check, with its timeout and its stderr line) is in tests/test_kernel_update.py. Synthetic values
-only."""
+only.
+
+Every process this module runs, itself included, carries a dead ROMP_MANAGER_PORT and ROMP_KERNEL_PORT
+(1), pytest's conftest floor or not: on 2026-09-10 a review probe of this change, run with the manager
+variable absent while the drift door still mapped the absence to the manager's default port, reached the
+live manager of a development box and restarted every session on it. The kernel guesses no port any more
+(absent means no manager started it), and the floor stays regardless: no probe here depends on the code
+under test to keep it off a live deployment."""
 import json
 import os
 import re
@@ -63,6 +70,11 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
+# Dead ports for this process and, explicitly, for every child it runs (run_banner, Browser.setUpClass):
+# the module docstring's last paragraph says why. ROMP_SERVE_PORT is the kernel port under the manager's
+# name, floored beside it the way tests/conftest.py floors all three.
+DEAD_PORTS = {"ROMP_MANAGER_PORT": "1", "ROMP_KERNEL_PORT": "1", "ROMP_SERVE_PORT": "1"}
+os.environ.update(DEAD_PORTS)
 km = load_source("romp_kernel_upd_confirm", os.path.join(BIN, "romp-kernel"))
 
 # The page the banner script thinks it runs in. `var` at module scope shadows node's globals; the
@@ -178,7 +190,7 @@ def run_banner(scenario, check=None):
     with open(path, "w") as f:
         f.write(HARNESS + pre + km._UPD_JS + "\n" + km._LANDING_ESC_JS + "\n(async function(){\nawait tick(); await tick();\n"
                 + scenario + "\n})();\n")
-    r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+    r = subprocess.run([node, path], capture_output=True, text=True, timeout=60, env=dict(os.environ, **DEAD_PORTS))
     shutil.rmtree(d, ignore_errors=True)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)
@@ -700,6 +712,17 @@ out(state());""")
         self.assertEqual((s["armed"], s["go"], s["goDisabled"], s["notNowHidden"]), (False, "Update", False, False))
 
 
+class DeadPorts(unittest.TestCase):
+    """Every process this module runs is handed a dead manager port and a dead kernel port (the module
+    docstring's last paragraph says why). Pinned in the child's own environment, not this one's: a run
+    under pytest inherits the conftest floor, so only the child's view says whether run_banner passes the
+    ports itself. The drivers' view is in Browser.test_the_drivers_carry_dead_manager_and_kernel_ports."""
+
+    def test_the_node_scenarios_carry_dead_manager_and_kernel_ports(self):
+        s = run_banner("out({ manager: process.env.ROMP_MANAGER_PORT || '', kernel: process.env.ROMP_KERNEL_PORT || '' });")
+        self.assertEqual(s, {"manager": "1", "kernel": "1"})
+
+
 class Wiring(unittest.TestCase):
     """Source pins on the parts node does not execute: the markup, the stylesheet, the Escape chain's
     order and the kernel route."""
@@ -837,7 +860,8 @@ const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 let browser;
 try { browser = await pw[cfg.engine].launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
-const R = { engine: cfg.engine, leg: cfg.leg, err: {}, pageErrors: [] };
+const R = { engine: cfg.engine, leg: cfg.leg, err: {}, pageErrors: [],
+            ports: { manager: process.env.ROMP_MANAGER_PORT || "", kernel: process.env.ROMP_KERNEL_PORT || "" } };
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
 const page = await ctx.newPage();
 page.on("pageerror", (e) => { R.pageErrors.push(String((e && e.message) || e)); });
@@ -1243,7 +1267,7 @@ class Browser(unittest.TestCase):
             with open(cfg, "w") as f:
                 json.dump({"leg": leg, "engine": engine, "launch": launch, "page": page, "pane": PANE, "checks": CHECKS, "labels": LABELS}, f)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=600,
-                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
+                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg, **DEAD_PORTS))
             if p.returncode == 3:
                 cls.skipped[leg] = "no playwright %s on this box (CI installs none): %s" % (engine, p.stderr.strip()[:200])
                 continue
@@ -1261,6 +1285,12 @@ class Browser(unittest.TestCase):
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
                 self.assertEqual((r["err"], r["pageErrors"]), ({}, []), engine)
+
+    def test_the_drivers_carry_dead_manager_and_kernel_ports(self):
+        # the driver's own view of its environment (DeadPorts says why the child's view is the one pinned)
+        for engine, r in self.R.items():
+            with self.subTest(engine=engine):
+                self.assertEqual(r["ports"], {"manager": "1", "kernel": "1"}, engine)
 
     def test_firefox_ran(self):
         # the pane and the Tab-into-pane cases are Firefox's: a press in a same-origin frame fires no top-window
