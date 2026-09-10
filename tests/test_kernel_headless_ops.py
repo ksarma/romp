@@ -413,6 +413,44 @@ def _sdk_reporting(running):
     return _Be()
 
 
+def _tmux_server(sids):
+    """A stand-in for _TMUX._run: a tmux server whose panes carry `sids`. `list-sessions -F <fmt>` answers one
+    line per sid in the caller's own format (LANE_FMT for live_sessions, the bare sid for alive_sids, NAME_FMT
+    for _tmux_name_of), as panes carrying those sids would, so the REAL Sessions.live() scan reads these sids
+    on the tmux backend with nothing patched above the fork; every other command exits 0 with nothing. The
+    pane's name is minted from the sid."""
+    import re
+    import subprocess
+
+    def run(args, t=3):
+        args = list(args)
+        out = ""
+        if args[:1] == ["list-sessions"]:
+            fmt = args[args.index("-F") + 1] if "-F" in args else "#{session_name}"
+            for sid in sids:
+                line = (fmt.replace("#{@romp}", "1").replace("#{@romp-session-id}", sid)
+                        .replace("#{@claude-state}", "waiting").replace("#{session_name}", "pane-" + sid[:8]))
+                out += re.sub(r"#\{[^}]*\}", "", line) + "\n"
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=out, stderr="")
+    return run
+
+
+def _drop_regs(paths):
+    """Unlink a test's private SDK regs and forget them in the SDK backend module's reg cache and incident
+    latch: the cache is module-global and prunes only past a 64-entry drift, so a row it cached for a path
+    a later test reuses would be served for that test's file."""
+    import sys
+    sbm = sys.modules.get("romp_sdk_backend")
+    for p in paths:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+        if sbm is not None:
+            sbm._REG_CACHE.pop(str(p), None)
+            sbm._REG_SERVE_WARNED.discard(str(p))
+
+
 class UnknownSessionRefused(_RouteServer):
     """A name (or id) that resolves to no session is a 404 naming it, on /end, /interrupt and /send
     alike. _sid_of falls back to its input unchanged, so a typo used to mint a phantom sid: /end
@@ -1546,32 +1584,48 @@ class UnknownSessionRefused(_RouteServer):
         # record of; HTTP 404) or unreadable (the WS err frame naming the record; HTTP 503; "try again" at
         # neither, since no writer serves it). A running session is admitted whatever its record reads. The
         # map _resolve_sid read is what the routes hand the gate, so the refusal path still scans once.
+        # Round 6: the table is driven through the REAL Sessions.live() scan (real reg files under the test's
+        # state dir, a stubbed tmux server), never a hand-built map. A hand-built row stood for "running",
+        # while the SDK half of the real map lists every alive=True reg, dormant included, and serves a
+        # corrupt reg's last good cached row (the pusher keeps the cache warm while the kernel runs), so a
+        # dormant session whose record broke after the scan had cached it was admitted at both doors and fell
+        # through to tmux. Running means the backend runs the session now: a tmux pane in the map, or an SDK
+        # session thread in running_sids; an SDK row in the map is a reg that says alive, never liveness. A
+        # reg that is a JSON list is on disk before the SDK backend is first built, so the build reads it.
         dead, named, live = ("aaaa1111-2222-3333-4444-555555555555", "bbbb1111-2222-3333-4444-555555555555",
                              "cccc1111-2222-3333-4444-555555555555")
         bad_thread, bad_named, bad_list = ("dddd1111-2222-3333-4444-555555555555",
                                            "eeee1111-2222-3333-4444-555555555555",
                                            "ffff1111-2222-3333-4444-555555555555")
-        bad_live, bad_running = "abab1111-2222-3333-4444-555555555555", "cdcd1111-2222-3333-4444-555555555555"
+        bad_live_tmux, bad_live_sdk, bad_running = ("abab1111-2222-3333-4444-555555555555",
+                                                    "baba1111-2222-3333-4444-555555555555",
+                                                    "cdcd1111-2222-3333-4444-555555555555")
         sdir = km.jd.STATE / "sdk"
         sdir.mkdir(parents=True, exist_ok=True)
+        regs = [sdir / (s + ".json") for s in (dead, bad_thread, bad_named, bad_list, bad_live_tmux, bad_live_sdk,
+                                                bad_running)]
         (sdir / (dead + ".json")).write_text(json.dumps({"sid": dead, "alive": False, "cwd": "/tmp"}))
-        for sid in (bad_thread, bad_named, bad_live, bad_running):
+        for sid in (bad_thread, bad_named, bad_live_tmux, bad_running):
             (sdir / (sid + ".json")).write_bytes(b"{not json")
         (sdir / (bad_list + ".json")).write_bytes(json.dumps([1, 2]).encode())
         _register(THREAD_PARENT, "web-parent")
         _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
         _register(named, "named-only")
         _register(bad_named, "named-bad")
-        _register(bad_live, "live-bad")
+        _register(bad_live_tmux, "live-bad-tmux")
+        _register(bad_live_sdk, "live-bad-sdk")
         states = (("no record", self.GHOST, "unknown"),
                   ("dead SDK reg, no names entry", dead, "admitted"),
                   ("comment thread", THREAD_TSID, "admitted"),
                   ("names entry only", named, "admitted"),
-                  ("live, unregistered", live, "admitted"),
+                  ("a tmux pane carries the sid, unregistered", live, "admitted"),
                   ("a reg that will not read, no names entry (a thread's)", bad_thread, "unreadable"),
                   ("names-registered, dormant, a reg that will not read", bad_named, "unreadable"),
                   ("a reg that is a JSON list, no names entry", bad_list, "unreadable"),
-                  ("names-registered, a reg that will not read, in the live map", bad_live, "admitted"),
+                  ("names-registered, a reg that will not read, a tmux pane carries the sid", bad_live_tmux,
+                   "admitted"),
+                  ("names-registered, a reg that broke after the scan cached it: in the live map on the SDK "
+                   "backend, no thread runs it", bad_live_sdk, "unreadable"),
                   ("a reg that will not read, the SDK backend runs it", bad_running, "admitted"))
         status = {"admitted": 200, "unknown": 404, "unreadable": 503}
         frames = []
@@ -1580,8 +1634,9 @@ class UnknownSessionRefused(_RouteServer):
         km._thread_reg_memo.clear()
         km._thread_reg_failed.clear()
         try:
-            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
-                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {live: {}, bad_live: {}})), \
+            with mock.patch.object(km._TMUX, "available", lambda: True), \
+                 mock.patch.object(km._TMUX, "_run", _tmux_server([live, bad_live_tmux])), \
+                 mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
                  mock.patch.object(km, "_sdk", lambda be=_sdk_reporting([bad_running]): be), \
                  mock.patch.object(km, "_end_and_record", lambda sid, be, now, via, fresh=False, why=None: True), \
                  mock.patch.object(km, "_send_or_park", lambda be, sid, text: True), \
@@ -1589,6 +1644,18 @@ class UnknownSessionRefused(_RouteServer):
                  mock.patch.object(km, "_confirm_close_now", lambda sid: None), \
                  mock.patch.object(km, "_send_to_app", lambda app, m: None), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                # the warm-cache row: readable when the scan cached it, broken after
+                (sdir / (bad_live_sdk + ".json")).write_text(json.dumps({"sid": bad_live_sdk, "alive": True}))
+                scan = km.Sessions.live()
+                self.assertEqual(scan.get(bad_live_sdk, {}).get("backend"), "sdk", "the scan cached the readable row")
+                (sdir / (bad_live_sdk + ".json")).write_bytes(b"{not json")
+                km._thread_reg_memo.clear()
+                km._thread_reg_failed.clear()
+                scan = km.Sessions.live()
+                self.assertEqual({s: r.get("backend") for s, r in scan.items() if s in (live, bad_live_tmux, bad_live_sdk)},
+                                 {live: "tmux", bad_live_tmux: "tmux", bad_live_sdk: "sdk"},
+                                 "the real scan: the stubbed panes on tmux, the cached last good row on sdk")
+                self.assertNotIn(bad_list, scan, "an uncached body that is not an object is skipped, hiding no other row")
                 for label, sid, expect in states:
                     del frames[:]
                     fake.interrupt.reset_mock()
@@ -1618,25 +1685,133 @@ class UnknownSessionRefused(_RouteServer):
                             self.assertIn("could not read the record", resp.get("error", ""), (path, label))
                             self.assertNotIn("try again", resp.get("error", "").lower(), (path, label))
         finally:
-            for sid in (dead, bad_thread, bad_named, bad_list, bad_live, bad_running):
-                try:
-                    (sdir / (sid + ".json")).unlink()
-                except OSError:
-                    pass
+            _drop_regs(regs)
             _rm_thread(THREAD_PARENT, THREAD_TSID)
-            for sid in (THREAD_PARENT, named, bad_named, bad_live):
+            for sid in (THREAD_PARENT, named, bad_named, bad_live_tmux, bad_live_sdk):
                 _unregister(sid)
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
+    def test_a_dormant_sessions_record_that_breaks_while_the_kernel_runs_is_unreadable_at_both_doors(self):
+        # _backend_reports_running read membership in Sessions.live() as "a backend runs the sid", but the SDK
+        # half of that map lists every alive=True reg, dormant included, and list_regs serves a corrupt reg's
+        # last good cached row once it has read it (the pusher scans every tick, so the cache is always warm
+        # while the kernel runs). So a dormant names-registered SDK session whose record broke after the scan
+        # had cached it was ADMITTED at both doors: owns() answered False for the unreadable reg, backend_for
+        # fell to tmux, the dashboard's message went to TmuxBackend.send for a pane that did not exist with no
+        # modal, no undelivered.jsonl row and no log line, `romp interrupt <name>` sent Esc to a tmux target
+        # named after the session, `romp end <sid>` killed a same-named tmux session and said the kill did not
+        # take, and _unconfirmed_end_text promised "try again". The 503 the tests modelled appeared only with a
+        # cold cache (after a kernel restart). Running means the backend runs the session now: the tmux pane
+        # set or running_sids, never an SDK row in the map (review round 6, 2026-09-09). Through the REAL
+        # Sessions.live() (tmux off: the map is the SDK half only), by id and by name, at both doors.
+        sid, name = "abab2222-3333-4444-5555-666666666666", "warm-web"
+        reg_path = km.jd.STATE / "sdk" / (sid + ".json")
+        reg_path.parent.mkdir(parents=True, exist_ok=True)
+        undelivered = km.jd.STATE / "undelivered.jsonl"
+        _register(sid, name)
+        frames = []
+        client = {"send": lambda s: frames.append(json.loads(s))}
+        fake = mock.Mock()
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        try:
+            reg_path.write_text(json.dumps({"sid": sid, "alive": True, "name": name}))
+            self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), "sdk", "the scan cached the readable row")
+            reg_path.write_bytes(b"{not json")
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+            self.assertTrue(km._reg_unreadable(sid))
+            self.assertIn(sid, km.Sessions.live(), "the premise: the cached last good row is served while the kernel runs")
+            before = len(undelivered.read_text().splitlines()) if undelivered.exists() else 0
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda s: fake)), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                for path, body in (("/end", {"id": sid}), ("/end", {"name": name}), ("/end", {"name": name, "when": "idle"}),
+                                   ("/send", {"id": sid, "text": "hello"}), ("/send", {"name": name, "text": "hello"}),
+                                   ("/interrupt", {"id": sid}), ("/interrupt", {"name": name})):
+                    code, resp = self._post(path, body)
+                    self.assertEqual(code, 503, (path, body, resp))
+                    self.assertIn("could not read the record for '%s'" % (body.get("id") or body.get("name")),
+                                  resp.get("error", ""), (path, body))
+                    self.assertIn(km._tilde(str(reg_path)), resp.get("error", ""), path)
+                    self.assertNotIn("try again", resp.get("error", "").lower(), path)
+                    self.assertNotIn("no live session", resp.get("error", ""), path)
+                self.assertNotIn(sid, km._end_on_idle_load(), "a refused deferred end records no wish")
+                self.assertTrue(km._drive({"type": "sendMessage", "id": sid, "text": "keep this text"}, client))
+                errs = [f for f in frames if f.get("type") == "err"]
+                self.assertEqual(len(errs), 1, frames)
+                self.assertIn("could not read the record", errs[0]["text"].lower())
+                self.assertIn(km._tilde(str(reg_path)), errs[0]["text"])
+                self.assertNotIn("no session with id", errs[0]["text"])
+                self.assertNotIn("try again", errs[0]["text"].lower())
+                self.assertEqual(errs[0]["copy"], "keep this text")
+                rows = [json.loads(x) for x in undelivered.read_text().splitlines()][before:]
+                self.assertEqual([(r["op"], r["sid"], r["what"], r["text"]) for r in rows],
+                                 [("sendMessage", sid, "message", "keep this text")], "the typed text is kept verbatim")
+                self.assertEqual(fake.method_calls, [], "nothing reached a backend at either door")
+                # the corroboration's phrasing for the same record: no writer serves a retry
+                self.assertNotIn("try again", km._unconfirmed_end_text({"cause": "reg"}, sid=sid).lower())
+                self.assertIn(km._tilde(str(reg_path)), km._unconfirmed_end_text({"cause": "reg"}, sid=sid))
+                self.assertNotIn("Try again", km._unconfirmed_end_text({"cause": "reg"}, name=name, sid=sid))
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {sid})
+            _unregister(sid)
+            _drop_regs([reg_path])
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
+    def test_a_reg_that_is_a_json_list_hides_no_other_sdk_session(self):
+        # list_regs ran setdefault on whatever json.loads returned, so a reg whose body is valid JSON but not
+        # an object raised out of the scan; Sessions.live() caught that around the WHOLE SDK half and dropped
+        # every SDK row, so by-name resolution of every OTHER SDK session answered 404 "no live session named"
+        # while the corrupt sid itself was gated unreadable, and a first SdkBackend build with such a file on
+        # disk failed, leaving the kernel with no SDK backend for its lifetime (review round 6, 2026-09-09).
+        # Through the REAL Sessions.live(): the good session resolves by name beside the broken file, which is
+        # skipped with one log line.
+        good, bad, name = "a1a12222-3333-4444-5555-666666666666", "b2b22222-3333-4444-5555-666666666666", "good-web"
+        sdir = km.jd.STATE / "sdk"
+        sdir.mkdir(parents=True, exist_ok=True)
+        good_path, bad_path = sdir / (good + ".json"), sdir / (bad + ".json")
+        _register(good, name)
+        good_path.write_text(json.dumps({"sid": good, "alive": True, "name": name}))
+        bad_path.write_bytes(json.dumps([1, 2]).encode())
+        fake = mock.Mock()
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                scan = km.Sessions.live()
+            self.assertEqual(scan.get(good, {}).get("backend"), "sdk", scan)
+            self.assertNotIn(bad, scan)
+            self.assertIn("list_regs: read failed for %s.json (ValueError)" % bad, err.getvalue())
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda s: fake)), \
+                 mock.patch.object(km, "_send_or_park", lambda be, sid, text: True), \
+                 mock.patch.object(km, "_route_meta_command", lambda be, sid, text, state=None: False), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                code, resp = self._post("/send", {"name": name, "text": "hello"})
+                self.assertEqual((code, resp), (200, {"ok": True, "queued": False}))
+                code, resp = self._post("/interrupt", {"name": name})
+                self.assertEqual((code, resp), (200, {"ok": True}))
+                fake.interrupt.assert_called_once_with(good)
+                code, resp = self._post("/interrupt", {"id": bad})
+                self.assertEqual(code, 503, resp)
+                self.assertIn("could not read the record", resp.get("error", ""))
+        finally:
+            _unregister(good)
+            _drop_regs([good_path, bad_path])
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
 
     def test_a_dormant_sessions_record_that_will_not_read_is_a_503_by_name_too(self):
         # the failed-read-as-404 class was closed for threads and by id in round 4 and stayed open by name:
-        # a dormant names-registered session's name resolves only through the live map, which list_regs
-        # omits a corrupt row from, so `romp end <name>` answered 404 "no live session named" on every
-        # attempt for a session whose record `romp end <sid>` said it could not read. _resolve_sid hands
-        # back the registered sid for exactly this record (_unreadable_dormant_named), and the gate answers
-        # its 503 (review round 5, 2026-09-09). A dormant session with a READABLE record keeps the by-name
-        # contract: a dormant session is addressed by id, 404 by name and admitted by id.
+        # a dormant names-registered session's name resolves only through the live map, and list_regs lists
+        # a corrupt reg only when it has cached a good row for it (an uncached one is omitted), so `romp end
+        # <name>` answered 404 "no live session named" on every attempt for a session whose record `romp end
+        # <sid>` said it could not read. The routes' resolution hands back the registered sid for exactly
+        # this record (_unreadable_dormant_named), and the gate answers its 503 (review round 5, 2026-09-09).
+        # A dormant session with a READABLE record keeps the by-name contract: a dormant session is addressed
+        # by id, 404 by name and admitted by id.
         dormant, name = "dddd2222-3333-4444-5555-666666666666", "dormant-web"
         reg_path = km.jd.STATE / "sdk" / (dormant + ".json")
         reg_path.parent.mkdir(parents=True, exist_ok=True)

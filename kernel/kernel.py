@@ -18348,17 +18348,25 @@ def _kernel_knows(sid, live=None):
 
 
 def _backend_reports_running(sid, live=None):
-    """Does a backend report `sid` running right now: the live map (`live`, a map the caller already read,
-    else one scanned here) or the SDK backend's in-flight set (running_sids: its live session threads, a
-    comment thread's included, which the live map hides by design). The liveness half of _session_gate,
-    asked only where a verdict needs it: a running session is admitted whatever its registry row reads,
-    since the row is rewritten from the backend's cache at its next flip and the base served such a
-    session. A failed scan or a backend without the set reads as not running."""
+    """Does a backend RUN `sid` right now: the tmux backend's live pane set or the Codex backend's live set
+    (the live map's rows on those backends: `live`, a map the caller already read, else one scanned here),
+    or the SDK backend's in-flight set (running_sids: its live session threads, a comment thread's included,
+    which the live map hides by design). The liveness half of _session_gate, asked only where a verdict
+    needs it: a running session is admitted whatever its registry row reads, since a running session's next
+    flip rewrites the row from the backend's cache and the base served such a session. Membership in the
+    live map is NOT liveness for an SDK row: the SDK half of Sessions.live() lists every alive=True reg,
+    dormant included, and list_regs serves a corrupt reg's last good cached row, so a dormant session whose
+    record broke while the kernel ran (the pusher scans every tick, so the cache is always warm) sat in the
+    map with no thread running it and was admitted at both doors, where backend_for fell through to tmux:
+    the dashboard's message went to a pane that did not exist and `romp end <sid>` killed a same-named
+    tmux session (review round 6, 2026-09-09). A failed scan or a backend without the set reads as not
+    running."""
     sid = str(sid or "")
     if not sid:
         return False
     try:
-        if sid in (live if live is not None else Sessions.live()):
+        row = (live if live is not None else Sessions.live()).get(sid)
+        if row is not None and (row.get("backend") or "") != "sdk":
             return True
     except Exception:
         pass
@@ -18374,10 +18382,13 @@ def _unreadable_record_text(sid, who=None):
     read: the record by path (~ for $HOME), that nothing was done, and the way out. Never "try again":
     no writer serves the retry. Only a flip of a running session (SdkBackend's kill, resume or promote)
     rewrites the row from the backend's cache, and a running session is admitted instead of refused;
-    _update_reg skips its write on an unreadable row, and list_regs omits it, so a dormant session's
-    broken record stays broken until the file is repaired or removed. Removing it drops the session from
-    the board (the dashboard's revive, which mints a fresh reg, is the other way back) (review round 5,
-    2026-09-09: the 503 promised a retry that no retry could serve)."""
+    _update_reg skips its write on an unreadable row, and list_regs serves the last good row for a reg it
+    has cached (the pusher's scans keep the cache warm while the kernel runs, with one log line per
+    incident) and omits an uncached one it cannot parse, a body that is JSON but not an object following
+    the same rule, so a dormant session's broken record stays broken until the file is repaired or
+    removed. Removing it drops the session from the board (the dashboard's revive, which mints a fresh
+    reg, is the other way back) (review round 5, 2026-09-09: the 503 promised a retry that no retry could
+    serve; round 6: the cached row it claimed list_regs omitted)."""
     return ("could not read the record for '%s': its registry entry %s exists but will not read; nothing was "
             "done. Repair or remove that file (removing it drops the session from the board)."
             % (who or sid, _tilde(str(jd.STATE / "sdk" / (str(sid) + ".json")))))
@@ -18391,8 +18402,10 @@ def _session_gate(sid, live=None, who=None):
     WS _drive gate and the HTTP control gate, _unknown_session_refusal, for /send, /interrupt and /end):
     (verdict, text), the verdict one of _GATE_ADMITTED, _GATE_UNKNOWN and _GATE_UNREADABLE, the text the
     unreadable refusal carries (None otherwise). In order of precedence:
-      admitted    a backend reports the sid running (_backend_reports_running), whatever its registry row
-                  reads: the row heals at its next flip and the base served such a session; else the
+      admitted    a backend RUNS the sid now (_backend_reports_running: a tmux pane or a Codex session in
+                  the live map, or an SDK session thread in running_sids; an SDK row in the live map is a
+                  reg that says alive, dormant or not, never liveness), whatever its registry row reads: a
+                  running session's next flip rewrites the row and the base served such a session; else the
                   kernel knows it (_kernel_knows: the names registry, the SDK registry via owns(), the live
                   map), so a dormant session, or a dead one addressed by id, passes to its idempotent end.
       unreadable  a NOT-running session whose SDK registry entry exists but will not read (_reg_unreadable):
