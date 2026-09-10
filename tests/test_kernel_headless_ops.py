@@ -2189,8 +2189,11 @@ class UnknownSessionRefused(_RouteServer):
         # verdict for a torn record rode the probe and, at a warm list_regs cache, the cache. The doors'
         # resolution reads the on-disk names registry first now: a name registered to a torn record is the
         # record's verdict with the probe down (no scan is made, so no probe-failed log line), with a pane's
-        # generation of the name listed (the pane is not reached; the text says a live session of the name is
-        # reachable by it again once the file is repaired or removed) and on the no-server exit, and the request
+        # generation of the name listed (the pane is not reached; the text says that if a live session of the
+        # name runs it is reachable by it once no torn record bears the name, conditional since round 11: with no
+        # namesake, as in the other two iterations, the repaired name is the dormant rule's 404, so round 10's
+        # "reachable by that name again once the file is repaired or removed" promised what never held) and on
+        # the no-server exit, and the request
         # forks tmux zero times; with the file removed the same name reaches the pane's generation from the
         # resolution's one fork (review round 10, 2026-09-09).
         import subprocess
@@ -2204,7 +2207,7 @@ class UnknownSessionRefused(_RouteServer):
         gone = subprocess.CompletedProcess(args=[], returncode=1, stdout="",
                                            stderr="no server running on /tmp/tmux-1000/default")
         ok_sid_x = _tmux_server(["sid-x"])(["list-sessions", "-F", km.TmuxBackend.LANE_FMT])
-        again = "A live session named 'web' is reachable by that name again once the file is repaired or removed."
+        again = "If a live session named 'web' runs, it is reachable by that name once no torn record bears it."
         try:
             with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
@@ -2222,6 +2225,8 @@ class UnknownSessionRefused(_RouteServer):
                             self.assertIn("could not read the record for 'web'", resp.get("error", ""), (label, path))
                             self.assertIn(km._tilde(str(torn_path)), resp.get("error", ""), (label, path))
                             self.assertIn(again, resp.get("error", ""), (label, path))
+                            self.assertNotIn("reachable by that name again", resp.get("error", ""),
+                                             (label, path, "the unconditional promise is gone: no namesake runs here"))
                             self.assertNotIn("try again", resp.get("error", "").lower(), (label, path))
                             self.assertNotIn("could not read the live session list", resp.get("error", ""), (label, path))
                             self.assertNotIn("tmux probe failed", err.getvalue(), (label, path, "no scan is made for a torn name"))
@@ -2254,10 +2259,12 @@ class UnknownSessionRefused(_RouteServer):
         # and never consults the torn dormant record, so it said "no session with id web" where the HTTP routes
         # said 503 "could not read" for the same name at both states: a torn dormant names-registered reg the
         # live map does not list (cold list_regs cache; round 6 regressed the door, 478ccdc0 agreed with HTTP),
-        # and a tmux probe that did not answer (pre-existing at the base). One miss path now (_named_miss), so
-        # the door refuses naming the read, with the typed spelling in the modal, the undelivered.jsonl row and
-        # the stderr cause; the no-server exit and a name nobody holds stay the unknown refusal
-        # (review round 7, 2026-09-09).
+        # and a tmux probe that did not answer (pre-existing at the base). One miss path then (_named_miss, round
+        # 7), so the door refused naming the read, with the typed spelling in the modal, the undelivered.jsonl row
+        # and the stderr cause; since round 10 the torn record is the resolution's (_resolve_sid's door read,
+        # _unreadable_dormant_named, gated by _session_gate's unreadable arm) and the failed scan stays
+        # _named_miss's, the order the body below drives; the no-server exit and a name nobody holds stay the
+        # unknown refusal (review rounds 7 and 10, 2026-09-09).
         import subprocess
         torn_path = km.jd.STATE / "sdk" / ("sid-q" + ".json")
         torn_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2534,8 +2541,8 @@ class UnknownSessionRefused(_RouteServer):
         # file named, no "try again", no probe made and so no probe-failed log line, at every door (round 9). By
         # NAME the same since round 10: the doors' resolution reads the torn record from the names registry
         # ahead of any scan, so with the probe down the verdict is the record's, not the scan's (round 9 left it
-        # the scan's there: the name resolved to nothing at a cold cache), and the text says a live session of the
-        # name is reachable by it again once the file is repaired or removed (review rounds 9 and 10, 2026-09-09;
+        # the scan's there: the name resolved to nothing at a cold cache), and the text says that if a live session
+        # of the name runs it is reachable by it once no torn record bears the name (review rounds 9 and 10, 2026-09-09;
         # rounds 7 and 8 pinned the flips this test denies).
         import subprocess
         sid, name = "abab7777-8888-9999-0000-111111111111", "torn-pane-web"
@@ -2583,8 +2590,8 @@ class UnknownSessionRefused(_RouteServer):
                         self.assertIn(record % name, resp.get("error", ""), (path, body))
                         self.assertIn(km._tilde(str(reg_path)), resp.get("error", ""), (path, body))
                         self.assertIn("Repair or remove", resp.get("error", ""), (path, body))
-                        self.assertIn("A live session named '%s' is reachable by that name again once the file is "
-                                      "repaired or removed." % name, resp.get("error", ""), (path, body))
+                        self.assertIn("If a live session named '%s' runs, it is reachable by that name once no torn "
+                                      "record bears it." % name, resp.get("error", ""), (path, body))
                         self.assertNotIn("try again", resp.get("error", "").lower(), (path, body))
                         self.assertNotIn("could not read the live session list", resp.get("error", ""), (path, body))
                         self.assertNotIn("tmux probe failed", err.getvalue(), "by name no scan is made for a torn record either")
@@ -2613,7 +2620,7 @@ class UnknownSessionRefused(_RouteServer):
                     self.assertEqual(len(errs), 1, frames)
                     self.assertIn("could not read the record for '%s'" % name, errs[0]["text"].lower())
                     self.assertIn(km._tilde(str(reg_path)), errs[0]["text"])
-                    self.assertIn("reachable by that name again once the file is repaired or removed", errs[0]["text"])
+                    self.assertIn("reachable by that name once no torn record bears it", errs[0]["text"])
                     self.assertNotIn("try again", errs[0]["text"].lower())
                     self.assertEqual(errs[0]["sid"], sid, "the modal carries the torn record's sid")
                     self.assertIn("undeliverable compact: the record for session %s will not read" % sid, err.getvalue())
@@ -2857,8 +2864,8 @@ class UnknownSessionRefused(_RouteServer):
         # generation of the name that the SDK backend RUNS is reached by name at both warmths and in every tmux
         # state, the call carrying its sid, and so is the torn generation itself when it is the running one
         # (round 11; round 10 refused the name with the torn generation's 503 beside a running generation, and
-        # before it the flip decided, scandir order picking the row). The text by name says a live session of
-        # the name is reachable by it again once the file is repaired or removed. Fails before on the cold side
+        # before it the flip decided, scandir order picking the row). The text by name says that if a live
+        # session of the name runs it is reachable by it once no torn record bears the name. Fails before on the cold side
         # (review rounds 9 and 10, 2026-09-09) and, for the running generation by name, at round 10's head.
         sid, name = "cdcd7777-8888-9999-0000-111111111111", "pair-web"
         mate = "cdcd7777-8888-9999-0000-222222222222"
@@ -2870,7 +2877,7 @@ class UnknownSessionRefused(_RouteServer):
         requests = (("/interrupt", {"id": sid}), ("/interrupt", {"name": name}), ("/end", {"id": sid}),
                     ("/end", {"name": name}), ("/send", {"id": sid, "text": "hello"}),
                     ("/send", {"name": name, "text": "hello"}))
-        again = "A live session named '%s' is reachable by that name again once the file is repaired or removed." % name
+        again = "If a live session named '%s' runs, it is reachable by that name once no torn record bears it." % name
 
         def verdicts(label, reqs):
             out = []
@@ -3014,8 +3021,8 @@ class UnknownSessionRefused(_RouteServer):
         # name through _drive, the err frame naming the record at both warmths with the pane listed and with the
         # probe down, without and with a live namesake pane bearing the name; the frames' text, sid and copy
         # agree across the cache states, the modal carries the torn record's sid by name too, and the by-name
-        # text says a live session of the name is reachable by it again once the file is repaired or removed.
-        # A second SDK generation of the name that the SDK backend RUNS is reached by name at both warmths and
+        # text says that if a live session of the name runs it is reachable by it once no torn record bears the
+        # name. A second SDK generation of the name that the SDK backend RUNS is reached by name at both warmths and
         # in every tmux state, the call carrying its sid, and so is the torn generation itself when it is the
         # running one (round 11; round 10 refused the name with the torn generation's frame beside a running
         # generation). Fails before on the cold side (no err frame, fake.interrupt called; with the namesake,
@@ -3032,7 +3039,7 @@ class UnknownSessionRefused(_RouteServer):
         fake = mock.Mock()
         msgs = ({"type": "interrupt", "id": sid}, {"type": "sendMessage", "id": sid, "text": "keep this"},
                 {"type": "compact", "name": name}, {"type": "sendCommand", "name": name, "cmd": "/model opus"})
-        again = "A live session named '%s' is reachable by that name again once the file is repaired or removed." % name
+        again = "If a live session named '%s' runs, it is reachable by that name once no torn record bears it." % name
 
         def verdicts(label, ms):
             out = []
@@ -3400,6 +3407,23 @@ class UnknownSessionRefused(_RouteServer):
             _forget_regs([reg_path])
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
+
+    def test_named_miss_reads_a_spelling_outside_the_alphabet_as_no_local_name_as_a_backstop(self):
+        # the alphabet line for the doors is _resolve_sid's door read: a spelling outside NAME_RE is handed back
+        # before any read, the gate's unknown verdict follows, and both doors reach _named_miss with the same
+        # spelling, so its own guard decides nothing while that read stands (round 11: deleting it left every
+        # module green, since no door drive reaches it deciding). It stays as a backstop (with the door read
+        # deleted it alone keeps host:name off the scan-failed 503) and is pinned directly: four spellings outside
+        # the alphabet answer None under a failed scan and under an unreadable store, and the inside-alphabet
+        # control is the scan's verdict, then the store's (review round 11, 2026-09-10).
+        import types
+        failed = types.SimpleNamespace(tmux_failed=True)
+        self.assertIsNone(km._named_miss("web/2", failed, False))
+        self.assertIsNone(km._named_miss("TESTHOST:web", failed, False))
+        self.assertIsNone(km._named_miss("../x", None, True))
+        self.assertIsNone(km._named_miss("web 2", failed, True))
+        self.assertEqual(km._named_miss("web", failed, False)[1], km._GATE_SCAN_FAILED)
+        self.assertEqual(km._named_miss("web", None, True)[1], km._GATE_STORE_UNREADABLE)
 
 
 class NamesSnapshotMemoRace(unittest.TestCase):

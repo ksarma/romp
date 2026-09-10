@@ -18403,18 +18403,21 @@ def _unreadable_record_text(sid, who=None, named=False):
     file drops the session from the board (the dashboard's revive, which mints a fresh reg, is the other way
     back) (review round 5, 2026-09-09: the 503 promised a retry that no retry could serve; round 6: the cached
     row it claimed list_regs omitted). `named` says the caller addressed the session by NAME (`who` is the
-    name, not the sid): the text then adds that a live session of that name is reachable by the name again
-    once the file is repaired or removed, since the doors' resolution reads the names registry first and a
-    torn record of the name is refused ahead of any live namesake bearing it, a tmux pane or a dormant SDK
+    name, not the sid): the text then adds that IF a live session of that name runs, it is reachable by the
+    name once no torn record bears it, since the doors' resolution reads the names registry first and a torn
+    record of the name is refused ahead of any live namesake bearing it, a tmux pane or a dormant SDK
     generation (round 10: resolved through the live map, the by-name verdict was the cache's, the namesake
     cold and the record warm; a generation the SDK backend runs is reached by the name ahead of the torn
     record, round 11). Said whether or not a namesake runs, since that is the live map's answer and this text
-    reads no map."""
+    reads no map, which is why the wording is conditional: for a lone dormant torn generation the next
+    by-name request after the repair or removal is the dormant rule's 404, and several torn generations of
+    one name are refused one file at a time (round 11; round 10 said "reachable by that name again once the
+    file is repaired or removed", a promise that never held for a lone dormant generation)."""
     text = ("could not read the record for '%s': its registry entry %s exists but will not read; nothing was "
             "done. Repair or remove that file (removing it drops the session from the board)."
             % (who or sid, _tilde(str(jd.STATE / "sdk" / (str(sid) + ".json")))))
     if named:
-        text += " A live session named '%s' is reachable by that name again once the file is repaired or removed." % who
+        text += " If a live session named '%s' runs, it is reachable by that name once no torn record bears it." % who
     return text
 
 
@@ -18467,8 +18470,13 @@ def _local_spelling(who):
     line per request; `../palette` and `../session-flags` were ADMITTED through the names door (NAMES / who
     read a file under STATE as a registry entry), and `../end-on-idle.json` was ended as a registered sid; an
     absolute path replaces the base the same way (review round 10, 2026-09-09). Asked by _resolve_sid's door
-    read, _session_gate and _named_miss, so a refused spelling touches nothing. A tmux session the CLI named
-    outside this alphabet (bin/romp's `new -t` checks tmux alone) is addressed by id."""
+    read, _session_gate and _named_miss, so a refused spelling touches nothing. `bin/romp new -t` and `romp
+    resume` fold the name to [A-Za-z0-9_-] (the launcher's `tr -c` in bin/romp), inside this alphabet, so a
+    launch never registers a name outside it; a tmux session renamed from inside tmux (prefix-$,
+    :rename-session, choose-tree; tmux folds only '.' and ':') is recorded as tmux spells it by the `romp
+    _renamed` hook, so one renamed outside the alphabet is addressed by id at /send, /interrupt, /end and the
+    WS by-name arm, or by name again after a tmux rename back into the alphabet, which the hook resyncs
+    (round 11; round 10 attributed the class to `new -t`)."""
     return bool(NAME_RE.fullmatch(str(who or "")))
 
 
@@ -18493,8 +18501,10 @@ def _session_gate(sid, live=None, who=None):
                   reads the on-disk names registry first (_resolve_sid's door read), which answers a generation
                   of the name the SDK backend runs ahead of a torn one (round 11), so a torn record of the name
                   is this verdict ahead of any live tmux namesake bearing the name and whatever the list_regs
-                  cache holds, and the text says a live session of the name is reachable by it again once the
-                  file is repaired or removed (round 10; rounds 7 to 9 resolved a name through the live map,
+                  cache holds, and the text says that if a live session of the name runs it is reachable by it
+                  once no torn record bears the name (round 10, the wording conditional since round 11: for a
+                  lone dormant torn generation the repaired name is the dormant rule's 404; rounds 7 to 9
+                  resolved a name through the live map,
                   so a torn generation's verdict by name was the cache's: the namesake cold, the record warm,
                   and with the probe down the scan's verdict cold). Rounds 5 to 8 admitted such a sid when the
                   live map listed a pane for it and answered the scan's verdict (try again) when the map listed
@@ -18556,8 +18566,13 @@ def _named_miss(who, live, store_unreadable):
     scan and, with the probe down, behind the list_regs cache: the scan's verdict at a cold cache, the record's
     at a warm one). A spelling that can name nothing local (_local_spelling: the roster's host:name with its
     colon, a path segment, anything outside NAME_RE's alphabet) is no local name and no thread's, so neither
-    read can be what fails it: None, and no file is read for it (round 6 drew the line at the colon; round 10
-    at the alphabet). Round 6 gave the torn lookup to _control_target alone and the WS compact and sendCommand
+    read can be what fails it: None, and no file is read for it. That check is a backstop here, not the doors'
+    alphabet line: _resolve_sid's door read hands such a spelling back before any read, the gate's unknown
+    verdict follows, and both doors arrive here with the same spelling, so while that read stands this check
+    decides nothing (round 11: deleting it left every module green; deleting the door read instead showed it
+    then alone keeps host:name off the scan-failed 503, which is why it stays). Round 6's colon guard here WAS
+    the line, since the scan ran before it; round 10 moved the line to the alphabet and to the door read.
+    Round 6 gave the torn lookup to _control_target alone and the WS compact and sendCommand
     door read the same name as unknown, and that door read a failed scan as a session that does not exist
     from the base on; one routine now, so the doors cannot drift again (review round 7, 2026-09-09). `cause`
     is the stderr cause the WS records writer logs (_refusal_cause)."""
@@ -18810,10 +18825,12 @@ def _drive(msg, client):
     # unreadable, in every tmux state and at every list_regs cache state (round 9), in the same three places,
     # never called foreign (review round 5, 2026-09-09: this door said "no session with
     # id" for a record `romp end` said it could not read, and passed a names-registered session on such a
-    # row through to the tmux fallthrough this gate exists to stop). A read that failed on the way (the tmux
-    # scan, a torn dormant record of the typed name, the comment threads' store) is refused naming the read,
-    # from the same miss path the routes take (_named_miss), with the typed spelling in the modal as in the
-    # routes' 503 (round 7), on every unknown verdict for a typed name whatever sid the resolution answered,
+    # row through to the tmux fallthrough this gate exists to stop). A read that failed on the way is refused
+    # naming the read, with the typed spelling in the modal as in the routes' 503: the tmux scan and the comment
+    # threads' store from the miss path the routes take (_named_miss, round 7), on every unknown verdict for a
+    # typed name whatever sid the resolution answered; a torn dormant record of the typed name from
+    # _session_gate's unreadable arm after _resolve_sid's door read (round 10; rounds 7 to 9 answered it from
+    # the miss path, behind the scan),
     # as the routes do (round 8: this door took the miss path for a name handed back unchanged only, so a name
     # the comment threads' store resolved to a sid with no record was refused here as a session that does not
     # exist while the probe was down, where the routes said the list could not be read).
@@ -27256,8 +27273,11 @@ def _control_target(who, route=""):
     out so the /send arm's dead-pane guard reads the one scan this request made instead of forking a second
     probe (round 7). A request forks tmux at most once: in the resolution, or in the /send arm's alive_sids
     read when nothing was scanned (by id to a tmux-backed sid, or a name that is itself a registered sid; a
-    readable SDK reg routes to the SDK backend and forks nothing); a torn record forks zero times, by id and
-    by name, since the record's verdict needs no map (round 8 scanned here for a registered sid whose
+    readable SDK reg routes to the SDK backend and forks nothing); a torn record forks zero times when the
+    names registry answers the resolution (a registered sid by id, a registered name) and once otherwise, in
+    the resolution's Sessions.live() (an unregistered sid, a comment thread by id or by its row name; the
+    /send arm is never reached for one, the gate having refused it), since the record's verdict needs no map
+    (round 8 scanned here for a registered sid whose
     registry entry will not read, ahead of a gate that scanned for one itself; round 9 took both scans out;
     round 10 took the by-name scan out too, the names registry answering first). A failed read is never
     reported as a session that does not exist (review rounds 4 and 5, 2026-09-09; the fail-loudly rule).

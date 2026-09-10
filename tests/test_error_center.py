@@ -319,9 +319,10 @@ class ErrorCenterWiring(unittest.TestCase):
         # lists them: no session by that id, a record that would not read, a live session list the tmux probe did
         # not answer for, a comment threads' store that would not read while a session name was resolved (the WS
         # by-name door's refusal, round 7's addition, which the round-7 text missed), a goals file that could not
-        # be read or written, with the dialog that announced the entry saying which. The order is the text's own,
-        # not a code path's: the by-name miss path (_named_miss) reads the failed scan before the torn record, and
-        # the first and the last cause are not on that path at all (round 9).
+        # be read or written, with the dialog that announced the entry saying which. The torn record is the
+        # resolution's door read (_resolve_sid, _unreadable_dormant_named, ahead of the miss path), the failed scan
+        # and the store are the miss path's (_named_miss), and the first and the last cause are on neither (rounds
+        # 9 to 11; round 9's comment had the miss path reading the scan before the torn record, its order then).
         # The on-disk row: a typed message is kept verbatim, and a refused reply, interrupt, end or compact (the
         # drive gate's refusals of the ops that carry no text; a compact by name carries its session's name as
         # the target, never as text) files a row with no text; only the goals-file gesture refusals (clear, drop,
