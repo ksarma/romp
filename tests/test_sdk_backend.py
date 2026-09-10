@@ -5768,7 +5768,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s.thread = mock.Mock(is_alive=lambda: True)
         s.fast = "off"; s._fast_unlocked = False
         self._start(s, "a1")
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
             self.assertTrue(s.backend.set_fast(self.SID, "on"))
             self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
@@ -5806,7 +5806,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._launched_effort = sb.effort_launch_shape("high"); s._launched_auth = "login"
         self._start(s, "a1")
         s.backend.set_effort(self.SID, "max")
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             s.backend.set_auth(self.SID, "key")
         self.assertIn("reconnect (web): the pending effort and auth picks ride this reconnect", ride(s))
         s = self._sess(effort="high")
@@ -5914,7 +5914,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._launched_auth = "login"
         asked = []
         s.request_reconnect = lambda *a, **k: asked.append(1)
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
             self.assertEqual(asked, [1]); self.assertEqual(s._auth_pending, "key")
             self.assertTrue(s.backend.set_auth(self.SID, "login"))
@@ -6004,7 +6004,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._launched_auth = "login"
         asked = []
         s.request_reconnect = lambda *a, **k: asked.append(1)
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
             s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "default", "auth": "key"}
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
@@ -6334,7 +6334,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         # billing, both orders
         s = self._sess(auth="key")
         s._launched_auth = "key"
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_auth(self.SID, "login"))
             self.assertTrue(s._reconnect)
             s._reset_reconnect_state()
@@ -6565,7 +6565,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._launched_auth = "login"
         s.auth_live = "login"
         self._start(s, "a1")
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
             self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
             self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["auth"])
@@ -6639,7 +6639,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s = self._sess(effort="high", auth="login")
         s._launched_effort = sb.effort_launch_shape("high"); s._launched_auth = "login"
         self._start(s, "a1")
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_effort(self.SID, "max"))
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
             self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["effort", "auth"])
@@ -6698,7 +6698,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s.thread = mock.Mock(is_alive=lambda: True)
         s.fast = "off"; s._fast_unlocked = False
         s.inflight = 1                                   # a turn open, no live work
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
             self.assertTrue(s.backend.set_fast(self.SID, "on"))
         self.assertTrue(s._reconnect_when_idle and not s._reconnect and not s._reconnect_held_for_work)
@@ -6729,7 +6729,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         # an idle pick flips at its immediate arm, as before
         s = self._sess(auth="login")
         s._launched_auth = "login"; s.auth_live = "login"
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
         self.assertTrue(s._reconnect); self.assertEqual(s.auth_live, "")
 
@@ -7065,7 +7065,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s.auth_live = "login"
         s.loop = q
         self._start(s, "a1")
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_effort(self.SID, "max"))
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
             q.flush()                                                        # the loop serves both requests
@@ -7114,7 +7114,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         q.flush()
         self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
         self._stop(s, "a1")                                                  # the work ends; the settle arms
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             def picks():
                 s.backend.set_fast(self.SID, "on")
                 s.backend.set_auth(self.SID, "key")
@@ -7446,7 +7446,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(s.snapshot()["effort"], "high", "the running value stays beside it")
         s.backend.set_mode(self.SID, "bypassPermissions")
         s.backend.set_fast(self.SID, "on")
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             s.backend.set_auth(self.SID, "key")
         snap = s.snapshot()
         self.assertEqual(snap["pickHeld"]["surfaces"], ["effort", "mode", "fast", "auth"])
@@ -7482,7 +7482,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertTrue(s._reconnect); self.assertEqual(s._launching["effort"], sb.effort_launch_shape("max"))
         self.assertTrue(s.backend.set_effort(self.SID, "low"))          # the arm-to-teardown half: pending, request queued
         self.assertTrue(s.backend.set_fast(self.SID, "on"))
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
             self.assertEqual(s._pick_names(), ["effort", "fast", "auth"])
             self.assertEqual(len(q.queued), 3, "three requests wait for the loop")
@@ -7651,8 +7651,8 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             s._settle_withdrawal("effort", "repeat")
         self.assertGreaterEqual(len(held_at), 6, "every path computed the shape: %r" % (held_at,))
         self.assertEqual([h for h in held_at if h], [], "the launch shape was computed with the hold lock held")
-        # the problem line a settings file that cannot be read logs (key_available, once per backend) is logged with
-        # the lock released too: the read itself happens inside the shape compute
+        # the problem line a settings file that cannot be read logs (key_state, once per backend, main's
+        # _say_settings_unreadable) is logged with the lock released too: the read itself happens inside the shape compute
         seen = []
         current = []
 
@@ -7670,7 +7670,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             q.flush()
             self._stop(s, "a1")
             self.assertTrue(s._arm_reconnect_if_quiet("turn end", queued_ok=True))
-        self.assertTrue(any("reads as having no apiKeyHelper until it does" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(any("cannot tell which side this box bills until it reads" in str(m) for m in self.logs), self.logs)
         self.assertTrue(seen, "the read ran")
         self.assertEqual([h for h in seen if h], [], "the settings read (and its problem line) ran under the hold lock")
 
@@ -8311,7 +8311,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s.fast = "off"; s._fast_unlocked = False
         self.assertTrue(s.backend.set_fast(self.SID, "on"))
         self.assertTrue(s.backend.set_env(self.SID, {"X": "1"}))
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"):
             self.assertTrue(s.backend.set_auth(self.SID, "key"))
         self.assertEqual(asked, ["effort", "mode", "mode", "fast", "env", "auth"])
         # the refused opt-in's restore names no pick: a restore, not a pick, and the request keeps its plain meaning
@@ -9332,7 +9332,7 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         # replaced with `pass`, 513 tests stayed green, and a billing revert in the spawn window relaunched the
         # identical login/key shape). Patched key availability and a user-level helper, so the leg runs the same on
         # every box; the session starts on a login pick
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True), \
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"), \
              mock.patch.object(sb._cred, "helper_source", return_value="user"):
             self.s.auth = "login"
             self.be._update_reg(self.SID, auth="login")
@@ -9647,7 +9647,7 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         # by its own request, a third client of the OTHER shape. Patched key availability and a user-level helper; the
         # session starts on a login pick; a text is queued with the pick so its request defers and the second process's
         # init is reached (the fake reports the key iff the settings it launched with leave the helper on)
-        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True), \
+        with mock.patch.object(sb.SdkBackend, "key_state", return_value="ok"), \
              mock.patch.object(sb._cred, "helper_source", return_value="user"):
             self.s.auth = "login"
             self.be._update_reg(self.SID, auth="login")

@@ -232,11 +232,13 @@ class OptionsInjection(_OptionsHarness):
         self.assertEqual(s2._launched_auth, "login")
 
     def test_a_key_pick_that_launched_without_a_key_is_stamped_as_what_launched(self):
-        # an explicit key pick on a box with no helper launches plain (the test below) and bills Claude Code's
-        # own credential resolution. Stamping it "key" made a later key pick, once a helper existed, read as
+        # an explicit key pick on a box with no helper and no login launches plain (the test below) and bills
+        # Claude Code's own credential resolution (with a login signed in the pick falls to it instead: pick_fall,
+        # PickFallsToTheAvailableSide). Stamping it "key" made a later key pick, once a helper existed, read as
         # unchanged in set_auth, so the helper was never billed (review round 1); the stamp records the side
         # that launched, and the re-pick reconnects
         self._no_helper()
+        self.be.login_ok = lambda: False
         sid = "11111111-2222-3333-4444-%012d" % 7
         sb.write_reg(self.be.state_dir, sid, {"sid": sid, "name": "s7", "cwd": "/tmp", "auth": "key"})
         s = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
@@ -252,7 +254,9 @@ class OptionsInjection(_OptionsHarness):
         self.assertTrue(self.be.set_auth(sid, "key"))
         self.assertEqual(asked, [1], "the re-pick reconnects onto the helper")
         self.assertEqual(s._auth_pending, "key")
-        # and picking login on that session reads unchanged: the same env either way
+        # and picking login on that session reads unchanged: the same env either way (a login the box can bill,
+        # else set_auth refuses the pick before the guard)
+        self.be.login_ok = lambda: True
         asked.clear()
         s._auth_pending = ""
         self.assertTrue(self.be.set_auth(sid, "login"))

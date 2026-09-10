@@ -5042,8 +5042,8 @@ class SdkSession:
         #   init's apiKeySource against THIS, so a CLI that lands on the other side (a stale login, a helper a
         #   login pick meant to suppress) is flagged loudly instead of silently billing the wrong account
         self._launched_unkeyed_pick = False  # an explicit API-key pick that launched plain because the box has
-        #   no apiKeyHelper (_options): Claude Code's own credential resolution, its login, is what pays, said
-        #   once per process in the log
+        #   no apiKeyHelper and no signed-in login to fall to (_options; with a login the pick falls to it,
+        #   pick_fall): Claude Code's own credential resolution is what pays, said once per process in the log
         self._pick_fell_said = ""    # the pick whose fall to the other side _options has said for THIS
         self._pick_unknown_said = ""     # the 'cannot tell, launching with the pick as is' row: once per session and pick
         #   session (once per session, not per reconnect; the user 2026-09-08)
@@ -11432,8 +11432,8 @@ class SdkBackend:
         # the launch and the stamps agree by construction; a set_auth landing after it compares against the
         # stamp and its own request launches the other side after this one lands
         auth = sess.auth
-        # The side this launch bills: the pick, unless the box cannot bill it and CAN bill the other —
-        # then the launch falls to the side that exists (the user 2026-09-08: no login on the box means
+        # The side this launch bills: the pick, unless the box cannot bill it and CAN bill the other; then
+        # the launch falls to the side that exists (the user 2026-09-08: no login on the box means
         # everything bills the key, never a dead login; the mirror case, a key pick on a helper-less box
         # with a login, bills the login). Two picks fall this way: a stale login pick on a box whose
         # login is gone (or whose apiKeyHelper is MANAGED, which outranks the per-session layer the
