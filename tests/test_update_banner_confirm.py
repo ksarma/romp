@@ -39,8 +39,10 @@ Chromium, Firefox and WebKit, plus Firefox under Gecko's switch for the WebKit f
 loudly where absent) drive the served CSS, markup and script with real input: a double-click, a held
 Enter, two taps at the Update button's point, a spread second tap past its right edge, a click and a tap
 on the confirm, a real click on Cancel, a click and a drag on the banner's own text, Tab and Enter on
-Cancel, Escape, a press inside a same-origin iframe, Tab out of the banner into the iframe, the
-phone-width layout and the armed row's geometry against the plain row's at five widths. The kernel side
+Cancel, Escape, a press inside a same-origin iframe, Tab out of the banner into the iframe, a press on
+the banner released over the iframe or outside the viewport, a right and a middle click inside it, the
+phone-width layout, the armed row's geometry against the plain row's at ten desktop widths with four
+label forms, after a resize while armed and after the re-read replaced a long label with a short one. The kernel side
 (the route's refusal of an unconfirmed body, the audit row, the counts and the registry read on
 /update-check, with its timeout and its stderr line) is in tests/test_kernel_update.py. Synthetic values
 only."""
@@ -115,7 +117,8 @@ var document = {
                                            "rupd-cancel": CX, "rupd-dismiss": DM }[id] || null; },
   getElementsByTagName: function (t) { return t === "iframe" ? FRAMES : []; }
 };
-var window = { addEventListener: function (t, f, cap) { (WLISTENERS[t] = WLISTENERS[t] || []).push({ f: f, cap: capFlag(cap) }); } };
+var window = { addEventListener: function (t, f, cap) { (WLISTENERS[t] = WLISTENERS[t] || []).push({ f: f, cap: capFlag(cap) }); },
+               removeEventListener: function (t, f) { WLISTENERS[t] = (WLISTENERS[t] || []).filter(function (l) { return l.f !== f; }); } };
 var location = { reload: function () { RELOADS++; } };
 var CHECK = { cur: "v0.1.0", tag: "v0.2.0", mode: "ask", state: "", boot: "b1", drift: "", driftSha: "", sessions: 3, midTurn: 1, otherKernels: 0 };
 var UPDATE_OK = true, UPDATE_TEXT = "";
@@ -724,7 +727,7 @@ class Wiring(unittest.TestCase):
                    "d.addEventListener('pointerdown',function(){if(armed)disarm();},true);",
                    "d.addEventListener('pointerup',function(){press=false;},true);",
                    "var w=d.defaultView;if(w)w.addEventListener('focus',function(){if(armed)disarm();},true);}catch(e){}}",
-                   "box.classList.add('rup-arm');fit(g);wireFrames();",
+                   "box.classList.add('rup-arm');fit();wireFrames();window.addEventListener('resize',refit);",
                    "function disarm(back,always){if(!armed)return;var a=document.activeElement,inside=back&&(always||(a&&box.contains(a)));",
                    "armed=false;window.removeEventListener('resize',refit);",
                    "document.addEventListener('pointerdown',function(e){var inside=!!(e&&e.target&&box.contains(e.target));press=inside&&e.button===0&&e.isPrimary!==false;if(armed&&!inside)disarm();},true);",
@@ -766,13 +769,22 @@ class Wiring(unittest.TestCase):
         self.assertIn("#rupd .rup-armed{font-weight:500;user-select:none;-webkit-user-select:none}", css,
                       "the double-click the layout routes onto the label paints no selection")
         self.assertIn("border-color:rgba(0,0,0,0.25);margin-left:12px}", css, "the confirm's margin: with the box's gap, 24px past the label")
-        self.assertIn("#rupd.rup-arm .rup-armed{display:flex;align-items:center;align-self:stretch;padding:6px 0}", css,
-                      "the label is as tall as a button and the row, under the armed class only so hidden still hides it")
+        self.assertIn("#rupd.rup-arm .rup-armed{display:flex;align-items:center;align-self:stretch;padding:6px 0;flex:1 1 0}", css,
+                      "the label is as tall as a button and the row, under the armed class only so hidden still hides it; "
+                      "basis 0 so the row shrinks the label's text before the message's")
         js = km._UPD_JS
-        self.assertIn("function arm(){var t=label(),g=rect(go);", js, "Update's footprint is measured before it hides")
-        self.assertIn("box.classList.add('rup-arm');fit(g);wireFrames();", js)
-        self.assertIn("var w=Math.max(l.width,g.width),d=g.right-l.right;if(d>0)w=Math.max(w,l.width+2*d);", js,
-                      "at least Update's width, and wide enough that its right edge reaches Update's")
+        self.assertIn("function arm(){var t=label(),seq=++arms;plain=plainRects();armed=true;", js, "the plain row is measured before it hides")
+        self.assertIn("box.classList.add('rup-arm');fit();wireFrames();window.addEventListener('resize',refit);", js)
+        self.assertIn("if(seq!==arms)return;note(d);if(armed){lbl.textContent=label();fit();}", js, "the re-read re-fits, unless its arm has ended")
+        self.assertIn("var w=p.g.right-p.n.left-12;if(w>l.width)lbl.style.minWidth=Math.ceil(w)+'px';", js,
+                      "the label spans from 12px right of Not now's left edge to Update's right edge at least")
+        self.assertIn("var dx=p.g.right-l.right;if(dx>0.5||dx<-0.5)box.style.transform='translateX(calc(-50% + '+dx.toFixed(2)+'px))';", js,
+                      "the box is shifted so the label's right edge is Update's")
+        self.assertIn("maxW=p.g.right+(b.right-l.right)-vw*0.04;if(vw&&maxW<b.width)box.style.maxWidth=Math.floor(maxW)+'px';", js,
+                      "the box is capped so its left edge keeps the cap's margin once shifted; a long label wraps inside")
+        self.assertIn("if(b&&b.height<p.b.height-0.5)box.style.minHeight=Math.ceil(p.b.height)+'px';", js, "at least the plain box's height")
+        self.assertIn("function refit(){if(!armed)return;plain=plainRects();fit();}", js)
+        self.assertIn("c.style.visibility='hidden';", js, "the plain row is re-measured from a hidden clone, never by toggling the live box")
         html = km._landing()
         html = html if isinstance(html, str) else html.decode("utf-8")
         self.assertIn(":root{--err:#c0392b}", html)
@@ -784,10 +796,12 @@ class Wiring(unittest.TestCase):
         # the sibling banner's phone rule, where the armed label takes a full row of its own so the
         # confirm never sits on the row where Update was (the Browser leg below measures the widths)
         css = km._UPD_CSS
-        self.assertIn("z-index:99999;display:none;flex-wrap:wrap;width:max-content;align-items:center;gap:12px;"
-                      "max-width:92vw;box-sizing:border-box;", css)
-        self.assertIn("@media (max-width:640px){#rupd{width:92vw;gap:10px 12px}"
-                      "#rupd .rup-msg,#rupd .rup-armed{flex:1 1 100%}#rupd button{flex:1 1 auto;white-space:normal}"
+        self.assertIn("z-index:99999;display:none;width:max-content;align-items:center;gap:12px;"
+                      "max-width:92vw;box-sizing:border-box;", css, "no wrap at desktop widths: the row shrinks its label and message")
+        self.assertIn("#rupd:not(.rup-arm){max-width:min(92vw,100vw - 240px)}", css,
+                      "the plain box leaves the armed row its room to the right (Restart, its 24px, the padding, doubled: the box is centred)")
+        self.assertIn("@media (max-width:639px){#rupd,#rupd:not(.rup-arm){width:92vw;max-width:92vw;flex-wrap:wrap;gap:10px 12px}"
+                      "#rupd .rup-msg,#rupd.rup-arm .rup-armed{flex:1 1 100%}#rupd button{flex:1 1 auto;white-space:normal}"
                       "#rupd .rup-cancel,#rupd .rup-confirm{order:1}}", css,
                       "on a phone Cancel and the confirm share the row beneath the label, never the row Not now and Update had")
         self.assertIn("#rupd .rup-confirm:hover:not(:disabled){background:var(--err,#c0392b);", css,
@@ -827,13 +841,13 @@ const R = { engine: cfg.engine, leg: cfg.leg, err: {}, pageErrors: [] };
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
 const page = await ctx.newPage();
 page.on("pageerror", (e) => { R.pageErrors.push(String((e && e.message) || e)); });
-let posts = 0, dismisses = 0, check = cfg.checks.std;
+let posts = 0, dismisses = 0, check = cfg.checks.std, hold = null;   // `hold`: a promise the /update-check answer waits on
 await page.route("http://romp.test/**", (route) => {
   const u = new URL(route.request().url());
   const html = (body) => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body });
   if (u.pathname === "/shell") return html(cfg.page);
   if (u.pathname === "/pane") return html(cfg.pane);
-  if (u.pathname === "/update-check") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(check) });
+  if (u.pathname === "/update-check") { const answer = () => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(check) }); return hold ? hold.then(answer) : answer(); }
   if (u.pathname === "/update") { posts++; return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, state: "running" }) }); }
   if (u.pathname === "/update-dismiss") { dismisses++; return route.fulfill({ status: 200, contentType: "application/json", body: "{}" }); }
   return route.fulfill({ status: 404, body: "" });
@@ -865,10 +879,17 @@ const st = () => page.evaluate(() => {
            userSelect: cs.userSelect || cs.webkitUserSelect || "", lblMinWidth: lbl.style.minWidth,
            box: r(box), goRect: r(go), lblRect: r(lbl), cf: r(cf), cx: r(cx), dm: r(dm), msg: r(msg), scrollWidth: box.scrollWidth, clientWidth: box.clientWidth,
            vw: window.innerWidth, docWidth: document.documentElement.scrollWidth,
+           boxTransform: box.style.transform, boxMaxWidth: box.style.maxWidth, boxMinHeight: box.style.minHeight,
            clicks: window.__clicks.slice(), cxClicks: window.__cxClicks };
 });
 const center = async (sel) => page.evaluate((s) => { const b = document.querySelector(s).getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; }, sel);
 const settle = async (want) => { for (let i = 0; i < 100 && posts < want; i++) await new Promise((r) => setTimeout(r, 50)); return posts; };
+// two animation frames: the resize event is dispatched in the rendering steps of the frame after the
+// viewport changed (Chromium; Firefox dispatches it before setViewportSize resolves), so a measurement
+// after a resize while armed waits for them
+const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+const plainOf = (p) => ({ go: p.goRect, dm: p.dm, msg: p.msg, box: p.box });
+const GEOM_WIDTHS = [640, 660, 680, 700, 740, 800, 840, 1000, 1280, 1366];
 const step = async (name, fn) => { try { R[name] = await fn(); } catch (e) { R.err[name] = String((e && e.stack) || e); } };
 // the plain row's rects (Update, Not now) before the arm, then the armed row's after it
 const armAt = async (w) => {
@@ -878,7 +899,7 @@ const armAt = async (w) => {
   await page.click("#rupd-go");
   const s = await st();
   s.goPt = goPt;
-  s.plain = { go: plain.goRect, dm: plain.dm, msg: plain.msg, box: plain.box };
+  s.plain = plainOf(plain);
   return s;
 };
 
@@ -900,16 +921,35 @@ await step("widths", async () => {
   await page.setViewportSize({ width: 1280, height: 800 });
   return out;
 });
-// 1b. the armed row's geometry against the plain row's with the shortest and the longest label, at the
-// five widths (Escape disarms between widths)
+// 1b. the armed row's geometry against the plain row's with each label form (the standard label, the
+// shortest, the longest with two-digit counts and the count-less form when the manager did not answer) at
+// the two phone widths and the ten desktop widths (Escape disarms between widths); then a resize while
+// armed (armed at 1280, resized to 700, the phone width, 1000 and 660, each resize given its frames), the
+// plain row at each width measured after the disarm
 await step("geometry", async () => {
   const out = {};
-  for (const variant of ["shortest", "longest"]) {
+  for (const variant of ["std", "shortest", "longest", "unknown"]) {
     await load(variant);
-    out[variant] = {};
-    for (const w of [390, 360, 700, 1000, 1280]) {
-      out[variant][w] = await armAt(w);
+    out[variant] = { widths: {}, resize: {} };
+    for (const w of [390, 360].concat(GEOM_WIDTHS)) {
+      out[variant].widths[w] = await armAt(w);
       await page.keyboard.press("Escape");
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.click("#rupd-go");
+    const armed = {};
+    for (const w of [700, 360, 1000, 660]) {
+      await page.setViewportSize({ width: w, height: 800 });
+      await frames();
+      armed[w] = await st();
+    }
+    await page.keyboard.press("Escape");
+    for (const w of [700, 360, 1000, 660]) {
+      await page.setViewportSize({ width: w, height: 800 });
+      await frames();
+      const s = armed[w];
+      s.plain = plainOf(await st());
+      out[variant].resize[w] = s;
     }
   }
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -1119,8 +1159,8 @@ await step("tabIntoPane", async () => {
   return { onConfirm, after, paneActive, posts: posts - before };
 });
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify(R) + "\n");
-process.exit(0);
+// the result exceeds a pipe's 64 KB: node writes to a pipe asynchronously, so the exit waits for the write
+process.stdout.write("RESULT:" + JSON.stringify(R) + "\n", () => process.exit(0));
 """
 
 
@@ -1143,15 +1183,19 @@ PANE = ("<!DOCTYPE html><html><head><meta charset=utf-8></head><body id=pane-bod
         "pane <button id=pane-btn style='margin-top:120px'>in the pane</button></body></html>")
 CHECK = {"cur": "v0.1.0", "tag": "v0.2.0", "mode": "ask", "state": "", "boot": "b1", "drift": "", "driftSha": "",
          "sessions": 32, "midTurn": 3, "otherKernels": 0}       # the long label, the width case that overflowed
-# the three labels the geometry is measured with: the standard one, the shortest form the script can
-# produce (one session, nothing interrupted, one kernel) and the longest (the manager did not answer)
+# the four labels the geometry is measured with: the standard one, the shortest form the script can
+# produce (one session, nothing interrupted, one kernel), the longest (two-digit counts, the manager did
+# not answer) and the count-less form of the boot window with the manager not answering
 CHECKS = {"std": CHECK,
           "shortest": dict(CHECK, sessions=1, midTurn=0),
-          "longest": dict(CHECK, sessions=32, midTurn=3, otherKernels=None)}
+          "longest": dict(CHECK, sessions=32, midTurn=12, otherKernels=None),
+          "unknown": dict(CHECK, sessions=None, midTurn=None, otherKernels=None)}
 LABELS = {"std": "Restart 32 sessions now, interrupting 3",
           "shortest": "Restart 1 session now",
-          "longest": "Restart 32 sessions here now, interrupting 3; the other kernels may restart too (the manager did not answer)"}
+          "longest": "Restart 32 sessions here now, interrupting 12; the other kernels may restart too (the manager did not answer)",
+          "unknown": "Restart every session here now; the other kernels may restart too (the manager did not answer)"}
 LABEL = LABELS["std"]
+GEOM_WIDTHS = (640, 660, 680, 700, 740, 800, 840, 1000, 1280, 1366)     # the desktop widths the driver measures (its own list matches)
 
 
 def _contains(rect, pt):
@@ -1197,7 +1241,7 @@ class Browser(unittest.TestCase):
         for leg, engine, launch in cls.LEGS:
             cfg = os.path.join(lab, leg + ".json")
             with open(cfg, "w") as f:
-                json.dump({"leg": leg, "engine": engine, "launch": launch, "page": page, "pane": PANE, "checks": CHECKS}, f)
+                json.dump({"leg": leg, "engine": engine, "launch": launch, "page": page, "pane": PANE, "checks": CHECKS, "labels": LABELS}, f)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=600,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if p.returncode == 3:
@@ -1477,17 +1521,17 @@ class Browser(unittest.TestCase):
                 self.assertEqual(p["rightMessage"]["posts"], p["intoPane"]["posts"], (engine, "nothing posted along the way"))
 
     def test_the_armed_controls_never_share_a_pixel_with_a_plain_row_control(self):
-        # measured at 360, 390, 700, 1000 and 1280 with the standard label, the shortest and the longest:
-        # the confirm's rect is disjoint from Update's and Not now's plain rects, so no second activation
-        # of one gesture reaches it wherever the first landed, and a click meant for it after a disarm the
-        # user did not perform (a new offer pushed, a pane script's focus call) lands on no control;
-        # Cancel's rect is disjoint from Update's, so such a click meant for Cancel never arms. On a
+        # measured at 360, 390 and the ten desktop widths with the four label forms: the confirm's rect is
+        # disjoint from Update's and Not now's plain rects, so no second activation of one gesture reaches
+        # it wherever the first landed, and a click meant for it after a disarm the user did not perform
+        # (a new offer pushed, a pane script's focus call) lands on no control; Cancel's rect is disjoint
+        # from Update's and Not now's, so such a click meant for Cancel never arms or dismisses. On a
         # one-row layout (the label beside the message) the label covers Update's whole plain rect, is at
         # least Update's width, and the confirm begins at least 24 px past both Update's right edge and
         # the label's. The label does not select
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
-                for variant, widths in (("std", r["widths"]), ("shortest", r["geometry"]["shortest"]), ("longest", r["geometry"]["longest"])):
+                for variant, widths in [("std", r["widths"])] + [(v, r["geometry"][v]["widths"]) for v in ("std", "shortest", "longest", "unknown")]:
                     for vw, s in widths.items():
                         where = (engine, variant, vw)
                         self.assertTrue(s["armed"], where)
@@ -1497,6 +1541,7 @@ class Browser(unittest.TestCase):
                         self.assertTrue(_disjoint(s["cf"], go), where + ("the confirm over Update's plain rect", s["cf"], go))
                         self.assertTrue(_disjoint(s["cf"], dm), where + ("the confirm over Not now's plain rect", s["cf"], dm))
                         self.assertTrue(_disjoint(s["cx"], go), where + ("Cancel over Update's plain rect", s["cx"], go))
+                        self.assertTrue(_disjoint(s["cx"], dm), where + ("Cancel over Not now's plain rect", s["cx"], dm))
                         self.assertGreaterEqual(s["lblRect"]["width"], go["width"] - 0.5, where + ("the label at least Update's width", s["lblRect"], go))
                         self.assertEqual(s["userSelect"], "none", where)
                         self.assertLessEqual(s["scrollWidth"], s["clientWidth"], where + ("the box does not overflow itself", s))
@@ -1505,9 +1550,9 @@ class Browser(unittest.TestCase):
                             self.assertGreaterEqual(s["cf"]["left"], s["lblRect"]["right"] + 24 - 0.5, where + ("24 px past the label", s["cf"], s["lblRect"]))
                         if s["lblRect"]["top"] < s["msg"]["bottom"]:      # the label beside the message: it took Update's place
                             self.assertTrue(_covers(s["lblRect"], go), where + ("the label covers Update's plain rect", s["lblRect"], go))
-                            self.assertTrue(s["cf"]["left"] >= go["right"] + 24 - 0.5 or s["cf"]["top"] >= go["bottom"],
-                                            where + ("24 px past Update's right edge, or on a row below it", s["cf"], go))
-                        else:                                                # the label wrapped: the confirm is below Update's row too
+                            self.assertGreaterEqual(s["cf"]["left"], go["right"] + 24 - 0.5, where + ("24 px past Update's right edge", s["cf"], go))
+                        else:                                                # the phone layout: the confirm is below Update's row
+                            self.assertLess(int(vw), 640, where + ("only the phone layout puts the label on a row of its own",))
                             self.assertGreaterEqual(s["cf"]["top"], go["bottom"], where + ("the confirm on a row below Update's", s["cf"], go))
 
     def test_at_phone_widths_the_armed_row_stays_inside_the_viewport_and_a_desktop_keeps_one_row(self):

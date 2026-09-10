@@ -56001,7 +56001,7 @@ def _stale_block(v):
 # means the still-running kernel consumed the child's report (say so).
 # "Not now" is page-scoped on purpose — the next kernel start re-offers (what the user asked for).
 _UPD_CSS = (
-    "#rupd{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:99999;display:none;flex-wrap:wrap;"
+    "#rupd{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:99999;display:none;"
     "width:max-content;align-items:center;gap:12px;max-width:92vw;box-sizing:border-box;background:#252526;border:1px solid rgba(255,255,255,0.12);"
     "border-radius:8px;padding:10px 14px;color:#e6e6e6;box-shadow:0 8px 28px rgba(0,0,0,0.45);"
     "font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
@@ -56028,35 +56028,52 @@ _UPD_CSS = (
     # past Update's whole footprint and Cancel, left of the label, left of where Not now stood. So the
     # confirm never shares a pixel with a plain-row control, and after a disarm the user did not perform
     # (a new offer pushed, a script's focus call) a click meant for the confirm lands on padding or
-    # nothing, never on Not now or Update. Cancel may then land on Not now's old footprint only when the
-    # shift is shorter than Cancel (it is not on any width measured; a dismissal is the lesser harm and
-    # the next release re-offers). The label does not select (user-select none): the double-click the
-    # layout routes onto it would otherwise paint a word. The class on the box is the armed state: it
-    # hides Update while the offer's own hidden flag on the button (the in-flight wait sets it) stays
-    # untouched
+    # nothing, never on Not now or Update. Where the row cannot hold the label's text on one line the
+    # TEXT wraps inside the label (review round 4, 2026-09-10; the row wrapped Restart to a row of its
+    # own before, under the message, between 640 and about 760px with the standard label and just under
+    # each label's one-row width above that), so Restart is on Update's row at every desktop width and
+    # every label form. The label does not select (user-select none): the double-click the layout routes
+    # onto it would otherwise paint a word. The class on the box is the armed state: it hides Update
+    # while the offer's own hidden flag on the button (the in-flight wait sets it) stays untouched
     "#rupd.rup-arm .rup-go{display:none}#rupd .rup-armed{font-weight:500;user-select:none;-webkit-user-select:none}"
     # the label is as tall as a button (6px of padding: a button's 5px and its 1px border) and stretches to
     # the row, so Update's footprint is covered top to bottom too and, on a row of its own, the row beneath
     # begins below that footprint; display is set under the armed class only, so the hidden attribute
-    # keeps hiding the label
-    "#rupd.rup-arm .rup-armed{display:flex;align-items:center;align-self:stretch;padding:6px 0}"
+    # keeps hiding the label. flex-basis 0 with grow 1: the label takes the width the row has left once
+    # the message and the buttons have theirs, at least the minimum fit() sets, so a row the box cannot
+    # hold wraps the LABEL's text first and the message's only when the label is at that minimum (a
+    # shrink factor scales with the flex basis, so a basis of 0 never shrinks the label below its
+    # minimum while the message still can)
+    "#rupd.rup-arm .rup-armed{display:flex;align-items:center;align-self:stretch;padding:6px 0;flex:1 1 0}"
     "#rupd .rup-confirm{background:var(--err,#c0392b);color:#fff;font-weight:600;border-color:rgba(0,0,0,0.25);margin-left:12px}"
     "#rupd .rup-confirm:hover:not(:disabled){background:var(--err,#c0392b);filter:brightness(1.1)}"
-    # Widths (review round 1 of the confirm step). A fixed box with left:50% shrink-to-fits against the
-    # HALF viewport, so a long armed label wrapped the message to two lines on a desktop and, on a phone,
-    # pushed Cancel past the viewport's edge as a sliver no sideways scroll could reach: width:max-content
-    # sizes the box to its content (capped at 92vw), and flex-wrap lets the items wrap inside that cap
-    # instead of overflowing it. Under 640px the same rule as #rstale's: the message takes the full row
-    # and the buttons drop beneath it, sharing its width for finger-sized targets; width is explicit
-    # there so the row layout does not depend on the box's intrinsic size, and a button's text may wrap
-    # (the armed label is wider than a 360px phone's box in Firefox's metrics; nowrap would overflow it).
-    # The armed label takes a full row of its own there too, and Cancel and the confirm are ordered after
-    # it (they precede it in flow for the desktop row; alone on the row Not now and Update had, Cancel
-    # would span it), so they share the row beneath the label and the confirm never sits on the row where
+    # Widths (review round 1 of the confirm step; one row at desktop widths since round 4). A fixed box
+    # with left:50% shrink-to-fits against the HALF viewport, so a long armed label wrapped the message
+    # to two lines on a desktop and, on a phone, pushed Cancel past the viewport's edge as a sliver no
+    # sideways scroll could reach: width:max-content sizes the box to its content, capped at 92vw. At
+    # 640px and up the row never wraps: a row wider than the cap shrinks the label (its text wraps
+    # inside it, the rule above) and then the message, so Restart stays on the label's row, to its right,
+    # whatever the label says. The PLAIN box keeps 240px of the viewport free (120px a side, since the
+    # box is centred), so the armed row has room to put Restart 24px past Update's right edge and stay
+    # inside the viewport at every width: Restart is about 78px wide in the banner's font, plus its 24px
+    # and the box's 14px right padding, 116px past Update's right edge; the reserve leaves that and
+    # about 4px more a side (the armed box's own right edge stays at least that far from the viewport's
+    # in the reference font; a wider font eats the slack before the edge). Below 640px the plain
+    # message wraps a little earlier than it did (the release message keeps one line from about 745px).
+    # Under 640px the same rule as #rstale's: the box spans 92vw and its items wrap, the message takes
+    # the full row and the buttons drop beneath it, sharing its width for finger-sized targets; width
+    # is explicit there so the row layout does not depend on the box's intrinsic size, and a button's
+    # text may wrap (the armed label is wider than a 360px phone's box in Firefox's metrics; nowrap
+    # would overflow it). The armed label takes a full row of its own there too (the selector repeats
+    # the armed rule's specificity so it wins), and Cancel and the confirm are ordered after it (they
+    # precede it in flow for the desktop row; alone on the row Not now and Update had, Cancel would
+    # span it), so they share the row beneath the label and the confirm never sits on the row where
     # Update was; the label is as tall as a button (the padding rule above), so that row begins below
-    # Update's footprint.
-    "@media (max-width:640px){#rupd{width:92vw;gap:10px 12px}"
-    "#rupd .rup-msg,#rupd .rup-armed{flex:1 1 100%}#rupd button{flex:1 1 auto;white-space:normal}"
+    # Update's footprint. The plain cap is listed there too so it does not outrank the phone width
+    # (a :not() adds a class's worth of specificity).
+    "#rupd:not(.rup-arm){max-width:min(92vw,100vw - 240px)}"
+    "@media (max-width:639px){#rupd,#rupd:not(.rup-arm){width:92vw;max-width:92vw;flex-wrap:wrap;gap:10px 12px}"
+    "#rupd .rup-msg,#rupd.rup-arm .rup-armed{flex:1 1 100%}#rupd button{flex:1 1 auto;white-space:normal}"
     "#rupd .rup-cancel,#rupd .rup-confirm{order:1}}"
     # light theme (body.theme-light): white card, hairline border, warm dark text
     "body.theme-light #rupd{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
@@ -56078,7 +56095,7 @@ _UPD_JS = (
     "(function(){var box=document.getElementById('rupd');if(!box)return;"
     "var msg=box.querySelector('.rup-msg'),go=document.getElementById('rupd-go'),dm=document.getElementById('rupd-dismiss'),"
     "cx=document.getElementById('rupd-cancel'),lbl=document.getElementById('rupd-armed'),cf=document.getElementById('rupd-confirm');"
-    "var dismissedTag='',curTag='',waiting=false,bootNow='',armed=false,impact=null,press=false;"
+    "var dismissedTag='',curTag='',waiting=false,bootNow='',armed=false,impact=null,press=false,arms=0,plain=null;"
     # Two clicks, never one (2026-09-10): a single click POSTed /update, and a click that only meant to
     # focus the dashboard window landed on the button and restarted every session on the box, cutting
     # every turn in flight. The first click ARMS the banner: the Update button gives its place to a
@@ -56137,29 +56154,58 @@ _UPD_JS = (
     # nothing at the mousedown, so nothing inside the box is focused at the click), and focus returns to
     # Update either way
     "function disarm(back,always){if(!armed)return;var a=document.activeElement,inside=back&&(always||(a&&box.contains(a)));"
-    "armed=false;box.classList.remove('rup-arm');lbl.hidden=true;cf.hidden=true;cx.hidden=true;dm.hidden=waiting;"
+    "armed=false;window.removeEventListener('resize',refit);box.classList.remove('rup-arm');lbl.hidden=true;cf.hidden=true;cx.hidden=true;dm.hidden=waiting;"
+    "lbl.style.minWidth='';box.style.transform='';box.style.maxWidth='';box.style.minHeight='';"
     "if(inside)try{go.focus({preventScroll:true});}catch(e){}}"
     # the label is computed before armed flips: a label that threw would otherwise leave a plain-looking
-    # Update armed. Update's footprint is measured before it hides (fit below needs it). Focus moves to
-    # the label BEFORE Update hides (a focusout on Update whose relatedTarget is inside the banner, kept),
-    # so a held Enter's repeats land on the label, and Tab goes on to the confirm
-    "function arm(){var t=label(),g=rect(go);armed=true;lbl.textContent=t;lbl.style.minWidth='';lbl.hidden=false;cf.hidden=false;cx.hidden=false;dm.hidden=true;"
-    "try{lbl.focus({preventScroll:true});}catch(e){}box.classList.add('rup-arm');fit(g);wireFrames();"
-    "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){note(d);if(armed)lbl.textContent=label();})"
+    # Update armed. The plain row (Update, Not now, the box) is measured before it hides (fit below needs
+    # it). Focus moves to the label BEFORE Update hides (a focusout on Update whose relatedTarget is
+    # inside the banner, kept), so a held Enter's repeats land on the label, and Tab goes on to the
+    # confirm. fit() runs at the arm, again when the re-read changes the label's text (a shorter label
+    # would otherwise stop covering Update's footprint: review round 4, 2026-09-10), and on every window
+    # resize while armed (the listener is added here and removed by disarm; the plain row is then
+    # re-measured, plainRects below). The re-read of an arm that has since ended is ignored (`arms`, a
+    # sequence number): its answer would fit a label against a row that is no longer on screen
+    "function arm(){var t=label(),seq=++arms;plain=plainRects();armed=true;lbl.textContent=t;lbl.hidden=false;cf.hidden=false;cx.hidden=false;dm.hidden=true;"
+    "try{lbl.focus({preventScroll:true});}catch(e){}box.classList.add('rup-arm');fit();wireFrames();window.addEventListener('resize',refit);"
+    "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){if(seq!==arms)return;note(d);if(armed){lbl.textContent=label();fit();}})"
     "['catch'](function(e){});}"
-    # the label covers the whole footprint the Update button had, so the second activation of one gesture
-    # lands on it wherever the first did (Update's right edge included), and the confirm begins at least
-    # 24px past that edge: measured at the arm, not assumed. The box is centred and sized to its content,
-    # so the armed row shifts left by half of what it adds (Cancel is narrower than Not now, the label
-    # wider than Update, the confirm and its gap are new), and with a short label the label's right edge
-    # stops short of Update's; widening the label by twice the shortfall moves that edge onto Update's.
-    # At least Update's own width in any case. Skipped when the label has a row of its own (the phone
-    # layout, or a long label that wrapped): the confirm is then on a row below the one Update was on.
-    # No measurement in a document without layout (the node harness): the label keeps its natural width
+    # The armed row is laid over the plain row it replaced, measured, never assumed (fit, review round
+    # 4 of the confirm step, 2026-09-10; rounds 2 and 3 widened the label until its right edge reached
+    # Update's and let the row wrap otherwise). Three settings from the plain row's rects: the label is
+    # at least as wide as the span from 12px right of Not now's left edge to Update's right edge, so once
+    # its right edge is Update's, Cancel (12px before it) ends at Not now's left edge at the latest and
+    # never shares a pixel with it; the box's width is capped so that its left edge stays the cap's own
+    # margin (4vw) inside the viewport once its right edge is where Restart needs it (a long label's
+    # text wraps inside the label, the flex rule above, rather than pushing the box off the left edge,
+    # and the message keeps its width until the label is at its minimum); and the box is shifted, from
+    # its centred position, by the distance from the label's right edge to Update's, so the label covers
+    # Update's footprint (its right edge at Update's, its left edge at or before Not now's left plus
+    # 12px, Update's left included) and Restart begins 24px (the gap and its margin) past that edge. The
+    # box is then at least as tall as the plain box (its top is fixed), so the label, stretched to the
+    # row, covers the footprint top to bottom whatever the message's line count. Skipped when the label
+    # has a row of its own (the phone layout under 640px: the confirm is then on the row below the one
+    # Update was on) and in a document without layout (the node harness), after clearing what an
+    # earlier fit set, so a resize into the phone layout leaves nothing behind. plainRects measures the
+    # plain row directly while it shows (the arm) and, while armed (a resize), from a clone of the box
+    # laid out as the plain row would be at the new width: visibility hidden, no role, the armed
+    # controls hidden and Update and Not now shown, inserted beside the box for one synchronous
+    # measurement and removed (toggling the live box's own classes would blur the focused label, and
+    # that focusout is a disarm)
     "function rect(n){try{return n.getBoundingClientRect();}catch(e){return null;}}"
-    "function fit(g){var l=rect(lbl),m=rect(msg);if(!g||!l||!m||!g.width||l.top>=m.bottom)return;"
-    "var w=Math.max(l.width,g.width),d=g.right-l.right;if(d>0)w=Math.max(w,l.width+2*d);"
-    "if(w>l.width)lbl.style.minWidth=Math.ceil(w)+'px';}"
+    "function plainRects(){if(!armed)return {g:rect(go),n:rect(dm),b:rect(box)};"
+    "try{var c=box.cloneNode(true),q=function(s){return c.querySelector(s);};c.classList.remove('rup-arm');c.removeAttribute('role');c.setAttribute('aria-hidden','true');"
+    "c.style.transform='';c.style.maxWidth='';c.style.minHeight='';c.style.visibility='hidden';q('.rup-go').hidden=go.hidden;q('.rup-dismiss').hidden=false;"
+    "q('.rup-armed').hidden=true;q('.rup-confirm').hidden=true;q('.rup-cancel').hidden=true;"
+    "box.parentNode.insertBefore(c,box.nextSibling);var r={g:rect(q('.rup-go')),n:rect(q('.rup-dismiss')),b:rect(c)};box.parentNode.removeChild(c);return r;}"
+    "catch(e){return null;}}"
+    "function fit(){lbl.style.minWidth='';box.style.transform='';box.style.maxWidth='';box.style.minHeight='';"
+    "var p=plain;if(!p||!p.g||!p.n||!p.b||!p.g.width)return;var l=rect(lbl),m=rect(msg),b=rect(box);if(!l||!m||!b||!l.width||l.top>=m.bottom)return;"
+    "var vw=window.innerWidth||0,maxW=p.g.right+(b.right-l.right)-vw*0.04;if(vw&&maxW<b.width)box.style.maxWidth=Math.floor(maxW)+'px';"
+    "var w=p.g.right-p.n.left-12;if(w>l.width)lbl.style.minWidth=Math.ceil(w)+'px';"
+    "l=rect(lbl);var dx=p.g.right-l.right;if(dx>0.5||dx<-0.5)box.style.transform='translateX(calc(-50% + '+dx.toFixed(2)+'px))';"
+    "b=rect(box);if(b&&b.height<p.b.height-0.5)box.style.minHeight=Math.ceil(p.b.height)+'px';}"
+    "function refit(){if(!armed)return;plain=plainRects();fit();}"
     # every same-origin pane document hears presses and focus for the banner: wired now (the panes
     # precede this script in the body), on each (re)load of a frame (a pane that reloads while armed gets
     # a fresh, unwired document; the load handler wires it), and at every arm (a frame added since the
