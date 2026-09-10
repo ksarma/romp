@@ -1,9 +1,9 @@
 // The shared fake-DOM shim's PROJECTION RULE, pinned on its own (ui/test-dom-shim.ts; ui/timeline-tags-scale.test.ts
 // pins it over a live dialog at scale), and a RATCHET over the other UI test files: a test file that fakes a DOM with
 // enumerable edges (parentNode, parent, childNodes, children, a child or sibling pointer, ownerDocument or host as a
-// plain enumerable property) either builds its nodes with the shared shim or is named on the allowlist below, which
-// may not grow past ALLOWLIST_MAX (lowered as files migrate): a renamed file replaces its entry, a new file may not
-// join. The rule hides the edges at CREATION: a property product code hangs on a node later enumerates, whatever its
+// plain enumerable property) either imports nodeFactory or hideEdges from the shared shim, which counts as switched,
+// or is named on the allowlist below, which may not grow past ALLOWLIST_MAX (lowered as files migrate): a renamed
+// file replaces its entry, a new file may not join. The rule hides the edges at CREATION: a property product code hangs on a node later enumerates, whatever its
 // type, and a node-valued one re-opens a path for a failing dump to walk; the projection pins here and in the
 // tags-scale test, plus the runner's cgroup cap, are the backstop for that. Source pins over ui/**/*.test.ts, the
 // repo convention. Why both: on 2026-09-09 a failing strict assertion with a fake node on one side allocated tens of
@@ -149,15 +149,17 @@ const src = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
  *  - an object-literal key (`{ EDGE: null, EDGE: [] }`, `{ EDGE: kid }`). With an identifier value the key host is
  *    left out: an object-literal `host:` in this tree is the payload field naming a machine, which the source pins
  *    over the renderer quote;
- *  - a class field, with any modifier or none (public, private, protected, readonly, declare, override), typed or
- *    not, anywhere on a line (`tag = "x"; private EDGE: N | null = null;`);
+ *  - a class field, with any modifier or none (public, private, protected, readonly, declare, override), plain,
+ *    definite (`EDGE!: N | null;`) or optional (`EDGE?: N[]`), typed or not, with an initializer or without one (a
+ *    declared field is an own enumerable property once the constructor assigns it), anywhere on a line (`tag = "x";
+ *    private EDGE: N | null = null;`). A field typed as a primitive (string, number, boolean) is no edge and is skipped;
  *  - a constructor parameter property (`constructor(public EDGE: N[] = [])`, with or without a default);
  *  - an assignment through any name (`this.EDGE = null`, `n.EDGE = []`, `c.EDGE = p`).
- *  Out of scope, by design: an edge under another name (a `kids` list), a field declared without an initialiser
- *  (`EDGE?: N;` is no own property until assigned, which the assignment shape then sees), a shorthand key
- *  (`{ EDGE }`), and a value that is a member expression, a call or a `new` (`c.EDGE = this.host`). The class-field
- *  shape cannot tell a field from a statement assigning a same-named local at line start; the DOM-vocabulary condition
- *  and the allowlist are the check on that. */
+ *  Out of scope, by design: an edge under another name (a `kids` list), a shorthand key (`{ EDGE }`), a value that is
+ *  a member expression, a call or a `new` (`c.EDGE = this.host`), and a declared field whose type carries a comma
+ *  (`EDGE: Record<string, N>;`). The class-field shape cannot tell a field from a statement assigning a same-named
+ *  local at line start, nor a declared field from a type-literal or interface member of the same shape; the
+ *  DOM-vocabulary condition and the allowlist are the check on that. */
 const KEY = "(parentNode|parent|childNodes|children|firstChild|lastChild|nextSibling|previousSibling|ownerDocument|host)";
 const KEY_NOT_HOST = KEY.replace("|host", "");
 const MODS = "(?:(?:public|private|protected|readonly|declare|override)\\s+)";
@@ -166,18 +168,25 @@ const NOT_CONTINUED = "\\b(?!\\s*[\\[<|&.(])";   // not a type continuation (Kid
 const IDENT = NOT_KEYWORD + "[A-Za-z_$][\\w$]*" + NOT_CONTINUED;                  // a bare name as a value, after =
 const IDENT_LOWER = NOT_KEYWORD + "[a-z_$][\\w$]*" + NOT_CONTINUED;               // as an object-literal value, where a capitalised name reads as a type in a type literal
 const VALUE = "(?:null\\b|undefined\\b|\\[\\]|this\\b|" + IDENT + ")";
+const NOT_PRIM = "(?!\\s*(?:string|number|boolean|bigint|symbol|undefined|void|never)\\b)";   // a field typed as a primitive is no edge
 const EDGE_INIT: Record<string, RegExp> = {
   "object-literal key": new RegExp("[{,]\\s*" + KEY + "\\s*:\\s*(?:null\\b|undefined\\b|\\[\\])"),
   "object-literal key, identifier value": new RegExp("[{,]\\s*" + KEY_NOT_HOST + "\\s*:\\s*(?:this\\b|" + IDENT_LOWER + ")"),
-  "class field": new RegExp("(?:^|[;{])\\s*" + MODS + "*" + KEY + "\\s*(?::[^=;\\n]+)?=\\s*" + VALUE, "m"),
+  // with an initializer (typed or not), or declared only: `EDGE!: N | null;`, `EDGE?: N[]`, `EDGE: N | null` ending the line
+  "class field": new RegExp("(?:^|[;{])\\s*" + MODS + "*" + KEY + "\\s*[?!]?\\s*(?:(?::[^=;\\n]+)?=\\s*" + VALUE + "|:" + NOT_PRIM + "[^=;,{}\\n]+?\\s*(?:;|$))", "m"),
   "parameter property": new RegExp("[(,]\\s*" + MODS + "+" + KEY + "\\b"),
   "assignment": new RegExp("\\b[A-Za-z_$][\\w$]*\\." + KEY + "\\s*=\\s*" + VALUE),
 };
 const FAKES_DOM = /appendChild|nodeType|tagName/;
-const USES_SHIM = /from "(\.\.\/|\.\/)test-dom-shim"/;
+const USES_SHIM = /import\s*\{[^}]*\b(?:hideEdges|nodeFactory)\b[^}]*\}\s*from\s*"(?:\.\.\/|\.\/)test-dom-shim"/;
 /** The names of the shapes `s` initialises an edge in; empty when none. */
 const edgeShapes = (s: string): string[] => Object.keys(EDGE_INIT).filter((k) => EDGE_INIT[k].test(s));
 const fakesEdges = (s: string) => FAKES_DOM.test(s) && edgeShapes(s).length > 0;
+/** True when `s` must be on the allowlist: it fakes a DOM with enumerable edges and imports neither nodeFactory nor
+ *  hideEdges from the shared module. An importer counts as SWITCHED: the module's rule hides its edges (a migrated class
+ *  declares `EDGE!: N | null` and calls hideEdges in its constructor, which no regex can see), and its projection tests
+ *  are the check on that. */
+const needsListing = (s: string) => fakesEdges(s) && !USES_SHIM.test(s);
 
 // The test files still faking a DOM with enumerable edges on 2026-09-10, each named, so the list can only shrink: a
 // file that moves to the shared shim (or hides its edges the same way) comes off it and ALLOWLIST_MAX comes down with
@@ -345,25 +354,24 @@ const SWITCHED = [
 test("ratchet: every UI test file that fakes a DOM with enumerable edges is on the allowlist, every allowlisted file still does, and the list has not grown", () => {
   const files = testFiles();
   assert.ok(files.includes("test-dom-shim.test.ts") && files.includes("webview/tab-color-picker.test.ts"), "the sweep covers ui/ and ui/webview/");
-  const matching = files.filter((f) => fakesEdges(src(f)));
+  const matching = files.filter((f) => needsListing(src(f)));
   assert.deepEqual(matching.filter((f) => !ALLOWLIST.includes(f)), [],
-    "a UI test file fakes a DOM with an enumerable edge (parentNode, parent, children, childNodes, a child or sibling pointer, ownerDocument or host): " +
-    "build its nodes with ui/test-dom-shim.ts (nodeFactory), or hide the edges the same way (hideEdges); the allowlist may not grow. A renamed file " +
-    "that was on the list replaces its old entry; a new file may not join (a failing assertion on such a node can allocate tens of GB)");
-  assert.deepEqual(ALLOWLIST.filter((f) => !matching.includes(f)), [], "an allowlisted file no longer fakes a DOM with enumerable edges, or is gone: take it off the list and lower ALLOWLIST_MAX");
+    "a UI test file fakes a DOM with an enumerable edge (parentNode, parent, children, childNodes, a child or sibling pointer, ownerDocument or host) " +
+    "without the shared module: build its nodes with nodeFactory, or hide the edges with hideEdges, imported from ui/test-dom-shim.ts (an importer of " +
+    "either counts as switched); the allowlist may not grow. A renamed file that was on the list replaces its old entry; a new file may not join (a " +
+    "failing assertion on such a node can allocate tens of GB)");
+  assert.deepEqual(ALLOWLIST.filter((f) => !matching.includes(f)), [], "an allowlisted file no longer fakes a DOM with enumerable edges, imports the shared module now, or is gone: take it off the list and lower ALLOWLIST_MAX");
   assert.ok(ALLOWLIST.length <= ALLOWLIST_MAX, "the allowlist holds " + ALLOWLIST.length + " files, above its ceiling of " + ALLOWLIST_MAX + ": the list may not grow");
   assert.deepEqual(ALLOWLIST, ALLOWLIST.slice().sort(), "the allowlist is sorted, so a change to it reads as one line");
   assert.equal(new Set(ALLOWLIST).size, ALLOWLIST.length, "no name twice");
 });
 
-test("the files that carried the shim's copies import the shared module and keep no node factory of their own; no importer fakes edges beside it", () => {
+test("the files that carried the shim's copies import nodeFactory or hideEdges and keep no node factory of their own; this file's own text initialises no edge", () => {
   for (const f of SWITCHED) {
     const s = src(f);
-    assert.ok(USES_SHIM.test(s), f + " imports test-dom-shim");
+    assert.ok(USES_SHIM.test(s), f + " imports nodeFactory or hideEdges from test-dom-shim");
     assert.ok(!/^function makeNode\(/m.test(s), f + " defines no makeNode of its own");
-    assert.ok(!fakesEdges(s), f + " initialises no enumerable edge");
   }
-  for (const f of testFiles()) if (USES_SHIM.test(src(f))) assert.ok(!fakesEdges(src(f)), f + " imports the shim and still fakes a DOM with enumerable edges");
   assert.ok(!fakesEdges(src("test-dom-shim.test.ts")), "this file does not trip its own rule");
 });
 
@@ -386,6 +394,11 @@ const POSITIVE: Array<[string, string, string]> = [   // [the shape it must trip
   ["class field", "class N {\n  override EDGE: N | null = null;\n  appendChild() {}\n}", "lastChild"],
   ["class field", "class N {\n  EDGE: N | null = BODY;\n  appendChild() {}\n}", "previousSibling"],
   ["class field", "class N {\n  EDGE = null;\n  appendChild() {}\n}", "host"],
+  ["class field", "class N {\n  EDGE!: N | null;\n  constructor() { hideEdges(this); }\n  appendChild() {}\n}", "parentNode"],
+  ["class field", "class N {\n  EDGE?: N[];\n  appendChild() {}\n}", "children"],
+  ["class field", "class N {\n  EDGE: N | null;\n  appendChild() {}\n}", "parent"],
+  ["class field", "class N { tag = 'x'; private EDGE!: Doc | null; nodeType = 1; }", "ownerDocument"],
+  ["class field", "class N {\n  public readonly EDGE?: N[] = [];\n  appendChild() {}\n}", "childNodes"],
   ["parameter property", "class N { constructor(private EDGE: N[] = []) {} appendChild() {} }", "children"],
   ["parameter property", "class N {\n  constructor(public readonly EDGE: N | null, m: Map<string, N> = new Map()) {}\n  appendChild() {}\n}", "parentNode"],
   ["parameter property", "class N { constructor(readonly EDGE: N) {} nodeType = 1; }", "ownerDocument"],
@@ -399,7 +412,8 @@ const POSITIVE: Array<[string, string, string]> = [   // [the shape it must trip
 const NEGATIVE: Array<[string, string, string]> = [   // [what it is, scratch source, edge name]
   ["a data fixture with no DOM vocabulary", "const goal = { title: 'x', EDGE: [] };", "children"],
   ["a comparison, not an assignment", "if (n.EDGE === null) n.appendChild(c); if (m.EDGE == null) return;", "parentNode"],
-  ["a type literal", "type N = { EDGE: N | null; kids: N[] };\nconst tagName = 'DIV';", "parent"],
+  ["a field typed as a primitive", "class N {\n  EDGE: string;\n  appendChild() {}\n}", "host"],
+  ["a field typed as a primitive union", "class N { EDGE!: string | null; nodeType = 1; }", "parent"],
   ["a type literal with comma separators", "type N = { EDGE: N, tagName: string };", "parent"],
   ["a type literal keyed on a primitive", "type Row = { EDGE: string; nodeType: number };", "host"],
   ["a plain parameter default, no modifier", "function mk(EDGE = [], tagName = 'div') { return { tagName }; }", "children"],
@@ -424,4 +438,13 @@ test("the detector: each shape trips on a scratch source, and its near-misses do
   assert.deepEqual(edgeShapes(fixture), ["object-literal key"], "the data fixture initialises an edge; the DOM-vocabulary condition is what spares it");
   assert.equal(Object.keys(EDGE_INIT).length, 5, "five shapes, each with a positive above");
   for (const shape of Object.keys(EDGE_INIT)) assert.ok(POSITIVE.some(([s]) => s === shape), shape + " has a positive case");
+});
+
+test("an importer of nodeFactory or hideEdges counts as switched and needs no listing whatever it declares; a non-importer does", () => {
+  const cls = scratch("class N {\n  EDGE!: N | null;\n  constructor() { hideEdges(this); }\n  appendChild() {}\n}\n", "parentNode");
+  assert.ok(fakesEdges(cls) && needsListing(cls), "the class alone is detected and must be listed");
+  for (const imp of ['import { hideEdges } from "./test-dom-shim";\n', 'import { nodeFactory, hideEdges } from "../test-dom-shim";\n'])
+    assert.ok(fakesEdges(imp + cls) && !needsListing(imp + cls), "with " + JSON.stringify(imp.trim()) + ": detected, switched, not listed");
+  assert.ok(needsListing('import { FLAT_RECT } from "./test-dom-shim";\n' + cls), "importing a constant alone is not switching");
+  for (const f of SWITCHED) assert.ok(USES_SHIM.test(src(f)), f + " imports nodeFactory or hideEdges");
 });
