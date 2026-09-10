@@ -512,6 +512,7 @@ test("imageEmbeds: every embed form, in order, fenced code skipped; sameDest and
     "![a](one.png)", "text ![b](two.png \"title\") more", "![c][ref] and ![d] and ![e][]",
     "<img src=\"three.png\" alt=x> <img src='four%20five.png'>", "```", "![fenced](one.png)", "```",
     "~~~", "<img src=\"nope.png\">", "~~~", "![f](<six seven.png>)", "![a](one.png)",
+    "wiki ![[w.png]] and ![[ x.png |300]] and a link [[not-an-embed]]",   // Obsidian's embed (Slice 4 of plans/markdown-viewer.md): the target, trimmed, before any |; a wikilink is no embed
     "", "[ref]: r.png", "[d]: d.png 'D'", "[e]: e.png",
   ].join("\n");
   const embeds = fc.imageEmbeds(src);
@@ -519,6 +520,7 @@ test("imageEmbeds: every embed form, in order, fenced code skipped; sameDest and
     ["one.png", "![a](one.png)"], ["two.png", '![b](two.png "title")'], ["r.png", "![c][ref]"], ["d.png", "![d]"], ["e.png", "![e][]"],
     ["three.png", '<img src="three.png" alt=x>'], ["four%20five.png", "<img src='four%20five.png'>"],
     ["six seven.png", "![f](<six seven.png>)"], ["one.png", "![a](one.png)"],
+    ["w.png", "![[w.png]]"], ["x.png", "![[ x.png |300]]"],
   ]);
   assert.ok(fc.sameDest("six seven.png", "six%20seven.png"), "marked percent-encodes the destination");
   assert.ok(fc.sameDest("four%20five.png", "four%20five.png"));

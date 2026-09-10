@@ -823,7 +823,7 @@ none`; a `:---:` column computes `text-align: center`; `--hl-cmt` on the code ba
 anchor-map paints across `.cl` spans. Tests: computed-style leg; wrapped-code anchor-map fixture.
 
 **The Slice 3 build** (2026-09-08). Branch `mdviewer-s3`, stacked on `mdviewer-s2` (5c0c737c) with the fork's main
-merged in (aa474a3e), and again at 461c6f76 once Slice 2 had landed as fork PR #396. The gap analysis behind it ran
+merged in (8362983a), and again at fb42df7d once Slice 2 had landed as fork PR #396. The gap analysis behind it ran
 every criterion above in headless Chromium over the real viewer at the Slice 2 tip; the numbers below are its and the
 build's. Where the code as built departs from the text, why, and which test holds each rule:
 1. *The heading scale.* GitHub's: h1 2em, h2 1.5em, h3 1.25em, h4 1em, h5 and h6 1em in the dim tier, weight 600, a
@@ -1148,15 +1148,887 @@ that new TeX shapes keep bypassing (a digit-named macro, an aliased definer and 
 past the reading before it); a worker bounds the time itself, whatever the shape, and the heuristics stay as the first
 line.
 
+**The Slice 4 build** (2026-09-09). Branch `mdviewer-s4`, on Slice 3's head (fb42df7d, the fork's main merged in),
+with the fork's main merged in again at 0b5e23be once Slice 3 had landed as fork PR #407. The gap analysis behind it
+ran every construct of a synthetic fixture through the real files, chat and feed bundles in headless Chromium at
+03b95284 and recorded what fetched on open; the browser legs below re-run those scenes over the build. Where the code
+as built departs from the text above, why, and which test holds each rule:
+1. *One module, on the singleton.* `ui/webview/md-config.ts` exports an idempotent `applyMdConfig()` that sets `gfm:
+   true, breaks: false` and registers every extension in one list, `mdExtensions`: the double-tilde `del` rule (moved
+   here from chat-md.ts and file-view.ts, which each held a copy), the math placeholders, front matter, footnotes,
+   callouts, `==mark==`, wikilinks and embeds. render.ts, file-view.ts and anchor-map.ts each call it at load;
+   chat-md.ts builds its `breaks: true` instance for the person's own words from the same list; the fill
+   (`registerMdPostPass(renderMathPlaceholders)`) is registered beside the list. The singleton and not a private
+   `Marked` instance, because `marked.use` writes the module defaults the static `Lexer.lex` reads: anchor-map.ts
+   keeps `Lexer.lex` and sees every token the renderer rendered, whichever module loaded first (measured 2026-09-08:
+   an instance's extensions never reach the static lexer). The eight test copies of the viewer's configuration
+   (anchor-map.test.ts and its six siblings, file-comments-rendered-point-browser) call `applyMdConfig()`, and the
+   five probe bundles (md-sanitize-postpass, -chat-links, -chat-schemeless, -chat-modified-click and -anchor-map) arm
+   the singleton the same way (the first four had registered the chat's extensions beside the viewer's options,
+   -anchor-map the viewer's options alone; this count read four until the review round 7). The consequence, flagged
+   to the person as an open ruling: the constructs render in chat replies too.
+   A wikilink there is the dotted dead span showing the source as written (no directory), a reply opening with a `---`
+   block that reads as YAML folds as front matter (item 3), `> [!NOTE]` in agent output becomes a titled block, `[^1]`
+   with a definition and `==text==` render (two more shapes of the same ruling, from the review round 2: a section of
+   a reply between two rules whose body is `#` lines alone reads as a comment-only YAML mapping and folds, as pandoc,
+   Jekyll and Obsidian read it; bash's `[[ -f x ]]`, Python's `[[1]]` and R's `lst[[1]]` are the dead span, text
+   preserved). The sheets dress the constructs in the chat's `.md` bodies too: each construct rule is doubled `.md X,
+   .fileview-md X` in styles.css and feed.css (the mark rule keys on the class the renderer emits, `mark.md-mark`, so
+   neither the chat's comment highlight `mark.cmt-hl` nor the panel's marks are its subject, the review round 3; the
+   bubble takes the white family it wears elsewhere), so a callout in a reply is a titled block and a `==mark==` the
+   amber wash, not the browser's yellow-on-black (the review round 1; md-config-chat-styles-browser.test.ts reads both
+   themes). Round 4 of the review re-inked two constructs in the bubble and named every construct in the print block:
+   in the bubble a footnote definition and the front-matter fold took the page's dim grey from their shared rules,
+   1.66:1 (dark) and 1.39:1 (light) on the saturated fill, and read now in the bubble's own ink, with the quote's 0.40
+   white for the footnote's rail and the fold's box; and a callout's rail and ink are set outright there for both of
+   its forms, since the bubble's blockquote rule outranked the shared callout rule for the blockquote form alone and
+   `> [!note]` and `> [!note]-` one line apart wore different rails and inks (the same leg types both). Round 5 held
+   every ink the slice sets in the bubble to 4.5:1 on both fills, measured over the wash it sits on, and the bubble's
+   washes darken the fill (a white wash under white ink lowers the ratio): the mark's wash is an 18% black (6.40:1
+   dark, 6.92:1 light; the code span's 20% white wash it copied put the ink at 3.35:1 and 3.51:1), a callout's ink is
+   the bubble's own (inherit) over an 8% black wash, both forms alike (5.36:1 dark, 5.85:1 light; round 4's 0.88 tint
+   over the 7% white wash `--callout` gave them read 3.59:1 and 3.87:1) and, since round 6, both forms in the bubble's
+   own face (the bubble's quote rule sets the blockquote form in `--font-prose`, the light theme's mono for the
+   assistant's quoted words, and reached the blockquote form alone, so on light `> [!note]` read in ui-monospace and
+   `> [!note]-` one line below in the sans; a callout is the person's own construct, and the quoted passage keeps its
+   mono; the chat-styles leg reads one computed font-family for both forms, their titles and their bodies, on both
+   themes), a dead wikilink keeps the shared rule's dotted underline at the bubble's full ink (the shared 0.7 opacity,
+   tuned to `--fg` on `--bg`, put white on the fill at 3.10:1 and 3.38:1), and the fold's YAML takes the page's `--fg`
+   in the bubble's page-coloured pre well (13.96:1 light, 10.38:1 dark; round 4's inherit was the bubble's white on
+   the light theme's cream, 1.19:1, where the `var(--dim)` it inherited before read at 5.99:1; the chat-styles leg
+   opens the fold and reads the pre). In print the footnote definition, the front matter and a gated figure's
+   placeholder print black ink and black borders with the placeholder's wash off, and a callout's `--callout` is
+   black, the variable its rail and wash ride, so every callout prints a black rail over a faint neutral wash beside
+   the plain quote's (the construct rules, two classes deep, outranked the print block's one-class ink rule and its
+   border list; md-config-print-constructs-browser.test.ts measures the pane, the chat modal and the feed page under
+   print media and back). Round 5 named the embed chip on the construct line too, `a.fv-embed`, whose hairline box
+   printed white on white on the feed page, gave the `==mark==` one print wash, 15% black, where it kept 35% of the
+   theme's amber and the same note printed two tints from two themes (both in
+   md-config-print-constructs-browser.test.ts), and opened a display formula's scroll box in print as the table's is:
+   a formula of the page's own takes the table's room and shift, so one between the column and the body prints whole
+   and centred across both gutters (an 836px formula in a 762px column, cut at the column's edge before), a narrow one
+   keeps its column box and an equation tag its place at the column's edge, and one wider than the paper starts at the
+   gutter and is cut at the paper's edge, KaTeX's nowrap being what no sheet rule scales
+   (md-config-print-wide-formula-browser.test.ts measures the three shapes on the pane and the feed page); a display
+   formula inside a callout, a quote or a list item takes the open box and not the room and shift, as a nested table
+   takes neither, so one wider than its container runs from the container's left edge past its right edge to the
+   paper's edge, start-aligned, which shows more of it than the screen's clip did (round 6, recorded: the shift would
+   put ink across the container's rail or a list's bullet, and the sheet cannot read a container's inset). Round 6
+   also prints the source fallback's dotted underline black beside its ink (`code.md-math-src`: the shared rule names
+   the underline's colour outright, `text-decoration-color: var(--dim)`, so the block's `color: black` did not carry
+   to it and the cue printed at 2.56:1 on white from the dark themes and in another grey from the light one;
+   md-config-print-constructs-browser.test.ts reads it on every cell). md-config.test.ts executes the grammar and the
+   idempotence and pins who calls it; render-math.test.ts pins the list's literal and the three callers;
+   chat-md.test.ts pins the user instance; md-strikethrough.test.ts imports the rule from here.
+2. *Decision 1, math everywhere.* file-view.ts's import of md-config.ts brings the grammar, the fill and KaTeX into
+   files.js and feed.js (math-bundles.test.ts: a metafile of each bundle built with the shipped config holds
+   math.ts, md-config.ts and katex; the viewer imports nothing from render.ts, code-block.test.ts). Production
+   sizes, raw and gzip, before and after: files.js 495,838 / 148,117 to 866,609 / 240,946 (+370,771 / +92,829);
+   feed.js 777,513 / 231,906 to 1,150,102 / 325,693 (+372,589 / +93,787); render.js 1,494,823 / 428,911 to 1,511,207
+   / 433,636 (+16,384 / +4,725, the new extensions). KaTeX is 348,919 bytes of each viewer bundle. Its DOM is
+   decision 1's other cost, measured in the review round 7 on the freeze bench's medium note (3,000 lines, 162
+   inline and 52 display formulas): 214 `.katex` roots hold about 8,000 more elements, the mount is 160 to 200 ms
+   slower to first paint, the panel's cards placement and a comment add 20 to 25% slower, and the one reflow at a
+   divider release or a resize reads one vsync longer; the drag itself moves a ghost line and lays the pane out once
+   at release, and math-free every number is within noise of main. feed.css imports `katex/dist/katex.min.css` as
+   styles.css does (esbuild inlines it and emits the fonts once, the same hashed names) and gains the
+   `.katex-display` twin (parity head). md-sanitize-viewer-math-browser flips to the positive: the Files pane
+   renders the same three KaTeX roots as the chat page; md-config-obsidian-browser's second test opens the feed page
+   under feed.css built as the webview build builds it and reads KaTeX's face applied. Slice 5's math item is pulled
+   forward, since math now reaches the viewer: anchor-map.ts skips a `.katex` root's text as a control and makes
+   `mathInline` and `mathBlock` zero-text holes, so a paragraph with inline math maps around the formula and a
+   display formula's paragraph is a hole block (before this, on the chat page, `walkInline`'s default case refused
+   the whole paragraph). The highlight paints the formula with its passage: paintRendered wraps a run of adjacent
+   siblings (text and inline formulas) in one mark, and a formula whose TeX the range holds is included even at the
+   range's edge or alone, so a comment on `Inline $x^2$ math and` is one box and not two with the formula bare
+   between them; a display formula, a block of its own, is never wrapped (the review round 2;
+   anchor-map-obsidian.test.ts, md-config-math-map-browser.test.ts). A mark reads the top-level blocks it touches
+   and no other, the covered formulas' among them: on the text path since the fork's Files pane freeze fixes met the
+   slice (their scoped walk kept, the formulas' blocks added to it) and, since the review round 7, on the
+   formula-only path too (paintRendered's `unitsUnder`, shared with wrapBetween; 40 formula-only marks over a
+   26k-node document read 142 ms a pass against 6.4 ms scoped). A run of whitespace-only text nodes between blocks,
+   the pair the sanitizer leaves where a block-level comment or a `<style>` stood, is never a mark of its own (round
+   7: wrapRuns skipped one such node alone and ringed the pair as an empty box between the blocks, which moved
+   everything below down 30 px on every fresh Rendered paint; anchor-map.test.ts and anchor-map-obsidian.test.ts
+   hold both). Since round 12 the painter predicts two things about white space, each exact, and paints every other
+   whitespace-only text node of a range for the browser's layout to judge (the layout-time trim, below). One: a text
+   node directly under the render root is skipped when it is `\s` and format characters alone (anchor-map.ts
+   ROOT_BLANK). The top-level children are what the block pairing reads, so such a node is never the passage's text,
+   and a mark there would be a top-level child of the root that the next pairing meets (anchor-map.test.ts,
+   anchor-map-obsidian.test.ts and md-config-paint-collapsed-blank.test.ts hold that no mark is a top-level node);
+   round 11's guard read `\s` alone and painted a lone U+200B between two top-level html paragraphs, pasted from a
+   web page, as a box on a line of its own. Two: a text node of collapsible white space (HTML's ASCII five, space,
+   tab, line feed, form feed and carriage return; never JavaScript's `\s`, so a node of no-break or ideographic
+   spaces between two blocks is a blank line the note renders, painted as on main) whose nearest non-blank sibling
+   on both sides is a block-level box, or whose parent is one and has no such sibling on that side, and that stands
+   under no `pre`, is skipped without a measurement: the block-neighbour pre-skip (CSS 2 section 9.2.2.1, an
+   anonymous inline box holding only collapsible white space between block-level boxes is not rendered, and a
+   block's leading and trailing white space is collapsed away; under an author's `pre` nothing is collapsible, so
+   two spaces or a tab between two block children render a line of their own, 16.86 and 67.44 px at 14px sans-serif,
+   and the node is painted and measured like every other blank, a newline alone measuring zero and unwrapped: round
+   12's pre-skip skipped the rendered spaces, a ring gap inside the pre, and round 13 exempts a `pre` ancestor;
+   md-config-paint-trim-fixpoint.test.ts and its browser leg). BLOCK_BOXES is derived, every tag the sanitizer keeps
+   that Chromium lays out as a block or a table's part, plus `.katex-display`
+   (md-config-paint-whitespace-browser.test.ts holds it against DOMPurify's allowlist and the computed display,
+   md-config-block-boxes.test.ts in node against the HTML Standard's Rendering section's block-level tags,
+   anchor-map-fixtures/block-tags.json), and the reading saves the mark, the measurement and the unwrap for the
+   hundreds of "\n" nodes marked leaves between a list's items, a quote's paragraphs or a fold's blocks; outside a
+   pre the trim alone gives the same answer on every scene, so the reading is an optimisation kept because it is
+   exact where it applies. The trim (anchor-map.ts trimCollapsedMarks, exported): after the paint, every mark whose
+   text is blank (no letter, digit, punctuation or symbol in it, or the hangul fillers alone; the alphabet picks
+   what is MEASURED and never what is unwrapped, so a candidate that renders, U+093F alone as a dotted circle, keeps
+   its mark) is measured with a Range over each of its text nodes, their client rects' widths summed (never one
+   Range over the mark's contents: two comments over one passage nest their marks, and a Range over the outer mark's
+   contents reads the inner mark's border box, 4 px of padding a level, so round 12 peeled such a nest one level per
+   pass; round 13), and unwrapped at zero width when the mark has a box of its own (one under a display:none
+   ancestor is kept, and the panel measures it again on the show, by the seam's reflow report when a frame ran while
+   the pane was hidden or in the frame the hidden trim armed when none did, the hide and the show in one task; the
+   Event-based sentence below): a collapsible space at a line's edge or at the point where the line wraps, one after a
+   neighbour ending in a space or beside an element that renders nothing (an empty anchor, an audio element without
+   controls, a floated image, a picture without an image), a zero-width, bidi or soft-hyphen character alone, a
+   newline the browser drops; a rendered blank keeps its mark (a no-break or ideographic space, a space between two
+   inline children on one line, the space beside an svg icon, an image or a checkbox). Three shapes, each measured on
+   the round 12 prototype: two-phase (every candidate measured, then every collapsed one unwrapped, one layout per
+   pass; a measurement per unwrap cost 12 s on a paragraph of 5,000 code spans against 0.4 s), batched (paintRendered
+   trims its own marks by default, `PaintOptions.trim`; the Comments panel paints every comment of a pass with `trim:
+   false` and runs the trim once over the pass's marks, file-comments.ts paintAll and trimBlanks, one layout for the
+   pass, and a card whose every mark was a collapsed blank is re-filed as not painted, as the unbatched paint returns
+   null) and to a fixpoint (a mark's own 2 px side padding is in the layout, so an unwrap can move a wrap point and
+   collapse a later blank; until a pass unwraps nothing or no candidate is left, a loop that ends by construction
+   since each continuing pass removes a mark, with TRIM_PASSES_MAX = 20 as a safety cap and a call that reaches it
+   with candidates standing counted in TRIM_STATS.capped; over round 12's 91 scenes 42 paints took one pass, 34 two
+   and one three, and the paragraph of 5,000 links takes eight passes fresh at 700 px and twelve after a narrowing
+   from 800 to 400 px, where round 12's cap of three left 366 and 266 padding-only marks standing; round 13,
+   md-config-paint-trim-fixpoint.test.ts and its browser leg). Event-based: the panel re-trims its standing marks
+   when the seam reports a reflow (Slice 2's onRendered with `why` "reflow", a width change or a text-size step) in
+   the frame the cards are re-placed, and since round 13 on two layout changes the seam never reports, the body's
+   captured `load` (a figure's bytes landing, a gated figure's restored media among them) and the document's
+   FontFaceSet `loadingdone` (a face arriving under the sheet's font-display: swap), which re-wrap the lines with no
+   width report, each folded into the panel's layout frame (one trim per frame however many events ask, the cards
+   placed over the marks that stay); and when a trim finds the pane without a box (a display:none iframe, the phone
+   shell's tab switch, where every blank mark measures nothing and is kept) it asks for a frame and measures the
+   marks again there, once per event and never per frame: when the hide and the show fall in one task that frame is
+   the first after the show and re-trims it, and when a frame runs while the pane is hidden (Chromium runs a
+   display:none frame's requestAnimationFrame at full rate, so every hide that outlasts a frame; round 14) the armed
+   frame runs hidden and keeps every mark, and the seam's width observer reports the hide and the show as reflows,
+   the show's report re-trimming (md-config-paint-retrim-events-browser.test.ts, five legs over the real panel; leg
+   4 the one-task shape, leg 5 the hide across frames, with two trims per event while hidden and never one per frame);
+   and when the pending target alone is painted or unpainted (a composer opened, closed or moved: file-comments.ts
+   repaintPresel), whose 2 px side padding moves the wrap points of the lines it shares with a highlight: round 14
+   trimmed the standing marks at once in the same call (the item of fourteen links selected whole over its comment had
+   left two, three, four and four padding-only highlight marks at 600, 500, 400 and 300 px for as long as the composer
+   was pending), and since round 15 the repaint is a paint pass over the line boxes the target enters and leaves
+   (lineBoxOf: the box is the block whose width does not follow its content, past the embed chip's inline-block and a
+   table's parts, round 16; the boxes are closed under the highlights standing in them, every box a repainted
+   highlight's own marks stand in read too until no highlight is new; those highlights are unpainted and painted again
+   in cards() order, the pass's, and the change marks whole-document through paintChanges when one stands in any of
+   the boxes, since paintChanges has no per-change scope and a per-box unpaint would split a change spanning boxes, at
+   a price on a note of a hundred paragraphs with an insertion in each of 12 to 14.5 ms an open and 11 to 12 ms a
+   Cancel against 1.7 to 3.6 and 1.1 to 1.6 ms with no change mark in the target's paragraph; the target inside them,
+   then the one trim; round 15 read the target's boxes alone and painted the highlights in the order of their first
+   marks, so two overlapping comments whose order by time was not their order in the text swapped nesting at every
+   open and close and back at the next pass, the click on the overlap opening the other card meanwhile, a highlight
+   painted again in a box the target never touched landed inside the marks standing there, and a target on the chip's
+   text moved the paragraph's wrap points while no highlight of it was repainted), since a trim alone left the
+   highlight's blanks trimmed at the old wrap points bare where they rendered at the new ones, 4 and 2 of the item's
+   spaces at 300 and 400 px selected whole, 2 and 1 with four links selected, and 39 of the 120-link item's 119 at 800
+   px while the composer stood, and 4, 4, 3 and 2 after Cancel at 300 to 600 px until the next paint pass; a repaint
+   that adds and removes no Rendered mark (a reply, a comment on a deletion or a detached change, which
+   startChangeComment opens by id alone since fork PR #657 renamed the change card's Reply to Comment on this change,
+   a re-place, a comment on the file, a region, a refusal, the Raw view) trims nothing, where a comment on a spanned
+   change paints a target over the change's span and repaints its line boxes as the float's Comment does
+   (md-config-paint-presel-retrim-browser.test.ts, the real panel at 300 to 600 px, the whole item and four of its
+   links: no padding-only mark and no bare blank pending or after Cancel, the marks a paint pass's under the same
+   target; md-config-paint-presel-kinds-browser.test.ts: zero Range measurements for the kinds that paint no target,
+   where round 14 measured 4,260 on the 5,000-link paragraph, 22 to 27 ms a click, and one trim with measurements on
+   each open and Cancel of a comment on the spanned insertion;
+   md-config-paint-presel-scope-browser.test.ts, round 16: two overlapping comments at 300 and 800 px, a comment
+   across two paragraphs with the target in the second, an insertion and a deletion point in a paragraph the target
+   never touches, and a target on the embed chip's text at 385 to 725 px, the nesting, the click target and the marks
+   the pass's pending, after Cancel and after the next pass); and what the repaint painted again it re-files as the
+   pass does (a change whose every mark the trim removed as not shown, one whose mark stands again as shown, a
+   highlight whose every mark went as not painted) and renders the cards in the same call when a filing moved, since
+   the callers after a passage's Comment and after Cancel render the composer alone and the cards read the filings at
+   render time (round 17: a session's insertion of one soft hyphen, a character the index records and the trim
+   measures, rendered as a hyphen at a line break and as nothing elsewhere, so the target's padding moving the
+   paragraph's wrap point across it moved the filing at every open and Cancel while the card said the opposite until
+   the next render; a plain space never reaches the shape, since the index skips whitespace and never paints it;
+   md-config-paint-presel-refile-browser.test.ts, both directions over the real panel, the paragraph in the generic
+   monospace face at a 60ch measure so the wrap point is the design's and not the face's). The repaint's price is a
+   fresh paint of the boxes' marks to the fixpoint, one layout a pass, in the real pane at 1000 px: the fourteen-link
+   item 5 to 6.5 ms an open and 2.2 to 2.5 ms a Cancel, the 120-link item 27 to 39 and 14 to 22 ms, forty comments
+   over sixty paragraphs 3 to 5 and 1.4 to 1.7 ms; one comment across the paragraph of 5,000 links 6.0 to 6.2 s an
+   open (three passes, 13,821 Range.getClientRects calls) and 3.2 to 3.3 s a Cancel (two passes, 9,510), against 2.7
+   to 2.8 and 1.3 s for round 14's trim of the standing marks and about 1.3 s for main's untrimmed paint, recorded
+   beside the paint's cost below and not optimised (the passes are the fixpoint's). The panel does not repaint on a
+   reflow, a load or a face's arrival, so a blank trimmed at the old layout that renders at the new one stays bare
+   until the next paint pass (item 10). The re-trim's price per reflow: realistic shapes under 10 ms (200 comments
+   over 300 paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to 11 ms); one comment across the 5,000-link paragraph 1 to
+   13 s in the real pane under the convergence loop (round 14's measurements, three runs agreeing on every call count:
+   a window-resize step 1.0 to 1.1 s, a divider release 2.1 to 2.4 s narrowing 1000 to 700 px and 5.1 to 5.6 s
+   widening back, a text-size step 12.4 to 13.3 s over ten passes, nine that unwrapped and the tenth confirming, each
+   pass after one that unwrapped laying the mutated paragraph out again at 1.0 to 1.3 s a layout; round 13's 1.5 to
+   4.6 s was measured under the three-pass cap the same round replaced, which left 51 padding-only marks on the
+   text-size step where the loop leaves none), recorded beside the paint's cost below and not optimised. The divider's
+   drag itself fires one reflow, at release (the shell moves a ghost line and lays the pane out once); a window-edge
+   resize reflows every frame and pays the price per frame. The cost, measured on the build box in headless Chromium
+   under feed.css at 800 px: one comment across a paragraph of 5,000 links (4,999 blank marks, 324 wrap points) paints
+   trimmed in 300 ms against 269 untrimmed once the layout the panel reads next is counted on both sides (323 against
+   45 measured alone, the difference being that layout), two passes of 9,674 Range.getClientRects calls in all, 324
+   marks unwrapped, one per line break of the painted paragraph; a 200-comment pass over 300 paragraphs 21.1 ms
+   batched against 20.3 untrimmed and 20.6 unbatched, Chromium laying the mutated paragraph out incrementally, so the
+   batching bounds the cost rather than saving much here. In node the stand-ins offer no layout, so the trim measures
+   nothing and the node tests pin the DOM shape and the two skips: md-config-paint-trim.test.ts over a stand-in that
+   measures (the rule, the hidden-ancestor guard, two-phase as one layout per pass, the fixpoint to convergence, a
+   five-blank cascade unwrapped whole with one layout per pass, every pass over the marks the last one kept and a
+   confirming pass when candidates remain, the batching option, the candidate alphabet, the root guard and the
+   pre-skip), md-config-paint-trim-fixpoint.test.ts (round 13, over a stand-in whose Range reads an element the Range
+   selects whole as its box, as CSSOM does: the cascade to convergence and TRIM_STATS, the safety cap, a nest of marks
+   measured by its text and dropped in one pass, the pre exemption of the pre-skip),
+   md-config-paint-collapsed-blank.test.ts (no top-level mark, no empty mark, the content marks exact, unpaint and
+   repaint exact, over 66 scenes plus the top-level zero-width one, with pointers and on the index path) and
+   md-config-blank-scenes-fixture.test.ts (the union fixture's shape: the two paragraphs in every scene, a CR always
+   the CRLF pair, since a lone CR had split a scene's html block and left it exercising nothing). The browser legs pin
+   the trimmed result over the union of every blank scene rounds 7 to 13 collected
+   (anchor-map-fixtures/blank-scenes.json, 95 scenes: folds, an author's figure, details, dl and center, badge rows,
+   br pairs, wrap points at several widths, nbsp and U+3000, U+FEFF, every zero-width character of round 11's
+   alphabet, the bidi marks and the soft hyphen, svg icons, audio with and without controls, an author pre with br and
+   block children and with spaces or a tab between its block children, tables, footnote definitions, list items, a
+   form feed, a CRLF, a floated image, a picture without an image, a space inside a kbd, a table caption, a plain
+   note): md-config-paint-trim-browser.test.ts (the trim removes blank marks alone, no padding-only mark at any depth
+   of nesting, the oracle reading the text nodes under a mark, every rendered blank of the painted blocks marked
+   wherever the trim unwrapped nothing and the paint reaching the closing paragraph in every scene but the recorded
+   refused one, no top-level mark, the unpaint exact, the plain note untouched, one comment and two comments across
+   the passage; the wrap scenes at eight widths from 800 to 180 px; the reflow re-trim; the 200-comment pass batched
+   within a same-run bound of the untrimmed one; the oracle's own check over a hand-built nest),
+   md-config-paint-trim-panel-browser.test.ts (the real viewer and panel: the batched pass, the reflow, a text-size
+   step; four and eight overlapping comments nested one level per comment with no padding-only mark at any level,
+   fresh at 300 px and after a narrowing), md-config-paint-trim-fixpoint-browser.test.ts (the 120-link item and the
+   5,000-link paragraph at 800, 700, 500, 400 and 300 px, fresh and narrowed from 800 px with one re-trim: no
+   padding-only mark, no call at the safety cap, the paragraph's cascade past three passes; one to eight overlapping
+   comments at 300 px; the pre scenes, every rendered blank under the pre marked),
+   md-config-paint-retrim-events-browser.test.ts (the real panel: a figure's load and a font face's loadingdone
+   re-trim with no reflow, a change of one zero-width space filed as not shown with Reveal, a paint made in a hidden
+   pane re-trimmed on the show: in the same task by the frame the hidden trim armed, leg 4, and across frames by the
+   seam's reflow report with the trim twice per event while hidden and never per frame, leg 5),
+   md-config-paint-presel-retrim-browser.test.ts (rounds 14 and 15, the real panel: the whole item and four of its
+   links selected over the item's comment at 300, 400, 500 and 600 px, the float's Comment then Cancel; no
+   padding-only mark of either class and no bare rendered blank in the item while the composer is pending or after
+   Cancel, the target's marks nested inside the highlight's and never the inverse, the marks a paint pass's under the
+   same target and the highlight's blank marks after Cancel the pass's before the click, the seam reporting neither a
+   paint nor a reflow), md-config-paint-presel-kinds-browser.test.ts (round 15, re-aimed by the merge of fork PR #657:
+   the real panel over the 120-link item's comment, a spanned insertion's card and a deletion's card; Comment on this
+   file, Reply on the comment and Comment on this change on the deletion's card, by id alone, each opened and
+   cancelled with zero Range measurements and zero trims, where the float's Comment on eleven of the links and Comment
+   on this change on the spanned insertion's card, a target over the inserted word, each trim once with measurements
+   on open and once on Cancel), md-config-paint-presel-scope-browser.test.ts (round 16, the real panel:
+   two overlapping comments whose order by time is not their order in the text, at 300 and 800 px, keep the pass's
+   nesting, click target over the overlap and ring of marks while the composer stands, after Cancel and after the next
+   pass; a comment across two paragraphs overlapped in the first by a later one keeps them with the target in the
+   second; with the target in the other paragraph an insertion inside the highlight opens the change on a click and a
+   deletion point stays inside one highlight mark; a target on the embed chip's text at 385, 500, 605 and 725 px
+   repaints every mark of the paragraph's highlight, its blank marks and the paragraph's bare blanks after Cancel the
+   pass's before the click and pending a pass's under the same target), md-config-paint-presel-refile-browser.test.ts
+   (round 17, the real panel: a session's insertion of one soft hyphen in the target's paragraph, rendered as a hyphen
+   at a line break alone, so the target's padding moves the paragraph's wrap point across it and the change's filing
+   with it; the paragraph in the generic monospace face at a 60ch measure so the wrap point is the design's and not
+   the face's; in both directions the change card's tag, Reveal and link follow the body while the composer stands,
+   after Cancel and after the next pass, and a pass under the same target files the change as the repaint did),
+   md-config-paint-collapsed-blank-browser.test.ts (every whitespace-only node held across the paint and read node by
+   node: a mark exactly when it renders with a width), md-config-paint-whitespace-browser.test.ts leg 4 (the
+   5,000-link paragraph: one blank mark unwrapped per line break at 800 px, no zero-width blank mark, no rendered
+   blank unmarked, the passes read off the getClientRects and removeChild calls, the first over every blank mark, each
+   later one over exactly the marks the last kept, ending in a pass that unwraps nothing or in no candidate left, at
+   800 px and at 700 px, where the cascade takes eight passes, with no zero-width blank mark at either, the trimmed
+   paint within a same-run bound of the untrimmed one) and md-config-paint-rendered-space-browser.test.ts (a form feed
+   leading a block renders a 14 px glyph inside the mark where the bare node collapses, so the highlighted paragraph
+   shows the glyph; item 10). History, for the reader of the rounds' records: main skipped any whitespace-only node
+   under one of twelve block containers (UL, OL, LI, BLOCKQUOTE, DIV, TABLE, THEAD, TBODY, TR, SECTION, ARTICLE, BODY;
+   TD never among them, which is why the `&nbsp;` spacer cell painted on main) whatever its neighbours, so the
+   rendered space between two inline children of a list item or a centred badge row was never painted and the ring
+   broke at it, and it painted every other blank as a ringed box around nothing. Round 8 read the node's neighbours
+   (the "\n" between a folded callout's paragraphs, DETAILS not being on the list); round 9 derived BLOCK_BOXES, read
+   a block-box parent's edge and a `<br>` as a line edge, and made the neighbour reads constant time over the DOM's
+   sibling pointers (one mark across 3,000 links 850 ms indexed against 32 with the pointers;
+   md-config-paint-whitespace.test.ts counts the child-list reads and its browser leg times equal work); round 10
+   restricted the readings to the collapsible five and retired main's container list
+   (md-config-paint-rendered-space.test.ts and its browser leg); round 11 read each side's rendered content through
+   empty inlines, hidden elements, atomic inlines and text ending in a space, and skipped a zero-width run wherever it
+   stood. Round 12's fresh reading found the next shapes that prediction got wrong (an inline svg looked past as
+   rendering nothing, an audio element without controls read as a box, a floated image, a picture without an image, a
+   form feed read as collapsible, the bidi marks and the soft hyphen outside the zero-width alphabet, a space inside
+   an inline-block, and the line wrap no reading of the DOM can see), and the prediction gave way to the trim: the
+   repo's rule is an exact mechanism over a heuristic that approximates it, and the exact answer is the browser's own
+   layout. A passage that is one zero-width character alone still gets a card and no highlight (its one mark is
+   trimmed and paintRendered returns null; md-config-paint-collapsed-blank-browser.test.ts).
+   anchor-map-obsidian.test.ts and the browser leg select across the formula and get the TeX between. The fill's two
+   fallback shapes, KaTeX's `span.katex-error` on TeX it cannot parse and the belt's `code.md-math-src` past a bound,
+   are controls like `.katex` (anchor-map.ts FORMULA_CLASSES), so a display fallback keeps the 1:1 pairing and an
+   inline one maps around; before that a display fallback took no element and every block after it paired one early,
+   and the reader's place was a block off (the review round 1). The control list keys on class tokens the sanitizer
+   lets an author write, as Slice 3's `code-copy` did: a hand-typed span wearing `katex`, `katex-error`,
+   `md-math-src`, `md-fnback`, `md-frontmatter-head` or `fv-gate` is a control too, its text skipped, so a quote
+   covering it is refused with the Raw view offered while a comment on the prose beside it paints (Slice 1's note
+   records the shape for the math markup); the collision is tolerated, as item 9's is, since only the fills could mark
+   their own elements and marked's renderer emits `md-fnback` and `md-frontmatter-head` before the sanitizer (the
+   review round 7). reader-place.ts also keys its list on class tokens, but on five of these seven: the two fallback
+   shapes are not skipped there on purpose, since an html block's fallback can only come from a placeholder the author
+   typed, whose TeX the source parse reads too (its header; the review round 8). A selection endpoint inside a
+   formula's glyphs is the formula touched ("touches a formula", the Raw view offered at the formula's line); the edge
+   that selects none of it maps the prose beside it; an endpoint inside another control (a back link's label, the fold
+   label, a gate's label) stands at the control's edge, so a triple-click on a footnote definition maps its words
+   (anchor-map-obsidian.test.ts tests 8 to 11, md-config-math-map-browser.test.ts). The block tokenizer's start hint
+   names only a newline before a line the tokenizer will accept (math.ts nextBlockMath, one pass with a memo of the
+   first closer per family, its answer remembered per lexer frame by md-block-start.ts): marked clips the paragraph at
+   the hint and resumes it when the tokenizer says no, with a newline the source did not hold, so a rejected line
+   (`$$x$$ is inline here.`, an unclosed `$$`) broke the raw tiling from that paragraph to the end of the note, and a
+   match at the string's own start, one character into a line, cut `A $$x$$` in two
+   (md-config-math-block-start.test.ts, whose bound holds the hint to one pass per call: a first cut that ran the
+   block tokenizer at every candidate lexed a note of 1,500 rejected candidates in 13 s and never shipped). marked
+   also joins two paragraphs its own regex separated (a header-looking line over a delimiter row with a different cell
+   count, a lowercase `<prefix>` line, a bare `* ` or `1. ` bullet, each interrupting the paragraph and then refused
+   by its tokenizer) whenever a block hint has a hit anywhere later in the note, with a newline in the raw the source
+   does not hold; and with no hint at all it joins a paragraph and an indented line under it that a
+   delimiter-row-shaped line or a `---` follows (the gfm table interrupt admits any indentation on its header line,
+   the code tokenizer runs before the table's and takes the indented line, and the lexer joins it onto the paragraph
+   with the indentation gone from `text`, CommonMark's own reading of a continuation line), at the top level, in a
+   quote's body and in a list item's block text. The anchor map rebuilds such a paragraph's source lines from its raw
+   and text (each text line the raw line it came from less up to four spaces, a blank raw line no text line matches a
+   join's newline; anchor-map.ts sourceRaw and joinedSourceRaw, in the block table and the walk) and maps the text
+   into them line by line through the suffix view, so either join costs the map nothing (the review rounds 2 and 3 for
+   the hint's join: before it every block from the join to the end of the note refused; round 5 for the indented
+   line's, pre-existing at the base, where the round-3 placement by `text` alone stopped at the first stripped space
+   and every later span collapsed alike; md-config-merged-paragraph.test.ts,
+   md-config-merged-paragraph-browser.test.ts). The joined rendering, one `<p>` where bare marked gives two, is
+   marked's own and GitHub's for those shapes, and it turns on a `$$` further down the note (item 10). marked calls
+   every block hint before every paragraph on the whole remaining source, so a hint that scans the rest of the note
+   made the lex quadratic in the paragraph count (the review round 2: 8,000 one-line paragraphs 1.3 s on the singleton
+   against 34 ms with no hint, a 200 KB reply twice the base's time); the math hint's answer is remembered per lexer
+   frame (md-block-start.ts memoBlockStart, exact because a frame's sources are suffixes of one another and a nested
+   body is a frame of its own; the callout's hint, memoised the same way in round 2, is gone since round 3, item 5),
+   the math tokenizer's closer search too, and the lex is linear in the paragraph count: 36 ms for those 8,000
+   paragraphs, 35 ms for 8,000 rejected `$$` lines where the base took 736 (md-config-block-start-memo.test.ts holds
+   the memoised lex equal to the plain one and the singleton's lex linear: since the review round 8 as the median of
+   seven paired ratios of one lex of a 16,000-paragraph note to eight lexes of a 2,000-paragraph one, equal work for a
+   linear lex, bounded at 3 where a linear lex measures 1.0 to 1.1 and the pre-memo one 7.5, with a 1,500 ms guard on
+   the large note's median, and the math hint's own finder counted once per frame through the frame it writes; round
+   7's single-lex pairs, bounded at 24 where a linear lex measured 9, inflated three times under a CPU quota, steadily
+   across every pair, because only the large lex outlasted a scheduler slice, and the earlier bound, ten times a small
+   timing taken first, failed under a parallel suite's load on the merge audit). KaTeX's flagged text takes a theme
+   token, `--math-err` (math.ts MATH_ERROR_COLOR, which KaTeX writes into the span's inline style), declared in both
+   theme blocks of both sheets at 4.5:1 or better on `--bg`, overridden to black in the print block on `.fileview-md`
+   (a custom property inherits, so it reaches the flagged span and an unsupported command's glyphs inside a rendered
+   formula alike; set on `.katex-error` alone, those glyphs printed in the screen red) and to the bubble's own ink in
+   the person's bubble (`currentColor`: the page's red read at 1.67:1 and 1.28:1 on the two fills; the review round 2,
+   md-config-math-inks-browser.test.ts), as the source fallback prints; KaTeX's default #cc0000 read at 2.8:1 on the
+   dark page (md-config-math-error-colour.test.ts, theme-parity.test.ts). The heading ids are minted BEFORE the fill,
+   as sanitizeMd's caller pass (file-view.ts mintHeadingIds, md-sanitize.ts `own`): read after it, `# Ratio
+   $\frac{a}{b}$` slugged KaTeX's glyphs in layout order (md-ratio-ba) where GitHub's slug and the note's own links
+   spell md-ratio-fracab (md-config-fragment-landing-browser.test.ts). The Web Worker of the design note is NOT built:
+   VS Code's webview CSP has no `worker-src`, and an asynchronous fill changes when `fireRendered` and the seat run
+   over a paint (the comments panel and the reader's place would meet placeholders); the synchronous bounded fill of
+   Slice 1 stays, and the note stays a direction.
+3. *Front matter* renders as ONE element, `details.md-frontmatter` with a `summary` reading "Front matter" and the
+   YAML in a `pre`, escaped text and never author HTML. The tokenizer fires only for the document's first token
+   (`tokens === this.lexer.tokens && tokens.length === 0`: a quote's or a list item's body is lexed into a fresh
+   array, so `> ---` inside a quote stays an hr; `state.top` is not that test), and only for a body that reads as a
+   YAML mapping (isYamlMapping: every left-margin line a `key:` line, a `- ` item under a key, a `#` comment or blank;
+   a bare key begins with a letter or digit of any script, or an underscore, since ASCII alone rendered a vault whose
+   property names are in its own language, `Über:`, as the hr and the heading again: the review round 3) with no blank
+   line after the opener (pandoc's rule), so a document that merely opens with a rule, a fence opening with `---` or
+   prose between two rules keeps its blocks (the review round 1: a reply bounded by rules folded its first section
+   into a closed block, and a `---` inside a fence closed the block early, so the fence's closer opened a block that
+   swallowed the rest). Its raw tiles the source from offset 0, trailing blank lines included, so the block table's
+   first span is `[0, 37]` where it was `[0, 3]` and `[4, 37]`, and the setext h2 the keys used to become (with its
+   minted `md-title-...` id) is gone. anchor-map.ts treats it as a hole block ("the front matter") with the fold label
+   a control; `tagOf` gives DETAILS. md-config.test.ts renders it (one element at the start, none mid-document or
+   inside a quote; the rule-bounded, fenced and YAML shapes); anchor-map-obsidian.test.ts holds the block span from
+   offset 0, the DETAILS tag, the hole's reason and the hr-without-YAML case. A fold's state survives every paint:
+   renderBody notes every `details` under `.fileview-md` before the swap and restores each after it, in both viewers
+   (file-view.ts foldKeeper; before it the Rendered/Raw switch, a reload's landing, the editor's take and handback and
+   a `#` reveal reset every fold to what the source says; the review round 2, md-config-fold-state-browser.test.ts
+   drives the gestures over the real Files bundle). The match runs in two passes, each in document order: first by
+   class, summary text and body text, when that exact key names as many noted folds as new folds, the k-th new paired
+   with the k-th noted (the review round 4: two identical `> [!note]- Todo` placeholders shared one exact-key queue,
+   so a session filling the first while the person read the second swapped their states; a key whose count changed, a
+   twin filled in, added or removed, falls whole to the second pass and its order, which hands the first noted state
+   of that title to the first new fold of that title, so the twin the person reads keeps its state through a fill
+   anywhere and through a twin added or removed behind it; a twin added or removed AHEAD of it shifts its state by one
+   (an identical one, whose arrival or departure changes the key's count; a same-titled fold with a body of its own
+   leaves the twins paired in the first pass while their count stands; once it changed, one removed or added ahead of
+   them in the same write shifts their states the same way, the review round 7): three identical `> [!note]- Todo`
+   twins, the middle one open, the first removed, and the person's twin is now the first, takes the first noted state,
+   shut, and the one below it opens, the content having nothing to tell identical twins apart, the limit the review
+   round 6 states here and in foldKeeper's header; the review round 5: round 4's rule, one noted fold and one new fold
+   only, sent untouched twins whole to the second pass too, where a same-titled fold inserted or removed ahead of them
+   shifted their states by one, the fifth leg of the fold-state test), then the leftovers by class and summary text
+   alone, so a fold a session's edit rewrote keeps its state and a fold that stands as it was keeps its own when a
+   fold of the same class and title was removed or inserted ahead of it (the review round 3: with class and summary
+   text as the whole key, two `> [!note]- Same title` callouts shared one queue, and a reload the Comments panel's
+   poll asked for after such an edit opened the fold the person had left shut; the same leg drives that reload through
+   the panel's poll). Order alone decides an edit that both removes one same-titled fold and rewrites another's body,
+   a twin rewritten in the same write that inserts a same-titled fold, whose text change is the insertion's, and an
+   identical twin added or removed ahead of the twin the person reads. A body of `#` lines alone is a comment-only
+   mapping and folds, as pandoc, Jekyll and Obsidian read it; in a reply that shape is inside item 1's open ruling.
+4. *Footnotes*, our own extension (marked-footnote is not installed and renders at the end, which breaks the 1:1 block
+   pairing). `[^id]` renders `sup.md-fnref > a[href="#fn-id"][id="fnref-id"]` showing its number, and ONLY when the
+   document defines the id (GitHub's rule; the lexer lexes every block before any inline text, so the definitions are
+   known when a reference is lexed): `[^1]` with no `[^1]:` line stays as written, where it rendered a live-looking
+   link to nowhere (the review round 1). A second reference to the same note gets `fnref-id-2`. A definition renders
+   IN PLACE as `div.md-footnote[id="fn-id"]` with a back link `a.md-fnback[href="#fnref-id"]` first, one element per
+   definition, so the paragraphs after it pair as before (the acceptance); its body is a paragraph inside the div, the
+   back link first in it (GitHub's `li > p`, since the review round 10: rendered directly under the div, the spaces
+   between the body's inline elements were whitespace-only text nodes under a DIV, which the paint's container rule of
+   the time skipped, so a highlight across `[^1]: **a** *b*` or two links in a definition broke at each space, a 4 px
+   gap, where main, rendering the line as a plain paragraph, painted it whole; both sheets give that paragraph no
+   margin of its own, so the footnote's box is unchanged, measured to the pixel; md-config-footnote-paint.test.ts and
+   its browser leg drive paintRendered from the paragraph before to the paragraph after); its text runs as far as
+   marked's paragraph rule reads a paragraph, so a lazy continuation line (GitHub's form) or a two-space indented one
+   (Obsidian's) stays in the note and another definition, a list, a heading or a line a registered block extension's
+   start hint names ends it (a four-space rule lost a wrapped definition's second line; md-config.ts clipAtBlockStarts
+   applies the cut marked makes before its own paragraph, so a `$$` block on the line after `[^1]: text` is a display
+   formula after the note, where the borrowed paragraph rule ran over it: the review round 2). Block content inside a
+   definition, GitHub's four-space form (a fence, a list, a second paragraph indented four spaces), is not adopted: a
+   four-space-indented line is the paragraph's continuation, as marked's own paragraph reads it, so an indented fence
+   renders as a code span (the review round 3, open in item 10). A duplicate definition keeps its class and back link
+   and drops its id, so `#fn-id` lands on the first. Numbering is by order of first reference, kept on the lexer
+   instance (one per parse, the anchor map's static lex included), and a definition nothing refers to shows its marker
+   as written (`[^id]:`) as a label with no back link, so every character the author wrote stays in view: a regex
+   class explained at a line start, `[^a-z]: matches anything but a lowercase letter`, is GFM's definition shape,
+   which GitHub drops whole, and the bare id ran into the text as a word (the review round 2). The ids reach the DOM
+   prefixed `user-content-` and the `#fn-id` hrefs land through fragmentTarget in the viewer
+   (md-config-obsidian-browser.test.ts clicks both ways over the Files bundle) and the chat's `#` delegate. A `[^n]:
+   URL` line is a footnote now, where marked's `def` rule used to swallow it as a link reference (a note that used
+   that form as a real link reference changes rendering). The shown number is a hole ("a footnote reference"); the
+   back link is a control; the definition's text maps past its marker through the blockquote's suffix view. `tagOf`
+   gives DIV. md-config.test.ts renders the reference, the in-place definition, the numbering, the URL-only
+   definition, the undefined reference, the duplicate, the orphan and the continuation lines;
+   anchor-map-obsidian.test.ts holds the DIV tag, the paragraph after a definition, the definition's own text and the
+   number's refusal.
+5. *Callouts.* A block extension tried before the built-in blockquote: GitHub's `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
+   `[!WARNING]`, `[!CAUTION]` and Obsidian's `[!type] Title` with any type render `blockquote.md-callout` with a
+   `p.md-callout-title` (the author's title, else the type capitalised) and the body lexed as blocks; `[!type]-` and
+   `[!type]+` render a `details` closed or open with the title in its `summary`. Its extent is marked's own blockquote
+   rule, borrowed, so a lazy continuation line with no `>` stays inside the tinted block as GitHub keeps it, and it
+   registers NO start hint (the review round 3): its marker line begins with `>`, a paragraph interrupt marked's own
+   rule knows, so a hint could shorten no paragraph, and the one round 1 gave it (after a newline only, since marked
+   calls a hint on `src.slice(1)` and a `^` alternative cut `a> [!note] b` into a one-letter paragraph and a callout;
+   round 2 memoised its answer per frame) set marked's clip flag for a `> [!` anywhere later in the source, which
+   joined a paragraph and its interrupt-rejected successor into one `<p>` with a raw that no longer tiled the source
+   (item 2). The marker line is spelled as marked spells a quote's, `>`, an optional space or tab, then up to three
+   spaces before `[!` (round 3: one space alone left `>\t[!NOTE]` and `>  [!note]` plain quotes where GitHub reads the
+   alert). The body takes marked's two blockquote preparations: the marker's optional space may be a tab (`>\tbody`
+   kept its tab and the nested lex made it indented code) and a lazy `===` or `--` line is prefixed with four spaces
+   so it stays a paragraph's text and not a setext underline (the review round 2), from the body's second line on: the
+   body's first line has no paragraph before it to underline, and guarded it was indented code reading `===` (round
+   3). The body's marker is CommonMark's, a `>` after at most three spaces, where marked's blockquote strips a `>`
+   under any indentation (` *>`): a lazy continuation line indented four or more spaces that begins with `>` keeps its
+   `>` as text in a callout, as commonmark.js and GitHub render it, and loses it in marked's plain quote (the review
+   round 5, kept as built: the callout follows GitHub and the anchor map's suffix view holds either way, since round 6
+   for the bare tail form too, a lazy `>` line indented four or more spaces closing the quote, which refused the quote
+   whole until then, below; md-config.test.ts pins both). The anchor map's suffix view reads through those four
+   spaces, which hold no source position, so the body line and its underline map to their own characters
+   (anchor-map.ts suffixLineView; before, the callout or the quote refused whole with a reason naming a tab; round 3,
+   anchor-map-obsidian.test.ts). The same view takes a quote's empty `>` line past the text as blank under ANY
+   indentation (QUOTE_BLANK_RE, marked's own strip ` *>[ \t]?`: a lazy `    >` or a tab and `>` enters the quote
+   through the paragraph's continuation and the strip empties it there too, so the quote's own ` {0,3}>` opens a line
+   and is not what the tail rule reads; round 6, where a closing `>` indented four spaces refused the quote whole and
+   one indented three mapped): marked's blockquote tokenizer strips the marker and rtrims the newlines left, so a
+   quote closed with an empty `>` line, a common way to write one, has a raw line more than its text and refused whole
+   from Rendered, its nested and list-hosted forms too, where a callout of the same shape mapped (round 5,
+   pre-existing at the base; anchor-map-obsidian.test.ts, test 17 holding the indented shapes). The nested walk runs
+   over the tab-expanded text (anchor-map.ts blockLexView; normalizeSource shares the expansion through expandTabs): a
+   blockquote's text, a callout's body and a list item's text go through marked's block lexer again, which expands
+   their leading tab runs before lexing, so the nested tokens' raws did not tile the unexpanded text, and a quote
+   closed by `> ` and a tab or `>` and two tabs (the strip takes ONE whitespace after the marker), a `> ` and tab
+   continuation line, `>` and two tabs before a line of text, a callout body line with a tab after the marker's space,
+   and the list holding a `- ` and tab item all refused whole with the paragraph reason or a reason naming the tab;
+   they map since round 6, each tab's four spaces taking the tab's position so no emitted character moves, and an
+   indented code block a tab opens is a hole at the tab (a `> ` and tab line of its own paragraph, a `- ` and tab
+   item's text). The pre-slice refusal of a tab after the marker is retired with it, pre-existing at the base
+   (anchor-map-obsidian.test.ts test 18; anchor-map.test.ts's two pre-slice pins hold as the code hole and as marked's
+   three-space bullet mismatch). The type rides in a class (`md-callout-note`), not the `data-callout` attribute the
+   design named, since the sanitizer drops every data attribute; the sheets tint by class through the page's own
+   tokens (note and its kin the accent, tip green, important teal, warning amber, caution red, any other type the
+   hairline; feed.css's `:root` declares the awaiting green and the compacting teal the tip and important tints read,
+   which stood in its light block alone, so on the two dark themes the feed page's tip and important callouts lost
+   rail, wash and title tint: the review round 2, feed-css-vars.test.ts reads the sheet with the light block cut out
+   and md-config-feed-callout-tints-browser.test.ts six callouts under both sheets and three themes). The tip and
+   important tints are tokens of their own since round 5, `--callout-tip` and `--callout-important`, declared in both
+   theme blocks of both sheets: on the dark themes the awaiting green and the compacting teal as before; on the light
+   theme the light `--green` (#3E7D0E, 4.25:1 on the page) and a teal (#0F766E, 4.59:1), since the status fills, the
+   same hex in both themes, were 2.27:1 and 2.09:1 rails on the cream page, under the 3:1 non-text floor, and the rail
+   and the wash are the type's one carrier; md-config-callout-title-ink-browser.test.ts holds the five alerts' rails
+   at 3:1 on the page under both sheets and the three themes, theme-parity.test.ts both tokens at 3:1 on `--bg` in
+   both themes, and the feed-tints leg and feed-css-vars.test.ts read the new tokens. The title reads in the body's
+   ink, bold, and the type shows on the rail and the wash alone (the review round 3): the tint tokens are rails and
+   fills, not inks (the hairline at 1.45:1 and the caution red at 2.91:1 on the dark themes, the light theme's tip and
+   important under 2.2:1), so a title in the rail token failed every custom type;
+   md-config-callout-title-ink-browser.test.ts holds every title at 4.5:1 under both sheets and the three themes, and
+   the bubble's title reads in the bubble's own ink (item 1). The title line is a hole ("a callout's title", since the
+   marker is not shown and a missing title is generated); the body maps as blocks. `tagOf` gives BLOCKQUOTE, or
+   DETAILS for a folded one, whose open or closed state survives a paint (item 3, foldKeeper). The folded form wears
+   the blockquote's `margin: 0.5em 0` since round 6, at the blockquote rule's own weight through a `:where()` head, so
+   a fold that is the body's first or last child keeps the body's edge as a blockquote does (a details matched no
+   margin rule, and a run of `> [!tip]-` folds stacked flush into one tinted box with a notch where their rounded
+   corners met; both sheets, a fileview-parity head; md-config-chat-styles-browser.test.ts reads both forms' margins
+   in a reply, a notice, the viewer root and the bubble, and two one-child roots at 0px). A `#` target inside a folded
+   callout, a closed `details`, is revealed before the scroll (md-sanitize.ts revealFragmentTarget, the HTML spec's
+   ancestor revealing steps, run by scrollToFragment for both viewers; before it the click scrolled to nothing with
+   the fold shut). The comments panel runs the same reveal on its own marks before every scroll to one
+   (file-comments.ts revealMarks: goTo, scrollCard and the head click's centering, the margin pass re-run after a fold
+   opened), so a comment on a folded callout's body or on the front matter shows its highlight where a shut fold came
+   to the center with none (the review round 2; md-config-goto-closed-details-browser.test.ts). md-config.test.ts
+   renders the five alerts, a titled type, the two folds, the lazy line and the mid-paragraph marker;
+   anchor-map-obsidian.test.ts holds the tags, the body's blocks (a folded one's hidden body too) and the title's
+   refusal, the generated title included; md-config-fragment-landing-browser.test.ts lands a heading link, a
+   `[[#Heading]]` wikilink and a footnote reference inside a shut fold.
+6. *`==mark==`* renders `<mark class="md-mark">` and maps by delimiter width like em and strong; the opener must touch
+   its content, so `a == b` in prose stays literal, and neither delimiter may touch a word on its outside (the run of
+   `=` is exactly two; the opener is refused after an ASCII letter, digit, underscore, closing bracket, quote or `=`,
+   the characters an operand ends in, and the closer before an ASCII letter, digit, underscore or `=`, which a right
+   operand begins with; ASCII only, so CJK prose with no space around a highlight is not refused), so `a==b and c==d`,
+   `a===b`, `len(a)==0 or len(b)==0`, `x[i]==y[j] and a[0]==b[0]`, `'a'==b and 'c'==d` and `f()==1 and g()==2` in a
+   sentence or a heading stay literal where the plain delimiter rule paired two comparisons into one highlight (the
+   review round 1 guarded the opener against letters and digits, round 2 both ends against an operand). A highlight
+   holds no `==` (the review round 3): the first `==` after the opener is its closer, and a closer that touches a word
+   makes the text literal up to it, so `==high==lighted and ==more== end` highlights `more` alone and `if x ==0 or y
+   ==1 then ==done==` highlights `done` (round 2's lazy match ran on to the next `==` and rendered one highlight from
+   `high` to `more`, the second opener eaten); `==a == b==` is literal, the operator reading winning as everywhere in
+   the rule; the recorded consequence stands, `==high==lighted` alone is literal. A code span inside a highlight is
+   skipped whole (the review round 4): the tokenizer matches over a copy of the source cut at the first `==` outside a
+   code span, with the spans before it masked to marked's own filler (md-config.ts markView), so `==see `a==b` here==`
+   highlights `see a==b here` with the comparison in code, as Obsidian renders it, and a `==` inside a span never
+   closes the highlight (`==x `y== z` w==` is one highlight, where rounds 2 and 3 closed it at `y` and broke the
+   span); only a code span is skipped, so `==**a==b**==` stays literal, and the double-tilde rule keeps the blind spot
+   its two copies always had. A backslash-escaped `=` is the highlight's text (the review round 5): marked masks
+   escaped punctuation before its em and strong run and hands an extension the unmasked source, so `==a \== b== end`
+   closed at the `==` of `\==`, highlighted `a \` and left ` b== end` literal, where `\=` is marked's escape
+   everywhere else in the paragraph; a backslash and the ASCII punctuation character after it are one atom of the
+   content, CommonMark's escape (its section 2.4), and a backslash before any other character is a literal backslash,
+   text of the highlight (the review round 6: round 5's atom took a backslash and ANY character, so `==a \ == z`
+   rendered a highlight ending in a backslash and a space where round 4 and Obsidian leave it literal, its closer
+   preceded by whitespace; a backslash before a space, a tab or a newline is text and the whitespace stands as the
+   content's last character, which refuses the closer, while `==C:\dir== x` highlights as it always did); the view
+   skips a `==` an odd count of backslashes precedes, so `==a \== b==` highlights `a == b`, `==x \\== y` and `==a\\==
+   b` close at their `==`, two backslashes escaping each other, and `==a\==` is literal, one `=` escaped and one left;
+   the double-tilde rule keeps the blind spot marked's own gfm del has. md-config.test.ts pins the shapes and the cut.
+   The element's class is what both sheets' rule keys on, `mark.md-mark` (a bare `.fileview-md mark` outranked the
+   comments panel's single-class marks, `.fc-hl`, `.fc-presel` and `.fc-ins`, so every highlight in the Rendered view
+   wore the amber wash: round 3, md-config-mark-classes-browser.test.ts compares the panel's marks inside the view
+   with the same marks outside it, and md-config-math-map-browser.test.ts reads their dress on the real fill).
+   md-config.test.ts renders it and keeps the comparisons literal; anchor-map-obsidian.test.ts maps its text by the
+   delimiters.
+7. *Decision 2, wikilinks and embeds.* The renderer emits an anchor ONLY when the per-parse walkTokens of the file
+   kind (file-view-links.ts viewerWalkTokens, run by mdBlock for the file kind alone) stamped the token `resolved`:
+   `[[Note]]` becomes `<a href="Note.md">Note</a>` (`.md` appended unless the target names a file type Obsidian opens,
+   KNOWN_EXT_RE: `[[img.png]]` and `[[paper.pdf]]` keep their extension, and a dotted title such as `[[Note.v2]]`,
+   `[[Release v1.0]]` or `[[Node.js]]` is a note, where any dotted target read as a file with an extension and linked
+   a file that does not exist; the review round 1), `[[Note|alias]]` shows the alias, `[[Note#Heading]]` carries the
+   fragment, `[[#Heading]]` is a section link of the same note; #347's link pass then turns each into a path link to
+   `<dir>/Note.md` with the fragment in `data-frag`, no existence check. Everywhere else (a chat reply, a URL
+   document) the same text is `span.fv-wikilink.fv-dead` showing the source as written, brackets included (`[[Note]]`,
+   `![[img.png]]`, an R-style `matrix[[0]]` too), with a title that says why and names no surface (the review round 1:
+   the span showed the alias or target alone, so a reply's reader could not tell a wikilink from plain text, and its
+   title spoke of "the viewer" to a reader of a reply). `[[text]](url)` is CommonMark's link with bracketed text and
+   `![[img.png]](url)` its image: the tokenizer yields when `]]` is followed by `(` and marked's link rule reads the
+   span, as GitHub renders them (the review round 2: the wikilink took `[[docs]]` and left `(url)` as prose, in a note
+   a path link to a `docs.md` that does not exist); a span the link rule refuses, `[[Note]](see also)`, and adjacent
+   `[[A]][[B]]` stay wikilinks. A span that names neither a file nor a section, `[[ ]]`, `[[#]]`, `![[ ]]`, `[[a/]]`
+   or `[[ | ]]`, stays literal as `[[]]` does (the review round 3: in a file document it rendered `<a href="">`,
+   dressed as an external link that opened the page itself, or a path link to a nameless `a/.md`). Bash's `[[ -f x
+   ]]`, Python's `[[1]]` and R's `lst[[1]]` in a reply are the dead span too, text preserved and the title accurate:
+   no character rule separates them from Obsidian's valid targets (`[[ Note ]]`, `[[1]]`), and a per-kind grammar
+   would be a ruling of the open ruling's kind. `![[image.png]]` renders an `<img>` when resolved, so
+   rewriteFigureSrcs loads it from the file's folder and `![[image.png|300]]` sets its width; `![[Note]]` is a
+   link-shaped chip `a.fv-embed`; unresolved, an embed is the dead span too (an `<img src="image.png">` in a reply
+   would fetch from the page's own origin). An anchor's shown text is the source text at `textOffset` in the raw, so
+   the anchor map places it exactly (a dead span is never mapped: a reply is not, and the URL kind keeps its place by
+   blocks). The comments panel's embed grammar and the host's (`imageEmbeds` in file-comments.ts and
+   tools/file-comments-host.mjs) read the `![[...]]` form: it was a one-regex addition, so the limit the design
+   allowed for was not taken; file-comments-panel.test.ts and the host's tests hold both readers.
+8. *rewriteFigureSrcs* reads every attribute a figure fetches through (figure-gate.ts figureRefs): an img's `src` and
+   `srcset`, a `source`'s `src` and `srcset`, a video's `src` and `poster`, an audio's and a track's `src`, an svg
+   `image`'s or `feImage`'s `href` and `xlink:href`. A srcset is rewritten candidate by candidate with its descriptors
+   kept (HTML's own parse, a comma inside a URL kept). Only an img's `src` keeps `data-fv-src`, the one attribute the
+   panel pairs an embed by. An `xlink:href` is folded into `href`: when both stand, `href` wins (SVG 2's rule) and the
+   xlink attribute goes either way, so the element carries one attribute every reader agrees on. The URL kind resolves
+   every one of those attributes against the document through the same walk (file-view.ts resolveFigureRefs, no
+   `data-fv-src` since a URL document has no panel), where it resolved `img[src]` alone and the browser resolved a
+   relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a track's `src` against the
+   page (the review round 2; md-config-url-figure-refs-browser.test.ts). file-view-figures-absolute.test.ts's selector
+   pin is the gate's `FIGURE_SEL` now, with a case per shape. An `feImage` never reaches the rewrite or the gate
+   today: the sanitizer's `svg` profile (md-sanitize.ts MD_PURIFY, no `svgFilters`) drops a filter's primitives first,
+   so that arm is a guard for a wider profile, pinned over the stand-in together with the profile itself (a wider
+   profile must bring a browser leg; the review round 1).
+9. *Decision 8, the gate* (figure-gate.ts, run by mdBlock after rewriteFigureSrcs on the sanitized DOM). The allowed
+   set is the gear's `figureHosts` (settings.ts `FIGURE_HOSTS_DEFAULT`: github.com, raw.githubusercontent.com,
+   user-images.githubusercontent.com, camo.githubusercontent.com, avatars.githubusercontent.com,
+   objects.githubusercontent.com, private-user-images.githubusercontent.com, github.githubassets.com, localhost,
+   127.0.0.1; exact names, no wildcard) plus the page's own origin and the kernel's (`window.__rompKernelBase`), which
+   every local figure goes through, plus the hosts clicked in this page (`loadedHosts`, a module Set that lives as
+   long as the page, which is how Decision 8's "for the session" is built: the chat webview, the feed, the Files pane
+   and each browser tab each remember their own, so a host clicked while reading one file is loaded for every file
+   opened in that page afterwards, until the page reloads; the viewer's Reload or a Raw and back keeps a clicked host
+   loaded, an emptied list gates a host the setting allowed; figure-gate.test.ts holds the set, and the gate leg
+   re-opens the file and reads both clicked hosts loaded on open). An entry of the list is read down to its host name
+   through the URL parser (settings.ts figureHostName, the reading remoteHost gives a source: an address pasted whole,
+   a port or a path is stored as the host alone, an internationalised name in its `xn--` form, an IPv4 address without
+   leading zeros; an entry with its own scheme is parsed as it stands, any other under `http://`), once per host; a
+   line the parser refuses is kept as typed, allows nothing, and is named under the list in the gear (gear.js
+   figureHostsNote). Before that a stored `https://cdn.test` or `cdn.test:8080` was a dead entry that gated the host
+   it named, with no sign in the gear (the review round 1). A media root (img, video, audio, picture, svg; a `source`
+   or `track` through its parent) with a source on another host is wrapped in
+   `span.fv-gate[data-act="fv-load"][role=button][tabindex=0][data-fv-host]`, its label "Image from host. Click to
+   load." (or Video, Audio), sized by the author's pixel `width` and `height` or the sheet's minimum box; every
+   fetching attribute moves to `data-fv-gated-<name>` and `data-fv-src` to `data-fv-gated-fv-src`, so nothing leaves
+   the page and no embed pairs while gated. The element stays inside the placeholder, which keeps the region layer's
+   contract: with the panel open the layer wraps THE img inside the placeholder, and the click leaves the wrapper
+   standing around the loaded picture (the leg reads both). The click is delegated on `.fileview-body` (and the URL
+   viewer's body), never bound to the placeholder, since every paint rebuilds the DOM; Enter and Space on a focused
+   placeholder do the same in both viewers (file-view.ts gateKeys: the URL viewer's `delegate` reads clicks alone, so
+   its placeholder ignored the keys until the review round 1; md-config-url-gate-keys-browser.test.ts); the restore is
+   the acknowledgement. One click restores every placeholder waiting on that host alone and relabels one waiting on
+   more. The gear's list reaches an open document through the settings listener (regateFigures on `storage` and
+   `romp:settings`): a host added restores its placeholders in place, a host removed applies at the file's next paint,
+   which docs/reference.md says in those words (the review round 2). Nothing in the gate FINDS an element by class,
+   since the sanitizer keeps an author's `class`: the placeholder by its `data-act`, its label by `data-fv-label`
+   (LABEL_MARK), and the sheets' hide rule keys on the placeholder's `data-act` and the label's mark, neither of which
+   the sanitizer lets an author write (round 3: keyed on the class it hid every child element, bold, a link or a code
+   span, of an author's `<span class="fv-gate">` around prose; the box's chrome on the class stays, the recorded call;
+   md-config-gate-author-span-browser.test.ts), so an author's `<text class="fv-gate-label">` inside a gated svg no
+   longer takes the label's text and a `<span class="fv-gate">` around prose survives a click or a settings event with
+   its text (the review round 1; md-config-figure-gate-authored-browser.test.ts). The srcset parse breaks on HTML's
+   ASCII whitespace alone (a JS `\s` stopped at a no-break space, so `github.com<nbsp>@evil.test/x.png` read as
+   github.com to the gate while the browser fetched evil.test) and leaves parentheses at the first `)` as HTML's
+   descriptor tokenizer does, and every srcset under a judged root is written back in the gate's own spelling before
+   the judgment, so the attribute the browser reads is the one the gate parsed. An inline svg's paint references are
+   fetching attributes too (the review round 2: `fill`, `stroke`, `filter`, `clip-path`, `mask`, `marker-start`,
+   `marker-mid` and `marker-end` take a CSS `url()`, DOMPurify's svg profile keeps all eight and its URI check passes
+   `url(`, so a `url(https://host/p.svg#p)` on the svg or any element inside it fetched on open with no placeholder,
+   in both kinds; figure-gate.ts paintRefs reads them with a CSS Syntax tokenizer, cssUrls, that preprocesses the
+   value first as CSS Syntax's section 3.3 does (a CRLF pair, a lone CR or a FF is one newline: read raw,
+   `\75&#13;&#10;rl(` had the escape eat the CR and the LF end the name, so the fill fetched on open with no
+   placeholder; round 3), decodes escapes and skips comments, since `\75 rl(` is `url(` and `github.com\40 evil.test`
+   is `github.com@evil.test` to the browser, judges every quoted string as well (a mask reads the CSS shorthand, so
+   `image-set("https://host/a.png" 1x)` fetches), and moves the attribute to `data-fv-gated-<name>`; rewriteFigureSrcs
+   leaves them as written; md-config-svg-paint-urls.test.ts and md-config-svg-paint-gate-browser.test.ts). The
+   placeholder's text is skipped by the anchor map (isControl) and by the reader's place (reader-place.ts noteText),
+   so an html block holding a gated figure at the top of the view keeps the place across a paint (its label had read
+   against a parse of the block's source that reads nothing, and the Raw switch seated nothing;
+   md-config-figure-gate-place.test.ts and its browser leg). The URL kind names the document's own host beside the
+   list: the URL viewer fetches with `mode: "same-origin"`, so that HOSTNAME is the page's, but the gate compares
+   origins (remoteHost), so a figure on the document's hostname under another scheme or port loads on open only
+   through this arm (the gate leg's URL scene holds it: fx-alt, fx-port). The chat's `md()` is not gated (recorded).
+   Measured on open, DPR 1, the fixture of file-view-figures-gate-browser: the one request that left the page was
+   github.com's picture; `/file` served the file and its `![](fig.png)`; six placeholders held remote.test's img,
+   srcset, poster, picture, svg and second img and one held other.test's. After the click on one remote.test
+   placeholder: remote.test's img.png, img2.png, poster.png and svg.png were fetched and `/file` served local.png; the
+   2x srcset candidate was not picked at DPR 1; for the `<picture>`, Chromium took the fallback img rather than the
+   source's srcset when both came back on an element already in the document (the leg accepts either). A `<picture>`
+   is gated whole, so its local fallback waits with the remote source. The gear's row is a textarea, one host per
+   line; gear.js holds a copy of the default list, the host reading and the normaliser (it cannot import settings.ts),
+   and gear-figure-hosts.test.ts holds them equal to settings.ts's. figure-gate.test.ts covers the pure parts (the
+   srcset parse, remoteHost, the allowed set, the normaliser); settings.test.ts and md-config-figure-hosts.test.ts the
+   field and its reading; docs/reference.md and the guide's Figures paragraph describe it.
+10. *Not built here.* Obsidian's `%%comment%%` and `#tag` (the text names them for awareness only) stay literal.
+   Slice 5's other items (refusal reasons for the remaining token names) are untouched; its goTo into a closed
+   details is delivered here (item 5, the panel's revealMarks), since this slice is what makes a closed fold
+   reachable from plain markdown. Open after the review round 2: a display formula under a highlight stays bare and
+   a comment on one alone paints nothing in Rendered (an inline mark paints no wash over a block box; a block-level
+   treatment, a class on the `.katex-display` element with a rule in both sheets, is a panel and CSS change;
+   anchor-map-obsidian.test.ts pins the current shape); the chat's markdown fetches an svg paint reference on render
+   as it fetches a chat `<img src>`, the gate being the viewer's (item 9); the callout body's trailing newlines are
+   not trimmed as marked's blockquote trims its text (the pins hold the current output). Open after the review round
+   3: block content inside a footnote definition (GitHub's four-space form: a fence, a list, a second paragraph) is
+   not adopted and an indented fence renders as a code span (item 4; taking it needs the callout's nested block lex
+   for the definition and the anchor map's walk over it, a plan change); marked's join of a paragraph and its
+   interrupt-rejected successor renders one `<p>` when a display formula stands anywhere later in the note and two
+   without (marked's own join, GitHub's rendering for those shapes; the map places both, item 2); a gated figure
+   narrower than the placeholder's 14em minimum box gets a box of the minimum's width, so a 50px icon's placeholder
+   is wider than the icon and the text below moves up by the difference after the click (the minimum is what lets
+   the box name its host legibly; a box the figure's width wraps the label to a dozen lines and overflows, measured
+   in round 3). Open after the review round 5: marked's blockquote and the callout differ on a lazy line indented
+   four or more spaces that begins with `>` (item 5; marked's deviation from CommonMark, not copied); the person's
+   bubble's code span keeps the 20% white wash it wore before the slice (white over it 3.35:1 dark, 3.51:1 light;
+   item 1's washes are the slice's, that one is not), and the math fill's source fallback on that same wash, Slice
+   1's 0.88 tint, reads at 2.95:1 and 3.09:1 (Slice 1's rule, recorded with it when the rule was chosen, the same
+   standing; round 6); a formula wider than the paper prints cut at the paper's edge, and an inline formula with no
+   break point (no top-level operator or relation) wider than the column overflows the column on screen with no
+   scroll, the tail readable from Raw, where one with a top-level `+` or `=` wraps between its bases (item 1,
+   KaTeX's nowrap, which no sheet rule scales; an inline-block scroll box of its own would lift every inline formula
+   off the text's baseline, CSS 2.1 section 10.8.1, and make a breakable one a block, measured in round 6). Open
+   after the review round 8: a hole's text is painted when it stands between two positioned characters of a range
+   and not when it stands at the range's edge (paintRendered's skip of an endpoint that found no position and
+   wrapBetween's wrap of everything between the two it has are main's path for tables and code blocks, which the
+   slice's callout title and front matter inherit; the slice's one change on those lines passes the formulas), so a
+   comment on a whole alert paints its body alone and one running past it paints the generated title too, text the
+   source does not hold; painting a hole at the edge would paint tables and code blocks there as well, and never
+   painting generated text would make the title a control, which changes mapRenderedSelection's refusal of an
+   endpoint inside it (item 5; anchor-map-obsidian.test.ts's refusal test), so the rule for holes is Slice 5's, with
+   its painter items. Open after the review round 9: the panel's unpaint (file-comments.ts unpaint, main's path,
+   which the slice leaves as it is) normalizes a mark's parent once per mark, so unwrapping the marks of one
+   paragraph costs the square of its inline children where the paint costs their count: 9,999 marks over a paragraph
+   of 5,000 links painted in 33 ms and unwrapped in 469, 999 marks over 500 links in 3.6 and 5.5 (headless Chromium,
+   the medians of five); normalizing each parent once after the loop unwraps the 9,999 in 11 ms
+   (md-config-paint-whitespace-browser.test.ts's timing leg does so on its own copy, so the paint alone is timed), a
+   panel change for Slice 5's painter items. Open after the review round 10: the mapping's alphabet is JavaScript's
+   `\s` on every side (anchor-map.ts Emitter.put drops each such character from a block's chars, nonWsBefore and
+   nthNonWs count in the same alphabet, and the panel's quote matching, comments.ts normalize, collapses the same
+   set), so a selection begun on a no-break or ideographic space, a full-width indent, is trimmed to the glyph after
+   it: its highlight starts one glyph in (14 px at 14px sans-serif for U+3000) while the quote anchors; the trim is
+   a pinned rule (anchor-map.test.ts, whitespace at the selection's edges), and a narrower alphabet is a change to
+   the walk, the matching and the panel's normalize together, main's contract, for Slice 5's painter items. Open
+   after the review round 11: a footnote definition's literal separator, the space md-config.ts emits between the
+   back link and the body for the author's space after the colon that the marker's regex consumes (marked's task
+   item puts one after its checkbox the same way), is a rendered space at the head of the body, so a highlight
+   across the note paints it as a mark of its own beside the back link, which no mark holds, as it paints the task
+   item's after its checkbox (a ruling, not a slip: the separator stays, since without it the note's copied and
+   accessible text reads `1alpha` for `1 alpha`, an inline-block adding no separator of its own to a selection's
+   text, and the sheets' margin-right alone halves the label's gap, 7.45 px to 3.86 at 15px;
+   md-config-footnote-paint.test.ts and its browser leg pin the mark; a paint rule skipping a rendered space beside
+   a control would skip the checkbox's too and reopen round 10's pin). Closed after the review round 12: round 11's
+   wrap-point box (a collapsible space between two inline children at which the browser breaks the line, painted as
+   the padding alone at the end of the line before the wrap, on main too) is fixed by the layout-time trim (item 2),
+   which measures the mark in the browser's layout and unwraps it. Open after the review round 12, the trim's
+   recorded shapes: (a) the fixpoint's price: a blank unwrapped as collapsed that renders once a later unwrap moves
+   its line's wrap point back stays bare while the pane keeps the width: a mark is never re-wrapped (a blank at a
+   line's last inch would flip with every pass), and the next paint pass at the same width paints the blank again and
+   runs the same cascade over the same layout, so it unwraps the same marks in the same passes and leaves the same
+   blanks bare (round 16; md-config-paint-trim-fixpoint-browser.test.ts leg 1 holds a second pass at each of its
+   widths equal to the first in passes, blank marks kept and bare blanks), a ring gap of the space's width (3.89 px at
+   14px sans-serif) at each such blank. In a fresh paint's trim at one width the shape followed the pass count in
+   every cell round 16 measured: a trim that converged in two passes left none and one of three or more left some,
+   from a few to about two thousand with the passage's length (the fixpoint leg's page under feed.css at 19 widths
+   from 220 to 1,000 px: the 120-link item 4 at 220 px, 13 at 260 and 14 at 660, a paragraph of 600 links 27 to 207 at
+   ten widths; the leg's own widths: the 5,000-link paragraph 2,005 bare at 700 px in eight passes, 1,884 at 400 in
+   six and 2,095 at 300 in five, none at 800 and 500 in two; the 120-link item two passes and none at all five). A
+   re-trim after a narrowing counts as well the blanks the old width's trim unwrapped that render at the new one
+   (shape (b)), so its pass count bounds nothing: the leg's item narrowed from 800 to 700, 400 and 300 px converges in
+   two passes and leaves 12, 10 and 12 bare (five passes and 44 at 500), the paragraph 648 to 3,267 (three passes at
+   700 and 500, twelve at 400, eleven at 300). In the real Files pane (round 16, by content width): the 120-link item
+   under one comment shows 24 of its 119 spaces bare at 420 px, 13 at 660 and 5 at 460, none at thirteen other widths
+   sampled between 220 and 660; a paragraph of 600 links 167 at 220 px, 116 at 300, 83 at 380, 81 at 420 and 460, 71
+   at 400 and 49 at 560, none at nine others; the panel's own pass at the pane's opening width, 460 px, leaves 5 and
+   81, and a second pass at every width the same counts. The shape's size, measured in round 13 on the build box
+   (headless Chromium, the trim leg's page under feed.css at 14px sans-serif, one comment across the passage; a bare
+   blank is a whitespace-only text node below the top level with a Range width above zero and no mark ancestor, the
+   browser legs' reading), is bimodal by width: none at most widths, and at a width where a line's slack falls inside
+   the marks' side padding (4 px a mark; the Comments panel nests one mark per overlapping comment, so k comments over
+   one passage put 4k px around every link and every blank of it, and the widths at which the flip happens move with
+   the count: the nest figures below) the unwraps pull a word up onto line after line and the flip cascades through
+   the lines below. The list item of fourteen links under one comment shows one bare blank of eleven rendered at 240
+   px and four of ten at 220, none at the legs' six other widths; a list item of 120 links, sampled every 20 px from
+   800 to 200, shows none at 25 of the 31 widths, 14 of 116 at 660, 1 at 640, 3 at 360, 13 of 94 at 260, 80 of 90 at
+   240 (the 212 px content width takes two links a line untrimmed; the unwraps pull a third up on most lines, 50
+   against 59, and the ring breaks at every space from the fifteenth link on) and 4 of 63 at 220, with 2 each at 550
+   and 450 off that grid; a list item of 120 links of varied lengths 1 to 28 of 83 to 117 at 15 of the 31 widths; the
+   paragraph of 5,000 links none at 800, 650, 600 and 500 px and 341 to 2,095 of 4,162 to 4,653 at 750, 700, 550, 450,
+   400, 350 and 300 once the fixpoint completes (round 12's three-pass cap stopped short at five of these widths, with
+   271 to 533 padding-only marks left and 1,111 to 2,095 bare). Overlapping comments (round 14, measured in the real
+   Files pane, the panel leg's page under styles.css and files-pane.css, where the item's content box is the viewport
+   less 66 px and the pane's 14.95px type makes a bare blank 4.75 px): the fourteen-link item under one to four
+   comments at viewports from 200 to 420 px in 20 px steps shows bare blanks in 8 of the 48 cells and none in the
+   other 40 (none at any count from 240 to 300 px, at 380 or at 400): under one comment 6 of 6 at 200 px and 1 of 11
+   at 320 (under two to four comments at 200 px the item lays out one link a line and renders no blank); under two 2
+   of 12 at 420; under three 8 of 8 at 220 and 4 of 10 at 320; under four 6 of 6 at 220, 4 of 10 at 340 and 1 of 11 at
+   360. At 220 px under three or four comments every blank mark of the nest measures zero in the untrimmed layout (12
+   or 16 px of padding around each link's 79.5 px of text in a 154 px content box puts every space at a wrap point,
+   where under two comments 5 of the 13 are), so the pass's trim unwraps all 39 or 52 of them in one pass, the freed
+   padding repacks the lines, and every one of the 8 (three comments) or 6 (four) blanks that then render stands bare:
+   the highlight is a ringed box per link with a gap at every space, where under two comments at the same width 16
+   blank marks stay and none is bare, and at 300 px the spaces are marked at every count. No padding-only mark stands
+   in any of the 48 cells, so the property round 13 pinned holds where the ring's continuity does not;
+   md-config-paint-trim-panel-browser.test.ts's nest leg runs at 300 px, a width where no blank flips at any count,
+   and pins the padding-only count and not this shape's size, as every leg does. md-config-paint-trim-browser.test.ts
+   bounds such blanks by the marks unwrapped and holds zero where nothing was unwrapped: a bound on the count, never a
+   claim about its size. The layout-neutral mark, `.fc-hl` and `.fc-presel` with `margin: 0 -2px` beside their 2 px
+   side padding in both sheets (a fileview-parity head), would keep the paint from moving any wrap point and remove
+   the shape; it is a design call about main's comments feature for its owner, recorded and not applied. (b) A blank
+   trimmed at one layout that renders at another stays unmarked until the next paint pass: the panel re-trims its
+   standing marks on the seam's reflow, on a figure's load and on a font face's arrival (round 13's two triggers, item
+   2), after a paint made in a hidden pane once the pane shows, and never re-wraps (the pending target's paint and
+   unpaint, round 14's fifth trigger, are since round 15 a paint pass over the line boxes the target enters and
+   leaves, closed since round 16 under the highlights standing in them, item 2: round 14's trim alone had left 2, 3, 4
+   and 4 of the fourteen-link item's blanks bare after Cancel at 600 to 300 px and 4 and 2 while the composer stood at
+   300 and 400 px, 2 and 1 with four links selected, where the leg now holds zero bare and zero padding-only, pending
+   and after Cancel; md-config-paint-trim-panel-browser.test.ts bounds the rendered blanks left bare after its paint
+   by the marks the trim unwrapped, shape (a)'s bound, and asserts nothing about them after a reflow; its pass unwraps
+   something, an assertion of the leg, so the exact form, none where nothing was unwrapped, is
+   md-config-paint-trim-browser.test.ts's, keyed on the event), so a blank trimmed before a
+   figure or a face landed that renders after it is this shape under a new trigger. Its size, measured the same way:
+   the 120-link item painted at 800 px (17 lines) and narrowed in one step shows 12 bare blanks of 113 rendered at
+   700, 11 of 108 at 600, 44 of 110 at 500, 10 of 91 at 400 and 12 of 83 at 300, of which 9 to 12 are the blanks
+   trimmed at 800 that render at the new width and the rest, 35 at 500, the re-trim's own unwraps pulling words up,
+   shape (a) run during the re-trim; the varied list 12 to 19 of 104 to 116; the paragraph of 5,000 links (328 lines
+   at 800) 295 to 3,267 of 4,110 to 4,627 once the re-trim's fixpoint completes (295 to 1,858 when round 12's cap
+   stopped it short at 400 and 300 px); and a drag from 800 to 300 px in 10 px steps with a re-trim at each step (a
+   window-edge resize's shape; the divider re-trims once, at release) leaves 115 of 118 rendered blanks bare on the
+   120-link item and 95 of 97 on the varied one, since a blank that collapsed at any width on the way stays unwrapped:
+   after a drag, nearly every space of an inline-heavy highlight is a ring gap until the next paint pass. (c) A form
+   feed leading a block collapses as a bare text node (0 px) and renders as a 14 px glyph once it stands in an inline
+   box of its own, a span or the mark alike (Chromium, both probed), so the trimmed paint keeps that mark and the
+   highlighted paragraph shows the glyph where the unpainted one shows nothing
+   (md-config-paint-rendered-space-browser.test.ts pins it; a form feed leading a block is written by no author). (d)
+   A highlight from an html block into a markdown block after it is cut off and mislocated when the later block's
+   whitespace-stripped text equals the html block's rendered text (a list item `**a**` after a block rendering `a`:
+   the broken-img scene of anchor-map-fixtures/blank-scenes.json before round 13 re-lettered it, which had left that
+   scene painting nothing past the html block) or when the sanitizer shortens the later block's source text (a
+   stripped `<style>` in the list item, scene 86, whose letters differ from the html block's; round 13's probes over
+   the real bundle, in which a plain `- b` after a block rendering `a b` pairs and `- <b>a</b> <i>b</i>` does not),
+   the pairing defect Slice 5's list records (the resync across an html block, `runFits`); pre-existing on main and
+   untouched by the slice. Scene 86 hits it, the union's one recorded case, so md-config-paint-trim-browser.test.ts
+   confines its rendered-blank oracle to the top-level blocks the paint reached and holds that every other scene's
+   paint reaches the closing paragraph (round 13 found two scenes passing every oracle vacuously: the broken-img scene
+   above and a CRLF scene written with a lone CR, which marked reads as a blank line ending the html block;
+   md-config-blank-scenes-fixture.test.ts pins the fixture's shape). Closed after the review round 13: the three-pass
+   cap (the fixpoint runs to convergence, TRIM_PASSES_MAX a safety cap counted when reached; item 2); a nest of
+   overlapping comments' marks peeled one level per pass (the trim measures each mark's text nodes); the pre-skip
+   deciding a rendered blank under an author pre (a `pre` ancestor exempts the node and the trim measures it); a paint
+   made while the pane was hidden left untrimmed on the show (the trim re-arms the panel's layout frame when the body
+   has no box, which re-trims the show when the hide and the show fall in one task; a hide that outlasts a frame is
+   re-trimmed by the seam's reflow report of the show, round 14's measurement); a figure's load or a font face's
+   arrival re-wrapping the lines with no width report and leaving padding-only marks (the panel re-trims on both
+   events); and a change whose every mark the pass's trim removed filed as shown (re-filed as not shown, its card
+   offering Reveal). Closed after the review round 14: the pending target repainted alone over a highlight's lines (a
+   composer opened or closed) leaving the highlight's wrap-point blanks as padding-only marks until a reflow or the
+   next pass (the repaint trims the standing marks in the same call, item 2). Closed after the review round 15: that
+   trim alone leaving the highlight's blanks trimmed at the old wrap points bare where they rendered at the new ones,
+   while the composer stood and after Cancel (the repaint is a paint pass over the line boxes the target enters and
+   leaves, item 2 and (b) above), and the same trim measuring every standing mark when a composer that paints no
+   target opened or closed (a repaint that adds and removes no Rendered mark trims nothing). Closed after the review
+   round 16: the repaint painting the highlights in the order of their first marks where the pass paints them in
+   cards() order (two overlapping comments whose order by time was not their order in the text swapped nesting at
+   every open and close and back at the next pass, a click on the overlap opening the other card meanwhile), the
+   repaint reading the target's boxes alone (a highlight painted again whole in a box the target never touched landed
+   inside the highlight or change mark standing there), and lineBoxOf stopping at an inline-block (the embed chip's,
+   whose width follows its text, so a target on its text moved the paragraph's wrap points while no highlight of the
+   paragraph was repainted; item 2). Closed after the review round 17: the repaint re-filing a change whose marks it
+   painted again (one whose every mark the trim removed as not shown, one whose mark stands again as shown) and
+   rendering no card, so the change card said the opposite of the body until the next render (a session's insertion of
+   one soft hyphen, rendered at a line break alone; item 2). Pre-existing on main, found by round 16's review and left
+   to the focus follow-on of plans/file-review.md (card-layout.ts and placeCards are byte-identical to 5917393e): the
+   margin layout's pass is not a fixed point under a focus when two cards' marks share a line, since card-layout.ts
+   breaks the tie on `desired` by the list's order and placeCards feeds a non-render pass the DOM order it wrote in
+   placement order, so when the tied pair straddles the focus's spill boundary each observer pass (a resize, a card's
+   growth, a composer's open or Cancel) swaps the pair and moves the cards below by their height difference, and a
+   render pass, the model's order, swaps them back; the fix is the pass fed the render's order, or an
+   input-independent tie-break, with a card-layout test that feeds the placement order back under a focus. Recorded
+   and not changed after rounds 13 to 16: the re-trim's price per reflow on the 5,000-link paragraph (item 2,
+   re-measured under the convergence loop in round 14), the pending target's repaint on it (item 2, round 15's
+   measurement), the change marks' whole-document repaint when one stands in a box (item 2, round 16's measurement)
+   and shapes (a) to (d) above, (a) re-measured under overlapping comments in round 14 (its nest figures above) and at
+   a standing width in the real pane in round 16 (its counts by content width above).
+
 ### Slice 5: comments anchor on real notes
 
 Pair blocks inside an unclosed HTML container (a flattened walk); match code quotes raw; math tokens
-as holes, no token names in refusals; report the first obstacle in document order; open `<details>`
-ancestors in goTo; overlapping `.fc-hl` keep one wash and a click opens every card under it; paintAll
-hints with the last located start; strip cell delimiters from a table quote; offer Comment on
-`selectionchange`. Acceptance: selections after the wrapper and details containers map; the `total =
-a * b * 2` comment paints in Rendered; the math paragraph maps around the formula; a Raw comment
-across two cells paints; a keyboard selection offers Comment. Tests: anchor-map and file-comments
+as holes, no token names in refusals; report the first obstacle in document order (opening
+`<details>` ancestors in goTo landed with Slice 4); overlapping `.fc-hl` keep one wash and a click
+opens every card under it; paintAll hints with the last located start; strip cell delimiters from a
+table quote; offer Comment on `selectionchange`. Acceptance: selections after the wrapper and details containers map;
+the `total = a * b * 2` comment paints in Rendered; the math paragraph maps around the formula; a Raw comment across
+two cells paints; a keyboard selection offers Comment. Tests: anchor-map and file-comments
 fixtures. One more for the flattened walk, found in Slice 1's merge review (2026-09-08) and identical on main:
 the resync across an html block (`runFits`, anchor-map.ts) accepts the first end from which the next block lines
 up by whitespace-stripped text alone, so when a node the block rendered carries exactly the next paragraph's text

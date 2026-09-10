@@ -17,7 +17,9 @@
 // whichever bundle imports it gets the identical modal.
 import hljs from "highlight.js/lib/core";
 import { marked, type Tokens } from "marked";
-import { sanitizeMd } from "./md-sanitize";
+import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
+import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
+import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
@@ -87,21 +89,13 @@ function langFor(path: string): string | null {
   return LANG[ext] || null;
 }
 
-// marked is a per-bundle singleton. render.ts makes the SAME calls with the SAME choices — GFM without
-// hard breaks, strikethrough only on DOUBLE tildes (marked's stock GFM `del` tokenizer fires on a
-// single ~, so prose between two "approximately" tildes renders struck through; GitHub itself only
-// strikes ~~double~~) — so configuring here too is an idempotent no-op in the chat bundle, and keeps
-// this module correct anywhere it's bundled without render.ts.
-marked.setOptions({ gfm: true, breaks: false });
-marked.use({
-  tokenizer: {
-    del(src: string) {
-      const m = /^~~(?=\S)([\s\S]*?\S)~~/.exec(src);
-      if (!m) return undefined;
-      return { type: "del", raw: m[0], text: m[1], tokens: (this as { lexer: { inlineTokens(s: string): unknown[] } }).lexer.inlineTokens(m[1]) };
-    },
-  },
-} as Parameters<typeof marked.use>[0]);
+// marked is a per-bundle singleton, configured ONCE for every bundle by md-config.ts (Slice 4 of
+// plans/markdown-viewer.md): GFM without hard breaks, strikethrough on DOUBLE tildes only, the math placeholders
+// KaTeX fills after the sanitize, front matter, footnotes, callouts, ==mark==, wikilinks and embeds. render.ts and
+// anchor-map.ts make the same call; the first configures and the rest are no-ops, so this module is correct in
+// any bundle it lands in (files.js and feed.js carry the grammar, the fill and KaTeX through this import; the
+// chat page's viewer parsed with the chat's grammar before, the other two with none).
+applyMdConfig();
 
 // ── view-format preferences ────────────────────────────────────────────────────────────────────────
 // The Raw ⇄ Rendered choice for markdown and the word-wrap toggle persist in localStorage, NOT a kernel
@@ -1169,6 +1163,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // reveal, a width change no hook saw and the clamp; file-view-place-browser.test.ts the toggle and the drag with the
   // reader partway into a paragraph, a picture, a table, a list and a blockquote.
   let shownText: string | null = null;
+  const folds = foldKeeper(body);   // every fold's open or closed state across a paint (foldKeeper, below): noted before the swap, restored after it
   let place: Place | null = null;
   let placeWidth = -1;
   let placeScrollTop = -1;
@@ -1434,11 +1429,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       aimFrame(shown);                        // …and the frame opens on the reader's page, not page 1
       return;
     }
+    // the folds' state under the view about to go, read before the editor's early return too: Edit paints nothing here and
+    // then takes the body itself, so this is the one read between the person's last click and the loader (foldKeeper)
+    folds.note();
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
     perfTimed("paint", () => {                // the whole pass, the place read to the seat, as one fileview:paint frame of the page's collector (perfTimed)
       if (text === null) return;              // never taken (the guard above returned): TypeScript drops a reassignable variable's narrowing inside a closure
       const kept = keptPlace();               // the reader's place under the view about to go (null: the loader, or the editor, held the body)
       body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+      folds.restore();                        // each fold as the person left it, before the hooks measure and the seat reads the heights (a Raw paint has none)
       stampBodyWidth();                       // the fresh root's tables take the body's width (no report follows a render)
       fireRendered();                         // the seam's onRendered: every text paint, so highlights follow the view
       shownText = text;
@@ -1566,8 +1565,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const ln = Number(x.dataset.line);
     openLinkedFile(p, sid || null, ln > 0 ? ln : null, x.dataset.frag || null);
   };
+  // A gated figure's placeholder (figure-gate.ts; decision 8 of plans/markdown-viewer.md): the click loads every figure
+  // of that host in the document and remembers the host for the page. Read here, on the stable body, since every paint
+  // rebuilds the placeholder (ui/CLAUDE.md, click-safe controls); Enter and Space do the same for a focused one, as its
+  // role says they should (gateKeys, shared with the URL viewer). The restore is the acknowledgement: the picture stands
+  // where the placeholder was, at once.
+  gateKeys(body);
   body.addEventListener("click", (ev) => {
     const t = ev.target as Element | null;
+    const g = gateOf(t, body);
+    if (g) { ev.preventDefault(); loadGate(g); return; }
     const x = linkOf(t);
     if (!x) return;
     if (panelMark(t) && !wantsOwnTab(ev)) {                      // a plain click on the panel's mark: the card's, and only the card's
@@ -2345,7 +2352,9 @@ export function openUrlView(href: string): void {
   // the chat's own anchor delegate routes them.
   delegate(body, {
     "fv-anchor": (a, ev) => { ev.preventDefault(); scrollToFragment(body, a.getAttribute("href") || ""); },
+    [GATE_ACT]: (g, ev) => { ev.preventDefault(); loadGate(g); },   // a gated figure's placeholder (figure-gate.ts): the same click as the local viewer's
   });
+  gateKeys(body);                                      // and the same Enter and Space: the delegate reads clicks alone, and the placeholder is a role=button span
   body.addEventListener("submit", (ev) => { ev.preventDefault(); });   // the local viewer's backstop (openFileView), same reason
   body.appendChild(loaderEl());                        // loader first; the fetch below replaces it
   box.appendChild(bar); box.appendChild(body);
@@ -2377,6 +2386,7 @@ export function openUrlView(href: string): void {
   // no reload, no aside, no text-size control, so none of the local viewer's reflow bookkeeping is needed here.
   let heldPlace: Place | null = null;
   let heldScrollTop = -1;
+  const folds = foldKeeper(body);                      // the folds' state across the switch, as the local viewer keeps it (foldKeeper)
   const keptPlace = (): Place | null => (shownText === null ? null : heldPlace && body.scrollTop === heldScrollTop ? heldPlace : readPlace(body, shownText));
   const seat = (kept: Place | null) => {
     if (kept && shownText !== null && seatPlaceOutcome(body, shownText, kept).clamped) { heldPlace = kept; heldScrollTop = body.scrollTop; }
@@ -2390,10 +2400,12 @@ export function openUrlView(href: string): void {
       b.setAttribute("aria-pressed", String(on));
     }
     if (text === null) return;                         // the loader holds the body until the bytes land
+    folds.note();                                      // the folds under the view about to go
     const kept = keptPlace();                          // the reader's place under the view about to go (the held one across a clamp)
     body.replaceChildren(fmt.md === "rendered"
       ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
       : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
+    folds.restore();                                   // each fold as the person left it, before the seat reads the heights
     shownText = text;
     seat(kept);                                        // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
     landFragment();                                    // after the paint, and only a rendered one lands
@@ -2550,15 +2562,143 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
 // `#evidence-results` and `#Evidence Results` all find md-evidence-results (file-view-links.ts fragmentTarget is
 // the one lookup; mark time reads it too). Nothing found → nothing happens: inert, never a scroll to the top and
 // never a navigation. Both viewers land through here: the local one's section links and a sibling link's
-// fragment, the URL one's fv-anchor links and the URL's own hash.
+// fragment, the URL one's fv-anchor links and the URL's own hash. Found, the target is REVEALED before the scroll
+// (md-sanitize.ts revealFragmentTarget: every closed <details> on its ancestor path opened, a hidden="until-found"
+// removed), the steps the browser's own fragment navigation takes and scrollIntoView does not: a heading, a footnote
+// definition or an anchor inside a folded callout (`> [!type]-`, a closed details since Slice 4 of
+// plans/markdown-viewer.md) was scrolled to nothing, with the fold still shut (the Slice 4 review).
 function scrollToFragment(box: HTMLElement, fragment: string): boolean {
   let frag = fragment.replace(/^#/, "");
   try { frag = decodeURIComponent(frag); } catch { /* a stray % — match the bytes as written */ }
   if (!frag) return false;
   const target = fragmentTarget(box.querySelector(".fileview-md") || box, frag);
   if (!target) return false;
+  revealFragmentTarget(target);
   target.scrollIntoView({ block: "start" });
   return true;
+}
+
+// A fold's open or closed state across a paint. The front matter and a `[!type]-` or `[!type]+` callout render as a
+// <details> (md-config.ts; Slice 4 of plans/markdown-viewer.md), and so does an author's own. Every text paint rebuilds the
+// body from marked (renderBody's swap, both viewers), and a <details>' only state is the DOM, so every fold went back to
+// what the source says (`[!type]+` open, everything else closed) on the Rendered/Raw switch, on a reload's landing, on
+// the editor's take and handback and on a sibling's Reveal: a fold the person had opened to read shut again, one they had
+// closed opened again, a fold a `#` click had just revealed (scrollToFragment, above) shut on the next paint, and the block
+// under the eye changed height under the reader's place, 72px open to 39px closed (the Slice 4 review; ui/CLAUDE.md: an
+// expand's state survives re-renders). Each viewer keeps one keeper: `note` reads every fold under the rendered box, in
+// order, before the swap, and `restore` re-applies each state after it to the fold it was read from, found in two passes.
+// The first pass matches a new fold to a noted one with the same class, summary text AND body text, in order; the second
+// matches what is left by class and summary text alone, in order. For an unchanged text the first pass finds every fold
+// by index. For a text a reload or an edit changed, a fold whose body a session rewrote while the person read it keeps
+// its state through the second pass, and a fold that stands as it was keeps its own even when a fold of the same class
+// and title was removed or inserted ahead of it: with class and title alone as the key, two `> [!note]- Same title`
+// callouts, or two untitled folded callouts of one type (whose generated title is the type, the common Obsidian shape),
+// shared one queue, so removing the first handed its state to the second, and a new one inserted ahead took the state of
+// the fold behind it (the Slice 4 review, round 3). A fold whose title changed, or a new one, shows as authored. The
+// first pass pairs an exact key only when it names AS MANY noted folds as new folds, the k-th new to the k-th noted: two
+// folds identical in class, title and body (two `> [!note]- Todo` placeholders a template left) share a key the pass has
+// nothing to tell them apart by. While their count stands, the twins pair in order and each keeps its own state, whatever
+// a same-titled fold with a body of its own did around them: inserted or removed ahead of them, between them or after
+// them, it pairs by title in the second pass or shows as authored. When their count changed, a session filled one in,
+// added one or removed one, the whole key falls to the second pass and its order, whose k-th noted state of that title
+// goes to the k-th new fold of that title. So the fold the person reads keeps its state through a fill anywhere (the
+// count and the order stand, so every fold keeps its own state, the filled one included) and through a twin added or
+// removed BEHIND it when the same write adds or removes no fold of its title ahead of it. A twin added or removed AHEAD
+// of it shifts the states by one, the fold the person reads taking the state of the twin that stood where it now stands,
+// or the authored state when none did (the last twin, with one added ahead of it): three identical `> [!note]- Todo`
+// placeholders, the second open, the first deleted by a session, paint the new first (the fold the person was reading)
+// shut and the new second open; and the open twin itself removed hands its open to the twin behind it, if any. Once the
+// twins' count changed, the title queue holds every same-titled fold the first pass left unpaired, so a same-titled fold
+// with a body of its own removed or added AHEAD of them in the same write shifts the states the same way, the number of
+// twins ahead unchanged (the Slice 4 review, round 7). Three folds byte-identical in class, title and body give no
+// content rule anything to decide on, so those are order-only cases, accepted (the Slice 4 review, round 6). Paired in
+// the first pass anyway, as before round 4, the one fold still carrying the shared body took the queue's first state
+// whichever fold that was, so the two placeholders swapped states when the person read the second while a session wrote
+// into the first (the Slice 4 review, round 4). Round 4's rule, an exact key pairs only when it names ONE noted fold and
+// ONE new fold, sent untouched twins whole to the second pass, where a same-titled fold inserted ahead of them took the
+// first twin's state and every twin took the next one's, and one removed from ahead of them shifted the states the other
+// way, so the twin the person read shut either way (the Slice 4 review, round 5). Order alone decides what content
+// cannot: a twin added or removed ahead of the twin the person reads (above), the leftovers of an edit that both removes
+// one same-titled fold and rewrites another's body, and a twin rewritten in the same write that inserts a same-titled
+// fold, whose text change is the insertion's and reads as it (the likelier single edit, and the reading the round-3
+// sentence above states). A Raw paint has no folds and neither reads nor writes, so the state read when the rendered
+// view left stands until it is painted again. The state moves on the person's own clicks and the `#` reveal alone: no
+// per-paint derivation, no timer (CLAUDE.md, cards move on new information). md-config-fold-state-browser.test.ts drives
+// the gestures, the same-title reloads, the identical twins and the twins' same-titled neighbours included.
+type Fold = { key: string; body: string; open: boolean };
+function foldKey(d: Element): string {
+  let summary = "";
+  for (const c of Array.from(d.children)) if (c.tagName === "SUMMARY") { summary = c.textContent || ""; break; }
+  return d.className + "\n" + summary;
+}
+/** The fold's body text: everything under it but its summary, which tells two same-titled folds apart. */
+function foldBody(d: Element): string {
+  let text = "";
+  for (const c of Array.from(d.childNodes)) if ((c as Element).tagName !== "SUMMARY") text += c.textContent || "";
+  return text;
+}
+function foldKeeper(body: HTMLElement): { note: () => void; restore: () => void } {
+  let folds: Fold[] = [];
+  const box = () => body.querySelector(".fileview-md");
+  const exactKey = (key: string, text: string) => key + "\u0000" + text;
+  return {
+    note: () => {
+      const md = box();
+      if (md) folds = Array.from(md.querySelectorAll("details")).map((d) => ({ key: foldKey(d), body: foldBody(d), open: d.hasAttribute("open") }));
+    },
+    restore: () => {
+      const md = box();
+      if (!md || !folds.length) return;
+      const now = Array.from(md.querySelectorAll("details"));
+      const taken = new Set<Fold>();                     // noted folds the first pass matched
+      const state = new Map<Element, boolean>();
+      // pass 1: the same fold, by class, title and body text, when that exact key names AS MANY noted folds as new folds,
+      // the k-th new paired with the k-th noted in document order; a key whose count changed (a fold filled in, added or
+      // removed among folds identical in class, title and body) is left whole to pass 2 and its order
+      const byExact = new Map<string, Fold[]>();
+      for (const f of folds) { const k = exactKey(f.key, f.body); const q = byExact.get(k); if (q) q.push(f); else byExact.set(k, [f]); }
+      const nowKeys = now.map((d) => exactKey(foldKey(d), foldBody(d)));
+      const nowExact = new Map<string, number>();
+      for (const k of nowKeys) nowExact.set(k, (nowExact.get(k) || 0) + 1);
+      const paired = new Set<string>();                  // the exact keys with equal counts, read before the queues shrink
+      byExact.forEach((q, k) => { if (nowExact.get(k) === q.length) paired.add(k); });
+      now.forEach((d, i) => {
+        const k = nowKeys[i];
+        const q = byExact.get(k);
+        if (!q || !paired.has(k)) return;
+        const f = q.shift();
+        if (!f) return;
+        taken.add(f); state.set(d, f.open);
+      });
+      // pass 2: the leftovers by class and title, in order: a fold whose body an edit changed keeps its state
+      const byKey = new Map<string, Fold[]>();
+      for (const f of folds) { if (taken.has(f)) continue; const q = byKey.get(f.key); if (q) q.push(f); else byKey.set(f.key, [f]); }
+      for (const d of now) {
+        if (state.has(d)) continue;
+        const q = byKey.get(foldKey(d));
+        const f = q && q.shift();
+        if (f) state.set(d, f.open);
+      }
+      state.forEach((open, d) => { if (open) d.setAttribute("open", ""); else d.removeAttribute("open"); });
+    },
+  };
+}
+
+// A gated figure's placeholder (figure-gate.ts; decision 8 of plans/markdown-viewer.md) activates from BOTH viewers'
+// bodies the same way: the click through each body's own listener, and Enter or Space through gateKeys, installed once
+// on the stable body (never on the placeholder, which every paint rebuilds; ui/CLAUDE.md, click-safe controls). The
+// placeholder is a span with role=button and tabindex=0, so the browser synthesizes no click for its keys: without
+// this listener the URL viewer, whose click is a `delegate` (actions.ts, clicks alone), showed a focusable button that
+// ignored Enter and Space (the Slice 4 review). The restore is the acknowledgement.
+function loadGate(g: HTMLElement): void { loadGatedHost(g.dataset.fvHost || "", document); }
+function gateKeys(body: HTMLElement): void {
+  body.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const g = gateOf(ev.target, body);
+    if (!g) return;
+    ev.preventDefault();
+    loadGate(g);
+  });
 }
 
 // Where the rendered document LIVES, so its relative references can be resolved against it (the user
@@ -2600,24 +2740,19 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // and interrupt the active session; review find on #958, 2026-09-07), and rules modelled on GitHub's for a
     // note's own HTML: no <style>, no form controls, ids and names prefixed user-content-, inline style reduced to
     // its colours, no background attribute (plans/markdown-viewer.md, Slice 1). The sanitized <body>'s children
-    // are adopted as they are, no re-parse. The viewer's own stamps (heading ids, the file kind's path and section
-    // links, the URL kind's fv-anchor stamp) are set AFTER this sanitize, so they are unaffected and never
-    // prefixed; a section link finds an author's id or name under the prefix (file-view-links.ts fragmentTarget).
-    box.replaceChildren(...Array.from(sanitizeMd(dirty).childNodes));
+    // are adopted as they are, no re-parse. The viewer's own stamps (the file kind's path and section links, the
+    // URL kind's fv-anchor stamp) are set AFTER this sanitize, so they are unaffected and never prefixed; a section
+    // link finds an author's id or name under the prefix (file-view-links.ts fragmentTarget). The heading ids are
+    // the one stamp set INSIDE the call, as sanitizeMd's own pass (mintHeadingIds, below): after DOMPurify, so they
+    // are never prefixed either, and ahead of the registered passes, since the math fill replaces a formula's
+    // placeholder with KaTeX's glyphs and a slug read after it slugged those (`# Ratio $\frac{a}{b}$` minted
+    // md-ratio-ba); read before it, the heading's text is the text as written, the TeX included, which is GitHub's
+    // slug and the id the note's own links spell.
+    box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content
     rendered = false;
   }
-  // Every heading gets an id first — marked 12 emits none, so a document's own `[top](#evidence)`
-  // had nothing to land on. GitHub's slug (headingSlug, made unique in order by uniqueSlugs), and
-  // PREFIXED `md-` on purpose: an unprefixed id="tabs" would dress a heading in the chat page's
-  // #tabs CSS and shadow getElementById("tabs") for the page's own controls. Both modes, before the
-  // anchors are sorted: a section link is live when its target is a heading, an element with that id
-  // or a named anchor, each under the sanitizer's user-content- prefix (file-view-links.ts fragmentTarget
-  // reads all three).
-  const heads = Array.from(box.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
-  const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
-  heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
   // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
   // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
   keepVideoShape(box);
@@ -2655,12 +2790,12 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     a.removeAttributeNS(XLINK_NS, "href");
   });
   if (doc && doc.kind === "url") {
-    box.querySelectorAll("img[src]").forEach((node) => {
-      const img = node as HTMLImageElement;
-      const src = img.getAttribute("src") || "";
-      const abs = resolveDocRelative(src, doc.href);
-      if (abs !== src) img.setAttribute("src", abs);
-    });
+    // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
+    // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a
+    // track's `src` in a URL document stayed relative and the browser resolved it against the PAGE, fetching the
+    // dashboard's directory instead of the document's and 404ing, the gap rewriteFigureSrcs closed for the file kind
+    // (the Slice 4 review, round 2).
+    resolveFigureRefs(box, doc.href);
     box.querySelectorAll(LINK_SEL).forEach((node) => {
       const a = node as HTMLElement | SVGElement;
       const href = linkHref(a);
@@ -2669,12 +2804,23 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
       // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
       a.setAttribute("href", resolveDocRelative(href, doc.href));
     });
+    // Decision 8 for a URL document: the document's own host loads on open beside the gear's list; every other host
+    // is gated behind a click that names it (figure-gate.ts; the same placeholder, restored by the same action).
+    let own = "";
+    try { own = new URL(doc.href, document.baseURI).hostname; } catch { /* an unparseable location: the list alone */ }
+    gateRemoteFigures(box, document.baseURI, [own]);
   } else if (doc) {
     // Figures on the session's disk: re-pointed at the kernel's /file route by rewriteFigureSrcs (below), which
     // keeps the authored src in `data-fv-src` for the comments panel's embed matching and joins the path the way
     // every other reader of an embed's destination does (a relative src under the file's directory, an absolute
     // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
     rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
+    // Then decision 8 (plans/markdown-viewer.md; figure-gate.ts): a figure whose source is on a host the gear's list
+    // does not name, and that the person has not loaded in this document, is wrapped in a placeholder naming the host
+    // and fetches nothing until the placeholder is clicked. The kernel's own route, being the page's origin, is never
+    // gated, so a file's own attachments load on open; the list is read at every paint (loadSettings inside), so a
+    // change in the gear reaches the next paint, and an open document through the settings listener the gate installs.
+    gateRemoteFigures(box, document.baseURI);
   }
   if (doc && doc.kind === "file") {
     // A file on the session's disk: its links are sorted by file-view-links.ts (linkMarkdownAnchors). A link to the
@@ -2738,6 +2884,26 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   return box;
 }
 
+/** Every heading gets an id first: marked 12 emits none, so a document's own `[top](#evidence)` had nothing to land
+ *  on. GitHub's slug of the heading's text (headingSlug, made unique in order by uniqueSlugs), and PREFIXED `md-` on
+ *  purpose: an unprefixed id="tabs" would dress a heading in the chat page's #tabs CSS and shadow
+ *  getElementById("tabs") for the page's own controls. Both modes, every caller, before the anchors are sorted: a
+ *  section link is live when its target is a heading, an element with that id or a named anchor, each under the
+ *  sanitizer's user-content- prefix (file-view-links.ts fragmentTarget reads all three). Run by sanitizeMd as
+ *  mdBlock's own pass, on the sanitized body (so SANITIZE_NAMED_PROPS never prefixes these ids) and BEFORE the
+ *  registered passes (md-sanitize.ts): the math fill is one of those, and it replaces a formula's placeholder, whose
+ *  text is the TeX as written, with KaTeX's glyphs, whose text is layout order (a fraction's denominator before its
+ *  numerator, a U+200B strut). A slug read after the fill gave `# Ratio $\frac{a}{b}$ and energy $E=mc^2$` the id
+ *  md-ratio-ba-and-energy-emc2, so the note's own `[see](#ratio-fracab-and-energy-emc2)` and a `[[#Ratio ...]]`
+ *  wikilink rendered dead on the Files pane and the feed the moment Slice 4 brought the fill to their bundles (the
+ *  chat page's viewer had it before); read before it, the slug is GitHub's, md-ratio-fracab-and-energy-emc2, as the
+ *  Files pane minted it while it had no fill (md-config-fragment-landing-browser.test.ts). */
+function mintHeadingIds(root: ParentNode): void {
+  const heads = Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
+  const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
+  heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
+}
+
 /** A markdown file's path figures — `![](plot.png)`, `<img src="figs/a.png">`, `![](/srv/notes-api/figs/a.png)` — name
  *  files on the kernel's disk, and a browser resolving them against the page URL (/files, /chat, /feed) 404'd every
  *  one: a relative src against the page's directory, an absolute path against the dashboard ORIGIN, where no route
@@ -2767,15 +2933,78 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
  *  removed. `dir` carries its trailing slash ("" for a bare relative file name, which then resolves against the
  *  session's cwd like the file did). */
 export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {
-  root.querySelectorAll("img[src]").forEach((node) => {
-    const img = node as HTMLElement;
-    const src = img.getAttribute("src") || "";
-    if (!src || src.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(src)) { img.removeAttribute("data-fv-src"); return; }
+  // Every attribute a figure fetches through (figure-gate.ts figureRefs; Slice 4 of plans/markdown-viewer.md): an img's
+  // src and srcset, a `<source>`'s src and srcset (inside a picture, a video or an audio), a video's src and poster, an
+  // audio's and a track's src, and an inline svg's `<image>` or `<feImage>` href, SVG 1.1's `xlink:href` spelling
+  // included (the feImage arm is a guard for a wider sanitizer profile: MD_PURIFY drops filter primitives today, so none
+  // reaches this walk in the product). Before this the rewrite read `img[src]` alone, so `<video src="clip.mp4">` and `<audio src="a.mp3">` in a
+  // file were fetched from the PAGE's origin and 404'd, exactly as `![](plot.png)` once did. A srcset is rewritten
+  // candidate by candidate, its descriptors kept (`1x`, `100w`); the authored spelling stays in `data-fv-src` for the
+  // img's src alone, the one attribute the comments panel pairs an embed by. An svg image's xlink:href is moved to the
+  // plain `href` as the anchors' is in mdBlock, so the element carries one attribute every reader agrees on.
+  const path = (src: string): string | null => {
+    if (!src || src.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(src)) return null;   // a web address, a data: URL, an empty src: as written
     let rel = src;
     try { rel = decodeURI(src); } catch { /* a malformed escape: the spelling as written */ }
-    img.setAttribute("data-fv-src", src);
-    img.setAttribute("src", fileUrl(rel.startsWith("/") ? rel : dir + rel, sid));
-  });
+    return fileUrl(rel.startsWith("/") ? rel : dir + rel, sid);
+  };
+  for (const ref of figureRefs(root)) {
+    const el = ref.el as HTMLElement;
+    if (ref.attr === "srcset") {
+      const cands = parseSrcset(ref.value);
+      let changed = false;
+      for (const c of cands) { const p = path(c.url); if (p !== null) { c.url = p; changed = true; } }
+      if (changed) el.setAttribute("srcset", serializeSrcset(cands));
+      continue;
+    }
+    const p = path(ref.value);
+    if (el.tagName === "IMG" && ref.attr === "src") {
+      if (p === null) { el.removeAttribute("data-fv-src"); continue; }
+      el.setAttribute("data-fv-src", ref.value);
+    }
+    if (ref.attr === "xlink:href") {
+      // SVG 2's rule when both spellings stand: `href` wins. The xlink one goes either way, so the element carries the one
+      // attribute every reader (the gate's figureRefs included) agrees on; its value moves to `href` only when no href stood.
+      el.removeAttributeNS(XLINK_NS, "href");
+      if (!el.hasAttribute("href")) el.setAttribute("href", p === null ? ref.value : p);
+      continue;
+    }
+    if (p === null) continue;
+    el.setAttribute(ref.attr, p);
+  }
+}
+
+/** A URL document's figures resolve against where the document LIVES, through every attribute a figure fetches through
+ *  (figure-gate.ts figureRefs, the walk rewriteFigureSrcs takes for a file on disk): an img's `src` and `srcset`, a
+ *  `source`'s `src` and `srcset`, a video's `src` and `poster`, an audio's and a track's `src`, an svg `image`'s `href` and
+ *  `xlink:href`. Before this the URL kind resolved `img[src]` alone, and every other relative reference was left to the
+ *  browser, which resolves it against the PAGE (the Slice 4 review, round 2: `<video src="clip.mp4" poster="poster.png">`
+ *  in a document at /notes/note.md was fetched from the dashboard's root and 404'd; a `srcset` candidate the same). A
+ *  srcset is resolved candidate by candidate with its descriptors kept; an `xlink:href` is folded into `href` as
+ *  rewriteFigureSrcs folds it (`href` wins when both stand), so the element carries the one attribute every reader
+ *  agrees on. resolveDocRelative (md-links.ts) leaves a scheme, a `#fragment` and an empty value as written, so an
+ *  absolute figure is untouched and the gate judges it as before; a protocol-relative `//host/…` takes the document's
+ *  scheme, as the browser would give it against the document. No `data-fv-src`: that stamp is the comments panel's
+ *  pairing key and a URL document has no panel. Runs on the sanitized DOM, after DOMPurify, as the file kind's rewrite
+ *  does; the attribute is read and written, never the property, which is already resolved against the page. */
+function resolveFigureRefs(root: ParentNode, base: string): void {
+  for (const ref of figureRefs(root)) {
+    const el = ref.el;
+    if (ref.attr === "srcset") {
+      const cands = parseSrcset(ref.value);
+      let changed = false;
+      for (const c of cands) { const abs = resolveDocRelative(c.url, base); if (abs !== c.url) { c.url = abs; changed = true; } }
+      if (changed) el.setAttribute("srcset", serializeSrcset(cands));
+      continue;
+    }
+    const abs = resolveDocRelative(ref.value, base);
+    if (ref.attr === "xlink:href") {
+      el.removeAttributeNS(XLINK_NS, "href");
+      if (!el.hasAttribute("href")) el.setAttribute("href", abs);
+      continue;
+    }
+    if (abs !== ref.value) el.setAttribute(ref.attr, abs);
+  }
 }
 
 /** A pixel-sized `<video>` keeps the shape its `width` and `height` attributes give it, capped or not. The viewer's sheets

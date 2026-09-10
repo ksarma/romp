@@ -943,17 +943,20 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
     "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  const sanitizeAt = mdFn.indexOf("box.replaceChildren(...Array.from(sanitizeMd(dirty).childNodes));");   // the shared sanitizer, md-sanitize.ts
+  const sanitizeAt = mdFn.indexOf("box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));");   // the shared sanitizer, md-sanitize.ts, with the heading ids as its caller pass (before the fill)
   const fallbackAt = mdFn.indexOf("box.textContent = text;");
   const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
   assert.ok(sanitizeAt >= 0 && fallbackAt > sanitizeAt && rewriteAt > fallbackAt, "sanitize → (fallback) → rewrite, in that order, on `box`");
   assert.ok(mdFn.indexOf("return box;") > rewriteAt);
   const rw = VIEW.split("export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {")[1].split("\n}\n")[0];
-  assert.match(rw, /root\.querySelectorAll\("img\[src\]"\)\.forEach/, "a DOM walk over the sanitized tree");
-  assert.match(rw, /const src = img\.getAttribute\("src"\) \|\| "";/);
-  assert.match(rw, /if \(!src \|\| src\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) \{ img\.removeAttribute\("data-fv-src"\); return; \}/, "untouched: empty, protocol-relative URL, any scheme — an absolute PATH is rewritten");
+  // Slice 4 of plans/markdown-viewer.md widened the walk from `img[src]` to every attribute a figure fetches through
+  // (figure-gate.ts figureRefs: img src and srcset, source, video src and poster, audio, track, an svg image's href); the
+  // path rule is one function applied to each, and only an img's src keeps data-fv-src
+  assert.match(rw, /for \(const ref of figureRefs\(root\)\) \{/, "a DOM walk over the sanitized tree");
+  assert.match(rw, /if \(!src \|\| src\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) return null;/, "untouched: empty, protocol-relative URL, any scheme; an absolute PATH is rewritten");
   assert.match(rw, /try \{ rel = decodeURI\(src\); \} catch \{/, "marked's percent-encoding undone; malformed taken as written");
-  assert.match(rw, /img\.setAttribute\("data-fv-src", src\);\n\s*img\.setAttribute\("src", fileUrl\(rel\.startsWith\("\/"\) \? rel : dir \+ rel, sid\)\);/, "the authored value kept, then the kernel URL: the path itself when absolute, else <dir>/<src>");
+  assert.match(rw, /return fileUrl\(rel\.startsWith\("\/"\) \? rel : dir \+ rel, sid\);/, "the kernel URL: the path itself when absolute, else <dir>/<src>");
+  assert.match(rw, /if \(el\.tagName === "IMG" && ref\.attr === "src"\) \{\n\s*if \(p === null\) \{ el\.removeAttribute\("data-fv-src"\); continue; \}\n\s*el\.setAttribute\("data-fv-src", ref\.value\);\n\s*\}/, "the authored value kept on an img's src (the attribute the comments panel pairs an embed by), removed when the src is not a path");
   assert.doesNotMatch(rw, /innerHTML|outerHTML|\.replace\(|DOMParser/, "never a string rewrite of marked's HTML");
   assert.doesNotMatch(rw, /normalize|\.\.\//, "no client-side path normalization: the kernel resolves and gates `..`");
 });

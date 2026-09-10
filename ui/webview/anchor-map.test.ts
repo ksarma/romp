@@ -17,6 +17,7 @@ import xml from "highlight.js/lib/languages/xml";
 import cssLang from "highlight.js/lib/languages/css";
 import markdown from "highlight.js/lib/languages/markdown";
 import { marked } from "marked";
+import { applyMdConfig } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
 import {
   mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered,
   rawOffsetToLine, rawRowForOffset, type SelLike, type MapResult, type SourceRange,
@@ -38,17 +39,8 @@ type HostModule = {
     { comment: { anchorAt?: number }; range?: { from: number; to: number } } | { error: string };
 };
 
-// ── the viewer's marked configuration (file-view.ts) ──────────────────────────────────────────────
-marked.setOptions({ gfm: true, breaks: false });
-marked.use({
-  tokenizer: {
-    del(src: string) {
-      const m = /^~~(?=\S)([\s\S]*?\S)~~/.exec(src);
-      if (!m) return undefined;
-      return { type: "del", raw: m[0], text: m[1], tokens: (this as { lexer: { inlineTokens(s: string): unknown[] } }).lexer.inlineTokens(m[1]) };
-    },
-  },
-} as Parameters<typeof marked.use>[0]);
+// ── the viewer's marked configuration: the one every bundle applies (md-config.ts; pinned by anchor-map.test.ts) ──
+applyMdConfig();
 for (const [name, lang] of Object.entries({ python, py: python, xml, html: xml, css: cssLang, markdown, md: markdown })) {
   try { hljs.registerLanguage(name, lang as any); } catch { /* dup */ }
 }
@@ -257,8 +249,13 @@ function rawDomIndexOf(source: string): (srcOff: number) => number | null {
 test("pins: the viewer's Raw rows, marked configuration, and lexer identity", () => {
   assert.match(VIEW, /return `<span class="fv-cl"><span class="fv-ct">\$\{prefix\}\$\{ln\}\$\{suffix\}<\/span><\/span>`;/);
   assert.match(VIEW, /const lines = html\.split\("\\n"\);\n\s+if \(lines\.length && lines\[lines\.length - 1\] === ""\) lines\.pop\(\);/);
-  assert.match(VIEW, /marked\.setOptions\(\{ gfm: true, breaks: false \}\);/);
-  assert.match(VIEW, /const m = \/\^~~\(\?=\\S\)\(\[\\s\\S\]\*\?\\S\)~~\/\.exec\(src\);/);
+  // the viewer's configuration is the one every bundle applies (md-config.ts, Slice 4 of plans/markdown-viewer.md): the
+  // viewer calls it at load, as this suite does, and holds no options of its own
+  const CONFIG = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "md-config.ts"), "utf8");
+  assert.match(VIEW, /^applyMdConfig\(\);/m);
+  assert.doesNotMatch(VIEW, /marked\.(setOptions|use)\(/, "file-view.ts configures nothing of its own");
+  assert.match(CONFIG, /marked\.setOptions\(\{ gfm: true, breaks: false \}\);/);
+  assert.match(CONFIG, /const m = \/\^~~\(\?=\\S\)\(\[\\s\\S\]\*\?\\S\)~~\/\.exec\(src\);/);
   // the viewer's parse carries its link-target hook (file-view-links.ts viewerWalkTokens) as a PER-CALL option: the tokens are
   // marked's own, so the shapes replicated here are unchanged; only a link token's href is rewritten before the render, and only
   // for the file kind (the 2026-09-07 fold: a URL document takes marked's defaults). The walkTokens itself runs for every kind
@@ -267,7 +264,8 @@ test("pins: the viewer's Raw rows, marked configuration, and lexer identity", ()
   assert.match(VIEW, /const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n\s*if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\} \}\) as string;/);
   const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
   assert.match(MAP, /Lexer\.lex\(N\)/, "the walk lexes with the viewer's configured singleton (no private options)");
-  assert.doesNotMatch(MAP, /marked\.(setOptions|use)\(/, "anchor-map never reconfigures marked");
+  assert.doesNotMatch(MAP, /marked\.(setOptions|use)\(/, "anchor-map holds no options of its own: it applies the one configuration (applyMdConfig) and lexes under it");
+  assert.match(MAP, /^applyMdConfig\(\);/m, "…at load, so the static lexer sees every extension the renderer has, whichever module loaded first");
   assert.match(MAP, /from "\.\.\/\.\.\/vendor\/track-changents\/engine\.js"/, "the engine comes from the vendored copy (contract C4)");
 });
 
@@ -847,6 +845,28 @@ test("Rendered paint: a range over several blocks wraps each block's text and no
   assert.ok(marks.length >= 3);
   for (const m of marks) assert.notEqual(stripWs(m.textContent), "", "no whitespace-only marks between blocks: " + JSON.stringify(m.textContent));
   assert.equal(stripWs(marks.map((m) => m.textContent).join("")), stripWs("Key points: Cache the rendered notes for five minutes."));
+});
+
+test("Rendered paint: a run of adjacent whitespace-only text nodes between blocks (the two the sanitizer leaves where a block-level comment stood) is never wrapped: no mark at the top level, the two nodes as rendered", () => {
+  // marked emits a block-level HTML comment between two blocks as `</blockquote>\n<!-- ... -->\n\n<p>`, and DOMPurify removes
+  // the comment node and leaves the "\n" and the "\n\n" as two ADJACENT text nodes under .fileview-md (the parser here does
+  // the same; a <style> between two blocks leaves the same pair). wrapRuns skipped a whitespace-only run only when it was ONE
+  // node, so a comment across the two blocks wrapped the pair in a mark of its own: a ringed box on a line between the
+  // blocks, 4 x 18 px in Chromium, and everything below moved down by its height, back on every fresh Rendered paint (the
+  // Slice 4 review, round 7). Main's wrapSlices skipped every such node on its own.
+  const source = "> A quoted line before a block comment.\n\n<!-- a block comment between two blocks -->\n\nParagraph after the block comment with words.\n";
+  const { box } = buildRendered(source);
+  const kids = box.childNodes.slice();
+  const tag = (n: FakeNode) => n.nodeType === 3 ? JSON.stringify((n as FakeText).data) : (n as FakeElement).tagName;
+  const isWsText = (n: FakeNode) => n.nodeType === 3 && stripWs((n as FakeText).data) === "";
+  assert.ok(kids.some((n, i) => i > 0 && isWsText(n) && isWsText(kids[i - 1])), "the fixture holds two adjacent whitespace-only text nodes at the top level: " + kids.map(tag).join(" | "));
+  const start = source.indexOf("A quoted"), end = source.indexOf("with words.") + "with words.".length;
+  const marks = paintRendered(El(box), source, { start, end }, "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(marks && marks.length >= 2, "both blocks' text painted: " + JSON.stringify(marks && marks.map((m) => m.textContent)));
+  for (const m of marks) assert.notEqual(stripWs(m.textContent), "", "no whitespace-only mark: " + JSON.stringify(m.textContent));
+  for (const m of marks) assert.notEqual(m.parentNode, box, "no mark stands at the top level: " + JSON.stringify(m.textContent));
+  assert.ok(box.childNodes.length === kids.length && kids.every((n, i) => box.childNodes[i] === n), "the top-level children are as rendered, the two whitespace nodes among them: " + box.childNodes.map(tag).join(" | "));
+  assert.equal(stripWs(marks.map((m) => m.textContent).join("")), stripWs("A quoted line before a block comment. Paragraph after the block comment with words."));
 });
 
 test("Rendered paint reads the top-level blocks a range touches and no other: a mark costs its own blocks, not the document", () => {

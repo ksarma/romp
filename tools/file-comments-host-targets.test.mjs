@@ -195,8 +195,8 @@ test('the passage may be wider than the embed, and every embed form the panel re
   assert.equal(readSidecar(r.storePath).comments.length, 3);
 });
 
-test('imageEmbeds reads the panel\'s four forms with the destination as written and skips fenced code, so the host and the panel name the same figures', () => {
-  const text = 'a ![one](figs/a.png "t") b ![two](<figs/b c.png>) c ![three][ref] d ![ref] e <img alt=x src=\'figs/e.png\'>\n'
+test('imageEmbeds reads the panel\'s five forms with the destination as written and skips fenced code, so the host and the panel name the same figures', () => {
+  const text = 'a ![one](figs/a.png "t") b ![two](<figs/b c.png>) c ![three][ref] d ![ref] e <img alt=x src=\'figs/e.png\'> f ![[figs/w.png|300]]\n'
     + '~~~\n![no](figs/f.png)\n~~~\n[ref]: figs/d.png\n![none][missing]\n';
   const embeds = imageEmbeds(text);
   assert.deepEqual(embeds.map((e) => [text.slice(e.start, e.end), e.dest]), [
@@ -205,6 +205,7 @@ test('imageEmbeds reads the panel\'s four forms with the destination as written 
     ['![three][ref]', 'figs/d.png'],
     ['![ref]', 'figs/d.png'],
     ['<img alt=x src=\'figs/e.png\'>', 'figs/e.png'],
+    ['![[figs/w.png|300]]', 'figs/w.png'],
   ]);
   assert.deepEqual(imageEmbeds('no figures here'), []);
 });

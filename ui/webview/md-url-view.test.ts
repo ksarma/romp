@@ -265,18 +265,32 @@ test("EVERY exit that stops short of consuming the body aborts this open's contr
 
 // ── 5. relative references inside the rendered document ──
 
-test("mdBlock takes the document's location and rewrites relative img/src and a/href AFTER the sanitizer", () => {
+test("mdBlock takes the document's location and resolves relative figure references (every fetching attribute) and a/href AFTER the sanitizer", () => {
   assert.match(VIEW, /type MdDocLoc = \{ kind: "url"; href: string \} \| \{ kind: "file"; path: string; sid: string \| null \};/);
   assert.match(VIEW, /function mdBlock\(text: string, doc\?: MdDocLoc\): HTMLElement \{/);
   const sanitize = MD_FN.indexOf("sanitizeMd(");
-  const rewrite = MD_FN.indexOf("resolveDocRelative(");
-  assert.ok(sanitize > -1 && rewrite > sanitize, "sanitise first; the rewrite only ever sees what the sanitizer kept");
-  // the ATTRIBUTE, never the property — .src/.href are already resolved against the page (the wrong base)
-  assert.match(MD_FN, /const src = img\.getAttribute\("src"\) \|\| "";/);
+  const figures = MD_FN.indexOf("resolveFigureRefs(box, doc.href);");
+  const links = MD_FN.indexOf("resolveDocRelative(href, doc.href)");
+  assert.ok(sanitize > -1 && figures > sanitize && links > sanitize, "sanitise first; the rewrites only ever see what the sanitizer kept");
+  // the figures: every attribute a figure fetches through (figure-gate.ts figureRefs), not img[src] alone (the Slice 4 review, round 2:
+  // a relative srcset candidate, a video's src or poster, an audio's, a source's or a track's src resolved against the PAGE and 404'd),
+  // each resolved through the executed helper against the document URL; a srcset candidate by candidate, its descriptors kept;
+  // an svg image's xlink:href folded into href as rewriteFigureSrcs folds it (md-config-url-figure-refs-browser.test.ts drives it)
+  assert.match(MD_FN, /if \(doc && doc\.kind === "url"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*resolveFigureRefs\(box, doc\.href\);/, "the URL kind's figure pass is the walk over every fetching attribute");
+  assert.doesNotMatch(MD_FN, /querySelectorAll\("img\[src\]"\)/, "no img-only arm is left in mdBlock");
+  const RF = VIEW.split("function resolveFigureRefs(root: ParentNode, base: string): void {")[1].split("\n}")[0];
+  assert.match(RF, /for \(const ref of figureRefs\(root\)\) \{/, "the gate's own walk names the attributes");
+  assert.match(RF, /const abs = resolveDocRelative\(c\.url, base\); if \(abs !== c\.url\) \{ c\.url = abs; changed = true; \}/, "each srcset candidate resolved");
+  assert.match(RF, /if \(changed\) el\.setAttribute\("srcset", serializeSrcset\(cands\)\);/, "written back with its descriptors");
+  assert.match(RF, /const abs = resolveDocRelative\(ref\.value, base\);/, "every other attribute resolved through the one helper");
+  assert.match(RF, /el\.removeAttributeNS\(XLINK_NS, "href"\);\n\s*if \(!el\.hasAttribute\("href"\)\) el\.setAttribute\("href", abs\);/, "xlink:href folded into href, href winning when both stand");
+  assert.match(RF, /if \(abs !== ref\.value\) el\.setAttribute\(ref\.attr, abs\);/);
+  assert.equal((RF.match(/resolveDocRelative\(/g) || []).length, 2, "the resolution is the pure helper's, in its two shapes (a srcset candidate, an attribute)");
+  // the ATTRIBUTE, never the property: .src/.href/.poster are already resolved against the page (the wrong base); no stamp for the panel here
+  assert.doesNotMatch(RF, /\.src\b|\.poster\b|\.href\b|innerHTML|data-fv-src/, "no property reads or writes, no string rewrite, no data-fv-src in a URL document");
   assert.match(MD_FN, /const href = linkHref\(a\);/);   // linkHref reads the href attribute (or xlink:href), never the property
   assert.doesNotMatch(MD_FN, /img\.src\b|a\.href\b/, "no property reads");
-  // URL mode: both resolve against the document URL through the executed helper
-  assert.match(MD_FN, /const abs = resolveDocRelative\(src, doc\.href\);\s*\n\s*if \(abs !== src\) img\.setAttribute\("src", abs\);/);
+  // URL mode: the links resolve against the document URL through the executed helper
   assert.match(MD_FN, /a\.setAttribute\("href", resolveDocRelative\(href, doc\.href\)\);/);
   // in-document and already-absolute anchors are left alone by the resolver
   assert.match(MD_FN, /if \(!href \|\| href\.startsWith\("#"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) return;/);
@@ -292,9 +306,13 @@ test("local file mode: a relative image is the sibling over the kernel's /file r
   // `~`-anchored src joins under the directory here, as those two readers do, where upstream took it as itself.
   assert.match(MD_FN, /rewriteFigureSrcs\(box, doc\.path\.slice\(0, doc\.path\.lastIndexOf\("\/"\) \+ 1\), doc\.sid\);/);
   const RW = VIEW.split("export function rewriteFigureSrcs(")[1].split("\n}")[0];
-  assert.match(RW, /img\.setAttribute\("src", fileUrl\(rel\.startsWith\("\/"\) \? rel : dir \+ rel, sid\)\);/, "the kernel URL is fileUrl's");
-  // gated to path-shaped refs: a scheme (http:, data:) or a protocol-relative URL is the browser's
-  assert.match(RW, /if \(!src \|\| src\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) \{ img\.removeAttribute\("data-fv-src"\); return; \}/);
+  // one path builder for every fetching attribute (Slice 4 of plans/markdown-viewer.md widened the rewrite from `img[src]` to
+  // every attribute figure-gate.ts's figureRefs reads: srcset candidates, a video's poster, a source's src, an svg image's href)
+  assert.match(RW, /return fileUrl\(rel\.startsWith\("\/"\) \? rel : dir \+ rel, sid\);/, "the kernel URL is fileUrl's");
+  assert.equal((RW.match(/fileUrl\(/g) || []).length, 1, "built in one place, whatever attribute carries it");
+  // gated to path-shaped refs: a scheme (http:, data:) or a protocol-relative URL is the browser's, and an img's data-fv-src goes with it
+  assert.match(RW, /if \(!src \|\| src\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) return null;/);
+  assert.match(RW, /if \(p === null\) \{ el\.removeAttribute\("data-fv-src"\); continue; \}/);
   // code only: rewriteFigureSrcs's doc comment names the relay route in prose, and the shared MD_FN slice spans it
   assert.doesNotMatch((MD_FN + RW).replace(/\/\*[\s\S]*?\*\//g, ""), /"\/file\?path="|\/remote\//, "the route is fileUrl's to build (federation-aware)");
   assert.match(VIEW, /import \{ fileUrl \} from "\.\/preview";/);
@@ -332,13 +350,21 @@ test("local file mode: a relative link becomes a path link on the anchor itself 
 
 // ── 6. in-document fragments: heading ids, and `#links` that land instead of spawning a tab ──
 
-test("every heading gets id=md-<slug> after sanitisation, in both modes (the md- prefix keeps the page's own ids and CSS out of it)", () => {
-  assert.match(MD_FN, /const heads = Array\.from\(box\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\];\s*\n\s*const slugs = uniqueSlugs\(heads\.map\(\(h\) => headingSlug\(h\.textContent \|\| ""\)\)\);\s*\n\s*heads\.forEach\(\(h, i\) => \{ h\.id = "md-" \+ slugs\[i\]; \}\);/);
+test("every heading gets id=md-<slug> after sanitisation and BEFORE the math fill, in both modes (the md- prefix keeps the page's own ids and CSS out of it)", () => {
+  // the minting is a function of its own (mintHeadingIds), handed to sanitizeMd as the caller's pass: it runs on the
+  // sanitized body, so SANITIZE_NAMED_PROPS never prefixes the viewer's own md- ids, and ahead of the registered passes,
+  // the math fill among them, so a heading with a formula is slugged from its TeX as written and never from KaTeX's
+  // glyphs (the Slice 4 review: `# Ratio $\frac{a}{b}$` minted md-ratio-ba and the note's own link to md-ratio-fracab was
+  // dead; md-config-fragment-landing-browser.test.ts executes both over the real bundle)
+  assert.match(MD_FN, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/, "mdBlock's one sanitize call hands the minting in as the caller's pass");
+  const MINT = (VIEW.split("function mintHeadingIds(root: ParentNode): void {")[1] || "").split("\n}\n")[0];
+  assert.match(MINT, /const heads = Array\.from\(root\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\];\s*\n\s*const slugs = uniqueSlugs\(heads\.map\(\(h\) => headingSlug\(h\.textContent \|\| ""\)\)\);\s*\n\s*heads\.forEach\(\(h, i\) => \{ h\.id = "md-" \+ slugs\[i\]; \}\);/);
+  const SAN = web("md-sanitize.ts");
+  assert.match(SAN, /if \(own\) own\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);/, "sanitizeMd runs the caller's pass ahead of the registered passes (the math fill), on the sanitized body");
   const sanitize = MD_FN.indexOf("sanitizeMd(");
-  const ids = MD_FN.indexOf('h.id = "md-"');
   const docGate = MD_FN.indexOf('if (doc && doc.kind === "url") {');
-  assert.ok(sanitize > -1 && sanitize < ids && ids < docGate, "after DOMPurify, and OUTSIDE the doc gate: every mode, every caller (and after it, so SANITIZE_NAMED_PROPS never prefixes the viewer's own md- ids)");
-  assert.match(MD_FN, /an unprefixed id="tabs" would dress a heading in the chat page's[\s\S]*?#tabs CSS and shadow getElementById\("tabs"\)/, "the prefix's reason is written down");
+  assert.ok(sanitize > -1 && sanitize < docGate, "OUTSIDE the doc gate: every mode, every caller");
+  assert.match(MD_FN, /an unprefixed id="tabs" would dress a heading in the chat page's[\s\S]*?#tabs CSS and shadow[\s\S]*?getElementById\("tabs"\)/, "the prefix's reason is written down");
 });
 
 test("a `#fragment` anchor is stamped fv-anchor and gets NO _blank in a URL document (or one with no location); every other anchor there still does; a file's anchors are the module's", () => {
@@ -379,7 +405,7 @@ test("the opened URL's own #fragment lands after the FIRST rendered paint — on
   assert.match(URL_FN, /if \(!hash\) \{ landed = true; return; \}\s*\n\s*if \(fmt\.md !== "rendered"\) return;[^\n]*\n\s*landed = true;/);
   assert.match(URL_FN, /try \{ hash = new URL\(href\)\.hash; \} catch \{/);
   assert.match(URL_FN, /landed = true;\s*\n\s*requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToFragment\(body, hash\); \}\);/);
-  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/, "after the paint and the reader's seat (reader-place.ts, through the viewer's held-place seat), inside renderBody, so a later Rendered toggle lands too");
+  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/, "after the paint, the folds' restore and the reader's seat (reader-place.ts, through the viewer's held-place seat), inside renderBody, so a later Rendered toggle lands too");
   assert.doesNotMatch(URL_FN, /renderBody\(\);\s*\n\s*landFragment\(\);/, "no second, mode-blind landing after the bytes");
 });
 
@@ -418,7 +444,7 @@ test("rendered markdown never carries data-* attributes into the page, in the vi
   // both go through sanitizeMd (md-sanitize.ts), whose one profile forbids data-*
   const sanitizes = (MD_FN.match(/sanitizeMd\([^)]*\)/g) || []);
   assert.equal(sanitizes.length, 1);
-  assert.match(sanitizes[0], /sanitizeMd\(dirty\)/);
+  assert.match(sanitizes[0], /sanitizeMd\(dirty, mintHeadingIds\)/);   // the second argument is the viewer's own pass (the heading ids), run inside the call (Slice 4 of plans/markdown-viewer.md)
   assert.doesNotMatch(MD_FN, /DOMPurify\.sanitize|ALLOW_DATA_ATTR|USE_PROFILES/, "no per-call profile in the viewer");
   const chatMd = (RENDER.split("function md(src: string, repo: string | null = prRepoFor()): string {")[1] || "").split("\nfunction ")[0];   // the signature carries the PR-link repo (pr-links.ts)
   assert.match(chatMd, /const clean = sanitizeMd\(dirty\);/);

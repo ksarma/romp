@@ -42,6 +42,7 @@
 import { linkifyPathTokens, markPathLink, fileUriToPath, isFileUri, LINE_SUFFIX_RE, DEAD_TEXT, textUnits, spanHolding, rewriteSpan, type TextSpan } from "./path-links";
 import { headingSlug } from "./md-links";   // the slug the viewer mints heading ids from (`md-` + slug), so a section link finds its heading
 import { userContentTarget } from "./md-sanitize";   // an author's id or name under the sanitizer's user-content- prefix, or bare (the chat's delegate reads the same lookup)
+import { resolveWikilink } from "./md-config";   // the stamp that lets a `[[Note]]` render as an anchor in a file document (Slice 4)
 import { urlSegments, urlRanges, linkifyUrls as markUrls } from "./url-links";   // the URL pass, shared with the todo linkers (url-links.ts)
 
 /** The URL anchors this module mints wear this class; the viewer's delegate and the sheets key on it. */
@@ -300,6 +301,7 @@ export function viewerLinkTarget(href: string): string {
 }
 export function viewerWalkTokens(token: { type: string; href?: string | null }): void {
   if (token.type === "link" && typeof token.href === "string") token.href = viewerLinkTarget(token.href);
+  resolveWikilink(token);   // a file has a directory for `[[Note]]` to resolve against: the renderer emits an anchor (md-config.ts)
 }
 
 /** The element a section link's `id` names in `root`: the first with that id, else the first `<a name>` of that name,

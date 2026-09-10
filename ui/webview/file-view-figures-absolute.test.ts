@@ -12,6 +12,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { FIGURE_SEL } from "./figure-gate";
+import { XLINK_NS } from "./md-links";
 
 // ── a DOM stand-in: attributes and the one selector rewriteFigureSrcs uses ─────────────────────────
 class El {
@@ -26,10 +28,16 @@ class El {
   removeAttribute(k: string): void { this.attrs.delete(k); }
   addEventListener(): void { /* inert */ }
   removeEventListener(): void { /* inert */ }
+  // SVG 1.1's xlink:href, the one namespaced attribute the walk reads (figure-gate.ts figureRefs) and the rewrite removes
+  getAttributeNS(ns: string | null, k: string): string | null { return ns === XLINK_NS ? this.getAttribute("xlink:" + k) : null; }
+  removeAttributeNS(ns: string | null, k: string): void { if (ns === XLINK_NS) this.attrs.delete("xlink:" + k); }
   querySelectorAll(sel: string): El[] {
-    assert.equal(sel, "img[src]", "the stand-in answers the one selector the rewrite uses");
+    // the one selector the rewrite uses, figure-gate.ts's FIGURE_SEL: the tags a figure fetches through (Slice 4 of
+    // plans/markdown-viewer.md widened it from `img[src]` to video, audio, source, track and an svg's image and feImage)
+    assert.equal(sel, FIGURE_SEL, "the stand-in answers the one selector the rewrite uses");
+    const tags = new Set(sel.split(",").map((t) => t.trim().toUpperCase()));
     const out: El[] = [];
-    const walk = (n: El) => { for (const c of n.childNodes) { if (c.tagName === "IMG" && c.hasAttribute("src")) out.push(c); walk(c); } };
+    const walk = (n: El) => { for (const c of n.childNodes) { if (tags.has(c.tagName)) out.push(c); walk(c); } };
     walk(this);
     return out;
   }
@@ -168,4 +176,84 @@ test("a `~/`-anchored src is a relative path whose first segment is `~`: joined 
   // the guide states the two readings in one sentence, in the user's terms
   const guide = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8").replace(/\s+/g, " ");
   assert.match(guide, /A figure path that starts with `~\/` is not expanded to your home folder: it names a folder called `~` next to the file, as other markdown viewers read it, while a link that starts with `~\/` does open under your home folder\./);
+});
+
+// ── Slice 4 of plans/markdown-viewer.md: every attribute a figure fetches through, not img[src] alone ────────────────
+const tag = (name: string, attrs: Record<string, string> = {}, ...kids: El[]) => {
+  const e = new El(name);
+  for (const k of Object.keys(attrs)) e.setAttribute(k, attrs[k]);
+  for (const c of kids) e.appendChild(c);
+  return e;
+};
+
+test("video, audio, source and track srcs, a video's poster and a picture's source srcset go through /file like an img's src; only an img's src keeps data-fv-src", async () => {
+  const video = tag("video", { src: "clip.mp4", poster: "figs/poster.png" });
+  const sourced = tag("video", {}, tag("source", { src: "c.webm" }), tag("track", { src: "subs.vtt" }));
+  const audio = tag("audio", { src: "a.mp3" });
+  const picture = tag("picture", {}, tag("source", { srcset: "pic-2x.png 2x, pic-1x.png 1x" }), tag("img", { src: "pic-fallback.png" }));
+  await rewrite([video, sourced, audio, picture]);
+  assert.equal(video.getAttribute("src"), q(DIR + "clip.mp4"), "a video's src");
+  assert.equal(video.getAttribute("poster"), q(DIR + "figs/poster.png"), "and its poster, which the browser fetches on open");
+  assert.equal(video.getAttribute("data-fv-src"), null, "data-fv-src stays an img's: the panel pairs pictures, not clips");
+  assert.equal((sourced.childNodes[0] as El).getAttribute("src"), q(DIR + "c.webm"), "a <source> inside a video");
+  assert.equal((sourced.childNodes[1] as El).getAttribute("src"), q(DIR + "subs.vtt"), "a <track> inside a video");
+  assert.equal(audio.getAttribute("src"), q(DIR + "a.mp3"));
+  assert.equal((picture.childNodes[0] as El).getAttribute("srcset"), q(DIR + "pic-2x.png") + " 2x, " + q(DIR + "pic-1x.png") + " 1x", "a picture's source srcset, candidate by candidate, descriptors kept");
+  assert.equal((picture.childNodes[1] as El).getAttribute("src"), q(DIR + "pic-fallback.png"));
+  assert.equal((picture.childNodes[1] as El).getAttribute("data-fv-src"), "pic-fallback.png");
+});
+
+test("an img's srcset is rewritten by candidate, its x and w descriptors kept, a remote candidate left as written; the src keeps its own rewrite and data-fv-src", async () => {
+  const both = tag("img", { src: "local.png", srcset: "local-2x.png 2x, https://remote.test/sr.png 3x" });
+  const widths = tag("img", { src: "w.png", srcset: "w-100.png 100w, w-200.png 200w", sizes: "100px" });
+  await rewrite([both, widths]);
+  assert.equal(both.getAttribute("src"), q(DIR + "local.png"));
+  assert.equal(both.getAttribute("data-fv-src"), "local.png");
+  assert.equal(both.getAttribute("srcset"), q(DIR + "local-2x.png") + " 2x, https://remote.test/sr.png 3x", "the local candidate through /file, the web one as written (decision 8's gate judges it)");
+  assert.equal(widths.getAttribute("srcset"), q(DIR + "w-100.png") + " 100w, " + q(DIR + "w-200.png") + " 200w");
+  assert.equal(widths.getAttribute("sizes"), "100px", "sizes is not a source and is untouched");
+});
+
+// The feImage arm is exercised over the stand-in ALONE: the product never reaches it today. mdBlock sanitizes before it
+// rewrites (file-view.ts), and the sanitizer's profile (md-sanitize.ts MD_PURIFY: DOMPurify's `svg` profile, not its
+// `svgFilters`) drops a filter's primitives, `<feImage>` with them, so a note's `<filter><feImage href>` renders as an
+// empty `<filter>` in the Files pane and fetches nothing, gated or not (measured 2026-09-09 over the real sanitizeMd in
+// headless Chromium: the feImage gone, the `<image>` beside it kept). The arm stays in FIGURE_SEL as a guard for a
+// wider profile, and the test after this one fails the day the profile widens, so that change brings a DOM-level test
+// (file-view-figures-gate-browser.test.ts) and updates the prose on the arm (figure-gate.ts, the plan's item 8, file-view.ts).
+test("an inline svg's <image> href goes through /file; an xlink:href becomes the plain href, so the element carries one attribute; the feImage arm holds over the stand-in, unreachable in the product while the sanitizer drops filters", async () => {
+  const image = tag("svg", {}, tag("image", { href: "figs/d.png" }));
+  const xlink = tag("svg", {}, tag("image", { "xlink:href": "figs/e.png" }));
+  const both = tag("svg", {}, tag("image", { href: "figs/f.png", "xlink:href": "figs/g.png" }));
+  const filter = tag("svg", {}, tag("filter", {}, tag("feImage", { href: "figs/h.png" })));
+  const remote = tag("svg", {}, tag("image", { href: "https://remote.test/svg.png" }));
+  await rewrite([image, xlink, both, filter, remote]);
+  assert.equal((image.childNodes[0] as El).getAttribute("href"), q(DIR + "figs/d.png"));
+  const x = xlink.childNodes[0] as El;
+  assert.equal(x.getAttribute("href"), q(DIR + "figs/e.png"), "the XLink spelling is read");
+  assert.equal(x.getAttribute("xlink:href"), null, "and removed after the copy, as mdBlock treats an anchor's");
+  const b = both.childNodes[0] as El;
+  assert.equal(b.getAttribute("href"), q(DIR + "figs/f.png"), "an href the author wrote beside the xlink wins");
+  assert.equal(b.getAttribute("xlink:href"), null, "the xlink is rewritten onto href too, so no second source stands");
+  assert.equal(((filter.childNodes[0] as El).childNodes[0] as El).getAttribute("href"), q(DIR + "figs/h.png"), "a filter's feImage href is rewritten when one reaches the rewrite; today none does (the sanitizer drops it), so this holds the arm for a wider profile");
+  assert.equal((remote.childNodes[0] as El).getAttribute("href"), "https://remote.test/svg.png", "a web address stays as written");
+});
+
+// The premise the case above rests on, executable: the one sanitizer (md-sanitize.ts, the only DOMPurify.sanitize call
+// in the dashboard) runs under DOMPurify's `svg` profile alone, and `feImage` is a member of its `svgFilters` list, not
+// of `svg` (dompurify 3.4.10: `filter` and `image` sit in `svg`, every `fe*` primitive in `svgFilters`). So no feImage
+// reaches rewriteFigureSrcs or the gate's figureRefs in the product, and the stand-in case is the arm's only coverage.
+// Widening the profile, by `svgFilters: true` or by naming the tag in ADD_TAGS, makes the arm live in the Files pane:
+// that change must bring a DOM-level test over the real bundle (a filter's feImage fixture in
+// file-view-figures-gate-browser.test.ts, local and remote) and update the prose on the arm (figure-gate.ts's header
+// and FIGURE_SEL comment, plans/markdown-viewer.md's build note item 8, the rewriteFigureSrcs comment in
+// file-view.ts). This fails first, and names that work.
+test("the sanitizer drops a filter's <feImage> today (the svg profile without svgFilters, no ADD_TAGS), so the feImage arm is covered over the stand-in alone; widening the profile must bring a DOM-level test", async () => {
+  const { MD_PURIFY } = await import("./md-sanitize");
+  const profiles: { svg?: boolean; svgFilters?: boolean } = MD_PURIFY.USE_PROFILES || {};   // DOMPurify allows `false` here
+  assert.equal(profiles.svg, true, "the svg profile is what lets an inline svg's <image> through at all");
+  assert.notEqual(profiles.svgFilters, true, "svgFilters would keep <feImage>: the arm goes live in the product, so add the browser leg and update the prose named above before enabling it");
+  const addTags = MD_PURIFY.ADD_TAGS ?? [];
+  assert.ok(Array.isArray(addTags), "ADD_TAGS as a predicate could admit feImage too: name tags, so this pin can read them");
+  assert.ok(!addTags.map((t) => t.toLowerCase()).includes("feimage"), "ADD_TAGS is the other door to a live feImage: the same follow-through applies");
 });

@@ -112,32 +112,35 @@ test("md-sanitize.ts holds the dashboard's ONLY DOMPurify.sanitize call; render.
   assert.deepEqual(callers, ["md-sanitize.ts"], "every other module goes through sanitizeMd");
   const SAN = read("md-sanitize.ts");
   assert.equal((SAN.match(/DOMPurify\.sanitize\(/g) || []).length, 1);
-  assert.match(SAN, /export function sanitizeMd\(dirty: string\): HTMLElement \{\n\s*installMdSanitizeHooks\(\);\n\s*const clean = DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\) as HTMLElement;/,
-    "the hook is installed before the first sanitize, and the profile is spread with RETURN_DOM");
-  assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/, "the input post-pass, then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
+  assert.match(SAN, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{\n\s*installMdSanitizeHooks\(\);\n\s*const clean = DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\) as HTMLElement;/,
+    "the hook is installed before the first sanitize, and the profile is spread with RETURN_DOM; the caller's own pass is optional (the chat's md() and userMd() pass none)");
+  assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*if \(own\) own\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/,
+    "the input post-pass, then the caller's own pass (the viewer's heading ids, read from the text as written), then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
   assert.match(SAN, /export function registerMdPostPass\(pass: \(root: ParentNode\) => void\): void \{\n\s*if \(!postPasses\.includes\(pass\)\) postPasses\.push\(pass\);\n\}/, "the registry: idempotent, a pass registered twice runs once (md-sanitize-katex-browser.test.ts executes it)");
   assert.match(SAN, /const postPasses: Array<\(root: ParentNode\) => void> = \[\];/, "the registry is a module array of passes over the sanitized body, empty until a grammar module registers one");
   const importers = sources.filter((f) => /from "dompurify"/.test(read(f)));
   assert.deepEqual(importers, ["md-sanitize.ts"]);
   assert.match(read("render.ts"), /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
-  assert.match(read("file-view.ts"), /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
+  assert.match(read("file-view.ts"), /import \{ sanitizeMd, revealFragmentTarget \} from "\.\/md-sanitize";/);   // plus the reveal step the viewer's scrollToFragment shares with the chat's `#` delegate
   assert.equal((read("render.ts").match(/sanitizeMd\(/g) || []).length, 2, "md() and userMd()");
   assert.equal((read("file-view.ts").match(/sanitizeMd\(/g) || []).length, 1, "mdBlock");
 });
 
 test("the math fill is registered as a sanitizeMd post-pass by the module that installs the grammar, so no renderer calls it by hand", () => {
-  const grammar = read("chat-md.ts");
+  const grammar = read("md-config.ts");   // the one configuration: the grammar and its fill travel together (Slice 4 of plans/markdown-viewer.md)
   assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
   assert.match(grammar, /import \{ registerMdPostPass \} from "\.\/md-sanitize";/);
   assert.match(grammar, /^registerMdPostPass\(renderMathPlaceholders\);$/m);
   assert.doesNotMatch(read("render.ts"), /renderMathPlaceholders\(|from "\.\/math"/, "render.ts renders no math of its own: the fill rides every sanitizeMd call");
-  assert.doesNotMatch(read("file-view.ts"), /renderMathPlaceholders|from "\.\/math"|from "\.\/chat-md"/, "the viewer imports no grammar: in the chat page the singleton carries it, and a bundle without it renders no math");
+  assert.doesNotMatch(read("file-view.ts"), /renderMathPlaceholders|from "\.\/math"|from "\.\/chat-md"/, "the viewer imports no grammar of its own: md-config.ts, which it applies, carries the grammar and its fill into every bundle that hosts it (Slice 4 of plans/markdown-viewer.md)");
 });
 
-test("the feed bundle carries the sanitizer but neither the math grammar nor KaTeX: a bundle without the grammar has no fill", () => {
+test("the feed bundle carries the sanitizer, the grammar, the fill and KaTeX: every bundle that hosts the viewer renders math (Slice 4 of plans/markdown-viewer.md, decision 1)", () => {
   // What the import pins above promise, checked on the built graph: esbuild's metafile lists every module the feed
-  // entry pulls in. file-view.ts brings md-sanitize.ts (the viewer renders notes in the feed page too); chat-md.ts,
-  // math.ts and the katex package are the chat bundle's alone.
+  // entry pulls in. file-view.ts brings md-sanitize.ts (the viewer renders notes in the feed page too) and md-config.ts,
+  // which brings math.ts and the katex package (before Slice 4 the feed bundle had none of the three and a note's
+  // formulas showed as bare TeX there); chat-md.ts, the chat's own user-bubble renderer, and render.ts stay the chat
+  // bundle's alone (math-bundles.test.ts holds the same for files.js and render.js).
   const EXT = process.cwd();                                      // npm test runs in vscode-extension
   const esbuild = createRequire(path.join(EXT, "package.json"))("esbuild");   // the extension's esbuild, wherever this bundle was written
   const r = esbuild.buildSync({
@@ -147,8 +150,11 @@ test("the feed bundle carries the sanitizer but neither the math grammar nor KaT
   const inputs = Object.keys(r.metafile.inputs as Record<string, unknown>).map((f) => f.replace(/\\/g, "/"));
   assert.ok(inputs.some((f) => f.endsWith("ui/webview/md-sanitize.ts")), "the feed bundle sanitizes through md-sanitize.ts (via file-view.ts)");
   assert.ok(inputs.some((f) => f.endsWith("ui/webview/file-view.ts")));
-  const stray = inputs.filter((f) => /ui\/webview\/(chat-md|math)\.ts$|node_modules\/katex\//.test(f));
-  assert.deepEqual(stray, [], "no grammar, no fill, no KaTeX in the feed bundle");
+  assert.ok(inputs.some((f) => f.endsWith("ui/webview/md-config.ts")), "the one configuration, the grammar and its fill's registration");
+  assert.ok(inputs.some((f) => f.endsWith("ui/webview/math.ts")), "the math grammar and the fill");
+  assert.ok(inputs.some((f) => /node_modules\/katex\//.test(f)), "KaTeX, the library behind the fill");
+  const stray = inputs.filter((f) => /ui\/webview\/(chat-md|render)\.ts$/.test(f));
+  assert.deepEqual(stray, [], "the chat's own renderers ride in no other bundle");
 });
 
 test("the submit backstop: one preventDefault listener on the viewer body in openFileView AND openUrlView, installed before any render swaps the body's children", () => {

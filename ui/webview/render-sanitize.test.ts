@@ -22,7 +22,7 @@ test("md() sanitizes marked output with DOMPurify before returning HTML", () => 
   assert.match(RENDER, /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
   assert.doesNotMatch(RENDER, /from "dompurify"|DOMPurify\.sanitize\(/, "render.ts holds no sanitizer of its own");
   assert.match(SANITIZE, /import DOMPurify from "dompurify";/);
-  assert.match(SANITIZE, /export function sanitizeMd\(dirty: string\): HTMLElement \{[\s\S]*?DOMPurify\.sanitize\(dirty, /);
+  assert.match(SANITIZE, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{[\s\S]*?DOMPurify\.sanitize\(dirty, /);   // the optional second parameter is the viewer's own pass (heading ids); the chat passes none
   // (the signature grew an optional repo parameter for PR links — pr-links.ts — so match it loosely)
   const mdFn = RENDER.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdFn, "md() function not found");
@@ -34,13 +34,13 @@ test("md() sanitizes marked output with DOMPurify before returning HTML", () => 
 });
 
 test("the file viewer's mdBlock adopts the same sanitizer's output, and spells no profile of its own", () => {
-  assert.match(VIEW, /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
+  assert.match(VIEW, /import \{ sanitizeMd, revealFragmentTarget \} from "\.\/md-sanitize";/);   // plus the reveal step the viewer's scrollToFragment shares with the chat's `#` delegate
   assert.doesNotMatch(VIEW, /from "dompurify"|DOMPurify\.sanitize\(/, "the viewer holds no sanitizer of its own");
   const mdBlock = VIEW.match(/function mdBlock\([^\n]*\{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdBlock, "mdBlock not found");
   assert.match(mdBlock, /marked\.parse\(/);
   // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string)
-  assert.match(mdBlock, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty\)\.childNodes\)\);/);
+  assert.match(mdBlock, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/);   // the second argument is the viewer's own pass (the heading ids), run inside the call
   assert.doesNotMatch(mdBlock, /box\.innerHTML = /, "nothing reaches the viewer's innerHTML unsanitized");
 });
 

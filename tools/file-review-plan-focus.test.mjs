@@ -68,8 +68,10 @@ test('the focus as stated is the code\'s: set before the render, given to the ru
   assert.ok(note.includes('Without a focus the rule is unchanged'));
   assert.ok(layout.includes('if (f < 0) {\n    for (const it of items) if (it.desired === null) put(it, floor);\n    for (const { it } of marked) put(it, Math.max(it.desired as number, floor));'), 'the old rule, verbatim, without a focus');
   assert.ok(note.includes('`focusOn`, which `goTo` and `scrollCard` call and which runs a pass when the focus changed'));
-  assert.ok(/goTo\(key: string\): void \{\n\s*if \(this\.margin && this\.focusOn\(key\) && this\.centerOn\(key\)\) return;/.test(panel));
-  assert.ok(/scrollCard\(id: string\): void \{\n\s*if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/.test(panel));
+  // the statements before the focus line are Slice 4's (plans/markdown-viewer.md): a mark inside a closed <details> is revealed
+  // first, and the pass that follows a reveal reads the opened fold; the focus, then the centering, come next as before
+  assert.ok(/goTo\(key: string\): void \{\n\s*const opened = this\.revealMarks\(key\);[^\n]*\n\s*if \(opened && this\.margin\) this\.placeCards\(false\);[^\n]*\n\s*if \(this\.margin && this\.focusOn\(key\) && this\.centerOn\(key\)\) return;/.test(panel));
+  assert.ok(/scrollCard\(id: string\): void \{\n\s*if \(this\.margin && this\.revealMarks\(id\)\) this\.placeCards\(false\);[^\n]*\n\s*if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/.test(panel));
   assert.ok(/private focusOn\(key: string\): boolean \{[\s\S]*?if \(this\.focusCard !== key\) \{ this\.focusCard = key; this\.placeCards\(false\); \}/.test(panel));
   assert.ok(panel.includes('if (!wasOpen) this.focusCard = x.dataset.id;'), 'the head-click listener sets the focus for a card that opens');
   assert.ok(note.includes('The focus clears when the list no longer holds the card (a status, the filter, a fold), when the layout ends (`layoutOff`: the fold to the list, edit mode, the panel\'s close) and with the panel (`dispose`)'));

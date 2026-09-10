@@ -78,9 +78,10 @@ import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
 import { hostOf, bareId } from "./host-prefix";
 import { loadSettings, saveSettings, onExternalSettingsChange, type CommentsFilter } from "./settings";   // Show changes inline and the filter: the shared, persisted webview settings (the inline-display and filter follow-ons, 2026-09-07)
-import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine } from "./anchor-map";
+import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, trimCollapsedMarks, rawOffsetToLine } from "./anchor-map";
 import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
+import { revealFragmentTarget } from "./md-sanitize";   // the HTML spec's ancestor revealing steps, run on a mark inside a closed <details> before any scroll to it (revealMarks)
 import {
   type Status, type Hunk, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, unsentCount, cardCounts, filterOffered, detachedChanges,
@@ -268,6 +269,10 @@ const IMG_INLINE = new RegExp("!\\[(" + LABEL + ")\\]\\([ \\t]*(?:<([^<>\\n]*)>|
 const IMG_FULL_REF = new RegExp("!\\[(" + LABEL + ")\\]\\[(" + LABEL + ")\\]", "g");
 const IMG_SHORT_REF = new RegExp("!\\[(" + LABEL + ")\\](?![\\[(])", "g");
 const IMG_HTML = /<img\b[^>]*?\bsrc[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/gi;
+// Obsidian's embed, `![[image.png]]` or `![[image.png|300]]` (Slice 4 of plans/markdown-viewer.md; md-config.ts renders
+// the image ones as an <img> the viewer rewrites like `![](image.png)`): the destination is the target before any `|`,
+// trimmed as the renderer trims it. The host (tools/file-comments-host.mjs) reads the same form.
+const IMG_WIKI = /!\[\[([^\[\]|\n]+?)(?:\|[^\[\]\n]*)?\]\]/g;
 const REF_DEF = /^ {0,3}\[((?:\\.|[^\[\]\\])+)\]:[ \t]*<?([^\s>]+)>?/gm;
 const normLabel = (s: string): string => s.trim().replace(/\s+/g, " ").toLowerCase();
 /** Offsets of the source's fenced code blocks, [start, end): an embed written inside one renders as text. */
@@ -299,11 +304,12 @@ export function imageEmbeds(src: string): ImageEmbed[] {
   const push = (start: number, len: number, dest: string | undefined): void => {
     if (dest !== undefined && !inFence(start)) out.push({ start, end: start + len, dest });
   };
-  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF, IMG_HTML]) re.lastIndex = 0;
+  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF, IMG_HTML, IMG_WIKI]) re.lastIndex = 0;
   while ((m = IMG_INLINE.exec(src))) push(m.index, m[0].length, m[2] ?? m[3] ?? "");
   while ((m = IMG_FULL_REF.exec(src))) push(m.index, m[0].length, defs.get(normLabel(m[2] || m[1])));
   while ((m = IMG_SHORT_REF.exec(src))) push(m.index, m[0].length, defs.get(normLabel(m[1])));
   while ((m = IMG_HTML.exec(src))) push(m.index, m[0].length, m[1] ?? m[2] ?? m[3] ?? "");
+  while ((m = IMG_WIKI.exec(src))) push(m.index, m[0].length, m[1].trim());
   out.sort((a, b) => a.start - b.start);
   return out.filter((e, i) => !i || e.start >= out[i - 1].end);   // a shortcut form inside a longer one: the longer wins
 }
@@ -462,6 +468,21 @@ function btn(label: string, act: string, cls = "fileview-btn"): HTMLButtonElemen
 function cssId(s: string): string {
   return typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(s) : s.replace(/["\\]/g, "\\$&");
 }
+/** Whether `m` stands in content the page keeps off the screen and a scroll cannot bring on: inside a closed <details>
+ *  (below its summary, which is in view already) or under a `hidden="until-found"`. The same two conditions the HTML
+ *  spec's ancestor revealing steps act on (md-sanitize.ts revealFragmentTarget), read without changing anything. */
+function foldedAway(m: Element): boolean {
+  for (let n: Element | null = m; n; n = n.parentElement) {
+    if ((n.getAttribute("hidden") || "").toLowerCase() === "until-found") return true;
+    const p = n.parentElement;
+    if (p && p.localName === "details" && n.localName !== "summary" && !p.hasAttribute("open")) return true;
+  }
+  return false;
+}
+/** Whether a mark of a paint pass still stands in the document, read after the pass's trim (anchor-map.ts trimCollapsedMarks
+ *  unwraps a collapsed blank's mark and removes it): isConnected where the DOM offers it; a stand-in without the property (the
+ *  node tests' DOMs) answers by the parent the removal would have cleared, so nothing there is re-filed as unpainted. */
+const standing = (m: Element): boolean => typeof m.isConnected === "boolean" ? m.isConnected : !!m.parentNode;
 const clock = (t: number | string): string => {
   const d = new Date(t);
   if (isNaN(d.getTime())) return "";
@@ -1006,6 +1027,14 @@ class Panel {
   statusRefusal: { code: string; error: string } | null = null;   // why there is no status, when the kernel refused one
   root: HTMLElement | null = null;          // the aside, built on first open
   marks = new WeakSet<Element>();           // the highlights and picture frames THIS panel painted into the body (owns)
+  /** The Rendered marks of the last paint pass (the highlights, the change marks, the pending target), the layout-time trim's
+   *  subjects (anchor-map.ts trimCollapsedMarks): trimmed once after the pass, again on every reflow, and again when the pending
+   *  target alone is painted or unpainted (trimBlanks; repaintPresel, whose marks join the pass's: the target's, and the marks it
+   *  paints again in the line boxes the target enters and leaves). */
+  passMarks: Element[] = [];
+  /** The pass's change marks by change id (paintChanges under the deferred trim), read once the pass has trimmed: a change whose
+   *  every mark the trim removed is filed as not shown (paintAll), as the unbatched paint would have filed it. */
+  passChanges: Array<{ id: string; marks: Element[] }> = [];
   open = false;
   pending = new Map<number, Pending>();
   appliedReq = 0;                           // the reqId of the newest ask whose reply is showing (applyStatus)
@@ -1158,6 +1187,7 @@ class Panel {
   bodyPad = 0;                                // the end padding the pass gave the body, in px (padBody): the footer's height plus the last card's overhang
   contentWatched = new Set<Element>();        // the body's element children the size observer holds (watchContent: the content's box, which grows when the body's does not)
   layoutFrame: number | null = null;          // the pass scheduled for the next frame (scheduleLayout: one per frame, however many events ask)
+  retrim = false;                             // the standing Rendered marks are measured again in that frame, before the pass (scheduleRetrim: a figure landed or a font face arrived, and the lines re-wrapped with no width report)
   syncFrom: "body" | "track" | null = null;   // the scroller whose write onto the other is still to echo (mirrorScroll)
   sizer: ResizeObserver | null = null;        // the body, the row and the track (the aside's width and height reach it as the track's): a size change re-runs the pass
   cardSizer: ResizeObserver | null = null;    // the cards of the current render: one growing (a crop, a box inside it) pushes the cards below
@@ -1354,13 +1384,33 @@ class Panel {
     ctx.body().addEventListener("load", this.hideFloatOnScroll, true);
     ctx.body().addEventListener("scroll", this.hideFloatOnScroll, { passive: true });
     ctx.onSelection((sel) => this.onSelection(sel));
-    // a PAINT (new nodes): the whole pass over the body. A REFLOW (the same nodes at a new width or text size, a pane drag's
-    // every frame): the marks stand around the same characters, so only what was MEASURED from the text is redone, the
+    // the layout changes that re-wrap the lines with no width report, so the seam fires no reflow (the width observer's report
+    // is its only source): a figure's bytes landing (the same captured `load`; a gated figure's restored media loads through it
+    // too) and a font face arriving (the document's FontFaceSet `loadingdone`: the sheet's faces load with `font-display: swap`,
+    // so the fallback face shows first and every glyph's width changes when Inter lands). Each re-measures the standing marks'
+    // collapsed blanks in the next frame (scheduleRetrim): a space that rendered before is the wrap point now, and its mark
+    // would be the sheet's padding around nothing, a ringed 4 x 18 px box at the end of the line until the next paint pass or
+    // width change (the Slice 4 review, round 13; md-config-paint-retrim-events-browser.test.ts). The third such change is the
+    // panel's own paint: the pending target painted or unpainted alone (repaintPresel), whose 2 px side padding moves the wrap
+    // points of the lines it shares with a highlight; that one is a paint pass over the line boxes the target enters and leaves,
+    // the highlights there painted again with the target inside them and trimmed at once, in the same call (rounds 14 and 15;
+    // md-config-paint-presel-retrim-browser.test.ts). Here at the mount and not with the margin layout's listeners (installLayout,
+    // wired at the first open), since the highlights stand while the panel is closed too. The fonts' listener hangs on the
+    // document, which outlives the viewer: dispose removes it.
+    ctx.body().addEventListener("load", this.scheduleRetrim, true);
+    const fonts = typeof document !== "undefined" ? (document as any).fonts : null;
+    if (fonts && typeof fonts.addEventListener === "function") fonts.addEventListener("loadingdone", this.scheduleRetrim);
+    // a PAINT (new nodes): the whole pass over the body. A REFLOW (the same nodes at a new width or text size: the divider's
+    // release, since the shell moves a ghost line during the drag and lays the pane out once; a text-size step; a window
+    // resize's every frame): the marks stand around the same characters, so only what was MEASURED from the text is redone, the
     // cards' places (scheduleLayout, one pass per frame) and the float, which sat by a passage that has moved. Until
     // 2026-09-09 a reflow ran paintAll too, unwrapping and re-wrapping every highlight and change mark and rebuilding the
     // aside, once per frame of a drag: 1.1 s a frame at 3,000 lines with 200 comments and 200 changes (bench
     // tools/viewer-resize-bench.ts), and the whole dashboard stalled for the drag on a bigger file.
-    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") this.scheduleLayout(); else this.paintAll(); });
+    // ...and on a reflow the Rendered marks' collapsed blanks are measured again first (trimBlanks: a space that rendered at the
+    // old width may be the wrap point at the new one, and its mark would be the sheet's padding around nothing), in the same
+    // frame, so the cards are placed over the marks that stay
+    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") { this.trimBlanks(); this.scheduleLayout(); } else this.paintAll(); });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
       if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)
@@ -1875,6 +1925,9 @@ class Panel {
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     this.ctx.body().removeEventListener("load", this.hideFloatOnScroll, true);
     this.ctx.body().removeEventListener("scroll", this.hideFloatOnScroll);
+    this.ctx.body().removeEventListener("load", this.scheduleRetrim, true);
+    const fonts = typeof document !== "undefined" ? (document as any).fonts : null;
+    if (fonts && typeof fonts.removeEventListener === "function") fonts.removeEventListener("loadingdone", this.scheduleRetrim);   // the document outlives the viewer
     document.removeEventListener("keydown", this.escapeReplace, true);
     this.failAll("the file viewer closed");
     if (live === this) live = null;   // …and the window's save-chord claim (claimSaveChord reads `live`) is no longer this box's
@@ -3155,6 +3208,11 @@ class Panel {
     if (this.status && this.textCurrent(this.status)) this.bytesLanded();   // the view shows the status's text: a reject's reload has landed
     if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
     const rendered = this.ctx.mode() === "rendered";
+    // the pass's Rendered marks, painted with the trim deferred (`trim: false`) and trimmed ONCE after the pass (trimBlanks):
+    // the trim measures its marks against the layout, and a measurement after each call's wraps lays the mutated block out
+    // again, 0.45 ms a call on a 12k-element note, 90 ms added to a 200-comment pass; batched, the pass pays one layout
+    this.passMarks = []; this.passChanges = [];
+    const byCard: Array<{ id: string; marks: Element[] }> = [];
     // the comment highlights — unless the filter shows the changes alone (activeFilter), when the text wears the change
     // marks only; the cards the filter hides are not rendered, so nothing reads `located` for them
     for (const card of this.activeFilter() === "changes" ? [] : this.cards()) {
@@ -3171,9 +3229,10 @@ class Panel {
       let painted = false;
       if (loc.state !== "detached" && loc.range) {
         const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");
-        const out = rendered ? paintRendered(root, src, loc.range, cls, { act: "fcopen", id: card.id })
+        const out = rendered ? paintRendered(root, src, loc.range, cls, { act: "fcopen", id: card.id }, { trim: false })
           : paintRaw(root, src, loc.range, cls, { act: "fcopen", id: card.id });
         painted = !!out && out.length > 0;
+        if (rendered && out) { this.passMarks.push(...out); byCard.push({ id: card.id, marks: out }); }
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
         // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
@@ -3186,11 +3245,56 @@ class Panel {
       }
       this.located.set(card.id, { ...loc, painted });
     }
-    this.paintChanges(root, src, rendered);
+    this.paintChanges(root, src, rendered, true);
     this.paintPresel(root, src, rendered);
+    this.trimBlanks();
+    // a card whose every mark was a collapsed blank (a passage of one zero-width character) shows nothing: card only, as the
+    // unbatched paint would have said (paintRendered returns null once its marks are trimmed)
+    for (const c of byCard) { const l = this.located.get(c.id); if (l && l.painted && !c.marks.some(standing)) this.located.set(c.id, { ...l, painted: false }); }
+    // ...and a change whose every mark was one (an inserted zero-width space) is filed as not shown the same way, so its card wears
+    // the tag and offers Reveal (renderChangeCard) instead of claiming a mark the body does not hold; a substitution keeps its
+    // deletion point, a span the trim never measures, and stays shown (the Slice 4 review, round 13)
+    for (const c of this.passChanges) if (!c.marks.some(standing)) this.paintedChanges.delete(c.id);
     this.paintRegions();
     if (held) this.refocusMark(held);
     this.render();
+  }
+  /** The layout-time trim over the pass's standing Rendered marks (anchor-map.ts trimCollapsedMarks: a mark whose text is blank
+   *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every
+   *  mark of it in one measurement, and again on the seam's reflow, when a blank that rendered at the old width may be the
+   *  wrap point at the new one. A mark the trim or the unpaint already removed is skipped; a blank trimmed at the old width
+   *  that renders at the new one is not re-wrapped, and stays bare until the next paint pass (the trim's header). The price, on
+   *  the shape the plan accepts the paint's cost for (one comment across a paragraph of 5,000 links, about 4,600 blank marks):
+   *  seconds per reflow in the real pane at a divider release, a text-size step and a window-resize step, the first measurement
+   *  of each pass after the one before it unwrapped laying the mutated paragraph out again (1 to 1.5 s a layout there) and the
+   *  loop running to convergence (the figures are recorded in plan item 2 and anchor-map.ts's Event-based paragraph; the Slice 4
+   *  review's round 13 measured 1.5 to 4.6 s under the three-pass cap the same round replaced with the convergence loop, which
+   *  raised it); realistic shapes cost under 10 ms (200 comments over 300 paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to
+   *  11 ms). The divider's drag itself pays nothing: the shell moves a ghost line and lays the pane out once, at release; a
+   *  window-edge resize reflows every frame, and pays this per frame. */
+  private trimBlanks(rearm = true): void {
+    this.passMarks = this.passMarks.filter(standing);
+    if (!this.passMarks.length) return;
+    // the pane hidden (a display:none iframe, the phone shell's every tab switch; the body has no box): every blank mark measures no
+    // width and no box of its own and is kept, its blank one that may render on the show. Two paths re-trim the show, and which
+    // runs is whether a lifecycle update ran in the hidden frame between the hide and the show. One did (a hide that outlasts a
+    // frame; in headless Chromium every such hide of the Slice 4 review's round 14 probes, 10 of 10): the seam's width observer
+    // reports the hide, contentRect 0, and then the show, as reflows, and the reflow hook's trimBlanks measures the marks with the
+    // body's box back. None did (the hide and the show in one task): no observer reports either, the body's width stays the one last
+    // observed, and the frame this trim asks for on finding no box (scheduleRetrim) is the first after the show and measures the
+    // marks there; that is the re-arm's whole case. A hidden frame is NOT frameless: Chromium runs a display:none same-origin
+    // frame's requestAnimationFrame at full rate (26 callbacks in 400 ms hidden, round 14), so in the first case the frame the
+    // hide's trim asked for runs hidden, measures the marks without a box and keeps them all, and the reflow report does the show's
+    // work (round 13 recorded that frame as the first after the show, which holds in the second case alone). The frame's own trim
+    // never re-arms (rearm false), so an event that finds the body without a box costs one measurement more, in its frame, and
+    // never one per frame (md-config-paint-retrim-events-browser.test.ts leg 4, the one-task shape, and leg 5, the hide that
+    // outlasts frames: two trims for the hide and two for a paint made hidden, none per frame, one for the show). The box is read
+    // BEFORE the trim, with the layout the trim's first measurement forces anyway; read after its unwraps it would force a second
+    // layout of the mutated blocks.
+    const body = this.ctx.body();
+    const boxless = rearm && typeof body.getClientRects === "function" && body.getClientRects().length === 0;
+    this.passMarks = trimCollapsedMarks(this.passMarks);
+    if (boxless) this.scheduleRetrim();
   }
   // The marks in the BODY are controls too (KEY_ACTS: a highlight, a change mark, a rectangle), and every paint pass
   // rebuilds them — so a status landing while the keyboard was on one left it on the body, the way Enter on a card's
@@ -3246,7 +3350,7 @@ class Panel {
   /** The change marks, after the comment highlights (D5): stylesFor hands each mark the author's session colour
    *  from the Slice 1 colour map as `--fc-author` (nothing when unknown: the sheet's neutral). Every painted
    *  element is a control (it opens the card) and the panel's own (owns), like a comment highlight. */
-  private paintChanges(root: Element, src: string, rendered: boolean): void {
+  private paintChanges(root: Element, src: string, rendered: boolean, deferTrim = false): void {
     const s = this.status;
     if (!this.inline) return;                          // Show changes inline is off: no mark in either view, the cards say everything
     if (this.activeFilter() === "comments") return;    // the filter shows the comments alone: no change mark, the setting above untouched
@@ -3274,21 +3378,33 @@ class Panel {
       // paint ADDED: a `data-act="fcchange"` the file's author wrote survives the sanitizer, and swept in it would pass
       // owns() and act as a control (the delegate root's rule above)
       const before = new Set(Array.from(root.querySelectorAll('[data-act="fcchange"]')));
-      const r = paintChangesRendered(root, src, changes, stylesFor);
+      const r = paintChangesRendered(root, src, changes, stylesFor, { trim: !deferTrim });
       for (const id of r.painted) this.paintedChanges.add(id);
       marks = Array.from(root.querySelectorAll('[data-act="fcchange"]')).filter((m) => !before.has(m));
+      this.passMarks.push(...marks);
+      // under the deferred trim the painted ids are provisional: the pass confirms each against the marks that stay once it has
+      // trimmed (paintAll reads passChanges), since paintChangesRendered reports a change painted by its untrimmed marks
+      if (deferTrim) for (const id of r.painted) this.passChanges.push({ id, marks: marks.filter((m) => (m as HTMLElement).dataset.id === id) });
     } else {
       marks = paintChangesRaw(root, src, changes, stylesFor);
       for (const m of marks) { const id = (m as HTMLElement).dataset.id; if (id) this.paintedChanges.add(id); }
     }
     for (const m of marks) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open this change"; this.mark(m); }
   }
-  private paintPresel(root: Element, src: string, rendered: boolean): void {
+  /** The composer's pending target, painted with the trim deferred (`trim: false`) like every mark of a pass and added to the pass's
+   *  standing marks: the caller trims once after it (paintAll's pass and repaintPresel, trimBlanks), so the target's own collapsed
+   *  blanks and a standing highlight's blanks that its padding moved to a wrap point are measured in one layout. Returns the
+   *  Rendered marks it added (none in the Raw view, for a composer of another kind, or for a target the text no longer matches):
+   *  repaintPresel reads their line boxes. Until the Slice 4 review's round 14 the repaint alone trimmed the target's own marks and
+   *  left the highlight's (repaintPresel says what stood). */
+  private paintPresel(root: Element, src: string, rendered: boolean): Element[] {
     const c = this.composer;
-    if (!c || c.kind !== "comment" || !c.range || c.text !== src) return;   // the range indexes c.text; over other bytes it would paint the wrong span
-    if (!rendered) { paintRaw(root, src, c.range, "fc-presel"); return; }
-    const out = paintRendered(root, src, c.range, "fc-presel");
+    if (!c || c.kind !== "comment" || !c.range || c.text !== src) return [];   // the range indexes c.text; over other bytes it would paint the wrong span
+    if (!rendered) { paintRaw(root, src, c.range, "fc-presel"); return []; }
+    const out = paintRendered(root, src, c.range, "fc-presel", undefined, { trim: false });
+    if (out) this.passMarks.push(...out);
     if (!out || !out.length) { const img = imgForRange(root, src, c.range, this.ctx.path); if (img) frameImage(img, "fc-presel"); }
+    return out || [];
   }
   /** Unwrap painted marks: the text nodes go back in place and the parent is normalized. A framed
    *  picture is stripped of its marks instead — unwrapping an <img> would remove the picture. */
@@ -3301,11 +3417,160 @@ class Panel {
       p.removeChild(n); p.normalize();
     }
   }
+  /** The box whose line boxes hold `m`: its nearest ancestor whose width does not follow its content, so that a mark's 2 px side
+   *  padding inside it moves the wrap points of that box's lines and of no other box's. That is a block (the paragraph, the list
+   *  item, the table element, which the sheet lays out as a block of its content's width capped at the pane's), found by climbing
+   *  past every inline-level box (a computed display of `inline`, `contents`, `ruby` or an `inline-*` box: the embed chip
+   *  `a.fv-embed` is an inline-block whose width is its text's, so a mark inside it grows the chip by the padding and moves the
+   *  wrap points of the paragraph around it; taken as the box, the chip held no highlight, the paragraph's went unrepainted, and
+   *  its blanks trimmed at the pending wrap points stood bare after Cancel, round 14's symptom in a shape the constructs note
+   *  ships, the Slice 4 review's round 16) and every table part (a `table-*` display: a cell's width is its column's, shared with
+   *  the cells of the other rows, and the auto layout redistributes the columns when a cell's content grows); the root when none
+   *  is found below it. This is the scope of the repaint the pending target's paint and unpaint run (repaintPresel). `memo` is
+   *  per call, keyed on the parent: the marks of one passage share a few. A document with no computed style (a stand-in)
+   *  answers the parent. */
+  private lineBoxOf(m: Element, root: Element, memo: Map<Element, Element>): Element {
+    const p = m.parentNode as Element | null;
+    if (!p || p === root || p.nodeType !== 1) return root;
+    const hit = memo.get(p);
+    if (hit) return hit;
+    const d = typeof getComputedStyle === "function" ? getComputedStyle(p).display : "block";
+    const follows = d === "contents" || d.startsWith("inline") || d.startsWith("ruby") || d.startsWith("table-");   // a box whose width follows its content, or none of its own
+    const box = follows ? this.lineBoxOf(p, root, memo) : p;
+    memo.set(p, box);
+    return box;
+  }
+  /** Unwrap these marks: the text nodes go back in place and each parent is normalized (unpaint's own step, over elements the
+   *  caller holds rather than a selector). */
+  private unwrap(marks: Element[]): void {
+    for (const n of marks) {
+      const p = n.parentNode; if (!p) continue;
+      while (n.firstChild) p.insertBefore(n.firstChild, n);
+      p.removeChild(n); p.normalize();
+    }
+  }
+  /** The pending target repainted alone (a composer opened, closed or moved: startComment, closeComposer and the other sites), as
+   *  a paint pass over the LINE BOXES the target leaves and enters (lineBoxOf). The target's 2 px side padding is in the layout,
+   *  so painting it moves the wrap points of the lines it shares with a highlight, and unpainting it moves them back; the trim
+   *  (anchor-map.ts trimCollapsedMarks) unwraps a blank mark that collapses at a wrap point and never re-wraps one, so a trim
+   *  alone leaves the highlight's ring gapped at every blank that renders again once the wrap points moved: the Slice 4 review's
+   *  round 14 trimmed the standing marks after the target's paint and left, on the list item of fourteen links selected whole
+   *  over its comment, 2 to 4 of the highlight's spaces bare after Cancel for as long as the file stayed open, and while the
+   *  composer stood 4 and 2 of them at 300 and 400 px, 2 and 1 with four of the links selected (39 of the 120-link item's 119
+   *  spaces at 800 px). So the target's arrival and departure are paint events for the marks whose lines they move, and the repaint
+   *  is the pass over them, in three parts. The boxes are closed under the highlights standing in them: a highlight found in one is
+   *  unwrapped whole and painted again over its full range, so every box its own marks stand in is one the repaint changes too, and
+   *  the highlights standing THERE go with it, until no highlight is new (round 15 read the target's boxes alone, and a highlight
+   *  painted again in a box the target never touched landed inside the highlight or change mark standing there, a deletion point
+   *  between two of its marks, the nesting the pass gives them inverted). The highlights of that set are then unpainted and painted
+   *  again, with the same range, classes and attributes, in the pass's order, cards() (the model's order by time, so the later
+   *  comment nests inside the earlier where two overlap, and a click on the overlap opens the innermost mark's card, the later
+   *  comment's); round 15 painted them in the order of their first marks, so two overlapping comments whose order by time was not
+   *  their order in the text swapped nesting at every open and close and back at the next pass, the click on the overlap opening
+   *  the other card meanwhile. The change marks are unpainted and painted again WHOLE-DOCUMENT, through paintChanges, when one
+   *  stands in any of the boxes: paintChanges paints every hunk of the status and has no per-change scope, and an unpaint of one
+   *  box's change marks alone would split a change that spans boxes (a deletion point is placed against its new text's first mark).
+   *  Its price, on a note of a hundred paragraphs with an insertion in each (100 change marks painted again; round 16's measurement
+   *  in the real Files pane at 1000 px, headless Chromium, three runs): an open 12 to 14.5 ms and a Cancel 11 to 12 ms, against 1.7
+   *  to 3.6 and 1.1 to 1.6 ms with the target in a paragraph no change mark shares. Then the one batched trim over the standing
+   *  marks; the target is painted once before, so its boxes can be read, and again in its place, inside the highlights as the pass
+   *  paints it. A repaint that adds and removes no Rendered mark (a reply, a comment on a deletion or a detached change, a
+   *  re-place, a comment on the file, a region, a refusal, the Raw view's row mark) changes no line and measures nothing
+   *  (md-config-paint-presel-kinds-browser.test.ts: zero Range measurements for those kinds). After the repaint the boxes' marks
+   *  are what a paint pass leaves under the same target: no padding-only mark and no bare rendered blank beyond the pass's own
+   *  recorded shape, pending and after Cancel alike (md-config-paint-presel-retrim-browser.test.ts, the item of fourteen links at
+   *  300 to 600 px, the whole item and four of its links), the nesting of overlapping comments and of a highlight over a change
+   *  mark the pass's, and a target inside the embed chip repainting the paragraph around it
+   *  (md-config-paint-presel-scope-browser.test.ts, round 16). The price is a fresh paint of the boxes' marks to the trim's
+   *  fixpoint, one layout a pass (round 15's measurements in the real Files pane at 1000 px, headless Chromium, three runs each,
+   *  the round 14 tree measured in the same run): the item of fourteen links 5 to 6.5 ms an open and 2.2 to 2.5 ms a Cancel (two
+   *  passes; 3.7 to 5 and 1.4 to 2.1 before), the 120-link item 27 to 39 and 14 to 22 ms (three passes; 14 to 16 and 4.4 to 5.1
+   *  before), forty comments over sixty paragraphs 3 to 5 and 1.4 to 1.7 ms (no blank candidate, so a trim that measures nothing);
+   *  one comment across the paragraph of 5,000 links (9,511 marks) 6.0 to 6.2 s an open (three passes, 13,821 Range.getClientRects
+   *  calls) and 3.2 to 3.3 s a Cancel (two, 9,510), against 2.7 to 2.8 and 1.3 s for round 14's trim of the standing marks (two
+   *  passes and one) and about 1.3 s for main's untrimmed paint, the recorded shape (plan item 2, the paint's cost) and not
+   *  optimised; the passes are the fixpoint's, so no reordering makes them fewer. A composer that paints no target costs the
+   *  render alone (a reply on that paragraph 20 to 28 ms, a comment on the file 1.5; 38 to 42 and 18 to 22 with round 14's trim of
+   *  4,260 measurements). What the repaint painted again it re-files as the pass does (paintAll's two filings): a highlight whose
+   *  every mark the trim removed is filed as not painted, a change whose every mark it removed as not shown, and a change whose
+   *  mark stands again as shown; and when a filing moved the cards are rendered HERE, since the callers render the composer alone
+   *  after a passage's Comment and after Cancel (renderFrom) and the cards read the filings at render time (renderChangeCard's tag,
+   *  Reveal and link; renderCard's link and Reveal). The Slice 4 review's round 17 found the tag stale in both directions on a
+   *  session's insertion of one soft hyphen, a character the index records and the trim measures, rendered as a hyphen at a line
+   *  break and as nothing elsewhere, so the target's padding moving the paragraph's wrap point across it moved the filing at every
+   *  open and Cancel while the card said the opposite until the next render (a plain space never reaches the shape: the index skips
+   *  whitespace, so it is never painted; md-config-paint-presel-refile-browser.test.ts, both directions, the paragraph in a
+   *  monospace face at a fixed measure so the wrap point is the design's and not the face's). A filing that did not move renders
+   *  nothing: the caller's render stands, and no card moves on no new information. */
   private repaintPresel(): void {
-    this.unpaint(".fc-presel");
     const src = this.ctx.text(); const root = this.contentRoot();
-    if (src !== null && root) this.paintPresel(root, src, this.ctx.mode() === "rendered");
+    if (src === null || !root || this.ctx.mode() !== "rendered") {   // a media body, or the Raw view (a row mark, no layout-time trim)
+      this.unpaint(".fc-presel");
+      if (src !== null && root) this.paintPresel(root, src, false);
+      this.paintRegions();
+      return;
+    }
+    const isMark = (m: Element): boolean => m.tagName.toUpperCase() === "MARK";
+    const memo = new Map<Element, Element>(); const boxes = new Set<Element>();
+    for (const m of Array.from(root.querySelectorAll(".fc-presel"))) if (isMark(m)) boxes.add(this.lineBoxOf(m, root, memo));
+    this.unpaint(".fc-presel");
+    for (const m of this.paintPresel(root, src, true)) boxes.add(this.lineBoxOf(m, root, memo));
+    if (!boxes.size) { this.paintRegions(); return; }   // no Rendered mark came or went: the layout is the one the last trim measured
+    const held = this.heldMark();
+    // the panel's highlights standing in those boxes, by card, and the boxes closed under them (the docblock): each highlight found
+    // adds the boxes of its own marks, read in their turn, until none is new
+    const ids = new Set<string>(); const queue = Array.from(boxes);
+    while (queue.length) {
+      const b = queue.shift()!;
+      for (const m of Array.from(b.querySelectorAll('[data-act="fcopen"]'))) {
+        const id = (m as HTMLElement).dataset.id;
+        if (!id || !isMark(m) || !this.marks.has(m) || ids.has(id)) continue;
+        ids.add(id);
+        for (const own of this.ownMarks("fcopen", id)) if (isMark(own)) { const bx = this.lineBoxOf(own, root, memo); if (!boxes.has(bx)) { boxes.add(bx); queue.push(bx); } }
+      }
+    }
+    // ...and whether a change mark of ours stands in any of them: a tinted mark or a deletion point (the `span.fc-del` the pass puts
+    // inside the highlight it falls in; a highlight painted again around a standing point lands split on either side of it)
+    let changes = false;
+    for (const b of boxes) { if (Array.from(b.querySelectorAll('[data-act="fcchange"]')).some((m) => this.marks.has(m))) { changes = true; break; } }
+    const shownBefore = changes ? new Set(this.paintedChanges) : null;   // the pass's filing of the changes, read against the repaint's below
+    // the highlights in the pass's order: cards(), and after them any mark whose card the model no longer lists, in document order
+    const order = this.cards().map((c) => c.id).filter((id) => ids.has(id));
+    for (const id of ids) if (!order.includes(id)) order.push(id);
+    const again: Array<{ id: string; range: SourceRange; own: HTMLElement[] }> = [];
+    for (const id of order) {
+      const loc = this.located.get(id); const own = this.ownMarks("fcopen", id).filter(isMark);
+      if (loc && loc.range && own.length) again.push({ id, range: loc.range, own });
+    }
+    if (again.length || changes) {
+      this.unpaint(".fc-presel");
+      for (const a of again) this.unwrap(a.own);
+      if (changes) { unpaintChanges(this.ctx.body()); this.passChanges = []; }
+      for (const a of again) {
+        const like = a.own[0];
+        const out = paintRendered(root, src, a.range, like.className, { act: "fcopen", id: a.id }, { trim: false }) || [];
+        this.passMarks.push(...out);
+        for (const m of out) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = like.title; if (like.dataset.new) (m as HTMLElement).dataset.new = like.dataset.new; this.mark(m); }
+      }
+      if (changes) this.paintChanges(root, src, true, true);
+      this.paintPresel(root, src, true);
+    }
+    this.trimBlanks();
+    // the re-filing, the pass's (paintAll): a highlight or a change whose every mark the trim removed is filed as not painted or not
+    // shown, a change whose mark stands again as shown; `refiled` when a card's filing moved, since the cards read it at render time
+    let refiled = false;
+    for (const a of again) {
+      const l = this.located.get(a.id); if (!l) continue;
+      const painted = this.ownMarks("fcopen", a.id).length > 0;
+      if (painted !== l.painted) { refiled = true; this.located.set(a.id, { ...l, painted }); }
+    }
+    if (shownBefore) {
+      for (const c of this.passChanges) if (!c.marks.some(standing)) this.paintedChanges.delete(c.id);
+      if (this.paintedChanges.size !== shownBefore.size || Array.from(this.paintedChanges).some((id) => !shownBefore.has(id))) refiled = true;
+    }
+    if (held) this.refocusMark(held);
     this.paintRegions();                               // the composer's pending region and the re-place cue live on the overlays
+    if (refiled) this.render();                        // a filing moved: the cards say so now, in the same call (the docblock)
   }
   /** The body was repainted, possibly over NEW text (the poll saw the file move and reloaded it; Reload;
    *  a refresh; a save through the editor): a pending passage follows its passage into that text
@@ -3711,6 +3976,8 @@ class Panel {
    *  document, and a body-wide first match would scroll to that. A region comment's mark is its rectangle (.fc-region,
    *  painted by paintRegions). No mark of ours in the view: Reveal. */
   goTo(key: string): void {
+    const opened = this.revealMarks(key);              // a fold around the mark opens first, in either layout: the content below it moved
+    if (opened && this.margin) this.placeCards(false); // ...and centerOn reads the placement, so the pass runs over the opened fold (a focus change below runs one of its own)
     if (this.margin && this.focusOn(key) && this.centerOn(key)) return;   // the margin layout: the card the focus, level with its mark; the mark to the body's center, the card beside it (the lock brings the track)
     const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
     const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
@@ -3808,14 +4075,38 @@ class Panel {
     row.classList.remove("fc-landing");
     row.style.background = ""; row.style.boxShadow = "";
   }
+  /** A card's marks brought out of any fold before a scroll to them. A comment on a folded callout's body (`> [!type]-`),
+   *  on the front matter (both closed <details> from plain markdown since Slice 4 of plans/markdown-viewer.md) or on prose
+   *  inside an author's own <details> paints inside the fold: the browser lays the hidden content out on a forced read, so
+   *  the mark HAS a box (the margin pass placed its card level with a phantom) but nothing of it shows, and centerOn or
+   *  scrollIntoView brought a shut fold to the center with no highlight anywhere, the card saying nothing of it (the
+   *  Slice 4 review). The HTML spec's ancestor revealing steps, which the browser's own fragment navigation runs and
+   *  scrollIntoView does not, open every closed details on the way up and drop a `hidden="until-found"`
+   *  (revealFragmentTarget, what the viewer's `#` landing runs). Returns whether anything opened: in the margin layout the
+   *  caller then re-runs the pass at once, since the fold's opening moved every mark below it and centerOn reads the
+   *  placement, not the DOM. The panel's OWN marks only (ownMarks), as every scroll to a mark reads them. */
+  private revealMarks(key: string): boolean {
+    const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
+    let opened = false;
+    for (const m of this.ownMarks(act, id)) {
+      if (!foldedAway(m)) continue;
+      revealFragmentTarget(m);
+      opened = true;
+    }
+    return opened;
+  }
   /** The card into view: in the margin layout it is made the focus first, so the pass lays it level with its mark before
-   *  the scroll reads where it stands. Every caller sets the focus on its own path too (showCard; goTo; the saved line's
-   *  click reaches a card landSaved made the focus when the save landed), and the setter stays HERE all the same: when the
-   *  save itself scrolled here (before decision 43) it was the one caller with no setter before it, and a reply saved on
-   *  an open card that was not the focus — the change mark above it clicked since the card was opened, the card pushed
-   *  under the tall change card — was scrolled to where the push-down rule left it, its mark brought into view with the
-   *  card a viewport below, the defect the focus follow-on fixed (the verification review, 2026-09-09). */
+   *  the scroll reads where it stands. Two callers set the focus on their own path before this one (showCard; the saved
+   *  line's click, fcsavedgo, reaches a card landSaved made the focus when the save landed) and one does not, the re-place
+   *  drag (onRegionDrawn opens the card, renders and scrolls here), so for that path the setter HERE is the only one; goTo
+   *  never comes through here and sets the focus the same way itself (focusOn). The setter stays here for the reason it was
+   *  added: when the save itself scrolled here (before decision 43) it was the one caller with no setter before it, and a
+   *  reply saved on an open card that was not the focus (the change mark above it clicked since the card was opened, the
+   *  card pushed under the tall change card) was scrolled to where the push-down rule left it, its mark brought into view
+   *  with the card a viewport below, the defect the focus follow-on fixed (the verification review, 2026-09-09). A fold
+   *  around the mark opens before either pass (revealMarks). */
   scrollCard(id: string): void {
+    if (this.margin && this.revealMarks(id)) this.placeCards(false);   // the margin layout scrolls to the mark: a fold around it opens first, and the pass reads the moved content
     if (this.margin && this.focusOn(id) && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: the card the focus, level with its mark, its mark to the center; a loose card into the track's box, the body along with it
     this.root?.querySelector('.fc-card[data-id="' + cssId(id) + '"]')?.scrollIntoView({ block: "nearest" });
   }
@@ -3858,19 +4149,35 @@ class Panel {
     const row = this.ctx.body().parentElement;
     return !!row && getComputedStyle(row).flexDirection !== "column";
   }
-  /** One pass per frame, however many events ask for it (a figure's load, a resize, a card's growth). */
+  /** One pass per frame, however many events ask for it (a figure's load, a resize, a card's growth): the frame runs the re-trim
+   *  the events asked for (retrim), then places the cards (layoutPass). A closed panel gets a frame for a re-trim alone, its
+   *  highlights standing, and the pass then returns at once. */
   private scheduleLayout(): void {
-    if (this.layoutFrame !== null || !this.open) return;
-    if (typeof requestAnimationFrame !== "function") { this.placeCards(false); return; }
-    this.layoutFrame = requestAnimationFrame(() => { this.layoutFrame = null; this.placeCards(false); });
+    if (this.layoutFrame !== null || !(this.open || this.retrim)) return;
+    if (typeof requestAnimationFrame !== "function") { this.layoutPass(); return; }
+    this.layoutFrame = requestAnimationFrame(() => { this.layoutFrame = null; this.layoutPass(); });
   }
+  /** The frame's work: the standing marks' collapsed blanks measured again when an event asked for it (scheduleRetrim), first, so
+   *  the cards are placed over the marks that stay; then the pass (placeCards returns at once when the panel is closed). */
+  private layoutPass(): void {
+    if (this.retrim) { this.retrim = false; this.trimBlanks(false); }
+    this.placeCards(false);
+  }
+  /** The standing Rendered marks measured again (trimBlanks) in the next frame, one trim however many events ask, and the cards
+   *  re-placed after it in the same frame: a figure's bytes landing or a font face arriving re-wraps the lines with no width report,
+   *  so the seam fires no reflow (the mount's listeners say why; md-config-paint-retrim-events-browser.test.ts). */
+  scheduleRetrim = (): void => { this.retrim = true; this.scheduleLayout(); };
   /** After every render: the pass, then the centering a head click asked for — in that order, so the expanded card's
    *  new height has pushed the cards below it before anything scrolls (no jump after the expand). Only a card the
-   *  click OPENED is centered: a fold is a dismissal, and the text should not move for it. */
+   *  click OPENED is centered: a fold is a dismissal, and the text should not move for it. A mark inside a closed
+   *  <details> is brought out of it BEFORE the pass (revealMarks): the centering is a scroll to the mark, and the pass
+   *  must measure the content as the opened fold lays it out. */
   private afterRender(): void {
-    this.placeCards(true);
     const intent = this.expandIntent; this.expandIntent = null;
-    if (intent && this.margin && !intent.wasOpen && this.openCards.has(intent.key)) this.centerOn(intent.key);
+    const opening = intent !== null && !intent.wasOpen && this.openCards.has(intent.key);
+    if (opening && this.margin) this.revealMarks(intent!.key);
+    this.placeCards(true);
+    if (opening && this.margin) this.centerOn(intent!.key);
     if (this.savedOut && !this.margin) this.reflect();   // the list layout: the saved line follows the cards as this render laid them (reflectLines); only a render moves them there, and the margin pass re-reads at its own end
   }
   /** The margin pass: card-layout.ts decides, this measures and applies. The mode first — a change toggles the

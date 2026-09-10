@@ -1111,6 +1111,9 @@ const LABEL = '(?:\\\\.|[^\\[\\]\\\\])*';
 const IMG_INLINE = new RegExp('!\\[(' + LABEL + ')\\]\\([ \\t]*(?:<([^<>\\n]*)>|([^\\s()]*(?:\\([^\\s()]*\\)[^\\s()]*)*))(?:[ \\t]+(?:"[^"]*"|\'[^\']*\'|\\([^()]*\\)))?[ \\t]*\\)', 'g');
 const IMG_FULL_REF = new RegExp('!\\[(' + LABEL + ')\\]\\[(' + LABEL + ')\\]', 'g');
 const IMG_SHORT_REF = new RegExp('!\\[(' + LABEL + ')\\](?![\\[(])', 'g');
+// Obsidian's embed, `![[image.png]]` or `![[image.png|300]]`: the destination is the target before any `|`, trimmed
+// (the panel's reading, ui/webview/file-comments.ts IMG_WIKI; Slice 4 of plans/markdown-viewer.md). Linear like the rest.
+const IMG_WIKI = /!\[\[([^\[\]|\n]+?)(?:\|[^\[\]\n]*)?\]\]/g;
 const IMG_OPEN = /<img\b/gi;
 const SRC_ATTR = /\bsrc[ \t]*=[ \t]*/gi;
 const NOT_BARE = /[\s"'>]/;
@@ -1219,10 +1222,11 @@ export function imageEmbeds(text) {
   const push = (start, len, dest) => {
     if (dest !== undefined && !inFence(start)) out.push({ start, end: start + len, dest });
   };
-  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF]) re.lastIndex = 0;
+  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF, IMG_WIKI]) re.lastIndex = 0;
   while ((m = IMG_INLINE.exec(text))) push(m.index, m[0].length, m[2] ?? m[3] ?? '');
   while ((m = IMG_FULL_REF.exec(text))) push(m.index, m[0].length, defs.get(normLabel(m[2] || m[1])));
   while ((m = IMG_SHORT_REF.exec(text))) push(m.index, m[0].length, defs.get(normLabel(m[1])));
+  while ((m = IMG_WIKI.exec(text))) push(m.index, m[0].length, m[1].trim());
   for (const t of htmlImgTags(text)) push(t.start, t.end - t.start, t.dest);
   out.sort((a, b) => a.start - b.start);
   return out.filter((e, i) => !i || e.start >= out[i - 1].end);   // a shortcut form inside a longer one: the longer wins

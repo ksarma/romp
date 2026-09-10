@@ -466,6 +466,34 @@ one of 70, 80, 90, 100, 115, 130, 150, 175 or 200 percent, set by the **A−** /
 its headings, the code and the Raw view together, and the prose measure with
 them; a value outside the table reads as 100.
 
+### Pictures from the web in a viewed file
+
+A markdown file shown in the viewer may carry pictures and clips from the web. The
+gear's **Pictures from the web in files** setting is the list of hosts whose figures load
+when the file opens; a figure from any other host is shown as a box naming the host, makes
+no request, and loads on one click, together with every other figure from that host in the
+file. A host loaded that way stays loaded until the page reloads. The list is kept with the
+other gear settings in the browser's own storage (`figureHosts` under `romp:settings`), one
+host name per entry, exact (`github.com` does not cover `gist.github.com`), and it starts as
+`github.com`, `raw.githubusercontent.com`, `user-images.githubusercontent.com`,
+`camo.githubusercontent.com`, `avatars.githubusercontent.com`,
+`objects.githubusercontent.com`, `private-user-images.githubusercontent.com`,
+`github.githubassets.com`, `localhost` and `127.0.0.1`. The kernel's own address, which
+every figure stored beside the file loads through, needs no entry; a `data:` image makes no
+request and is never gated. An inline `<svg>` whose `fill`, `stroke`, `filter`, `clip-path`,
+`mask`, `marker-start`, `marker-mid` or `marker-end` attribute names another host with
+`url(...)` is a figure from the web too, and is gated the same way. An entry is read as the
+browser reads a host: an address pasted whole (`https://cdn.test/a.png`), a port
+(`cdn.test:8080`) or a path is stored as the host alone (`cdn.test`), an internationalised
+name in its `xn--` form and an IPv4 address without leading zeros, and the gear shows the
+stored form on its next open. A line the browser cannot read as a host is kept, allows
+nothing, and is named under the list in the gear. A change to the list, saved from this tab's
+gear or another tab's, reaches an open file without a reload: a host added to the list
+restores its boxes where the file stands. A host removed from the list takes effect at the
+file's next paint (a re-open, or a switch between Raw and Rendered); a picture already
+fetched stays on the page until then. The setting applies to files shown in the viewer, on
+every surface; a picture in a chat message is not gated.
+
 ### The tab strip's per-browser choices
 
 The chat tab strip keeps its grouping choices in the browser's own storage, under

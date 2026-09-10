@@ -17,13 +17,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { marked } from "marked";
+import { applyMdConfig } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
 
 const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const SHEETS: Record<string, string> = { "styles.css": fs.readFileSync(path.join(UI, "styles.css"), "utf8"), "feed.css": fs.readFileSync(path.join(UI, "feed.css"), "utf8") };
 
-marked.setOptions({ gfm: true, breaks: false });   // the viewer's configuration (pinned by anchor-map.test.ts)
+applyMdConfig();   // the viewer's configuration: the one every bundle applies (md-config.ts; pinned by anchor-map.test.ts)
 
 // the notes-api report: three paragraphs after a heading, the changes a session made to it
 const SOURCE = "# Report\n\nThe api session cut p95 latency by 40% and the p99 by 10%.\n\n"

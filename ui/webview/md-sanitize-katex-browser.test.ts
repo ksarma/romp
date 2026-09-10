@@ -34,15 +34,16 @@ const STYLES_CSS = fs.readFileSync(path.join(UI, "styles.css"), "utf8").replace(
 
 // the chat's two renderers, rebuilt from the real modules exactly as render.ts composes them (md() and userMd()
 // are not exported; render-math.test.ts pins render.ts to this order): marked with the chat grammar, then sanitizeMd,
-// which runs the math fill itself (chat-md.ts registers renderMathPlaceholders as a sanitizeMd post-pass at load, so
+// which runs the math fill itself (md-config.ts registers renderMathPlaceholders as a sanitizeMd post-pass at load, so
 // importing the grammar is what arms it; no call here by hand), plus KaTeX's own rendering for comparison
 const ENTRY = `
 import { Marked } from "marked";
 import katex from "katex";
-import { chatMdExtensions, userMdHtml } from "./chat-md";
+import { userMdHtml } from "./chat-md";
+import { mdExtensions } from "./md-config";
 import { sanitizeMd, registerMdPostPass } from "./md-sanitize";
 import { renderMathPlaceholders, MATH_MAX_SIZE_EM, maxExpandFor } from "./math";
-const assistant = new Marked({ gfm: true, breaks: false }, ...chatMdExtensions);
+const assistant = new Marked({ gfm: true, breaks: false }, ...mdExtensions);
 function md(src: string): string { return sanitizeMd(assistant.parse(src) as string).innerHTML; }
 function userMd(src: string): string { return sanitizeMd(userMdHtml(src)).innerHTML; }
 function twice(src: string): { once: string; again: string } {

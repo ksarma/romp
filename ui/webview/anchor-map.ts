@@ -15,7 +15,9 @@
 //     escaped link labels refuse by design (the plan's list).
 //   - makeAnchor / locateComment delegate to the vendored track-changents engine, so the browser's anchor
 //     is byte-identical to the one `track-comment` would build.
-//   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements.
+//   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements; in the Rendered view an
+//     inline formula whose TeX the range holds goes under the mark with the words beside it (wrapBetween), so a passage
+//     with a formula in it is one highlight and not two with the formula bare between them.
 //   - paintChangesRaw / paintChangesRendered / unpaintChanges (Slice 2) paint a session's pending changes:
 //     an insertion is its new text wrapped, a deletion a ZERO-WIDTH point whose struck label is CSS
 //     content, and the author's chip is CSS content too (`data-fc-chip` on a change's last Raw element),
@@ -26,18 +28,27 @@
 //
 // Everything walks a MINIMAL structural DOM (nodeType, childNodes, parentNode, data, splitText,
 // ownerDocument.createElement/createTextNode, getAttribute/setAttribute, insertBefore/appendChild/
-// removeChild), so anchor-map.test.ts runs it under node against a small stand-in with no jsdom.
+// removeChild), so anchor-map.test.ts runs it under node against a small stand-in with no jsdom. One
+// reading of the LAYOUT is taken when the document offers it (ownerDocument.createRange and the Range's
+// getClientRects, the element's own getClientRects): the Rendered paint's trim of collapsed blanks
+// (trimCollapsedMarks), a no-op over a stand-in without them.
 //
 // Offsets are UTF-16 code-unit indexes into the source string the viewer fetched (the same units the
 // engine, the fingerprint, and the host script use); `end` is exclusive.
 
 import { Lexer, type Token, type Tokens } from "marked";
+import { applyMdConfig, type FrontMatterToken, type FootnoteRefToken, type FootnoteDefToken, type CalloutToken, type MarkToken, type WikilinkToken, calloutTitle } from "./md-config";
 import { findExact } from "./comments";
 // The vendored engine is CommonJS with no declaration file (gaps-3 map, TS7016 under this tsconfig). The
 // import is bundled by esbuild as-is; the two functions used here are typed locally below. If a shared
 // declaration lands later, this directive becomes a no-op.
 // @ts-ignore -- untyped CommonJS module
 import engineUntyped from "../../vendor/track-changents/engine.js";
+
+// The lexer below is the static `Lexer.lex`, which reads marked's module defaults, so the one configuration every
+// renderer applies (md-config.ts) is applied here too: the tokens this walk places are the tokens the viewer
+// rendered, whichever bundle it runs in and whether or not the viewer's module loaded first. Idempotent.
+applyMdConfig();
 
 // ── public types (contract C4) ─────────────────────────────────────────────────────────────────────
 
@@ -72,6 +83,10 @@ type DNode = {
   nodeType: number;
   parentNode: DNode | null;
   childNodes: ArrayLike<DNode>;
+  /** The DOM's sibling pointers, when the node offers them (a browser's Node does; a test's stand-in may not): a step to a
+   *  neighbour in constant time, where indexing the parent's child list costs its length (sibling, follows). */
+  previousSibling?: DNode | null;
+  nextSibling?: DNode | null;
 };
 type DText = DNode & { data: string; splitText(offset: number): DText };
 type DElement = DNode & {
@@ -81,8 +96,11 @@ type DElement = DNode & {
   insertBefore(node: DNode, ref: DNode | null): DNode;
   appendChild(node: DNode): DNode;
   removeChild(node: DNode): DNode;
-  ownerDocument: { createElement(tag: string): DElement; createTextNode(s: string): DText } | null;
+  ownerDocument: { createElement(tag: string): DElement; createTextNode(s: string): DText; createRange?(): DRange } | null;
 };
+/** The one layout reading (trimCollapsedMarks): a Range over a mark's contents and the widths the browser lays them out at. A
+ *  stand-in that offers no createRange, or a Range with no getClientRects, is measured by nothing and every mark stays. */
+type DRange = { selectNodeContents(n: DNode): void; getClientRects(): ArrayLike<{ width: number }> };
 
 const TEXT = 3;
 const ELEMENT = 1;
@@ -114,11 +132,31 @@ function topChildOf(root: DNode, n: DNode): DNode | null {
 }
 const textOf = (root: DNode): string => textNodes(root).map((t) => t.data).join("");
 const stripWs = (s: string): string => s.replace(/\s+/g, "");
+/** The three shapes the fill leaves where a formula's placeholder stood (math.ts renderMathPlaceholders): KaTeX's layout
+ *  (`.katex`, glyphs laid out from the TeX), KaTeX's flag on TeX it could not parse (`.katex-error`, the TeX as text, with
+ *  no `.katex` root around it), and the fill's own belt for a formula past a bound (`code.md-math-src`, the TeX as text, in a
+ *  `pre` for a display formula). Each is a control below: its text is not the note's, whether glyphs or the TeX (the source
+ *  holds the TeX between delimiters, and the mathInline / mathBlock tokens are zero-text holes), and a formula the fill fell
+ *  back on used to leave the TeX in the block's rendered text, so a paragraph with one refused as not matching the file, and
+ *  a display formula took no element and every block after it paired one element early, its paragraphs refused and the
+ *  reader's place a block off (the Slice 4 review). A selection endpoint inside one is a formula touched (mapRenderedSelection). */
+const FORMULA_CLASSES = ["katex", "katex-error", "md-math-src"];
+const isFormula = (n: DNode): boolean => FORMULA_CLASSES.some((cls) => hasClass(n, cls));
 /** A control the viewer parks inside the rendered markup, not the note's text: the Copy button code-block.ts puts in every
  *  fence's <pre>. Its label "Copy" joined a block's rendered text, so every block holding a fence, and every list or quote
  *  with one anywhere in it, failed to pair with its source and was refused as not matching the file, and paintRendered's
- *  fallback counted the label in its hay (the Slice 3 review). Every walk over a rendered node's text skips it. */
-const isControl = (n: DNode): boolean => hasClass(n, "code-copy");
+ *  fallback counted the label in its hay (the Slice 3 review). Every walk over a rendered node's text skips it, and since
+ *  Slice 4 the other elements whose text is not the note's: a formula in any of the fill's three shapes (FORMULA_CLASSES: the
+ *  paragraph maps AROUND the formula and the mathInline / mathBlock tokens are zero-text holes), a footnote's back link, the
+ *  front matter's fold label, and a gated figure's placeholder. */
+const CONTROL_CLASSES = [
+  "code-copy",              // the fence's Copy button (code-block.ts)
+  ...FORMULA_CLASSES,       // a formula, rendered or shown as its TeX (math.ts renderMathPlaceholders)
+  "md-fnback",              // a footnote definition's back link (md-config.ts): its label is the footnote's number
+  "md-frontmatter-head",    // the front matter's fold control (md-config.ts): its label is the viewer's
+  "fv-gate",                // a gated figure's placeholder (figure-gate.ts): its label names the host, and holds the media
+];
+const isControl = (n: DNode): boolean => CONTROL_CLASSES.some((cls) => hasClass(n, cls));
 
 // ── code lines under a wrap ────────────────────────────────────────────────────────────────────────
 //
@@ -229,17 +267,57 @@ function textLenUnder(n: DNode, inCounted: boolean, counts: ((el: DElement) => b
   return sum;
 }
 
+/** A selection boundary inside a control (isControl): the control, the global text index at its place (a control counts no
+ *  text, so its place is one index, the same before and after it), and where in the control's own text the boundary sits
+ *  (`inner` of `len`: 0 at its leading edge, `len` at its trailing edge). The browser puts a boundary there for ordinary
+ *  gestures on the Slice 4 constructs: a triple-click on a footnote definition anchors on the back link's label, a drag
+ *  that starts or ends on a formula's glyphs, a triple-click on the paragraph before a display formula, whose focus lands
+ *  on the formula's first glyph. boundaryIndex used to answer null for these, the answer for a node under another surface,
+ *  and the selection was refused as reaching outside the rendered text (the Slice 4 review). */
+type InControl = { control: DElement; at: number; inner: number; len: number };
+type Boundary = number | "before" | "after" | InControl | null;
+const inControl = (b: Boundary): b is InControl => typeof b === "object" && b !== null;
+/** The global text index a boundary stands at: a boundary inside a control at the control's place. */
+const boundaryAt = (b: Exclude<Boundary, null>, total: number): number => (b === "before" ? 0 : b === "after" ? total : inControl(b) ? b.at : b);
+/** Whether `node` is `el` or under it. */
+function isUnder(node: DNode, el: DNode): boolean {
+  for (let n: DNode | null = node; n; n = n.parentNode) if (n === el) return true;
+  return false;
+}
+
 /**
  * The number of counted characters under `root` before the boundary (node, offset), i.e. the boundary's
  * global text index. "before"/"after" when the boundary is outside `root` but `node` is an ancestor of
- * it (the selection reached past the text and may snap to its edge); null when the boundary is unrelated
- * to `root` (a sibling surface, which refuses). `counts` limits counting to text under elements it
- * admits (the Raw rows), so text outside a row never shifts an index.
+ * it (the selection reached past the text and may snap to its edge); an InControl when the boundary sits
+ * inside a control under `root` (whose text is not counted: the control's place, and the boundary's place
+ * in its own text); null when the boundary is unrelated to `root` (a sibling surface, which refuses).
+ * `counts` limits counting to text under elements it admits (the Raw rows), so text outside a row never
+ * shifts an index.
  */
 function boundaryIndex(root: DNode, node: DNode, offset: number,
-                       counts: ((el: DElement) => boolean) | null): number | "before" | "after" | null {
+                       counts: ((el: DElement) => boolean) | null): Boundary {
   let total = 0;
+  let within: InControl | null = null;
   const visit = (n: DNode, inCounted: boolean): boolean => {
+    if (isControl(n) && n !== root) {
+      if (!isUnder(node, n)) return false;
+      // the boundary's place in the control's own text: every text node under the control counts toward `len`, and toward
+      // `inner` while it lies before the boundary (a control holds no control, so nothing is skipped here)
+      let inner = 0, len = 0, seen = false;
+      const walk = (c: DNode): void => {
+        if (c === node) {
+          if (isText(c)) { inner += Math.min(Math.max(0, offset), c.data.length); len += c.data.length; }
+          else for (let i = 0; i < c.childNodes.length; i++) { if (i === offset) seen = true; walk(c.childNodes[i]); }
+          seen = true;
+          return;
+        }
+        if (isText(c)) { len += c.data.length; if (!seen) inner += c.data.length; return; }
+        for (let i = 0; i < c.childNodes.length; i++) walk(c.childNodes[i]);
+      };
+      walk(n);
+      within = { control: n as DElement, at: total, inner, len };
+      return true;
+    }
     if (n === node) {
       if (isText(n)) { if (inCounted || !counts) total += Math.min(Math.max(0, offset), n.data.length); return true; }
       const here = inCounted || !counts || (isElement(n) && counts(n));
@@ -247,12 +325,11 @@ function boundaryIndex(root: DNode, node: DNode, offset: number,
       return true;
     }
     if (isText(n)) { if (inCounted || !counts) total += n.data.length; return false; }
-    if (isControl(n)) return false;
     const here = inCounted || !counts || (isElement(n) && counts(n));
     for (let i = 0; i < n.childNodes.length; i++) if (visit(n.childNodes[i], here)) return true;
     return false;
   };
-  if (visit(root, false)) return total;
+  if (visit(root, false)) return within ?? total;
   // Not under root: is `node` an ancestor of root? Then the boundary sits before or after the whole root.
   let child: DNode = root;
   let p = root.parentNode;
@@ -374,8 +451,7 @@ export function mapRawSelection(sel: SelLike, codeRoot: Element, source: string)
   const a = boundaryIndex(root, sel.anchorNode as unknown as DNode, sel.anchorOffset, isRow);
   const f = boundaryIndex(root, sel.focusNode as unknown as DNode, sel.focusOffset, isRow);
   if (a === null || f === null) return refuse("The selection reaches outside the file text.");
-  const snap = (x: number | "before" | "after") => (x === "before" ? 0 : x === "after" ? idx.total : x);
-  let s = Math.min(snap(a), snap(f)), e = Math.max(snap(a), snap(f));
+  let s = Math.min(boundaryAt(a, idx.total), boundaryAt(f, idx.total)), e = Math.max(boundaryAt(a, idx.total), boundaryAt(f, idx.total));
   if (s >= e) return refuse("Select some text to comment on.");
   // Self-check on the untrimmed range: the text nodes' concatenation must equal the source slice with
   // its line endings removed (a DOM "\n" standing for a source "\r" is a line ending too).
@@ -452,6 +528,15 @@ function wrapNode(t: DText, className: string, data?: Record<string, string>): D
   m.appendChild(t);
   return m;
 }
+/** Wrap a run of ADJACENT SIBLINGS (text nodes and inline formulas, in order) in one mark, in their parent where the first stood. */
+function wrapRun(run: DNode[], className: string, data?: Record<string, string>): DElement {
+  const parent = run[0].parentNode as DElement | null;
+  if (!parent) throw new Error("anchor-map: node has no parent");
+  const m = makeMark(parent.ownerDocument, className, data);
+  parent.insertBefore(m, run[0]);
+  for (const n of run) m.appendChild(n);
+  return m;
+}
 
 /** Wrap [a, b) of the concatenated text of `nodes` (consecutive text nodes) in marks, splitting at the
  *  edges; whitespace-only nodes are skipped when `skipWs` admits them. Returns the marks in order. */
@@ -514,11 +599,16 @@ export function locateComment(source: string, anchor: Anchor, hintOffset?: numbe
 //
 // marked's tokens carry no positions and its `raw` strings index a PREPROCESSED text (CRLF and CR
 // normalized to LF, leading tabs expanded to four spaces), children of list items and blockquotes are
-// dedented / de-prefixed, and block-level `text` tokens double their interior newlines in `raw`. The walk
-// therefore runs over the normalized text N with a map back to source offsets, places every token by
-// verifying its raw (or, for block text, its text) at the assigned position, and maps child text through
-// a per-line "suffix of the raw line" view for list items and blockquotes. Only non-whitespace characters
-// are recorded: the renderer's own line breaks carry no text, so alignment and mapping ignore whitespace.
+// dedented / de-prefixed and then lexed with THEIR leading tabs expanded (the block lexer expands on every
+// call, so a tab after a quote's marker reaches its nested tokens as four spaces; blockLexView), block-level
+// `text` tokens double their interior newlines in `raw`, and a
+// paragraph marked joined onto the one before it (sourceRaw) doubles the newline at the join and, when the
+// joined block was an indented line, loses its indentation in `text`. The walk therefore runs over the
+// normalized text N with a map back to source offsets, places every token by verifying its raw (or, for
+// block text and a joined paragraph, the raw as the source holds it, sourceRaw) at the assigned position,
+// and maps child text through a per-line "suffix of the raw line" view for list items, blockquotes and
+// joined paragraphs. Only non-whitespace characters are recorded: the renderer's own line breaks carry no
+// text, so alignment and mapping ignore whitespace.
 
 class Refusal extends Error {}
 
@@ -536,32 +626,93 @@ class View {
   }
 }
 
-/** Child text of a list item or blockquote: line i of `text` is a suffix of line i of the raw view (the
- *  bullet, indentation, or `> ` prefix removed); raw lines past the text are blank. Anything else (a tab
- *  the lexer expanded after the marker, marked's setext protection) fails the suffix test and refuses. */
-function suffixLineView(raw: View, text: string): View {
+/** A lazy `===` or `--` line as marked's blockquote tokenizer guards it: up to three spaces, a run of `=` or `-`, spaces. */
+const SETEXT_LAZY_RE = /^ {0,3}(?:=+|-+) *$/;
+/** A quote line with nothing after its marker, as marked's blockquote tokenizer reads one: `^ *>[ \t]?` comes off every
+ *  line of the quote's raw, under ANY indentation, since a lazy continuation line indented four or more spaces enters the
+ *  quote through the paragraph's continuation (the quote rule's own ` {0,3}>` is what OPENS a line, not what the strip
+ *  takes: the Slice 4 review, round 6, where `> first\n    >` and `> first\n\t>` refused whole and `> first\n   >`
+ *  mapped); the tokenizer rtrims the newlines that remain of the quote's last such lines, so at the quote's end the line
+ *  is a raw line past the text. A raw line matching this is by construction one the tokenizer emptied. */
+const QUOTE_BLANK_RE = /^ *>[ \t]?$/;
+/** Child text of a list item or blockquote, and the text of a paragraph marked joined an indented line onto
+ *  (sourceRaw): line i of `text` is a suffix of line i of the raw view (the bullet, indentation, or `> `
+ *  prefix removed); raw lines past the text are blank, or a quote's empty `>` lines (QUOTE_BLANK_RE: the
+ *  blockquote tokenizer strips the marker and rtrims what is left, so `> first\n>` has a raw line more than
+ *  its text; the Slice 4 review, round 5: before this a quote closed with an empty `>` line, a common way to
+ *  write one, refused whole, its nested and list-hosted forms too, where a callout of the same shape mapped).
+ *  One more shape passes, marked's setext protection: a quote's (or md-config.ts's callout's) lazy `===` or
+ *  `--` line after another line is prefixed with four spaces in `text`, so the nested lex reads a paragraph's
+ *  text and not a setext underline. The spaces are the tokenizer's, not the note's, and the emitter records
+ *  no whitespace, so they take the underline's own start and the underline's characters their raw offsets
+ *  (the Slice 4 review, round 3: before this the callout or the quote refused whole, with a reason naming
+ *  a tab, and a selection on its body was sent to the Raw view). A tab after the marker's own whitespace is
+ *  a suffix like any other and stays a tab here; the nested lexer's expansion of it is the caller's next
+ *  step (blockLexView). Anything else fails the suffix test and refuses with `mismatch`, the caller's reason. */
+function suffixLineView(raw: View, text: string, mismatch = "a block whose lines the mapping could not place"): View {
   const rawLines = raw.str.split("\n"), textLines = text.split("\n");
   if (textLines.length > rawLines.length) throw new Refusal("a block whose lines the mapping could not place");
   const map: number[] = new Array(text.length + 1);
   let rawLineStart = 0, ti = 0, endN = raw.n(0);
   for (let i = 0; i < textLines.length; i++) {
     const rl = rawLines[i], tl = textLines[i];
-    if (!rl.endsWith(tl)) throw new Refusal("a line that begins with a tab after its marker");
-    const off = rl.length - tl.length;
-    for (let k = 0; k < tl.length; k++) map[ti + k] = raw.n(rawLineStart + off + k);
+    if (rl.endsWith(tl)) {
+      const off = rl.length - tl.length;
+      for (let k = 0; k < tl.length; k++) map[ti + k] = raw.n(rawLineStart + off + k);
+    } else if (i > 0 && SETEXT_LAZY_RE.test(rl) && tl === "    " + rl.replace(/^ {0,3}/, "")) {
+      // marked's guard: four spaces the source does not hold, then the raw line less its indentation
+      const lead = rl.length - rl.replace(/^ {0,3}/, "").length;
+      for (let k = 0; k < tl.length; k++) map[ti + k] = raw.n(rawLineStart + lead + Math.max(0, k - 4));
+    } else throw new Refusal(mismatch);
     ti += tl.length;
-    endN = raw.n(rawLineStart + off + tl.length);
+    endN = raw.n(rawLineStart + rl.length);
     if (i < textLines.length - 1) { map[ti] = raw.n(rawLineStart + rl.length); ti++; }
     rawLineStart += rl.length + 1;
   }
   for (let i = textLines.length; i < rawLines.length; i++) {
-    if (rawLines[i].trim() !== "") throw new Refusal("a block whose lines the mapping could not place");
+    if (rawLines[i].trim() !== "" && !QUOTE_BLANK_RE.test(rawLines[i])) throw new Refusal("a block whose lines the mapping could not place");
   }
   map[text.length] = endN;
   return new View(text, null, map);
 }
 
+/** marked's tab expansion, the block lexer's first step on every text it is handed (blockTokens: `^( *)(\t+)`, four
+ *  spaces per tab, the run being the tabs right after a line's leading spaces; a space after the run ends it for the
+ *  rest of the line). `n(i)` is the position str[i] carries; each tab's four spaces carry the tab's own. The result's
+ *  map has one entry per character and one past the end. */
+function expandTabs(str: string, n: (i: number) => number): { str: string; map: number[] } {
+  let out = "";
+  const map: number[] = [];
+  let spacesOnly = true, tabRun = false;
+  for (let i = 0; i < str.length; i++) {
+    const c = str[i], at = n(i);
+    if (c === "\n") { out += c; map.push(at); spacesOnly = true; tabRun = false; continue; }
+    if (c === "\t" && (spacesOnly || tabRun)) { out += "    "; map.push(at, at, at, at); spacesOnly = false; tabRun = true; continue; }
+    if (c === " ") { if (tabRun) tabRun = false; }
+    else { spacesOnly = false; tabRun = false; }
+    out += c; map.push(at);
+  }
+  map.push(n(str.length));
+  return { str: out, map };
+}
+/** The view a NESTED block lex's tokens tile: a blockquote's text, a callout's body and a list item's text each go
+ *  through blockTokens again, which expands their leading tab runs before lexing (expandTabs), so a tab the container's
+ *  marker left in the text (`> \tquoted`, `>\t\tcode`, a closing `> \t`, `- \titem`) is four spaces in the nested
+ *  tokens' raws. The top-level walk runs over N, the source with the same expansion (normalizeSource); this is that step
+ *  one level down, and the four spaces take the tab's position, so no emitted character moves and a block the tab opens
+ *  (an indented code block) places as a hole where the tab stands. The Slice 4 review, round 6: before this the nested
+ *  walk ran over the unexpanded text, the nested raws did not tile it, and any such quote refused whole, a closing
+ *  `> \t` line with "a paragraph the mapping could not place" (round 5 covered `>\t` and `> ` singly: the strip takes
+ *  one whitespace and the nested lexer expanded the second), a `> \tquoted` line with a reason naming the tab. */
+function blockLexView(v: View): View {
+  if (!/^ *\t/m.test(v.str)) return v;
+  const { str, map } = expandTabs(v.str, (i) => v.n(i));
+  return new View(str, null, map);
+}
+
 type Hole = { reason: string; startN: number; endN: number };
+/** The reason of a formula's hole (mathInline, mathBlock), the one formulaExtra finds a hole by. */
+const FORMULA_HOLE = "a formula";
 /** The emitted characters of one top-level block: `chars` are its non-whitespace rendered characters in
  *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a nested code
  *  block or table the renderer shows but the mapping refuses). */
@@ -582,10 +733,63 @@ class Emitter {
   }
 }
 
+/** A token's raw as the SOURCE holds it. That is `raw` for every token but a paragraph, or a list item's block text, that
+ *  marked 12's block lexer (blockTokens) joined another block onto. Every join site there runs `lastToken.raw += "\n" +
+ *  token.raw` after the single newline between the two was already moved onto the previous raw by the space step, so the
+ *  joined raw holds one newline per join the source does not, while `text` gets one per join. Two joins reach a paragraph.
+ *  The clip join: the lexer sets its lastParagraphClipped flag whenever any block extension's start hint returned a position,
+ *  however far below, and then joins the next paragraph onto the previous one; the paragraph regex itself stops early for
+ *  its own reasons (a header-looking line over a delimiter row the table tokenizer then rejects on the cell count, a
+ *  lowercase `<prefix>` line the paragraph rule's html lookahead stops at and the html tokenizer refuses, a bare `* ` or
+ *  `1. ` bullet the list tokenizer refuses as empty), so the join fires with a display formula anywhere later in the note
+ *  (the math hint, the grammar's one block hint; the callout's, which joined alike, went in round 3 of the review,
+ *  md-config.ts), top level or inside a quote's body (the Slice 4 review, rounds 2 and 3: the raw tiled nothing from there
+ *  on, every later block's span collapsed to the join's start, and every selection past it refused). The code join: the
+ *  gfm table interrupt admits any indentation on its header line, so the paragraph regex stops before a line indented four
+ *  columns (four spaces, or a tab the lexer expanded) when a delimiter-row-shaped line follows it, as in
+ *  `Intro\n    Column A\n|---|---|`, or a `---` under the indented line; the code tokenizer, which runs before the table's,
+ *  takes the indented line as indented code, and the lexer joins it onto the paragraph with `text += "\n" + code.text`, the indentation
+ *  stripped (`^ {1,4}` per line): CommonMark's own reading, since an indented code block cannot interrupt a paragraph and
+ *  a continuation line's indentation is not shown. That join needs no hint, so it fires at the top level, in a quote's
+ *  body and in a list item's block text (the same join onto a `text` token), and both joins stack (round 5 of the review:
+ *  every later block's span collapsed to the join's start, as under the clip join, because a walk of the raw that allowed
+ *  for the doubled newline alone stopped at the first stripped space; the same at the base, where the shape was a
+ *  refusal from the join to the end of the note). The renderer emits the joined block as ONE element over `text`, so the
+ *  source raw is rebuilt line by line (joinedSourceRaw): each line of `text` is the raw line it came from less up to four
+ *  leading spaces, a blank raw line no text line matches is a join's newline and goes, and the raw lines past the text
+ *  are its trailing newlines. The block table and the walk place that string as they place any raw, and the walk maps the
+ *  text into it through the per-line suffix view (suffixLineView). A raw the relation does not hold for comes back
+ *  unchanged, and the usual placement then refuses whatever it cannot place. md-config-merged-paragraph.test.ts holds
+ *  both joins over every trigger shape and a fuzz of them; the browser leg maps past both over the real Files bundle. */
+function sourceRaw(t: Token): string {
+  if (t.type !== "paragraph" && t.type !== "text") return t.raw;
+  const { raw, text } = t as Tokens.Paragraph | Tokens.Text;
+  if (raw.indexOf("\n\n") < 0) return raw;
+  return joinedSourceRaw(raw, text) ?? raw;
+}
+/** The lines of a joined block's raw as the source holds them (sourceRaw), joined by newlines; null when raw and text are
+ *  not in the join's relation. Each text line takes the next raw line that ends with it after no more than four spaces
+ *  (the indentation the code tokenizer strips; a blank text line takes a blank raw line); a blank raw line a non-blank
+ *  text line passes over is a join's newline; anything else the text lacks fails. */
+function joinedSourceRaw(raw: string, text: string): string | null {
+  const rawLines = raw.split("\n"), textLines = text.split("\n");
+  const out: string[] = [];
+  let ri = 0;
+  for (const tl of textLines) {
+    for (;;) {
+      if (ri >= rawLines.length) return null;
+      const rl = rawLines[ri++];
+      if (rl.endsWith(tl) && /^ {0,4}$/.test(rl.slice(0, rl.length - tl.length))) { out.push(rl); break; }
+      if (rl !== "") return null;
+    }
+  }
+  for (; ri < rawLines.length; ri++) { if (rawLines[ri] !== "") return null; out.push(""); }
+  return out.join("\n");
+}
+
 // marked's escape() leaves an `&` alone when it begins an entity; the browser then decodes it to ONE
 // character, so the rendered text is shorter than the source. Such prose refuses (plan).
 const ENTITY_RE = /&(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);/;
-const countNL = (s: string): number => { let n = 0; for (let i = 0; i < s.length; i++) if (s[i] === "\n") n++; return n; };
 
 function emitText(view: View, em: Emitter): void {
   if (ENTITY_RE.test(view.str)) throw new Refusal("prose with an HTML entity");
@@ -605,8 +809,10 @@ function plainInline(tokens: Token[]): string {
       }
       case "escape": out += (t as Tokens.Escape).raw.slice(1); break;
       case "codespan": { const n = /^`+/.exec(t.raw)![0].length; out += t.raw.slice(n, t.raw.length - n); break; }
-      case "em": case "strong": case "del": case "link": out += plainInline((t as Tokens.Em).tokens); break;
-      case "image": case "br": case "html": break;
+      case "em": case "strong": case "del": case "link": case "mark": out += plainInline((t as Tokens.Em).tokens); break;
+      case "footnoteRef": out += String((t as FootnoteRefToken).n); break;   // the number the reference shows
+      case "wikilink": { const w = t as WikilinkToken; if (!w.image) out += w.text; break; }   // an image embed shows no text
+      case "image": case "br": case "html": case "mathInline": break;   // a formula's glyphs are skipped as a control (isControl)
       default: throw new Refusal(`content of a kind the mapping does not handle (${t.type})`);
     }
   }
@@ -632,11 +838,32 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
         for (let i = n; i < raw.length - n; i++) em.put(raw[i], view.n(p + i));
         break;
       }
-      case "em": case "strong": case "del": {
-        const tt = t as Tokens.Em | Tokens.Strong | Tokens.Del;
-        const d = t.type === "em" ? 1 : t.type === "strong" ? 2 : (/^~+/.exec(raw) || [""])[0].length;
+      case "em": case "strong": case "del": case "mark": {
+        const tt = t as Tokens.Em | Tokens.Strong | Tokens.Del | MarkToken;
+        const d = t.type === "em" ? 1 : t.type === "strong" || t.type === "mark" ? 2 : (/^~+/.exec(raw) || [""])[0].length;
         if (!d || raw.slice(d, raw.length - d) !== tt.text) throw new Refusal(`${t.type} marks the mapping could not place`);
         walkInline(tt.tokens, view.sub(p + d, p + d + tt.text.length), em);
+        break;
+      }
+      case "footnoteRef": {
+        // `[^id]` shows its number, text the source does not hold: a hole the selection may not touch
+        const tt = t as FootnoteRefToken;
+        em.holes.push({ reason: "a footnote reference", startN: view.n(p), endN: view.n(p + raw.length) });
+        em.putHole(String(tt.n), em.holes.length - 1);
+        break;
+      }
+      case "wikilink": {
+        // `[[Note]]`, `[[Note|alias]]`, `![[Note]]`: the shown text is the source text at textOffset (md-config.ts); an image
+        // embed (`![[image.png]]`) is a picture and shows no text
+        const tt = t as WikilinkToken;
+        if (tt.image) break;
+        if (raw.slice(tt.textOffset, tt.textOffset + tt.text.length) !== tt.text) throw new Refusal("a wikilink the mapping could not place");
+        emitText(view.sub(p + tt.textOffset, p + tt.textOffset + tt.text.length), em);
+        break;
+      }
+      case "mathInline": {
+        // rendered by KaTeX into glyphs the walks skip (isControl): a zero-text hole, so the paragraph maps around it
+        em.holes.push({ reason: FORMULA_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
         break;
       }
       case "link": {
@@ -681,18 +908,18 @@ const DEF_RE = (): RegExp => Lexer.rules.block.gfm.def;
 /** Place `tokens`, which tile `view.str` from `p` (block-level; nested containers recurse). */
 function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
   for (const t of tokens) {
-    const raw = t.raw;
+    const raw = sourceRaw(t);   // a paragraph or block text marked joined a block onto: the raw as the source holds it
     if (t.type === "text") {
-      // Block text (tight list items): `raw` doubles interior newlines; `text` is the source text, and
-      // the raw's extra trailing newlines are the ones the lexer moved onto this token.
+      // Block text (tight list items): marked's `text` tokenizer reads one line and the lexer joins the next onto it
+      // with a doubled newline in raw, or an indented line its code tokenizer took first with the indentation gone
+      // from `text` (sourceRaw rebuilt the source's lines, `raw` here); line i of `text` is a suffix of line i of that
+      // raw, and the raw's extra trailing newlines are the ones the lexer moved onto this token.
       const tt = t as Tokens.Text;
-      if (!view.str.startsWith(tt.text, p)) throw new Refusal("a list item with indented code, or one the mapping could not place");
-      if (tt.tokens) walkInline(tt.tokens, view.sub(p, p + tt.text.length), em);
-      else emitText(view.sub(p, p + tt.text.length), em);
-      p += tt.text.length;
-      const trailing = raw.length - tt.text.length - countNL(tt.text);
-      if (trailing < 0) throw new Refusal("a list item the mapping could not place");
-      for (let k = 0; k < trailing; k++, p++) if (view.str[p] !== "\n") throw new Refusal("a list item the mapping could not place");
+      if (!view.str.startsWith(raw, p)) throw new Refusal("a list item the mapping could not place");
+      const tv = suffixLineView(view.sub(p, p + raw.length), tt.text, "a list item the mapping could not place");
+      if (tt.tokens) walkInline(tt.tokens, tv, em);
+      else emitText(tv, em);
+      p += raw.length;
       continue;
     }
     if (!view.str.startsWith(raw, p)) {
@@ -705,7 +932,6 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         if (view.str.startsWith(raw, q)) break;
       }
       if (view.str.startsWith(raw, q)) p = q;
-      else if (/^ *\t/.test(view.str.slice(p, p + 8))) throw new Refusal("a line that begins with a tab after its marker");
       else throw new Refusal(`a ${t.type} the mapping could not place`);
     }
     switch (t.type) {
@@ -718,13 +944,15 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
       }
       case "paragraph": {
         const tt = t as Tokens.Paragraph;
-        if (!raw.startsWith(tt.text) || /[^\n]/.test(raw.slice(tt.text.length))) throw new Refusal("a paragraph the mapping could not place");
-        walkInline(tt.tokens, view.sub(p, p + tt.text.length), em);
+        if (raw.startsWith(tt.text) && !/[^\n]/.test(raw.slice(tt.text.length))) walkInline(tt.tokens, view.sub(p, p + tt.text.length), em);
+        // the code join (sourceRaw): the source holds the indentation `text` lost, so line i of text is a suffix of raw line i
+        else if (raw !== tt.raw) walkInline(tt.tokens, suffixLineView(view.sub(p, p + raw.length), tt.text, "a paragraph the mapping could not place"), em);
+        else throw new Refusal("a paragraph the mapping could not place");
         break;
       }
       case "blockquote": {
         const tt = t as Tokens.Blockquote;
-        walkBlocks(tt.tokens, suffixLineView(view.sub(p, p + raw.length), tt.text), em);
+        walkBlocks(tt.tokens, blockLexView(suffixLineView(view.sub(p, p + raw.length), tt.text)), em);
         break;
       }
       case "list": {
@@ -732,7 +960,7 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         let q = p;
         for (const item of tt.items) {
           if (!view.str.startsWith(item.raw, q)) throw new Refusal("a list the mapping could not place");
-          walkBlocks(item.tokens, suffixLineView(view.sub(q, q + item.raw.length), item.text), em);
+          walkBlocks(item.tokens, blockLexView(suffixLineView(view.sub(q, q + item.raw.length), item.text)), em);
           q += item.raw.length;
         }
         // the last item's raw is trimmed, and a single newline after the list is moved onto the list's raw
@@ -755,6 +983,37 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         for (const row of tt.rows) for (const cell of row) em.putHole(plainInline(cell.tokens), h);
         break;
       }
+      case "frontMatter": {
+        // one folded block over the YAML (md-config.ts): shown, never mapped; the fold's label is a control the walks skip
+        const tt = t as FrontMatterToken;
+        em.holes.push({ reason: "the front matter", startN: view.n(p), endN: view.n(p + raw.length) });
+        em.putHole(tt.text, em.holes.length - 1);
+        break;
+      }
+      case "footnoteDef": {
+        // `[^id]: text` rendered in place (md-config.ts): line i of `text` is a suffix of raw line i (the marker, or a
+        // continuation line's indent, removed), the blockquote's shape; the back link's label is a control the walks skip
+        const tt = t as FootnoteDefToken;
+        walkInline(tt.tokens, suffixLineView(view.sub(p, p + raw.length), tt.text), em);
+        break;
+      }
+      case "callout": {
+        // `> [!type] Title` and its body (md-config.ts): the `> ` prefixes come off as a blockquote's do; the title line is a
+        // hole (the type marker is not shown, and a missing title is generated from the type), the body maps as blocks
+        const tt = t as CalloutToken;
+        const tv = suffixLineView(view.sub(p, p + raw.length), tt.text);
+        const nl = tt.text.indexOf("\n");
+        const bodyStart = nl < 0 ? tt.text.length : nl + 1;
+        em.holes.push({ reason: "a callout's title", startN: view.n(p), endN: tv.n(bodyStart) });
+        em.putHole(calloutTitle(tt), em.holes.length - 1);
+        walkBlocks(tt.tokens, blockLexView(tv.sub(bodyStart, tt.text.length)), em);
+        break;
+      }
+      case "mathBlock": {
+        // a display formula of its own: KaTeX's glyphs are skipped as a control (isControl), so the block has no text
+        em.holes.push({ reason: FORMULA_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
+        break;
+      }
       case "html": throw new Refusal("an HTML block");
       default: throw new Refusal(`content of a kind the mapping does not handle (${t.type})`);
     }
@@ -766,25 +1025,19 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
  *  (length N.length + 1; a "\n" from CRLF maps to the CR, the four spaces of a tab to the tab). */
 function normalizeSource(source: string): { N: string; nStart: Int32Array | null } {
   if (!/\r|^ *\t/m.test(source)) return { N: source, nStart: null };
-  const map: number[] = [];
-  let N = "";
-  // marked expands ONE run of tabs per line, the run right after the line's leading spaces
-  // (`^( *)(\t+)`); a space after that run ends the expansion for the rest of the line.
-  let spacesOnly = true, tabRun = false;
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i];
-    if (c === "\r") {
-      N += "\n"; map.push(i);
-      if (source[i + 1] === "\n") i++;
-      spacesOnly = true; tabRun = false; continue;
+  // CRLF and CR to LF first (the lexer's own order), the LF taking the CR's offset; then marked's tab expansion
+  let lf = source, lfMap: number[] | null = null;
+  if (source.includes("\r")) {
+    lf = ""; lfMap = [];
+    for (let i = 0; i < source.length; i++) {
+      const c = source[i];
+      if (c === "\r") { lf += "\n"; lfMap.push(i); if (source[i + 1] === "\n") i++; continue; }
+      lf += c; lfMap.push(i);
     }
-    if (c === "\n") { N += "\n"; map.push(i); spacesOnly = true; tabRun = false; continue; }
-    if (c === "\t" && (spacesOnly || tabRun)) { N += "    "; map.push(i, i, i, i); spacesOnly = false; tabRun = true; continue; }
-    if (c === " ") { if (tabRun) { tabRun = false; } }
-    else { spacesOnly = false; tabRun = false; }
-    N += c; map.push(i);
+    lfMap.push(source.length);
   }
-  map.push(source.length);
+  const m = lfMap;
+  const { str: N, map } = expandTabs(lf, m ? (i) => m[i] : (i) => i);
   return { N, nStart: Int32Array.from(map) };
 }
 
@@ -844,7 +1097,11 @@ function tagOf(t: Token): string | null {
     case "code": return "PRE";
     case "table": return "TABLE";
     case "hr": return "HR";
-    default: return null;
+    // the Slice 4 constructs (md-config.ts), each ONE element in place
+    case "frontMatter": return "DETAILS";
+    case "footnoteDef": return "DIV";
+    case "callout": return (t as CalloutToken).fold ? "DETAILS" : "BLOCKQUOTE";
+    default: return null;   // mathBlock among them: a .katex-display span once filled, a code block when shown as source
   }
 }
 
@@ -863,24 +1120,25 @@ function placeTokens(N: string): { placed: Placed[]; lexError: string | null } {
   let pos = 0;
   let broken: string | null = lexError;
   for (const t of tokens) {
-    if (broken === null && !N.startsWith(t.raw, pos)) {
+    const raw = sourceRaw(t);   // a paragraph marked joined a block onto: the raw as the source holds it
+    if (broken === null && !N.startsWith(raw, pos)) {
       // a reference definition (never a token), else resync on the next raw and leave the gap unmapped
       for (;;) {
         const m = DEF_RE().exec(N.slice(pos));
         if (!m) break;
         pos += m[0].length;
-        if (N.startsWith(t.raw, pos)) break;
+        if (N.startsWith(raw, pos)) break;
       }
-      if (!N.startsWith(t.raw, pos)) {
-        const j = N.indexOf(t.raw, pos);
+      if (!N.startsWith(raw, pos)) {
+        const j = N.indexOf(raw, pos);
         if (j >= 0) pos = j; else broken = `a ${t.type} the mapping could not place`;
       }
     }
-    if (t.type === "space") { if (broken === null) pos += t.raw.length; continue; }
-    let textEndN = pos + t.raw.length;
-    while (textEndN > pos && t.raw[textEndN - pos - 1] === "\n") textEndN--;
-    placed.push({ t, startN: pos, endN: pos + t.raw.length, textEndN, broken });
-    if (broken === null) pos += t.raw.length;
+    if (t.type === "space") { if (broken === null) pos += raw.length; continue; }
+    let textEndN = pos + raw.length;
+    while (textEndN > pos && raw[textEndN - pos - 1] === "\n") textEndN--;
+    placed.push({ t, startN: pos, endN: pos + raw.length, textEndN, broken });
+    if (broken === null) pos += raw.length;
   }
   return { placed, lexError };
 }
@@ -1070,6 +1328,34 @@ function srcRangeOf(idx: RenderedIndex, text: string): SourceRange | null {
   return { start: nOf(idx, i), end: nOf(idx, i + len) };
 }
 
+/** Every formula element (FORMULA_CLASSES) under `n` in document order, none looked into. */
+function formulaElements(n: DNode, out: DNode[] = []): DNode[] {
+  if (isControl(n)) { if (isFormula(n)) out.push(n); return out; }
+  for (let i = 0; i < n.childNodes.length; i++) formulaElements(n.childNodes[i], out);
+  return out;
+}
+/** The Raw offer for a selection that touched a formula through its ELEMENT (a boundary inside it): the block that renders
+ *  the top-level node holding it, and the hole the element stands for, the k-th formula hole of the block for the k-th
+ *  formula element under the node (the walk pushes holes in source order and the renderer emits elements in the same
+ *  order); the block's own start when the count disagrees (a placeholder an author typed by hand renders a formula the
+ *  walk never saw). The same fields blockExtra gives a hole touched through its characters. */
+function formulaExtra(idx: RenderedIndex, root: DNode, control: DNode, gs: number, ge: number): Partial<MapRefusal> {
+  let selected = "";
+  for (const n of idx.topNodes) { selected += isText(n) ? n.data : textOf(n); }
+  const rawRange = srcRangeOf(idx, selected.slice(gs, ge).trim());
+  const raw: Partial<MapRefusal> = rawRange ? { rawHasQuote: true, rawRange } : { rawHasQuote: false };
+  let top: DNode = control;
+  while (top.parentNode && top.parentNode !== root) top = top.parentNode;
+  const b = idx.nodeBlock.get(top);
+  if (b === undefined) return raw;
+  const blk = idx.blocks[b];
+  const k = formulaElements(top).indexOf(control);
+  const holes = blk.holes.filter((h) => h.reason === FORMULA_HOLE);
+  const startN = k >= 0 && k < holes.length ? holes[k].startN : blk.startN;
+  const off = nOf(idx, startN);
+  return { blockStartLine: rawOffsetToLine(idx.source, off), blockStartOffset: off, ...raw };
+}
+
 export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source: string): MapResult {
   const root = renderedRoot as unknown as DElement;
   if (sel.isCollapsed || !sel.anchorNode || !sel.focusNode) return refuse("Select some text to comment on.");
@@ -1077,8 +1363,20 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   const a = boundaryIndex(root, sel.anchorNode as unknown as DNode, sel.anchorOffset, null);
   const f = boundaryIndex(root, sel.focusNode as unknown as DNode, sel.focusOffset, null);
   if (a === null || f === null) return refuse("The selection reaches outside the rendered text.");
-  const snap = (x: number | "before" | "after") => (x === "before" ? 0 : x === "after" ? idx.total : x);
-  const gs = Math.min(snap(a), snap(f)), ge = Math.max(snap(a), snap(f));
+  // A boundary inside a control stands at the control's place: the control's text is the viewer's (a back link's number, a
+  // fold label, a gated figure's label), so a selection that begins or ends on it begins or ends beside it, and a
+  // triple-click on a footnote definition maps the definition's words. A FORMULA is the note's, though not text the mapping
+  // places (its token is a zero-text hole): a boundary inside one means the person selected the formula, or part of it, and
+  // the answer is the hole's, "touches a formula", with the Raw view offered at the formula. The one exception is the edge
+  // that selects none of it: a selection ending at a formula's first character (a triple-click on the paragraph before a
+  // display formula puts its focus there) or starting past its last, which stands at the formula's place like any control.
+  const sa = boundaryAt(a, idx.total), sf = boundaryAt(f, idx.total);
+  const gs = Math.min(sa, sf), ge = Math.max(sa, sf);
+  for (const [x, sx, other] of [[a, sa, sf], [f, sf, sa]] as const) {
+    if (!inControl(x) || !isFormula(x.control)) continue;
+    const clear = sx < other ? x.inner >= x.len : sx > other ? x.inner <= 0 : false;   // the start past its end, or the end at its start
+    if (!clear) return refuse("This selection touches a formula; comment on it from the Raw view.", formulaExtra(idx, root, x.control, gs, ge));
+  }
   if (gs >= ge || !idx.topNodes.length) return refuse("Select some text to comment on.");
   // the selected rendered text, for the Raw offer (computed only when a refusal needs it)
   let rawMemo: Partial<MapRefusal> | null = null;
@@ -1161,40 +1459,247 @@ function nthNonWs(node: DNode, k: number): { t: DText; off: number } | null {
   return null;
 }
 
-const BLOCK_CONTAINERS = new Set(["UL", "OL", "LI", "BLOCKQUOTE", "DIV", "TABLE", "THEAD", "TBODY", "TR", "SECTION", "ARTICLE", "BODY"]);
-/** Whitespace-only text between block elements: marking it would paint a stray blob. */
-const skipBlockWs = (t: DText): boolean => {
-  if (stripWs(t.data) !== "") return false;
+/** White space the browser collapses: HTML's ASCII white space (space, tab, line feed, form feed, carriage return), which
+ *  CSS's white-space processing folds into one space inside a line and drops at a line's edges. JavaScript's `\s` matches these
+ *  AND the Unicode spaces (a no-break space, an ideographic space, an em space, a thin space), which the browser renders as
+ *  glyphs of their own width wherever they stand (3.89 px for U+00A0 and 14 px for U+3000 at 14px sans-serif in Chromium), so
+ *  the block-neighbour pre-skip (skipBlockWs) reads this set and no other: a node of Unicode spaces between two blocks renders
+ *  a blank line and is painted, as on main (the Slice 4 review, round 10; md-config-paint-rendered-space.test.ts and its browser
+ *  leg). stripWs, which the walk and the matching use, keeps `\s`: the source and the rendering agree on it either way. */
+const COLLAPSIBLE_WS_ONLY = /^[ \t\n\r\f]*$/;
+const isCollapsibleWs = (s: string): boolean => COLLAPSIBLE_WS_ONLY.test(s);
+/** Text the root guard skips (skipBlockWs): JavaScript's `\s`, the block pairing's own alphabet (stripWs, analyzeRendered), plus
+ *  the format characters, Unicode's Cf (the zero width space, joiner and non-joiner, the word joiner and the invisible operators,
+ *  the bidi marks, embeddings and isolates, a soft hyphen, U+FEFF), which render no glyph anywhere. A text node of these alone
+ *  directly under the render root is the white space between two blocks, or the zero-width run an html block leaves at the top
+ *  level (`<p>x</p>` U+200B `<p>y</p>`, pasted from a web page), never the passage's text, and a mark there would be a
+ *  top-level child of the root. Round 11's guard read `\s` alone and painted a lone U+200B at the top level as the sheet's
+ *  padding around nothing on a line of its own (the Slice 4 review, round 12; md-config-paint-collapsed-blank.test.ts). */
+const ROOT_BLANK = /^[\s\p{Cf}]*$/u;
+/** Every tag the sanitizer keeps (DOMPurify's html profile less MD_FORBID_TAGS, md-sanitize.ts) that Chromium lays out as a
+ *  block-level box or a table or one of a table's parts (display block, list-item, table, table-caption, table-column, the
+ *  row and column groups, table-row, table-cell), the document's own `html` and `body`, which the parser never places in a
+ *  fragment, left out. Read that way, not hand-picked: an author's html block can hold any element the sanitizer lets
+ *  through, so the list is the sanitizer's, not CommonMark's html-block tag list (an `<hgroup>` is not on that list and
+ *  stands inside an author's `<details>` all the same). The Slice 4 review's round 8 wrote the list by hand and left out
+ *  `center`, `dir`, `menu` and `search`, kept by the sanitizer and blocks in Chromium, while naming `form` and `fieldset`,
+ *  which the sanitizer strips (round 9; md-config-paint-whitespace-browser.test.ts derives the set from the sanitizer's
+ *  own allowlist and the browser's computed display and holds it equal to this one; md-config-block-boxes.test.ts holds it
+ *  in node, where CI runs and the browser leg skips, equal to the Rendering section's block-level tags
+ *  (anchor-map-fixtures/block-tags.json) the installed DOMPurify's allowlist keeps, less MD_FORBID_TAGS, html and body,
+ *  round 10). The set serves one reading, the block-neighbour pre-skip of skipBlockWs: a text node of collapsible white space
+ *  with one of these on both sides, or a block-box parent's edge, makes no line box at all and is skipped without a
+ *  measurement; every other blank is painted and measured (trimCollapsedMarks). KaTeX's display root, the one span the sheets
+ *  lay out as a block (`.katex-display`), is read by its class (isBlockBox). Exported for the tests alone. */
+export const BLOCK_BOXES: ReadonlySet<string> = new Set([
+  "P", "DIV", "UL", "OL", "LI", "MENU", "DIR", "BLOCKQUOTE", "PRE", "HR", "CENTER", "SEARCH", "HGROUP", "H1", "H2", "H3", "H4", "H5", "H6",
+  "TABLE", "CAPTION", "COLGROUP", "COL", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH",
+  "DETAILS", "SUMMARY", "FIGURE", "FIGCAPTION", "DL", "DT", "DD",
+  "SECTION", "ARTICLE", "ASIDE", "NAV", "HEADER", "FOOTER", "MAIN", "ADDRESS",
+]);
+const isBlockBox = (n: DNode): boolean => isElement(n) && (BLOCK_BOXES.has(n.tagName.toUpperCase()) || hasClass(n, "katex-display"));
+/** The sibling of `n` on the side `dir` (-1 before, 1 after), null at the parent's edge: the DOM's own pointer when the node
+ *  offers one (a browser's Node: constant time a step), else by the index of `n` in its parent's child list (the tests'
+ *  stand-ins). Indexing every time made a paint quadratic in a paragraph's inline children: each space between two inline
+ *  elements is a whitespace-only node the paint reads the neighbours of, and each read scanned the paragraph's child list from
+ *  the start, so one mark across a paragraph of 3,000 links cost 850 ms in Chromium against 27 ms before the neighbour
+ *  rule; with the pointers 32 ms (the Slice 4 review, round 9; md-config-paint-whitespace.test.ts counts the child-list reads,
+ *  its browser leg times equal work). */
+function sibling(n: DNode, dir: -1 | 1): DNode | null {
+  const s = dir < 0 ? n.previousSibling : n.nextSibling;
+  if (s !== undefined) return s;
+  const p = n.parentNode;
+  if (!p) return null;
+  const kids = p.childNodes;
+  for (let k = 0; k < kids.length; k++) if (kids[k] === n) { const j = k + dir; return j >= 0 && j < kids.length ? kids[j] : null; }
+  return null;
+}
+/** Whether the Rendered paint leaves the whitespace-only text node `t` unmarked without measuring it. Two readings of the DOM,
+ *  each exact, are all the painter predicts about white space; every other blank in a range is painted, and the browser's own
+ *  layout decides afterwards (trimCollapsedMarks: a mark whose text is blank and lays out at zero width is unwrapped).
+ *  1. The root guard. A text node directly under the render root is skipped when it is `\s` and format characters alone
+ *     (ROOT_BLANK). The top-level children are what the block pairing reads (analyzeRendered), such a node is never the
+ *     passage's text to it (the "\n" marked leaves between two top-level blocks, the pair the sanitizer leaves where a
+ *     block-level comment stood, a no-break space line an html block of two images holds), and a mark there would be a
+ *     top-level child of the root that the next pairing meets (anchor-map-obsidian.test.ts, anchor-map.test.ts and
+ *     md-config-paint-collapsed-blank.test.ts hold that no mark is a top-level node).
+ *  2. The block-neighbour pre-skip. A text node of collapsible white space (isCollapsibleWs) whose nearest non-blank sibling
+ *     on BOTH sides is a block-level box (isBlockBox), or whose parent is a block-level box and has no such sibling on that
+ *     side, and that stands under no `pre`, generates no line box at all: CSS 2, section 9.2.2.1, an anonymous inline box that
+ *     holds only collapsible white space between block-level boxes is not rendered, and a block's leading and trailing white
+ *     space is collapsed away. Under an author's `pre` (`white-space: pre`; the one element the sanitizer keeps that preserves
+ *     white space, since an inline style keeps its colours alone, md-sanitize.ts) nothing is collapsible, so the reading does
+ *     not apply and the node is painted and measured like every other blank: two spaces or a tab between two block children
+ *     render a line of their own (16.86 and 67.44 px at 14px sans-serif in Chromium) and keep their mark, a newline alone is a
+ *     forced break of zero width and the trim unwraps it (the Slice 4 review, round 13: round 12's pre-skip read the node as
+ *     collapsible whatever its ancestors and skipped the rendered spaces, a ring gap inside the pre;
+ *     md-config-paint-trim-fixpoint.test.ts and its browser leg). The "\n" marked leaves between a list's items, a quote's
+ *     paragraphs, a table's rows or a fold's blocks is this shape, hundreds of nodes in a long note, and the pre-skip saves the
+ *     mark, the measurement and the unwrap each would cost (the review round 12 prototype: outside a pre the trim alone gives
+ *     the same answer on every scene, so the reading is an optimisation, kept because it is exact where it applies).
+ *  Everything else is painted and measured: a space between two inline children, beside an image, an svg, an anchor, an empty
+ *  span, an audio element, a `<br>`, a floated image, a block inside an inline, after a neighbour ending in a space, at a wrap
+ *  point, a zero-width or bidi character alone, a newline under a pre. The Slice 4 review's rounds 7 to 11 grew a DOM-side
+ *  prediction of which of those the browser collapses (main's block-container list, then neighbour and edge readings over
+ *  BLOCK_BOXES and `<br>`, then a reading of each side's rendered content through empty inlines, hidden elements, atomic inlines
+ *  and text ending in white space), and each round's fresh reading found the next shape the prediction got wrong (round 12: an
+ *  inline svg looked past as rendering nothing, an audio element without controls read as a box, a floated image read as in the
+ *  line, a picture without an image, a form feed read as collapsible, the bidi marks and the soft hyphen outside the zero-width
+ *  alphabet, a space inside an inline-block, and the line wrap no reading of the DOM can see). The repo's rule is an exact
+ *  mechanism over a heuristic that approximates it, and the exact answer here is the browser's layout, read after the paint
+ *  (round 12; md-config-paint-trim.test.ts and its browser leg over the scenes those rounds collected,
+ *  anchor-map-fixtures/blank-scenes.json).
+ *  History. Main skipped any whitespace-only node under one of twelve block containers (UL, OL, LI, BLOCKQUOTE, DIV, TABLE,
+ *  THEAD, TBODY, TR, SECTION, ARTICLE, BODY; TD never among them) whatever its neighbours, so the rendered space between two
+ *  inline children of a list item or a centred badge row was never painted and the ring broke at it, two ringed boxes with a
+ *  bare gap of the space's width (round 10 removed the list); and it painted every other blank as a ringed 4 x 18 px box around
+ *  nothing: the "\n" between a folded callout's paragraphs (round 8), beside an author's figure or center and between two
+ *  `<br>`s (round 9), beside an empty anchor and after a neighbour ending in a space (round 11), and at every wrap point. */
+const skipBlockWs = (t: DText, root: DNode): boolean => {
   const p = t.parentNode;
-  return !!p && isElement(p) && BLOCK_CONTAINERS.has(p.tagName.toUpperCase());
+  if (!p || !isElement(p)) return false;
+  if (p === root) return ROOT_BLANK.test(t.data);
+  if (!isCollapsibleWs(t.data)) return false;
+  // the nearest sibling that is not collapsible white space itself (a run of such nodes between two blocks is one anonymous
+  // box, the pair the sanitizer leaves where a block-level comment stood), else the parent's edge
+  const edge = (dir: -1 | 1): boolean => {
+    let s = sibling(t, dir);
+    while (s && isText(s) && isCollapsibleWs(s.data)) s = sibling(s, dir);
+    return s ? isBlockBox(s) : isBlockBox(p);
+  };
+  if (!edge(-1) || !edge(1)) return false;
+  // under a pre nothing is collapsible (point 2 above): the node is painted and the trim measures it
+  for (let a: DNode | null = p; a && a !== root; a = a.parentNode) if (isElement(a) && a.tagName.toUpperCase() === "PRE") return false;
+  return true;
 };
 
-/** Wrap from (startNode, startOff) to (endNode, endOff) — both text positions under `root`. The text nodes between
- *  the two are read from the top-level children of `root` the two sit under, and the children between those, not from
- *  the whole of `root`: a walk of every text node under the root per mark made the Comments panel's paint pass cost
- *  marks x nodes (0.11-0.22 ms per 1000 nodes per mark in Chromium; 466 marks over a 24k-node document were 1.1 s of a
- *  1.4 s frame on every width change, and 0.7 s of each added comment on a 79k-node file with 32 comments, 2026-09-09).
- *  A mark now costs the blocks it touches. */
+/** A formula element (FORMULA_CLASSES) that stands in a line of text: KaTeX's inline layout, its flag on TeX it could not parse,
+ *  or the belt's code span, under a paragraph, a heading, a list item, an emphasis. Not a display formula, which is a block of
+ *  its own line: KaTeX's `.katex` inside its `.katex-display` wrapper (whose `>` selectors lay the formula out), the belt's
+ *  `code` inside a `pre`, or KaTeX's flag standing as a top-level node (under `root`). An inline mark around a block-level box
+ *  paints nothing over it, and a mark between `.katex-display` and its `.katex` breaks the layout, so a display formula is
+ *  never wrapped: a highlight over one needs a block-level treatment of its own, which nothing paints today. */
+function isInlineFormula(n: DNode, root: DNode): boolean {
+  if (!isFormula(n)) return false;
+  const p = n.parentNode;
+  return !!p && p !== root && isElement(p) && !hasClass(p, "katex-display") && p.tagName.toUpperCase() !== "PRE";
+}
+/** What a Rendered highlight is made of, document order: every text node textNodes() returns and, standing among them, every
+ *  inline formula (isInlineFormula), not looked into. Walks `from` (the whole of `root` by default, or one of its top-level
+ *  children: wrapBetween reads the blocks a mark touches and no more), judging a formula's standing against `root` itself. */
+function highlightUnits(root: DNode, from: DNode = root, out: DNode[] = []): DNode[] {
+  const visit = (n: DNode) => {
+    if (isText(n)) { out.push(n); return; }
+    if (isControl(n)) { if (isInlineFormula(n, root)) out.push(n); return; }
+    for (let i = 0; i < n.childNodes.length; i++) visit(n.childNodes[i]);
+  };
+  visit(from);
+  return out;
+}
+/** Whether `b` is the sibling right after `a`. */
+function follows(a: DNode, b: DNode): boolean {
+  const p = a.parentNode;
+  if (!p || b.parentNode !== p) return false;
+  if (a.nextSibling !== undefined) return a.nextSibling === b;   // the DOM's pointer, constant time (sibling's note)
+  const kids = p.childNodes;
+  for (let i = 0; i < kids.length; i++) if (kids[i] === a) return kids[i + 1] === b;
+  return false;
+}
+/** The highlight units (highlightUnits) under the top-level children of `root` in `tops` (each one a child of `root`,
+ *  topChildOf's result) and under the children between them, in document order: what a mark reads instead of the whole of
+ *  `root`, so it costs the blocks it touches (wrapBetween's docstring has the numbers). Both highlight paths read through
+ *  this: wrapBetween for a passage of text, paintRendered for a range holding formulas alone. None when `tops` is empty. */
+function unitsUnder(root: DNode, tops: Set<DNode>): DNode[] {
+  if (tops.size === 1) return highlightUnits(root, Array.from(tops)[0]);
+  const kids = root.childNodes;
+  let k0 = -1, k1 = -1, seen = 0;
+  for (let k = 0; k < kids.length && seen < tops.size; k++) if (tops.has(kids[k])) { if (k0 < 0) k0 = k; k1 = k; seen++; }
+  const all: DNode[] = [];
+  for (let k = k0; k0 >= 0 && k <= k1; k++) highlightUnits(root, kids[k], all);
+  return all;
+}
+/** Wrap `units` (a contiguous slice of highlightUnits, its edge text nodes already cut to the range) in marks: one mark per run
+ *  of adjacent siblings, so the text on both sides of an inline formula and the formula itself are ONE box when they stand
+ *  side by side in their paragraph, and a formula inside an emphasis goes under the emphasis's own mark with the text beside it
+ *  there. Before this each text node took a mark of its own and a formula none, so a comment across `Inline $x^2$ math and`
+ *  showed two ringed boxes with the rendered formula bare between them, and a reader could not tell from the page whether the
+ *  formula was part of the passage (the quote holds its TeX; the Slice 4 review). Whitespace-only text between block elements
+ *  is skipped as before (skipBlockWs), a run of several such nodes with it. The panel's unpaint moves every child of a mark
+ *  back in its place and normalizes the parent (file-comments.ts), so a formula under a mark returns to where it stood. */
+function wrapRuns(root: DNode, units: DNode[], className: string, data?: Record<string, string>): DElement[] {
+  const marks: DElement[] = [];
+  let run: DNode[] = [];
+  // never an empty mark: a run of text alone whose every node is empty (an edge cut that left nothing) or whitespace-only
+  // between block elements is skipped, however many nodes the run has. The sanitizer leaves TWO adjacent whitespace nodes
+  // under the root where it removed a block-level comment or a <style> between two blocks, and a rule that skipped the one
+  // such node alone wrapped the pair as a mark of its own: a ringed box on a line between the blocks, everything below moved
+  // down by its height, back on every fresh Rendered paint (the Slice 4 review, round 7; main's wrapSlices skipped each
+  // such node on its own).
+  const skip = (r: DNode[]): boolean => r.every((u) => isText(u) && (!u.data.length || skipBlockWs(u, root)));
+  const flush = () => {
+    if (run.length && !skip(run)) marks.push(wrapRun(run, className, data));
+    run = [];
+  };
+  for (const u of units) {
+    if (run.length && !follows(run[run.length - 1], u)) flush();
+    run.push(u);
+  }
+  flush();
+  return marks;
+}
+/** Wrap from (startNode, startOff) to (endNode, endOff), both text positions under `root`, and with them the inline formulas
+ *  that stand between the two positions and the ones in `formulas` (the formulas whose TeX the range holds, paintRendered's
+ *  coveredFormulas): a formula before the start or after the end of the text extends the highlight to itself, and the text
+ *  between it and the passage (whitespace, since the passage's first and last characters are its first and last non-blank
+ *  ones in the range) goes under the highlight with it. The units between the two positions are read from the top-level
+ *  children of `root` the positions and the formulas sit under, and the children between those, not from the whole of
+ *  `root`: a walk of every text node under the root per mark made the Comments panel's paint pass cost marks x nodes
+ *  (0.11-0.22 ms per 1000 nodes per mark in Chromium; 466 marks over a 24k-node document were 1.1 s of a 1.4 s frame on
+ *  every width change, and 0.7 s of each added comment on a 79k-node file with 32 comments, 2026-09-09). A mark now costs
+ *  the blocks it touches. */
 function wrapBetween(root: DNode, s: { t: DText; off: number }, e: { t: DText; off: number },
-                     className: string, data?: Record<string, string>): DElement[] {
+                     className: string, data?: Record<string, string>, formulas: DNode[] = []): DElement[] {
   const ts = topChildOf(root, s.t), te = topChildOf(root, e.t);
   if (!ts || !te) return [];
-  let all: DText[];
-  if (ts === te) all = textNodes(ts);
-  else {
-    const kids = root.childNodes;
-    let k0 = -1, k1 = -1;
-    for (let k = 0; k < kids.length && (k0 < 0 || k1 < 0); k++) { if (kids[k] === ts) k0 = k; if (kids[k] === te) k1 = k; }
-    if (k0 < 0 || k1 < 0 || k1 < k0) return [];
-    all = [];
-    for (let k = k0; k <= k1; k++) textNodes(kids[k], all);
-  }
-  const i0 = all.indexOf(s.t), i1 = all.indexOf(e.t);
+  // the top-level children the highlight reads: the two the positions sit under, and the ones the covered formulas sit under
+  // (a formula before the start or after the end of the text extends the highlight to itself, so its block is read too)
+  const tops = new Set<DNode>([ts, te]);
+  for (const f of formulas) { const tf = topChildOf(root, f); if (tf) tops.add(tf); }
+  const all = unitsUnder(root, tops);
+  let i0 = all.indexOf(s.t), i1 = all.indexOf(e.t);
   if (i0 < 0 || i1 < 0 || i1 < i0) return [];
-  const nodes = all.slice(i0, i1 + 1);
-  let a = s.off, b = 0;
-  for (let i = 0; i < nodes.length; i++) b += i < nodes.length - 1 ? nodes[i].data.length : e.off;
-  return wrapSlices(nodes, a, b, className, data, skipBlockWs);
+  let a = s.off, b = e.off;
+  for (const f of formulas) {
+    const i = all.indexOf(f);
+    if (i < 0) continue;
+    if (i < i0) { i0 = i; a = 0; }
+    if (i > i1) { i1 = i; b = e.t.data.length; }
+  }
+  const units = all.slice(i0, i1 + 1);
+  // cut the passage's edge text nodes to the range, so every unit is wrapped whole
+  if (s.t === e.t) {
+    if (b <= a) return [];
+    let t = s.t;
+    if (a > 0) t = t.splitText(a);
+    if (b - a < t.data.length) t.splitText(b - a);
+    units[units.indexOf(s.t)] = t;
+  } else {
+    const j = units.indexOf(s.t);
+    if (a > 0) units[j] = s.t.splitText(a);
+    if (b < e.t.data.length) e.t.splitText(b);
+  }
+  return wrapRuns(root, units, className, data);
+}
+/** The formulas of `blk` whose TeX lies inside `range`, as elements: the k-th formula hole of the block stands for the k-th
+ *  formula element under its nodes (formulaExtra's pairing, the walk's source order being the renderer's document order);
+ *  none when the counts disagree (a placeholder an author typed by hand renders a formula the walk never saw). */
+function coveredFormulas(idx: RenderedIndex, blk: Block, range: SourceRange, out: DNode[]): void {
+  const holes = blk.holes.filter((h) => h.reason === FORMULA_HOLE);
+  if (!holes.length) return;
+  const els: DNode[] = [];
+  for (const n of blk.dom) formulaElements(n, els);
+  if (els.length !== holes.length) return;
+  holes.forEach((h, k) => { if (nOf(idx, h.startN) >= range.start && nOf(idx, h.endN) <= range.end) out.push(els[k]); });
 }
 
 /** A string and, for each of its characters, the index in the string it was derived from: `text[i]` is
@@ -1279,12 +1784,224 @@ export function stripMarkupMapped(s: string): Mapped {
 }
 const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 
+// ── the layout-time trim of collapsed blanks ───────────────────────────────────────────────────────
+//
+// paintRendered paints every text node of its range below the render root (skipBlockWs's two DOM-side skips apart), then
+// measures every mark whose text is blank and unwraps the ones the browser lays out at zero width: a collapsible space at a
+// line's edge or at the point where the line wraps, one after a neighbour ending in a space or beside an element that renders
+// nothing (an empty anchor, an audio element without controls, a floated image), a zero-width or bidi character, a newline the
+// browser drops. A rendered blank keeps its mark: a no-break or ideographic space, a space between two inline children on one
+// line, the space beside an svg icon, an image or a checkbox. The measurement is the browser's own, a Range over each text node
+// under the mark with its client rects' widths summed (a text node split over a wrap counts both fragments), never one Range over
+// the mark's contents: two comments over one passage nest their marks (the later paint wraps the text node where it stands, inside
+// the earlier comment's mark), and a Range over the outer mark's contents reads the inner MARK element's border box, 4 px of
+// padding around a collapsed blank, so a nest of d marks over one wrap point was peeled one level per pass and stood as ringed
+// boxes inside one another at the cap (the Slice 4 review, round 13; md-config-paint-trim-fixpoint.test.ts and the panel leg's
+// overlapping comments); a mark with no client rect of its own (a display:none ancestor) is kept, since its blank may render
+// when the ancestor shows (the panel measures it again on the show: through the seam's reflow report when a frame ran while the
+// pane was hidden, Chromium's case, since a display:none frame's requestAnimationFrame runs there, or in the frame file-comments.ts
+// trimBlanks armed on finding the body without a box when none did, the hide and the show in one task). Blank, to the trim, is
+// text with no letter, digit, punctuation or symbol (`\s`, the format and control characters, a combining mark alone) or the
+// hangul fillers alone (letters to Unicode, blank in most fonts); the alphabet picks what is MEASURED and layout decides, so a
+// candidate that renders (U+093F alone draws a dotted circle, U+000B a glyph) keeps its mark.
+// Three shapes the measurement takes, each measured by the review round 12's prototype:
+// - Two-phase. Every candidate is measured, then every collapsed one unwrapped. An unwrap between two measurements invalidates
+//   the layout and the next getClientRects lays the block out again: one pass that unwrapped as it measured cost the prototype
+//   12.3 s on a paragraph of 5,000 code spans with 373 wrap points, against 0.4 s with one layout per pass. The shipped trim on a
+//   paragraph of 5,000 links (4,999 blank marks, 324 wrap points at 800 px) costs about 30 ms on the build box, two passes of one
+//   Range.getClientRects per blank mark (9,674 calls), once the layout is counted on both sides (300 ms against 269 with the
+//   layout the panel reads next forced after each); measured alone the trimmed paint is 323 ms against 45, the difference being
+//   that layout, which the trim forces and the panel would pay on its next frame (md-config-paint-whitespace-browser.test.ts leg
+//   4 pins the shape).
+// - Batched. paintRendered trims its own marks by default (PaintOptions.trim), one forced layout per call; the Comments panel
+//   paints every comment of a pass and passes `trim: false`, then runs trimCollapsedMarks ONCE over every mark of the pass
+//   (file-comments.ts paintAll), so a 200-comment pass pays one layout, not 200 (the prototype measured 0.45 ms a call on a
+//   12k-element note, 90 ms added to a pass unbatched; on the build box the same pass measured 21 ms batched against 20 untrimmed
+//   and 21 unbatched, Chromium laying the mutated paragraph out incrementally, so the batching is the shape that bounds the cost
+//   rather than a saving measured here; md-config-paint-trim-browser.test.ts point 4).
+// - To a fixpoint. A mark's own 2 px side padding is in the layout, so unwrapping a collapsed mark shortens its line and a
+//   later blank on the line may collapse in turn; after a pass that unwrapped something the remaining candidates are measured
+//   again, until a pass unwraps nothing. The loop ends by construction (a mark is only ever removed, so the candidates shrink on
+//   every pass that continues); TRIM_PASSES_MAX is a safety cap, and a call that reaches it with candidates standing is counted in
+//   TRIM_STATS.capped. Round 12 capped the passes at three, and on the paragraph of 5,000 links a fresh paint at 700 px left 366
+//   padding-only marks (the passes unwrap 373, 373, 371, 366, 299, 298, 297 and 0: the 4 px freed per line moves nearly every
+//   wrap point one word, so the paragraph's wrap-point marks collapse again after each pass), at 400 px 406 and at 300 px 271; a
+//   re-trim after a narrowing from 800 to 400 px left 266 (twelve passes to converge) and 800 to 300 px 652 (eleven); 800, 600
+//   and 500 px happened to converge in two passes, and 800 px was the one width the tests pinned (the Slice 4 review, round 13;
+//   md-config-paint-trim-fixpoint-browser.test.ts holds zero padding-only marks at five widths, fresh and after a narrowing).
+//   The reverse, a blank unwrapped as collapsed that renders once a later unwrap moved the wrap point, stays bare while the pane
+//   keeps the width: a mark is never re-wrapped, since a blank at a line's last inch can flip with every pass, and the next paint
+//   pass at the same width paints the blank again and runs the same cascade over the same layout, so it unwraps the same marks in
+//   the same number of passes and leaves the same blanks bare (md-config-paint-trim-fixpoint-browser.test.ts leg 1 holds a second
+//   pass at each of its widths equal to the first in passes, blank marks kept and bare blanks); a pass at another width runs that
+//   width's cascade, with its own gaps or none. In a fresh paint's trim at one width the shape followed the pass count in every
+//   cell the Slice 4 review's round 16 measured (the fixpoint leg's page under feed.css at 19 widths from 220 to 1,000 px and the
+//   real pane at 19 viewports, content widths 220 to 660, each across the 120-link item and a paragraph of 600 links; the leg's
+//   own five widths across the item and the paragraph of 5,000 links): a trim that converged in two passes (the first unwrapped
+//   the wrap points' blanks, the second found nothing more collapsed) left no blank bare, and one that took three or more left
+//   some, from a few to about two thousand with the passage's length: the 120-link item 4 to 24 (4 at 220 px under feed.css, 5 at
+//   460 in the pane), the 600-link paragraph 27 to 207, the 5,000-link paragraph 2,005 at 700 px in eight passes, 1,884 at 400 in
+//   six and 2,095 at 300 in five. A re-trim after a narrowing counts as well the blanks the old width's trim unwrapped that render
+//   at the new one (shape (b), the Event-based paragraph below), so its pass count bounds nothing: the leg's item narrowed from 800
+//   to 700, 400 and 300 px converges in two passes and leaves 12, 10 and 12 bare (five passes and 44 at 500), and the paragraph
+//   648 to 3,267 (three passes at 700 and 500 px, twelve at 400, eleven at 300). In the real pane, one comment across the 120-link
+//   item leaves 24 of its 119 spaces bare at a content width of 420 px, 13 at 660 and 5 at 460, none at the thirteen other widths
+//   sampled between 220 and 660; across the paragraph of 600 links 167 at 220 px, 116 at 300, 83 at 380, 81 at 420 and 460, 71 at
+//   400 and 49 at 560, none at nine others; the panel's own pass at the pane's opening width, 460 px, leaves 5 and 81, and a second
+//   pass at every width the same counts (plans/markdown-viewer.md, the Slice 4 build note's item 10 (a), records the shape, its
+//   counts under feed.css and under overlapping comments, and the layout-neutral mark as the option that removes it).
+// Event-based: the measurement is taken at paint time, and the panel runs the trim again over its standing marks when the seam
+// reports a reflow (file-comments.ts, onRendered "reflow": the body's width changed, a text-size step), so a blank that collapses
+// at the new width loses its mark in the frame the cards are re-placed; a blank trimmed at the old width that renders at the
+// new one stays unpainted until the next paint pass, which paints it and trims at the new width (the fixpoint's shape above; the
+// panel repaints on new nodes, never on a reflow, since 2026-09-09). Since the Slice 4 review's round 13 the panel re-trims on
+// two layout changes the seam never reports as well, the body's captured `load` (a figure's bytes landing) and the document's
+// FontFaceSet `loadingdone` (a face arriving under font-display: swap), each re-wrapping the lines with no width report, folded
+// into its layout frame (one trim per frame); and a trim that finds the body without a box (a display:none pane, where every blank
+// mark measures nothing and is kept) asks for a frame and measures the marks again there, once per event and never per frame:
+// when the hide and the show fall in one task that frame is the first after the show and re-trims it; when a frame runs while
+// the pane is hidden (Chromium runs a display:none frame's requestAnimationFrame, so every hide that outlasts a frame) the armed
+// frame runs hidden and keeps every mark, and the seam's width observer reports the hide and the show as reflows, the show's
+// report re-trimming (file-comments.ts trimBlanks and scheduleRetrim; md-config-paint-retrim-events-browser.test.ts legs 4 and 5).
+// Since round 14 the panel's own repaint of the pending target alone (file-comments.ts repaintPresel: a composer opened, closed
+// or moved), whose 2 px side padding moves the wrap points of the lines it shares with a highlight, trims at once in the same
+// call; since round 15 that repaint is a paint pass over the line boxes the target enters and leaves, since round 16 closed under
+// the highlights standing in them (every box a repainted highlight's own marks stand in is read too, until no highlight is new; the
+// highlights are painted again in cards() order, the pass's, the change marks whole-document through paintChanges when one stands in
+// any of the boxes, the target inside them, then the one trim; lineBoxOf climbs past inline-level boxes, the embed chip's
+// inline-block among them, and table parts to the block whose width does not follow its content), since a trim alone left the
+// highlight's blanks trimmed at the old wrap points bare where they rendered at the new ones, while the composer stood and after
+// Cancel; a repaint that adds and removes no Rendered mark (a reply, a re-place, a comment on the file, a region, the Raw view)
+// trims nothing (md-config-paint-presel-retrim-browser.test.ts, the item of fourteen links at 300 to 600 px, no padding-only mark
+// and no bare blank pending or after Cancel; md-config-paint-presel-kinds-browser.test.ts, zero measurements for those kinds;
+// md-config-paint-presel-scope-browser.test.ts, two overlapping comments' nesting and click target the pass's, a highlight across
+// two paragraphs, a change mark in an untouched paragraph, a target on the embed chip). Its price is a fresh paint of the boxes'
+// marks to the fixpoint, one layout a pass, in the real pane at 1000 px: the fourteen-link item 5 to 6.5 ms an open and 2.2 to 2.5
+// ms a Cancel, the 120-link item 27 to 39 and 14 to 22 ms, forty comments over sixty paragraphs 3 to 5 and 1.4 to 1.7 ms; one
+// comment across the paragraph of 5,000 links 6.0 to 6.2 s an open (three passes, 13,821 Range.getClientRects calls) and 3.2 to 3.3
+// s a Cancel (two passes, 9,510), against 2.7 to 2.8 and 1.3 s for round 14's trim of the standing marks and about 1.3 s for main's
+// untrimmed paint, recorded and not optimised (the passes are the fixpoint's). The re-trim's price per reflow: realistic shapes
+// under 10 ms (200 comments over 300 paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to 11 ms); one comment across the paragraph of
+// 5,000 links 1 to 13 s in the real pane under the convergence loop (round 14's measurements, three runs agreeing on every call
+// count: a window-resize step 1.0 to 1.1 s and 1,457 Range.getClientRects calls, a divider release narrowing 1000 to 700 px 2.1 to
+// 2.4 s and 8,079, widening back 5.1 to 5.6 s and 11,514, a text-size step 12.4 to 13.3 s and 14,244, ten passes, nine that
+// unwrapped and the tenth confirming, each pass after one that unwrapped laying the mutated paragraph out again at 1.0 to 1.3 s a
+// layout; round 13 recorded 1.5 to 4.6 s, measured under the three-pass cap the same round replaced, which left 51 padding-only
+// marks standing on the text-size step where the loop leaves none), recorded beside the paint's cost and not optimised. The
+// divider's drag itself fires one reflow, at release (the shell moves a ghost line and lays the pane out once); a window-edge resize
+// reflows every frame and pays the price per frame.
+// In node the stand-ins offer no layout, so the trim measures nothing and every blank the DOM-side skips leave is a mark; the
+// node tests pin the DOM shape and the two skips, the browser legs the trimmed result (md-config-paint-trim.test.ts and
+// md-config-paint-trim-browser.test.ts, over anchor-map-fixtures/blank-scenes.json, the scenes the review rounds 7 to 13 collected).
+
+export type PaintOptions = {
+  /** Trim this call's collapsed blank marks (trimCollapsedMarks), the default. The Comments panel passes false and trims once
+   *  per paint pass over every mark of the pass: one layout instead of one per call. */
+  trim?: boolean;
+};
+/** The safety cap on a trim's measure-then-unwrap passes. The loop stops when a pass unwraps nothing and ends by construction
+ *  before then (each pass that continues removes at least one mark); the cap guards against a cascade that unwraps one mark a pass,
+ *  and a call that reaches it with candidates standing is counted in TRIM_STATS.capped. Over round 12's 91 fixture scenes 42 paints
+ *  took one pass (nothing collapsed), 34 two (a pass that unwrapped, then the pass that confirmed nothing else had) and one three
+ *  (the list item of fourteen links at 220 px); the paragraph of 5,000 links takes up to eight passes fresh and twelve after a
+ *  narrowing (the header), the most measured. Exported for the tests. */
+export const TRIM_PASSES_MAX = 20;
+/** The last trim's pass count and the calls that reached the cap since the module loaded: the record the header names, read by
+ *  the tests and by a devtools probe. */
+export const TRIM_STATS = { passes: 0, capped: 0 };
+/** A mark whose every text node matches this is measured: no letter, digit, punctuation or symbol in it (so `\s`, the Unicode
+ *  spaces, the format characters Cf, the controls Cc, a combining mark alone), or the hangul fillers (U+115F, U+1160, U+3164,
+ *  U+FFA0: letters to Unicode, blank in most fonts). The alphabet chooses what is measured, never what is unwrapped. */
+const TRIM_CANDIDATE = /^(?:[^\p{L}\p{N}\p{P}\p{S}]|[\u115f\u1160\u3164\uffa0])*$/u;
+type DMeasured = DElement & { getClientRects?(): ArrayLike<unknown> };
+/** Whether `m` is a mark the trim measures: a `mark` element holding text, all of it blank (TRIM_CANDIDATE). A framed picture (an
+ *  `img` wearing the highlight class, file-comments.ts frameImage), a deletion point or a mark with a word in it is never touched. */
+function isBlankMark(m: DElement): boolean {
+  if (m.tagName.toUpperCase() !== "MARK") return false;
+  let texts = 0;
+  const blank = (n: DNode): boolean => {
+    if (isText(n)) { texts++; return TRIM_CANDIDATE.test(n.data); }
+    for (let i = 0; i < n.childNodes.length; i++) if (!blank(n.childNodes[i])) return false;
+    return true;
+  };
+  return blank(m) && texts > 0;
+}
+/** The document's Range for the measurement, null when the document offers none or the Range no getClientRects (the tests'
+ *  stand-ins), in which case nothing is measured and every mark stays. */
+function measureRange(m: DElement): DRange | null {
+  const doc = m.ownerDocument;
+  if (!doc || typeof doc.createRange !== "function") return null;
+  const r = doc.createRange();
+  return typeof r.getClientRects === "function" ? r : null;
+}
+/** The rendered width of the mark's text: a Range over each text node under it, the client rects' widths summed, a fragment per
+ *  line a node runs over. Per text node and never over the mark's contents: a Range that selects an element whole reports the
+ *  element's border box (CSSOM getClientRects), so over an outer mark holding an inner one (two comments over one passage) the
+ *  inner mark's 4 px of padding around a collapsed blank read as content and the nest was peeled one level per pass (the header). */
+function contentWidth(r: DRange, m: DElement): number {
+  let w = 0;
+  const visit = (n: DNode) => {
+    if (isText(n)) {
+      r.selectNodeContents(n);
+      const rects = r.getClientRects();
+      for (let i = 0; i < rects.length; i++) w += rects[i].width;
+      return;
+    }
+    for (let i = 0; i < n.childNodes.length; i++) visit(n.childNodes[i]);
+  };
+  visit(m);
+  return w;
+}
+/** The mark's own client rects: none under a display:none ancestor (kept, its blank may render when the ancestor shows, and the
+ *  panel measures it again on the show, by the seam's reflow report or the frame it armed, file-comments.ts trimBlanks); a
+ *  collapsed blank in a rendered line gives the mark its padding's rect. A stand-in without the method counts as rendered. */
+const ownRects = (m: DMeasured): number => typeof m.getClientRects === "function" ? m.getClientRects().length : 1;
+/** Unwrap every mark of `marks` whose text is blank (isBlankMark) and lays out at zero width: the browser collapsed the blank, so
+ *  the mark was the sheet's padding around nothing. The mark's children go back before it and it is removed, with no normalize
+ *  (the neighbouring marks keep their text nodes; the panel's unpaint normalizes). Two-phase and to a fixpoint, as the header
+ *  says. Returns the marks kept, in the order given. Exported for the Comments panel's batched pass and its reflow re-trim, and
+ *  for the tests. */
+export function trimCollapsedMarks(marks: Element[]): Element[] {
+  let kept = marks as unknown as DElement[];
+  let cands = kept.filter(isBlankMark);
+  const r = cands.length ? measureRange(cands[0]) : null;
+  TRIM_STATS.passes = 0;
+  if (!r) return marks;
+  let converged = false;
+  while (TRIM_STATS.passes < TRIM_PASSES_MAX && cands.length) {
+    TRIM_STATS.passes++;
+    // phase one: every measurement (one layout for the pass), no mutation among them
+    const drop = new Set<DElement>();
+    for (const m of cands) if (m.parentNode && contentWidth(r, m) === 0 && ownRects(m) > 0) drop.add(m);
+    if (!drop.size) { converged = true; break; }
+    // phase two: every unwrap (a nest of marks over one blank is dropped whole: the outer mark's children move up before it,
+    // the inner mark among them, and the inner mark's move then finds its new parent; either order leaves the text in place)
+    for (const m of drop) {
+      const p = m.parentNode as DElement;
+      while (m.childNodes.length) p.insertBefore(m.childNodes[0], m);
+      p.removeChild(m);
+    }
+    kept = kept.filter((m) => !drop.has(m));
+    cands = cands.filter((m) => !drop.has(m));
+  }
+  if (!converged && cands.length) TRIM_STATS.capped++;
+  return kept as unknown as Element[];
+}
+
 export function paintRendered(renderedRoot: Element, source: string, range: SourceRange, className: string,
-                              data?: Record<string, string>): Element[] | null {
+                              data?: Record<string, string>, opts?: PaintOptions): Element[] | null {
   const root = renderedRoot as unknown as DElement;
+  // the marks of one wrap, trimmed of their collapsed blanks unless the caller batches the trim (the header above); none left
+  // (a passage of one zero-width character, say) is no highlight, and the next path gets its turn
+  const done = (marks: DElement[]): Element[] | null => {
+    const out = opts && opts.trim === false ? (marks as unknown as Element[]) : trimCollapsedMarks(marks as unknown as Element[]);
+    return out.length ? out : null;
+  };
   const idx = renderedIndex(root, source);
-  // ── the exact path: emitted characters whose source offset lies in the range
+  // ── the exact path: emitted characters whose source offset lies in the range, and the inline formulas whose TeX does
+  //    (a formula emits no character: its hole names its span, and coveredFormulas pairs the hole with its element)
   let first: { b: number; k: number } | null = null, last: { b: number; k: number } | null = null;
+  const formulas: DNode[] = [];
   for (let b = 0; b < idx.blocks.length; b++) {
     const blk = idx.blocks[b];
     if (blk.refused !== null || !blk.dom.length) continue;
@@ -1296,13 +2013,27 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
       const s = nOf(idx, p);   // one source character: emitted text is never a tab expansion or a line ending
       if (s >= range.start && s < range.end) { if (!first) first = { b, k }; last = { b, k }; }
     }
+    coveredFormulas(idx, blk, range, formulas);
   }
   if (first && last) {
     const s = nthNonWs(idx.blocks[first.b].dom[0], first.k);
     const e = nthNonWs(idx.blocks[last.b].dom[0], last.k);
     if (s && e) {
-      const marks = wrapBetween(root, s, { t: e.t, off: e.off + 1 }, className, data);
-      if (marks.length) return marks as unknown as Element[];
+      const out = done(wrapBetween(root, s, { t: e.t, off: e.off + 1 }, className, data, formulas));
+      if (out) return out;
+    }
+  } else if (formulas.length) {
+    // the range holds formulas and no text (a comment made in the Raw view on `$x^2$` alone): the formulas are the highlight,
+    // read from the top-level children they sit under (unitsUnder), as wrapBetween reads its units. A walk of the whole root
+    // here cost marks x nodes for such marks after main's M1 had scoped the text path: 40 formula-only marks over a 26k-node
+    // document were 142 ms a pass against 6.9 ms for 40 text marks on the same paragraphs (the Slice 4 review, round 7).
+    const tops = new Set<DNode>();
+    for (const f of formulas) { const tf = topChildOf(root, f); if (tf) tops.add(tf); }
+    const all = unitsUnder(root, tops);
+    const at = formulas.map((f) => all.indexOf(f)).filter((i) => i >= 0);
+    if (at.length) {
+      const out = done(wrapRuns(root, all.slice(Math.min(...at), Math.max(...at) + 1), className, data));
+      if (out) return out;
     }
   }
   // ── the fallback: a whitespace-tolerant match of the quote stripped of its markup, inside the blocks
@@ -1344,8 +2075,7 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
   const k = srcHits.findIndex((h) => scopeStart + scopeSrc.map[h.start] >= range.start && scopeStart + scopeSrc.map[h.end - 1] < range.end);
   if (k < 0) return null;
   const hit = hits[k];
-  const marks = wrapSlices(nodes, inNodes(hit.start), inNodes(hit.end), className, data, skipBlockWs);
-  return marks.length ? (marks as unknown as Element[]) : null;
+  return done(wrapSlices(nodes, inNodes(hit.start), inNodes(hit.end), className, data, (t) => skipBlockWs(t, root)));
 }
 
 /** `s` with every whitespace run collapsed to one space and its edges trimmed, and `map[i]` the index in `s`
@@ -1735,7 +2465,7 @@ function renderedPointStyles(label: string, styles: Record<string, string>): Rec
  * a batch whose offsets do not index `source` (offsetsIndex) paints nothing and reports every id unpainted.
  */
 export function paintChangesRendered(renderedRoot: Element, source: string, changes: ChangePaint[],
-                                     stylesFor: (c: ChangePaint) => Record<string, string>): { painted: string[]; unpainted: string[] } {
+                                     stylesFor: (c: ChangePaint) => Record<string, string>, opts?: PaintOptions): { painted: string[]; unpainted: string[] } {
   const painted: string[] = [], unpainted: string[] = [];
   if (!batchIndexes(changes, source)) return { painted, unpainted: changes.map((c) => c.id) };
   for (const c of changes) {
@@ -1747,7 +2477,7 @@ export function paintChangesRendered(renderedRoot: Element, source: string, chan
       continue;
     }
     if (c.curFrom === c.curTo) { unpainted.push(c.id); continue; }
-    const marks = paintRendered(renderedRoot, source, { start: c.curFrom, end: c.curTo }, "fc-ins", data);
+    const marks = paintRendered(renderedRoot, source, { start: c.curFrom, end: c.curTo }, "fc-ins", data, opts);
     if (!marks || !marks.length) { unpainted.push(c.id); continue; }
     const styles = stylesFor(c);
     for (const m of marks) applyStyles(m as unknown as DElement, styles);

@@ -1,0 +1,495 @@
+{
+ "note": [
+  "The blank scenes the Slice 4 review collected over its rounds 7 to 13 for the comments painter (anchor-map.ts paintRendered and",
+  "its layout-time trim, trimCollapsedMarks): a fold's paragraphs, an author's figure, details, dl and center, badge rows, br pairs,",
+  "wrap points at several widths, a nbsp and an ideographic space, U+FEFF and the zero-width and bidi characters, svg icons, audio",
+  "with and without controls, an author pre with br and block children and with spaces or a tab between its block children (round",
+  "13: rendered under white-space: pre, so painted and kept), tables, footnote definitions, list items, a form feed, a CRLF, a floated",
+  "image, a picture without an image, ruby and rp, a space inside a kbd, a table caption, and a plain note. Each",
+  "scene is markdown from the paragraph 'Intro para.' to the paragraph 'After para.' and the width of the prose root it is laid",
+  "out at (the range painted runs from the first character of the one to the last of the other). No expected marks are recorded:",
+  "md-config-paint-trim-browser.test.ts reads the answer off the browser's layout for every scene (no blank mark of zero width, no",
+  "top-level mark, the trim removing blank marks alone, the unpaint exact). Two scenes are shaped around the pairing's recorded refusal",
+  "(plans/markdown-viewer.md, Slice 4 build note item 10 (d)): the broken-img scene's list item reads **z** so its stripped text differs from",
+  "the html block's bold before it (written **a** it painted nothing past that block); the stripped-comment scene is left hitting the refusal as",
+  "the union's one recorded case. A CR is always the CRLF pair: to marked a lone CR before CRLF is a blank line, which ends an html block",
+  "(md-config-blank-scenes-fixture.test.ts pins it). Synthetic prose, no paths."
+ ],
+ "scenes": [
+  {
+   "name": "callout open (fold), two body paragraphs",
+   "width": 800,
+   "markdown": "Intro para.\n\n> [!note]+ Title\n> body one **a** *b* end\n>\n> body two\n\nAfter para."
+  },
+  {
+   "name": "callout closed (fold), two body paragraphs",
+   "width": 800,
+   "markdown": "Intro para.\n\n> [!note]- Title\n> body one **a** *b* end\n>\n> body two\n\nAfter para."
+  },
+  {
+   "name": "html details open with figure",
+   "width": 800,
+   "markdown": "Intro para.\n\n<details open>\n<summary>More</summary>\n<figure>\n<img src=\"a.png\" alt=\"a\">\n<figcaption>cap **x** *y*</figcaption>\n</figure>\n<p>one <b>a</b> <i>b</i></p>\n</details>\n\nAfter para."
+  },
+  {
+   "name": "html details closed with figure (collapsed blanks beside the image)",
+   "width": 800,
+   "markdown": "Intro para.\n\n<details>\n<summary>More</summary>\n<figure>\n<img src=\"a.png\" alt=\"a\">\n<figcaption>cap</figcaption>\n</figure>\n</details>\n\nAfter para."
+  },
+  {
+   "name": "html details closed with inline blanks",
+   "width": 800,
+   "markdown": "Intro para.\n\n<details>\n<summary>More</summary>\n<p>one <b>a</b> <i>b</i></p>\n<p>two</p>\n</details>\n\nAfter para."
+  },
+  {
+   "name": "figure img figcaption",
+   "width": 800,
+   "markdown": "Intro para.\n\n<figure>\n<img src=\"a.png\" alt=\"a\">\n<figcaption>cap</figcaption>\n</figure>\n\nAfter para."
+  },
+  {
+   "name": "dl",
+   "width": 800,
+   "markdown": "Intro para.\n\n<dl>\n<dt>term</dt>\n<dd>def <b>a</b> <i>b</i></dd>\n</dl>\n\nAfter para."
+  },
+  {
+   "name": "center with image",
+   "width": 800,
+   "markdown": "Intro para.\n\n<center>\n<img src=\"a.png\" alt=\"a\">\n</center>\n\nAfter para."
+  },
+  {
+   "name": "div align center badge row",
+   "width": 800,
+   "markdown": "Intro para.\n\n<div align=\"center\"><a href=\"#x\"><img src=\"a.png\" alt=\"a\"></a> <a href=\"#y\"><img src=\"b.png\" alt=\"b\"></a> <a href=\"#z\"><img src=\"c.png\" alt=\"c\"></a></div>\n\nAfter para."
+  },
+  {
+   "name": "br pair in paragraph",
+   "width": 800,
+   "markdown": "Intro para.\n\nline one<br>\n<br>\nline three\n\nAfter para."
+  },
+  {
+   "name": "wrap points: list item of links",
+   "width": 800,
+   "markdown": "Intro para.\n\n- [Link0 docs](#l0) [Link1 docs](#l1) [Link2 docs](#l2) [Link3 docs](#l3) [Link4 docs](#l4) [Link5 docs](#l5) [Link6 docs](#l6) [Link7 docs](#l7) [Link8 docs](#l8) [Link9 docs](#l9) [Link10 docs](#l10) [Link11 docs](#l11) [Link12 docs](#l12) [Link13 docs](#l13)\n- second item\n\nAfter para."
+  },
+  {
+   "name": "wrap points: paragraph of links",
+   "width": 800,
+   "markdown": "Intro para.\n\n[Link0 docs](#l0) [Link1 docs](#l1) [Link2 docs](#l2) [Link3 docs](#l3) [Link4 docs](#l4) [Link5 docs](#l5) [Link6 docs](#l6) [Link7 docs](#l7) [Link8 docs](#l8) [Link9 docs](#l9) [Link10 docs](#l10) [Link11 docs](#l11) [Link12 docs](#l12) [Link13 docs](#l13)\n\nAfter para."
+  },
+  {
+   "name": "nbsp paragraph spacer",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p>&nbsp;</p>\n\nAfter para."
+  },
+  {
+   "name": "nbsp before first inline and between brs",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p>&nbsp;<b>bold</b> x<br>\n&nbsp;<br>\ny</p>\n\nAfter para."
+  },
+  {
+   "name": "nbsp spacer cell html table",
+   "width": 800,
+   "markdown": "Intro para.\n\n<table>\n<tr><td>&nbsp;</td><td>b <i>c</i></td></tr>\n</table>\n\nAfter para."
+  },
+  {
+   "name": "U+3000 indent paragraph",
+   "width": 800,
+   "markdown": "Intro para.\n\n\u3000full width indent **a** *b*\n\nAfter para."
+  },
+  {
+   "name": "lone U+FEFF paragraph and in li",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p>\ufeff</p>\n\n- \ufeff<b>x</b> *y*\n\nAfter para."
+  },
+  {
+   "name": "lone U+200B and mixed with space",
+   "width": 800,
+   "markdown": "Intro para.\n\n<div>\u200b</div>\n\n<p>a\u200b <b>b</b></p>\n\n<p>a <b>b</b>\u200b <i>c</i></p>\n\nAfter para."
+  },
+  {
+   "name": "inline svg icon and icon i",
+   "width": 800,
+   "markdown": "Intro para.\n\n- <i class=\"icon\"></i> item <svg width=\"10\" height=\"10\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\"/></svg> tail **a** *b*\n\nAfter para."
+  },
+  {
+   "name": "audio with and without controls, video, canvas",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><audio src=\"a.mp3\"></audio> <b>a</b> <audio controls src=\"a.mp3\"></audio> <i>b</i></p>\n\n<p><video src=\"v.mp4\" width=\"80\" height=\"40\"></video> <b>a</b> <canvas width=\"20\" height=\"10\"></canvas> <i>b</i></p>\n\nAfter para."
+  },
+  {
+   "name": "img badges in paragraph",
+   "width": 800,
+   "markdown": "Intro para.\n\n[![b1](a.png)](#x) [![b2](b.png)](#y) [![b3](c.png)](#z)\n\nAfter para."
+  },
+  {
+   "name": "author pre with br",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre>line one<br>\n  line two\n\n    four</pre>\n\nAfter para."
+  },
+  {
+   "name": "author pre with block children",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre><div>a</div>\n<div>  b</div></pre>\n\nAfter para."
+  },
+  {
+   "name": "html table",
+   "width": 800,
+   "markdown": "Intro para.\n\n<table>\n<thead>\n<tr><th>h1</th> <th>h2</th></tr>\n</thead>\n<tbody>\n<tr><td>a <b>x</b> <i>y</i></td> <td>b</td></tr>\n</tbody>\n</table>\n\nAfter para."
+  },
+  {
+   "name": "markdown table",
+   "width": 800,
+   "markdown": "Intro para.\n\n| a | b |\n|---|---|\n| **x** *y* | z |\n\nAfter para."
+  },
+  {
+   "name": "footnote definition",
+   "width": 800,
+   "markdown": "Intro para.\n\ntext[^1] more\n\n[^1]: alpha **beta** *gamma*\n\nAfter para."
+  },
+  {
+   "name": "tight list",
+   "width": 800,
+   "markdown": "Intro para.\n\n- **a** *b*\n- c [d](#d) e\n\nAfter para."
+  },
+  {
+   "name": "loose list",
+   "width": 800,
+   "markdown": "Intro para.\n\n- **a** *b*\n\n- c [d](#d) e\n\nAfter para."
+  },
+  {
+   "name": "task items",
+   "width": 800,
+   "markdown": "Intro para.\n\n- [ ] task **a** *b*\n- [x] done [d](#d)\n\nAfter para."
+  },
+  {
+   "name": "blockquote",
+   "width": 800,
+   "markdown": "Intro para.\n\n> quote **a** *b*\n>\n> second\n\nAfter para."
+  },
+  {
+   "name": "form feed and CRLF",
+   "width": 800,
+   "markdown": "Intro para.\r\n\r\na\fb **c** *d*\r\n\r\ne\r\n\r\nAfter para."
+  },
+  {
+   "name": "empty inline neighbours",
+   "width": 800,
+   "markdown": "Intro para.\n\n- <a name=\"x\"></a> item **a**\n- <span></span> two <code></code> three <kbd></kbd> four\n- <span hidden>h</span> five <span hidden=\"until-found\">u</span> six\n\nAfter para."
+  },
+  {
+   "name": "trailing space inside neighbour",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><b>Label: </b> <i>value</i> and <i>a</i> <b> b</b></p>\n\n- [docs ](#a) *x*\n\nAfter para."
+  },
+  {
+   "name": "inline parent edges",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><em> <b>a</b></em> tail <em><b>a</b> </em></p>\n\nAfter para."
+  },
+  {
+   "name": "heading and hr",
+   "width": 800,
+   "markdown": "Intro para.\n\n## Head **a** *b*\n\n---\n\nAfter para."
+  },
+  {
+   "name": "menu with inline children and block children",
+   "width": 800,
+   "markdown": "Intro para.\n\n<menu>\n<li>a <b>b</b> <i>c</i></li>\n<li><p>x</p>\n<p>y</p></li>\n</menu>\n\nAfter para."
+  },
+  {
+   "name": "dir with inline children",
+   "width": 800,
+   "markdown": "Intro para.\n\n<dir>\n<li>a <b>b</b></li>\n</dir>\n\nAfter para."
+  },
+  {
+   "name": "search with two blocks and inline children",
+   "width": 800,
+   "markdown": "Intro para.\n\n<search>\n<p>a <b>b</b></p>\n<p>c</p>\n</search>\n\nAfter para."
+  },
+  {
+   "name": "hgroup with heading and paragraph",
+   "width": 800,
+   "markdown": "Intro para.\n\n<hgroup>\n<h2>Head <b>a</b></h2>\n<p>sub <i>b</i></p>\n</hgroup>\n\nAfter para."
+  },
+  {
+   "name": "section article aside nav header footer main address with inline children",
+   "width": 800,
+   "markdown": "Intro para.\n\n<section>a <b>b</b></section>\n<article>a <b>b</b></article>\n<aside>a <b>b</b></aside>\n<nav>a <b>b</b></nav>\n<header>a <b>b</b></header>\n<footer>a <b>b</b></footer>\n<main>a <b>b</b></main>\n<address>a <b>b</b></address>\n\nAfter para."
+  },
+  {
+   "name": "div with two blocks, block then inline, inline then block",
+   "width": 800,
+   "markdown": "Intro para.\n\n<div>\n<p>a</p>\n<p>b</p>\n</div>\n\n<div><p>a</p> tail <b>x</b></div>\n\n<div>head <b>x</b> <p>b</p></div>\n\nAfter para."
+  },
+  {
+   "name": "hr inside div between inline runs",
+   "width": 800,
+   "markdown": "Intro para.\n\n<div>a <b>b</b><hr>c <i>d</i></div>\n\nAfter para."
+  },
+  {
+   "name": "svg icon leading a list item, a paragraph and a div link",
+   "width": 800,
+   "markdown": "Intro para.\n\n- <svg width=\"10\" height=\"10\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\"/></svg> **Label**\n\n<p><svg width=\"10\" height=\"10\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\"/></svg> <b>Label</b></p>\n\n<div><a href=\"#x\"><svg width=\"10\" height=\"10\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\"/></svg></a> <a href=\"#y\">link</a></div>\n\nAfter para."
+  },
+  {
+   "name": "svg badge row of two svg links, svg closing an item, svg hidden",
+   "width": 800,
+   "markdown": "Intro para.\n\n<div align=\"center\"><a href=\"#x\"><svg width=\"10\" height=\"10\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\"/></svg></a>\n<a href=\"#y\"><svg width=\"10\" height=\"10\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\"/></svg></a></div>\n\n- **a** <svg width=\"10\" height=\"10\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\"/></svg>\n- <svg hidden width=\"10\" height=\"10\"><rect width=\"10\" height=\"10\"/></svg> **b**\n\nAfter para."
+  },
+  {
+   "name": "audio without controls in a list item, video without dimensions, canvas closing",
+   "width": 800,
+   "markdown": "Intro para.\n\n- <audio src=\"a.mp3\"></audio> **Recording**\n- <video src=\"v.mp4\"></video> **clip**\n- **a** <canvas width=\"20\" height=\"10\"></canvas>\n\nAfter para."
+  },
+  {
+   "name": "U+200B between two top-level html paragraphs and U+FEFF likewise",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p>x</p>\u200b<p>y</p>\n\n<p>x</p>\ufeff<p>y</p>\n\nAfter para."
+  },
+  {
+   "name": "each zero-width character alone in an item and one mixed with nbsp",
+   "width": 800,
+   "markdown": "Intro para.\n\n- \u200c<b>a</b> *b*\n- \u200d<b>a</b> *b*\n- \u2060<b>a</b> *b*\n- \u2061<b>a</b> *b*\n- \u2062<b>a</b> *b*\n- \u2063<b>a</b> *b*\n- \u2064<b>a</b> *b*\n- <b>a</b>\u200b\u00a0<i>b</i>\n\nAfter para."
+  },
+  {
+   "name": "zero-width node inside a pre and beside a code span",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre>a\u200b\nb</pre>\n\n<p><code>x</code>\u200b <b>y</b></p>\n\nAfter para."
+  },
+  {
+   "name": "author pre with a br pair and with div children",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre>a<br>\n<br>b</pre>\n\n<pre>a<p>x</p>\n<p>y</p>b</pre>\n\nAfter para."
+  },
+  {
+   "name": "author pre with a leading newline and a trailing one",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre>\n  indented\n\n</pre>\n\nAfter para."
+  },
+  {
+   "name": "form feed ending a neighbour, alone closing an item, alone between two inlines",
+   "width": 800,
+   "markdown": "Intro para.\n\n- <b>a\f</b> <i>b</i>\n- <b>a</b>\f\n- <b>a</b>\f<i>b</i>\n\nAfter para."
+  },
+  {
+   "name": "nested lists three deep with inline children",
+   "width": 800,
+   "markdown": "Intro para.\n\n- one **a** *b*\n  - two **a** *b*\n    - three **a** *b*\n  - back\n\nAfter para."
+  },
+  {
+   "name": "ordered list, item with a hard break (two spaces) and an html br",
+   "width": 800,
+   "markdown": "Intro para.\n\n1. **a** *b*\n2. line one  \n   line two **c**\n3. x<br>\n   y *d*\n\nAfter para."
+  },
+  {
+   "name": "loose nested list and a loose task item",
+   "width": 800,
+   "markdown": "Intro para.\n\n- **a** *b*\n\n  - nested **c** *d*\n\n- [ ] task **e**\n\n  more *f*\n\nAfter para."
+  },
+  {
+   "name": "list item starting with an image, nbsp between items' children",
+   "width": 800,
+   "markdown": "Intro para.\n\n- ![a](a.png) text **b**\n- **a**\u00a0<i>b</i>\n- \u00a0\n\nAfter para."
+  },
+  {
+   "name": "summary with inline children, open and closed",
+   "width": 800,
+   "markdown": "Intro para.\n\n<details open>\n<summary>Sum <b>a</b> <i>b</i></summary>\n<p>body <b>x</b></p>\n</details>\n\n<details>\n<summary>Sum <b>a</b> <i>b</i></summary>\n<p>body <b>x</b></p>\n</details>\n\nAfter para."
+  },
+  {
+   "name": "figcaption with inline children and two images in a figure",
+   "width": 800,
+   "markdown": "Intro para.\n\n<figure>\n<img src=\"a.png\" alt=\"a\"> <img src=\"b.png\" alt=\"b\">\n<figcaption>cap <b>a</b> <i>b</i></figcaption>\n</figure>\n\nAfter para."
+  },
+  {
+   "name": "wbr, empty sup and code, nested empty spans, anchor closing an item",
+   "width": 800,
+   "markdown": "Intro para.\n\n- a<wbr> <b>b</b>\n- <sup></sup> <b>b</b>\n- <code></code> <b>b</b>\n- <span><span></span></span> <b>b</b>\n- **a** <a name=\"end\"></a>\n\nAfter para."
+  },
+  {
+   "name": "whitespace-only node inside an empty inline at the edge and between text",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><sub> </sub><b>a</b> text</p>\n\n<p><b>a</b><sub> </sub><i>b</i></p>\n\n<p><b>a</b><span> </span><i>b</i></p>\n\nAfter para."
+  },
+  {
+   "name": "code span ending in a space, a br closing the neighbour, tabs and space runs between inlines",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><code>x </code> <b>y</b></p>\n\n<p><b>a<br></b> <i>b</i></p>\n\n<p><b>a</b>\t\t<i>b</i> <b>c</b>   <i>d</i></p>\n\nAfter para."
+  },
+  {
+   "name": "CRLF newline inside an html block between inline children",
+   "width": 800,
+   "markdown": "Intro para.\r\n\r\n<div>a <b>b</b>\r\n<i>c</i></div>\r\n\r\nAfter para."
+  },
+  {
+   "name": "block inside an inline splitting the line",
+   "width": 800,
+   "markdown": "Intro para.\n\n<div><span><div>x</div></span> <b>b</b></div>\n\n<div><b>a</b> <span><div>x</div></span></div>\n\nAfter para."
+  },
+  {
+   "name": "front matter then a paragraph with inline children",
+   "width": 800,
+   "markdown": "---\ntitle: T\ntags: [a, b]\n---\n\nIntro para.\n\n**a** *b*\n\nAfter para."
+  },
+  {
+   "name": "callout with inline children in the title and a list in the body",
+   "width": 800,
+   "markdown": "Intro para.\n\n> [!tip] Title **a** *b*\n> - item **c** *d*\n> - two\n>\n> tail **e**\n\nAfter para."
+  },
+  {
+   "name": "callout closed with a nested callout and a code span",
+   "width": 800,
+   "markdown": "Intro para.\n\n> [!note]- Outer **a**\n> > [!tip] Inner *b*\n> > body `c` **d**\n\nAfter para."
+  },
+  {
+   "name": "wikilink dead span, mark and del as neighbours",
+   "width": 800,
+   "markdown": "Intro para.\n\n[[Note]] **a** [[Note|alias]]\n\n==m== **a** ~~d~~ *b*\n\nAfter para."
+  },
+  {
+   "name": "footnote definition with code, link and emphasis, two definitions",
+   "width": 800,
+   "markdown": "Intro para.\n\ntext[^1] more[^2]\n\n[^1]: alpha `code` [link](#l) **b**\n\n[^2]: beta *c*\n\nAfter para."
+  },
+  {
+   "name": "inline math between inline children, display math in a blockquote",
+   "width": 800,
+   "markdown": "Intro para.\n\n$x$ **a** $y^2$ *b*\n\n> quote **a**\n>\n> $$\n> \\sum_i i\n> $$\n>\n> tail *b*\n\nAfter para."
+  },
+  {
+   "name": "html table with a space-only cell and a th of nbsp",
+   "width": 800,
+   "markdown": "Intro para.\n\n<table>\n<tr><th>\u00a0</th><th>h <b>x</b></th></tr>\n<tr><td> </td><td>a <i>y</i></td></tr>\n</table>\n\nAfter para."
+  },
+  {
+   "name": "heading with inline children only and a heading closing with a space",
+   "width": 800,
+   "markdown": "Intro para.\n\n## **a** *b*\n\n### c <b>d</b>&nbsp;\n\nAfter para."
+  },
+  {
+   "name": "blockquote with a br pair and a nested blockquote",
+   "width": 800,
+   "markdown": "Intro para.\n\n> line one<br>\n> <br>\n> line three **a**\n>\n> > nested **b** *c*\n\nAfter para."
+  },
+  {
+   "name": "picture element and kbd with text as neighbours",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><picture><source srcset=\"a.png\"><img src=\"a.png\" alt=\"a\"></picture> <b>x</b></p>\n\n<p><kbd>Ctrl</kbd> <b>x</b> <kbd></kbd> <i>y</i></p>\n\nAfter para."
+  },
+  {
+   "name": "U+3000 between inlines and nbsp run between two brs",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><b>a</b>\u3000<i>b</i></p>\n\n<p>x<br>\n\u00a0\u00a0<br>\ny</p>\n\nAfter para."
+  },
+  {
+   "name": "wrap points: paragraph of links at 300 px",
+   "width": 300,
+   "markdown": "Intro para.\n\n[Link0 docs](#l0) [Link1 docs](#l1) [Link2 docs](#l2) [Link3 docs](#l3) [Link4 docs](#l4) [Link5 docs](#l5) [Link6 docs](#l6) [Link7 docs](#l7) [Link8 docs](#l8) [Link9 docs](#l9) [Link10 docs](#l10) [Link11 docs](#l11) [Link12 docs](#l12) [Link13 docs](#l13)\n\nAfter para."
+  },
+  {
+   "name": "wrap points: list item of links at 300 px",
+   "width": 300,
+   "markdown": "Intro para.\n\n- [Link0 docs](#l0) [Link1 docs](#l1) [Link2 docs](#l2) [Link3 docs](#l3) [Link4 docs](#l4) [Link5 docs](#l5) [Link6 docs](#l6) [Link7 docs](#l7) [Link8 docs](#l8) [Link9 docs](#l9) [Link10 docs](#l10) [Link11 docs](#l11) [Link12 docs](#l12) [Link13 docs](#l13)\n- second item\n\nAfter para."
+  },
+  {
+   "name": "wrap points: paragraph of links at 220 px",
+   "width": 220,
+   "markdown": "Intro para.\n\n[Link0 docs](#l0) [Link1 docs](#l1) [Link2 docs](#l2) [Link3 docs](#l3) [Link4 docs](#l4) [Link5 docs](#l5) [Link6 docs](#l6) [Link7 docs](#l7) [Link8 docs](#l8) [Link9 docs](#l9) [Link10 docs](#l10) [Link11 docs](#l11) [Link12 docs](#l12) [Link13 docs](#l13)\n\nAfter para."
+  },
+  {
+   "name": "wrap points: list item of links at 220 px",
+   "width": 220,
+   "markdown": "Intro para.\n\n- [Link0 docs](#l0) [Link1 docs](#l1) [Link2 docs](#l2) [Link3 docs](#l3) [Link4 docs](#l4) [Link5 docs](#l5) [Link6 docs](#l6) [Link7 docs](#l7) [Link8 docs](#l8) [Link9 docs](#l9) [Link10 docs](#l10) [Link11 docs](#l11) [Link12 docs](#l12) [Link13 docs](#l13)\n- second item\n\nAfter para."
+  },
+  {
+   "name": "wrap points: plain words at 180 px",
+   "width": 180,
+   "markdown": "Intro para.\n\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 **b** *i* tail0 tail1 tail2 tail3 tail4 tail5 tail6 tail7 tail8 tail9\n\nAfter para."
+  },
+  {
+   "name": "img align=right float then a space and text, in p and li, and before a trailing float",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><img align=\"right\" src=\"a.png\" alt=\"a\" width=\"20\" height=\"20\"> <b>a</b> <i>b</i></p>\n\n- <img align=\"right\" src=\"a.png\" alt=\"a\" width=\"20\" height=\"20\"> **a** *b*\n\n<p><b>a</b> <i>b</i> <img align=\"right\" src=\"a.png\" alt=\"a\" width=\"20\" height=\"20\"></p>\n\nAfter para."
+  },
+  {
+   "name": "picture without img, rp, ruby of rp only, marquee empty, template, nobr empty",
+   "width": 800,
+   "markdown": "Intro para.\n\n- <picture><source srcset=\"a.png\"></picture> <b>x</b>\n- <rp>x</rp> <b>x</b>\n- <ruby><rp>x</rp></ruby> <b>x</b>\n- <marquee></marquee> <b>x</b>\n- <template><b>t</b></template> <b>x</b>\n- <nobr></nobr> <b>x</b>\n\nAfter para."
+  },
+  {
+   "name": "whitespace inside a kbd, an fv-embed anchor and a code span, tight and spaced",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><b>a</b><kbd> </kbd><i>b</i></p>\n\n<p><b>a</b> <kbd> </kbd> <i>b</i></p>\n\n<p><b>x</b><a class=\"fv-embed\"> <b>y</b></a></p>\n\n<p><b>a</b><code> </code><i>b</i></p>\n\n<p><b>a</b> <code> </code> <i>b</i></p>\n\nAfter para."
+  },
+  {
+   "name": "zero-width format characters outside the alphabet, lone: LRM, RLM, LRE, PDF, LRI, ALM, soft hyphen, MVS, IAA",
+   "width": 800,
+   "markdown": "Intro para.\n\n- \u200e<b>a</b> *b*\n- \u200f<b>a</b> *b*\n- \u202a<b>a</b> *b*\n- \u202c<b>a</b> *b*\n- \u2066<b>a</b> *b*\n- \u061c<b>a</b> *b*\n- \u00ad<b>a</b> *b*\n- \u180e<b>a</b> *b*\n- \ufff9<b>a</b> *b*\n\n<p>\u200e</p>\n\n<div>\u00ad</div>\n\n<p><b>a</b>\u200e<i>b</i></p>\n\n<p><b>a</b>\u200e <i>b</i></p>\n\nAfter para."
+  },
+  {
+   "name": "nonspacing marks and blank fillers alone: CGJ, VS16, Mongolian FVS1, VS17, combining acute, hangul fillers",
+   "width": 800,
+   "markdown": "Intro para.\n\n- \u034f<b>a</b> *b*\n- \ufe0f<b>a</b> *b*\n- \u180b<b>a</b> *b*\n- \udb40\udd00<b>a</b> *b*\n- \u0301<b>a</b> *b*\n- \u115f<b>a</b> *b*\n- \u3164<b>a</b> *b*\n\n<p><b>a</b>\u3164<i>b</i></p>\n\nAfter para."
+  },
+  {
+   "name": "control and space glyphs that render: VT, NEL, ogham space, en quad, thin space, narrow nbsp, medium math space, braille blank, line separator",
+   "width": 800,
+   "markdown": "Intro para.\n\n- \u000b<b>a</b> *b*\n- <b>a</b>\u000b<i>b</i>\n- \u0085<b>a</b> *b*\n- <b>a</b>\u0085<i>b</i>\n- \u1680<b>a</b> *b*\n- <b>a</b>\u1680<i>b</i>\n- \u2000<b>a</b> *b*\n- <b>a</b>\u2000<i>b</i>\n- \u2009<b>a</b> *b*\n- <b>a</b>\u2009<i>b</i>\n- \u202f<b>a</b> *b*\n- <b>a</b>\u202f<i>b</i>\n- \u205f<b>a</b> *b*\n- <b>a</b>\u205f<i>b</i>\n- \u2800<b>a</b> *b*\n- <b>a</b>\u2800<i>b</i>\n- \u2028<b>a</b> *b*\n- <b>a</b>\u2028<i>b</i>\n\nAfter para."
+  },
+  {
+   "name": "svg display=none beside a space",
+   "width": 800,
+   "markdown": "Intro para.\n\n- <svg display=\"none\" width=\"10\" height=\"10\"><rect width=\"10\" height=\"10\"/></svg> **a**\n\nAfter para."
+  },
+  {
+   "name": "hidden inline parent and a hidden div holding inline blanks",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><i>x</i><span hidden> <b>a</b></span></p>\n\n<div hidden>text <b>a</b> <i>b</i></div>\n\n<div><p hidden>x</p>\n<b>a</b> <i>b</i></div>\n\nAfter para."
+  },
+  {
+   "name": "adjacent whitespace nodes left by a stripped comment, style or input, in p and li",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p><b>a</b> <!-- x --> <i>b</i></p>\n\n- <b>a</b> <style>x{}</style> <i>b</i>\n- x <input type=\"checkbox\"> **a** <input type=\"text\"> *b*\n\nAfter para."
+  },
+  {
+   "name": "table caption with inline children, summary outside details, two spaces around an empty anchor",
+   "width": 800,
+   "markdown": "Intro para.\n\n<table><caption>c <b>a</b> <i>b</i></caption><tr><td>x</td></tr></table>\n\n<summary>s <b>a</b></summary> <b>x</b>\n\n<p><b>a</b> <a name=\"x\"></a> <i>b</i></p>\n\nAfter para."
+  },
+  {
+   "name": "br then space then img then space, p of one space, td of nbsp and space, img of zero size, broken img with empty alt",
+   "width": 800,
+   "markdown": "Intro para.\n\n<p>a<br> <img src=\"a.png\" alt=\"a\"> <b>b</b></p>\n\n<p> </p>\n\n<table><tr><td>&nbsp; </td><td>x <b>y</b></td></tr></table>\n\n<p><img src=\"a.png\" alt=\"a\" width=\"0\" height=\"0\"> <b>a</b></p>\n\n- <img src=\"a.png\" alt=\"\"> **z**\n\nAfter para."
+  },
+  {
+   "name": "video, canvas and audio with the hidden attribute",
+   "width": 800,
+   "markdown": "Intro para.\n\n- <video hidden src=\"v.mp4\"></video> **a**\n- <canvas hidden></canvas> **a**\n- <audio controls hidden src=\"a.mp3\"></audio> **a**\n\nAfter para."
+  },
+  {
+   "name": "plain note: heading, paragraph with inline children, list, quote, fence (the trim unwraps nothing here)",
+   "width": 800,
+   "markdown": "Intro para.\n\n# A heading\n\nA plain paragraph with **bold**, *emphasis*, a [link](#l) and `code` in it, long enough to wrap once at the page's width, and a second sentence after the first.\n\n- one item\n- two items with *emphasis*\n\n> a quote of one paragraph\n\n```\nfenced code\n```\n\nAfter para."
+  },
+  {
+   "name": "two spaces between two block children of an author pre (rendered under white-space: pre, a line of their own)",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre><div>a</div>  <div>b</div></pre>\n\nAfter para."
+  },
+  {
+   "name": "two spaces before the first block child of an author pre",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre>  <div>a</div></pre>\n\nAfter para."
+  },
+  {
+   "name": "a newline and two spaces between two block children of an author pre",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre><div>a</div>\n  <div>b</div></pre>\n\nAfter para."
+  },
+  {
+   "name": "a tab between two block children of an author pre",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre><div>a</div>\t<div>b</div></pre>\n\nAfter para."
+  }
+ ]
+}

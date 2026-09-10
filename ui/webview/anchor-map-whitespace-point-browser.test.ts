@@ -16,13 +16,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { marked } from "marked";
+import { applyMdConfig } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
 
 const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const SHEETS: Record<string, string> = { "styles.css": fs.readFileSync(path.join(UI, "styles.css"), "utf8"), "feed.css": fs.readFileSync(path.join(UI, "feed.css"), "utf8") };
 
-marked.setOptions({ gfm: true, breaks: false });   // the viewer's configuration (pinned by anchor-map.test.ts)
+applyMdConfig();   // the viewer's configuration: the one every bundle applies (md-config.ts; pinned by anchor-map.test.ts)
 
 // the notes-api report: a heading and one paragraph a copy-editing session tidied
 // one line of prose with room beside it for the struck labels: the 80ch column of Slice 3 of plans/markdown-viewer.md holds
