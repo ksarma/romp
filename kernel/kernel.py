@@ -56349,10 +56349,17 @@ _UPD_JS = (
     # manager started answers 0 other kernels (the registry read asks nothing) and manager:false, and its
     # label is the on-disk form (label above); `manager` is false only when the field says so, since an
     # older kernel's answer has no field and its restart forms stand. An answer that carries no offer (no
-    # release tag, no drift with its sha) records nothing (review round 6, 2026-09-10): the kernel reads no
-    # counts when no label can be worded from them, so its nulls there mean not asked, and recording them
-    # made the first arm after a later push say the manager did not answer
-    "function note(d){if(!d||!(d.tag||(d.drift&&d.driftSha)))return;impact={sessions:(typeof d.sessions==='number')?d.sessions:null,midTurn:d.midTurn||0,"
+    # release tag, no drift with its sha) records no counts (review round 6, 2026-09-10): the kernel reads
+    # none when no label can be worded from them, so its nulls there mean not asked, and recording them
+    # made the first arm after a later push say the manager did not answer. Its manager field is recorded
+    # (review round 7, 2026-09-10): the route serves that field on every answer, outside the counts gate,
+    # and it holds for the kernel's life, so a page loaded idle on a kernel no manager started arms with the
+    # on-disk form and the green Update at once when a push later offers (round 6 dropped the field with
+    # the counts, and that arm read the restart form, red Restart and the reload clause until the re-read
+    # landed, for good when it failed). Recorded with null counts, which label() never reads on that form,
+    # and only while nothing is held: the counts of an earlier arm stand
+    "function note(d){if(!d)return;if(!(d.tag||(d.drift&&d.driftSha))){if(d.manager===false&&!impact)impact={sessions:null,midTurn:0,others:null,manager:false};return;}"
+    "impact={sessions:(typeof d.sessions==='number')?d.sessions:null,midTurn:d.midTurn||0,"
     "others:(typeof d.otherKernels==='number')?d.otherKernels:null,manager:d.manager!==false};}"
     # the confirm's face follows the label (review round 5): Update, in Update's green, when the click
     # updates on disk and restarts nothing; Restart, in the error red, when it restarts sessions. Set at
@@ -58918,7 +58925,8 @@ class Handler(BaseHTTPRequestHandler):
                 # the dismissal filter and no drift sha: an idle page load) neither is read (review round
                 # 6 of the confirm step, 2026-09-10: until then every idle page load dialled the registry
                 # and waited its timeout on a silent manager), so a null count in such an answer means
-                # not asked, and the banner records none of it (note()). And while an update runs through EITHER door
+                # not asked, and the banner records none of them (note(); it records the `manager` field
+                # below, which is served on every answer). And while an update runs through EITHER door
                 # (the tag door's detached child, _UPDATE_STATE; the drift door's converge thread or
                 # the auto converge, _MAIN_CONVERGE_INFLIGHT) the banner shows the wait and its poll
                 # reads boot, failed and updated alone, so the registry read (a loopback GET, up to 1 s

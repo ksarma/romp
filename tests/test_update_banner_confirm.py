@@ -404,15 +404,28 @@ out({ waited: waited, atOnce: atOnce, after: state() });""", check={"state": "ru
         # review round 6 (2026-09-10): the kernel reads no counts when nothing is offered (no registry dial on an
         # idle page load), so that answer's nulls mean not asked, not unknown. note() recorded them anyway, and
         # the first arm after a later push said "other kernels may restart too (the manager did not answer)"
-        # though the manager was never asked. note() now records nothing from an answer that carries no offer;
-        # the arm's own re-read, made while the offer stands, fills the counts in
-        s = run_banner("""
-window.__rompUpdateOffer('v0.1.0', 'v0.2.0', '', 'b1', ''); CHECK.tag = 'v0.2.0'; CHECK.sessions = 3; CHECK.midTurn = 1; CHECK.otherKernels = 0;
+        # though the manager was never asked. note() now records no counts from an answer that carries no
+        # offer; the arm's own re-read, made while the offer stands, fills the counts in
+        push = "window.__rompUpdateOffer('v0.1.0', 'v0.2.0', '', 'b1', ''); CHECK.tag = 'v0.2.0'; CHECK.sessions = 3; CHECK.midTurn = 1; CHECK.otherKernels = 0;"
+        s = run_banner(push + """
 GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: atOnce, after: state() });""",
                        check={"tag": "", "sessions": None, "midTurn": None, "otherKernels": None})
         self.assertEqual((s["atOnce"]["label"], s["atOnce"]["armed"]), ("Restart every session now", True),
                          "no claim about a manager the kernel never asked")
         self.assertEqual(s["after"]["label"], "Restart 3 sessions now, interrupting 1", "the arm's re-read fills the counts in")
+        # review round 7 (2026-09-10): the answer's manager field rides outside the counts gate (the route serves it
+        # on every answer) and holds for the kernel's life, so note() records it from an offer-less answer too. Round
+        # 6 dropped it with the counts, and on a kernel no manager started a page loaded idle then pushed an offer
+        # armed with the restart form and the red Restart until the re-read landed, for good when it failed
+        disk = "Update romp on disk now; restart it yourself to run it"
+        down = "var realFetch = fetch; fetch = function (u, o) { if (u === '/update-check') return Promise.reject(new Error('down')); return realFetch(u, o); };"
+        for name, pre in (("the re-read lands", ""), ("the re-read fails", down)):
+            s = run_banner(pre + push + " GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: atOnce, after: state() });",
+                           check={"tag": "", "sessions": None, "midTurn": None, "otherKernels": None, "manager": False})
+            for when in ("atOnce", "after"):
+                a = s[when]
+                self.assertEqual((a["label"], a["confirm"], a["confirmDisk"], a["armed"]), (disk, "Update", True, True),
+                                 "%s, %s: the on-disk form from the idle answer's manager field" % (name, when))
 
     def test_an_ended_wait_leaves_not_now_to_dismiss_the_message(self):
         # review round 6 (2026-09-10): after the on-disk `updated` outcome ended the wait, the banner showed its
@@ -513,6 +526,11 @@ GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: at
                                     ("absent", {"state": "running", "tag": ""}, "romp is updating \u2014 the dashboard reloads when it restarts\u2026")):
             s = run_banner("out(state());", check=check)
             self.assertEqual(s["msg"], expect, name + ": the load")
+        # the click that beats the arm's re-read on a page loaded idle (review round 7, 2026-09-10): the idle
+        # answer's manager field is recorded (note()), so this click words the wait as the update on disk too
+        s = run_banner("window.__rompUpdateOffer('v0.1.0', 'v0.2.0', '', 'b1', ''); CHECK.tag = 'v0.2.0'; GO.onclick(); CF.onclick(); out(state());",
+                       check={"tag": "", "sessions": None, "midTurn": None, "otherKernels": None, "manager": False})
+        self.assertEqual((s["msg"], len(s["posts"])), (click_disk, 1), "no manager: the click before the re-read, on a page loaded idle")
 
     def test_a_re_read_that_answers_running_changes_neither_the_label_nor_the_held_counts(self):
         # review round 6 (2026-09-10): an update started elsewhere between the click and the arm's re-read (another

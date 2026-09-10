@@ -1109,9 +1109,10 @@ class Routes(Fresh):
         # idle /update-check, a page load with no offer pending included, against the route's own comment (read
         # only when a label can be worded from them): every idle page load dialled the manager and waited its
         # 1 s timeout on a silent one. Both are skipped when nothing is offered (no release tag after the
-        # dismissal filter, no drift sha): every count null, no dial, and the banner's note() records nothing
+        # dismissal filter, no drift sha): every count null, no dial, and the banner's note() records no counts
         # from such an answer (the node scenario in tests/test_update_banner_confirm.py), since null there means
-        # not asked, not unknown. The connection class refuses every port: a read that runs is seen as a dial
+        # not asked, not unknown; the manager field, served on every answer, it does record (review round 7).
+        # The connection class refuses every port: a read that runs is seen as a dial
         import contextlib
         saved_port, saved_be = os.environ.get("ROMP_MANAGER_PORT"), (km._sdk_backend, km._codex_backend)
         dials, asked, err = [], [], io.StringIO()
