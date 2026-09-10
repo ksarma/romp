@@ -22,7 +22,7 @@ const MODULE_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-token-modul
 after(() => fs.rmSync(MODULE_STATE, { recursive: true, force: true }));   // one leaked dir per run otherwise
 process.env.ROMP_STATE_DIR = MODULE_STATE;
 delete process.env.ROMP_SERVE_TOKEN;
-const { writeGate, serveToken, acceptedTokens, mintServeTokenIfAbsent } = require(MGR);
+const { writeGate, serveToken, readTokenFile, acceptedTokens, mintServeTokenIfAbsent } = require(MGR);
 
 const TOKEN = 'zq9-not-a-real-token-zq9';   // synthetic; the tests assert it never reaches a log or a body
 
@@ -40,14 +40,21 @@ function freePort() {
 // a stand-in kernel that stays up, and no ROMP_SERVE_TOKEN in its environment, so the FILE is the token.
 // `profile`: a kernels.json entry with its own stateDir holding `profile.token` (a second stand-in
 // kernel is spawned for it). `unreadable`: a directory at the token path, a file the manager can neither
-// read nor mint over.
-async function manager({ token, profile, unreadable } = {}) {
+// read nor mint over. `symlink`: a link at the token path to a regular 0600 file holding `symlink`, which
+// the manager must refuse rather than read through (its target is at `h.linkTarget`).
+async function manager({ token, profile, unreadable, symlink } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-token-'));
   const bin = path.join(dir, 'bin'), state = path.join(dir, 'state');
   for (const d of [bin, state, path.join(dir, 'tmux')]) fs.mkdirSync(d);
   fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   if (token) fs.writeFileSync(path.join(state, 'serve-token'), token + '\n', { mode: 0o600 });
   if (unreadable) fs.mkdirSync(path.join(state, 'serve-token'));
+  let linkTarget = '';
+  if (symlink) {
+    linkTarget = path.join(dir, 'elsewhere-token');
+    fs.writeFileSync(linkTarget, symlink + '\n', { mode: 0o600 });
+    fs.symlinkSync(linkTarget, path.join(state, 'serve-token'));
+  }
   const serve = path.join(dir, 'fake-serve');
   fs.writeFileSync(serve, `#!/bin/sh\nexec "${process.execPath}" -e "setInterval(() => {}, 1000)"\n`, { mode: 0o755 });
   const port = await freePort(), servePort = await freePort();
@@ -68,7 +75,7 @@ async function manager({ token, profile, unreadable } = {}) {
   delete env.ROMP_SERVE_TOKEN;
   delete env.XDG_STATE_HOME;
   const mgr = spawn(process.execPath, [MGR, 'up'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
-  const h = { dir, state, profileRoot, port, mgr, log: '', pids: new Set() };   // pids: every kernel the manager reported, reaped at cleanup
+  const h = { dir, state, profileRoot, linkTarget, port, mgr, log: '', pids: new Set() };   // pids: every kernel the manager reported, reaped at cleanup
   mgr.stderr.on('data', (d) => { h.log += d; });
   h.exited = new Promise((resolve) => mgr.on('exit', (code, sig) => resolve({ code, sig })));
   h.sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -163,6 +170,25 @@ test('mintServeTokenIfAbsent: an absent path gets a 0600 file in the kernel\'s s
     try { assert.deepEqual(mintServeTokenIfAbsent(path.join(root, 'none')), { minted: false }, 'the env is the token: nothing to mint'); }
     finally { delete process.env.ROMP_SERVE_TOKEN; }
     assert.equal(fs.existsSync(path.join(root, 'none')), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('readTokenFile: a symlink at the path is refused, dangling or not, never read through (the kernel\'s rule)', () => {
+  // review round 2 (2026-09-10): the manager read THROUGH a link and opened its doors on the target's
+  // contents while the kernel refused to start on the same path; a dangling link read as ENOENT
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-token-link-'));
+  try {
+    const file = path.join(root, 'serve-token'), target = path.join(root, 'other');
+    fs.writeFileSync(target, TOKEN + '\n', { mode: 0o600 });
+    fs.symlinkSync(target, file);
+    assert.deepEqual(readTokenFile(file), { token: '', why: `${file}: a symlink` });
+    assert.deepEqual(readTokenFile(target), { token: TOKEN }, 'the target itself, named directly, reads');
+    fs.unlinkSync(target);
+    assert.deepEqual(readTokenFile(file), { token: '', why: `${file}: a symlink` }, 'a dangling link is a symlink, not an absent file');
+    fs.unlinkSync(file);
+    fs.writeFileSync(file, TOKEN + '\n', { mode: 0o644 });
+    assert.deepEqual(readTokenFile(file), { token: TOKEN }, 'a loose mode is accepted here: the kernel tightens it at its next start, and a refusal would invert that');
+    assert.match(readTokenFile(path.join(root, 'none')).why, /ENOENT/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -280,6 +306,34 @@ test('an unreadable token path: writes are refused with 503 (never open) while r
     assert.match(h.log, /refused POST \/restart-all from 127\.0\.0\.1: the serve token is unavailable/);
     // the token file arrives (a kernel booted and minted it): the next request is compared against it
     fs.rmdirSync(path.join(h.state, 'serve-token'));
+    fs.writeFileSync(path.join(h.state, 'serve-token'), TOKEN + '\n', { mode: 0o600 });
+    assert.equal((await h.req('/restart-all', 'POST', { 'X-Romp-Token': 'zq9-wrong-zq9' })).code, 401);
+    assert.equal((await h.req('/restart-all', 'POST', { 'X-Romp-Token': TOKEN })).code, 200);
+  } finally { await h.cleanup(); }
+});
+
+test('a symlink at the token path: writes are refused with 503 naming the link, even with the target\'s token, while reads work; a regular file in its place opens the doors', async () => {
+  // review round 2 (2026-09-10): the manager read through the link, so its doors were gated by the
+  // TARGET's contents while the kernel (which refuses a linked token path) crash-looped beside it
+  const h = await manager({ symlink: TOKEN });
+  try {
+    const before = await h.kernel();
+    assert.ok(before.pid, `no kernel came up: ${h.log}`);
+    assert.doesNotMatch(h.log, /minted the serve token/, 'a link at the path is left alone, never minted over');
+    const r = await h.req('/restart-all', 'POST', { 'X-Romp-Token': TOKEN });
+    assert.equal(r.code, 503, `the target's own token does not open the doors: ${r.body}`);
+    const body = JSON.parse(r.body);
+    assert.equal(body.ok, false);
+    assert.match(body.error, /cannot read the serve token \(.*serve-token: a symlink\)/, 'the body names the link, not ENOENT');
+    assert.equal((await h.req('/stop', 'POST', { 'X-Romp-Token': TOKEN })).code, 503);
+    assert.equal((await h.req('/restart-all', 'POST')).code, 503, 'tokenless is the same refusal');
+    assert.equal((await h.req('/status', 'GET')).code, 200);
+    await h.sleep(400);
+    assert.equal((await h.kernel()).pid, before.pid, 'nothing restarted');
+    assert.match(h.log, /refused POST \/restart-all from 127\.0\.0\.1: the serve token is unavailable/);
+    assert.doesNotMatch(h.log, new RegExp(TOKEN), 'never the token');
+    // the link replaced by a regular file: the next request is compared against it, no manager restart
+    fs.unlinkSync(path.join(h.state, 'serve-token'));
     fs.writeFileSync(path.join(h.state, 'serve-token'), TOKEN + '\n', { mode: 0o600 });
     assert.equal((await h.req('/restart-all', 'POST', { 'X-Romp-Token': 'zq9-wrong-zq9' })).code, 401);
     assert.equal((await h.req('/restart-all', 'POST', { 'X-Romp-Token': TOKEN })).code, 200);

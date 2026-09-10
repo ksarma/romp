@@ -885,11 +885,14 @@ manager logs one line naming the address and the door, never the token.
 When nothing is at the primary root's token path as the manager starts, it mints
 the file itself (the kernel's shape: 18 random bytes as base64url, mode 0600,
 written whole) before its port opens, so a manager whose kernel never got as far
-as minting one can still be stopped. While the manager cannot read a token file
-that does exist (wrong owner or mode, a symlink, a directory), every
-state-changing request is answered 503, saying so, until the file is repaired:
-the doors never open on a missing token. Before this gate (2026-09-10) a local
-process restarted every session by posting to the port.
+as minting one can still be stopped. While a token file that does exist cannot
+be read by the manager (another owner, an unreadable mode, a directory), or is
+a symlink (the manager reads no token through a link, as the kernel does),
+every state-changing request is answered 503, saying so, until the file is
+repaired: the doors never open on a missing token. A readable file with a loose
+mode is accepted as it is; the kernel tightens the mode at its next start.
+Before this gate (2026-09-10) a local process restarted every session by
+posting to the port.
 
 `romp refresh`, `romp down`, the dashboard's Restart, the release self-update,
 the automatic converge and the VS Code extension all send the header. When the
