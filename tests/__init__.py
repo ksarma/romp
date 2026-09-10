@@ -86,3 +86,13 @@ os.environ["ROMP_SERVE_PORT"] = "1"
 # sys.path itself. One module object either way.
 from . import romp_load as _romp_load  # noqa: E402
 sys.modules.setdefault("romp_load", _romp_load)
+
+# `import lab_dist` in the served-lab modules (tests/lab_dist.py, the one owner of the vscode-extension/dist
+# build) resolves the same way, for the same reason.
+from . import lab_dist as _lab_dist  # noqa: E402
+sys.modules.setdefault("lab_dist", _lab_dist)
+
+# `import lab_dist_stub` in the two real-tree pins (tests/lab_dist_stub.py, the node preload standing in for the bare
+# packages a checkout without the extension's node_modules lacks) resolves the same way.
+from . import lab_dist_stub as _lab_dist_stub  # noqa: E402
+sys.modules.setdefault("lab_dist_stub", _lab_dist_stub)

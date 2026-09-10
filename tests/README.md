@@ -8,6 +8,21 @@ Every bug fix or feature change lands with a test (repo rule). Four suites:
   `kernel/loadsource.py`). `tools/loadsource-sweep.py` converts a file still on
   `SourceFileLoader(...).load_module()` (removed in Python 3.15), and
   `test_state_isolation_order.py` refuses that idiom and isolate state with `XDG_STATE_HOME`.
+  Every browser-driven served lab (a module that serves the dashboard from a copy of
+  the built bundles) takes that copy from `lab_dist.copy_dist` (`tests/lab_dist.py`):
+  one esbuild run per checkout state under a file lock, so xdist workers never copy
+  a build in flight; the state is keyed on the trees `esbuild.js`'s exported configs
+  name (node requires the module, which builds only as a script; no text scan), the
+  config's own tree, and their imports. A checkout whose environment cannot build
+  (the extension's node_modules absent, or esbuild failing) skips the served labs
+  with the reason; the harness's own failures raise. The two pins that compare the
+  derivation against the real tree run without node_modules too, through
+  `tests/lab_dist_stub.py` (a node preload that stands in for a bare package the
+  config itself requires and node cannot find, on a checkout with no node_modules
+  beside the config, a dependency of the build and not of the exported data; a
+  node_modules that exists and lacks the package makes it throw, and a skip
+  inside its block is a failure). `tests/test_lab_dist.py`
+  refuses a module that builds or copies dist on its own.
   Golden transcript fixtures: `test_romp_events_golden.py` + `fixtures/`.
   Run: `python3 -m pytest tests/ -q` (~20s; a stalled run is a hang, not slow).
   The `_HAVE_SDK`-gated classes in `test_sdk_backend.py` (OptionsAssembly, the
