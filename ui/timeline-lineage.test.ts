@@ -36,9 +36,11 @@ test("the kernel serves lineage per lane and clips the copied history only while
   // the clip runs in the lane's segment derivation (_lane_segments), which takes the fork time as `bft`;
   // build_timeline hands it branch_of's t for the lane on BOTH routes a bars build takes (the 2026-09-09
   // fold's lane memo ruling): a LIVE lane's derivation runs through the per-lane memo (perf round 4), a
-  // DEAD lane's is called directly (a dead miss) and cached under the dead-lane memo's key
+  // DEAD lane's is called directly (a dead miss) and cached under the dead-lane memo's key. The trailing
+  // argument on both calls is the build's full-prompt map (upstream #1151, the timeline wire's first-line
+  // prompts), which rides after the fork time and changes nothing about the clip
   assert.match(KERNEL, /if bft and \(seg\.get\("end"\) or seg\["t"\]\) <= bft:\s*\n\s*continue/);
-  assert.match(KERNEL, /_bft = \(branch_of\.get\(sid\) or \{\}\)\.get\("t"\)\s*\n\s*if live:\s*\n\s*bars, seg_ends, last_t, compactions, cap_marks, other_marks = _lane_memo\(\s*\n\s*sid, parsed, session, goals, caps, live, _bft, parse_ok\)\s*\n\s*else:\s*\n\s*value = _lane_segments\(sid, session, goals, caps, live, _bft\)/,
+  assert.match(KERNEL, /_bft = \(branch_of\.get\(sid\) or \{\}\)\.get\("t"\)\s*\n\s*if live:\s*\n\s*bars, seg_ends, last_t, compactions, cap_marks, other_marks = _lane_memo\(\s*\n\s*sid, parsed, session, goals, caps, live, _bft, parse_ok, full_prompts\)\s*\n\s*else:\s*\n\s*value = _lane_segments\(sid, session, goals, caps, live, _bft, full_prompts\)/,
     "the fork time reaches the segment derivation on the live route (the per-lane memo) and on the dead route (the direct call)");
   // a dead lane SERVED from the dead-lane memo re-derives when the parent leaves or returns: the branch is in its
   // key, so the clip never outlives the parent's lane (tests/test_timeline_lane_memo.py runs it)

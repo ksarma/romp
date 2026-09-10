@@ -34,10 +34,8 @@ def echo_text_key(text) -> str:
     outer whitespace stripped, nothing else. Every reader shares it and must agree: the kernel's
     _atom_user_text(s) (the keys of the `tx_user_texts` mapping prune_live receives, and the sets the
     queued fold, _merge_live_atoms, _comments_frame and _tmux_echo_prune compare against),
-    SdkBackend.prune_live's and CodexBackend.prune_live's by-text retire (the echo side of that
-    comparison), CodexBackend._append's own retire of an echo by its landed record (its _rec_texts keys
-    the record side and send() stores the echo under the same key), and SdkBackend._text_landed /
-    _landed_texts (the transcript scan behind the boot and dead-spawn duplicate guard). Until 2026-09-06
+    the SDK and Codex prune_live by-text retire (the echo side of that comparison), and SdkBackend._text_landed
+    / _landed_texts (the transcript scan behind the boot and dead-spawn duplicate guard). Until 2026-09-06
     the scan collapsed internal whitespace while the prune compared the raw echo text against stripped
     keys, so a send whose text carried a trailing newline (`romp send` passes its argument verbatim) was
     FOUND by the scan, neither re-fed nor flagged, and never pruned or dismissable. Strip is as wide as
@@ -300,14 +298,13 @@ class SessionBackend(ABC):
         positionally; tests/test_backend_call_parity.py pins the shape against each backend): `tx_uuids` is
         the set of record uuids on disk; `tx_user_texts` maps each landed user text (keyed by echo_text_key)
         to the NEWEST record time carrying it, so an echo lands by text only through a record written at or
-        after its own send (T237b: "ok" twice must not retire the second before its record) -- a plain set
-        from an older caller keeps the unfloored match; `human_floor` is the newest genuine-human record's
-        time, the event that says the transcript has moved past anything typed before it. No floor retires a
-        plain input echo on any backend (2026-09-06): the SDK uses it to retire stale COMMAND feedback atoms,
-        the tmux backend to SETTLE an overtaken echo as dropped. A backend that accepts a narrower signature
-        than this raises TypeError on every live merge of its sessions -- the Codex backend shipped that way
-        (2026-09-02 to 2026-09-09), and the chat build of a session with a queued send failed until the echo
-        landed."""
+        after its own send (T237b: "ok" twice must not retire the second before its record), while a plain
+        set from an older caller keeps the unfloored match; `human_floor` is the newest genuine-human
+        record's time, the event that says the transcript has moved past anything typed before it. No floor
+        retires a plain input echo on any backend: the SDK uses it to retire stale COMMAND feedback atoms,
+        the tmux backend to SETTLE an overtaken echo as dropped, and the Codex backend accepts it and retires
+        nothing by it. A backend that declares a narrower signature than this raises TypeError on every live
+        merge of one of its sessions that holds a live atom."""
 
     # ── ask picker ───────────────────────────────────────────────────────────────────────────────
     @abstractmethod

@@ -555,8 +555,7 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
     be.__dict__.update({
         "state_dir": Path(state), "claude_bin": "/bin/false", "sessions": {},
         "_lock": threading.Lock(), "_reg_lock": threading.Lock(), "_pending_ask": {}, "_live": {},
-        "_fork_children_memo": None, "_work_key_pin": "", "work_key": "",   # a property with a pin at
-        #   HEAD (the pin wins), a plain attribute in older revisions (the instance value wins)
+        "_fork_children_memo": None,
         "_problems": [], "_problem_seq": 0,
         "_problem_lock": threading.Lock(), "_sdk_missing": False, "_turn_seq": {}, "_drive_marks": {},
         "_drive_inflight": set(), "_heal_attempts": {}, "_notify": None, "_poke_cb": None,
@@ -892,11 +891,15 @@ def _bench(args, state, repo, out, shadow, rec, maps):
 
     def scope(tmux):
         """The pusher cycle's scope, as _pusher_cycle opens it: the liveness snapshot, the sid->path memo,
-        the discover-rows memo (perf batch 2 P3; a kernel from before it never reads the slot) and the
-        names snapshot."""
+        the discover-rows memo (perf batch 2 P3; a kernel from before it never reads the slot), the names
+        snapshot and the cycle's billing-availability memo (_auth_avail_status, upstream
+        https://github.com/romp-on/romp/pull/1147, folded 2026-09-09; a kernel from before it never reads
+        the slot). tests/test_perf_bench.py CycleScopeParity reads _pusher_cycle's slots and fails when one
+        is missing here."""
         km._live_scope.snapshot = tmux
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
+        km._live_scope.auth = {}
         km._live_scope.names = km._names_snapshot()
 
     def unscope():
@@ -904,11 +907,13 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         km._live_scope.names = None
         km._live_scope.paths = None
         km._live_scope.sessions = None
+        km._live_scope.auth = None
 
     def new_cycle():
         """A fresh cycle's per-cycle memos (what _pusher_cycle resets between two cycles)."""
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
+        km._live_scope.auth = {}
 
     def clear_kernel_caches():
         """The kernel-side caches a freshly started kernel lacks (build_session's inputs above the parse)."""

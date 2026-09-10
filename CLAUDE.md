@@ -64,17 +64,23 @@ This repo may go public; assume every commit is permanent and world-readable.
   `notes-api` with `web`/`api`/`tests` sessions) rather than inventing per-test
   worlds.
 - Two machine-local backstops enforce this, neither a substitute for the rule:
-  the `.githooks/pre-push` hook greps each pushed ref's TIP tree, plus the lines
-  every commit new to every fetched remote ADDS, for the strings in
+  the `.githooks/pre-push` hook greps each pushed ref's TIP tree, plus, for
+  every commit new to every fetched remote, the lines it ADDS, its message, and
+  the domain of any author or committer address the clone is not configured to
+  use (`user.email` in any scope, or the environment's), and an annotated tag's
+  own tagger and message, for the strings in
   `~/.config/romp/private-strings.txt` (absent file → no-op, so contributors
   are unaffected; it reads pushed shas, not the working tree, so it arms every
   worktree — a working-tree scan missed a leak pushed from a peer worktree on
   2026-07-25; added lines rather than every commit's tree, so a branch that
   only INHERITED a string main has since redacted pushes once it merges the
-  main that carries the redaction — 2026-09-06; and "new" to EVERY fetched
+  main that carries the redaction — 2026-09-06; "new" to EVERY fetched
   remote, so a clone with a fork and the project as two remotes is not refused
   over the project's own history when it pushes a branch cut from the project's
-  main to the fork — 2026-09-07); and the maintainer's clone carries an UNTRACKED
+  main to the fork — 2026-09-07; and the metadata since 2026-09-09, when a
+  clone with no `user.email` had git stamp `<login>@<hostname -f>`, a tailnet
+  name, on a slice's commits and a pushed merge, through both content scans);
+  and the maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
   deliberately not in the repo: one machine's identifiers mean nothing on anyone
@@ -206,7 +212,10 @@ broad `git add` will sweep up your work). Conventions:
   copy of the second check (`.github/workflows/tier-policy.yml`) is gated to the
   upstream repository by its job-level `if:` (the header comment there says why), so on
   the fork it evaluates nothing and posts no Tier policy verdict; a fork PR is judged by
-  the label check alone. The author picks the tier at filing time:
+  the label check alone. The author picks the tier at filing time; upstream's tier workflow
+  also reads a `Tier: <tier>` line in the PR body (`Tier: fix`, say) from a contributor who
+  cannot label and applies the label (a label already present wins; maintainers re-tier by
+  relabeling):
   - `docs` (tier 0; upstream renamed it from `tests-only` on 2026-09-08, and both checks
     still accept the old spelling): documentation. On the fork that is tests, docs and
     repo plumbing, landing through a batch like every PR. Upstream, to the check it is
@@ -269,7 +278,18 @@ mid-test. The failure is ordering-dependent: green alone, red only under the ful
 suite. Tests that mint goals therefore use a private synthetic sid of their own
 (any invented uuid; still synthetic, never real) and clean their sid's journal in
 tearDown. Precedent + worked diagnosis: the model-fallback dedupe tests' class
-docstring (`tests/test_model_fallback_card.py`, DedupeBackstop).
+docstring (`tests/test_model_fallback_card.py`, DedupeBackstop). A second face of
+the same collision (2026-09-08, four end-to-end tests green alone and red in CI's
+serial order): a test that exercises the nudge walk and stubs `jd.load_goals` as
+the walk's snapshot must ALSO stub `jd.load_goals_shared_or_fault`, the walk's
+shared read-only view since the jobs-stage change, and move the goal directory
+with the state (`jd._rebind_state(tmp)` repoints GOALDIR and every derived dir;
+assigning `jd.STATE` alone leaves GOALDIR where import bound it), because the
+shared view reads a store FILE when one exists and delegates to `load_goals` only
+when none does, so an earlier module's store for the shared placeholder sid at the
+unrebound GOALDIR was what the walk read (no goal due, no fire, a deferral never
+cleared, a KeyError). Precedent: `tests/test_nudge_injected_turn_arm.py`,
+`test_nudge_fresh_guard.py`, `test_nudge_memo_deadlock.py`, `test_nudge_bundle.py`.
 
 ## Authoritative sources — fail loudly, don't degrade silently (user rule, 2026-07-03)
 Read state from its AUTHORITATIVE source — a designed API, or the live store that

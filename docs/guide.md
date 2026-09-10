@@ -143,8 +143,9 @@ a tab into another group, right-click it and pick **Move to <tag>** under **Tags
 adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. The row's
 **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser. The groups follow one another across the
-strip and wrap as they need; the gear's **One tag group per row in the tab strip** starts every
-group on its own row instead.
+strip and wrap as they need (a header left at a row's end with its first tab on the next row moves
+down to join it, when the two fit on one row); the gear's **One tag group per row in the tab strip**
+starts every group on its own row instead.
 
 **A section at a glance.** Clicking a header also shows the section in the transcript's place:
 one row per session, with its color and emoji, a dot for its state (yellow working, red stopped on a
@@ -476,7 +477,9 @@ text back in the file. **Accept all** and **Reject all** decide every change at 
 all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
 deletion, since a point is easy to miss; a change the current view does not mark, because it
 cannot or because the marks are hidden, offers it too. Reply on a change's card leaves a
-comment on the change itself, and the session's answer comes back to that card. A session's
+comment on the change itself, and the session's answer comes back to that card. You can also
+comment inside a change without replying to it: a click on a change mark or a comment highlight
+opens its card, and a selection made by dragging inside one leaves a comment on those words. A session's
 tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
@@ -559,6 +562,8 @@ exchange is visible to you. Each session gets mail tools: send a message to a
 session by name, check the inbox, and see who is live. Each session also
 publishes a working note saying what it currently holds, so agents can see who
 to talk to instead of messaging each other to find out.
+
+Not the same tools: romp peers are discovered only through the postal service's `list_agents`. Claude Code also ships its own `ListAgents` and `SendMessage` tools, which list the account's Anthropic cloud sessions and this session's own subagents: a different system, and a cloud session in that list is easy to mistake for a romp peer (the user 2026-09-08, who found one there that read like a session of theirs). The recommended setting is `"permissions": { "deny": ["ListAgents"] }` in the Claude Code settings, so the only list of agents a session sees is romp's; `SendMessage` must stay allowed, because continuing a subagent uses it.
 
 The timeline draws an arc for each message. Hover one for its gist:
 
@@ -949,6 +954,11 @@ switches indented under it, and a button:
   tab, tap the notification, and check that it brings you back. With the main
   switch off, the answer adds that real notifications will not arrive until it
   is on.
+
+The handler that answers a tap lives on the phone, and the phone refreshes it
+whenever you open the app and whenever a notification arrives. If a tap ever
+opens Romp on the wrong session, close the app from the app switcher and open
+it again once.
 
 The bell itself shows the state of the device you are looking at: lit when the
 main switch is on and this device is set up, and crossed out otherwise. Its

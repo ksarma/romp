@@ -3,8 +3,8 @@
 // Three layers. Browser-free: the frame classifier (the report's rows), the percentile and compare
 // arithmetic, the report fold, the /tmp path guard that keeps a recording of real session data out
 // of any git checkout (with a simulated macOS layout, where /tmp is a symlink), the private file
-// modes a recording is written with, the synthesizer's wire shapes (the kernel's _keys list for the
-// bars slot, contiguous delta revisions, a byte-stable stream), the --record client against a local
+// modes a recording is written with, the synthesizer's wire shapes (the compact bars slot the pane's
+// shim keys itself, contiguous delta revisions, a byte-stable stream), the --record client against a local
 // WebSocket server (the query, the cookie and Origin credential form, the ready handshake and nothing
 // else, the JSONL shape, the early-close and refusal errors), and the CPU-profile fold over a
 // synthetic .cpuprofile, and the per-user run directory with its dead-owner sweep. With python3 and a
@@ -594,7 +594,26 @@ test("synthesizeFrames: the Outline stream carries ledgers, the waiting stream c
   assert.equal(waitingFull.userTodosOn, true);
 });
 
-test("synthesizeFrames: the timeline stream is the skeleton, the keyed bars slot, then bar-level deltas", () => {
+// The wire tables, read from the view's export (ui/romp-timeline-view.js BAR_WIRE and JUDGING_WIRE; the module loads
+// under bare node) rather than copied by hand: tests/test_timeline_bars_wire.py holds that table byte for byte to
+// kernel.py's _BAR_WIRE and _JUDGING_WIRE, so the kernel literal, the view and this synthesizer are one chain, and a
+// key the kernel renames, retires or adds (the view following) reddens the subset checks below instead of leaving the
+// bench emitting a wire the kernel no longer sends. The long names a bar keeps (id, start, end; kernel.py _BAR_LONG)
+// and a judging entry's k, t and t1 are hand-listed: the view exports no list of them. A subset check catches a key
+// the synth emits that the wire lacks, not a wire key the synth never emits.
+const { BAR_WIRE, JUDGING_WIRE } = createRequire(import.meta.url)(path.join(REPO, "ui", "romp-timeline-view.js"));
+const BAR_KEYS = new Set(["id", "start", "end", ...Object.keys(BAR_WIRE)]);
+const JUDGING_KEYS = new Set(["k", "t", "t1", ...Object.keys(JUDGING_WIRE)]);
+/** A compact bar omits every default (kernel.py's bar literal; wire_bar in tests/test_timeline_bars_wire.py is its
+ *  twin, and the view's expandBar fills them back), so a short key that is present must carry something other than
+ *  its BAR_WIRE default: no src at "typed", no empty mids, no open, cont, nudgeAuto or romp at false. */
+function assertNoBarDefaults(b, what) {
+  for (const [short, [name, dflt]] of Object.entries(BAR_WIRE)) {
+    if (short in b) assert.notDeepEqual(b[short], dflt, `${what}: ${name} (${short}) rides only off its default`);
+  }
+}
+
+test("synthesizeFrames: the timeline stream is the skeleton, the compact bars slot, then bar-level deltas", () => {
   const frames = synthesizeFrames("timeline", 30);
   const types = frames.map((f) => classifyFrame(f.data));
   assert.equal(types[0], "data");
@@ -607,11 +626,23 @@ test("synthesizeFrames: the timeline stream is the skeleton, the keyed bars slot
   const bars = JSON.parse(frames[1].data);
   assert.equal(Object.keys(bars.turns).length, 3);
   assert.equal(Object.values(bars.turns).reduce((a, lane) => a + lane.length, 0), 30);
-  assert.ok(bars._keys, "a keyed full frame carries the kernel's key list");
-  assert.deepEqual(bars._keys, barsKeys(bars));
-  assert.ok(bars._keys.turns.every((k) => k.includes(DELTA_SEP)), "a bar's key is lane + separator + id");
-  assert.equal(bars._keys.turns.length, 30);
-  assert.ok(bars._keys.judging.every((k) => k.split(DELTA_SEP).length === 4), "a judging key is sid, t, judge, t1");
+  // the wire since T278c: compact bars, per-lane compact judging, and no key list (the pane's shim derives the keys)
+  assert.equal(bars._keys, undefined, "the full carries no key list");
+  const every = Object.values(bars.turns).flat();
+  assert.ok(every.every((b) => Object.keys(b).every((k) => BAR_KEYS.has(k))), "a bar is {id, start, end} plus _BAR_WIRE's short keys");
+  for (const b of every) assertNoBarDefaults(b, "a full's bar");
+  assert.ok(every.every((b) => b.p && b.w && b.r && b.q && b.c && b.m), "the ids and captions ride under their short keys");
+  assert.ok(every.some((b) => b.u === true) && every.every((b) => !("u" in b) || b.u === true), "open is u: true, and only on an open bar");
+  assert.ok(!Array.isArray(bars.judging) && Object.keys(bars.judging).length >= 1, "judging is a per-lane object");
+  const entries = Object.values(bars.judging).flat();
+  assert.ok(entries.length >= 1);
+  assert.ok(entries.every((e) => typeof e.k === "string" && e.k.split(DELTA_SEP).length === 2 && e.j && typeof e.t === "number" && typeof e.t1 === "number"
+    && !("judge" in e) && !("sid" in e) && !("kd" in e) && !("x" in e)), "a judging entry is compact: k, t, j, t1 and the counts; no long names, the run kind and empty text omitted");
+  assert.ok(entries.every((e) => Object.keys(e).every((k) => JUDGING_KEYS.has(k))), "a judging entry is {k, t, t1} plus _JUDGING_WIRE's short keys");
+  const keys = barsKeys(bars);
+  assert.equal(keys.turns.length, 30);
+  assert.ok(keys.turns.every((k) => k.includes(DELTA_SEP)), "a bar's key is lane + separator + id");
+  assert.ok(keys.judging.length === entries.length && keys.judging.every((k) => k.split(DELTA_SEP).length === 3), "a judging key is lane + separator + k");
   let rev = 0;
   for (const f of frames) {
     const m = JSON.parse(f.data);
@@ -620,6 +651,11 @@ test("synthesizeFrames: the timeline stream is the skeleton, the keyed bars slot
     assert.equal(m.base, rev, "each delta's base is the revision the pane holds");
     assert.equal(m.rev, rev + 1); rev = m.rev;
     assert.ok(m.coll.turns.set && Object.keys(m.coll.turns.set).every((k) => k.includes(DELTA_SEP)));
+    for (const [k, b] of Object.entries(m.coll.turns.set)) {
+      assert.equal(k, k.split(DELTA_SEP)[0] + DELTA_SEP + b.id, "a set key is what the shim would derive for its bar");
+      assert.ok(Object.keys(b).every((x) => BAR_KEYS.has(x)) && !("open" in b), "a delta's bar is compact too");
+      assertNoBarDefaults(b, "a delta's bar");
+    }
     assert.equal(typeof m.rest.now, "number", "the clock rides every delta");
   }
   assert.ok(rev >= 20);
@@ -627,9 +663,9 @@ test("synthesizeFrames: the timeline stream is the skeleton, the keyed bars slot
   assert.deepEqual(Object.keys(streamSummary(frames).byType).sort(), ["bars", "data", "delta:bars", "ka"]);
 });
 
-test("barsKeys mints the kernel's keys: an empty lane is its bare prefix, messages key by id", () => {
-  const keys = barsKeys({ turns: { a: [], b: [{ id: "x" }, { id: 7 }] }, judging: [{ sid: "s", t: 1, judge: "closer", t1: 2 }], messages: [{ id: "m1" }] });
-  assert.deepEqual(keys, { turns: ["a" + DELTA_SEP, "b" + DELTA_SEP + "x", "b" + DELTA_SEP + "7"], judging: ["s" + DELTA_SEP + "1" + DELTA_SEP + "closer" + DELTA_SEP + "2"], messages: ["m1"] });
+test("barsKeys derives the shim's keys: an empty lane is its bare prefix, judging keys by lane + k, messages key by id", () => {
+  const keys = barsKeys({ turns: { a: [], b: [{ id: "x" }, { id: 7 }] }, judging: { s: [{ k: "1" + DELTA_SEP + "closer", t: 1, j: "closer", t1: 2 }], e: [] }, messages: [{ id: "m1" }] });
+  assert.deepEqual(keys, { turns: ["a" + DELTA_SEP, "b" + DELTA_SEP + "x", "b" + DELTA_SEP + "7"], judging: ["s" + DELTA_SEP + "1" + DELTA_SEP + "closer", "e" + DELTA_SEP], messages: ["m1"] });
 });
 
 test("synthesizeFrames refuses the apps it cannot fake, each for its own reason, and unknown apps", () => {

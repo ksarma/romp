@@ -1326,19 +1326,28 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   wrap.appendChild(box);
   document.body.appendChild(wrap);
 
-  // A one-line notice in the viewer's error dress (the edit-blocked reason, a save failure, a save whose
-  // comments-log entry did not land, a line past the end): one at a time, replacing the last. Mounted ABOVE
-  // the body row, between the title bar and .fileview-main, never inside the body (plans/markdown-viewer.md
-  // Slice 2): inside it the notice scrolled away with the text (at scrollTop 400 it was 400px above the
-  // body's top; the past-the-end notice was scrolled out of view by the very landing it explains) and went
-  // with the next swap of the body's children. Here it shows at any scroll position and outlives a view
-  // switch and a reload; the editor's entry and exit remove it themselves (enterEdit, exitEdit).
+  // The edit-mode notice (a degraded editor, a refused save): one at a time, replacing the last, mounted as
+  // a child of the card between the title bar and the body. It used to be prepended inside the body, above
+  // an editor whose height is 100% of that same body, so the body's content was the bar plus the whole body:
+  // the editor's bottom rows were cut off by the bar's height, and the body's own scroll carried the bar
+  // out of view. As a row of the card (a column flex container; .fileview > .fileview-err keeps its height)
+  // the body shrinks under it and the editor's 100% resolves against what is left. Nothing swaps the card's
+  // children, so leaving edit mode removes the notice itself (exitEdit). Held by reference, THIS card's
+  // notice and no other: a viewer that was replaced (Reload file re-opens fresh) keeps its keydown handler
+  // and still runs its exitEdit on Escape, and a lookup by id from there would strip the live card's notice
+  // while that card is still in edit mode.
+  // In this tree the same bar carries the viewer's other one-line notices too (a blocked edit, a refused save, a
+  // comments-log warning, a line past the end; plans/markdown-viewer.md Slice 2), so it shows at any scroll
+  // position and outlives a view switch and a reload; and the body row it sits above is .fileview-main, the row
+  // the body shares with the panel (upstream's card has the body directly under the title bar).
+  let note: HTMLElement | null = null;
   const noteBar = (msg: string): HTMLElement => {
-    document.getElementById("fileview-save-err")?.remove();
+    note?.remove();
     const bar2 = el("div", "fileview-err");
     bar2.id = "fileview-save-err";
     bar2.textContent = msg;
     box.insertBefore(bar2, main);
+    note = bar2;
     return bar2;
   };
 
@@ -1856,8 +1865,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // repaint hands the read-mode state back.
     fireRendered();
     // a notice over the read view (a refusal since lifted, a line past the end) goes as the editor takes the body: the
-    // swap below took it while the bar sat inside the body, and the bar now sits above the row (noteBar)
-    document.getElementById("fileview-save-err")?.remove();
+    // swap below took it while the bar sat inside the body, and the bar now sits above the row (noteBar), THIS card's
+    note?.remove(); note = null;
     // per the loading-state rule the chunk wait shows the romp loader, not a blank body
     const wait = el("div", "fileview-load");
     wait.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
@@ -1895,7 +1904,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         return;
       }
       enterFallback();
-      noteBar(why + " — editing in the plain fallback editor.");   // loud: say the editor is degraded, never pretend
+      // loud: say the editor is degraded, never pretend
+      noteBar(why + " — editing in the plain fallback editor.");
     });
   };
   const exitEdit = () => {
@@ -1904,9 +1914,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     applied = { accepted: [], rejected: [] };   // the decisions went with the editor; the next mount starts its own afresh
     editHooks = null;                           // a cancelled save's late ack must not touch a NEW session
     saveBtn.disabled = false; saveBtn.textContent = "Save";
-    // the edit's notices (a refused save's, a declined close's, a fallback editor's) go with the editor: the repaint took
-    // them while the bar sat inside the body, and a notice that must outlive the exit is raised again after it (noteLog)
-    document.getElementById("fileview-save-err")?.remove();
+    // the notice is a row of the card (noteBar), so the body swap below no longer takes it: a save that
+    // landed, Cancel and Escape all leave through here, and none may leave a stale notice standing. The
+    // edit's notices (a refused save's, a declined close's, a fallback editor's) go with the editor, and a
+    // notice that must outlive the exit is raised again after it (noteLog).
+    note?.remove(); note = null;
     renderBody();
     // a fetch that landed while the editor was up painted nothing (fetchFile): now that the edit is over, read the file
     // as it is — the exit is the event the dropped bytes were waiting for
@@ -1926,9 +1938,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // the decisions this save carries (the tracked path below fills it): marked applied when the save lands, so a later
     // Save from the same editor sends only what came after
     let sent: EditDecisions | null = null;
-    // Loud, in place, and the BUFFER SURVIVES: the error bar sits above the textarea. A conflict
-    // (the disk moved — an agent wrote it) offers Reload, which re-opens fresh — behind the same
-    // discard confirm, so the user's edits are never thrown away silently (never a merge UI).
+    // Loud, in place, and the BUFFER SURVIVES: the error bar sits above the body that holds the
+    // textarea. A conflict (the disk moved: an agent wrote it) carries a Reload button, which re-opens
+    // fresh behind the same discard confirm, so the user's edits are never thrown away silently (never
+    // a merge UI).
     // `moved`: the comments host's store-moved / file-moved / config-moved refusals (Slice 5) offer the same Reload the
     // kernel's own conflict wording does; a desync or any other refusal shows its reason and keeps the buffer, no offer.
     const showSaveError = (err: string, moved = false) => {

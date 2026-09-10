@@ -101,17 +101,18 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertNotIn("headless", h)
 
     def test_judge_rows_are_one_line_label_plus_picker(self):
-        # label + picker share the line (the user 2026-07-12): nine .rs-jrow rows — six judge
+        # label + picker share the line (the user 2026-07-12): ten .rs-jrow rows — six judge
         # selects since the distilling tier split out of triage (the user 2026-08-14), each label
-        # carrying the hidden mixed-state marker (the settings-sync work, same day); the fork's
-        # Fast judging checkbox (the user 2026-08-09), which has no marker because it does not
-        # propagate across kernels; plus the default-comment model/effort pair (the user
-        # 2026-08-29), which reuses the same one-line layout — the control right after the hover
-        # sub, no full-width control stacked under the label; the flex CSS carries the layout
+        # carrying the hidden mixed-state marker (the settings-sync work, same day); the judge
+        # concurrency select (T277), marked like them; the fork's Fast judging checkbox (the user
+        # 2026-08-09), which has no marker because it does not propagate across kernels; plus the
+        # default-comment model/effort pair (the user 2026-08-29), which reuses the same one-line
+        # layout — the control right after the hover sub, no full-width control stacked under the
+        # label; the flex CSS carries the layout
         h = _gear_src()
-        self.assertEqual(h.count("rs-jrow"), 9)
+        self.assertEqual(h.count("rs-jrow"), 10)
         for sel in ("rs-judgemodel", "rs-judgeeffort", "rs-distillmodel", "rs-distilleffort",
-                    "rs-indexmodel", "rs-indexeffort"):
+                    "rs-indexmodel", "rs-indexeffort", "rs-judgeconc"):
             self.assertRegex(h, r"rs-jrow'><b>[^<]+<span class=rs-mixed hidden></span></b>"
                                 r"<span class=rs-sub>[^<]*</span><select id=" + sel)
         self.assertRegex(h, r"rs-jrow'><b>[^<]+</b><span class=rs-sub>[^<]*</span><input type=checkbox id=rs-judgefast")

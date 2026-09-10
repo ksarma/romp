@@ -33,8 +33,9 @@
 //      Serving design: the REAL kernel HTTP Handler runs in a python3 subprocess under an isolated
 //      environment, the pattern of tests/test_color_route.py with the floors tests/conftest.py applies:
 //      private XDG_STATE_HOME and TMUX_TMPDIR; the manager variables and the API-key variables removed;
-//      the manager's key FILE and the boot model-catalog fetch pointed away (the kernel would otherwise
-//      read ~/.config/romp/service.env and carry its key to the Models API); the Claude binary floored
+//      the service env file pointed away (kernel/credentials.py reads it at boot for retired names) and
+//      the boot model-catalog fetch off (it would otherwise run the operator's apiKeyHelper); the Claude
+//      binary floored
 //      to /bin/false; the postal peer bus off; ROMP_KERNEL_NO_OPEN=1; a serve token minted for the run.
 //      So the page HTML and the WebSocket shim are the kernel's own bytes. The subprocess holds a pipe
 //      from the parent and exits when it closes, so it cannot outlive the bench however the bench ends.
@@ -51,9 +52,11 @@
 //      uuids) in the kernel's wire shapes, for tests and for a bench that must not depend on a live
 //      board. Frames mirror kernel.py: build_feed's {type:"feed"} and _feed_delta's {type:"feedDelta"}
 //      for the feed, Outline and waiting pages; build_timeline's skeleton ({type:"data"}), the
-//      {type:"bars"} slot with its _keys list and _send_slot_delta's {type:"delta", slot:"bars"} for
-//      the timeline; keepalives throughout. The chat's {type:"session"} frame is not synthesized:
-//      build_session's shape is too rich to fake faithfully, so record it from the live kernel.
+//      {type:"bars"} slot (compact bars per _BAR_WIRE and per-lane compact judging per _compact_judging,
+//      with no key list since T278c: the pane's shim derives the keys) and _send_slot_delta's
+//      {type:"delta", slot:"bars"} for the timeline; keepalives throughout. The chat's {type:"session"}
+//      frame is not synthesized: build_session's shape is too rich to fake faithfully, so record it from
+//      the live kernel.
 //
 //   --compare A.json B.json prints the deltas between two replay reports.
 //
@@ -435,40 +438,44 @@ function synthLane(k, now, live) {
   };
 }
 
+/** A wire bar as the kernel sends it since T278c (kernel.py _BAR_WIRE): id, start and end by name, the rest
+ *  under one-letter keys with every default omitted (a typed source, no mids, a closed bar, no continuation,
+ *  no nudge, no romp author), so the view's expandBar takes its compact branch, as it does on a live board. */
 function synthBar(k, j, now, open) {
   const start = now - 3600 + 240 * j;
   const text = `${VERBS[(j + k) % VERBS.length]} ${OBJECTS[(j * 3 + k) % OBJECTS.length]}`;
-  return {
-    id: `seg-${k}-${j}`, promptId: `aaaaaaaa-0000-4000-8000-${String(k).padStart(4, "0")}${String(j).padStart(8, "0")}`,
-    workId: `bbbbbbbb-0000-4000-8000-${String(k).padStart(4, "0")}${String(j).padStart(8, "0")}`,
-    start, end: open ? now : start + 150, open, cont: false, prompt: text, summary: `Working on ${text.toLowerCase()}`,
-    msgCaption: text, src: "typed", mids: [], pending: false, tid: SIDS[k],
-    uuid: `aaaaaaaa-0000-4000-8000-${String(k).padStart(4, "0")}${String(j).padStart(8, "0")}`,
-    nudgeAuto: false, romp: false,
-    workUuid: `bbbbbbbb-0000-4000-8000-${String(k).padStart(4, "0")}${String(j).padStart(8, "0")}`,
-    replyUuid: `cccccccc-0000-4000-8000-${String(k).padStart(4, "0")}${String(j).padStart(8, "0")}`,
+  const tail = `${String(k).padStart(4, "0")}${String(j).padStart(8, "0")}`;
+  const bar = {
+    id: `seg-${k}-${j}`, start, end: open ? now : start + 150,
+    p: `aaaaaaaa-0000-4000-8000-${tail}`, w: `bbbbbbbb-0000-4000-8000-${tail}`, r: `cccccccc-0000-4000-8000-${tail}`,
+    q: text, c: `Working on ${text.toLowerCase()}`, m: text,
   };
+  if (open) bar.u = true;
+  return bar;
 }
 
-/** The kernel's _keys list for a {type:"bars"} full frame (kernel.py _delta_split / _delta_key). */
+/** The keys the pane's shim derives for a {type:"bars"} full frame (kernel.py DELTA_KINDS.bars, buildMaps): a
+ *  bar by lane + separator + id, a judging entry by lane + separator + its kernel-minted k, an empty lane as its
+ *  bare prefix, a message by id. The kernel sends no key list since T278c; a delta's set keys must spell these. */
 export function barsKeys(bars) {
-  const turns = [];
-  for (const [sid, lane] of Object.entries(bars.turns || {})) {
-    if (!Array.isArray(lane) || !lane.length) { turns.push(sid + DELTA_SEP); continue; }
-    for (const b of lane) turns.push(sid + DELTA_SEP + String(b.id));
-  }
-  const judging = (bars.judging || []).map((row) => ["sid", "t", "judge", "t1"].map((f) => String(row[f])).join(DELTA_SEP));
-  const messages = (bars.messages || []).map((m) => String(m.id));
-  return { turns, judging, messages };
+  const dictlist = (coll, field) => {
+    const keys = [];
+    for (const [sid, lane] of Object.entries(coll || {})) {
+      if (!Array.isArray(lane) || !lane.length) { keys.push(sid + DELTA_SEP); continue; }
+      for (const e of lane) keys.push(sid + DELTA_SEP + String(e[field]));
+    }
+    return keys;
+  };
+  return { turns: dictlist(bars.turns, "id"), judging: dictlist(bars.judging, "k"), messages: (bars.messages || []).map((m) => String(m.id)) };
 }
 
-/** A timeline stream: the lanes skeleton, the keyed bars slot, then bar-level deltas, a skeleton
+/** A timeline stream: the lanes skeleton, the compact bars slot, then bar-level deltas, a skeleton
  *  re-push and keepalives. */
 function synthTimelineStream(cards, r, now) {
   const t0 = now * 1000;
   const skeleton = () => ({
     type: "data",
-    data: { type: "timeline", now, sessions: SIDS.map((_s, k) => synthLane(k, now, true)), turns: {}, messages: [], judging: [],
+    data: { type: "timeline", now, sessions: SIDS.map((_s, k) => synthLane(k, now, true)), turns: {}, messages: [], judging: {},
       palette: COLORS.map((c) => c.bg), cmapGrad: null, activeChat: null, focus: null, hover: null, usage: null },
   });
   const frames = [{ t: t0, data: JSON.stringify(skeleton()) }];
@@ -478,15 +485,17 @@ function synthTimelineStream(cards, r, now) {
     turns[sid] = [];
     for (let j = 0; j < perLane; j++) turns[sid].push(synthBar(k, j, now, k < 2 && j === perLane - 1));
   });
-  const judging = [];
+  // the judging band per lane, compact (kernel.py _compact_judging): k is the key the kernel mints and the shim
+  // reads as-is (t, the separator, the judge); the run kind and the empty text are defaults and stay off the wire
+  const judging = {};
   for (let j = 0; j < Math.min(perLane, 12); j++) {
     const k = j % SIDS.length;
     const t = now - 3400 + 240 * j;
-    judging.push({ judge: pick(r, ["planner", "closer", "distiller", "captioner"]), sid: SIDS[k], t, t1: t + 8, kind: "run", text: "",
-      ms: 7200, in: 4000 + j * 10, out: 300, sent: t, recv: t + 8 });
+    const judge = pick(r, ["planner", "closer", "distiller", "captioner"]);
+    (judging[SIDS[k]] = judging[SIDS[k]] || []).push({ k: `${t}${DELTA_SEP}${judge}`, t, j: judge, t1: t + 8, ms: 7200, in: 4000 + j * 10, out: 300, s: t, r: t + 8 });
   }
   const bars = { type: "bars", turns, judging, messages: [], now, warming: false };
-  frames.push({ t: t0 + 300, data: JSON.stringify({ ...bars, _keys: barsKeys(bars) }) });
+  frames.push({ t: t0 + 300, data: JSON.stringify(bars) });
   let rev = 0;
   const ka = (t) => frames.push({ t, data: JSON.stringify({ type: "ka", dv: now }) });
   for (let step = 1; step <= 24; step++) {
@@ -499,7 +508,7 @@ function synthTimelineStream(cards, r, now) {
     if (step % 6 === 0) {
       // the open bar closes and a new one opens: two entries cross
       const last = lane[lane.length - 1];
-      last.open = false; last.end = nowS - 5;
+      delete last.u; last.end = nowS - 5;
       set[SIDS[k] + DELTA_SEP + last.id] = { ...last };
       const fresh = synthBar(k, lane.length, nowS, true);
       lane.push(fresh);
@@ -627,11 +636,11 @@ export async function startPageServer({ dist, python = "python3", log = () => {}
   fs.mkdirSync(env.TMUX_TMPDIR, { recursive: true });
   env.ROMP_KERNEL_NO_OPEN = "1";
   env.ROMP_POSTAL_PEERS = "0";   // the feed page polls /tunnels, which otherwise asks the LIVE postal bus for its peers
-  // The floors tests/conftest.py applies, for the same reasons. The kernel's live API key is the manager's
-  // env FILE (kernel/keysource.py falls back to ~/.config/romp/service.env when these two are unset), the
-  // boot model-catalog fetch would carry that key to the Models API from the first /sessions request a
-  // pane makes, and a missing ROMP_CLAUDE_BIN resolves to the real CLI, so it is set to a binary that runs
-  // nothing rather than removed.
+  // The floors tests/conftest.py applies, for the same reasons. The kernel reads the manager's env FILE at
+  // boot (kernel/credentials.py falls back to ~/.config/romp/service.env when these two are unset) and
+  // refuses to start on a retired key line there, the boot model-catalog fetch would run the operator's
+  // apiKeyHelper in-process from the first /sessions request a pane makes, and a missing ROMP_CLAUDE_BIN
+  // resolves to the real CLI, so it is set to a binary that runs nothing rather than removed.
   env.ROMP_SERVICE_ENV_FILE = env.ROMP_SERVICE_ENV = path.join(tmp, "no-service.env");   // never created
   env.ROMP_MODEL_CATALOG = "off";
   env.ROMP_CLAUDE_BIN = "/bin/false";

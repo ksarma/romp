@@ -534,8 +534,8 @@ test("a Rendered deletion inside a code fence is card-only: its 'not shown' tag 
 // ── source pins ────────────────────────────────────────────────────────────────────────────────────
 
 test("pins: fcchange cancels the click as fcopen does, and both are Enter-activated controls (KEY_ACTS)", () => {
-  assert.match(SRC, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \},/);
-  assert.match(SRC, /fcopen: \(x, ev\) => \{ ev\.preventDefault\(\); this\.openPanel\(\);/);
+  assert.match(SRC, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); if \(this\.dragClick\(ev\)\) return; this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \},/);
+  assert.match(SRC, /fcopen: \(x, ev\) => \{ ev\.preventDefault\(\); if \(this\.dragClick\(ev\)\) return; this\.openPanel\(\);/);
   assert.match(SRC, /const KEY_ACTS = new Set\(\[[^\]]*"fcopen", "fcchange"[^\]]*\]\);/);
 });
 

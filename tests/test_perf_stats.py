@@ -148,13 +148,28 @@ class Collector(unittest.TestCase):
                          "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
         self.assertEqual(set(snap["memos"]),
                          {"pass", "shared", "chain",
+                          "nudgeGate", "cleared", "courierSkip", "backref", "captions", "goalArchive", "plannerSkip",
                           "lift_gate", "nudge_walk", "wire", "intr_marks", "sessions_scope",
-                          "captions", "states_overlay", "thread_reg", "bg_tops",
+                          "caps", "states_overlay", "thread_reg", "bg_tops",
                           "feed_segs", "lanes",
                           "chat_merge_sets", "chat_postal", "chat_ledger", "chat_fold_tasks"},
                          "one block per memo the kernel keeps (plan D4): the three identity memos on the goal-store "
-                         "path under upstream's names (pass, shared, chain; review find, 2026-09-08), then the rest")
+                         "path under upstream's names (pass, shared, chain; review find, 2026-09-08), the seven "
+                         "judge- and walk-side memos of the 2026-09-09 fold (nudgeGate, cleared, courierSkip, backref, "
+                         "captions, goalArchive, plannerSkip), then the rest; `caps` is the kernel's _Caps object memo, "
+                         "renamed from `captions` when upstream's captions file-read memo took that key")
         # the three identity memos' readers land here (review find, 2026-09-08: they had no consumer)
+        self.assertEqual(set(snap["memos"]["plannerSkip"]), {"skipped", "planned", "recorded"})
+        self.assertEqual(set(snap["memos"]["captions"]), {"served", "parsed"})
+        self.assertEqual(set(snap["memos"]["goalArchive"]), {"served", "loaded"})
+        self.assertEqual(set(snap["memos"]["backref"]), {"served", "built"},
+                         "the sender-board walk behind the courier link repair: built once per input state (2026-09-09)")
+        self.assertEqual(snap["memos"]["nudgeGate"], {"served": 0, "derived": 0},
+                         "the nudge walk's placement gate: served vs re-derived (2026-09-09)")
+        self.assertEqual(set(snap["memos"]["cleared"]), {"served", "derived"},
+                         "the clear set: parsed once per file state, served while it stands (2026-09-09)")
+        self.assertEqual(snap["memos"]["courierSkip"], km.jd.courier_skip_stats(),
+                         "the courier gate: sessions skipped, scanned, recorded (2026-09-09)")
         self.assertEqual(snap["memos"]["pass"], km._goals_memo_report())
         self.assertEqual(snap["memos"]["shared"], km.jd.shared_store_stats())
         self.assertEqual(snap["memos"]["chain"], km.jd.chain_memo_stats())
@@ -191,12 +206,12 @@ class Collector(unittest.TestCase):
         for k, v in snap["memos"]["lift_gate"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["nudge_walk"]),
-                         {"walked", "gated", "loads", "shared", "plan_hit", "plan_miss", "plan_bypass",
-                          "deleg_hit", "deleg_miss", "lifted", "evict", "stale", "entries"},
-                         "the auto-nudge walk (round 5): session-cycles visited and gated, the decision's store reads "
-                         "and the shared-cache answers, the placement gate's memo counters and its bypass, the "
-                         "delegated check's, the wake-only lifts filed, evictions and stale-pin releases, plus its "
-                         "occupancy")
+                         {"walked", "gated", "loads", "shared", "deleg_hit", "deleg_miss", "lifted", "evict", "entries"},
+                         "the auto-nudge walk (round 5, trimmed in the 2026-09-09 fold): session-cycles visited and gated, "
+                         "the decision's store reads and the shared-cache answers, the delegated check's memo counters, "
+                         "the wake-only lifts filed, evictions, plus the placement-gate memo's occupancy; the gate's own "
+                         "served / derived pair is memos.nudgeGate (a hit reads as served, a miss or a bypass as derived; "
+                         "no stale pin exists under the parse cache's own key)")
         for k, v in snap["memos"]["nudge_walk"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["bg_tops"]),
@@ -226,9 +241,10 @@ class Collector(unittest.TestCase):
                          "the pusher cycle's discover memo: _sessions reads and the wide walk")
         for k, v in snap["memos"]["sessions_scope"].items():
             self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["captions"]), {"hit", "miss", "fail", "evict", "entries"},
-                         "the captions store memo (perf round 4, item C): reads served against read, failed reads, "
-                         "entries dropped, and its occupancy")
+        self.assertEqual(set(snap["memos"]["caps"]), {"hit", "miss", "fail", "evict", "entries"},
+                         "the _Caps object memo (perf round 4, item C; memos.caps since the 2026-09-09 fold, when upstream's "
+                         "captions file-read memo took `captions`): reads served against read, failed reads, entries "
+                         "dropped, and its occupancy")
         self.assertEqual(set(snap["memos"]["states_overlay"]), {"hit", "append", "refold", "fail", "evict", "entries"},
                          "the states-overlay fold: unchanged, appended rows only, every row, failed reads, entries dropped, occupancy")
         self.assertEqual(set(snap["memos"]["thread_reg"]), {"hit", "miss", "fail", "evict", "entries"},
@@ -241,7 +257,7 @@ class Collector(unittest.TestCase):
                          "occupancy, the segments served against derived, and the dead lanes' outcomes since the "
                          "2026-09-09 fold (served from the dead-lane memo, derived directly, served as a cached "
                          "failed parse)")
-        for blk in ("captions", "states_overlay", "thread_reg", "lanes"):
+        for blk in ("caps", "captions", "states_overlay", "thread_reg", "lanes"):
             for k, v in snap["memos"][blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
         self.assertEqual(set(snap["memos"]["feed_segs"]),
@@ -747,6 +763,53 @@ class PusherRecords(unittest.TestCase):
     def _pusher(self):
         return km._PERF_STATS.snapshot()["pusher"]
 
+    def test_an_idle_cycle_is_one_that_set_no_wake_sent_nothing_and_saved_nothing(self):
+        # IDLE CYCLES (2026-09-09): the loop re-enters after a fixed 0.5 s backstop whether or not anything
+        # changed; the idle share is what a cadence change is judged on. A cycle whose jobs set no wake,
+        # sent no client payload and saved no goal store counts as idle, with its wall and CPU.
+        km._pusher_cycle_jobs = lambda now, tmux, any_client: time.sleep(0.003)
+        before = self._pusher()
+        km._pusher_cycle()
+        after = self._pusher()
+        self.assertEqual(after["idle_cycles"], before["idle_cycles"] + 1)
+        self.assertGreaterEqual(after["idle_ms_sum"] - before["idle_ms_sum"], 3.0)
+        self.assertGreaterEqual(after["idle_cpu_ms_sum"], before["idle_cpu_ms_sum"])
+        self.assertEqual(after["cycles"], before["cycles"] + 1, "an idle cycle is still a cycle")
+
+    def test_a_cycle_that_sends_a_payload_is_not_idle(self):
+        km._pusher_cycle_jobs = lambda now, tmux, any_client: km._PERF_STATS.send(("chat", "s1"), "full", 10)
+        before = self._pusher()
+        km._pusher_cycle()
+        after = self._pusher()
+        self.assertEqual(after["idle_cycles"], before["idle_cycles"])
+        self.assertEqual(after["sends"], before["sends"] + 1)
+
+    def test_a_deduped_frame_does_not_break_an_idle_cycle(self):
+        # with a dashboard connected the push builds and compares the per-cycle chat frames every cycle; a
+        # frame the client already holds is reported as "deduped" and is not a payload that went out
+        km._pusher_cycle_jobs = lambda now, tmux, any_client: km._PERF_STATS.send(("chat", "taborder"), "deduped", 10)
+        before = self._pusher()
+        km._pusher_cycle()
+        after = self._pusher()
+        self.assertEqual(after["idle_cycles"], before["idle_cycles"] + 1, "still idle")
+        self.assertEqual(after["sends"], before["sends"], "a deduped frame is not a send")
+
+    def test_a_cycle_that_sets_the_wake_is_not_idle(self):
+        km._pusher_cycle_jobs = lambda now, tmux, any_client: km._pusher_wake.set()
+        before = self._pusher()
+        km._pusher_cycle()
+        km._pusher_wake.clear()
+        self.assertEqual(self._pusher()["idle_cycles"], before["idle_cycles"])
+
+    def test_a_cycle_that_saves_a_goal_store_is_not_idle(self):
+        km._pusher_cycle_jobs = lambda now, tmux, any_client: km.jd._goal_io_bump("saves")
+        before = self._pusher()
+        km._pusher_cycle()
+        self.assertEqual(self._pusher()["idle_cycles"], before["idle_cycles"])
+        km._pusher_cycle_jobs = lambda now, tmux, any_client: km.jd._goal_io_bump("writes")
+        km._pusher_cycle()
+        self.assertEqual(self._pusher()["idle_cycles"], before["idle_cycles"])
+
     def test_a_cycle_is_counted_and_timed(self):
         km._pusher_cycle_jobs = lambda now, tmux, any_client: time.sleep(0.005)
         before = self._pusher()
@@ -865,9 +928,11 @@ class PusherRecords(unittest.TestCase):
         frac = km._DELTA_MAX_FRACTION
         km._DELTA_MAX_FRACTION = 10.0        # synthetic payloads are tiny: the size guard would send the whole instead
         self.addCleanup(setattr, km, "_DELTA_MAX_FRACTION", frac)
-        b1 = {"type": "bars", "turns": {"lane": [{"id": "t1", "a": 1}]}, "judging": [], "messages": [],
+        # judging is a per-lane dict on the wire since T278c (upstream #1154, folded 2026-09-09): a list is an
+        # unkeyable payload and the slot falls back to whole frames
+        b1 = {"type": "bars", "turns": {"lane": [{"id": "t1", "a": 1}]}, "judging": {}, "messages": [],
               "now": 1, "warming": False}
-        b2 = {"type": "bars", "turns": {"lane": [{"id": "t1", "a": 1}, {"id": "t2", "a": 2}]}, "judging": [],
+        b2 = {"type": "bars", "turns": {"lane": [{"id": "t1", "a": 1}, {"id": "t2", "a": 2}]}, "judging": {},
               "messages": [], "now": 2, "warming": False}
         s0 = self._sends()
         for b in (b1, b2, b2):

@@ -109,7 +109,9 @@ test("source pins: render.ts installs the publisher once, at top level, over the
   assert.match(KERNEL, /"#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#files-pane,#tl-pane\{display:contents!important\}"/, "the phone shell dissolves the pane wrappers: the desktop rule hides nothing there");
   assert.match(KERNEL, /"iframe\{position:static;display:none;width:100%;height:100%;border:0\}"/, "...and hides the iframes themselves");
   assert.match(KERNEL, /"#f-chat\.m-on,#f-fleet\.m-on,#f-feed\.m-on,#f-waiting\.m-on,#f-files\.m-on\{display:block\}"/, "...except the one tab carrying m-on");
-  assert.match(KERNEL, /function show\(p\)\{[^\n]*for\(var k in F\)F\[k\]\.classList\.toggle\('m-on',k===p\);/, "the tab switch moves m-on across the iframes: what the phone leg drives");
+  // the loop skips a pane the page lacks (if(F[k]): the 2026-09-09 fold's ruling, so a trimmed page never throws
+  // mid-switch); the property is the same: every iframe present gets m-on toggled by the tab
+  assert.match(KERNEL, /function show\(p\)\{[^\n]*for\(var k in F\)if\(F\[k\]\)F\[k\]\.classList\.toggle\('m-on',k===p\);/, "the tab switch moves m-on across the iframes: what the phone leg drives");
 });
 
 // ── the browser legs ──────────────────────────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ The fix, both faces:
     file was not saved, the held message not sent; the ack of a held send on another tab) would die
     with that reload, which follows in the next task, so the page snapshots the toasts on screen into
     the persisted state on the core's pre-reload hook and the fresh page shows them again once
-    (render.ts persistNoticesForReload, reload-hold.ts liveNotices / takePendingNotices).
+    (render.ts persistNoticesForReload, reload-notices.ts liveNotices / takePendingNotices).
   * reload (the VS Code pipe reloads its webview on kernel reconnect): the payload dies with
     the page, so the ship NAMES persist beside the drafts and the next load says LOUDLY what
     was lost — never a silent vanish.
@@ -91,9 +91,11 @@ class SourcePins(unittest.TestCase):
         # flight its bytes and a held send its release — the very wedge the reconnect re-ship heals in the same page.
         # So the chat pane answers the reload core's busy ask while either is pending; the shim's own reasons first.
         self.assertIn('(window as any).__rompPaneBusy = (): string => {', RENDER)
-        self.assertIn('if (pendingShips.size) return "upload";', RENDER)
-        self.assertIn('if (shipGateSid) return "held-send";', RENDER)
         self.assertIn('const shimBusy = (window as any).__rompPaneBusy as (() => string) | undefined;', RENDER)
+        # …and only for ships whose ack can still arrive (reload-hold.ts, the review of the hold): a ship to a host whose
+        # relay is down, or to a host no longer attached, does not hold the dashboard's reload
+        self.assertIn('return reloadHoldReason([...pendingShips.keys()], shipGateSid, (window as any).__rompFed);', RENDER)
+        self.assertNotIn('if (pendingShips.size) return "upload";', RENDER)
 
     def test_the_chat_page_loads_the_shim_before_the_bundle_so_the_busy_report_wraps_the_shims(self):
         # the wrapper above reads the shim's window.__rompPaneBusy first and replaces it; that only holds because the

@@ -210,20 +210,19 @@ class FetchAndFallback(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self._state = jd.STATE
         jd.STATE = Path(self.td.name)
-        self._url, self._fn = km.MODELS_API_URL, getattr(jd, "_WORK_KEY_FN", None)
+        self._url = km.MODELS_API_URL
         self._login_fn = jd._LOGIN_AUTH_ENV_FN
         jd._LOGIN_AUTH_ENV_FN = None
-        self._env = {k: os.environ.get(k) for k in _CRED_VARS + _SOURCE_VARS}
-        # the key source (kernel/keysource.py) reads a per-test service.env that does not exist, and
-        # no reference, bearer or legacy key the developer's shell exports is in the process env
-        os.environ["ROMP_SERVICE_ENV_FILE"] = str(Path(self.td.name) / "service.env")
-        for k in ("ROMP_API_KEY_REF", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"):
-            os.environ.pop(k, None)
-        # the fake sees only this (never a key-shaped string: the pre-commit scanner). The LP key is the
-        # credential the fetch prefers (CredentialPolicy below); the tests of the work-key rung below
-        # pop it first
-        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-test-credential"
-        jd._WORK_KEY_FN = None
+        self._source_env = {k: os.environ.get(k) for k in ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CONFIG_DIR")}
+        os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+        # The kernel's credential is Claude Code's apiKeyHelper, run in-process (2026-09-08): a fixture helper
+        # in a per-test CLAUDE_CONFIG_DIR prints a synthetic value (never key-shaped: the pre-commit scanner)
+        # and counts its runs, so the memo and the "never persisted" property can be asserted.
+        self.cfg = tempfile.mkdtemp()
+        os.environ["CLAUDE_CONFIG_DIR"] = self.cfg
+        self.helper_runs = Path(self.cfg) / "runs"
+        self._helper("#!/bin/sh\nprintf '.' >> '%s'\necho synthetic-test-credential\n" % self.helper_runs)
+        km.jd._cred.forget_helper_key()
         km.MODELS_API_URL = "http://127.0.0.1:%d/v1/models" % self.port
         _FakeModelsAPI.rows, _FakeModelsAPI.status, _FakeModelsAPI.page_size = list(FAKE_ROWS), 200, 100
         _FakeModelsAPI.seen = []
@@ -233,11 +232,29 @@ class FetchAndFallback(unittest.TestCase):
     def tearDown(self):
         _reset_catalog()
         km.MODELS_API_URL = self._url
-        jd._WORK_KEY_FN = self._fn
         jd._LOGIN_AUTH_ENV_FN = self._login_fn
-        _restore_env(self._env)
+        km.jd._cred.forget_helper_key()
+        for key, value in self._source_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         jd.STATE = self._state
         self.td.cleanup()
+
+    def _helper(self, body):
+        """(Re)write the fixture helper Claude Code's user settings name."""
+        script = Path(self.cfg) / "helper.sh"
+        script.write_text(body)
+        script.chmod(0o700)
+        (Path(self.cfg) / "settings.json").write_text(json.dumps({"apiKeyHelper": str(script)}))
+        km.jd._cred.forget_helper_key()
+
+    def _runs(self):
+        try:
+            return len(self.helper_runs.read_text())
+        except OSError:
+            return 0
 
     def _clients(self):
         """Fake dashboard clients on the kernel's client list — one per app that hosts a picker — so the
@@ -301,75 +318,62 @@ class FetchAndFallback(unittest.TestCase):
         self.assertIn("URLError", km._catalog_status["lastError"])
         self.assertIn("Models API unreachable", log)
 
-    def test_no_credential_says_so_and_serves_the_seed(self):
-        for k in _CRED_VARS:
-            os.environ.pop(k, None)
+    def test_no_helper_says_so_and_serves_the_seed(self):
+        os.unlink(Path(self.cfg) / "settings.json")
+        km.jd._cred.forget_helper_key()
         started, log = self._refresh("boot")
         self.assertTrue(started)
         self.assertEqual(_FakeModelsAPI.seen, [], "no request without a credential")
-        self.assertIn("no API credential", km._catalog_status["lastError"])
-        self.assertIn("no API credential the kernel can use", log)
+        self.assertIn("no apiKeyHelper", km._catalog_status["lastError"])
+        self.assertIn("no apiKeyHelper in Claude Code's settings for the kernel to run", log)
         self.assertEqual(km.MODEL_VERSIONS["fable"][0]["value"], "claude-fable-5-1", "seed still serves")
 
-    def test_provider_failure_never_falls_back_to_an_ambient_key_or_token(self):
-        os.environ.pop("ANTHROPIC_LP_API_KEY")          # the LP rung is above the work key: reach the source
-        os.environ["ANTHROPIC_API_KEY"] = "synthetic-test-credential"
+    def test_the_claimed_bearer_is_the_last_rung_and_the_helper_outranks_it(self):
+        # The one assertion of the fork's retired CredentialPolicy class (upstream #1128 took the LP-key rung and
+        # the manager-env claimer it pinned) whose mechanism survives: a login token the kernel claimed at boot is
+        # the catalog's last credential, riding as an OAuth bearer, and Claude Code's apiKeyHelper outranks it.
+        os.unlink(Path(self.cfg) / "settings.json")
+        km.jd._cred.forget_helper_key()
+        self.assertIsNone(km._models_api_credential(), "no helper and no bearer: nothing to borrow")
+        jd._LOGIN_AUTH_ENV_FN = lambda: {"ANTHROPIC_AUTH_TOKEN": "synthetic-claimed-token"}
+        self.assertEqual(km._models_api_credential(), ("Authorization", "Bearer synthetic-claimed-token"),
+                         "the bearer the kernel claimed at boot is the last rung")
+        creds = []
+        with patch.object(km, "_fetch_models_api", side_effect=lambda cred, timeout=8:
+                          creds.append(cred) or list(FAKE_ROWS)):
+            started, log = self._refresh()
+        self.assertTrue(started)
+        self.assertEqual(creds, [("Authorization", "Bearer synthetic-claimed-token")],
+                         "the catalog request rides the bearer header")
+        self.assertEqual(km._catalog_status["source"], "api")
+        self.assertNotIn("synthetic-claimed-token", log, "the token never reaches the log")
+        self._helper("#!/bin/sh\necho synthetic-test-credential\n")
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-test-credential"),
+                         "a configured helper outranks the bearer")
+
+    def test_a_failing_helper_never_falls_back_to_an_ambient_token_and_says_only_static_words(self):
         os.environ["ANTHROPIC_AUTH_TOKEN"] = "synthetic-ambient-token"
-        jd._WORK_KEY_FN = Mock(side_effect=jd._keysrc.KeySourceError("1Password retrieval failed"))
+        self._helper("#!/bin/sh\necho 'this line would be a secret' >&2\nexit 1\n")
         started, log = self._refresh()
         self.assertTrue(started)
-        jd._WORK_KEY_FN.assert_called_once_with()
         self.assertEqual(_FakeModelsAPI.seen, [])
-        self.assertIn("1Password retrieval failed", km._catalog_status["lastError"])
+        self.assertIn("apiKeyHelper failed", km._catalog_status["lastError"])
         self.assertNotIn("synthetic-ambient-token", log)
-        self.assertNotIn("synthetic-test-credential", log)
+        self.assertNotIn("would be a secret", log, "the helper's stderr is discarded, never logged")
         self.assertFalse(km._catalog_status["inflight"])
 
-    def _wire_the_claimer(self):
-        """The wired path, exactly what _sdk_locked installs before the boot refresh: jd._WORK_KEY_FN =
-        sdk_backend.work_api_key, the one door through which the kernel reaches a key source. Upstream's
-        _models_api_credential also consulted keysource.select_source on its own when nothing was wired;
-        the fork refused that rung (2026-09-07 upstream fold; the fork's standing rule: the kernel never reads a key
-        source itself, and an unwired ambient ANTHROPIC_API_KEY stays unread, CredentialPolicy below), so
-        the two runtime-source tests reach the source the way the running kernel does. The claimer's
-        process-lifetime stash is cleared so the claim happens here and restored afterwards."""
-        stash = sb._WORK_KEY
-        sb._WORK_KEY = None
-        self.addCleanup(setattr, sb, "_WORK_KEY", stash)
-        jd._WORK_KEY_FN = sb.work_api_key
-
-    def test_runtime_reference_is_resolved_once_per_catalog_refresh_without_persistence(self):
-        os.environ.pop("ANTHROPIC_LP_API_KEY")          # the LP rung is above the work key: reach the source
-        self._wire_the_claimer()                        # through the claimer, not an unwired select_source (2026-09-07 upstream fold)
-        ref = "op://test-vault/test-item/api-key"
-        os.environ["ROMP_API_KEY_REF"] = ref
-        with patch.object(jd._keysrc.subprocess, "run",
-                          return_value=Mock(returncode=0, stdout=b"synthetic-runtime-key")) as run:
-            self._refresh()
-            self.assertEqual(run.call_count, 1)
-            self._refresh()
-            self.assertEqual(run.call_count, 2)
+    def test_the_helper_runs_once_per_ttl_and_its_value_is_never_persisted(self):
+        self._refresh()
+        self.assertEqual(self._runs(), 1)
+        self._refresh()
+        self.assertEqual(self._runs(), 1, "within the TTL the in-memory memo answers")
+        km.jd._cred.forget_helper_key()
+        self._refresh()
+        self.assertEqual(self._runs(), 2, "past the TTL (or a changed helper) it runs again")
         self.assertTrue(_FakeModelsAPI.seen)
         for file in Path(self.td.name).rglob("*"):
             if file.is_file():
-                self.assertNotIn(b"synthetic-runtime-key", file.read_bytes())
-
-    def test_invalid_reference_prevents_requests_and_does_not_use_legacy_key(self):
-        os.environ.pop("ANTHROPIC_LP_API_KEY")          # the LP rung is above the work key: reach the source
-        self._wire_the_claimer()                        # through the claimer, not an unwired select_source (2026-09-07 upstream fold)
-        os.environ["ANTHROPIC_API_KEY"] = "synthetic-test-credential"    # the legacy key the error must not use
-        Path(os.environ["ROMP_SERVICE_ENV_FILE"]).write_text("ROMP_API_KEY_REF=\n")
-        with patch.object(jd._keysrc.subprocess, "run") as run:
-            started, log = self._refresh()
-        self.assertTrue(started)
-        run.assert_not_called()
-        self.assertEqual(_FakeModelsAPI.seen, [])
-        self.assertIn("ROMP_API_KEY_REF", km._catalog_status["lastError"])
-        # the claimer took the legacy key out of the environment and the selected (invalid) reference
-        # retired it: fail closed, and no value in the log
-        self.assertNotIn("ANTHROPIC_API_KEY", os.environ)
-        self.assertNotIn("synthetic-test-credential", log)
-        self.assertFalse(km._catalog_status["inflight"])
+                self.assertNotIn(b"synthetic-test-credential", file.read_bytes(), "never on disk")
 
     def test_a_fetch_that_adds_ids_tells_every_open_picker_to_re_read_models(self):
         # the refresh used to call _push_soon() here, its comment claiming the pickers re-read /models
@@ -420,173 +424,6 @@ class FetchAndFallback(unittest.TestCase):
         self.assertEqual(v["source"], "api")
         self.assertEqual(v["added"], ["claude-opus-9-9"])
         self.assertIsNone(v["lastError"])
-
-
-_CRED_VARS = ("ANTHROPIC_LP_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-_SOURCE_VARS = ("ROMP_SERVICE_ENV_FILE", "ROMP_API_KEY_REF")     # the key source's own inputs (kernel/keysource.py)
-
-
-def _restore_env(saved):
-    for k, v in saved.items():
-        if v is None:
-            os.environ.pop(k, None)
-        else:
-            os.environ[k] = v
-
-
-class CredentialPolicy(unittest.TestCase):
-    """Which credential the catalog fetch rides (fork policy, 2026-09-02): ANTHROPIC_LP_API_KEY first — a
-    key set aside for direct API calls — else the manager-env work key the SDK backend CLAIMED out of
-    os.environ["ANTHROPIC_API_KEY"] when the kernel built it (sdk_backend.work_api_key, wired as
-    jd._WORK_KEY_FN — the same stash the judges bill to), else an OAuth bearer. So the kernel DOES read
-    the ANTHROPIC_API_KEY its own environment carried — through the claimer, once, exactly as the
-    judges do — and it cannot tell a work key from a session-auth key by value; the fork's rule is
-    operational: the MANAGER's environment carries the LP/work key, never the interactive session-auth
-    key (fixer 2026-09-02, correcting a first draft here that claimed the variable was never read — it
-    only exercised the UNWIRED claimer). What the kernel does not do is read the variable on its own
-    with no claimer wired: a key in the environment before the backend exists was designated for
-    nothing here. Synthetic, never key-shaped values (the pre-commit scanner)."""
-
-    def setUp(self):
-        self._env = {k: os.environ.get(k) for k in _CRED_VARS}
-        for k in _CRED_VARS:
-            os.environ.pop(k, None)
-        self._fn = getattr(jd, "_WORK_KEY_FN", None)
-        jd._WORK_KEY_FN = None
-        self._setfn = getattr(jd, "_ENV_SET_FN", None)
-        jd._ENV_SET_FN = None
-        self._okfn = getattr(jd, "_ENV_OK_FN", None)
-        jd._ENV_OK_FN = None
-        # the bearer rung reads jd._login_auth_env() since the upstream fold, which returns the wire the
-        # kernel's _sdk_locked installs (sdk_backend.startup_auth_env: the tokens claimed at boot, a
-        # process-lifetime stash) when one is set — unwired here, so the environment is what it reads
-        self._login_fn = jd._LOGIN_AUTH_ENV_FN
-        jd._LOGIN_AUTH_ENV_FN = None
-        self._stash = sb._WORK_KEY       # the claimer's process-lifetime stash: unclaimed, so a claim happens HERE
-        sb._WORK_KEY = None
-
-    def tearDown(self):
-        sb._WORK_KEY = self._stash
-        jd._WORK_KEY_FN = self._fn
-        jd._ENV_SET_FN = self._setfn
-        jd._ENV_OK_FN = self._okfn
-        jd._LOGIN_AUTH_ENV_FN = self._login_fn
-        _restore_env(self._env)
-
-    def test_a_fetch_on_the_sets_lp_key_reports_the_set_accepted_and_nothing_else_does(self):
-        # the Models API accepted the credential: when it is the set's own direct-call key, that is a
-        # success of the set, and it re-arms envsource's once-per-credential refusal path through the
-        # judges' wire (no fingerprint: the set as a whole); any other rung says nothing about the set
-        ok = []
-        jd._ENV_OK_FN = lambda fp: ok.append(fp) or True      # the real wire answers whether it re-armed
-        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": " synthetic-set-lp-credential ", "A_TOKEN": "x"}
-        self.assertTrue(km._credential_accepted(km._models_api_credential()))
-        self.assertEqual(ok, [""])
-        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-env-lp-credential")), "the environment's key")
-        self.assertFalse(km._credential_accepted(("Authorization", "Bearer synthetic-bearer-credential")), "a bearer")
-        self.assertFalse(km._credential_accepted(None))
-        self.assertEqual(ok, [""])
-        jd._ENV_SET_FN = lambda: {"A_TOKEN": "x"}
-        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "the set carries no LP key now")
-        jd._ENV_SET_FN = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
-        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "a broken wire re-arms nothing")
-        jd._ENV_OK_FN = None
-        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": "synthetic-set-lp-credential"}
-        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "unwired: file mode")
-        self.assertEqual(ok, [""])
-        src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
-        self.assertIn("            _credential_accepted(cred)\n            added = _apply_model_catalog(", src,
-                      "fired on the fetch's success path, before the catalog is applied")
-
-    def test_the_command_sets_lp_key_comes_first(self):
-        # the command source (kernel/envsource.py, 2026-09-05): its ANTHROPIC_LP_API_KEY line is the
-        # direct-call credential on a box that keeps every credential out of files and out of the
-        # manager's environment — read through the judges' wire, ahead of anything in os.environ
-        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": " synthetic-set-lp-credential ", "A_TOKEN": "x"}
-        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-env-lp-credential"
-        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-set-lp-credential"))
-
-    def test_a_set_without_an_lp_key_falls_to_the_environment_then_the_work_key(self):
-        jd._ENV_SET_FN = lambda: {"ANTHROPIC_API_KEY": "synthetic-set-work-credential", "A_TOKEN": "x"}
-        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-env-lp-credential"
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"))
-        os.environ.pop("ANTHROPIC_LP_API_KEY")
-        self.assertIsNone(km._models_api_credential(), "the set's work key is not read here: it rides the claimer")
-        jd._WORK_KEY_FN = lambda: "synthetic-set-work-credential"    # what the kernel wires in command mode
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-set-work-credential"))
-
-    def test_a_broken_or_empty_set_wire_changes_nothing(self):
-        jd._ENV_SET_FN = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
-        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-env-lp-credential"
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"))
-        jd._ENV_SET_FN = lambda: {}
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"))
-        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": "   "}
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-env-lp-credential"), "blank is absent")
-
-    def test_the_lp_key_is_preferred_over_the_claimed_key(self):
-        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-lp-credential"
-        os.environ["ANTHROPIC_API_KEY"] = "synthetic-manager-env-credential"
-        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-lp-credential"))
-
-    def test_the_claimed_manager_env_key_is_second(self):
-        os.environ["ANTHROPIC_API_KEY"] = "synthetic-manager-env-credential"    # unread except THROUGH the claimer
-        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-claimed-credential"))
-
-    def test_the_wired_claimer_reads_the_managers_key_the_judges_bill_to(self):
-        # the WIRED path — jd._WORK_KEY_FN = sdk_backend.work_api_key, exactly what _sdk_locked installs
-        # before the boot refresh: with only ANTHROPIC_API_KEY in the environment, that key IS the one
-        # the fetch rides, claimed out of the environment the judges' way
-        os.environ["ANTHROPIC_API_KEY"] = "synthetic-manager-env-credential"
-        jd._WORK_KEY_FN = sb.work_api_key
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-manager-env-credential"))
-        self.assertFalse("ANTHROPIC_API_KEY" in os.environ, "claimed OUT of os.environ — no session CLI inherits it")
-        self.assertEqual(jd._work_key(), "synthetic-manager-env-credential",
-                         "one stash: what the judges bill to is what the catalog fetch bills to")
-
-    def test_with_the_claimer_wired_the_lp_key_still_wins(self):
-        os.environ["ANTHROPIC_API_KEY"] = "synthetic-manager-env-credential"
-        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-lp-credential"
-        jd._WORK_KEY_FN = sb.work_api_key
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-lp-credential"))
-
-    def test_the_kernel_wires_the_claimer_before_the_boot_refresh(self):
-        import inspect
-        src = inspect.getsource(km._sdk_locked)
-        self.assertLess(src.index("jd._WORK_KEY_FN = sbmod.work_api_key"), src.index('_refresh_model_catalog("boot")'),
-                        "the boot fetch runs with the claimer wired: the manager-env key is what it rides")
-
-    def test_an_unwired_ambient_key_is_not_read_and_the_refresh_says_so(self):
-        os.environ["ANTHROPIC_API_KEY"] = "synthetic-ambient-credential"
-        self.assertIsNone(km._models_api_credential(), "no claimer wired → nothing claimed, nothing read")
-        self.assertTrue("ANTHROPIC_API_KEY" in os.environ, "…and the environment is left as it was")
-        # …and the refresh's no-credential line names what a box that wants the catalog must carry —
-        # the LP key, or the manager's own work key — honestly, so nobody exports a session-auth key
-        os.environ.pop("ROMP_MODEL_CATALOG", None)
-        _reset_catalog()
-        try:
-            err = io.StringIO()
-            with redirect_stderr(err):
-                self.assertTrue(km._refresh_model_catalog("boot", _async=False))
-            self.assertIn("no API credential the kernel can use", err.getvalue())
-            self.assertIn("ANTHROPIC_LP_API_KEY", err.getvalue())
-            self.assertIn("the manager's own API key", err.getvalue())
-            self.assertIn("never a session-auth key", err.getvalue())
-            self.assertNotIn("deliberately not read", err.getvalue(), "the first draft's overclaim is gone")
-            self.assertIn("no API credential", km._catalog_status["lastError"])
-        finally:
-            _reset_catalog()
-            os.environ["ROMP_MODEL_CATALOG"] = "off"     # the suite-wide floor, back in place
-
-    def test_a_bearer_token_is_the_last_resort(self):
-        os.environ["ANTHROPIC_AUTH_TOKEN"] = "synthetic-bearer-credential"
-        self.assertEqual(km._models_api_credential(), ("Authorization", "Bearer synthetic-bearer-credential"))
-        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
-        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-claimed-credential"),
-                         "a claimed key outranks the bearer")
 
 
 class StalenessEvent(unittest.TestCase):

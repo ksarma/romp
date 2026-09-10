@@ -50,18 +50,17 @@ def _iso(ms, clock):
 
 
 def _user_input_texts(content):
-    """The prompt texts of a userMessage item's UserInput list, ONE ENTRY PER INPUT (an empty one
-    dropped, each stripped of outer whitespace). Non-text inputs keep a readable placeholder (the
-    Claude CLI does the same for pasted images). One entry per input, not one joined text: the
-    backend starts a turn from its WHOLE queue, one input per queued send, and the app-server answers
-    with one userMessage item carrying them all. Until 2026-09-09 the inputs were newline-joined into
-    one text block, so two sends queued before a turn started (an idle session sent twice quickly, or
-    sends while the client was down or backing off) landed as one record whose text matched neither
-    send's echo: the backend's own retire and the kernel's prune_live both key an echo by its text,
-    so both echoes stayed live for good and painted as user bubbles beside the record in every later
-    build. A block per input is the shape the Claude CLI writes for several sends taken at one
-    boundary, which the kernel's _atom_user_texts and the chat's pending bubbles already land per
-    block."""
+    """The prompt texts of a userMessage item's UserInput list, ONE ENTRY PER INPUT, each stripped of
+    outer whitespace, an empty one dropped. Non-text inputs keep a readable placeholder (the Claude CLI
+    does the same for pasted images), an entry of its own. Per input, never one joined text: the backend
+    starts a turn from its WHOLE queue, one input per queued send, and the app-server answers with one
+    userMessage item carrying them all. Joined, the record for two queued sends reads
+    "first send\nsecond send", which matches neither send's echo (the backend's _append and the kernel's
+    prune_live both key an echo by its text), so both echoes stay live for good and paint as user bubbles
+    beside the record in every later build. A user record with several text blocks is a shape the kernel
+    already reads per block (kernel._atom_user_texts, behind the echo prune and the pending-bubble pass;
+    sdk_backend._landed_texts): romp bundles its own injected messages as several blocks in one record.
+    So a block per input needs no kernel change."""
     parts = []
     for c in content or []:
         t = (c or {}).get("type")
@@ -259,9 +258,9 @@ class ThreadNormalizer:
             texts = _user_input_texts(item.get("content"))
             if not texts:
                 return []
-            # a user item mid-turn is a steer: close any held text first, then the prompt record,
-            # one text block per input (see _user_input_texts), so a turn started from several
-            # queued sends lands each send's text as its own block
+            # a user item mid-turn is a steer: close any held text first, then the prompt record, one
+            # text block per input (see _user_input_texts), so a turn started from several queued sends
+            # lands each send's text as its own block
             return self._flush() + [self._user(iid, ts_ms,
                                                [{"type": "text", "text": t} for t in texts])]
         if started:
