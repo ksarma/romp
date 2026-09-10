@@ -156,18 +156,27 @@ CLI_SCOPE_IGNORED_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " ignored:"
 # oom_score_adj on the session tree makes the box-wide killers prefer a session over the kernel. Read
 # from the manager's environment ONCE per backend (cli_scope_limits), like the scope verdict, and
 # handed to bin/romp-cli-scope through options.env; the wrapper turns the sizes into systemd-run
-# properties (MemoryMax=, MemoryHigh=, MemorySwapMax=, with OOMPolicy=continue whenever one is set —
-# a scope's default `stop` would end the whole scope on one OOM kill) and writes the adjustment to its
-# own /proc/self/oom_score_adj before the exec. The same syntax rules live in the wrapper (size_ok,
-# adj_ok): the kernel's check is what the boot log reports from, and what keeps a bad value from
-# reaching the wrapper at all (it goes down empty); the wrapper's is its own guard. The syntax is not
-# the whole check: a value this systemd or this Linux refuses (OOMPolicy= on scopes before systemd 253;
-# an adjustment below the inherited floor) would pass it and be refused on every launch, one `ignored:`
-# line each, while the boot log called it in force. So with the scopes on, the kernel also runs the
-# wrapper's own steps once, at its start, against this box (_cli_scope_settle): the property probe
-# scope, the memory-controller check inside it, and the adjustment write in a throwaway child. What
-# that refuses lands in `rejected` and goes down empty, so a per-launch `ignored:` line marks a change
-# since boot, not a standing condition.
+# properties (MemoryMax=, MemoryHigh=, MemorySwapMax=), puts OOMPolicy=continue on EVERY scope, limits
+# or none (2026-09-10: a scope's default `stop` made systemd end a whole session's cgroup, its 41
+# background tasks included, when the box-wide OOM killer took one tool child in it; the property is
+# creation-time only, so no limit set later can add it; the wrapper's header has the incident), and
+# writes the adjustment to its own /proc/self/oom_score_adj before the exec. The same syntax rules live
+# in the wrapper (size_ok, adj_ok): the kernel's check is what the boot log reports from, and what keeps
+# a bad value from reaching the wrapper at all (it goes down empty); the wrapper's is its own guard. The
+# syntax is not the whole check: a value this systemd or this Linux refuses (OOMPolicy= on scopes before
+# systemd 253; an adjustment below the inherited floor) would pass it and be refused on every launch,
+# one `ignored:` line each, while the boot log called it in force. So with the scopes on, the kernel
+# also runs the wrapper's own steps once, at its start, against this box (_cli_scope_settle): the
+# property probe scope (due on every start, since OOMPolicy=continue is on every scope), the
+# memory-controller check inside it, and the adjustment write in a throwaway child. What that refuses
+# lands in `rejected` and goes down empty, or, for the policy, as ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1
+# (the wrapper then leaves the property off), so a per-launch `ignored:` line marks a change since boot,
+# not a standing condition. The policy is probed apart from the limits: a systemd before 253 refuses
+# `OOMPolicy=` on a scope and takes the memory properties, so when a failure names the policy the limits
+# are probed alone once more and stand when that passes (the marker goes down, the limits go down in
+# full). Such a systemd stops the whole scope on an OOM kill inside it, as every scope did before the
+# property went on all of them; the refusal is the box's version, not a setting to fix, so it is a plain
+# line, and a problem is logged only when a limit is refused.
 # Rows: (environment variable, report key — the word the boot line prints, as in `memoryMax=16G` —,
 # validator, the rule in words, the type a report of the value carries: sizes as the strings systemd
 # reads, the adjustment as an integer. Nothing here converts: the wrapper receives every value as the
@@ -201,23 +210,27 @@ CLI_SCOPE_LIMITS = (
 CLI_SCOPE_MEMORY_PROPS = {"memoryMax": "MemoryMax", "memoryHigh": "MemoryHigh", "memorySwapMax": "MemorySwapMax"}
 # The boot probe's checks (_cli_scope_settle), as `unsettled` names the ones that settled nothing and as
 # the boot line words them: the memory properties on a probe scope, the memory controller inside one,
-# the adjustment write in a throwaway child.
-CLI_SCOPE_CHECKS = ("memoryLimits", "memoryController", "oomScoreAdj")
+# the adjustment write in a throwaway child, and the OOM policy, which rides the same probe scope as the
+# memory properties (one probe, two checks it can leave unsettled).
+CLI_SCOPE_CHECKS = ("memoryLimits", "memoryController", "oomScoreAdj", "oomPolicy")
 CLI_SCOPE_CHECK_NAMES = {"memoryLimits": "memory-limits probe", "memoryController": "memory-controller check",
-                         "oomScoreAdj": "oom_score_adj check"}
+                         "oomScoreAdj": "oom_score_adj check", "oomPolicy": "OOMPolicy probe"}
+# The policy every session scope carries (bin/romp-cli-scope; the comment above says why), and the
+# variable the kernel hands the wrapper when this systemd refused it on a scope at the boot probe.
+CLI_SCOPE_OOM_POLICY = ["-p", "OOMPolicy=continue"]
+CLI_SCOPE_OOM_POLICY_REJECTED_VAR = "ROMP_CLI_SCOPE_OOM_POLICY_REJECTED"
 
 
 def _cli_scope_props(in_force: dict) -> list[str]:
-    """The `-p Name=value` words the wrapper adds to systemd-run for the memory limits in `in_force`
-    (report keys → values): CLI_SCOPE_LIMITS order, then `-p OOMPolicy=continue` when any is set — the
-    words bin/romp-cli-scope builds, so the boot probe starts the scope a session would get."""
+    """The `-p Name=value` words the wrapper adds to systemd-run: the memory limits in `in_force`
+    (report keys → values) in CLI_SCOPE_LIMITS order, then `-p OOMPolicy=continue`, always (2026-09-10;
+    it used to come only with a limit): the words bin/romp-cli-scope builds, so the boot probe starts
+    the scope a session would get. Never empty."""
     words = []
     for _var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
         if key in CLI_SCOPE_MEMORY_PROPS and key in in_force:
             words += ["-p", "%s=%s" % (CLI_SCOPE_MEMORY_PROPS[key], in_force[key])]
-    if words:
-        words += ["-p", "OOMPolicy=continue"]
-    return words
+    return words + CLI_SCOPE_OOM_POLICY
 
 
 def _cli_scope_probe(run, argv, stdout=False) -> tuple:
@@ -262,13 +275,34 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
     of the wrapper's own steps, run once here so a refusal that would otherwise repeat on every launch
     (one `ignored:` line and one problem each, while the boot log called the value in force) is settled
     once, lands in `rejected`, and goes down to the wrapper empty:
-      * the memory properties, on a probe scope (`systemd-run … -p … -- true`), with the wrapper's own
-        retry chain: a failure is retried bare, a bare pass is followed by one more try with the
-        properties, and only that second failure rejects them, quoting the deciding failure. Two
-        outcomes settle nothing: a bare failure too (the bus is away; the scope verdict is moments old),
-        and a second try that does not answer (a raise: the 10 s bound, an OSError). One plain line each
-        says so, the values stand as read, and the wrapper reports per launch — its fallback line, or
-        its `ignored:` line if the properties turn out to be refused;
+      * the scope properties (the memory limits, then OOMPolicy=continue, which every scope carries,
+        so this probe is due on every start, limits or none) on a probe scope (`systemd-run … -p …
+        -- true`), with the wrapper's own retry chain: a failure is retried bare, a bare pass is followed
+        by one more try with the properties, and only that second failure rejects them, quoting the
+        deciding failure. The policy is rejected when the deciding failure names it (`Unknown
+        assignment: OOMPolicy=`, a systemd before 253) or when it was the only property. A failure
+        that names the policy with limits among the properties says nothing about the limits (that
+        systemd takes the memory properties), so the limits are then probed ALONE, once: a pass rejects
+        the policy by itself, keeps the limits in `in_force` and sends the controller check below in
+        with the limits alone; a failure rejects the limits with the policy, as a problem line quoting
+        both failures (limits the operator set apply nowhere); no answer (a raise) rejects the policy
+        and leaves the limits UNSETTLED (memoryLimits), a plain line, the values standing as read for
+        the wrapper to report on. A failure that does NOT name the policy, with limits set, says nothing
+        about the policy, so the POLICY is then probed ALONE, once, the mirror of the limits-alone
+        re-probe: a pass keeps the policy OUT of `rejected` (the marker goes down empty, the policy stays
+        on every scope, /api-health reads `continue`) and rejects the memory limits alone, a problem line
+        naming the limits dropped; a failure naming the policy rejects it with the limits, a problem line
+        quoting both; a raise or a failure that does not name it leaves the policy UNSETTLED (oomPolicy),
+        the limits rejected, a problem line. With no memory limit the combined probe WAS the policy alone,
+        so it is rejected outright: a plain line when the failure named it (a systemd before 253),
+        a problem otherwise. The policy refused alone by a failure that names it is a plain line: a
+        systemd before 253 stops the whole scope on an OOM kill inside it, as every scope did before the
+        property went on all of them, and the refusal is the box's version, not a setting to fix. A pass
+        logs one plain line saying the policy is in force.
+        Two outcomes settle nothing: a bare failure too (the bus is away; the scope verdict is moments
+        old), and a second try that does not answer (a raise: the 10 s bound, an OSError). One plain
+        line each says so, the properties go down as read, and the wrapper reports per launch: its
+        fallback line, or its `ignored:` line if the properties turn out to be refused;
       * the memory controller, inside a probe scope carrying the properties (CLI_SCOPE_MEMORY_PROBE_CMD),
         since systemd accepts the properties from a user manager without the controller and applies
         nothing. The verdict is the marker the command prints (CLI_SCOPE_MEMORY_PROBE_MARKS): no
@@ -288,44 +322,124 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
         value, with a line that quotes the shell's stderr and names the floor only for the refused write;
         any other status is quoted as it is. No answer, or a child killed by a signal, settles nothing (a
         plain line; the wrapper reports per launch).
-    Returns (rejected: variable → value, memory_delegated: True/False, None when not settled, unsettled:
-    the checks that were due and settled nothing, named as CLI_SCOPE_CHECKS — empty when every due check
-    answered; the caller words its boot line from it, so no value whose check did not answer is ever
-    called in force). `run` is subprocess.run or a stand-in; `log`, when given, takes (message,
-    problem=bool)."""
+    Returns (rejected: variable → value, plus `OOMPolicy` → `continue` when the policy was refused;
+    memory_delegated: True/False, None when not settled; unsettled: the checks that were due and settled
+    nothing, named as CLI_SCOPE_CHECKS, empty when every due check answered; the caller words its boot
+    line from it, so no value whose check did not answer is ever called in force). `run` is
+    subprocess.run or a stand-in; `log`, when given, takes (message, problem=bool)."""
     rejected, delegated, unsettled = {}, None, []
-    props = _cli_scope_props(in_force)
-    if props:
-        base = CLI_SCOPE_PROBE[:-2]
-        rc, err, _out = _cli_scope_probe(run, base + props + ["--", "true"])
-        if rc != 0:
-            bare_rc, bare_err, _out = _cli_scope_probe(run, CLI_SCOPE_PROBE)
-            if bare_rc != 0:
-                rc = None
-                if log:
-                    log("cli scope: the per-session memory limits could not be settled at start — a probe scope "
-                        "with them failed (%s) and so did one without (%s); the values stand as read, and the "
-                        "wrapper reports on each launch" % (err or "no detail", bare_err or "no detail"))
-            else:
-                first_err = err
-                rc, err, _out = _cli_scope_probe(run, base + props + ["--", "true"])
-                if rc is None and log:
-                    log("cli scope: the per-session memory limits could not be settled at start — a probe scope "
-                        "with them failed (%s), one without passed, and the retry with them did not answer (%s); "
-                        "the values stand as read, and the wrapper reports on each launch"
-                        % (first_err or "no detail", err or "no detail"))
-        if rc is None:
+    props = _cli_scope_props(in_force)      # the memory limits set, then the policy: never empty
+    mem = props[:-len(CLI_SCOPE_OOM_POLICY)]  # the memory limits alone; empty when none is set
+    base = CLI_SCOPE_PROBE[:-2]
+    rc, err, _out = _cli_scope_probe(run, base + props + ["--", "true"])
+    if rc != 0:
+        bare_rc, bare_err, _out = _cli_scope_probe(run, CLI_SCOPE_PROBE)
+        if bare_rc != 0:
+            rc = None
+            if log:
+                log("cli scope: the scope properties (%s) could not be settled at start: a probe scope with them "
+                    "failed (%s) and so did one without (%s); they go to the wrapper as read, and the wrapper reports "
+                    "on each launch" % (" ".join(props), err or "no detail", bare_err or "no detail"))
+        else:
+            first_err = err
+            rc, err, _out = _cli_scope_probe(run, base + props + ["--", "true"])
+            if rc is None and log:
+                log("cli scope: the scope properties (%s) could not be settled at start: a probe scope with them "
+                    "failed (%s), one without passed, and the retry with them did not answer (%s); they go to "
+                    "the wrapper as read, and the wrapper reports on each launch"
+                    % (" ".join(props), first_err or "no detail", err or "no detail"))
+    if rc is None:
+        if mem:
             unsettled.append("memoryLimits")
-        elif rc != 0:
+        unsettled.append("oomPolicy")
+    limits_stand = rc == 0    # the memory limits passed a probe: the controller check below is due
+    if rc is not None and rc != 0:
+        # The combined probe (limits, then the policy) was refused. Probe whichever member the deciding
+        # failure did NOT decide for, so the verdict is a probe result, never an inference: a failure
+        # NAMING the policy says nothing about the limits (probe the limits alone), and a failure that
+        # does NOT name it says nothing about the policy (probe the policy alone). Reporting names exactly
+        # what each probe rejected: the problem line never says the policy is off while the marker goes
+        # down empty, nor the reverse.
+        names_policy = "OOMPolicy" in err
+        older = ("OOMPolicy= on scopes needs systemd 253, and an OOM kill inside a scope on this systemd stops the "
+                 "whole scope, as it did before the property")
+        def reject_limits():
             for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
                 if key in CLI_SCOPE_MEMORY_PROPS and key in in_force:
                     rejected[var] = in_force[key]
-            if log:
-                hint = " (OOMPolicy= on scopes needs systemd 253)" if "OOMPolicy" in err else ""
-                log("cli scope: systemd-run rejected the per-session memory limits (%s: %s) — not applied; "
-                    "sessions run in their scopes without them%s" % (" ".join(props), err or "no detail", hint),
-                    problem=True)
+        if names_policy and mem:
+            # systemd took the memory properties before but not the policy (a systemd before 253) → the
+            # deciding failure says nothing about the limits, so probe the LIMITS alone once more.
+            m_rc, m_err, _out = _cli_scope_probe(run, base + mem + ["--", "true"])
+            rejected["OOMPolicy"] = "continue"
+            if m_rc == 0:
+                limits_stand = True
+                props = mem    # what the scopes carry from here: the controller check and its lines name these words
+                if log:
+                    log("cli scope: systemd-run rejected OOMPolicy=continue on a scope (%s): %s; the memory limits alone (%s) "
+                        "were taken and stand; sessions run in their scopes with them and without the policy"
+                        % (err or "no detail", older, " ".join(mem)))
+            elif m_rc is None:
+                unsettled.append("memoryLimits")
+                if log:
+                    log("cli scope: systemd-run rejected OOMPolicy=continue on a scope (%s): %s; sessions run in their scopes "
+                        "without it, and the memory limits alone (%s) could not be settled: a probe scope with them did not "
+                        "answer (%s); they go to the wrapper as read, and the wrapper reports on each launch"
+                        % (err or "no detail", older, " ".join(mem), m_err or "no detail"))
+            else:
+                reject_limits()
+                if log:
+                    log("cli scope: systemd-run rejected the scope properties (%s: %s) and the memory limits alone (%s: %s), "
+                        "so they are not applied; sessions run in their scopes without them (OOMPolicy= on scopes needs "
+                        "systemd 253)" % (" ".join(props), err or "no detail", " ".join(mem), m_err or "no detail"),
+                        problem=True)
+        elif mem:
+            # the deciding failure did NOT name the policy (a memory size systemd refuses) → it says
+            # nothing about whether the policy stands, so probe the POLICY alone once more (the mirror of
+            # the limits-alone re-probe). The memory limits are what the combined probe refused.
+            p_rc, p_err, _out = _cli_scope_probe(run, base + CLI_SCOPE_OOM_POLICY + ["--", "true"])
+            reject_limits()
+            if p_rc == 0:
+                # the policy stands on its own → NOT rejected: the marker goes down empty, the wrapper puts
+                # it on every scope, /api-health says continue; only the memory limits are dropped
+                if log:
+                    log("cli scope: systemd-run rejected the memory limits (%s: %s) on a scope, so they are not applied; "
+                        "sessions run in their scopes without them; OOMPolicy=continue was taken on its own and stays on "
+                        "every scope" % (" ".join(mem), err or "no detail"), problem=True)
+            elif p_rc is not None and "OOMPolicy" in p_err:
+                # the policy is refused too, apart → reject it with the limits, quoting both refusals
+                rejected["OOMPolicy"] = "continue"
+                if log:
+                    log("cli scope: systemd-run rejected the memory limits (%s: %s) and OOMPolicy=continue alone (%s), so "
+                        "neither is applied; sessions run in their scopes without them (OOMPolicy= on scopes needs systemd 253)"
+                        % (" ".join(mem), err or "no detail", p_err or "no detail"), problem=True)
+            else:
+                # the policy-alone probe raised, or failed without naming the policy (a bus fault) → its
+                # fate is UNKNOWN, so leave it UNSETTLED (never rejected): the marker goes down empty and
+                # the wrapper's own pre-flight settles it per launch
+                unsettled.append("oomPolicy")
+                p_said = "did not answer (%s)" % (p_err or "no detail") if p_rc is None else "failed (%s)" % (p_err or "no detail")
+                if log:
+                    log("cli scope: systemd-run rejected the memory limits (%s: %s) on a scope, so they are not applied; "
+                        "sessions run in their scopes without them; whether OOMPolicy=continue stays on the scope could not "
+                        "be settled: a probe scope with it alone %s, and the wrapper reports on each launch"
+                        % (" ".join(mem), err or "no detail", p_said), problem=True)
         else:
+            # no memory limit set: the combined probe WAS the policy alone
+            rejected["OOMPolicy"] = "continue"
+            if log:
+                if names_policy:
+                    log("cli scope: systemd-run rejected OOMPolicy=continue on a scope (%s): %s; sessions run in their "
+                        "scopes without it" % (err or "no detail", older))
+                else:
+                    log("cli scope: systemd-run rejected OOMPolicy=continue on a scope (%s), so it is not applied; "
+                        "sessions run in their scopes without it, and one OOM kill inside a scope may then stop the whole "
+                        "scope" % (err or "no detail"), problem=True)
+    elif rc == 0 and log:
+        log("cli scope: OOMPolicy=continue in force on every session scope: an OOM kill inside a scope ends that "
+            "process alone, not the scope")
+    if limits_stand:
+        if mem:
             d_argv = base + props + ["--"] + CLI_SCOPE_MEMORY_PROBE_CMD
             d_rc, d_err, d_out = _cli_scope_probe(run, d_argv, stdout=True)
             first = None    # the first attempt, kept when it gave no verdict, so the line can say what it did
@@ -432,8 +546,13 @@ def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[d
     /proc/self/oom_score_adj it cannot open for writing). `memory_delegated` is that probe's verdict on
     the memory controller (True/False), None when it did not run or could not be settled; `unsettled`
     names the probe's checks that were due and settled nothing (CLI_SCOPE_CHECKS; empty when every due
-    check answered, and when none was due). `log`, when given, takes (message, problem=bool); the boot
-    line comes last, after every refusal: with `scope_on` false it says the limits apply to nothing,
+    check answered, and when none was due). With the scopes on and `run` given the property probe is
+    always due, since every scope carries OOMPolicy=continue (_cli_scope_props): a systemd that refuses
+    it puts `OOMPolicy` in `rejected` (the one key there that is no variable), which _options hands the
+    wrapper as ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1; the policy is settled apart from the limits, so a
+    systemd that refuses it and takes the memory properties (before 253) keeps the limits in `in_force`
+    (_cli_scope_settle). `log`, when given, takes (message, problem=bool);
+    the boot line comes last, after every refusal: with `scope_on` false it says the limits apply to nothing,
     since no scope is started for them to apply to; otherwise it lists each value in force under its own
     verdict (_cli_scope_boot_line) — in force, applied to nothing until the controller is delegated, or
     set but not settled by a named check — so a value whose check did not answer is never called in
@@ -454,11 +573,13 @@ def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[d
                 meanwhile = "; sessions run in their scopes without that limit" if scope_on else ""
                 log("cli scope: %s=%r is not %s — not applied%s" % (var, v, rule, meanwhile), problem=True)
     delegated, unsettled = None, []
-    if in_force and scope_on and run is not None:
+    if scope_on and run is not None:    # due with nothing set too: every scope carries OOMPolicy=continue
         refused, delegated, unsettled = _cli_scope_settle(in_force, run, log)
         for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
             if var in refused:
                 rejected[var] = in_force.pop(key)
+        if "OOMPolicy" in refused:
+            rejected["OOMPolicy"] = refused["OOMPolicy"]
     if in_force and log:
         if not scope_on:
             listed = " ".join("%s=%s" % (k, v) for k, v in in_force.items())
@@ -2740,10 +2861,16 @@ def down_resume_nudge(stop_t: int, start_t: int) -> str:
 
 def is_resume_nudge(text) -> bool:
     """Whether a queue entry is a boot-reconcile continuation nudge: BOOT_RESUME_NUDGE, its `romp
-    down` variant (down_resume_nudge, which shares the lead), or the crash one. Readers that keep the
-    nudge at the head of a queue, or hide it from a 'you' bubble, match on this, never on equality
-    with one constant."""
-    return isinstance(text, str) and (text == CRASH_RESUME_NUDGE or text.startswith(_RESUME_NUDGE_LEAD))
+    down` variant (down_resume_nudge, which shares the lead), or the crash one in any of its three forms
+    (is_crash_resume_nudge). Readers that keep the nudge at the head of a queue, or hide it from a
+    'you' bubble, match on this, never on equality with one constant."""
+    return isinstance(text, str) and (is_crash_resume_nudge(text) or text.startswith(_RESUME_NUDGE_LEAD))
+
+
+def is_crash_resume_nudge(text) -> bool:
+    """Whether a queue entry is the crash resume notice: CRASH_RESUME_NUDGE, CRASH_RESUME_NUDGE_OOM or
+    CRASH_RESUME_NUDGE_KILLED, which share the lead sentence (the kernel's INTR_CRASH_SIG lockstep)."""
+    return isinstance(text, str) and text.startswith(_CRASH_NUDGE_LEAD)
 
 
 def newest_down_stop(state_dir: Path) -> int | None:
@@ -2802,13 +2929,44 @@ RENAME_PING_HEAD = "<!-- romp-injected --><!-- romp-system -->[romp] This sessio
 
 # Same recovery, different death: the session's OWN claude process died mid-turn (killed or crashed)
 # while the kernel stayed up, so the kernel itself resumes it (_heal_cut_session) instead of waiting
-# for the next boot's reconcile.
-CRASH_RESUME_NUDGE = (
-    "<!-- romp-injected --><!-- romp-system -->[romp] This session's claude process died mid-turn "
-    "(killed or crashed); the session has been resumed with its history intact. If the conversation "
+# for the next boot's reconcile. The lead is what INTR_CRASH_SIG matches and is_crash_resume_nudge
+# keys on; the parenthesis names the cause when the kernel knows it (oom_verdict, 2026-09-10):
+#   * the OOM form is queued when the dead CLI's own scope says the OOM killer ended IT: the CLI's own
+#     exit by SIGKILL (the killer's signature under OOMPolicy=continue) with the cgroup's memory.events
+#     oom_kill count risen over the turn's baseline, or with that counter unreadable (the scope already
+#     collected); or Result=oom-kill on a scope systemd stopped whole, or the journal's record of that
+#     stop once the unit is gone. It does not say whether the rest of the session's processes went too:
+#     under OOMPolicy=continue the kill took one process, under `stop` systemd ended the whole scope,
+#     and the notice is one text for both, so it asks the session to check what it had running.
+#   * the KILLED form (round 3, 2026-09-10; one text for every cell since round 5) is queued for every
+#     "sigkill" verdict: the CLI's exit was SIGKILL and no OOM kill is on record for it. That is the
+#     flat-counter cell (the counter was READ and did not rise over the turn's baseline; it counts the
+#     memcg killer's and the global killer's kills alike, so a flat one excludes the kernel's killers and
+#     leaves a userspace killer such as earlyoom, which the counter cannot see, or a kill by hand) and
+#     the collected cells the journal cannot confirm (the Started line alone; no line for the unit; a
+#     journalctl that failed; a user manager without the memory controller, which records no kill).
+#     The kernel's log line keeps the finer evidence per cell; the notice says only what holds on all of
+#     them: a kill by signal 9, and no out-of-memory kill on record, which does not rule one out. Saying
+#     "out of memory" there would be a quietly wrong notice, and naming a definite cause on a no-record
+#     cell was one too (round 5), so this form names the signal, says what is on record, and asks for
+#     modest memory use meanwhile.
+#   * a contained tool-child kill the CLI outlived, or a plain crash, gets the bare "killed or crashed"
+#     form.
+# The rest is the same disarming of the stop record as BOOT_RESUME_NUDGE.
+_CRASH_NUDGE_LEAD = "<!-- romp-injected --><!-- romp-system -->[romp] This session's claude process died mid-turn"
+_CRASH_NUDGE_REST = (
+    "; the session has been resumed with its history intact. If the conversation "
     "tail shows '[Request interrupted by user]', that record came from this cut, not from the user: "
     "nobody asked you to stop. Re-read the tail of the conversation and pick the work back up where "
     "it stopped, without asking whether to continue.")
+CRASH_RESUME_NUDGE = _CRASH_NUDGE_LEAD + " (killed or crashed)" + _CRASH_NUDGE_REST
+CRASH_RESUME_NUDGE_OOM = (_CRASH_NUDGE_LEAD
+                          + " (out of memory: the OOM killer took a process running under this session, and anything "
+                            "else that was running under it may have been stopped with it; check what you had running "
+                            "before relying on it)" + _CRASH_NUDGE_REST)
+CRASH_RESUME_NUDGE_KILLED = (_CRASH_NUDGE_LEAD
+                             + " (killed by signal 9 partway through the last turn; no out-of-memory kill is on record for it, "
+                               "which does not rule one out; keep memory use modest for now)" + _CRASH_NUDGE_REST)
 
 
 # A CLI that cannot even START says so on the way out — and the ONE cause that reliably does this is the
@@ -3279,10 +3437,337 @@ def scope_unit_of(cgroup_text: str) -> str | None:
     return None
 
 
+def scope_cgroup_of(cgroup_text: str) -> str | None:
+    """The cgroup-v2 path (the `0::<path>` line) a /proc/<pid>/cgroup listing places the process in, when
+    that path is a romp session scope, else None. The turn-start baseline reads the LIVE scope's
+    memory.events from CGROUP_ROOT + this path (the same layout the heal builds from the show's
+    ControlGroup), so a legacy hierarchy (no `0::` line) leaves it None and the baseline unread. Pure."""
+    for ln in (cgroup_text or "").splitlines():
+        if ln.startswith("0::") and scope_unit_of(ln):
+            return ln[len("0::"):]
+    return None
+
+
 def scope_pid(unit: str) -> int | None:
     """The pid a session scope's name carries — the pid its CLI ran as (bin/romp-cli-scope's naming)."""
     m = _SESSION_SCOPE_RE.match(unit.strip())
     return int(m.group(2)) if m else None
+
+
+# WHY A DEAD CLI'S SCOPE IS ASKED HOW IT ENDED (2026-09-10). A scope under OOMPolicy=stop (the user
+# manager's default) is stopped whole by systemd the moment the OOM killer takes ONE process in it: the
+# CLI gets SIGTERM and exits 143, the kernel heals the session (_heal_cut_session), and nothing in the
+# log said why 41 background tasks had just died. Every session scope now carries OOMPolicy=continue
+# (bin/romp-cli-scope), under which systemd records NO Result=oom-kill (verified on systemd 255: a CLI
+# killed under MemoryMax=64M left memory.events `oom_kill 1` and Result=success), so the counter alone
+# cannot say WHICH death this was. The signals, primary first:
+#   * The CLI's OWN exit, the exact discriminator. The SDK reports how the process ended
+#     (ProcessError.exit_code, mirrored onto the transport's returncode), and a death by SIGKILL
+#     (signal 9, a negative status: SIGKILL_EXIT) is the OOM killer's signature under `continue`: the
+#     cgroup's own killer (verified: a CLI over its MemoryMax exited on signal 9) and the kernel's global
+#     killer too. Recorded at the moment the SDK reports it (SdkSession._cli_exit_code) and never
+#     dropped. A non-SIGKILL exit (the CLI finished a turn and exited on its own, exit 1, a SIGABRT) is
+#     NOT the killer, however many kills the scope's whole life counted; nor is 137, a wrapper's report
+#     of a child it did not exec into (SIGKILL_EXIT's comment). The exit -1 is the SDK's sentinel for a
+#     process wait that failed (SDK_EXIT_UNREPORTED; a real SIGHUP death reports the same) and reads as
+#     unreported, never as a signal.
+#   * The cgroup's memory.events `oom_kill`, read against a BASELINE, the count at the turn's start
+#     (SdkSession._oom_baseline; taken at connect and at each turn's 0->1 raise, one file read per turn).
+#     On cgroup v2 the counter counts the memcg killer's and the global killer's kills alike, so it
+#     DECIDES what a SIGKILL was: an increase since the baseline with a SIGKILL exit names THIS death out
+#     of memory; a readable counter that did NOT rise (a whole-life 0 with no baseline included) with a
+#     SIGKILL exit excludes the kernel's killers and leaves a kill by hand or a userspace killer the
+#     counter cannot see (earlyoom SIGKILLs on its own free-memory thresholds and never moves
+#     memory.events), named as a SIGKILL with no OOM kill counted and never as out of memory (kind
+#     "sigkill", CRASH_RESUME_NUDGE_KILLED); a counter that could not be read on a LOADED unit (a legacy
+#     hierarchy, a memory.events that will not open, a show that failed) leaves the SIGKILL standing alone
+#     as the killer's signature, and a counter gone with the scope's collection hands the decision to the
+#     journal (the Result bullet below; round 4). An increase WITHOUT a
+#     SIGKILL exit is a contained kill (a tool child the memcg took while the CLI ran on), named as a
+#     child, never as the CLI's cause, and only against a READ baseline: the whole-life count without one
+#     is context, not a verdict.
+#   * Result=oom-kill, for a scope WITHOUT the policy (the kernel's marker after a refused boot probe; a
+#     launch whose pre-flight dropped the properties; a systemd before 253, whose scopes have no
+#     OOMPolicy= and are stopped whole on an OOM kill, verified in v252's scope.c and 253's NEWS), which
+#     systemd stops whole, recording the cause on the unit. The Result survives on the unit only while a
+#     member outlives the SIGTERM: when every process goes down on it, the unit is collected within
+#     milliseconds of the CLI's exit, before the SDK reports that exit (the transport awaits the process
+#     after stdout's EOF, then the thread unwinds), so the show reads LoadState=not-found (verified on
+#     systemd 255: 8/8 not-found after an EOF-then-wait). For a not-found unit the heal therefore reads
+#     the unit's journal tail (SCOPE_JOURNAL_ARGV), whatever the exit: `<unit>: Failed with result
+#     'oom-kill'` names the whole-scope stop (SCOPE_JOURNAL_OOM_LINE). The `<unit>: A process of this
+#     unit has been killed by the OOM killer.` line (SCOPE_JOURNAL_KILL_LINE) is the user manager's
+#     record of EVERY OOM kill in the scope, written on the cgroup-empty event before the unit is
+#     collected (systemd 255: 60/60 lone processes OOM-killed under `continue` had the line in the
+#     journal at the instant of exit; 58/58 killed by hand had only the Started line), and it survives
+#     the collection the Result does not. It is whole-life, so for a non-SIGKILL exit it is no verdict
+#     (a contained kill under `continue` logs it too); for the SIGKILL + collected cell it is what tells
+#     the OOM killer from a kill by hand or earlyoom, which leave no line: with the line the cell is
+#     "oom", without it "sigkill" (round 4). systemd-oomd, the other userspace killer, DOES leave a line:
+#     the manager logs `<unit>: systemd-oomd killed N process(es) in this unit.` for a kill it made
+#     (SCOPE_JOURNAL_OOMD_LINE; verified on systemd 255, a scratch scope carrying oomd's xattrs and a kill
+#     -9 produced it through this read), and the heal reads it as a third kill line (round 5): "oom" with
+#     it, since a kill on memory pressure is one, the evidence naming systemd-oomd. Without the policy an
+#     oomd kill also stops the scope whole, and the stop line names it there. An empty or failed journal
+#     read is a clause in the plain line, never silence, and for the SIGKILL + collected cell it is the
+#     hedged "sigkill" too: a definite out-of-memory verdict needs a definite record.
+# The heal asks about the dead CLI's OWN scope by its exact unit name (SdkSession.cli_scope_unit, read
+# from the CLI's /proc/<pid>/cgroup at connect), never a glob over the sid's scopes: an older scope of
+# the same session, kept up by a tmux server and still draining an OOM kill of its own, would answer a
+# glob and be blamed for a newer CLI's death. A unit systemd no longer has loaded (the scope collected by
+# the wrapper's --collect once every process was gone; the common shape, since a lone CLI IS the scope's
+# last process) shows LoadState=not-found with an empty ControlGroup (the show still exits 0 and prints
+# Result=success for it, verified), so the live counter is gone and the CLI's SIGKILL exit plus the
+# journal's record are all the heal has, which is why the exit is the primary signal. Every heal path
+# writes ONE plain line saying what was read and what was not; none returns silently, and the reason a
+# counter or a journal could not be read (the scope collected, a loaded unit with no readable file, a
+# show or a journalctl that failed) is the caller's to state (oom_verdict's counter_note and
+# journal_note): oom_verdict is pure and never sees the backend. The cgroup path is ControlGroup under
+# the cgroup v2 mount (CGROUP_ROOT; the same root the memory-controller probe reads).
+SCOPE_SHOW_ARGV = ["systemctl", "--user", "show", "--no-pager", "-p", "Id,LoadState,Result,ControlGroup", "--"]
+SCOPE_SHOW_TIMEOUT = 10.0
+# the unit's last journal lines, read for a collected unit whatever the exit (the comment above); `-o cat`
+# prints the messages bare, `-t systemd` keeps the user manager's own lines only (a scope member's `logger`
+# lines carry the unit too and would push the manager's out of the window: verified, six logger lines
+# displaced the Started line), and `-n 5` bounds the read to the newest few; the unit follows. The window
+# is read from its LAST `Started ` line (journal_life; whatever the manager's StatusUnitFormat= puts after
+# the word, since `-u <unit> -t systemd` already restricts the read to this unit's manager lines), so an
+# earlier same-named unit's death inside it is cut off.
+SCOPE_JOURNAL_ARGV = ["journalctl", "--user", "-n", "5", "-o", "cat", "-t", "systemd", "-u"]
+SCOPE_JOURNAL_OOM_LINE = "Failed with result 'oom-kill'"
+SCOPE_JOURNAL_KILL_LINE = "A process of this unit has been killed by the OOM killer"
+# the manager's line for a kill by systemd-oomd: `<unit>: systemd-oomd killed <N|some> process(es) in this unit.`
+# (unit.c, MESSAGE_ID d989611b15e44c9dbf31e3c81256e4ed); the count varies, so the match is the head (round 5)
+SCOPE_JOURNAL_OOMD_LINE = "systemd-oomd killed"
+SCOPE_JOURNAL_STARTED = "Started "     # the manager's line at each start of a unit: `Started <unit> - <description>.`
+SCOPE_RESULT_OOM = "oom-kill"
+CGROUP_ROOT = "/sys/fs/cgroup"
+MEMORY_EVENTS = "memory.events"
+# A death by SIGKILL is how the process ends when the OOM killer takes it: the cgroup's own killer under
+# OOMPolicy=continue and the box-wide killer alike. anyio/asyncio report a signalled exit as a NEGATIVE
+# status, so ProcessError.exit_code and the transport's returncode are both -9 (verified 2026-09-10 in a
+# scratch scope: a CLI over MemoryMax, a self-SIGKILL, and a bystander-held scope all surfaced -9). The
+# exit is -9, and never 137, because every layer of the launch chain execs in place (bin/romp-cli-scope,
+# systemd-run --scope, the npm and version-manager shims), so a claude_bin wrapper must exec too: a shim
+# that runs the CLI as a child reports the child's SIGKILL as its own exit 137, and also defeats the
+# interrupt escalation (the SIGINT lands on the shim, never the CLI) and the orphan finder, so it is
+# outside what romp supports; 137 reads as a plain exit here (verified: a non-exec sh wrapper surfaced
+# 137 with "Killed" on stderr, an exec wrapper -9).
+SIGKILL_EXIT = -9
+# The SDK's sentinel for an exit it could not read: its transport falls to -1 when `await process.wait()`
+# raises (claude_agent_sdk, subprocess_cli), and anyio reports a real SIGHUP death as -1 too, so the value
+# is ambiguous and reads as unreported (exit_known, exit_said), never as a kill by signal 1.
+SDK_EXIT_UNREPORTED = -1
+
+
+def scope_show_props(show_text: str) -> dict:
+    """The `Key=value` lines of a `systemctl show -p … -- <unit>` answer for ONE unit, as a dict (values
+    stripped). Empty for an empty answer. Pure."""
+    out = {}
+    for ln in (show_text or "").splitlines():
+        if "=" in ln:
+            k, v = ln.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def oom_kill_count(memory_events_text: str) -> int | None:
+    """The `oom_kill` count in a cgroup's memory.events (`<key> <count>` lines), or None when the text
+    has no such line (not a memory.events, or a kernel without the counter). Pure."""
+    for ln in (memory_events_text or "").splitlines():
+        parts = ln.split()
+        if len(parts) == 2 and parts[0] == "oom_kill" and parts[1].isdigit():
+            return int(parts[1])
+    return None
+
+
+def exit_known(exit_code) -> bool:
+    """Whether the SDK reported a real exit for the CLI: not None (no code reported) and not
+    SDK_EXIT_UNREPORTED (-1, the transport's sentinel for a wait that failed, or a SIGHUP). Pure."""
+    return exit_code is not None and exit_code != SDK_EXIT_UNREPORTED
+
+
+def exit_said(exit_code, subject: str = "the CLI") -> str:
+    """How a reported exit reads in a log line: a negative status is the signal that ended the process
+    (`killed by signal N`), a non-negative one its exit code, None an unreported exit, and -1 the
+    SDK's ambiguous sentinel (SDK_EXIT_UNREPORTED), said as such and never as a kill by signal 1. Pure."""
+    if exit_code is None:
+        return "%s's exit was not reported" % subject
+    if exit_code == SDK_EXIT_UNREPORTED:
+        return "%s ended on signal 1 (SIGHUP) or the SDK could not read its exit (it reports -1 for both)" % subject
+    if exit_code < 0:
+        return "%s was killed by signal %d" % (subject, -exit_code)
+    return "%s exited %d" % (subject, exit_code)
+
+
+def journal_life(journal_text: str, unit: str | None = None) -> list[str]:
+    """The lines of a unit's journal tail (SCOPE_JOURNAL_ARGV) that belong to its NEWEST start: the lines
+    after the last `Started ` line (SCOPE_JOURNAL_STARTED), so an earlier unit of the same name whose
+    death sits inside the window is cut off, and every line of the window when no Started line is in it
+    (the manager's log level above info, or the window filled by this life's own lines). The cut is at
+    ANY Started line, not one naming the unit (round 5, fresh-4 and kernel-4): the read's `-u <unit> -t
+    systemd` already restricts the window to the manager's lines about this unit, and what the Started
+    line says after `Started ` is the manager's StatusUnitFormat= (description, upstream's compiled
+    default, gives `Started <description>.` with no unit name; name gives `Started <unit>.` with a period
+    where combined has a space; Debian, Ubuntu and Fedora build combined), so a match on the unit's name
+    was inert on two of the three. With `unit`, a line of the life counts only when it names the unit
+    (`<unit>: ...`), which the manager's kill and stop lines do. The residual: a same-named unit's
+    earlier death inside the window with no Started line to cut at, which the scope names (pid and a
+    nanosecond stamp) make a collision of both. Pure."""
+    lines = (journal_text or "").splitlines()
+    head = SCOPE_JOURNAL_STARTED
+    start = 0
+    for i, ln in enumerate(lines):
+        if ln.startswith(head):
+            start = i + 1
+    life = lines[start:]
+    if unit:
+        life = [ln for ln in life if ln.startswith(unit + ":")]
+    return life
+
+
+def journal_oom_stop(journal_text: str, unit: str | None = None) -> bool:
+    """Whether a unit's journal tail (SCOPE_JOURNAL_ARGV) records systemd stopping the scope whole over an
+    OOM kill in its newest life (journal_life): the `Failed with result 'oom-kill'` line
+    (SCOPE_JOURNAL_OOM_LINE). Pure."""
+    return any(SCOPE_JOURNAL_OOM_LINE in ln for ln in journal_life(journal_text, unit))
+
+
+def journal_oom_kill(journal_text: str, unit: str | None = None) -> bool:
+    """Whether a unit's journal tail (SCOPE_JOURNAL_ARGV) records an OOM kill of a process in the scope in
+    its newest life (journal_life): the user manager's `A process of this unit has been killed by the OOM
+    killer` line (SCOPE_JOURNAL_KILL_LINE), written on the cgroup-empty event and surviving the unit's
+    collection, or its `systemd-oomd killed N process(es) in this unit` line for a kill by systemd-oomd
+    (SCOPE_JOURNAL_OOMD_LINE, round 5). Whole-life within the start: a contained kill under
+    OOMPolicy=continue leaves either too, so what it decides is the caller's (oom_verdict: the SIGKILL +
+    collected cell only). Pure."""
+    return any(SCOPE_JOURNAL_KILL_LINE in ln or SCOPE_JOURNAL_OOMD_LINE in ln for ln in journal_life(journal_text, unit))
+
+
+def journal_oom_line(journal_text: str, unit: str | None = None) -> str | None:
+    """The line of a unit's journal tail (SCOPE_JOURNAL_ARGV) that names an OOM kill in its newest life
+    (journal_life), as the clause the evidence quotes, or None: the whole-scope stop line first
+    (SCOPE_JOURNAL_OOM_LINE, systemd's own record of the stop), then the manager's line for a kill by the
+    kernel's OOM killer (SCOPE_JOURNAL_KILL_LINE), then its line for a kill by systemd-oomd, quoted as
+    written past the unit's name and without its period since it carries the count (`systemd-oomd killed
+    1 process(es) in this unit`; round 5). Pure."""
+    life = journal_life(journal_text, unit)
+    if any(SCOPE_JOURNAL_OOM_LINE in ln for ln in life):
+        return SCOPE_JOURNAL_OOM_LINE
+    if any(SCOPE_JOURNAL_KILL_LINE in ln for ln in life):
+        return SCOPE_JOURNAL_KILL_LINE
+    for ln in life:
+        if SCOPE_JOURNAL_OOMD_LINE in ln:
+            return (ln.split(": ", 1)[1] if ": " in ln else ln).rstrip(".")
+    return None
+
+
+def oom_verdict(props: dict, oom_kill: int | None, exit_code: int | None, baseline: int | None = None,
+                counter_note: str | None = None, journal: str | None = None,
+                journal_note: str | None = None) -> tuple[str, str] | None:
+    """Whether a dead CLI's scope says how it died, as `(kind, evidence)` or None. Pure.
+
+    `props` is the show's answer (scope_show_props) for the exact unit, {} when the unit was not found or
+    the show failed; `oom_kill` is its cgroup's memory.events count, None when unreadable; `exit_code` is
+    how the SDK reported the CLI ending (SIGKILL is -9; None when no code was reported; -1 is the SDK's
+    own sentinel for a wait that failed, SDK_EXIT_UNREPORTED, and reads as unreported here too);
+    `baseline` is the counter at the turn's start (None when it was never read); `counter_note` is the
+    caller's reason an unreadable counter could not be read (only the caller knows whether the scope was
+    collected, the unit loaded with no readable file, or the show failed; None reads plainly); `journal`
+    is the newest life of the unit's journal tail (journal_life) when the caller read it (a not-found
+    unit, whatever the exit), None when it was not read, the read failed, or the journal has no line at
+    all for the unit (a manager that never logged the unit is silent about everything, so that silence
+    excludes nothing; round 5), and `journal_note` is the caller's clause about that read (what the
+    journal said, or why nothing is on record), None when no read was attempted (a loaded unit). The cells, primary first:
+      * a SIGKILL exit (SIGKILL_EXIT) with the counter risen over the turn-start baseline is "oom": the
+        killer's signature under OOMPolicy=continue, the cgroup's own killer and the kernel's global one
+        alike, the counter stated as corroboration;
+      * a SIGKILL exit with the counter unreadable and the journal READ (a collected scope) is decided by
+        the journal (round 4): "oom" when the newest life carries the manager's OOM-killer line
+        (journal_oom_kill: the OOM killer's line or systemd-oomd's, round 5) or its whole-scope stop line
+        (journal_oom_stop), else "sigkill" with the journal's silence as the evidence (a kill by hand, or
+        a userspace killer such as earlyoom, leaves no line). A journal that could not be read or has no
+        line for the unit is "sigkill" too (journal None with the caller's note), the evidence saying no
+        OOM kill is on record and ruling none out: a definite out-of-memory verdict needs a definite
+        record. With NO journal read (a loaded unit
+        whose memory.events could not be read, a legacy hierarchy, a show that failed) the SIGKILL stands
+        alone as "oom" with the counter note, and a loaded unit's Result is stated beside it;
+      * a SIGKILL exit with a READABLE counter that did not rise (`oom_kill <= (baseline or 0)`, so a
+        whole-life 0 with no baseline lands here too) is "sigkill": on cgroup v2 the counter counts the
+        memcg killer's and the global killer's kills alike, so a flat one excludes the kernel's killers
+        and leaves a kill by hand or a userspace killer (earlyoom) the counter cannot see; named as
+        such, never as out of memory. A whole-life count above 0 with no baseline keeps "oom" (nothing
+        says the counted kill was not this one), and so does Result=oom-kill beside the flat counter
+        (systemd's own record of the stop, the next cell, outranks it);
+      * Result=oom-kill, which systemd records on a scope WITHOUT the policy when it stops it whole,
+        stands alone (the whole-scope stop already happened);
+      * the journal's `Failed with result 'oom-kill'` line for a unit already collected is the same stop
+        read after the fact (the Result survives on the unit only while a member outlives the SIGTERM),
+        and is "oom" too, its evidence naming the journal as the source;
+      * an increase in the counter over a READ baseline with a known NON-SIGKILL exit is "contained", a
+        tool child the memcg took while the CLI itself exited some other way, named as a child and never
+        as the CLI's cause; with no baseline the whole-life count is context, not a verdict, whatever the
+        exit, and an unreported exit (None or -1) files no child verdict either.
+    A non-SIGKILL exit with no counter increase, an unreported exit with nothing but a whole-life count,
+    and a 137 (a wrapper's report of a child's SIGKILL, never the CLI's own, SIGKILL_EXIT's comment) are
+    None here: the caller states the count and the exit as context in its plain line and keeps the bare
+    notice."""
+    result = props.get("Result") or "unknown"
+    def counter():   # the counter clause, with the baseline when one was read
+        if oom_kill is None:
+            return counter_note or "its counter could not be read"
+        if baseline is None:
+            return "memory.events oom_kill=%d" % oom_kill
+        return "memory.events oom_kill=%d (was %d at the turn's start)" % (oom_kill, baseline)
+    if exit_code == SIGKILL_EXIT:
+        if oom_kill is None:
+            base = "" if baseline is None else " (oom_kill was %d at the turn's start)" % baseline
+            # a loaded unit's Result is read, so it is stated (round 4, correctness-2); a collected or
+            # unshown unit has none (props {}), and its cells keep their words
+            shown = ", Result=%s" % props["Result"] if props.get("Result") else ""
+            if journal is not None and (line := journal_oom_line(journal)):
+                return ("oom", "the CLI was killed by signal 9; %s%s%s; the journal records an OOM kill in its scope (%s)"
+                               % (counter(), base, shown, line))
+            if journal is not None:
+                return ("sigkill", "the CLI was killed by signal 9 and its scope's journal records no OOM kill (a kill by "
+                                   "hand, or a userspace killer the cgroup counter and so the journal cannot see); %s%s; %s"
+                                   % (counter(), base, journal_note or "the journal's newest lines record no OOM kill"))
+            if journal_note is not None:
+                return ("sigkill", "the CLI was killed by signal 9 and no OOM kill is on record for its scope (a kill by hand, "
+                                   "a userspace killer, or the OOM killer with its record unread or missing); %s%s; %s"
+                                   % (counter(), base, journal_note))
+            return ("oom", "the CLI was killed by signal 9; %s%s%s" % (counter(), base, shown))
+        if oom_kill > (baseline or 0):
+            return ("oom", "the CLI was killed by signal 9; %s, Result=%s" % (counter(), result))
+        if result != SCOPE_RESULT_OOM:   # systemd's own record of a whole-scope OOM stop outranks a flat counter
+            return ("sigkill", "the CLI was killed by signal 9 with no OOM kill counted in its scope this turn (a kill by "
+                               "hand, or a userspace killer the cgroup counter cannot see); %s, Result=%s" % (counter(), result))
+    if result == SCOPE_RESULT_OOM:
+        clause = "; %s" % counter() if oom_kill is not None else ""
+        return ("oom", "systemd stopped the whole scope over an OOM kill (Result=oom-kill); %s%s"
+                       % (exit_said(exit_code), clause))
+    if journal is not None and journal_oom_stop(journal):
+        return ("oom", "systemd stopped the whole scope over an OOM kill (journal: %s); %s"
+                       % (SCOPE_JOURNAL_OOM_LINE, exit_said(exit_code)))
+    if oom_kill is not None and baseline is not None and oom_kill > baseline and exit_known(exit_code):
+        return ("contained", "a process in the scope was OOM-killed (%s) while %s, so a tool child, not the CLI"
+                             % (counter(), exit_said(exit_code, "the CLI itself")))
+    return None
+
+
+def own_scope_unit(cgroup_text: str, pid: int, sid: str) -> str | None:
+    """The session scope a CLI STARTED, from its /proc/<pid>/cgroup listing: the romp session scope it
+    runs in (scope_unit_of) when that scope's name carries this pid and this sid's first 8 characters
+    (bin/romp-cli-scope names the unit `romp-session-<sid8>-$$-<t>` and execs into it, so a CLI in its
+    own scope always matches both); None for no scope, or one it merely inherited (a kernel launched
+    from inside a session's tool shell spawns CLIs inside that session's scope). Pure."""
+    unit = scope_unit_of(cgroup_text or "")
+    if not unit:
+        return None
+    m = _SESSION_SCOPE_RE.match(unit)
+    if not m or int(m.group(2)) != int(pid) or m.group(1).lower() != str(sid)[:8].lower():
+        return None
+    return unit
 
 
 def session_scope_units(list_lines: list[str], lastsids: list[str]) -> list[str]:
@@ -4258,6 +4743,45 @@ def _echo_queued_in(a: dict, queued) -> bool:
     return a.get("_echo_text") in idless
 
 
+def _call_on_loop(loop, fn, *args) -> bool:
+    """Schedule `fn(*args)` on a session's loop from another thread, or do nothing when there is no open
+    loop: asyncio.run closes the loop when the session thread ends and SdkSession.loop is never nulled, and
+    the crash heal keeps a dying session reachable through its scope reads (before the pop, round 4), so a
+    kernel-thread call that reaches it in that window (SdkBackend.kill through shutdown, request_reconnect,
+    interrupt, the live model and mode switches, resolve_ask, refresh_usage, stop_task, rewind_files) must
+    not raise RuntimeError('Event loop is closed') out of the kernel's own call (round 5, correctness-3:
+    kill raised it, so the end landed but the WS op's tail was skipped and a traceback logged). Returns
+    whether the call was scheduled; a closed loop runs nothing, and the caller's outcome says so where one
+    is reported. Never raises."""
+    if loop is None or fn is None:
+        return False
+    closed = getattr(loop, "is_closed", None)
+    if callable(closed) and closed():
+        return False
+    try:
+        loop.call_soon_threadsafe(fn, *args)
+    except RuntimeError:     # closed between the check and the call
+        return False
+    return True
+
+
+def _wake_feeder(loop, wake) -> None:
+    """Wake a session's input generator from another thread, or do nothing when there is no open loop to
+    wake (_call_on_loop): a send that reaches a session in its last milliseconds (the heal's scope reads
+    run before the dead session is popped, kernel-3 2026-09-10, and _ensure hands the send to it) must not
+    raise RuntimeError('Event loop is closed') out of enqueue after the text is queued. The text is safe:
+    the heal's own write folds the dying session's pending behind its nudge (round 5,
+    SdkBackend._write_sealed_queue), and a send after that fold is refused and re-resolved to the
+    replacement (SdkBackend.send). Never raises."""
+    if wake is not None:
+        _call_on_loop(loop, wake.set)
+
+
+# _heal_cut_session's "the scope was not read yet" marker: None is a legitimate verdict (the scopes off, no
+# unit recorded), so the pre-read cannot key on it (kernel-3, 2026-09-10).
+_UNREAD = object()
+
+
 class SdkSession:
     """One long-lived SDK client running in its own thread + asyncio loop."""
 
@@ -4317,6 +4841,21 @@ class SdkSession:
         # protocol/runtime state
         self.loop: asyncio.AbstractEventLoop | None = None
         self.client = None
+        # The systemd scope the live CLI runs in (bin/romp-cli-scope's `romp-session-<sid8>-<pid>-<t>.scope`),
+        # read from the CLI's own /proc/<pid>/cgroup at connect (_record_cli_scope); None when the CLI runs
+        # in no scope of its own (the scopes off, a fallback launch, a scope it merely inherited). The
+        # crash heal asks THIS unit how the CLI died (_oom_killed_scope), never a glob over the sid's scopes,
+        # so an older scope of the session still draining an OOM kill is never blamed for a newer CLI's death.
+        self.cli_scope_unit: str | None = None
+        # The v2 cgroup path of that scope (scope_cgroup_of), so the turn-start baseline can read the LIVE
+        # scope's memory.events; the counter at the last turn's start (_snapshot_oom_baseline); and how the
+        # SDK reported the CLI ending (ProcessError.exit_code / the transport's returncode: SIGKILL is -9),
+        # recorded at teardown so the heal, which runs after `self.client = None`, still has it. All three
+        # cleared at each connect (_record_cli_scope), so a stale value from a prior CLI never speaks for a
+        # new one.
+        self.cli_scope_cgroup: str | None = None
+        self._oom_baseline: int | None = None
+        self._cli_exit_code: int | None = None
         self.inflight = 0
         # The TEXTS of turns fed to the current client whose ResultMessage hasn't landed — the fed-turn
         # twin of `inflight` (append at feed, cleared at the authoritative settle), all on the loop
@@ -4584,6 +5123,15 @@ class SdkSession:
         #   permission). Each ask site holds this from present to resolve (PR #875 review, 2026-09-02).
         self._lock = threading.Lock()
         self._persist_lock = threading.Lock()   # one queue-mirror snapshot+write at a time (_persist_queue)
+        # The crash heal's two flags (round 5, 2026-09-10, kernel-3). _queue_sealed: _on_session_gone detected
+        # the cut, so from that instant the reg's queue is the heal's to write and _persist_queue is a no-op
+        # (a persist landing after the heal's write would put the dying session's pending, nudge-less, over
+        # the nudge). _queue_closed: the heal folded _pending into the reg and popped the session, in one
+        # hold of _lock, so enqueue and unqueue refuse from then on and SdkBackend.send re-resolves the sid
+        # to the replacement (a text appended after the fold would reach no queue). Both set only by the
+        # backend (_on_session_gone, _write_sealed_queue); never cleared: the session is dying.
+        self._queue_sealed = False
+        self._queue_closed = False
         self._ready = threading.Event()
         # Boot-stagger hook (see BOOT_RESUME_CONCURRENCY): fired exactly once when this session's CLI
         # is demonstrably past its spawn+catch-up burst (first init message) or its thread dies —
@@ -4615,15 +5163,20 @@ class SdkSession:
         `todo` is the user-todo id this text ANSWERS (SdkBackend.send's user_todo) and `send_id`
         the client's id for the send (SdkBackend.send's send_id): both ride the entry itself
         (_QueueText), through the reg mirror and back, so a recall reads them off the entry it
-        removes — never a kernel-side table a restart empties."""
+        removes, never a kernel-side table a restart empties. Returns whether the text was queued:
+        False, with nothing appended or persisted, once the crash heal has folded this dying session's
+        queue into the reg and popped it (_queue_closed, round 5): the caller re-resolves the sid and
+        the replacement takes the text (SdkBackend.send). True otherwise."""
         if todo or send_id:
             text = _QueueText(text, todo, send_id)
         with self._lock:
+            if self._queue_closed:
+                return False
             self._pending.append(text)
             loop, wake = self.loop, self._input_wake
         self._persist_queue()
-        if loop is not None and wake is not None:
-            loop.call_soon_threadsafe(wake.set)
+        _wake_feeder(loop, wake)
+        return True
 
     def enqueue_if_empty(self, text: str) -> bool:
         """Enqueue `text` only when NOTHING is queued — the emptiness check and the append share
@@ -4631,15 +5184,14 @@ class SdkSession:
         in separate holds, a send racing the gap between them queued AHEAD of the ping, and the
         CLI's pre-turn batching folded the user's words into the ping's machine record — the
         exact 2026-08-25 fold the empty-queue gate exists to prevent. Returns whether the text
-        was queued; False leaves the queue untouched."""
+        was queued; False leaves the queue untouched (a queue the crash heal closed too, _queue_closed)."""
         with self._lock:
-            if self._pending:
+            if self._pending or self._queue_closed:
                 return False
             self._pending.append(text)
             loop, wake = self.loop, self._input_wake
         self._persist_queue()
-        if loop is not None and wake is not None:
-            loop.call_soon_threadsafe(wake.set)
+        _wake_feeder(loop, wake)
         return True
 
     def pending(self) -> list[str]:
@@ -4707,8 +5259,12 @@ class SdkSession:
         cancel by id is exact). The kernel applies the same rule over its snapshot before calling here,
         but this pop runs under the lock and closes the window between that snapshot and the pop: if
         the feeder took the named entry in between, a text fallback would pop a same-words neighbour
-        and the kernel would report the cancel as done. Only an id-less call relocates by text."""
+        and the kernel would report the cancel as done. Only an id-less call relocates by text. A queue
+        the crash heal closed (_queue_closed, round 5) is a miss for every entry: the entries live on the
+        replacement now, and a pop here would persist a stale list over the reg the heal wrote."""
         with self._lock:
+            if self._queue_closed:
+                return None
             if send_id:
                 hit = next((i for i, q in enumerate(self._pending) if getattr(q, "send_id", "") == send_id), -1)
                 if hit < 0:
@@ -4735,9 +5291,16 @@ class SdkSession:
         _lock and write under _update_reg's own lock, so the pair could interleave as snapshot-A (empty,
         after the pop), snapshot-B (the new entry), write-B, write-A: a lost update that left the mirror
         without an entry _pending held until the next mutation (seen as a load-dependent failure of the
-        mirror test). Serializing whole persists keeps the last write the latest snapshot."""
+        mirror test). Serializing whole persists keeps the last write the latest snapshot.
+        A no-op once the crash heal has sealed the mirror (_queue_sealed, set at the cut in
+        _on_session_gone; round 5): the heal is the reg's single writer from that instant and folds
+        _pending into its own write (SdkBackend._write_sealed_queue), which takes this same lock, so a
+        persist that snapshotted before the seal lands before the heal reads the reg, and none lands
+        after it."""
         with self._persist_lock:
             with self._lock:
+                if self._queue_sealed or self._queue_closed:
+                    return
                 snap = list(self._pending)
             try:
                 self.backend._update_reg(self.sid, queue=[_queue_wire(t) for t in snap])
@@ -4762,8 +5325,7 @@ class SdkSession:
             # badge would miss the click and only catch up an event-loop tick later (the flicker this whole
             # signal exists to kill). _do_interrupt sets it again (harmless); the ResultMessage clears it.
             self._interrupted = True
-            self.loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._do_interrupt()))
+            _call_on_loop(self.loop, lambda: asyncio.ensure_future(self._do_interrupt()))
             return
         self._signal_cli(signal.SIGINT if action == "sigint" else signal.SIGKILL, action)
 
@@ -4793,8 +5355,7 @@ class SdkSession:
         (`picked`) and the token of its shared-defaults write (`tok`) — the keys every layer's revert
         compares against if the CLI refuses the switch (_do_set_model, the mode path's T139 rule)."""
         if self.loop and self.client:
-            self.loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._do_set_model(model, prev)))
+            _call_on_loop(self.loop, lambda: asyncio.ensure_future(self._do_set_model(model, prev)))
 
     # ---- the accepted model (see __init__) ----
 
@@ -4811,8 +5372,7 @@ class SdkSession:
         the last CONFIRMED mode, captured by set_mode before its optimistic flip — the value every
         layer reverts to if the CLI refuses the switch (T139)."""
         if self.loop and self.client:
-            self.loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._do_set_mode(mode, prev)))
+            _call_on_loop(self.loop, lambda: asyncio.ensure_future(self._do_set_mode(mode, prev)))
 
     def resolve_ask(self, kind: str, payload=None) -> bool:
         """Deliver a picker/permission UI action (answer/toggle/submit/custom/
@@ -4833,16 +5393,13 @@ class SdkSession:
             f = self._cur_ask_fut
             if f and not f.done():
                 f.set_result((kind, payload))
-        self.loop.call_soon_threadsafe(_set)
-        return True
+        return _call_on_loop(self.loop, _set)   # a closed loop delivers nothing, and says so (round 5)
 
     def shutdown(self):
-        self.ended = True
-        if self.loop:
-            self.loop.call_soon_threadsafe(self._wake_set)   # break the receive loop even if idle (no msg coming)
-        if self.loop and self.client:
-            self.loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._do_interrupt()))   # stop an in-flight turn promptly
+        self.ended = True                    # first: a dying session's loop may be closed, and the end must land
+        _call_on_loop(self.loop, self._wake_set)   # break the receive loop even if idle (no msg coming)
+        if self.client:
+            _call_on_loop(self.loop, lambda: asyncio.ensure_future(self._do_interrupt()))   # stop an in-flight turn promptly
 
     def _wake_set(self):
         if self._wake is not None:
@@ -4860,7 +5417,7 @@ class SdkSession:
         log line, and the caller asks again when the session is quiet."""
         if self.loop is None or self.ended:
             return
-        self.loop.call_soon_threadsafe(self._do_request_reconnect, defer)
+        _call_on_loop(self.loop, self._do_request_reconnect, defer)
 
     def _do_request_reconnect(self, defer=True):
         # a rewind-HELD queue must not defer the reconnect: those turns can't start until the
@@ -4995,7 +5552,13 @@ class SdkSession:
         A text whose hold was SETTLED when the client went (fed mid-turn, its turn ended, the CLI still
         held it for the drain) is in neither counter (the settle zeroed both), so the loop top puts it
         back into `_inflight_texts` before calling here (2026-09-08): it takes the same two branches
-        as any stranded turn, never a silent drop."""
+        as any stranded turn, never a silent drop.
+
+        The OOM baseline (SdkSession._oom_baseline) is not touched here or at the loop top: the connect
+        snapshot (_record_cli_scope) covers the idle interval on the new client, and a turn that starts on
+        it, re-headed from here or fed fresh, takes its own baseline at the feeder's 0->1 raise. A read at
+        the loop top saw the OLD scope's counter (the new client does not exist yet) and was discarded by
+        the next connect's record (round 3, 2026-09-10)."""
         if not self.inflight:
             return
         stranded = list(self._inflight_texts)      # fed to the abandoned client, never resulted
@@ -5395,9 +5958,7 @@ class SdkSession:
         refresh was actually scheduled, so the backend can move on to another session when this one has no
         live loop to run it on."""
         if self.loop and self.client:
-            self.loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._do_refresh_usage()))
-            return True
+            return _call_on_loop(self.loop, lambda: asyncio.ensure_future(self._do_refresh_usage()))
         return False
 
     def _arm_ask(self):
@@ -5449,6 +6010,53 @@ class SdkSession:
             #                             a raising _on_session_gone can never leak the slot)
             self._release_hold_at_exit()   # the CLI's queue died with it: a held text goes back to the queue
             self.backend._on_session_gone(self)
+
+    def _record_cli_scope(self, client, cgroup=None):
+        """Record the scope unit the live CLI runs in (cli_scope_unit) and its v2 cgroup path
+        (cli_scope_cgroup), read from its own /proc/<pid>/cgroup while the pid is there to read: the SDK
+        transport's process pid (client._transport._process.pid; the wrapper execs systemd-run, which execs
+        the CLI in place, so the pid the SDK spawned IS the CLI's and sits in the scope by the time the
+        handshake answered). Only a scope this CLI STARTED counts (own_scope_unit: the name carries its pid
+        and this sid); an inherited scope, a fallback launch or the scopes off leave None. Takes the first
+        memory.events baseline for the new CLI and resets the recorded exit code, so a heal keys on THIS
+        CLI's life, never a prior one's. `cgroup` is the test seam for _read_cgroup. Never raises: the
+        record only refines a heal's wording, and a transport without the attribute is not this method's
+        problem to report."""
+        self.cli_scope_unit = None
+        self.cli_scope_cgroup = None
+        self._oom_baseline = None
+        self._cli_exit_code = None
+        if not self.backend.cli_scope:
+            return
+        try:
+            pid = int(client._transport._process.pid)
+            raw = (cgroup or _read_cgroup)(pid)
+            self.cli_scope_unit = own_scope_unit(raw, pid, self.sid)
+            if self.cli_scope_unit:
+                self.cli_scope_cgroup = scope_cgroup_of(raw)
+                self._snapshot_oom_baseline()
+        except Exception as e:
+            self.backend._log("session %s: its CLI's scope could not be recorded at connect (%s); a crash heal will "
+                              "name no OOM kill" % (self.name, e), problem=False)
+
+    def _snapshot_oom_baseline(self):
+        """The scope's memory.events oom_kill count at the START of a turn, kept as _oom_baseline so the
+        heal can tell a kill that predates this turn (a tool child the session survived) from one that
+        ended it. Event-exact: called at connect and at each turn's inflight 0->1 raise, never on a timer,
+        one ~20 us file read per turn. No lock (the field is written only on the loop thread and read by
+        the heal after that thread's loop has stopped). Leaves the baseline None when there is no scope
+        path or the file cannot be read (a collected or legacy scope), and the heal then treats the raw
+        count as context, not a verdict."""
+        backend = getattr(self, "backend", None)
+        cg = getattr(self, "cli_scope_cgroup", None)
+        if backend is None or not getattr(backend, "cli_scope", False) or not cg:
+            self._oom_baseline = None
+            return
+        try:
+            with open(os.path.join(CGROUP_ROOT, cg.lstrip("/"), MEMORY_EVENTS)) as f:
+                self._oom_baseline = oom_kill_count(f.read())
+        except OSError:
+            self._oom_baseline = None
 
     async def _amain(self):
         # Lazy SDK import — keeps the module importable without the dep. RECORD a failure here before it
@@ -5542,6 +6150,8 @@ class SdkSession:
                 if item is None:
                     await self._input_wake.wait()   # idle, or holding behind a wedged turn → wait for a change
                     continue
+                if fresh:
+                    self._snapshot_oom_baseline()   # a turn starts here (inflight 0->1): re-baseline the OOM counter
                 off, fsid = self.backend._transcript_mark(self.sid)
                 if self._untaken is not None:
                     self._untaken["off"], self._untaken["fsid"] = off, fsid
@@ -5612,6 +6222,10 @@ class SdkSession:
             try:
                 async with ClaudeSDKClient(options=opts) as client:
                     connected = True
+                    # the CLI's own scope unit, while its pid is alive to read; before `self.client = client`
+                    # so the handshake-then-push adjacency the opening-state pin protects stays intact (it
+                    # needs only the client's pid, not the assignment)
+                    self._record_cli_scope(client)
                     self.client = client
                     # The handshake IS the "this session is open" event (snapshot `connected`, the flip
                     # the kernel's opening chip stands down on) — push THIS session now. Left to the
@@ -5676,6 +6290,7 @@ class SdkSession:
                     finally:
                         for tk in (feeder, recv, waker):
                             tk.cancel()
+                        cli_exit = None   # how the CLI ended: the crash heal's primary OOM discriminator
                         for tk, role in ((feeder, "input feeder"), (recv, "message receiver"), (waker, "waker")):
                             try:
                                 await tk
@@ -5688,6 +6303,24 @@ class SdkSession:
                                 # old bare `type: text` line left a session death with nothing to fix by.
                                 self.backend._log("sdk session %s: the %s ended on %s: %s, at %s"
                                                   % (self.name, role, type(e).__name__, _mask_ids(e), _compact_tb(e)))
+                                # The CLI's exit rides the stream's ProcessError (or the ResultError the SDK
+                                # substitutes, which carries it too): read the ATTRIBUTE, not the type. A
+                                # SIGKILL exit (-9) is the OOM killer's signature, judged against the scope's
+                                # counter (oom_verdict); recorded before `self.client = None` below, since
+                                # _on_session_gone (the heal) runs after it.
+                                ec = getattr(e, "exit_code", None)
+                                if ec is not None:
+                                    cli_exit = ec
+                        if cli_exit is None:
+                            # no typed exception carried a code (the stream just ended): the transport still
+                            # holds the process here, and its returncode is the same signal or code
+                            try:
+                                rc = client._transport._process.returncode
+                                if rc is not None:
+                                    cli_exit = rc
+                            except Exception:
+                                pass
+                        self._cli_exit_code = cli_exit
                         self.client = None
                         self._connected.clear()
             except Exception as e:
@@ -6278,12 +6911,16 @@ class SdkSession:
             # left an idle session busy (a reconnect deferred, a drive op parked) until its next real
             # turn (review round 2, 2026-09-08); should a count slip through anyway, the move's result
             # zeroes it.
+            raised_here = False
             with self._lock:
                 if self.inflight == 0:
                     self.inflight = 1
+                    raised_here = True
                     u = getattr(self, "_untaken", None)
                     if u is not None and u.get("settled") and getattr(self, "_inflight_texts", None) is not None:
                         self._inflight_texts.append(u.get("item", u["text"]))
+            if raised_here and getattr(self, "_snapshot_oom_baseline", None) is not None:
+                self._snapshot_oom_baseline()   # a CLI-started turn (a hook, a task's notification): re-baseline
         if getattr(self, "_ping_feeding", False):   # getattr: __new__-built test doubles skip __init__
             # the ping's turn is streaming — the CLI demonstrably started it, so a message fed from
             # here on lands MID-TURN as its own record (the CLI's designed forward behavior); the
@@ -7640,8 +8277,7 @@ class SdkSession:
                         if k == tool_use_id or v.get("toolUseId") == tool_use_id), "")
         if not tid or not (self.loop and self.client):
             return False
-        self.loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self._do_stop_task(tid)))
-        return True
+        return _call_on_loop(self.loop, lambda: asyncio.ensure_future(self._do_stop_task(tid)))
 
     async def _do_stop_task(self, tid):
         # loud on failure, like every stop (the interrupt lesson): a stop that vanishes without a trace
@@ -7690,8 +8326,7 @@ class SdkSession:
         isn't connected — the kernel warns then, never a silent no-op."""
         if not (uuid and self.loop and self.client):
             return False
-        self.loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self._do_rewind_files(uuid)))
-        return True
+        return _call_on_loop(self.loop, lambda: asyncio.ensure_future(self._do_rewind_files(uuid)))
 
     async def _do_rewind_files(self, uuid):
         # loud on failure (a restore that vanishes without a trace is the bug): the common refusal is a
@@ -9638,13 +10273,13 @@ class SdkBackend:
 
     def _note_cli_scope_ignored(self, sess, text: str) -> None:
         """The scope wrapper wrote its `ignored:` line on `sess`'s stderr (SdkSession._on_cli_stderr,
-        CLI_SCOPE_IGNORED_PREFIX): a per-session limit (CLI_SCOPE_LIMITS) was not applied, and the CLI
-        runs in its scope without it. Logged at once as a problem, for the fallback's reason (the CLI
-        starts, so nothing drains the tail), and counted for /api-health (cliScope.limitsIgnored) —
-        apart from the fallbacks, since the scope itself is there."""
+        CLI_SCOPE_IGNORED_PREFIX): a per-session limit (CLI_SCOPE_LIMITS), or the OOM policy every scope
+        carries, was not applied, and the CLI runs in its scope without it. Logged at once as a problem,
+        for the fallback's reason (the CLI starts, so nothing drains the tail), and counted for
+        /api-health (cliScope.limitsIgnored), apart from the fallbacks, since the scope itself is there."""
         with self._lock:
             self.cli_scope_ignored += 1
-        self._log("cli scope: session %s (%s) started its CLI without a per-session limit — %s"
+        self._log("cli scope: session %s (%s) started its CLI without one of its scope's settings: %s"
                   % (sess.name, str(sess.sid)[:8], text), problem=True)
 
     def api_health_snapshot(self, now: float | None = None, uptime_s=None) -> dict:
@@ -9666,10 +10301,12 @@ class SdkBackend:
         # Plus the per-session limits (cli_scope_limits): each /api-health key carries the value in force
         # — null when unset, refused, or when the scopes are off (nothing is started for a limit to apply
         # to); `rejected` names the variables whose values were refused, by their rule or by this box at
-        # the boot probe; `memoryControllerDelegated` is the boot probe's verdict on the memory controller
+        # the boot probe, and `OOMPolicy` when this systemd refused the policy on a scope; `oomPolicy` is
+        # the policy every scope carries (`continue`), null when it was refused or the scopes are off;
+        # `memoryControllerDelegated` is the boot probe's verdict on the memory controller
         # (null when no memory limit is set, the scopes are off, or it could not be settled); `unsettled`
         # names the boot probe's checks that settled nothing (CLI_SCOPE_CHECKS: memoryLimits,
-        # memoryController, oomScoreAdj), so a value shown here whose check did not answer is marked as
+        # memoryController, oomScoreAdj, oomPolicy), so a value shown here whose check did not answer is marked as
         # such — without it an unsettled adjustment reads exactly like a settled one; empty when every due
         # check answered, or none was due; `limitsIgnored` counts the wrapper's `ignored:` lines since boot
         # (_note_cli_scope_ignored) — lines, not launches.
@@ -9678,6 +10315,8 @@ class SdkBackend:
         out["cliScope"] = {"on": bool(self.cli_scope), "fallbacks": n,
                            "lastFallbackAt": int(at) if at else None,
                            "limitsIgnored": ign, "rejected": sorted(self.cli_scope_rejected),
+                           "oomPolicy": ("continue" if self.cli_scope and "OOMPolicy" not in self.cli_scope_rejected
+                                         else None),
                            "memoryControllerDelegated": self.cli_scope_memory_delegated if self.cli_scope else None,
                            "unsettled": list(self.cli_scope_unsettled) if self.cli_scope else []}
         for _var, key, _ok, _rule, typ in CLI_SCOPE_LIMITS:
@@ -9769,6 +10408,14 @@ class SdkBackend:
                         kw["env"][var] = self.cli_scope_limits[key]
                     elif var in self.cli_scope_rejected:
                         kw["env"][var] = ""
+                # The policy every scope carries has no variable of its own; a boot probe that found this
+                # systemd refuses it on a scope tells the wrapper so, and the wrapper leaves it off instead
+                # of finding out again, one `ignored:` line per launch. Sent on EVERY launch with an explicit
+                # value, "1" or "" (the same treatment as a refused limit above): the wrapper reads the
+                # marker from its environment, which merges this overlay over the manager's, so a stale "1"
+                # inherited there (a service.env line, a shell that exported it) would otherwise strip the
+                # policy from every scope while the boot line and /api-health said it was in force.
+                kw["env"][CLI_SCOPE_OOM_POLICY_REJECTED_VAR] = "1" if "OOMPolicy" in self.cli_scope_rejected else ""
             elif not self._cli_scope_wrapper_logged:
                 self._cli_scope_wrapper_logged = True
                 self._log("cli scope: the wrapper %s is missing or not executable (a packaging bug) — "
@@ -10350,25 +10997,32 @@ class SdkBackend:
         s = self._ensure(sid)
         if not s:
             return False
-        if _is_compact_cmd(text):
-            # Delivering /compact: mark the session compacting NOW (authoritative), covering the gap between
-            # this send and the CLI actually starting the turn — so a drive op the pusher's drain checks in
-            # that window still parks. Cleared event-based by the boundary / the turn's ResultMessage.
-            s._compacting = True
-        if _is_clear_cmd(text):
-            # Delivering /clear: light the clearing bracket NOW, so the chat shows "Clearing conversation…"
-            # from the instant of the send. Cleared event-based by the lastSid-flipping init (the fresh
-            # conversation exists) / the turn's ResultMessage.
-            s._clearing = True
-        # The echo's stamp AND the transcript's byte size, both taken BEFORE the CLI can see the text: the
-        # record it writes is then at or after both by construction (T237b for the stamp; the size,
-        # 2026-09-06, is where _text_landed starts the scan for this echo — see _transcript_mark).
-        sent_t = int(time.time())
-        sent_off, sent_fsid = self._transcript_mark(sid)
-        if send_id:
-            s.enqueue(text, todo=user_todo or "", send_id=str(send_id))
-        else:
-            s.enqueue(text, todo=user_todo or "")     # the two-argument shape every session double answers
+        sent_t = sent_off = sent_fsid = None
+
+        def attempt(s):
+            nonlocal sent_t, sent_off, sent_fsid
+            if _is_compact_cmd(text):
+                # Delivering /compact: mark the session compacting NOW (authoritative), covering the gap between
+                # this send and the CLI actually starting the turn, so a drive op the pusher's drain checks in
+                # that window still parks. Cleared event-based by the boundary / the turn's ResultMessage.
+                s._compacting = True
+            if _is_clear_cmd(text):
+                # Delivering /clear: light the clearing bracket NOW, so the chat shows "Clearing conversation…"
+                # from the instant of the send. Cleared event-based by the lastSid-flipping init (the fresh
+                # conversation exists) / the turn's ResultMessage.
+                s._clearing = True
+            # The echo's stamp AND the transcript's byte size, both taken BEFORE the CLI can see the text: the
+            # record it writes is then at or after both by construction (T237b for the stamp; the size,
+            # 2026-09-06, is where _text_landed starts the scan for this echo; see _transcript_mark). Taken
+            # again on every attempt: a re-resolved send is a new chance for the CLI to see the text.
+            sent_t = int(time.time())
+            sent_off, sent_fsid = self._transcript_mark(sid)
+            if send_id:
+                return s.enqueue(text, todo=user_todo or "", send_id=str(send_id))
+            return s.enqueue(text, todo=user_todo or "")     # the two-argument shape every session double answers
+        s = self._enqueue_resolving(sid, s, attempt, "send")   # a queue the crash heal closed under the send: the replacement
+        if not s:
+            return False
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
         # stream has it yet at send time — only we know the text). Synthetic uuid; pruned by text once the
         # transcript writes the real user atom.
@@ -10807,8 +11461,18 @@ class SdkBackend:
             return False, "the session could not start"
         s._rewind_leaf, s._rewind_to = leaf, target_uuid   # already-running thread: the reg seed didn't apply
         s._rewind_bare = bare
+        # The edit is queued on this session itself, never through _enqueue_resolving (round 7, kernel-3): a
+        # queue the crash heal has sealed (SdkSession._queue_sealed, set at the cut) or closed (enqueue's
+        # False, the fold) belongs to a dying session whose replacement is seeded with the crash nudge, so an
+        # edit re-resolved to it would ride the rewound branch behind the nudge, and a refused
+        # --resume-session-at would pop the nudge as the held edit (_rewind_failed) and deliver the edit on
+        # the plain reconnect. The arm refuses instead, its fields cleared, and asks no reconnect of the dying
+        # session. The sealed flag is read with getattr, as SdkBackend.interrupt reads it: the delete-while-busy
+        # doubles skip __init__. Nothing is enqueued for a bare rollback.
         if not bare:
-            s.enqueue(text)
+            if getattr(s, "_queue_sealed", False) or s.enqueue(text) is False:
+                self._update_reg(sid, rewindTo="", rewindLeaf="", rewindBare=False, rewindWait=False)
+                return False, "the session could not take the edit; it was not queued"
         s.request_reconnect()   # idle → reconnects now; a fresh thread's FIRST connect applies the flag
         self._poke()
         return True, ""
@@ -10961,13 +11625,46 @@ class SdkBackend:
         s = self._ensure(sid)
         if not s:
             return False
-        s.enqueue(text)
+        if not self._enqueue_resolving(sid, s, lambda s: s.enqueue(text), "deliver"):   # a queue the crash heal closed
+            return False                                                                # under the deliver: the replacement (round 6)
         self._poke()
         return True
 
+    def _enqueue_resolving(self, sid: str, s: SdkSession, attempt, what: str) -> "SdkSession | None":
+        """Queue a text on the session `sid` resolves to, re-resolving the sid when the session's queue CLOSED
+        under the attempt (round 5, kernel-3; one helper for send and deliver since round 6, regression-1,
+        when deliver ignored the refusal and reported a text it had dropped as delivered; the rewind arm
+        used it too until round 7, kernel-3, and refuses a sealed or closed queue instead, since its edit
+        must not ride the replacement behind the crash nudge). `attempt(s)` runs the enqueue on `s` and
+        returns what it returned: False, the closed queue's answer (SdkSession.enqueue), means the session's
+        crash heal folded its pending into the reg and popped it between the caller's _ensure and the
+        enqueue (SdkSession._queue_closed), so the text reached no queue; any other value (a double's None
+        too) is a queued text. The sid resolves to the replacement now (or spawns it from the reg the heal
+        wrote, nudge first), which takes the text in order. Bounded to three attempts: a replacement that
+        dies inside the same window is a crash loop, which the heal refuses to respawn. Returns the session
+        the text was queued on; None when the sid stopped resolving (the caller's own False) or the bound
+        was hit (logged as a problem). `what` is the caller's verb ("send", "deliver"), which both log lines
+        name (round 7, kernel-2: a deliver's re-resolve was logged as a send)."""
+        for _attempt in range(3):
+            if attempt(s) is not False:
+                return s
+            self._log("%s (%s): the session's queue closed under the %s (its crash heal folded the queue "
+                      "and popped it); re-resolving to the replacement" % (what, sid[:8], what), problem=False)
+            s = self._ensure(sid)
+            if not s:
+                return None
+        self._log("%s (%s): the session's queue closed under the %s three times; the text was not queued"
+                  % (what, sid[:8], what), problem=True)
+        return None
+
     def interrupt(self, sid: str) -> bool:
         s = self.sessions.get(sid)
-        if not s:
+        if not s or getattr(s, "_queue_sealed", False):    # getattr: the delete-while-busy doubles skip __init__
+            # A stop click during the crash heal's scope reads (round 6, fresh-1): the CLI is already dead and
+            # the heal is about to resume the session, so there is nothing to interrupt and no 'idle' record
+            # belongs over the trailing 'working' cut marker; before the reads ran ahead of the pop (round 4)
+            # the click found no session here and returned False the same way. _queue_sealed is set only at
+            # the cut, before the reads, and a replacement is a fresh session, so no live session is refused.
             return False
         s.interrupt()
         append_state(self.state_dir, sid, "idle", int(time.time()) - 1, by="interrupt")
@@ -12809,19 +13506,70 @@ class SdkBackend:
         return rec if isinstance(rec, dict) and rec.get("text") else None
 
     def _on_session_gone(self, sess: SdkSession):
-        with self._lock:
-            if self.sessions.get(sess.sid) is sess:
-                self.sessions.pop(sess.sid, None)
-        if not sess.ended:
-            if sess.inflight > 0 and not sess._interrupted:
-                # ABNORMAL death mid-turn (killed / crashed — not a user interrupt, not a clean
-                # ResultMessage finish, not our own shutdown). Do NOT settle 'waiting': that masked
-                # the cut (2026-07-06: reaped sessions settled 'waiting', so last_state_value never
-                # read 'working' and nothing ever resumed them — the silent stall). The trailing
-                # 'working' IS the cut marker; heal by resuming, bounded.
-                self._heal_cut_session(sess)
-            else:
-                # process exited on its own while idle (crash / EOF) — settle state; next send resumes
+        # The heal's scope reads (systemctl show and, for a collected unit, journalctl; each bounded by
+        # SCOPE_SHOW_TIMEOUT, a few ms typical) run BEFORE the pop (kernel-3, round 4, 2026-09-10): while
+        # the session is still in self.sessions a send for its sid lands in its own queue (_ensure returns
+        # it, its thread alive in this finally; _wake_feeder keeps the closed loop from raising) and the
+        # heal's write carries the text behind the nudge. Popped first, the same send spawned a replacement
+        # from a reg the nudge had not reached, and the replacement's next persist dropped the nudge. The
+        # reads take no lock. From the cut on, the dying session's queue mirror is SEALED (round 5, kernel-3
+        # and correctness-2): its _persist_queue is a no-op, the heal is the reg's single writer and folds
+        # the session's in-memory pending into its write (_write_sealed_queue), so a send whose own persist
+        # would have landed after the heal's write (the send's _ensure-to-persist gap, milliseconds under
+        # load) cannot put a nudge-less list over the nudge or lose its text; the fold also closes the
+        # queue, so a send that reaches this session after the fold is refused and re-resolves to the
+        # replacement (_enqueue_resolving: send and deliver; the rewind arm refuses instead). The pop and the heal's
+        # write share ONE hold of self._lock (round 6, tests-1; the heal's verdict, attempt count and nudge
+        # are decided before it): _ensure reads the reg under that lock, so a send either resolves the
+        # still-registered dying session (its enqueue folded, or refused after the fold and re-resolved) or
+        # reads the reg the heal wrote; with the pop before the write, a send in that gap spawned the
+        # replacement from the pre-write reg and its persist put a nudge-less list over the fold, losing
+        # the nudge and every sealed text. The fold's write is inside the hold that closes the queue too
+        # (round 6, correctness-1), so a refused enqueue re-resolves to a reg that carries the fold.
+        # Lock order, from the outside in: self._lock, then the session's _persist_lock, then _reg_lock,
+        # then the session's _lock (_write_sealed_queue). Every other site in this module takes them the
+        # same way or takes one alone (self._lock then _reg_lock in _ensure; _persist_lock then the
+        # session's _lock then _reg_lock in _persist_queue; _reg_lock holders take nothing but the log's
+        # own lock). The one reverse edge is the feeder's drain_holding call (self._lock) under a
+        # session's _lock in _amain's inputs(): it runs on that session's own loop thread, which for the
+        # dying session is THIS thread (asyncio.run has returned and the loop is closed before _run's
+        # finally calls here), and the heal takes no other session's _lock, so no cycle can form.
+        # self._lock is a plain Lock: the attempt count's own hold comes before the pop's, and
+        # append_machine_cut and _ensure run after it. What remains is the window between the verdict
+        # and the hold (microseconds): a kill landing there is ended when the hold writes, so the nudge
+        # goes to the reg of a session the heal's _ensure then finds not alive, and a later resume runs it.
+        cut = not sess.ended and sess.inflight > 0 and not sess._interrupted
+        if cut:
+            with sess._lock:
+                sess._queue_sealed = True
+        oom = self._oom_killed_scope(sess) if cut else _UNREAD
+        if cut and not sess.ended:
+            # ABNORMAL death mid-turn (killed / crashed: not a user interrupt, not a clean
+            # ResultMessage finish, not our own shutdown). Do NOT settle 'waiting': that masked
+            # the cut (2026-07-06: reaped sessions settled 'waiting', so last_state_value never
+            # read 'working' and nothing ever resumed them, the silent stall). The trailing
+            # 'working' IS the cut marker; heal by resuming, bounded. The heal pops the session
+            # itself, in the hold that writes the sealed queue (round 6).
+            self._heal_cut_session(sess, oom)
+        else:
+            err = None
+            with self._lock:
+                if self.sessions.get(sess.sid) is sess:
+                    self.sessions.pop(sess.sid, None)
+                if cut:
+                    # the cut was detected and the mirror sealed, then the session was ENDED during the
+                    # reads (a kill or a shutdown, round 5): no heal, but the sealed queue still owes the
+                    # reg its texts (a send during the reads persisted nothing), as the persist would have
+                    # written them; written in the pop's own hold, like the heal's write (round 6)
+                    try:
+                        self._write_sealed_queue(sess)
+                    except Exception:
+                        err = traceback.format_exc()
+            if err:
+                self._log("session %s: ended during its heal's scope read; its queue could not be written: %s"
+                          % (sess.name, err))
+            if not sess.ended:
+                # process exited on its own while idle (crash / EOF): settle state; next send resumes
                 append_state(self.state_dir, sess.sid, "waiting")
         # the thread (and its claude subprocess) is gone, so any background work is too — clear a stale
         # awaiting overlay so the session doesn't read working/awaiting forever (reorder_bug 2026-06-24).
@@ -12855,7 +13603,19 @@ class SdkBackend:
             try:
                 note = task_death_notice(died)
                 with self._reg_lock:
-                    reg = read_reg(self.state_dir, sess.sid) or {"sid": sess.sid}
+                    reg = read_reg(self.state_dir, sess.sid)
+                    if reg is None:
+                        if _reg_path(self.state_dir, sess.sid).exists():
+                            # the reg EXISTS but would not read (a transient failure): rebuilding it as {sid, queue,
+                            # bgTasks} guts it (no alive, no name, no cwd; _update_reg's guard, the 2026-08-31 blink
+                            # class) and the _ensure below would spawn from the gutted reg, the outcome the heal's own
+                            # write refuses (_write_sealed_queue, round 6). The same OSError here, logged by the except
+                            # below, and no _ensure (round 7, kernel-1): the notice does not reach the session now (the
+                            # one-lost-update trade _update_reg makes) and the reg keeps its bgTasks mirror for the
+                            # boot reconcile, which delivers the same notice.
+                            raise OSError("reg %s unreadable: skipping the background task death notice rather than "
+                                          "gutting the reg" % sess.sid[:8])
+                        reg = {"sid": sess.sid}
                     reg["queue"] = [e for e in (reg.get("queue") or [])          # keep id-carrying
                                     if (qt := _queue_text(e)) and qt != note] + [note]   # dicts intact
                     reg["bgTasks"] = []           # reported — never re-notify for the same deaths
@@ -12865,35 +13625,272 @@ class SdkBackend:
                 self._log("bg-task death notice (%s): %s" % (sess.name, traceback.format_exc()))
         self._poke()
 
-    def _heal_cut_session(self, sess: SdkSession):
+    def _heal_cut_session(self, sess: SdkSession, oom=_UNREAD):
         """A session's claude process died ABNORMALLY mid-turn while the kernel stayed up (killed by
         something external, OOM, a transport crash — the boot reconcile only heals cuts across a
         kernel RESTART, so without this the session stalls until the next restart). Resume it the
         same way the reconcile does: prepend the visible crash nudge to the persisted queue and
         re-ensure. BOUNDED to one resume per cut — the counter only resets when a turn COMPLETES
         (_turn_completed), so a CLI that keeps dying before finishing a turn is a crash loop and is
-        left cut (loudly) for the next boot reconcile instead of respawning forever."""
+        left cut (loudly) for the next boot reconcile instead of respawning forever. `oom` is the
+        scope's verdict _on_session_gone read before the pop (kernel-3, round 4); a caller that has not
+        read it (_UNREAD) gets the read here. The verdict (resume or refuse), the attempt count and the
+        nudge are decided BEFORE the session is popped, and the sealed queue is written and the session
+        popped in ONE hold of self._lock (round 6, tests-1; the order argument is in _on_session_gone's
+        comment): self._lock is a plain Lock, so the attempt count's hold comes first and the machine cut
+        and the _ensure follow the hold."""
         sid = sess.sid
+        # The dead CLI's own scope is read FIRST, before the crash-loop refusal below (kernel-1 2026-09-10):
+        # a session OOM-killed twice in a row must still have its cause named in the log, and its scope's
+        # evidence is gone by the next boot reconcile. The read is bounded (SCOPE_SHOW_TIMEOUT) and returns
+        # at once when the scopes are off or no unit is recorded. (unit, kind, evidence) or None; kind
+        # "oom" is the CLI's own death out of memory, "sigkill" a kill by signal 9 with no OOM kill counted
+        # in its scope this turn or recorded in its journal (a kill by hand, or a userspace killer the
+        # counter cannot see; rounds 3 and 4), "contained" a tool child the CLI outlived.
+        if oom is _UNREAD:
+            oom = self._oom_killed_scope(sess)
+        kind = oom[1] if oom else None
+        named = oom if kind == "oom" else None
         with self._lock:
             attempts = self._heal_attempts.get(sid, 0)
             self._heal_attempts[sid] = attempts + 1
         if attempts >= 1:
-            self._log("session %s: claude process died mid-turn AGAIN before completing a turn — "
-                      "crash loop; NOT resuming again, turn left cut for the next kernel restart"
-                      % sess.name)
+            line = ("session %s: claude process died mid-turn AGAIN before completing a turn; crash loop, "
+                    "NOT resuming again, turn left cut for the next kernel restart" % sess.name)
+            if named:
+                line += "; the OOM killer took a process in its scope %s (%s)" % (named[0], named[2])
+            elif kind == "sigkill":
+                line += "; %s (scope %s)" % (oom[2], oom[0])
+            # The refusal spawns nothing, but it still writes the reg's queue once (round 5, fresh-2): the
+            # mirror has been sealed since the cut, so a send that reached the dying session during the
+            # reads is in its pending and nowhere else; folded here, it is parked in the reg (no nudge, no
+            # re-head) and runs at the next start, which a later send or the boot reconcile makes. The pop
+            # shares the write's hold (round 6), or a send in the gap would spawn from the pre-write reg.
+            try:
+                with self._lock:
+                    if self.sessions.get(sid) is sess:
+                        self.sessions.pop(sid, None)
+                    parked = [e for e in self._write_sealed_queue(sess) if (qt := _queue_text(e)) and not is_crash_resume_nudge(qt)]
+            except Exception:
+                parked = []
+                line += "; its queue could not be written: %s" % traceback.format_exc().strip().splitlines()[-1]
+            if parked:
+                line += ("; %d queued text(s) wait until the next start (a later send or the boot reconcile runs them "
+                         "in order)" % len(parked))
+            self._log(line)
             return
-        self._log("session %s: claude process died mid-turn — resuming with history intact" % sess.name)
+        # The cause, when the dead CLI's own scope still says so: the OOM killer took a process in it,
+        # named in the log with the evidence and in the notice the session reads, instead of a bare exit
+        # (2026-09-10). A SIGKILL the scope's counter did not count is named as that, in the log and in a
+        # notice of its own that does not say out of memory (round 3). A contained child kill the CLI
+        # outlived is named in the log but resumes plainly.
+        if named:
+            self._log("session %s: claude process died mid-turn; the OOM killer took a process in its scope %s (%s); "
+                      "resuming with history intact" % (sess.name, named[0], named[2]))
+        elif kind == "sigkill":
+            self._log("session %s: claude process died mid-turn; %s (scope %s); resuming with history intact"
+                      % (sess.name, oom[2], oom[0]))
+        elif kind == "contained":
+            self._log("session %s: claude process died mid-turn; %s; resuming with history intact"
+                      % (sess.name, oom[2]))
+        else:
+            self._log("session %s: claude process died mid-turn; resuming with history intact" % sess.name)
+        nudge = CRASH_RESUME_NUDGE_OOM if named else CRASH_RESUME_NUDGE_KILLED if kind == "sigkill" else CRASH_RESUME_NUDGE
         try:
-            with self._reg_lock:
-                reg = read_reg(self.state_dir, sid) or {"sid": sid}
-                reg["queue"] = [CRASH_RESUME_NUDGE] + [e for e in (reg.get("queue") or [])
-                                                       if (qt := _queue_text(e)) and qt != CRASH_RESUME_NUDGE]
-                write_reg(self.state_dir, sid, reg)
-            append_machine_cut(self.state_dir, sid, "crash")   # romp's cut, romp's resume — never a user stop
+            with self._lock:
+                # the pop and the fold in one hold: the reg's queue becomes the nudge, then the session's
+                # pending (an earlier crash notice dropped), and _ensure sees the session or that reg
+                if self.sessions.get(sid) is sess:
+                    self.sessions.pop(sid, None)
+                self._write_sealed_queue(sess, nudge)
+            append_machine_cut(self.state_dir, sid, "crash")   # romp's cut, romp's resume, never a user stop
             self._ensure(sid)
         except Exception:
             self._log("session %s: crash-resume FAILED (turn left cut for the next kernel restart): %s"
                       % (sess.name, traceback.format_exc()))
+
+    def _write_sealed_queue(self, sess: SdkSession, nudge: str | None = None) -> list:
+        """The reg's ONE queue write for a dying session (round 5, kernel-3): fold the session's in-memory
+        _pending into reg['queue'], CLOSE the queue and WRITE the reg in the same hold of the session's _lock
+        (SdkSession._queue_closed: enqueue and unqueue refuse from here, and the backend re-resolves the sid
+        to the replacement, _enqueue_resolving). The write is INSIDE the hold that closes the queue (round 6,
+        correctness-1): an enqueue can see the closed queue only once the fold is on disk, so the _ensure it
+        re-resolves through reads a reg that carries the nudge and every sealed text; with the close before
+        the write, a send refused in that gap spawned the replacement from the pre-fold reg and its first
+        persist put a nudge-less list over the fold. Taken under the session's own _persist_lock, the lock
+        its _persist_queue holds across snapshot and write, so a persist that snapshotted before the mirror
+        was sealed (SdkSession._queue_sealed, set at the cut in _on_session_gone) lands before this read of
+        the reg, and none can land after this write. Every caller holds SdkBackend._lock, the pop's hold
+        (_on_session_gone, _heal_cut_session; round 6, tests-1), so the order is SdkBackend._lock, then
+        the session's _persist_lock, then _reg_lock, then the session's _lock; the comment at
+        _on_session_gone says why no path takes them the other way. The pending list is authoritative for
+        a live session's queue: it was seeded from the reg and every mutation mirrored it until the seal,
+        so a text queued or cancelled during the heal's reads is in it and not in the reg, and the reg's
+        own list is replaced, not merged (the reg mirrors it; a merge would duplicate or resurrect). With
+        `nudge` the crash resume notice heads the queue and an earlier crash notice is dropped (the heal's
+        de-dup, is_crash_resume_nudge); without one (the crash-loop refusal; a session ended during the
+        reads) the queue is written as it stands. A reg that EXISTS but would not read (read_reg None with
+        the file present, a transient failure) is not rebuilt from {sid, queue}: that guts it (no alive, no
+        name, no cwd; _update_reg's guard, the 2026-08-31 blink class), so the queue is still closed under
+        the session's _lock and an OSError is raised instead, worded as that guard (round 6, correctness-2);
+        the reg keeps its last good queue, the session's pending texts do not reach it (the one-lost-update
+        trade _update_reg makes), and the callers log the raise. Returns the entries written, in wire form.
+        Raises that OSError and what read_reg and write_reg raise: the callers log it."""
+        with sess._persist_lock:
+            with self._reg_lock:
+                reg = read_reg(self.state_dir, sess.sid)
+                with sess._lock:
+                    sess._queue_closed = True
+                    pend = list(sess._pending)
+                    if reg is None:
+                        if _reg_path(self.state_dir, sess.sid).exists():
+                            raise OSError("reg %s unreadable: skipping the sealed queue write rather than gutting the "
+                                          "reg (%d pending text(s) did not reach it)" % (sess.sid[:8], len(pend)))
+                        reg = {"sid": sess.sid}
+                    queue = [_queue_wire(t) for t in pend if not (nudge and is_crash_resume_nudge(t))]
+                    if nudge:
+                        queue = [nudge] + queue
+                    reg["queue"] = queue
+                    write_reg(self.state_dir, sess.sid, reg)
+        return queue
+
+    def _oom_killed_scope(self, sess: SdkSession):
+        """What the dead CLI's OWN scope says about how it died, as (unit, kind, evidence): kind "oom" (the
+        CLI's own death out of memory), "sigkill" (killed by signal 9 with no OOM kill counted in its scope
+        this turn: a kill by hand, or a userspace killer the counter cannot see), "contained" (a tool child
+        the CLI outlived), or None (read, nothing named); or None outright when there is nothing to ask
+        (the scopes off, or no unit recorded: a fallback launch, an inherited scope). The unit is the one
+        recorded at connect (sess.cli_scope_unit; the comment at SCOPE_SHOW_ARGV says why the exact name
+        and never a glob), asked with `systemctl --user show` for its LoadState, Result and ControlGroup.
+        The PRIMARY signal is the CLI's own exit (sess._cli_exit_code); the cgroup's memory.events oom_kill
+        count, read against the turn-start baseline (sess._oom_baseline), decides what a SIGKILL was and
+        tells a contained child kill apart; Result=oom-kill is the second signal for a scope without the
+        policy, and for a unit already collected the unit's journal tail is read, whatever the exit, for
+        the whole-scope stop line and the manager's OOM-kill lines, which decide the SIGKILL cell (oom with
+        one of them, the hedged sigkill without; round 4, _scope_journal). The reason a counter could not
+        be read goes to oom_verdict as its counter_note (the scope collected; a loaded unit whose file
+        could not be read; a show that failed): oom_verdict is pure and sees none of this. One timing race
+        sits between the show and the open (round 5, regression-4): a unit the show called loaded whose
+        cgroup the manager collects before memory.events is opened (about 10 ms after a lone process's
+        death on systemd 255) reads as a loaded unit with an unreadable counter, so its -9 files oom from
+        the exit alone with no journal read; a ruled cell, since the same ENOENT with the directory still
+        present is the no-memory-controller steady state where the journal is silent by construction, and
+        the two are not told apart here. A memory limit in force on the scope
+        (memoryMax in cli_scope_limits, with the controller delegated) is appended to an "oom" verdict by
+        SIGKILL as context, never guessed. EVERY read path logs ONE plain 'session scope result' line
+        saying what was read and what was not: it decides a heal's wording, not whether it happens, so it
+        is no problem, and it is the fail-loud half of the rule (never silent). Never raises."""
+        unit = sess.cli_scope_unit
+        if not self.cli_scope or not unit:
+            return None
+        sid8 = str(sess.sid)[:8]
+        exit_code = getattr(sess, "_cli_exit_code", None)
+        baseline = getattr(sess, "_oom_baseline", None)
+        base_said = ("oom_kill was %d at the turn's start" % baseline if baseline is not None
+                     else "no turn-start baseline")
+        props, count, read_said, counter_note, journal, journal_said = {}, None, None, None, None, None
+        try:
+            r = subprocess.run(SCOPE_SHOW_ARGV + [unit], capture_output=True, text=True, timeout=SCOPE_SHOW_TIMEOUT)
+        except Exception as e:
+            read_said = "systemctl show did not answer (%s)" % e
+            counter_note = read_said
+        else:
+            rc = getattr(r, "returncode", 0)
+            if rc != 0:
+                detail = ((getattr(r, "stderr", "") or "").strip().split("\n", 1)[0]) or "no detail"
+                read_said = "systemctl show exited %s (%s)" % (rc, detail)
+                counter_note = "systemctl show did not answer (exited %s: %s)" % (rc, detail)
+            else:
+                shown = scope_show_props(getattr(r, "stdout", "") or "")
+                if shown.get("LoadState", "loaded") != "loaded" or not shown.get("Id"):
+                    # already collected (a lone CLI IS the scope's last process): the not-found show prints
+                    # Result=success, which is NOT this scope's verdict, so it is dropped and the counter is
+                    # gone; the CLI's exit is what is left, and the journal still carries what the unit no
+                    # longer does: a whole-scope stop, and the manager's line for each OOM kill in the scope,
+                    # which for a SIGKILL exit tells the OOM killer from a kill by hand (round 4;
+                    # SCOPE_SHOW_ARGV's comment)
+                    read_said = ("the scope was already collected (LoadState=%s), so the live counter could not be read"
+                                 % (shown.get("LoadState") or "?"))
+                    counter_note = "the scope was already collected, so its counter could not be read"
+                    journal, journal_said = self._scope_journal(unit)
+                    read_said += "; " + journal_said
+                else:
+                    props = shown
+                    cgroup = shown.get("ControlGroup") or ""
+                    path = os.path.join(CGROUP_ROOT, cgroup.lstrip("/"), MEMORY_EVENTS) if cgroup else None
+                    try:
+                        if not path:
+                            raise OSError("the unit shows no ControlGroup")
+                        with open(path) as f:
+                            count = oom_kill_count(f.read())
+                        if count is None:
+                            raise OSError("no oom_kill line in %s" % path)
+                        read_said = "%s oom_kill=%d, Result=%s" % (MEMORY_EVENTS, count, shown.get("Result") or "unknown")
+                    except OSError as e:
+                        # a loaded unit whose file will not open: the steady state without the memory
+                        # controller, or the collection landing between the show and this open (the
+                        # docstring's timing race); the cell is the same for both
+                        read_said = ("%s could not be read (%s); only systemd's Result can say (Result=%s)"
+                                     % (MEMORY_EVENTS, e, shown.get("Result") or "unknown"))
+                        counter_note = "its scope's counter could not be read (%s)" % e
+        self._log("session scope result (%s): %s; %s; %s" % (sid8, exit_said(exit_code), base_said, read_said),
+                  problem=False)
+        verdict = oom_verdict(props, count, exit_code, baseline, counter_note, journal, journal_said)
+        if not verdict:
+            return (unit, None, None)
+        kind, evidence = verdict
+        if kind == "sigkill" and journal_said is not None and self.cli_scope_memory_delegated is False:
+            # the journal's silence excludes nothing here: systemd records an OOM kill from the scope's
+            # memory.events, which a user manager without the memory controller does not have (round 4)
+            evidence += ("; the memory controller is not delegated to the user manager, so systemd records no OOM "
+                         "kill for a scope and the journal's silence excludes none")
+        if kind == "oom" and exit_code == SIGKILL_EXIT and "memoryMax" in self.cli_scope_limits \
+                and self.cli_scope_memory_delegated is not False:
+            # context, never the cause: named only when a MemoryMax is set AND the controller is not known
+            # to leave it unapplied (MemoryHigh throttles and MemorySwapMax alone kills nothing, so neither
+            # is named); a flat counter ("sigkill") excludes the memcg killer, so the limit is not named
+            # there. The clause is worded by the boot probe's verdict (round 4, correctness-1): "in force"
+            # only when the controller check settled True; unsettled (None) says so and names the check
+            # that settled nothing, as the boot line does (_cli_scope_boot_line)
+            limit = self.cli_scope_limits["memoryMax"]
+            if self.cli_scope_memory_delegated is True:
+                evidence += "; a memory limit (MemoryMax=%s) is in force on its scope" % limit
+            else:
+                check = next((c for c in ("memoryLimits", "memoryController") if c in self.cli_scope_unsettled), None)
+                evidence += ("; a memory limit (MemoryMax=%s) is set for its scope but not settled (the %s settled nothing "
+                             "at start)" % (limit, CLI_SCOPE_CHECK_NAMES[check] if check else "boot probe"))
+        return (unit, kind, evidence)
+
+    def _scope_journal(self, unit: str):
+        """The newest life of a collected scope's user journal (SCOPE_JOURNAL_ARGV, cut at its last Started
+        line by journal_life), as (text, said): the text for oom_verdict (None when the read failed, so
+        nothing is judged from it) and one clause for the plain 'session scope result' line, which
+        oom_verdict also gets as its journal_note. Read for a unit the show no longer finds, whatever the
+        exit: systemd's Result=oom-kill leaves with the unit, and the journal is what still names a
+        whole-scope stop and, under OOMPolicy=continue, each OOM kill in the scope (SCOPE_SHOW_ARGV's
+        comment). Residuals: a user manager logging above notice writes no kill line; journald's
+        rate limit can drop it while the Started line stands; a line journald has not written yet at
+        the read is missed. Bounded like the show; never raises."""
+        try:
+            r = subprocess.run(SCOPE_JOURNAL_ARGV + [unit], capture_output=True, text=True, timeout=SCOPE_SHOW_TIMEOUT)
+        except Exception as e:
+            return None, "journalctl did not answer (%s)" % e
+        rc = getattr(r, "returncode", 0)
+        if rc != 0:
+            detail = ((getattr(r, "stderr", "") or "").strip().split("\n", 1)[0]) or "no detail"
+            return None, "journalctl exited %s (%s)" % (rc, detail)
+        raw = getattr(r, "stdout", "") or ""
+        if not raw.strip():
+            # not even a Started line: the manager never logged this unit (its log level, journald's
+            # retention), so its silence about a kill excludes nothing; None, like a failed read, so the
+            # verdict is the hedged one and never the flat-counter reading (round 5, correctness-1)
+            return None, "the journal has no line for the scope"
+        text = "\n".join(journal_life(raw, unit))
+        if journal_oom_stop(text):
+            return text, "the journal says systemd stopped the scope over an OOM kill (%s)" % SCOPE_JOURNAL_OOM_LINE
+        if journal_oom_kill(text):
+            return text, "the journal records an OOM kill in the scope (%s)" % journal_oom_line(text, unit)
+        return text, "the journal's newest lines for the scope record no OOM kill"
 
     def _turn_completed(self, sid: str):
         """A turn's ResultMessage landed — the session is demonstrably able to finish turns again, so

@@ -679,9 +679,15 @@ class OneFedTextAtATime(unittest.TestCase):
         self._push(c, _RateLimitEvent())
         self._settle()
         self.assertEqual(s.inflight, 0, "no turn frame, no turn")
+        # the CLI-started turn's 0->1 raise in _on_message re-baselines the scope's OOM counter, like a fed turn's
+        # raise in the feeder (the scope PR's round 3, 2026-09-10): count the snapshots through the instance
+        snaps = []
+        orig_snapshot = s._snapshot_oom_baseline
+        s._snapshot_oom_baseline = lambda: (orig_snapshot(), snaps.append(1))
         c.phase = "auto-turn"
         self._init(c)                                   # the CLI starts a turn on its own
         self._wait(lambda: s.inflight == 1, "the CLI's own turn counted")
+        self.assertEqual(len(snaps), 1, "the CLI-started turn re-baselined the OOM counter at its raise")
         self.assertEqual(s.fed_texts(), [], "…with no fed text of romp's in it")
         self.assertTrue(self.be.busy(SID))
         self._assistant(c)
