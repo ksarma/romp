@@ -46,6 +46,7 @@ SENTENCE = ("When changes are pending, a third checkbox, **accept the pending ch
             "later whose card was in view when you scrolled, clicked, tapped, or pressed a key. That way the session's later edits "
             "arrive as new changes instead of folding into an old one. A change you have not seen stays pending, and the checkbox "
             "says how many do, or, when you have seen none of them, that nothing is accepted until you look, and is then off. "
+            "A change the session edits again after you looked at it counts as unseen until you look again. "
             "The message then says how many changes you accepted and rejected.")
 
 
@@ -86,13 +87,31 @@ class TheDefinition(unittest.TestCase):
         gesture = _method(self.panel, "gesture(ev?: Event): void {")
         self.assertIn("if (!this.entryShown(e)) continue;", gesture)
 
+    def test_the_edited_again_clause_is_the_panels_texts_check(self):
+        # the seen set keeps each seen pending change's texts (seenTexts); a status whose change reads differently under the
+        # same id (a same-author track-edit coalesced into it) takes it out of the set and files it as an arrival again, and the
+        # next gesture with its card on screen sees it anew; the person's own change stays seen whatever it reads (the seen
+        # follow-on's review, third round, 2026-09-09)
+        self.assertIn("counts as unseen until you look again", self.section)
+        note = _method(self.panel, "private noteArrivals(s: Status): void {")
+        self.assertIn("if (!e.pending || !this.grownSince(e.key, s)) { if (e.pending) this.recordSeen(e.key, s); continue; }", note)
+        self.assertIn("seen.delete(e.key); this.seenTexts.delete(e.key);", note)
+        self.assertIn("if (e.author === YOU) this.recordSeen(e.key, s);", note)
+        self.assertIn("if (e.author === YOU) seen.add(e.key);", note)
+        self.assertIn("private grownSince(key: string, s: Status): boolean {", self.panel)
+        self.assertIn("return !!rec && changedSince([rec], s.hunks || []).length > 0;", self.panel)
+        # "look again" is the same look as the sentence's earlier clause: a gesture with the card on screen (entryShown)
+        gesture = _method(self.panel, "gesture(ev?: Event): void {")
+        self.assertIn("if (!this.entryShown(e)) continue;", gesture)
+
     def test_the_gestures_are_the_panels_listeners(self):
         # scrolled = a wheel or a touch move; clicked and tapped = a pointer press; pressed a key = keydown
         self.assertIn('for (const ev of ["pointerdown", "keydown"]) row.addEventListener(ev, (e) => this.gesture(e), true);', self.panel)
         self.assertIn('for (const ev of ["wheel", "touchmove"]) row.addEventListener(ev, (e) => this.gesture(e), { capture: true, passive: true });', self.panel)
 
     def test_no_panel_vocabulary(self):
-        for word in ("gesture", "seenKeys", "seenOpen", "entryShown", "noteArrivals", "statusEntries", "first status", "seed"):
+        for word in ("gesture", "seenKeys", "seenOpen", "entryShown", "noteArrivals", "statusEntries", "first status", "seed",
+                     "seenTexts", "grownSince", "coalesce"):
             self.assertNotIn(word, self.section)
 
 

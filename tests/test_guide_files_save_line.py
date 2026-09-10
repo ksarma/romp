@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""The guide's save sentences say a save leaves the text where it is, that a line at the foot of the panel says whether the new
-card is above or below, that clicking the line brings the card into view, and that the line goes with your next gesture; the
+"""The guide's save sentences say a save leaves the text where it is, that a line at the foot of the panel (under its header in
+the list under a narrow column: tests/test_guide_files_saved_line_layout.py) says whether the new card is above or below,
+that clicking the line brings the card into view, and that the line goes with your next gesture; the
 sentences name every kind of gesture the panel counts, and the keys it does not count (a Tab or a modifier pressed alone, the
 keyboard's way to the line), and the panel does each of those.
 
 Decision 43 (2026-09-09): the user prefers no scroll after a save, a scroll being disruptive, and accepts that the person
-may then have to look for the card; the line at the panel's foot is the answer to that. Before it, the arrivals follow-on
+may then have to look for the card; the line at the panel's foot, or under its header in the list, is the answer to that. Before it, the arrivals follow-on
 had the save's scroll stand down once the person had moved on, and this module (then named for the stand-down) held the
 guide's sentence to the gestures that stood it down. The same gestures now end the line, so the module keeps its shape:
 it reads the events the constructor routes into gesture() and requires the sentences to name each one in the reader's words,

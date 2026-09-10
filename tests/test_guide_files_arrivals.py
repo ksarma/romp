@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """The guide's Files section says a line under the panel's header counts what the session added since you last looked, and
-that a save leaves the text where it is, a line at the foot of the panel saying whether the new card is above or below; the
-panel does both.
+that a save leaves the text where it is, a line at the foot of the panel (under its header in the list under a narrow column)
+saying whether the new card is above or below; the panel does both.
 
 The arrivals follow-on (2026-09-09): the user sent comments, the session answered with eleven changes and seven replies while
 they kept commenting, and nothing in the panel said so until the next Send accepted the changes by default; and a reply they
 saved pulled the text back to its card after they had scrolled on. The panel now keeps the set of entries the person has seen,
 names the rest in a line under the header with a dot on each card until a gesture finds it on screen, and never scrolls on a
 save (decision 43, the same day: at first the scroll stood down once the person had moved on; the user then preferred no
-scroll at all, and a line at the panel's foot says where the card is). The guide's Files section gained a sentence for the
+scroll at all, and a line at the panel's foot, or under its header in the list, says where the card is). The guide's Files section gained a sentence for the
 first and two for the second; each clause is cross-checked against the panel, the model and the sheets, so a reworded
 sentence, a renamed control or a dropped rule fails here. Synthetic: only the repo's own text.
 """

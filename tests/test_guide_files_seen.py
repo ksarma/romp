@@ -42,6 +42,7 @@ SENTENCE = ("When changes are pending, a third checkbox, **accept the pending ch
             "later whose card was in view when you scrolled, clicked, tapped, or pressed a key. That way the session's later edits "
             "arrive as new changes instead of folding into an old one. A change you have not seen stays pending, and the checkbox "
             "says how many do, or, when you have seen none of them, that nothing is accepted until you look, and is then off. "
+            "A change the session edits again after you looked at it counts as unseen until you look again. "
             "The message then says how many changes you accepted and rejected.")
 
 

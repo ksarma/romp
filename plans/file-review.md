@@ -1706,7 +1706,15 @@ row's hold, `pressHold`, parks the change in place until after the click as well
 send reading the live set after the press's own mark, and accepting a change while the box still read disabled and
 unchecked with "nothing is accepted until you look", words the hold had kept through the press. Any other gesture while
 the confirm is up moves a card it shows to the seen side in place (`reflectSeen`), rewriting the option's words and its
-checked and disabled state, the count row and `confirmSeen` through the same `syncAcceptOption` the render uses. The
+checked and disabled state, the count row and `confirmSeen` through the same `syncAcceptOption` the render uses. Seen is
+keyed by the change's id and its texts (`seenTexts`, recorded with the seeds, at a gesture and for the person's own writes:
+`recordSeen`, `recordPending`): a same-author `track-edit` landing inside or beside a pending change is coalesced into it
+under the same id, so a status can bring a seen id with text the person has not read. A seen pending change that reads
+differently from its record leaves the set and is filed as an arrival again (`noteArrivals`, `grownSince`, the same
+comparison the decisions stand down on, `changedSince`): its dot, the line under the header and the unseen count name it,
+the next gesture with its card on screen sees it anew, and the person's own change stays seen whatever it reads (the
+review's third round, 2026-09-09: before it the send accepted a change grown under a seen id and the confirm counted it
+among the seen; `file-comments-seen-review3.test.ts` drives the case). The
 second ruling (decision 42): the message's `track-edit --thread <id>` line, which bound a revision to the comment so the
 card showed the edit inside it, confused them and is gone: both builders (`buildSendMessage`, the kernel's
 `_file_comments_message`) say plain `track-edit` for edits and `track-reply` for answering a comment in words, the
@@ -1727,7 +1735,9 @@ save's retired scroll stated as history wherever this document names it, each he
 `tools/file-review-plan-seen-review-3.test.mjs` (the third round's: the saved line's place stated by layout, the keys that
 are no gesture against `NAV_KEYS`, the acknowledgment never a note across a wrap, the Tests bullet's modules against the
 tree) and the rounds' own modules (`file-comments-seen-fixes.test.ts`, `file-comments-seen-review2.test.ts`,
-`file-comments-seen-review2-browser.test.ts`, `tests/test_guide_files_seen_definition.py`,
+`file-comments-seen-review2-browser.test.ts`, `file-comments-seen-review3.test.ts`,
+`file-comments-seen-review3-browser.test.ts`, `feed-css-saved-line-head-dress.test.ts`,
+`tests/test_guide_files_seen_definition.py`,
 `tests/test_guide_files_saved_line_layout.py`, `tools/file-comments-host-untouched.test.mjs`,
 `tools/file-comments-host-review-seen.test.mjs`; the Tests section says what each drives).
 
@@ -1787,7 +1797,14 @@ list), in the margin layout the acknowledgment line's position at the panel's fo
 focus (`fcsavedgo`: `scrollCard`); in the list layout the same button stands under the header (`savedLineHead`, appended by
 `renderHead`), since the list's Send section is the scroller's foot, below the very card the line says is below, so a line
 there was never on screen when it was wanted, and an earlier send's acknowledgment keeps its place at the foot there where
-the margin layout's gives way to the line (the review's first round, 2026-09-09). The side is latched at the landing
+the margin layout's gives way to the line (the review's first round, 2026-09-09). The acknowledgment the margin layout's
+line displaces comes back in its place when the line ends (`sentAck`, set with the acknowledgment by `doSend`;
+`restoreSent`, from `reflectLines` at a gesture and at the settled re-read that finds the card in view, and from the
+panel's close), so the foot never shows neither; the next confirm's opening clears the acknowledgment and the copy it
+kept, and a line standing then comes down on nothing, the next send's acknowledgment taking the place (the review's third
+round, 2026-09-09: a reply's landing read its card, taller with the composer's box inside it, as below the box, the close
+re-laid the card whole in view, and the pass's re-read ended the line with the acknowledgment gone;
+`file-comments-seen-review3.test.ts` and its browser leg drive the scene). The side is latched at the landing
 (`savedOut`), since a render swaps in a card list the pass has not sized yet and the track's scroll reads 0 until it has,
 and re-read where the geometry is settled, at the end of a pass and at a scroll (`reflectLines`, through the row's press
 hold as the arrivals line is: a line leaving the Send section moves the Send button under a pointer); the line ends there
@@ -2459,8 +2476,17 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   Send section's bottom edge with the confirm up; the list layout's save leaving the acknowledgment in place; the
   track-and-accept send standing down on a change grown between the press and set-tracked's reply), and
   `file-comments-seen-review2-browser.test.ts` measures the stuck line and the keyboard's way to it in Chromium and
-  Firefox; `tests/test_guide_files_seen_definition.py` holds the guide's definition of a seen change (the first status's
-  entries, and a later change whose card was in view at a gesture) to the panel;
+  Firefox; `file-comments-seen-review3.test.ts` drives the third round's over the same stand-in, a reply's box measured
+  inside its card (the re-read at the end of the margin pass ending the line when the composer's close lays the card whole
+  in view; the acknowledgment the line displaced back at the foot at that re-read, at a gesture and at the panel's close,
+  and gone for good when Send to session is pressed with the line standing; a seen pending change grown under its id
+  unseen again, an arrival with its dot, counted among the unseen, left pending by the send and seen anew at the next
+  gesture that finds its card), `file-comments-seen-review3-browser.test.ts` measures the reply-box scene and the
+  returning acknowledgment in Chromium and Firefox, and `feed-css-saved-line-head-dress.test.ts` holds the list layout's
+  line under the header to the arrivals row's dress in both sheets and measures the two rows in both engines;
+  `tests/test_guide_files_seen_definition.py` holds the guide's definition of a seen change (the first status's
+  entries, a later change whose card was in view at a gesture, and a seen change the session edited again unseen until
+  the next look) to the panel;
   `tests/test_guide_files_saved_line_layout.py` holds the guide's list-layout sentence to the panel's placement by
   layout, the sheets and the panel's tests of both placements; `tools/file-comments-host-untouched.test.mjs` drives the
   host's self-check end to end (a real stage, a comment changed in every way, the `anchorAt` carve-out, a check with
@@ -2560,8 +2586,9 @@ its click bringing the card into view (`tests/test_guide_files_arrivals.py` hold
 in the list under a narrow column the line stands under the panel's header instead
 (`tests/test_guide_files_saved_line_layout.py` holds that sentence to the panel's placement by layout, the sheets and the
 panel's tests of both placements). With the seen follow-on (2026-09-09), that the Send's checkbox accepts only the pending
-changes you have seen and says how many unseen ones stay pending (`tests/test_guide_files_seen.py` holds the sentence to the
-panel).
+changes you have seen and says how many unseen ones stay pending, and that a change the session edits again after you
+looked at it is unseen until you look again (`tests/test_guide_files_seen.py` and `tests/test_guide_files_seen_definition.py`
+hold the sentence to the panel).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -2733,8 +2760,9 @@ document stands on its own, each with the reasoning it was given.
     out of the box marks nothing seen) — by id, through the same accept the card's button uses, and says how many
     unseen ones stay pending; with nothing seen the box is unchecked and disabled and says so. The send accepts the
     seen set as the confirm showed it: the Send press is a gesture and marks a card on screen seen, for the next
-    confirm and not for this send. The message states the count the accept's reply lists. The seen follow-on under
-    Slice 2 has the build.
+    confirm and not for this send. The message states the count the accept's reply lists. A seen change the session
+    edits again under the same id is unseen again until the person looks at it (the review's third round, 2026-09-09).
+    The seen follow-on under Slice 2 has the build.
 
 42. **The edit-to-comment link leaves the loop, and a decision never resolves a comment** (2026-09-09). The message
     told the session to revise with `track-edit --thread <id>`, which binds the edit to the comment so its card shows
@@ -2754,8 +2782,9 @@ document stands on its own, each with the reasoning it was given.
     the list under a narrow column the same button stands under the panel's header (the list's Send section is the
     scroller's foot, below the very card the line says is below, so a line there was never on screen when it was
     wanted; the review's first round, 2026-09-09); the line ends at the person's next gesture (a Tab or a modifier
-    pressed alone, the keyboard's way to the line, is none) or when the card comes into view, never on a timer. The
-    arrivals follow-on under Slice 2 has the build.
+    pressed alone, the keyboard's way to the line, is none) or when the card comes into view, never on a timer. In the
+    margin layout the acknowledgment of the send before, which the line displaced, is back in its place when the line
+    ends (the review's third round, 2026-09-09). The arrivals follow-on under Slice 2 has the build.
 
 ## Open questions for the user
 

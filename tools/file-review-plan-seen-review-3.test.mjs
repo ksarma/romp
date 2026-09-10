@@ -54,6 +54,7 @@ const SEEN = 'The seen follow-on (2026-09-09):';
 const ARRIVALS = 'The arrivals follow-on (2026-09-09):';
 const seen = between(SEEN, ARRIVALS);
 const arrivals = between(ARRIVALS, '### Slice 3: region comments on images');
+const d41 = between('41. **The Send\'s accept takes the changes you have seen', '42. **');
 const d43 = between('43. **A save never moves the view; a line says where the card is**', '## Open questions for the user');
 const tests = between('## Tests', '## Docs');
 const docs = between('## Docs', '## Deliberately not in v1');
@@ -137,6 +138,7 @@ test('the plan never calls the acknowledgment a note, across a wrap either: the 
 test('the Tests bullet names the review rounds\' own modules, each in the tree, and the seen paragraph points at them', () => {
   const modules = [
     'file-comments-seen-fixes.test.ts', 'file-comments-seen-review2.test.ts', 'file-comments-seen-review2-browser.test.ts',
+    'file-comments-seen-review3.test.ts', 'file-comments-seen-review3-browser.test.ts', 'feed-css-saved-line-head-dress.test.ts',
     'tests/test_guide_files_seen_definition.py', 'tests/test_guide_files_saved_line_layout.py',
     'tools/file-comments-host-untouched.test.mjs', 'tools/file-comments-host-review-seen.test.mjs',
   ];
@@ -147,6 +149,34 @@ test('the Tests bullet names the review rounds\' own modules, each in the tree, 
     assert.ok(seen.includes('`' + m + '`'), `the seen paragraph names ${m}`);
   }
   assert.ok(seenBullet.includes('The review rounds\' own modules: `file-comments-seen-fixes.test.ts` drives the panel over the stand-in'));
+});
+
+// ── the consolidation's records (2026-09-09): the third round built two behaviours the plan did not record ──────────
+
+test('the plan records the texts check: a seen pending change grown under its id is unseen again (seenTexts, grownSince), in the seen paragraph, decision 41 and the guide, held to noteArrivals', () => {
+  assert.ok(seen.includes('Seen is keyed by the change\'s id and its texts (`seenTexts`, recorded with the seeds, at a gesture and for the person\'s own writes: `recordSeen`, `recordPending`)'));
+  assert.ok(seen.includes('A seen pending change that reads differently from its record leaves the set and is filed as an arrival again (`noteArrivals`, `grownSince`, the same comparison the decisions stand down on, `changedSince`)'));
+  assert.ok(seen.includes('the person\'s own change stays seen whatever it reads'));
+  assert.ok(d41.includes('A seen change the session edits again under the same id is unseen again until the person looks at it'));
+  assert.ok(flat(guide).includes('A change the session edits again after you looked at it counts as unseen until you look again.'), 'the guide says it in the reader\'s words');
+  const note = body(panel, 'private noteArrivals(s: Status): void {');
+  assert.ok(note.includes('if (!e.pending || !this.grownSince(e.key, s)) { if (e.pending) this.recordSeen(e.key, s); continue; }'), 'a seen pending change is read against its record');
+  assert.ok(note.includes('seen.delete(e.key); this.seenTexts.delete(e.key);'), 'and leaves the set when it reads differently');
+  assert.ok(note.includes('if (e.author === YOU) this.recordSeen(e.key, s);') && note.includes('if (e.author === YOU) seen.add(e.key);'), 'the person\'s own change stays seen');
+  assert.ok(panel.includes('private grownSince(key: string, s: Status): boolean {') && panel.includes('return !!rec && changedSince([rec], s.hunks || []).length > 0;'), 'the decisions\' own comparison');
+  assert.ok(panel.includes('private recordSeen(key: string, s: Status | null = this.status): void {') && panel.includes('private recordPending(s: Status): void {'), 'the records the seeds and a gesture write');
+});
+
+test('the plan records the returning acknowledgment: sentAck and restoreSent in the arrivals paragraph and decision 43, held to the panel', () => {
+  assert.ok(arrivals.includes('The acknowledgment the margin layout\'s line displaces comes back in its place when the line ends (`sentAck`, set with the acknowledgment by `doSend`; `restoreSent`, from `reflectLines` at a gesture and at the settled re-read that finds the card in view, and from the panel\'s close), so the foot never shows neither'));
+  assert.ok(arrivals.includes('the next confirm\'s opening clears the acknowledgment and the copy it kept, and a line standing then comes down on nothing'));
+  assert.ok(d43.includes('In the margin layout the acknowledgment of the send before, which the line displaced, is back in its place when the line ends'));
+  assert.ok(panel.includes('sentAck: string | null = null;'), 'the field');
+  assert.ok(body(panel, 'private restoreSent(line: HTMLElement | null): void {').includes('this.sentNote = this.sentAck;'), 'restoreSent puts it back');
+  assert.ok(body(panel, 'async doSend(): Promise<void> {').includes('this.sentAck = base;'), 'set with the acknowledgment');
+  assert.ok(body(panel, 'private reflectLines(): void {').includes('if (!this.savedOut) this.restoreSent(line);'), 'from reflectLines, where a gesture and the settled re-read end the line');
+  assert.ok(body(panel, 'closePanel(): void {').includes('this.restoreSent(null);'), 'and from the panel\'s close');
+  assert.ok(panel.includes('this.sendConfirm = true; this.sentNote = null; this.sentAck = null;'), 'the next confirm\'s opening clears both');
 });
 
 test('the plan names this module beside the seen follow-on\'s, in the paragraph and the Tests bullet', () => {

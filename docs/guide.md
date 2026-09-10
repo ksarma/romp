@@ -505,7 +505,7 @@ pending changes you have looked at: the ones already there when you first opened
 any that arrived later whose card was in view when you scrolled, clicked, tapped, or pressed a
 key. That way the session's later edits arrive as new changes instead of folding into an old one.
 A change you have not seen stays pending, and the checkbox says how many do, or, when you have
-seen none of them, that nothing is accepted until you look, and is then off. The message then
+seen none of them, that nothing is accepted until you look, and is then off. A change the session edits again after you looked at it counts as unseen until you look again. The message then
 says how many changes you accepted and rejected. All are checked by default. One send
 answers one todo; a todo that named several files is answered by the first, and later sends
 no longer offer it. The panel then says **Sent to** the session and when, or **Queued for**
