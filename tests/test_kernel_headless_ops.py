@@ -2380,6 +2380,44 @@ class UnknownSessionRefused(_RouteServer):
             self.assertEqual(code, 409, resp)
             self.assertEqual(sent, [("sid-x", "hello")], "nothing else was delivered")
 
+    def test_a_send_by_id_to_a_torn_record_a_pane_runs_forks_tmux_once(self):
+        # by id to a names-registered tmux session whose SDK reg is torn, the request forked tmux twice: the
+        # names registry answered the resolution, so nothing was scanned, the gate's unreadable arm scanned to
+        # ask whether a pane runs the sid and kept the map to itself, and the /send arm, handed no map, asked
+        # alive_sids again; a second probe that failed after the first listed the pane answered 503 for a
+        # session the request's own scan saw running, and the arm's comment promised one fork. _control_target
+        # scans once for a torn record by id, ahead of the gate, and hands that map to the gate and the arm; the
+        # real backend_for routes the torn reg to tmux, as the round-7 admitted-send test does (review round 8,
+        # 2026-09-09). The script answers the first fork with the pane and fails a second, so a second fork is
+        # a 503 here, never a stale answer.
+        reg_path = km.jd.STATE / "sdk" / ("sid-x" + ".json")
+        reg_path.parent.mkdir(parents=True, exist_ok=True)
+        reg_path.write_bytes(b"{not json")
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        ok_sid_x = _tmux_server(["sid-x"])(["list-sessions", "-F", km.TmuxBackend.LANE_FMT])
+        sent = []
+        try:
+            self.assertTrue(km._reg_unreadable("sid-x"))
+            with mock.patch.object(km, "_send_or_park", lambda be, sid, text: sent.append((sid, text)) or True), \
+                 mock.patch.object(km, "_route_meta_command", lambda be, sid, text, state=None: False), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+                 mock.patch.object(km._TMUX, "available", lambda: True):
+                calls = []
+                with mock.patch.object(km._TMUX, "_run", _scripted_run([ok_sid_x, None], calls)):
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        code, resp = self._post("/send", {"id": "sid-x", "text": "hello"})
+                self.assertEqual((code, resp), (200, {"ok": True, "queued": False}), err.getvalue())
+                self.assertEqual(sent, [("sid-x", "hello")])
+                self.assertEqual(len(calls), 1, "the by-id send to a torn record forked tmux %d times: %r"
+                                 % (len(calls), calls))
+                self.assertNotIn("tmux probe failed", err.getvalue())
+        finally:
+            _drop_regs([reg_path])
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
 
 class CodexRuntimeSelection(unittest.TestCase):
     # The kernel loads codex_backend.py through load_source (kernel/loadsource.py), the fork's loader kept

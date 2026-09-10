@@ -18465,9 +18465,11 @@ def _session_gate(sid, live=None, who=None):
     map handed to the liveness read and its tmux_failed read for the scan-failed verdict (round 7: the
     liveness read scanned and discarded the map, so the failure was invisible and a failed probe read as
     "not running"). The record is read first because only a failed read raises the liveness question, so a
-    readable or absent record costs what _kernel_knows always cost, and the routes' refusal path still
-    scans once. `who` is the caller's spelling for the text; the WS door, which addresses by id, leaves it
-    None."""
+    readable or absent record costs what _kernel_knows always cost, and the routes scan once: they hand in the
+    map the resolution read, or the one _control_target scans for a torn record by id, so the arm's own scan
+    serves the WS door's by-id ops alone (round 8). `who` is the caller's spelling for the text (the routes'
+    `who`, the WS door's `name` for compact and sendCommand, and _named_miss's `who` on behalf of both
+    doors); the WS door's by-id ops leave it None."""
     sid = str(sid or "")
     if sid and _reg_unreadable(sid):
         if live is None:
@@ -27114,10 +27116,12 @@ def _control_target(who, route=""):
     503 when the answer cannot be given because a read failed: the live session list (the tmux probe the
     resolution's own scan rides did not answer, live.tmux_failed), the comment threads' store
     (_thread_names answered None while resolving a name) or the sid's own registry entry
-    (_unknown_session_refusal's unreadable verdict). `live` is the map the resolution scanned (None when the
-    names registry answered first and nothing was scanned), handed out so the /send arm's dead-pane guard
-    reads the one scan this request made instead of forking a second probe (round 7); a by-name request
-    forks tmux once, in the resolution. A failed read is never reported as a session that does not exist
+    (_unknown_session_refusal's unreadable verdict). `live` is the map the resolution scanned, or, when the
+    names registry answered first and the sid's registry entry will not read, the one scan this routine makes
+    ahead of the gate (the gate would otherwise scan inside its unreadable arm and discard the map; round 8),
+    else None (a registered sid whose entry reads or is absent: nothing was scanned); handed out so the /send
+    arm's dead-pane guard reads the one scan this request made instead of forking a second probe (round 7); a
+    request forks tmux at most once, in the resolution or here. A failed read is never reported as a session that does not exist
     (review rounds 4 and 5, 2026-09-09; the fail-loudly rule). Order: the local doors (a local session
     wins), the roster by sid, the gate with the live map the resolution read (so a refused request scans
     once; a torn registry entry under a failed probe is the gate's own scan-failed 503), and, when the gate
@@ -27138,6 +27142,17 @@ def _control_target(who, route=""):
     r = _host_for_sid(sid)
     if r is not None:
         return sid, r, None, live
+    if live is None and _reg_unreadable(sid):
+        # the names registry answered the resolution, so nothing was scanned, and the gate's unreadable arm
+        # would scan to ask whether a pane runs the sid and keep the map to itself; the scan is made here
+        # instead, once, and handed to the gate and out to the /send arm, which read a map it was not handed
+        # as "nothing was scanned" and forked again: by id to a names-registered tmux session whose record is
+        # torn, a second probe that failed after the first listed the pane answered 503 for a session this
+        # request's own scan saw running (review round 8, 2026-09-09)
+        try:
+            live = Sessions.live()
+        except Exception:
+            live = _LiveMap()
     refusal = _unknown_session_refusal(sid, who, live, route=route)
     if refusal is None:
         return sid, None, None, live
@@ -58320,12 +58335,15 @@ class Handler(BaseHTTPRequestHandler):
                     # reads the scan the resolution made when it made one (`live`, by name: a row for the sid on
                     # the tmux backend is a pane that runs it, anything else is a session that is not running, the
                     # 409 the SDK refusal answers below), and asks the server itself only when nothing was scanned
-                    # (by id, or a name that is itself a registered sid), through the failure-aware primitive: None
-                    # is a probe that did not answer (503, nothing done), a set without the sid the 409, a tmux-less
-                    # box runs nothing (the same 409). Either way neither the setters nor the paste start, and the
-                    # request forks tmux once: round 5 asked alive_sids here after the resolution's own scan, so a
-                    # by-name send forked twice and a second probe that failed after the first listed the pane
-                    # answered 503 for a session the request's own scan saw running (review round 7, 2026-09-09).
+                    # (by id, or a name that is itself a registered sid, whose registry entry reads or is absent; for
+                    # a torn one _control_target scans once ahead of the gate and hands the map here), through the
+                    # failure-aware primitive: None is a probe that did not answer (503, nothing done), a set without
+                    # the sid the 409, a tmux-less box runs nothing (the same 409). Either way neither the setters nor
+                    # the paste start, and the request forks tmux once, in every state: round 5 asked alive_sids here
+                    # after the resolution's own scan, so a by-name send forked twice and a second probe that failed
+                    # after the first listed the pane answered 503 for a session the request's own scan saw running
+                    # (review round 7, 2026-09-09); by id to a torn names-registered record the gate's unreadable arm
+                    # scanned and this arm forked again, the same 503 from the same two probes (round 8).
                     # The trade-off is stated: a pane that dies between the resolution's scan and the paste is no
                     # longer caught here; TmuxBackend.send's daemon-thread failure was already the accepted shape.
                     # TmuxBackend.send keeps that shape on purpose: the WS sendMessage arm ignores _send_or_park's
