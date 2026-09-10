@@ -140,7 +140,9 @@ again to fold the tab with the rest. A tab set to show when folded keeps that se
 group is renamed. The `archived` section starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
-adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. The row's
+adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. If the
+tab left that group just before you clicked (a change from another pane or another dashboard), the
+click moves nothing: the row flashes and its tooltip says to click again. The row's
 **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser. The groups follow one another across the
 strip and wrap as they need; the gear's **One tag group per row in the tab strip** starts every
@@ -180,12 +182,13 @@ folded group's header opens the group and the view together. While the menu is o
 follows the copy you right-clicked, through your edits in the **Tags** flyout and through changes
 that arrive from elsewhere (another pane, another dashboard). The menu knows the group by its
 tag's id, and by its name when no tag has that id: a tag renamed meanwhile keeps the row under its
-new name, and a tag removed and made again under the same name keeps it too. Two kinds of group
-are known by name alone, a group that only another machine's tags make and a tag that was still
-being created when the menu started following the tab under it (you typed its name into the
-**Tags** flyout while the tab had no group, or you right-clicked the tab while the tag's row under
-**Tags** said creating): renamed while the session is under two or more groups, the row leaves, and
-a click writes nothing. Moving it to another group
+new name, and a tag removed and made again under the same name keeps it too. A group the menu
+knows by its name alone is lost to a rename while the session is under two or more groups: the row
+leaves, and a click writes nothing. Three kinds of group are known that way: a group that only
+another machine's tags make, a tag that was still being created when the menu started following
+the tab under it (you typed its name into the **Tags** flyout while the tab had no group, or you
+right-clicked the tab while the tag's row under **Tags** said creating), and a tag removed and made
+again under the same name, which the menu knows by its name from then on. Moving it to another group
 changes the group the line names. Removing that group's tag takes the row away, unless the session is left under
 exactly one other tag, whose group the line then names: under two or more, the menu cannot tell
 which copy you mean. If the removed tag comes back (a removal the kernel refused, or the tag added

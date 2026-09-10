@@ -6630,8 +6630,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // placeholder id the ack replaces, which no union carries afterwards (round 7); a union only remote hosts' tags make has no
   // local id; and a local tag deleted and created again under the same name has a new id, so the same-named union holds the copy,
   // as the strip's section, keyed by the name, still shows it. A copy the name alone carries is lost to a rename pushed while the
-  // session is under two or more groups (the row leaves, a click writes nothing), the limit the guide states for the remote-only
-  // group and the tag whose create was unanswered. The click's guard compares the row's section and the resolution through
+  // session is under two or more groups (the row leaves, a click writes nothing), the limit the guide states for every group the menu
+  // knows by its name alone: the remote-only group, the tag whose create was unanswered when the menu started following the tab, and
+  // the tag made again under its name (round 8). The click's guard compares the row's section and the resolution through
   // sameSection (the ids when both are local, else the names, so two remote-only sections are two), so a copy re-identified under
   // the same words refuses the click once, with the row's cue, and the second click writes for the new id.
   const unionFor = () => viewTagUnion(effViews());
