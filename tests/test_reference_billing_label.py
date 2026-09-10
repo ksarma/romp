@@ -11,13 +11,17 @@ in the module reddens here before the reference goes stale, and a retired readin
 Upstream's copy of this module (romp-on/romp #1182, this fork's own offer) pins ui/webview/render.ts, which
 renders the row inline there. In this fork render.ts hands the row, the sub-line and the picker's written-out
 choice to billing-label.ts (the fork's one renderer, kept under the 2026-09-09 fold's ruling C), so the copy
-pins read that module and one pin holds render.ts to calling it. The copy pins (BillingLabelRendersThePinnedCopy
-and TheReferenceQuotesEachReading) are the rendered text, not the expressions around it: a rename, a reshuffle
-or a further extraction that leaves every rendered word as it was keeps them green, since the doc is not stale
-then. Where a fragment is a common word (`unavailable`) or the warning glyph, the template quote beside it is
-included, so the pin names the row's own copy and not a comment or another control's. Two readings keep the
-fork's punctuation (`(applying, not confirmed yet)`, `; this session bills that`) where upstream's inline copy
-uses an em dash: the doc quotes what this tree renders.
+pins read that module, one pin holds render.ts to calling it, and one holds kernel/credentials.py's WHY_NO_LOGIN
+assignment to the sentence the unavailable reading interpolates, so that name is pinned too: the row renders the
+frame's loginWhy, which kernel.py fills from that constant (ui/webview/billing-one-auth.test.ts pins the routing
+by the same name), and the bare sentence would match any constant that carried it. The other copy pins
+(BillingLabelRendersThePinnedCopy's row and sub-line tests, and TheReferenceQuotesEachReading) are the rendered
+text, not the expressions around it: a rename, a reshuffle or a further extraction that leaves every rendered
+word as it was keeps them green, since the doc is not stale then. Where a fragment is a common word
+(`unavailable`) or the warning glyph, the template quote beside it is included, so the pin names the row's own
+copy and not a comment or another control's. Two readings keep the fork's punctuation (`(applying, not confirmed
+yet)`, `; this session bills that`) where upstream's inline copy uses an em dash: the doc quotes what this tree
+renders.
 
 The fork's earlier pins (the billing-label fix's review round 1 and the slice-2 fold, 2026-09-09) stay beside
 them, each holding a doc claim to the code it describes. Three read billing-label.ts's expressions on purpose,

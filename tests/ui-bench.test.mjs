@@ -594,9 +594,24 @@ test("synthesizeFrames: the Outline stream carries ledgers, the waiting stream c
   assert.equal(waitingFull.userTodosOn, true);
 });
 
-// kernel.py _BAR_WIRE's short keys plus the three names a bar keeps (T278c); ui/romp-timeline-view.js BAR_WIRE is
-// the same table, and tests/test_timeline_bars_wire.py compares the two, so this list drifts loudly
-const BAR_KEYS = new Set(["id", "start", "end", "p", "w", "r", "q", "c", "m", "s", "d", "u", "t", "a", "o"]);
+// The wire tables, read from the view's export (ui/romp-timeline-view.js BAR_WIRE and JUDGING_WIRE; the module loads
+// under bare node) rather than copied by hand: tests/test_timeline_bars_wire.py holds that table byte for byte to
+// kernel.py's _BAR_WIRE and _JUDGING_WIRE, so the kernel literal, the view and this synthesizer are one chain, and a
+// key the kernel renames, retires or adds (the view following) reddens the subset checks below instead of leaving the
+// bench emitting a wire the kernel no longer sends. The long names a bar keeps (id, start, end; kernel.py _BAR_LONG)
+// and a judging entry's k, t and t1 are hand-listed: the view exports no list of them. A subset check catches a key
+// the synth emits that the wire lacks, not a wire key the synth never emits.
+const { BAR_WIRE, JUDGING_WIRE } = createRequire(import.meta.url)(path.join(REPO, "ui", "romp-timeline-view.js"));
+const BAR_KEYS = new Set(["id", "start", "end", ...Object.keys(BAR_WIRE)]);
+const JUDGING_KEYS = new Set(["k", "t", "t1", ...Object.keys(JUDGING_WIRE)]);
+/** A compact bar omits every default (kernel.py's bar literal; wire_bar in tests/test_timeline_bars_wire.py is its
+ *  twin, and the view's expandBar fills them back), so a short key that is present must carry something other than
+ *  its BAR_WIRE default: no src at "typed", no empty mids, no open, cont, nudgeAuto or romp at false. */
+function assertNoBarDefaults(b, what) {
+  for (const [short, [name, dflt]] of Object.entries(BAR_WIRE)) {
+    if (short in b) assert.notDeepEqual(b[short], dflt, `${what}: ${name} (${short}) rides only off its default`);
+  }
+}
 
 test("synthesizeFrames: the timeline stream is the skeleton, the compact bars slot, then bar-level deltas", () => {
   const frames = synthesizeFrames("timeline", 30);
@@ -615,6 +630,7 @@ test("synthesizeFrames: the timeline stream is the skeleton, the compact bars sl
   assert.equal(bars._keys, undefined, "the full carries no key list");
   const every = Object.values(bars.turns).flat();
   assert.ok(every.every((b) => Object.keys(b).every((k) => BAR_KEYS.has(k))), "a bar is {id, start, end} plus _BAR_WIRE's short keys");
+  for (const b of every) assertNoBarDefaults(b, "a full's bar");
   assert.ok(every.every((b) => b.p && b.w && b.r && b.q && b.c && b.m), "the ids and captions ride under their short keys");
   assert.ok(every.some((b) => b.u === true) && every.every((b) => !("u" in b) || b.u === true), "open is u: true, and only on an open bar");
   assert.ok(!Array.isArray(bars.judging) && Object.keys(bars.judging).length >= 1, "judging is a per-lane object");
@@ -622,6 +638,7 @@ test("synthesizeFrames: the timeline stream is the skeleton, the compact bars sl
   assert.ok(entries.length >= 1);
   assert.ok(entries.every((e) => typeof e.k === "string" && e.k.split(DELTA_SEP).length === 2 && e.j && typeof e.t === "number" && typeof e.t1 === "number"
     && !("judge" in e) && !("sid" in e) && !("kd" in e) && !("x" in e)), "a judging entry is compact: k, t, j, t1 and the counts; no long names, the run kind and empty text omitted");
+  assert.ok(entries.every((e) => Object.keys(e).every((k) => JUDGING_KEYS.has(k))), "a judging entry is {k, t, t1} plus _JUDGING_WIRE's short keys");
   const keys = barsKeys(bars);
   assert.equal(keys.turns.length, 30);
   assert.ok(keys.turns.every((k) => k.includes(DELTA_SEP)), "a bar's key is lane + separator + id");
@@ -637,6 +654,7 @@ test("synthesizeFrames: the timeline stream is the skeleton, the compact bars sl
     for (const [k, b] of Object.entries(m.coll.turns.set)) {
       assert.equal(k, k.split(DELTA_SEP)[0] + DELTA_SEP + b.id, "a set key is what the shim would derive for its bar");
       assert.ok(Object.keys(b).every((x) => BAR_KEYS.has(x)) && !("open" in b), "a delta's bar is compact too");
+      assertNoBarDefaults(b, "a delta's bar");
     }
     assert.equal(typeof m.rest.now, "number", "the clock rides every delta");
   }

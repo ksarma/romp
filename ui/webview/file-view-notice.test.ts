@@ -6,9 +6,12 @@
 // the bar's height and the body's own scroll carried the bar out of view. It is now a child of the card
 // between the title bar and the body, where the card's column flex layout gives it its own row, and
 // exitEdit removes it, since nothing swaps the card's children the way the body's used to be swapped.
-// The card holds its notice by reference: a replaced viewer's exitEdit (its keydown handler outlives the
-// replace) must not reach the live card's notice, so the last case runs Escape through every handler the
-// document would run it through, oldest first.
+// The card holds its notice by reference: a replaced viewer's exitEdit must not reach the live card's notice.
+// The fork's replace path also drops the replaced viewer's keydown handler (dropOnKey), so the last case pins
+// that the replace dropped the first viewer's handlers, runs those DROPPED handlers directly (the stale
+// exitEdit, editing still true in its closure), which the document would never run, then runs the live card's
+// handlers in the order the document would run them, oldest first, and reads back that only the old viewer's
+// own notice went while the live card's still stands.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 
