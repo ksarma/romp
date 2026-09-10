@@ -78,6 +78,10 @@
 #strip-refresh:hover, #strip-net:hover { opacity: 1; background: var(--overlay-05, rgba(255, 255, 255, 0.08));
   color: var(--vscode-foreground, #ccc); }
 #strip-refresh:disabled { opacity: .35; cursor: default; }
+/* a refused restart's chrome (restartFromStrip adds .sn-actfail): the id rules above outrank a bare class rule
+   whatever the order, so the failure colour needs the id's specificity, and it sits after :hover so hovering to
+   read the title keeps the red (review round 3, 2026-09-10) */
+#strip-refresh.sn-actfail { border-color: #E5534B; color: #E5534B; }
 #strip-net.on { color: var(--accent, #9cd2ff); opacity: 1; }
 /* the popover-open acknowledgment: the button reacts the instant it's clicked */
 #strip-net.open { color: var(--accent, #9cd2ff); opacity: 1; background: var(--accent-wash, rgba(156, 210, 255, 0.12)); }

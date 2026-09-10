@@ -105,6 +105,14 @@ test("the strip's Restart reads the kernel's answer: a refusal re-enables the bu
   assert.equal(btn.disabled, false, "nothing is restarting: the button is back at once, not after the failsafe");
   assert.equal(btn.title, error, "the kernel's words, with the way out, as the title (the failure-title pattern)");
   assert.ok(btn.classes.has("sn-actfail"), "and the failure chrome");
+  // ...which must PAINT (review round 3, 2026-09-10): the button's own #strip-refresh rules outrank a bare .sn-actfail
+  // class rule whatever the source order (an id beats a class), so the colour needs a rule with the id's specificity,
+  // placed after the :hover rule (same specificity, later wins) or hovering to read the title takes the red away
+  const css = fs.readFileSync(path.join(path.resolve(process.cwd(), ".."), "ui", "webview", "strip.css"), "utf8");
+  const failRule = css.indexOf("#strip-refresh.sn-actfail { border-color: #E5534B; color: #E5534B; }");
+  assert.ok(failRule > 0, "a rule for the refused button with the id's specificity");
+  assert.ok(failRule > css.indexOf("#strip-refresh:hover"), "after the hover rule, so the red holds under the pointer");
+  assert.ok(css.indexOf("#strip-refresh:hover") > 0);
   // a refusal whose body is not the kernel's JSON still names the status
   const bare = new StubButton();
   await restartFromStrip(bare, () => Promise.resolve({ ok: false, status: 503, json: () => Promise.reject(new Error("not json")) }), 60_000);
