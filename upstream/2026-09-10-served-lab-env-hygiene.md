@@ -9,3 +9,5 @@ offered: their PR #1235
 closed: 2026-09-10
 ---
 Secrets hygiene found while verifying their #1217 for the fold: both served labs wrote a copy of os.environ into the lab's cfg.json for the driver's relaunch, so a runner whose shells carry API keys left them in a temp file for the run. Tests only; upstream-native; filed directly from the upstream base. The fixture whitelist follow-up (served-fixture-env-whitelist) stacks on it.
+
+2026-09-10: landed on fork main by fork PR #700, a standalone pick of their #1235 (5f6af53c) and #1274 ahead of fold slice 4e-6; #1274's kernel_env half waits on their #1262 (the served-fixture-env-whitelist entry).
