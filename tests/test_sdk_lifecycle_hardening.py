@@ -1631,6 +1631,353 @@ class CrashHeal(unittest.TestCase):
         self.assertEqual(len(scope_line), 1, logs)
         self.assertIn("the CLI exited 1; no turn-start baseline; memory.events oom_kill=2, Result=success", scope_line[0])
 
+    # ── the executing _amain tests' stand-in SDK ─────────────────────────────────────────────────────
+    @contextlib.contextmanager
+    def _fake_sdk(self, client_cls):
+        """A stand-in claude_agent_sdk module for the executing _amain tests: `client_cls` stands in for
+        ClaudeSDKClient; the options and message classes are bare. Restores sys.modules on exit, so the
+        session thread must be joined INSIDE the block (the lazy import at _amain's start reads it)."""
+        from importlib.machinery import ModuleSpec
+
+        class _Options:
+            def __init__(self, **kw):
+                for k, v in kw.items():
+                    setattr(self, k, v)
+        fake = types.ModuleType("claude_agent_sdk")
+        fake.__spec__ = ModuleSpec("claude_agent_sdk", loader=None)
+        fake.ClaudeSDKClient, fake.ClaudeAgentOptions, fake.HookMatcher = client_cls, _Options, (lambda **kw: kw)
+        for n in ("AssistantMessage", "ResultMessage", "SystemMessage", "TextBlock"):
+            setattr(fake, n, type(n, (), {}))
+        saved = sys.modules.get("claude_agent_sdk")
+        sys.modules["claude_agent_sdk"] = fake
+        try:
+            yield fake
+        finally:
+            if saved is None:
+                sys.modules.pop("claude_agent_sdk", None)
+            else:
+                sys.modules["claude_agent_sdk"] = saved
+
+    def _session_for_amain(self, d, be):
+        reg = {"sid": self.SID, "name": "web", "mode": "acceptEdits", "alive": True, "cwd": d}
+        sb.write_reg(Path(d), self.SID, reg)
+        return sb.SdkSession(be, dict(reg))
+
+    @staticmethod
+    def _until(pred, timeout=10.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end and not pred():
+            time.sleep(0.01)
+        return pred()
+
+    def test_amain_records_the_clis_exit_at_teardown(self):
+        # round 3 (tests-1): the exit-code capture at teardown (the exception's exit_code, else the transport's
+        # returncode) has an EXECUTING test: the real _amain runs against a stand-in SDK whose stream dies
+        # after the connect in each of the three shapes the SDK produces, and _cli_exit_code must read -9 once
+        # the thread has ended. The thread is JOINED, never shut down (shutdown sets `ended`, the path the heal
+        # skips), and the death waits for the connect, whose record clears the field, so the capture is what
+        # the read sees. If this ever fails with the field None under load, that is an ordering hole, not a flake.
+        from types import SimpleNamespace
+
+        class _Err(Exception):
+            def __init__(self, exit_code=None):
+                super().__init__("the CLI ended")
+                self.exit_code = exit_code
+        for shape in ("an exception carrying exit_code", "the stream ending with the transport's returncode set",
+                      "a codeless exception with the returncode set"):
+            with self.subTest(shape=shape):
+                death = threading.Event()
+
+                class _Client:
+                    def __init__(self, options=None, transport=None):
+                        self._transport = SimpleNamespace(_process=SimpleNamespace(pid=4242, returncode=None))
+
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(self, *a):
+                        return False
+
+                    async def query(self, prompt, session_id="default"):
+                        async for _turn in prompt:
+                            pass
+
+                    async def receive_messages(self):
+                        while not death.is_set():
+                            await asyncio.sleep(0.01)
+                        if shape == "an exception carrying exit_code":
+                            raise _Err(exit_code=-9)
+                        self._transport._process.returncode = -9
+                        if shape == "a codeless exception with the returncode set":
+                            raise _Err()
+                        return
+                        yield None   # noqa: the generator shape
+
+                    async def get_context_usage(self):
+                        return {"percentage": 1, "model": "m"}
+
+                    async def get_server_info(self):
+                        return {}
+
+                    async def interrupt(self):
+                        pass
+                d = tempfile.mkdtemp()
+                with self._fake_sdk(_Client):
+                    be = _backend(d)
+                    be.cli_scope = True
+                    s = self._session_for_amain(d, be)
+                    try:
+                        with mock.patch.object(sb, "_read_cgroup", lambda pid: "0::/user.slice/user@.service/app.slice/%s\n" % self.UNIT):
+                            s.start()
+                            self.assertTrue(s._connected.wait(timeout=10), "the connect never landed")
+                            self.assertIsNone(s._cli_exit_code, "the connect-time reset")
+                            death.set()
+                            s.thread.join(timeout=10)
+                        self.assertFalse(s.thread.is_alive(), "the stream's end ends the session thread (no reconnect armed)")
+                        self.assertEqual(s._cli_exit_code, -9, shape)
+                    finally:
+                        if s.thread.is_alive():
+                            s.shutdown()
+                            s.thread.join(timeout=10)
+                        shutil.rmtree(d, ignore_errors=True)
+
+    def test_amain_heals_a_midturn_sigkill_from_the_recorded_exit(self):
+        # the capture feeding the heal end to end (round 3, tests-1): the fake raises inflight to 1 before dying
+        # by SIGKILL (a turn in flight, as the OOM killer finds it), the show says the scope is already
+        # collected, and the heal names the death by the recorded -9 and queues the out-of-memory notice. Only
+        # the show's argv is dispatched to the fake systemctl; every other subprocess call is the real one.
+        from types import SimpleNamespace
+        death = threading.Event()
+        holder = {}
+
+        class _Err(Exception):
+            exit_code = -9
+
+        class _Client:
+            def __init__(self, options=None, transport=None):
+                self._transport = SimpleNamespace(_process=SimpleNamespace(pid=4242, returncode=None))
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def query(self, prompt, session_id="default"):
+                async for _turn in prompt:
+                    pass
+
+            async def receive_messages(self):
+                while not death.is_set():
+                    await asyncio.sleep(0.01)
+                s = holder["s"]
+                with s._lock:
+                    s.inflight = 1
+                raise _Err("the CLI ended")
+                yield None   # noqa: the generator shape
+
+            async def get_context_usage(self):
+                return {"percentage": 1, "model": "m"}
+
+            async def get_server_info(self):
+                return {}
+
+            async def interrupt(self):
+                pass
+        real_run = sb.subprocess.run
+        shows = []
+
+        def fake_run(argv, **kw):
+            if list(argv[:3]) == ["systemctl", "--user", "show"]:
+                shows.append(list(argv))
+                return mock.Mock(returncode=0, stdout=self._show(load="not-found", cgroup=""), stderr="")
+            return real_run(argv, **kw)
+        logs = []
+        d = tempfile.mkdtemp()
+        with self._fake_sdk(_Client):
+            be = _backend(d)
+            be.cli_scope = True
+            be._log_cb = logs.append
+            s = holder["s"] = self._session_for_amain(d, be)
+            try:
+                with mock.patch.object(sb, "_read_cgroup", lambda pid: "0::/user.slice/user@.service/app.slice/%s\n" % self.UNIT), \
+                     mock.patch.object(sb.subprocess, "run", fake_run), mock.patch.object(be, "_ensure") as ens:
+                    s.start()
+                    self.assertTrue(s._connected.wait(timeout=10), "the connect never landed")
+                    self.assertEqual(s.cli_scope_unit, self.UNIT)
+                    death.set()
+                    s.thread.join(timeout=10)
+                    self.assertFalse(s.thread.is_alive())
+                    self.assertEqual(s._cli_exit_code, -9)
+                    self.assertEqual(shows, [sb.SCOPE_SHOW_ARGV + [self.UNIT]], "one show, the dead CLI's exact unit")
+                    line = [m for m in logs if "died mid-turn" in m]
+                    self.assertEqual(len(line), 1, logs)
+                    self.assertIn("the OOM killer took a process in its scope %s (the CLI was killed by signal 9; the scope was "
+                                  "already collected, so its counter could not be read" % self.UNIT, line[0])
+                    self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
+                    ens.assert_called_once_with(self.SID)
+            finally:
+                if s.thread.is_alive():
+                    s.shutdown()
+                    s.thread.join(timeout=10)
+                shutil.rmtree(d, ignore_errors=True)
+
+    def test_amain_rebaselines_the_counter_at_the_feeders_raise(self):
+        # round 3 (tests-2): the per-turn baseline's wiring at the feeder's inflight 0->1 raise has an executing
+        # test: the connect reads 0, the scope's counter then reads 2 before a turn is fed, and the snapshot at
+        # the raise reads it, so the baselines go [0] -> [0, 2]. The wait is on the fake query having TAKEN the
+        # item (it arrives as an SDK user-message dict), never on inflight, which the snapshot races.
+        from types import SimpleNamespace
+        cgpath = "/user.slice/user@.service/app.slice/" + self.UNIT
+        root = tempfile.mkdtemp()
+        Path(root, cgpath.lstrip("/")).mkdir(parents=True)
+        events = Path(root, cgpath.lstrip("/"), "memory.events")
+        events.write_text(self.EVENTS(0))
+        fed = []
+
+        class _Client:
+            def __init__(self, options=None, transport=None):
+                self._transport = SimpleNamespace(_process=SimpleNamespace(pid=4242))
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def query(self, prompt, session_id="default"):
+                async for turn in prompt:
+                    fed.append(turn)
+
+            async def receive_messages(self):
+                await asyncio.Event().wait()
+                yield None
+
+            async def get_context_usage(self):
+                return {"percentage": 1, "model": "m"}
+
+            async def get_server_info(self):
+                return {}
+
+            async def interrupt(self):
+                pass
+        d = tempfile.mkdtemp()
+        with self._fake_sdk(_Client):
+            be = _backend(d)
+            be.cli_scope = True
+            s = self._session_for_amain(d, be)
+            baselines = []
+            orig = s._snapshot_oom_baseline
+
+            def counting():
+                orig()
+                baselines.append(s._oom_baseline)
+            s._snapshot_oom_baseline = counting   # an instance attribute: every caller reads it through self
+            try:
+                with mock.patch.object(sb, "_read_cgroup", lambda pid: "0::%s\n" % cgpath), mock.patch.object(sb, "CGROUP_ROOT", root):
+                    s.start()
+                    self.assertTrue(s._connected.wait(timeout=10), "the connect never landed")
+                    self.assertEqual(baselines, [0], "the connect-time baseline")
+                    events.write_text(self.EVENTS(2))   # a kill between turns (a tool shell's child the session outlived)
+                    s.enqueue("first turn")
+                    self.assertTrue(self._until(lambda: bool(fed)), "the fake query never took the item")
+                    self.assertEqual([f["message"]["content"][0]["text"] for f in fed], ["first turn"])
+                    self.assertEqual(baselines, [0, 2], "the feeder's 0->1 raise re-read the live counter before the yield")
+                    self.assertEqual(s._oom_baseline, 2)
+            finally:
+                s.shutdown()
+                if s.thread.ident is not None:
+                    s.thread.join(timeout=10)
+                shutil.rmtree(d, ignore_errors=True)
+
+    def test_a_reconnect_takes_no_baseline_from_the_old_scope(self):
+        # round 3 (correctness-3, regression-3): the loop top used to snapshot the counter before the new client
+        # existed, reading the OLD scope's memory.events, and the next connect's record discarded it. The connect
+        # snapshot covers the idle interval and the re-headed turn takes its own baseline at the feeder's raise,
+        # both on the NEW scope: after the first connect's read no snapshot reads the old scope's path, and the
+        # final baseline is the new scope's count
+        from types import SimpleNamespace
+        UNIT2 = "romp-session-11111111-4343-1700000000000001000.scope"
+        cg = "/user.slice/user@.service/app.slice/%s"
+        pids = iter([4242, 4343])
+
+        class _Client:
+            instances = []
+
+            def __init__(self, options=None, transport=None):
+                self._transport = SimpleNamespace(_process=SimpleNamespace(pid=next(pids)))
+                self.fed = []
+                type(self).instances.append(self)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def query(self, prompt, session_id="default"):
+                async for turn in prompt:
+                    self.fed.append(turn["message"]["content"][0]["text"])
+
+            async def receive_messages(self):
+                await asyncio.Event().wait()
+                yield None
+
+            async def get_context_usage(self):
+                return {"percentage": 1, "model": "m"}
+
+            async def get_server_info(self):
+                return {}
+
+            async def interrupt(self):
+                pass
+        root = tempfile.mkdtemp()
+        for u, n in ((self.UNIT, 5), (UNIT2, 0)):
+            Path(root, (cg % u).lstrip("/")).mkdir(parents=True)
+            Path(root, (cg % u).lstrip("/"), "memory.events").write_text(self.EVENTS(n))
+
+        def fake_cgroup(pid):
+            return "0::%s\n" % (cg % (self.UNIT if pid == 4242 else UNIT2))
+        d = tempfile.mkdtemp()
+        with self._fake_sdk(_Client):
+            be = _backend(d)
+            be.cli_scope = True
+            s = self._session_for_amain(d, be)
+            reads = []
+            orig = s._snapshot_oom_baseline
+
+            def recording():
+                orig()
+                reads.append((s.cli_scope_cgroup, s._oom_baseline))
+            s._snapshot_oom_baseline = recording
+            try:
+                with mock.patch.object(sb, "_read_cgroup", fake_cgroup), mock.patch.object(sb, "CGROUP_ROOT", root):
+                    s.start()
+                    self.assertTrue(s._connected.wait(timeout=10), "the first connect never landed")
+                    self.assertEqual(reads, [(cg % self.UNIT, 5)], "the connect-time baseline, on the first scope")
+                    # a settled hold (fed mid-turn, its turn ended, the CLI still held the text) meets a reconnect: the
+                    # loop top puts it back and _reconcile_stranded re-heads it (no conversation ever materialized), so
+                    # the new client feeds it as a fresh turn
+                    s._untaken = {"text": "carry on", "item": "carry on", "fresh": True, "settled": True,
+                                  "t": 0, "off": None, "fsid": None}
+                    s.loop.call_soon_threadsafe(lambda: (setattr(s, "_reconnect", True), s._wake_set()))
+                    self.assertTrue(self._until(lambda: len(_Client.instances) == 2 and _Client.instances[1].fed),
+                                    "the second connect and its re-headed feed never came")
+                    self.assertEqual(_Client.instances[1].fed, ["carry on"], "the re-headed text fed to the NEW client")
+                    self.assertEqual(s.cli_scope_unit, UNIT2)
+                    self.assertEqual(reads[0], (cg % self.UNIT, 5))
+                    self.assertEqual([r for r in reads[1:] if r[0] == cg % self.UNIT], [],
+                                     "no snapshot after the connect read the old scope's path (the loop-top read is gone)")
+                    self.assertEqual(reads[1:], [(cg % UNIT2, 0), (cg % UNIT2, 0)],
+                                     "the new connect's baseline, then the feeder's raise for the re-headed turn")
+                    self.assertEqual(s._oom_baseline, 0, "the new scope's count")
+            finally:
+                s.shutdown()
+                if s.thread.ident is not None:
+                    s.thread.join(timeout=10)
+                shutil.rmtree(d, ignore_errors=True)
+
+
     def test_with_the_scopes_off_nothing_is_asked(self):
         # no scope was started for the CLI (the test floor, macOS, ROMP_CLI_SCOPE=0): no systemctl at all, even
         # with a unit on the session

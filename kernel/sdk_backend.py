@@ -5346,7 +5346,13 @@ class SdkSession:
         A text whose hold was SETTLED when the client went (fed mid-turn, its turn ended, the CLI still
         held it for the drain) is in neither counter (the settle zeroed both), so the loop top puts it
         back into `_inflight_texts` before calling here (2026-09-08): it takes the same two branches
-        as any stranded turn, never a silent drop."""
+        as any stranded turn, never a silent drop.
+
+        The OOM baseline (SdkSession._oom_baseline) is not touched here or at the loop top: the connect
+        snapshot (_record_cli_scope) covers the idle interval on the new client, and a turn that starts on
+        it, re-headed from here or fed fresh, takes its own baseline at the feeder's 0->1 raise. A read at
+        the loop top saw the OLD scope's counter (the new client does not exist yet) and was discarded by
+        the next connect's record (round 3, 2026-09-10)."""
         if not self.inflight:
             return
         stranded = list(self._inflight_texts)      # fed to the abandoned client, never resulted
@@ -5989,7 +5995,6 @@ class SdkSession:
                 with self._lock:
                     self._inflight_texts.append(u.get("item", u["text"]))
                     self.inflight = max(self.inflight, 1)
-                self._snapshot_oom_baseline()   # the re-headed turn runs on the new client (inflight 0->1)
             # the abandoned client's live subagents and background tasks died with it — retire them on
             # the teardown event itself (and tell the session what it lost, as a CLI death does)
             self._drop_live_work("reconnect")
