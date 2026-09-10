@@ -1198,6 +1198,25 @@ export function partitionPending(hunks: Hunk[], seen: ReadonlySet<string> | null
   return out;
 }
 
+/** The person's open comments the session has answered (decision 46, 2026-09-10; the about follow-on): unresolved, the
+ *  person's own (YOU, by decision 6), with a turn by another author after the person's last turn on the comment, the
+ *  comment's own words or their latest reply. A revision (a turn of kind rev, the session's track-edit) counts as an
+ *  answer; the person's own reply after the session's does not leave the comment answered. Oldest first, as the cards
+ *  come. Read off the cards when the header action is pressed, never kept: a status is the one source. */
+export function answeredComments(cards: Card[]): Card[] {
+  return cards.filter((c) => {
+    if (c.resolved || c.author !== YOU) return false;
+    let answered = false;
+    for (const r of c.replies) answered = r.author !== YOU;   // ts order: the last turn's author decides
+    return answered;
+  });
+}
+/** The header action's words and the confirm's one line (decision 46). */
+export function resolveAnsweredLabel(n: number): string { return "Resolve answered (" + n + ")"; }
+export function resolveAnsweredAsk(n: number): string { return "Resolve the " + plural(n, "comment", "comments") + " the session has answered?"; }
+/** The acknowledgment after the resolve, in the sent acknowledgment's position. */
+export function resolvedWords(n: number): string { return "Resolved " + plural(n, "comment", "comments"); }
+
 /** The saved line's words (file-comments.ts savedLine; decision 43, 2026-09-09): a save never moves the view, and when the
  *  card it landed in is out of view the line at the panel's foot says which side of the box it is on — the side the
  *  panel read from the card's place (cardWhere). */

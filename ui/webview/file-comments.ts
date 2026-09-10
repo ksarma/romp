@@ -83,7 +83,7 @@ import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map
 import {
   type Status, type Hunk, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, unsentCount, cardCounts, filterOffered, detachedChanges,
-  commentsAbout, aboutOptionLabel, aboutTagWords, refStateWords, changeRef,
+  commentsAbout, aboutOptionLabel, aboutTagWords, refStateWords, changeRef, answeredComments, resolveAnsweredLabel, resolveAnsweredAsk, resolvedWords,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, figureTargets, figuresMoved, figureBaseline, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
   pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
@@ -1155,6 +1155,9 @@ class Panel {
   // markNew) until seen; `newKeys` is the set of card keys the current render marks. The set lives with the panel, so a
   // Raw/Rendered switch, a reload, a close and reopen of the aside keep it; a new file is a new panel.
   lit = new Set<string>();                    // the change ids whose marks a comment's tag lit under the pointer (lightChanges)
+  resolveAnsweredConfirm = false;             // the header action's confirm row is showing (decision 46)
+  resolvingAnswered = false;                  // the resolves are out, one after the other (resolveAnswered)
+  reopenAll: string[] | null = null;          // the comments the last Resolve answered resolved, offered back as Reopen all until the next gesture
   seenKeys: Set<string> | null = null;
   // the texts of every SEEN pending change, by its entry key, as they read when it was marked seen (the seeds above, a
   // gesture, the person's own write: recordSeen, recordPending). The key is the change's id, and the id is stable while the
@@ -1344,6 +1347,12 @@ class Panel {
         fcreply: (x, ev) => { ev.stopPropagation(); this.startReply(x.dataset.id!); },
         fcresolve: (x, ev) => { ev.stopPropagation(); void this.mutate("resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }, "card:" + x.dataset.id!); },
         fcresolved: () => { this.resolvedOpen = !this.resolvedOpen; this.render(); },
+        // Resolve answered (decision 46): the header action asks in one line, resolves the person's answered comments one
+        // request each, and offers them back as Reopen all in the acknowledgment's position until the next gesture
+        fcresolveanswered: () => { this.resolveAnsweredConfirm = true; this.render(); },
+        fcresolveansweredcancel: () => { this.resolveAnsweredConfirm = false; this.render(); },
+        fcresolveanswereddo: () => { void this.resolveAnswered(); },
+        fcreopenall: () => { void this.reopenAnswered(); },
         // the changes (Slice 2): a decision per card, both at once in the footer, a reply bound to the change, the fold
         fcaccept: (x, ev) => { ev.stopPropagation(); void this.mutate("accept", { ids: [x.dataset.id!] }, "change:" + x.dataset.id!); },
         fcreject: (x, ev) => { ev.stopPropagation(); void this.mutate("reject", { ids: [x.dataset.id!] }, "change:" + x.dataset.id!); },
@@ -2745,6 +2754,10 @@ class Panel {
     const on = (act: string): boolean => !!t && typeof t.closest === "function" && !!t.closest('[data-act="' + act + '"]') && (!ev || ev.type !== "wheel");
     const over = this.savedOut !== null && !on("fcsavedgo");   // the saved line is over at a gesture — not at a press on the line itself, whose click shows the card
     if (over) this.savedOut = null;
+    // the Reopen all offer (decision 46) ends the same way: at a gesture, a press on the offer itself excepted (its click is what
+    // it is for); the confirm's own buttons are the gesture that makes the offer, and the offer is set after their click
+    const undo = this.reopenAll !== null && !on("fcreopenall");
+    if (undo) this.reopenAll = null;
     // the key that sends is the send's own press (the fields' comment, sendPress): Enter or Space on the confirm's Send, the
     // chord in its note box (noteKey). It marks what is on screen seen like any gesture, and the confirm's option and count
     // row stay as the person read them (syncAcceptOption): the send that follows accepts what they say, and redraws the panel.
@@ -2761,7 +2774,7 @@ class Panel {
     if (press) this.sendPress = true;
     try {
       if (keys.size) this.reflectSeen(keys);
-      else if (over) this.reflect();
+      else if (over || undo) this.reflect();
     } finally { this.sendPress = was; }
   }
   /** Whether an entry's card is on screen: in the margin layout, its placed top inside the track's box (the head, where
@@ -2816,6 +2829,10 @@ class Panel {
     if (b) { if (!this.arrivals.size) b.remove(); else b.textContent = this.arrivalText(); }
     const cb = this.root?.querySelector('input[data-opt="accept"]') as HTMLInputElement | null;
     if (cb && this.status) this.syncAcceptOption(cb, this.status);
+    // the Reopen all offer ended at a gesture (decision 46): its line leaves in place, and the sent acknowledgment it stood in
+    // for comes back where it was (the render puts the same back)
+    const offer = this.root?.querySelector(".fc-reopen") as HTMLElement | null;
+    if (offer && this.reopenAll === null) { if (this.sentNote) offer.parentNode?.insertBefore(el("div", "fc-note fc-sent", this.sentNote), offer); offer.remove(); }
     const line = this.root?.querySelector('[data-act="fcsavedgo"]') as HTMLElement | null;
     if (this.savedOut) {
       const side = this.cardWhere(this.savedOut.key);
@@ -4114,6 +4131,36 @@ class Panel {
    *  and the ids are the ones the confirm showed, pendingSplit), then fileCommentsSend with `tracked` set to the
    *  post-toggle verdict and `accepted` = what the log says is unsent plus the N the accept's reply lists as decided;
    *  a refusal at any step aborts before the send. The comments are already on disk, so a refusal loses nothing. */
+  /** Resolve answered (decision 46): the person's open comments the session has answered, read off the cards at the press
+   *  (answeredComments: the status is the one source, and nothing is kept between the button and the click), resolved
+   *  through the host's resolve op one request each, in the cards' order; a refusal stands under that comment's card as
+   *  the card's own Resolve's would (mutate's row) and the rest go on. The ones resolved are offered back as Reopen all
+   *  in the acknowledgment's position until the person's next gesture (reopenAll; gesture ends it). */
+  async resolveAnswered(): Promise<void> {
+    if (this.resolvingAnswered) return;
+    const ids = answeredComments(this.cards()).map((c) => c.id);
+    this.resolveAnsweredConfirm = false;
+    if (!ids.length) { this.render(); return; }
+    this.resolvingAnswered = true; this.reopenAll = null; this.render();
+    const done: string[] = [];
+    try {
+      for (const id of ids) {
+        const r = await this.mutate("resolve", { commentId: id, on: true }, "card:" + id);
+        if (r) done.push(id);
+      }
+    } finally {
+      this.resolvingAnswered = false;
+      this.reopenAll = done.length ? done : null;
+      this.render();
+    }
+  }
+  /** Reopen all: the same comments back, one request each, the offer taken. */
+  async reopenAnswered(): Promise<void> {
+    const ids = this.reopenAll;
+    this.reopenAll = null;
+    this.render();
+    for (const id of ids || []) await this.mutate("resolve", { commentId: id, on: false }, "card:" + id);
+  }
   async doSend(): Promise<void> {
     const s = this.status;
     if (!s || this.statusRefusal || this.sending || !this.ctx.sid) return;   // statusRefusal: renderSend says why
@@ -4504,6 +4551,15 @@ class Panel {
       row.appendChild(i);
     }
     row.appendChild(btn("Comment on this file", "fcfile"));
+    // Resolve answered (decision 46): while the session has answered open comments of the person's, one action in the head
+    // row resolves them all; at zero it is not offered (progressive disclosure), since there is nothing for it to do
+    const answered = s ? answeredComments(this.cards()) : [];
+    if (answered.length || this.resolvingAnswered) {
+      const ra = btn(this.resolvingAnswered ? "Resolving…" : resolveAnsweredLabel(answered.length), "fcresolveanswered");
+      ra.disabled = this.resolvingAnswered;             // posts-and-waits: disabled and relabeled for the round trips (ui/CLAUDE.md)
+      ra.title = "Resolve the " + answered.length + " comment" + (answered.length === 1 ? "" : "s") + " of yours the session has answered; a comment stays open until you resolve it";
+      row.appendChild(ra);
+    }
     head.appendChild(row);
     // the filter (the filter follow-on, 2026-09-07): All · Comments N · Changes M, one group of the toggles' buttons on its own
     // row under them, the chosen one filled — offered once the file has a card to filter (filterOffered), and never before:
@@ -4561,6 +4617,14 @@ class Panel {
       pick.appendChild(f);
       pick.appendChild(btn("Cancel", "fctrackcancel"));
       underToggles(pick);
+    }
+    if (this.resolveAnsweredConfirm && s && answered.length) {
+      // the confirm, under the toggles' row like the Track choice: one plain line, Resolve, Cancel
+      const ask = el("div", "fc-row fc-choice");
+      ask.appendChild(el("span", "fc-note", resolveAnsweredAsk(answered.length)));
+      ask.appendChild(btn("Resolve", "fcresolveanswereddo"));
+      ask.appendChild(btn("Cancel", "fcresolveansweredcancel"));
+      underToggles(ask);
     }
     if (this.trackStop && s?.trackedBy) {
       const stop = el("div", "fc-row fc-choice");
@@ -5274,7 +5338,16 @@ class Panel {
     }
     const saved = this.savedLine();                    // the card a save landed in, out of view: which side it is on (decision 43), in the acknowledgment's position — the margin layout's; the list layout's stands under the header (renderHead, savedLineHead)
     if (saved) box.appendChild(saved);
-    if (this.sentNote) box.appendChild(el("div", "fc-note fc-sent", this.sentNote));
+    // the Reopen all offer (decision 46) stands in the acknowledgment's position, in its dress, until the next gesture; the
+    // sent acknowledgment it stands in for comes back when it ends (reflectLines, or this render)
+    if (this.reopenAll !== null) {
+      const line = el("div", "fc-note fc-sent fc-reopen");
+      line.appendChild(el("span", "fc-note", resolvedWords(this.reopenAll.length)));
+      const b = btn("Reopen all", "fcreopenall", "fc-note fc-sent fc-saved");
+      b.title = "Reopen the " + (this.reopenAll.length === 1 ? "comment" : this.reopenAll.length + " comments") + " just resolved";
+      line.appendChild(b);
+      box.appendChild(line);
+    } else if (this.sentNote) box.appendChild(el("div", "fc-note fc-sent", this.sentNote));
     for (const x of [this.loader("send"), this.errRow("send")]) if (x) box.appendChild(x);
     return box;
   }

@@ -883,7 +883,7 @@ test("pins: the delegate action, the header's order, the paint guards, the store
   assert.match(SRC, /activeFilter\(\): CommentsFilter \{\n\s+return filterOffered\(this\.status\) \? this\.filter : "all";/, "the kept choice governs only while there is a card to filter");
   const head = SRC.slice(SRC.indexOf("private renderHead("), SRC.indexOf("private renderComposer("));
   const pos = (s: string) => { const i = head.indexOf(s); assert.ok(i >= 0, s); return i; };
-  assert.ok(pos('row.appendChild(btn("Comment on this file", "fcfile"));\n    head.appendChild(row);') < pos("if (filterOffered(s)) {"), "the filter's row comes after the toggles' row");
+  assert.ok(pos('row.appendChild(btn("Comment on this file", "fcfile"));') < pos("head.appendChild(row);") && pos("head.appendChild(row);") < pos("if (filterOffered(s)) {"), "the filter's row comes after the toggles' row (which carries Resolve answered after Comment on this file since decision 46)");
   assert.ok(pos('const seg = el("div", "fc-row fc-filter");') < pos("head.appendChild(seg);") && pos("head.appendChild(seg);") < pos("if (this.trackChoice && s) {"), "…and, in the SOURCE, before the track-scope rows: the DOM puts those rows above it (underToggles inserts them before the filter's row; the review suite drives that order)");
 
   assert.match(head, /\["all", "All", [^\]]+\],\n\s+\["comments", "Comments " \+ n\.comments, [^\]]+\],\n\s+\["changes", "Changes " \+ n\.changes, [^\]]+\],/, "All · Comments N · Changes M, in that order, counted from cardCounts");
