@@ -315,11 +315,13 @@ class ErrorCenterWiring(unittest.TestCase):
         # every kind's toggle AND entry chip explains itself (not just show/hide)
         self.assertIn("var DESC={conn:", html)
         self.assertIn("b.title='Show or hide these entries. '+KINDLBL[k]+': '+DESC[k]", html)
-        # the undelivered kind's description covers the whole kind, the five causes the kind files, in the order
-        # the by-name miss path reads them: no session by that id, a record that would not read, a live session
-        # list the tmux probe did not answer for, a comment threads' store that would not read while a session
-        # name was resolved (the WS by-name door's refusal, round 7's addition, which the round-7 text missed),
-        # a goals file that could not be read or written, with the dialog that announced the entry saying which.
+        # the undelivered kind's description covers the whole kind, the five causes the kind files, as the text
+        # lists them: no session by that id, a record that would not read, a live session list the tmux probe did
+        # not answer for, a comment threads' store that would not read while a session name was resolved (the WS
+        # by-name door's refusal, round 7's addition, which the round-7 text missed), a goals file that could not
+        # be read or written, with the dialog that announced the entry saying which. The order is the text's own,
+        # not a code path's: the by-name miss path (_named_miss) reads the failed scan before the torn record, and
+        # the first and the last cause are not on that path at all (round 9).
         # The on-disk row: a typed message is kept verbatim, and a refused reply, interrupt, end or compact (the
         # drive gate's refusals of the ops that carry no text; a compact by name carries its session's name as
         # the target, never as text) files a row with no text; only the goals-file gesture refusals (clear, drop,
