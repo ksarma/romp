@@ -582,6 +582,8 @@ class FakeEl {
     return { left: 0, top: 0, right: 120, bottom: 20, width: 120, height: 20 };
   }
   get isConnected(): boolean { let n: FakeEl | null = this; while (n) { if (n.tag === "body") return true; n = n.parent; } return false; }
+  /** whether n is this node or one of its descendants (round 9): the window's scroll listener reads ctxMenuEl.contains(e.target) */
+  contains(n: unknown): boolean { let c = n instanceof FakeEl ? n : null; while (c) { if (c === this) return true; c = c.parent; } return false; }
   querySelector(): FakeEl | null { return null; }
   /** the page's focus, as the prelude's document.activeElement reads it (round 5: the focus carry is executed, not source-pinned) */
   static focused: FakeEl | null = null;
@@ -639,7 +641,13 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
   const notifier = RENDER.match(/\nfunction viewsChanged\(\) \{ tabMenuViewsHook\(\); \}\n/);
   const media = RENDER.match(/const PHONE_LAYOUT_MEDIA = "([^"]+)";/);
   assert.ok(la > 0 && lb > la && notifier && media, "the listeners', the notifier's or the media rule's anchor moved; re-anchor this lift");
-  const js = requireCjs("esbuild").transformSync(RENDER.slice(a, b) + RENDER.slice(la, lb) + notifier![0], { loader: "ts" }).code;
+  // THE MENU'S WINDOW LISTENERS ARE REAL TOO (round 9): the outside mousedown, Escape, the picker's two, the scroll and the blur, the block
+  // the browser probe slices, evaluated against the harness window, so a test that fires a scroll event drives render.ts's own exemption
+  // for the menu's own scroll (round 8 executed it in the browser leg alone, which skips where no browser is installed, CI included)
+  const wa = RENDER.indexOf('window.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target as Node)) dismissTabMenu(); }, true);');
+  const wb = RENDER.indexOf("\n", RENDER.indexOf('window.addEventListener("blur", () => dismissTabMenu());', wa)) + 1;
+  assert.ok(wa > 0 && wb > wa, "the menu's window listeners moved; re-anchor this lift");
+  const js = requireCjs("esbuild").transformSync(RENDER.slice(a, b) + RENDER.slice(la, lb) + notifier![0] + RENDER.slice(wa, wb), { loader: "ts" }).code;
   // the page as showTabMenu reads it: the maps and helpers named as render.ts names them
   const prelude = `
     const H = HOOKS;
@@ -651,6 +659,8 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
     const paletteColors = [];
     const dismissTabMenu = () => { H.dismissed++; ctxMenuEl?.remove(); ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; };   // as render.ts's (pinned in the menu door test): the menu leaves the page, the input and the views hook are cleared (round 5: a stub that left the menu on the page let C4 read a re-dress the page had discarded)
     const closeEmojiPrompt = () => {};
+    let emojiPrompt = null;   // the picker's listeners read it (never open here; round 9 lifts the menu's window listeners)
+    const Node = FakeEl;   // the scroll listener's instanceof check: a fake element is an element (round 9)
     const setSessionFlag = (id, k, v) => { H.flags.push([id, k, v]); };
     const setSessionColor = () => {}, startTabRename = () => {}, showMovePrompt = () => {}, showEmojiPrompt = () => {};
     const billingSubText = () => "";
@@ -889,6 +899,9 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.equal(MENU.split("carried(").length - 1, 2, "two carried cues, the Move to and + <name> rows' (other) and the pin row's (pin)");
   assert.match(MENU, /const h = homeNow\(\); if \(!h \|\| !sameSection\(sectionRef\(h\), sec\)\) \{ refuse\("pin", sec, sb2\.textContent \?\? ""\); return; \} writeTabGroupsPruned\(setPinned\(tabGroups\(\), sectionRef\(h\), id, !on\)\); build\(\);/, "the pin row's section is the copy's home at the click, and it must be the row's, Move to's rule (round 9; G2 executes the re-home, the two-holder re-home and the same-named tag under a new id; round 7 guarded on the row's union alone, so a copy re-homed under the press while its home's tag stood wrote a pin the prune dropped, with no cue)");
   assert.doesNotMatch(MENU, /liveUnion\(sec\)/, "the pin row no longer resolves its union by the ref (a home guard that then wrote the live union's ref still wrote a pruned pin in the renamed-away-plus-same-name corner)");
+  // round 8: THE MENU LEAVES WHEN THE PAGE MOVES UNDER IT AND NOT WHEN IT SCROLLS WITHIN ITSELF (THE MENU'S OWN SCROLL executes it over
+  // the harness window since round 9; the browser leg drives it with a real wheel where a browser is installed)
+  assert.match(RENDER, /\nwindow\.addEventListener\("scroll", \(e\) => \{ if \(ctxMenuEl && e\.target instanceof Node && ctxMenuEl\.contains\(e\.target\)\) return; dismissTabMenu\(\); \}, true\);\n/, "a scroll whose target the menu contains is the menu's own and is left alone; every other scroll dismisses");
   // round 3: THE MENU'S SEAT. One seat for the menu (the cursor's corner clamped inside the pane; the emoji picker's anchor follows),
   // re-run from the menu's own corner by the row's refresh, and the open flyout re-placed after it; the seat runs once the menu is on
   // the page (the lift's anchor)
@@ -2278,6 +2291,38 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
     assert.deepEqual(joinRows(fly), ["Move to archived"], "the rows follow: Move to archived, no + infra");
     assert.deepEqual(cued(fly), []);
     await tick();
+  });
+});
+
+test("executed: THE MENU'S OWN SCROLL LEAVES IT STANDING (menu review rounds 8 and 9). The window's capture scroll listener, lifted from render.ts onto the harness window, dismisses the menu when the page moves under it and not when the Tags flyout scrolls within itself: a scroll whose target is the flyout, a row in it or the menu is left alone; a scroll in another box dismisses, and so does one whose target is no element or missing", () => {
+  // Round 7 capped the flyout and made it a scroll container; the listener then saw the flyout's own scroll and closed the menu on the
+  // first wheel tick (and on the click that opened it, while the New tag input's focus scrolled the box; round 9 focuses without a
+  // scroll). Round 8's exemption was executed by the browser leg alone, which skips where no browser is installed (CI): this drives
+  // render.ts's own listener over the harness window, so a listener reverted to a bare dismissal fails here on the first scroll
+  const hooks = menuHooks();
+  withStore(() => {
+    const api = liftShowTabMenu()(hooks);
+    const win = hooks.window!;
+    assert.equal(win.count("scroll"), 1, "render.ts's one scroll listener is on the harness window");
+    const menu = api.open("api", "infra");
+    const fly = flyOf(menu);
+    const d0 = hooks.dismissed;
+    win.fire("scroll", { target: fly });
+    assert.deepEqual([hooks.dismissed, menu.isConnected], [d0, true], "the flyout's own scroll (a wheel over it): the menu stands");
+    win.fire("scroll", { target: fly.children.find((r) => r.has("ctx-item-pin"))! });
+    assert.deepEqual([hooks.dismissed, menu.isConnected], [d0, true], "a scroll whose target is a row inside the flyout (a click's scroll into view): the menu stands");
+    win.fire("scroll", { target: menu });
+    assert.deepEqual([hooks.dismissed, menu.isConnected], [d0, true], "the menu node itself as the target: contained");
+    win.fire("scroll", { target: new FakeEl("div", "elsewhere") });
+    assert.deepEqual([hooks.dismissed, menu.isConnected], [d0 + 1, false], "a scroll in a box outside the menu dismisses, as before the exemption");
+    const menu2 = api.open("api", "infra");
+    const d1 = hooks.dismissed;
+    win.fire("scroll", { target: {} });
+    assert.deepEqual([hooks.dismissed, menu2.isConnected], [d1 + 1, false], "the document's scroll (a target that is no element) dismisses");
+    const menu3 = api.open("api", "infra");
+    const d2 = hooks.dismissed;
+    win.fire("scroll", {});
+    assert.deepEqual([hooks.dismissed, menu3.isConnected], [d2 + 1, false], "and so does a scroll event with no target");
   });
 });
 
