@@ -2540,9 +2540,10 @@ class Panel {
    *  rule, kept here as a map so an arrival's order and its entry survive); the person's own writes join the seen set
    *  outright; an arrival the status no longer holds (a change decided, a comment gone) is no arrival. An arrival still
    *  standing takes the status's entry for it, in its place in the order: a change keeps its key when the sidecar's rebase
-   *  detaches it (store.detached) or re-attaches it as a hunk, and the entry's `pending` says which it is now, so the
-   *  accept option counts the arrived changes the accept will touch, not the ones it found pending at first sight (the
-   *  review, 2026-09-09). A SEEN pending change whose texts are not the ones the person saw (seenTexts, grownSince: a
+   *  detaches it (store.detached) or re-attaches it as a hunk, and the entry's `pending` says which it is now: the line
+   *  under the header counts it as a change either way, and the texts check below reads a pending one alone (the review,
+   *  2026-09-09; before decision 41 the accept option's own arrivals count read this flag, and that count went to the seen
+   *  split, partitionPending). A SEEN pending change whose texts are not the ones the person saw (seenTexts, grownSince: a
    *  same-author track-edit coalesced into it under the same id) is unseen again — out of the set, filed as an arrival
    *  like a new change, unless it is the person's own — and a seen pending change with no record yet (seen while detached,
    *  re-attached since) is recorded as it stands. Nothing until the first render seeded the set (render), and the first

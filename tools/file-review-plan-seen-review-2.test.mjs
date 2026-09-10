@@ -26,6 +26,8 @@ const panel = read('ui', 'webview', 'file-comments.ts');
 const model = read('ui', 'webview', 'file-comments-model.ts');
 const guide = read('docs', 'guide.md');
 const seenFixes = read('ui', 'webview', 'file-comments-seen-fixes.test.ts');
+const modelSeen = read('ui', 'webview', 'file-comments-model-seen.test.ts');
+const sendSeen = read('ui', 'webview', 'file-comments-send-seen.test.ts');
 
 // The text between two markers with hard wraps collapsed, so an assertion survives a rewrap; the markers are matched on
 // the collapsed text too, since a sentence can wrap anywhere.
@@ -87,11 +89,20 @@ test('a seen change is one whose CARD was on screen: the Send paragraph, decisio
   assert.ok(!/ownMarks|fc-mark|fc-ins|fc-del|markTop|dataset\.act/.test(shown), 'no mark path');
   const gesture = body(panel, 'gesture(ev?: Event): void {');
   assert.ok(gesture.includes('if (!this.entryShown(e)) continue;') && gesture.includes('this.seenKeys?.add(k);'), 'the gesture admits an arrival to the seen set through entryShown alone');
+  // the model's docstring and the two seen test modules' headers said "card or mark" after the plan and the guide had dropped it
+  // (the review's consolidation, 2026-09-09): the same rule, in every account of it
+  for (const [name, text] of [['file-comments-model.ts', model], ['file-comments-model-seen.test.ts', modelSeen], ['file-comments-send-seen.test.ts', sendSeen]]) {
+    assert.ok(!text.includes('card or mark'), name + ' promises no mark path');
+  }
+  assert.ok(model.includes('a change whose card was on screen at\n *  one of the person\'s gestures (the card alone, as the panel\'s entryShown reads it'), 'partitionPending\'s docstring says the card alone');
 });
 
 test('the unseen pending changes are among the arrivals the line counts, not that count: a detached arrival is in the line\'s count and never in the split', () => {
   assert.ok(seen.includes('every unseen pending change is among the arrivals the line under the header counts (that line\'s changes count takes in a detached arrival too, which `statusEntries` files as a change with pending off and the split, over the status\'s hunks, never sees, so the two numbers agree only while no detached change has arrived)'));
   assert.ok(!FLAT.includes('are the arrivals line\'s count'), 'the equality is not claimed');
+  // nor by the model's docstring or the model-seen module's title (the review's consolidation, 2026-09-09)
+  assert.ok(!model.includes('the same K the arrivals line counts') && !modelSeen.includes('are the arrivals line\'s count'), 'neither the model nor its tests claim the equality');
+  assert.ok(flat(model.replace(/^\s*\* ?/gm, '')).includes('so the two numbers agree only while no detached change has arrived'), 'acceptOptionLabel\'s docstring carries the caveat (the docblock\'s continuation markers stripped before the wrap is collapsed)');
   const entries = body(model, 'export function statusEntries(');
   assert.ok(entries.includes('for (const d of detachedChanges(store)) {') && entries.includes('kind: "change", author: d.author, authorId: d.authorId, subject: "chg:" + d.id, pending: false });'), 'a detached change is a change entry with pending off');
   assert.ok(body(model, 'export function arrivalWords(').includes('counts[e.kind]++;'), 'the line counts every change entry');

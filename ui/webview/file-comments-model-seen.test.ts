@@ -1,6 +1,6 @@
 // The seen-only accept's pure half (plans/file-review.md, decision 41 and "The seen follow-on (2026-09-09)" under Slice 2;
 // file-comments-model.ts partitionPending, acceptOptionLabel). The Send confirm's accept option used to accept every pending
-// change; it now accepts the ones the person has SEEN — a change whose card or mark was on screen at one of their gestures,
+// change; it now accepts the ones the person has SEEN — a change whose card was on screen at one of their gestures,
 // the arrivals follow-on's rule — and leaves the unseen ones pending. The model splits a status's pending changes against the
 // panel's seen set and gives the option its words; the panel's use of both, over the stand-in, is
 // file-comments-send-seen.test.ts. Synthetic fixtures only: placeholder ids, the session names "api" and "web".
@@ -53,7 +53,7 @@ test("acceptOptionLabel takes two counts: an accept resolves no comment (decisio
   for (const [seen, unseen] of [[2, 0], [2, 1], [0, 3]] as Array<[number, number]>) assert.ok(!acceptOptionLabel(seen, unseen).includes("resolves"));
 });
 
-test("the option never says 'arrived since you last looked': the unseen pending changes are the arrivals line's count, said once there", () => {
+test("the option never says 'arrived since you last looked': the unseen pending changes are among the arrivals the line under the header counts, said once there", () => {
   for (const [s, u] of [[2, 1], [0, 2], [1, 1], [3, 0]] as Array<[number, number]>) assert.ok(!acceptOptionLabel(s, u).includes("arrived"), acceptOptionLabel(s, u));
 });
 

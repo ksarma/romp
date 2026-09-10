@@ -1087,8 +1087,9 @@ export function arrivalWords(arrivals: Entry[], nameOf: (author: string, authorI
 }
 
 /** The pending changes split by whether the person has seen them (decision 41: the Send's accept takes the seen ones only).
- *  Seen is the panel's set of entry keys (statusEntries' "chg:" + id for a change): a change whose card or mark was on
- *  screen at one of the person's gestures, or that the panel's first status held, or that the person wrote. A null set is
+ *  Seen is the panel's set of entry keys (statusEntries' "chg:" + id for a change): a change whose card was on screen at
+ *  one of the person's gestures (the card alone, as the panel's entryShown reads it: a mark in the text with its card out of
+ *  the box marks nothing seen), or that the panel's first status held, or that the person wrote. A null set is
  *  a panel that has not rendered a status yet, and then nothing counts as seen: the accept would take changes nobody has
  *  looked at, the thing the rule exists to stop. The order within each side is the hunks' own. */
 export function partitionPending(hunks: Hunk[], seen: ReadonlySet<string> | null): { seen: Hunk[]; unseen: Hunk[] } {
@@ -1105,7 +1106,9 @@ export function savedWhereWords(side: "above" | "below"): string {
 }
 /** The Send confirm's accept option (decision 41): "accept the N pending changes you have seen", and in one parenthesis
  *  after it "K unseen stay pending" when `unseen` pending changes have not been on screen at a gesture of the person's yet
- *  (the same K the arrivals line counts as changes since they last looked, so it is not said twice here). With NO seen
+ *  (every unseen pending change is among the arrivals the line under the header counts, so that count is not said again
+ *  here; a detached arrival is in the line's count and never in the split, so the two numbers agree only while no detached
+ *  change has arrived). With NO seen
  *  change the option has nothing to accept: "accept the pending changes you have seen (all K pending changes are unseen;
  *  nothing is accepted until you look)" — the panel shows that box unchecked and disabled. The default of a box that can
  *  be checked is decision 8's and is not this function's. An accept resolves no comment (decision 42; before it, the

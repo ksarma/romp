@@ -2,7 +2,7 @@
 // the review stand-in file-comments-arrivals.test.ts drives (copied here, as the sibling modules copy it). The Send confirm's
 // accept option accepted every pending change, seen or not; the arrivals follow-on named the ones the person had not seen,
 // and the user's ruling of the same day keeps the box but never accepts an unseen change. Built: the confirm's option names
-// the pending changes the person has SEEN (a change whose card or mark was on screen at one of their gestures, or that the
+// the pending changes the person has SEEN (a change whose card was on screen at one of their gestures, or that the
 // panel's first status held) and the unseen ones it leaves pending; the send accepts the seen ones BY ID through the same
 // accept the card's button uses, never an accept-all; with nothing seen the box is unchecked and disabled and the send
 // accepts nothing; the count in the message is the accept reply's; a change seen by a gesture while the confirm is up moves
