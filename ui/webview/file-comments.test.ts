@@ -439,11 +439,12 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
 
 test("the card model: one card per comment from store + hunks, oldest first, kinds and refs; no card model crosses the wire", () => {
   const cards = cardModel(status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage, bound, replied, whole] }, hunks: [hunk] }).store, [hunk]);
-  assert.deepEqual(cards.map((c) => c.kind), ["passage", "passage", "change", "file"]);
+  assert.deepEqual(cards.map((c) => c.kind), ["passage", "passage", "file", "file"], "a comment naming a change with no passage is kind file with refs (the about follow-on: no kind change)");
   assert.deepEqual(cards.map((c) => c.id), [replied.id, passage.id, bound.id, whole.id]);
   assert.equal(cards[0].replies.length, 2); assert.equal(cards[0].replies[0].authorId, SID);
   assert.equal(cards[1].ref, "shipping the cache in v1.2");
-  assert.equal(cards[2].ref, "reduced → cut"); assert.equal(cards[2].hunk?.id, "h1");
+  assert.equal(cards[2].ref, "reduced → cut"); assert.deepEqual(cards[2].refs.map((r) => [r.id, r.state]), [["h1", "pending"]]);
+  assert.deepEqual(cards[3].refs, []);
   assert.equal(cards[3].ref, "this file"); assert.equal(cards[3].anchor, null);
   assert.deepEqual(cardModel(null, []), []);
   assert.doesNotMatch(SRC, /\.cards\b\s*[:=]/, "the panel derives cards from store + hunks in the reply, never a `cards` field");
