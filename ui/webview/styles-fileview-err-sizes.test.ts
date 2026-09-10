@@ -164,10 +164,10 @@ const ASIDE = ROOT + " > div.fileview-main > div.fc-panel.fileview-aside";
 const HEAD = ASIDE + " > div.fc-sec-head > div.fc-head";
 const COMPOSER = ASIDE + " > div.fc-composer";
 const CARD = ASIDE + " > div.fc-sec-cards > div.fc-cards > div.fc-card";
-// a reply's box stands in the card it answers, or in a hosted comment's box on a change card (placeComposer; the reply
-// follow-on, 2026-09-07): the composer's buttons at a third depth, under the card's own rules
+// a reply's box stands in the card it answers (placeComposer; the reply follow-on, 2026-09-07): the composer's buttons at a
+// third depth, under the card's own rules (before the about follow-on, 2026-09-10, a comment drawn inside a change card,
+// .fc-hosted, held the box a level deeper; the element is gone with the hosted rendering, so no chain goes through it)
 const IN_CARD = CARD + " > div.fc-composer.fc-composer-in";
-const IN_HOSTED = ASIDE + " > div.fc-sec-cards > div.fc-cards > div.fc-card.fc-change > div.fc-hosted > div.fc-composer.fc-composer-in";
 const SEND = ASIDE + " > div.fc-sec-send > div.fc-send";
 const ERR = " > div.fileview-err.fc-err";
 // every .fileview-btn the viewer and its panel render: the ones OUTSIDE the error dress…
@@ -178,7 +178,6 @@ const PLAIN_BUTTONS: Record<string, string> = {
   "panel Comment on this file": HEAD + " > div.fc-row > button.fileview-btn",
   "composer Save / Cancel": COMPOSER + " > div.fc-actions > button.fileview-btn",
   "reply composer Save / Cancel, in its card": IN_CARD + " > div.fc-actions > button.fileview-btn",
-  "reply composer Save / Cancel, in a hosted comment": IN_HOSTED + " > div.fc-actions > button.fileview-btn",
   "card Reply / Resolve / Reveal": CARD + " > div.fc-actions > button.fileview-btn",
   "send Send / Cancel": SEND + " > div.fc-confirm > div.fc-actions > button.fileview-btn",
 };
@@ -190,7 +189,6 @@ const DRESSED_BUTTONS: Record<string, string> = {
   "head / track / poll error ✕": HEAD + ERR + " > button.fileview-btn.fc-x",
   "composer error ✕": COMPOSER + " > div" + ERR + " > button.fileview-btn.fc-x",
   "reply composer error ✕, in its card": IN_CARD + " > div" + ERR + " > button.fileview-btn.fc-x",
-  "reply composer error ✕, in a hosted comment": IN_HOSTED + " > div" + ERR + " > button.fileview-btn.fc-x",
   "card error ✕": CARD + ERR + " > button.fileview-btn.fc-x",
   "send error Reload": SEND + ERR + " > button.fileview-btn",
   "send error ✕": SEND + ERR + " > button.fileview-btn.fc-x",
@@ -237,13 +235,12 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   // section: the box is placed into a card of the fresh list (the reply follow-on, 2026-09-07; file-comments-reply-place.test.ts)
   assert.match(PANEL, /head\.replaceChildren\(this\.renderHead\(s\)\);\n\s*this\.swapCards\(this\.renderCards\(s\)\);[^\n]*\n\s*this\.renderComposer\(\);[^\n]*\n\s*send\.replaceChildren\(this\.renderSend\(s\)\);/);
   assert.match(PANEL, /private swapCards\(fresh: HTMLElement\): void \{\n\s*const cards = this\.sections\.cards, box = this\.composerBox;\n\s*if \(!cards\.contains\(box\) \|\| !this\.graft\(cards, \[fresh\], box\)\) cards\.replaceChildren\(fresh\);/, "the fresh .fc-cards is the cards section's child either way");
-  // …and where the box stands in a card: in the .fc-card, or the .fc-hosted on a change card, of the comment it answers,
-  // before that host's .fc-actions, wearing .fc-composer-in (IN_CARD, IN_HOSTED)
-  assert.match(PANEL, /this\.sections\.cards\.querySelector\('\.fc-card\[data-id="' \+ id \+ '"\], \.fc-hosted\[data-id="' \+ id \+ '"\]'\)/);
+  // …and where the box stands in a card: in the .fc-card of the comment it answers, before that card's .fc-actions, wearing
+  // .fc-composer-in (IN_CARD); no other card can hold it (the about follow-on, 2026-09-10)
+  assert.match(PANEL, /this\.sections\.cards\.querySelector\('\.fc-card\[data-id="' \+ id \+ '"\]'\)/);
+  assert.doesNotMatch(PANEL, /fc-hosted|renderHosted/, "no comment is drawn inside a change card, so no chain goes through one");
   assert.match(PANEL, /before\(host, \(Array\.from\(host\.childNodes\) as HTMLElement\[\]\)\.find\(\(n\) => n\.nodeType === 1 && n\.classList\.contains\("fc-actions"\)\) \|\| null\);\n\s*box\.classList\.add\("fc-composer-in"\);/);
   assert.match(PANEL, /const card = el\("div", "fc-card fc-change"/, "a change card is a .fc-card too");
-  assert.match(PANEL, /const box = el\("div", "fc-hosted"\);\n\s*box\.dataset\.id = c\.id;/);
-  assert.match(PANEL, /for \(const cm of c\.comments\) card\.appendChild\(this\.renderHosted\(cm\)\);/, "the hosted box is the change card's child");
   assert.match(PANEL, /const head = el\("div", "fc-head"\);\n\s*const row = el\("div", "fc-row"\);\n\s*const t = btn\("Track changes", "fctrack", "fileview-btn fc-toggle"\);/);
   assert.match(PANEL, /row\.appendChild\(btn\("Comment on this file", "fcfile"\)\);\n\s*head\.appendChild\(row\);/);
   assert.match(PANEL, /const list = el\("div", "fc-cards"\);/);

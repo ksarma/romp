@@ -6,10 +6,10 @@
 // every panel suite installs):
 //   • the default: All, the three buttons offered once the file has a comment or a change and never before, their counts
 //     the action-row label's; nothing written to the store until a pick;
-//   • Comments: every comment card on its own — passage, whole-file, region, and a comment on a pending change with the
-//     change's words and an "on a change" tag — no change card, fold or foot; no change mark in the text, the highlights
+//   • Comments: every comment card on its own (passage, whole-file, region, and a comment a pending change answered, with
+//     its quote and an "answered by a change" tag); no change card, fold or foot; no change mark in the text, the highlights
 //     and the figure's rectangle kept;
-//   • Changes: the change cards alone, each with the comments made on it once open; no comment card or Resolved fold; the
+//   • Changes: the change cards alone, each counting the open comments about it in a tag; no comment card or Resolved fold; the
 //     change marks kept, no highlight and no region rectangle (gone on the pick, back under All, none from the first pass
 //     of a panel opened with Changes kept); with Show changes inline off on top, the cards and no mark;
 //   • All: today's list; the keyed expand state untouched by any pick; Send to session unfiltered;
@@ -55,8 +55,9 @@ const passage: StoreComment = {
   id: T0 + "-118", author: "you", ts: T0, body: "Which cache? Say which.",
   anchor: { quote: "shipping the cache in v1.2", prefix: "We recommend ", suffix: "." }, replies: [], resolved: false,
 };
-// a passage comment the session answered with a revision: it keeps its anchor and gains the change's id
-const hosted: StoreComment = {
+// a passage comment the session answered with a revision (a legacy suggestionId): it keeps its anchor and its own card, and
+// names the change in an "answered by a change" tag (the about follow-on, 2026-09-10; before it the card was drawn inside the change's)
+const answered: StoreComment = {
   id: T0 + 5000 + "-7", author: "you", ts: T0 + 5000, body: "Cut is the right word.",
   anchor: { quote: "cut p95 latency", prefix: "The api session ", suffix: " by 40%" }, suggestionId: "h1", replies: [], resolved: false,
 };
@@ -403,18 +404,20 @@ const changeCards = (aside: El): El[] => aside.querySelectorAll(".fc-card.fc-cha
 const commentCards = (aside: El): El[] => aside.querySelectorAll(".fc-card").filter((c) => !c.classes.includes("fc-change"));
 const highlights = (w: World): El[] => w.body.querySelectorAll(".fc-hl");
 const pick = async (aside: El, key: string): Promise<void> => { option(aside, key).click(); await flush(); };
-const kindOf = (c: El): string => { const k = c.querySelector(".fc-card-head .fc-kind"); return k ? k.textContent : ""; };   // the head's own cue (a hosted comment wears none)
+/** The same nodes, in the same order: identity, never a structural compare of two node lists. */
+const same = (a: El[], b: El[]): boolean => a.length === b.length && a.every((n, i) => n === b[i]);
+const kindOf = (c: El): string => { const k = c.querySelector(".fc-card-head .fc-kind"); return k ? k.textContent : ""; };   // the head's own cue
 // a whole-file comment, a region comment on the picture (no anchor: kind "region"), and a resolved passage comment
 const whole: StoreComment = { id: T0 + 1000 + "-3", author: "you", ts: T0 + 1000, body: "Tighten the summary throughout.", anchor: null, replies: [], resolved: false };
 const region: StoreComment = { id: T0 + 2000 + "-4", author: "you", ts: T0 + 2000, body: "This axis needs a label.", target: { kind: "image", region: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 }, hash: "sha256:0000" }, replies: [], resolved: false };
 const done: StoreComment = { id: T0 + 3000 + "-5", author: "you", ts: T0 + 3000, body: "Resolved earlier.", anchor: { quote: "Risks remain", prefix: "", suffix: " in the fallback path." }, replies: [], resolved: true };
 const h4 = H("h4", "ins", at("Risks"), at("Risks") + 5, "", "Risks", T0 - 60000);
 const FIVE = [h1, h2, h3, h4, h5];                    // four paragraphs: "## Findings" (h1, h2), "We recommend" (h3), "Risks remain" (h4), "Next steps" (h5) — the fourth folds
-const ALL_COMMENTS = [passage, hosted, whole, region, done];
-/** The suite's world: four open comments (one on the pending change h1) and a resolved one, five pending changes. */
+const ALL_COMMENTS = [passage, answered, whole, region, done];
+/** The suite's world: four open comments (one answered by the pending change h1) and a resolved one, five pending changes. */
 const full = (over: Partial<Status> = {}): Status => status({
   store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: ALL_COMMENTS }, hunks: FIVE,
-  unsent: { comments: [passage.id, hosted.id, whole.id, region.id], replies: [], accepted: 0, rejected: 0, watermark: null }, ...over,
+  unsent: { comments: [passage.id, answered.id, whole.id, region.id], replies: [], accepted: 0, rejected: 0, watermark: null }, ...over,
 });
 
 // ── the default ────────────────────────────────────────────────────────────────────────────────────
@@ -438,10 +441,12 @@ test("the default: All, the three buttons on their own row under the toggles, of
   // today's list: the changes first (four groups, the fourth folded), the foot, then the comments and the Resolved fold
   assert.deepEqual(changeCards(aside).map((c) => c.dataset.id), ["chg:h1", "chg:h2", "chg:h3", "chg:h4"]);
   assert.ok(act(aside, "fcmore"), "the fold row"); assert.ok(aside.querySelector(".fc-foot"), "Accept all · Reject all");
-  assert.deepEqual(commentCards(aside).map((c) => c.dataset.id), [passage.id, whole.id, region.id], "the comment on h1 rides its change card");
+  assert.deepEqual(commentCards(aside).map((c) => c.dataset.id), [passage.id, whole.id, region.id, answered.id], "every open comment's own card, oldest first, the one h1 answered among them (the about follow-on, 2026-09-10; before it that comment rode the change's card)");
+  assert.ok(tags(card(aside, "chg:h1")!).includes("1 comment"), "the change card counts the comment about it");
+  assert.ok(tags(card(aside, answered.id)!).includes("answered by a change"), "and the comment names the change");
   assert.ok(act(aside, "fcresolved"), "the Resolved fold");
   assert.equal(marksOf(w).length, 6, "the change marks: a point and a tint for the substitution, one each for the rest");
-  assert.equal(highlights(w).length, 2, "the passage comment's and the hosted comment's highlights");
+  assert.equal(highlights(w).length, 2, "the passage comment's and the answered comment's highlights");
   w.close();
   // nothing to filter: no control, whatever the store says
   store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "changes" }));
@@ -461,15 +466,15 @@ test("the counts are the label's, case by case: open comments of every kind, pen
   assert.deepEqual(cardCounts(null), { comments: 0, changes: 0 });
   assert.deepEqual(cardCounts(status({ store: null })), { comments: 0, changes: 0 });
   assert.deepEqual(cardCounts(s([], [])), { comments: 0, changes: 0 });
-  assert.deepEqual(cardCounts(s([passage, hosted, whole, region, done], FIVE)), { comments: 4, changes: 5 }, "a comment on a change counts as a comment; the resolved one does not");
-  assert.equal(actionLabel(s([passage, hosted, whole, region, done], FIVE)), "Comments · 4 · 5 changes");
+  assert.deepEqual(cardCounts(s([passage, answered, whole, region, done], FIVE)), { comments: 4, changes: 5 }, "a comment on a change counts as a comment; the resolved one does not");
+  assert.equal(actionLabel(s([passage, answered, whole, region, done], FIVE)), "Comments · 4 · 5 changes");
   assert.deepEqual(cardCounts(s([done], [], [{ id: "d1", author: "api", ts: T0, kind: "del", from: 0, oldText: "x", newText: "" }])), { comments: 0, changes: 0 }, "detached changes are the label's own clause");
   assert.equal(actionLabel(s([done], [], [{ id: "d1", author: "api", ts: T0, kind: "del", from: 0, oldText: "x", newText: "" }])), "Comments · 0 · 1 detached change");
 });
 
 // ── the three states ───────────────────────────────────────────────────────────────────────────────
 
-test("Comments: every comment card on its own — the comment on the pending change too, with the change's words and an 'on a change' tag — no change card, fold or foot; no change mark in the text while the highlights stay; the store written, no status ask", async (t: TestContext) => {
+test("Comments: every comment card on its own, the comment the pending change answered too, with its quote and an 'answered by a change' tag; no change card, fold or foot; no change mark in the text while the highlights stay; the store written, no status ask", async (t: TestContext) => {
   store.delete(SETTINGS_KEY);
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, full());
@@ -478,29 +483,34 @@ test("Comments: every comment card on its own — the comment on the pending cha
   assert.equal(w.posted.length, asks, "no message to the kernel: the cards and the hunks are already here");
   assert.deepEqual(chosen(aside), ["comments"]);
   assert.equal(stored()!.commentsFilter, "comments", "the pick is written to the shared store");
-  assert.deepEqual(commentCards(aside).map((c) => c.dataset.id), [passage.id, whole.id, region.id, hosted.id], "the four open comments, oldest first (the bound one is the newest), the bound one among them");
-  assert.deepEqual(changeCards(aside), [], "no change card");
-  assert.equal(aside.querySelector(".fc-group"), null, "no paragraph group");
-  assert.equal(act(aside, "fcmore"), null, "no fold row"); assert.equal(aside.querySelector(".fc-foot"), null, "no Accept all · Reject all");
-  assert.equal(act(aside, "fcacceptall"), null); assert.equal(act(aside, "fcrejectall"), null);
+  assert.deepEqual(commentCards(aside).map((c) => c.dataset.id), [passage.id, whole.id, region.id, answered.id], "the four open comments, oldest first (the answered one is the newest), as under All");
+  assert.equal(changeCards(aside).length, 0, "no change card");
+  assert.ok(!aside.querySelector(".fc-group"), "no paragraph group");
+  assert.ok(!act(aside, "fcmore"), "no fold row"); assert.ok(!aside.querySelector(".fc-foot"), "no Accept all · Reject all");
+  assert.ok(!act(aside, "fcacceptall")); assert.ok(!act(aside, "fcrejectall"));
   assert.ok(act(aside, "fcresolved"), "the Resolved fold stays: a resolved comment is a comment");
-  const bound = card(aside, hosted.id)!;
-  assert.equal(bound.querySelector(".fc-ref")!.textContent, "reduced → cut", "the change's words are the reference: the card keeps its change context");
-  assert.ok(tags(bound).includes("on a change"), "…and says the change is behind All or Changes");
+  const bound = card(aside, answered.id)!;
+  assert.equal(bound.querySelector(".fc-ref")!.textContent, "“cut p95 latency”", "a legacy passage comment keeps its quote as the reference; the change it names is the tag's");
+  const aboutTag = bound.querySelector(".fc-card-head .fc-tag.fc-about");
+  assert.ok(aboutTag, "the tag for the change that answered it");
+  assert.equal(aboutTag!.textContent, "answered by a change");
+  assert.equal(aboutTag!.dataset.refs, "h1", "the tag names the change");
+  assert.equal(aboutTag!.title, "The session answered this comment with: reduced → cut (pending)", "its title: the change's words and its state");
+  assert.ok(!tags(bound).includes("on a change"), "the old tag is gone (the about follow-on, 2026-09-10)");
   assert.equal(kindOf(bound), "Comment");
   assert.equal(marksOf(w).length, 0, "no change mark in the body");
   assert.equal(highlights(w).length, 2, "the highlights are not governed by Comments");
   assert.equal(option(aside, "changes").textContent, "Changes 5", "the hidden kind keeps its count on the button");
   assert.equal(option(aside, "comments").textContent, "Comments 4");
-  // a highlight click opens the comment's OWN card here: no change card hosts it
-  const hl = highlights(w).find((m) => m.dataset.id === hosted.id)!;
+  // a highlight click opens the comment's own card
+  const hl = highlights(w).find((m) => m.dataset.id === answered.id)!;
   hl.click();
-  assert.ok(card(aside, hosted.id)!.classes.includes("open"), "the bound comment's own card opens");
-  assert.equal(card(aside, "chg:h1"), null);
+  assert.ok(card(aside, answered.id)!.classes.includes("open"), "the answered comment's own card opens");
+  assert.ok(!card(aside, "chg:h1"), "no change card under Comments");
   store.delete(SETTINGS_KEY);
 });
 
-test("Changes: the change cards alone, each with the comments made on it once open; no comment card and no Resolved fold; the change marks stay and the highlights go; with Show changes inline off on top, the cards and no mark at all", async (t: TestContext) => {
+test("Changes: the change cards alone, each counting the open comments about it in a tag whose click (or Enter) shows the first under All; no comment card and no Resolved fold; the change marks stay and the highlights go; with Show changes inline off on top, the cards and no mark at all", async (t: TestContext) => {
   store.delete(SETTINGS_KEY);
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, full());
@@ -511,14 +521,21 @@ test("Changes: the change cards alone, each with the comments made on it once op
   assert.equal(stored()!.commentsFilter, "changes");
   assert.deepEqual(changeCards(aside).map((c) => c.dataset.id), ["chg:h1", "chg:h2", "chg:h3", "chg:h4"], "the changes as under All");
   assert.ok(act(aside, "fcmore"), "the fold row"); assert.ok(aside.querySelector(".fc-foot"), "the foot");
-  assert.deepEqual(commentCards(aside), [], "no comment card");
-  assert.equal(act(aside, "fcresolved"), null, "no Resolved fold");
-  assert.ok(tags(card(aside, "chg:h1")!).includes("1"), "the closed change card counts its comment");
+  assert.equal(commentCards(aside).length, 0, "no comment card");
+  assert.ok(!act(aside, "fcresolved"), "no Resolved fold");
+  // the change card counts the open comments about it in a tag, collapsed and open alike, and holds no comment (the about
+  // follow-on, 2026-09-10; before it the comment bound to the change was drawn inside the card once open)
+  const countTag = (): El => { const t = card(aside, "chg:h1")!.querySelector(".fc-card-head .fc-tag.fc-count.fc-about-count"); assert.ok(t, "the count tag"); return t!; };
+  assert.equal(countTag().textContent, "1 comment", "the closed change card counts the comment about it");
+  assert.deepEqual([countTag().dataset.act, countTag().dataset.id, countTag().getAttribute("role"), countTag().tabIndex, countTag().title],
+    ["fcaboutfirst", "h1", "button", 0, "Show the comment about this change"], "a control: its click shows the comment");
+  assert.ok(!card(aside, "chg:h2")!.querySelector(".fc-about-count"), "no tag on a change no comment names");
   card(aside, "chg:h1")!.querySelector(".fc-card-head")!.click();
-  const hostedBox = aside.querySelector('.fc-hosted[data-id="' + hosted.id + '"]');
-  assert.ok(hostedBox, "the comment on the change is on the change's card");
-  assert.equal(hostedBox!.querySelector(".fc-body")!.textContent, hosted.body);
-  assert.ok(act(hostedBox!, "fcreply", hosted.id) && act(hostedBox!, "fcresolve", hosted.id), "with its Reply and Resolve");
+  assert.equal(countTag().textContent, "1 comment", "open, the tag stays");
+  assert.equal(aside.querySelectorAll(".fc-hosted").length, 0, "no comment is drawn inside a change card");
+  assert.ok(!card(aside, "chg:h1")!.textContent.includes(answered.body), "the comment's words are its own card's");
+  assert.ok(!act(aside, "fcreply") && !act(aside, "fcchangereply"), "no Reply of any kind on the change card");
+  assert.ok(act(card(aside, "chg:h1")!, "fcchangecomment", "h1"), "Comment on this change is the card's own button");
   assert.equal(marksOf(w).length, 6, "the change marks stay");
   assert.equal(highlights(w).length, 0, "no comment highlight");
   assert.ok(w.body.textContent.includes("shipping the cache in v1.2"), "the text reads as before, unmarked");
@@ -531,6 +548,18 @@ test("Changes: the change cards alone, each with the comments made on it once op
   assert.equal(stored()!.changesInline, false); assert.equal(stored()!.commentsFilter, "changes", "two settings, both kept");
   act(aside, "fcinline")!.click(); await flush();
   assert.equal(marksOf(w).length, 6); assert.equal(highlights(w).length, 0, "the marks are back; the filter still hides the highlights");
+  // the tag's click: All chosen (the row that shows the comment cards), and the comment's own card open
+  countTag().click(); await flush();
+  assert.deepEqual(chosen(aside), ["all"]); assert.equal(stored()!.commentsFilter, "all");
+  assert.ok(card(aside, answered.id)!.classes.includes("open"), "the comment about the change is open");
+  assert.equal(highlights(w).length, 2, "and the highlights are back with All");
+  // Enter on the focused tag is its click (KEY_ACTS)
+  await pick(aside, "changes");
+  assert.ok(!card(aside, answered.id), "hidden again");
+  countTag().focus(); assert.ok(doc.activeElement === countTag(), "the tag is a Tab stop");
+  const ev = new Ev("keydown", { key: "Enter" }); dispatch(countTag(), ev); await flush();
+  assert.ok(ev.defaultPrevented, "Enter is the tag's");
+  assert.deepEqual(chosen(aside), ["all"]); assert.ok(card(aside, answered.id)!.classes.includes("open"));
   store.delete(SETTINGS_KEY);
 });
 
@@ -541,24 +570,24 @@ test("All brings today's list and both kinds of mark back; the keyed expand stat
   card(aside, passage.id)!.querySelector(".fc-card-head")!.click();
   assert.ok(card(aside, passage.id)!.classes.includes("open"));
   await pick(aside, "changes");
-  assert.equal(card(aside, passage.id), null, "hidden");
+  assert.ok(!card(aside, passage.id), "hidden");
   card(aside, "chg:h2")!.querySelector(".fc-card-head")!.click();
   assert.ok(card(aside, "chg:h2")!.classes.includes("open"));
   await pick(aside, "comments");
-  assert.equal(card(aside, "chg:h2"), null);
+  assert.ok(!card(aside, "chg:h2"));
   assert.ok(card(aside, passage.id)!.classes.includes("open"), "the comment card is open again: the state survived the pick that hid it");
   await pick(aside, "all");
   assert.deepEqual(chosen(aside), ["all"]);
   assert.equal(stored()!.commentsFilter, "all");
   assert.ok(card(aside, passage.id)!.classes.includes("open")); assert.ok(card(aside, "chg:h2")!.classes.includes("open"), "both open, as they were left");
   assert.deepEqual(changeCards(aside).map((c) => c.dataset.id), ["chg:h1", "chg:h2", "chg:h3", "chg:h4"]);
-  assert.deepEqual(commentCards(aside).map((c) => c.dataset.id), [passage.id, whole.id, region.id]);
+  assert.deepEqual(commentCards(aside).map((c) => c.dataset.id), [passage.id, whole.id, region.id, answered.id]);
   assert.ok(act(aside, "fcresolved") && act(aside, "fcmore") && aside.querySelector(".fc-foot"));
   assert.equal(marksOf(w).length, 6); assert.equal(highlights(w).length, 2);
   // the option already chosen changes nothing
   const before = marksOf(w);
   await pick(aside, "all");
-  assert.deepEqual(marksOf(w), before, "no new information, no repaint");
+  assert.ok(same(marksOf(w), before), "no new information, no repaint");
   store.delete(SETTINGS_KEY);
 });
 
@@ -576,8 +605,8 @@ const figure: StoreComment = {
 const figureIntro = (): El => { const img = new El("img"); img.setAttribute("src", "figure.png"); img.setAttribute("alt", "Figure"); return el("p", img); };
 const figured = (over: Partial<Status> = {}): Status => full({
   hunks: FIVE.map((h) => shifted(h, EMBED.length)),
-  store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, hosted, whole, figure, done] },
-  unsent: { comments: [passage.id, hosted.id, whole.id, figure.id], replies: [], accepted: 0, rejected: 0, watermark: null },
+  store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, answered, whole, figure, done] },
+  unsent: { comments: [passage.id, answered.id, whole.id, figure.id], replies: [], accepted: 0, rejected: 0, watermark: null },
   embeddedHashes: { "figure.png": FIG_HASH }, ...over,
 });
 const rects = (w: World): El[] => w.body.querySelectorAll(".fc-region");
@@ -589,30 +618,30 @@ test("a figure in rendered markdown: the region rectangle is painted under All a
   const img = w.body.querySelector(".fileview-md img")!;
   const overlay = w.body.querySelector(".fileview-md .fc-imgwrap .fc-overlay")!;
   assert.ok(overlay, "the figure is wrapped and has its overlay");
-  assert.equal(img.parentNode, overlay.parentNode, "the picture inside the wrapper, beside the overlay");
-  assert.deepEqual(rects(w).map((r) => [r.dataset.id, r.dataset.act, r.parentNode]), [[figure.id, "fcopen", overlay]], "All: the region comment's rectangle, a control on the figure's overlay");
+  assert.ok(img.parentNode === overlay.parentNode, "the picture inside the wrapper, beside the overlay");
+  assert.deepEqual(rects(w).map((r) => [r.dataset.id, r.dataset.act, r.parentNode === overlay]), [[figure.id, "fcopen", true]], "All: the region comment's rectangle, a control on the figure's overlay");
   assert.equal(rects(w)[0].classes.join(" "), "fc-region", "the figure's bytes are the comment's: neither stale nor unknown");
   assert.equal(w.body.querySelectorAll('.fc-hl[data-id="' + figure.id + '"]').length, 0, "the rectangle is the comment's mark: no text highlight doubles it");
-  assert.equal(highlights(w).length, 2, "the passage comment's and the hosted comment's highlights, as in the Raw world");
+  assert.equal(highlights(w).length, 2, "the passage comment's and the answered comment's highlights, as in the Raw world");
   assert.equal(marksOf(w).length, 6, "the change marks, past the embed line");
   assert.equal(kindOf(card(aside, figure.id)!), "Region");
   assert.ok(isLink(card(aside, figure.id)!), "the card's reference links to the painted rectangle");
   assert.equal(option(aside, "comments").textContent, "Comments 4", "the region comment counts as a comment");
   // Changes: the rectangle goes with the highlights; the overlay stays up (the panel is open), and the marks stay
   await pick(aside, "changes");
-  assert.deepEqual(rects(w), [], "Changes: no region rectangle");
-  assert.equal(w.body.querySelector(".fileview-md .fc-imgwrap .fc-overlay"), overlay, "the layer stands: the picture is not unwrapped and rewrapped for a pick");
-  assert.equal(img.parentNode, overlay.parentNode);
+  assert.equal(rects(w).length, 0, "Changes: no region rectangle");
+  assert.ok(w.body.querySelector(".fileview-md .fc-imgwrap .fc-overlay") === overlay, "the layer stands: the picture is not unwrapped and rewrapped for a pick");
+  assert.ok(img.parentNode === overlay.parentNode);
   assert.equal(highlights(w).length, 0); assert.equal(marksOf(w).length, 6, "the change marks are the Changes view's own");
-  assert.equal(card(aside, figure.id), null, "and the card is hidden with the other comment cards");
+  assert.ok(!card(aside, figure.id), "and the card is hidden with the other comment cards");
   // with Show changes inline off on top: no mark of any kind
   act(aside, "fcinline")!.click(); await flush();
-  assert.deepEqual(rects(w), []); assert.equal(marksOf(w).length, 0); assert.equal(highlights(w).length, 0);
+  assert.equal(rects(w).length, 0); assert.equal(marksOf(w).length, 0); assert.equal(highlights(w).length, 0);
   act(aside, "fcinline")!.click(); await flush();
-  assert.deepEqual(rects(w), []); assert.equal(marksOf(w).length, 6, "the marks back, the rectangle still withheld");
+  assert.equal(rects(w).length, 0); assert.equal(marksOf(w).length, 6, "the marks back, the rectangle still withheld");
   // All: the rectangle is back on the same overlay, the same control
   await pick(aside, "all");
-  assert.deepEqual(rects(w).map((r) => [r.dataset.id, r.dataset.act, r.parentNode]), [[figure.id, "fcopen", overlay]], "All: the rectangle is back");
+  assert.deepEqual(rects(w).map((r) => [r.dataset.id, r.dataset.act, r.parentNode === overlay]), [[figure.id, "fcopen", true]], "All: the rectangle is back");
   assert.equal(highlights(w).length, 2); assert.equal(marksOf(w).length, 6);
   assert.ok(isLink(card(aside, figure.id)!), "the card links to it again");
   // Comments: a rectangle is a comment's mark, so it stays while the change marks go
@@ -628,7 +657,7 @@ test("a figure in rendered markdown: the region rectangle is painted under All a
   const { aside: a2 } = await openPanel(w2, figured());
   assert.deepEqual(chosen(a2), ["changes"]);
   assert.ok(w2.body.querySelector(".fileview-md .fc-imgwrap .fc-overlay"), "the overlay is up: the panel is open over a figure");
-  assert.deepEqual(rects(w2), [], "opened with Changes kept: no rectangle painted at all");
+  assert.equal(rects(w2).length, 0, "opened with Changes kept: no rectangle painted at all");
   assert.equal(marksOf(w2).length, 6);
   await pick(a2, "all");
   assert.deepEqual(rects(w2).map((r) => r.dataset.id), [figure.id]);
@@ -642,7 +671,7 @@ test("Changes with no change pending, and comments to show: the line says where 
   assert.ok(filterRow(aside), "a comment: the control is offered");
   assert.deepEqual(chosen(aside), ["changes"]);
   assert.equal(aside.querySelector(".fc-empty")!.textContent, "No changes are pending. All or Comments above shows the comments.");
-  assert.deepEqual(commentCards(aside), []);
+  assert.equal(commentCards(aside).length, 0);
   await pick(aside, "comments");
   assert.deepEqual(commentCards(aside).map((c) => c.dataset.id), [passage.id]);
   w.close();
@@ -661,7 +690,7 @@ test("remembered: the store's commentsFilter opens the next panel filtered, head
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, full());
   assert.deepEqual(chosen(aside), ["comments"]);
-  assert.deepEqual(changeCards(aside), []); assert.equal(commentCards(aside).length, 4);
+  assert.equal(changeCards(aside).length, 0); assert.equal(commentCards(aside).length, 4);
   assert.equal(marksOf(w).length, 0); assert.equal(highlights(w).length, 2);
   await pick(aside, "all");
   assert.equal(stored()!.compact, true, "the store's other keys are kept"); assert.equal(stored()!.commentsFilter, "all");
@@ -683,7 +712,7 @@ test("a pick elsewhere — the settings signal another pane or the gear raises, 
   win.dispatchEvent(new Event("romp:settings"));
   await flush();
   assert.deepEqual(chosen(aside), ["changes"], "this header");
-  assert.deepEqual(commentCards(aside), []); assert.equal(changeCards(aside).length, 4);
+  assert.equal(commentCards(aside).length, 0); assert.equal(changeCards(aside).length, 4);
   assert.equal(highlights(w).length, 0); assert.equal(marksOf(w).length, 6);
   assert.equal(w.posted.length, asks, "no status ask for it");
   store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "comments" }));
@@ -695,7 +724,7 @@ test("a pick elsewhere — the settings signal another pane or the gear raises, 
   const before = highlights(w);
   win.dispatchEvent(new Event("romp:settings"));
   await flush();
-  assert.deepEqual(highlights(w), before, "no new information, no repaint");
+  assert.ok(same(highlights(w), before), "no new information, no repaint");
   store.delete(SETTINGS_KEY);
 });
 
@@ -706,24 +735,24 @@ test("the arrow keys move along the group and choose: right or down to the next 
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, full());
   option(aside, "all").focus();
-  assert.equal(doc.activeElement, option(aside, "all"));
+  assert.ok(doc.activeElement === option(aside, "all"));
   const press = (key: string): Ev => { const ev = new Ev("keydown", { key }); dispatch(doc.activeElement!, ev); return ev; };
   let ev = press("ArrowRight"); await flush();
   assert.ok(ev.defaultPrevented, "the arrow is the group's");
-  assert.deepEqual(chosen(aside), ["comments"]); assert.equal(doc.activeElement, option(aside, "comments"), "chosen and focused");
+  assert.deepEqual(chosen(aside), ["comments"]); assert.ok(doc.activeElement === option(aside, "comments"), "chosen and focused");
   assert.equal(stored()!.commentsFilter, "comments"); assert.equal(changeCards(aside).length, 0);
   press("ArrowDown"); await flush();
-  assert.deepEqual(chosen(aside), ["changes"]); assert.equal(doc.activeElement, option(aside, "changes"));
+  assert.deepEqual(chosen(aside), ["changes"]); assert.ok(doc.activeElement === option(aside, "changes"));
   press("ArrowRight"); await flush();
-  assert.deepEqual(chosen(aside), ["all"], "wraps"); assert.equal(doc.activeElement, option(aside, "all"));
+  assert.deepEqual(chosen(aside), ["all"], "wraps"); assert.ok(doc.activeElement === option(aside, "all"));
   press("ArrowLeft"); await flush();
-  assert.deepEqual(chosen(aside), ["changes"], "wraps the other way"); assert.equal(doc.activeElement, option(aside, "changes"));
+  assert.deepEqual(chosen(aside), ["changes"], "wraps the other way"); assert.ok(doc.activeElement === option(aside, "changes"));
   press("ArrowUp"); await flush();
   assert.deepEqual(chosen(aside), ["comments"]);
   press("Home"); await flush();
-  assert.deepEqual(chosen(aside), ["all"]); assert.equal(doc.activeElement, option(aside, "all"));
+  assert.deepEqual(chosen(aside), ["all"]); assert.ok(doc.activeElement === option(aside, "all"));
   press("End"); await flush();
-  assert.deepEqual(chosen(aside), ["changes"]); assert.equal(doc.activeElement, option(aside, "changes"));
+  assert.deepEqual(chosen(aside), ["changes"]); assert.ok(doc.activeElement === option(aside, "changes"));
   ev = press("Enter");
   assert.equal(ev.defaultPrevented, false, "other keys are the button's own");
   // an arrow on any other control is not the group's
@@ -763,9 +792,11 @@ test("Send to session is not filtered: under Comments and under Changes the butt
 test("the kind cue: every card head names its kind before the author's chip — Comment, Change, Region — and the card carries data-cue for the sheets' left edge; a comment on a decided change is a Comment", async (t: TestContext) => {
   store.delete(SETTINGS_KEY);
   const w = world(); t.after(() => w.close());
-  const decided: StoreComment = { ...hosted, id: T0 + 7000 + "-9", suggestionId: "h9" };   // bound to a change the log has accepted
+  const decided: StoreComment = { ...answered, id: T0 + 7000 + "-9", suggestionId: "h9" };   // a legacy passage comment answered by a change the log has accepted
+  // the person's own comment about the deletion h3, with no passage (the about follow-on, 2026-09-10): kind "file" with the change as its reference
+  const about: StoreComment = { id: T0 + 8000 + "-10", author: "you", ts: T0 + 8000, body: "Keep the word.", anchor: null, changeIds: ["h3"], replies: [], resolved: false };
   const log = [{ ts: "2026-09-07T10:00:00.000Z", kind: "accept", author: "you", changes: [{ id: "h9", oldText: "slow", newText: "fast" }] }];
-  const { aside } = await openPanel(w, full({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [...ALL_COMMENTS, decided] }, log }));
+  const { aside } = await openPanel(w, full({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [...ALL_COMMENTS, decided, about] }, log }));
   const headOf = (c: El) => c.querySelector(".fc-card-head")!.childNodes.map((n) => (n as El).classes[0]);
   for (const c of changeCards(aside)) {
     assert.deepEqual(headOf(c).slice(0, 2), ["fc-kind", "fc-chip"], c.dataset.id + ": the cue, then the chip");
@@ -778,19 +809,28 @@ test("the kind cue: every card head names its kind before the author's chip — 
   assert.equal(kindOf(byId(whole.id)), "Comment"); assert.equal(byId(whole.id).querySelector(".fc-kind")!.title, "A comment on the file as a whole");
   assert.equal(kindOf(byId(region.id)), "Region"); assert.equal(byId(region.id).dataset.cue, "comment", "a region is a comment: the comment's edge");
   assert.equal(byId(region.id).querySelector(".fc-kind")!.title, "A comment on a region of the picture");
-  assert.equal(kindOf(byId(decided.id)), "Comment"); assert.equal(byId(decided.id).querySelector(".fc-kind")!.title, "A comment on a change");
-  assert.ok(tags(byId(decided.id)).includes("accepted") && !tags(byId(decided.id)).includes("on a change"), "decided: the decision tag, not the pending one");
+  assert.equal(kindOf(byId(decided.id)), "Comment"); assert.equal(byId(decided.id).querySelector(".fc-kind")!.title, "A comment on a passage", "a legacy passage comment a change answered is still a comment on its passage");
+  assert.ok(tags(byId(decided.id)).includes("accepted") && tags(byId(decided.id)).includes("answered by a change"), "decided: the answering tag and the decision tag: " + JSON.stringify(tags(byId(decided.id))));
+  assert.equal(byId(decided.id).querySelector(".fc-tag.fc-about")!.title, "The session answered this comment with: slow → fast (accepted)");
+  assert.equal(kindOf(byId(about.id)), "Comment"); assert.equal(byId(about.id).dataset.cue, "comment", "a comment about a change is a comment: the comment's edge");
+  assert.equal(byId(about.id).querySelector(".fc-kind")!.title, "A comment about a change");
+  assert.equal(byId(about.id).querySelector(".fc-ref")!.textContent, "removed quickly", "the change's words are its reference");
+  assert.ok(tags(byId(about.id)).includes("about a change") && !tags(byId(about.id)).includes("accepted"), "about a pending change: the about tag, no decision: " + JSON.stringify(tags(byId(about.id))));
+  assert.ok(tags(card(aside, "chg:h3")!).includes("1 comment"), "and the change card counts it");
   act(aside, "fcresolved")!.click();
   assert.equal(kindOf(byId(done.id)), "Comment"); assert.equal(byId(done.id).dataset.cue, "comment");
-  // the hosted comment on a change card wears no cue of its own: it is part of the change's card
+  // the comment h1 answered is its own card with its own cue (the about follow-on, 2026-09-10; before it the comment was
+  // drawn inside the change's card and wore none), and the change card, open, holds no comment
+  assert.equal(kindOf(byId(answered.id)), "Comment"); assert.equal(byId(answered.id).querySelector(".fc-kind")!.title, "A comment on a passage");
   card(aside, "chg:h1")!.querySelector(".fc-card-head")!.click();
-  assert.equal(aside.querySelector('.fc-hosted[data-id="' + hosted.id + '"] .fc-kind'), null);
+  assert.equal(aside.querySelectorAll(".fc-hosted").length, 0);
+  assert.ok(!card(aside, "chg:h1")!.textContent.includes(answered.body));
   store.delete(SETTINGS_KEY);
 });
 
 // ── a reply's box when the filter hides its card ───────────────────────────────────────────────────
 
-test("a reply being written on a comment card that Changes hides: the box returns to the slot with a line saying so, and Cancel moves the focus to All; a reply on a comment on a change follows the comment between its own card and the change's", async (t: TestContext) => {
+test("a reply being written on a comment card that Changes hides: the box returns to the slot with a line saying so, and Cancel moves the focus to All; a reply on a comment a change answered stays in the comment's own card under All and Comments, never in the change's", async (t: TestContext) => {
   store.delete(SETTINGS_KEY);
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, full());
@@ -799,25 +839,39 @@ test("a reply being written on a comment card that Changes hides: the box return
   card(aside, passage.id)!.querySelector(".fc-card-head")!.click();
   act(aside, "fcreply", passage.id)!.click();
   const box = aside.querySelector(".fc-composer")!;
-  assert.equal(box.parentNode, card(aside, passage.id), "the box stands in the card");
+  assert.ok(box.parentNode === card(aside, passage.id), "the box stands in the card");
   await pick(aside, "changes");
   const slotBox = aside.querySelector(".fc-composer")!;
   assert.equal(slotBox.parentNode!.classes.includes("fc-panel"), true, "the card is hidden: the box is back in the panel's slot");
   assert.ok(aside.textContent.includes("The comment's card is hidden while Changes is chosen above (All or Comments shows it); the reply still goes to it."));
   doc.activeElement = slotBox.querySelector("textarea") as El;   // the keyboard in the box (the stand-in's focus() takes buttons and inputs only)
   act(slotBox, "fccancel")!.click();
-  assert.equal(doc.activeElement, option(aside, "all"), "Cancel: the keyboard goes to the row that brings the card back");
-  // a reply on the comment bound to h1: on the change card under All and Changes, on its own card under Comments
-  card(aside, "chg:h1")!.querySelector(".fc-card-head")!.click();
-  act(aside, "fcreply", hosted.id)!.click();
-  assert.equal(aside.querySelector(".fc-composer")!.parentNode!.dataset.id, hosted.id, "in the hosted comment's box on the change card");
-  assert.ok(aside.querySelector(".fc-composer")!.parentNode!.classes.includes("fc-hosted"));
-  await pick(aside, "comments");
-  assert.equal(aside.querySelector(".fc-composer")!.parentNode, card(aside, hosted.id), "on the comment's own card");
-  assert.ok(card(aside, hosted.id)!.classes.includes("open"));
+  assert.ok(doc.activeElement === option(aside, "all"), "Cancel: the keyboard goes to the row that brings the card back");
+  // a reply on the comment h1 answered: in the comment's own card under All and under Comments, in the slot under Changes
+  // (the about follow-on, 2026-09-10; before it the box followed the comment onto the change's card under All and Changes)
   await pick(aside, "all");
-  assert.ok(aside.querySelector(".fc-composer")!.parentNode!.classes.includes("fc-hosted"), "back on the change's card");
-  assert.ok(card(aside, "chg:h1")!.classes.includes("open"), "which stays open for it");
+  card(aside, answered.id)!.querySelector(".fc-card-head")!.click();
+  act(aside, "fcreply", answered.id)!.click();
+  const boxParent = (): El => aside.querySelector(".fc-composer")!.parentNode!;
+  const inOwnCard = (): boolean => { const p = boxParent(); return p.dataset.id === answered.id && p.classes.includes("fc-card") && !p.classes.includes("fc-change"); };
+  const heldHead = (key: string): boolean => card(aside, key)!.querySelector(".fc-card-head")!.getAttribute("aria-disabled") === "true";
+  assert.ok(inOwnCard(), "in the comment's own card");
+  const kids = boxParent().childNodes;
+  assert.equal(kids.indexOf(aside.querySelector(".fc-composer")!), kids.findIndex((n) => n instanceof El && n.classes.includes("fc-actions")) - 1, "above the card's buttons");
+  assert.equal(aside.querySelectorAll(".fc-hosted").length, 0);
+  assert.ok(heldHead(answered.id), "the comment's head is held for the reply");
+  card(aside, "chg:h1")!.querySelector(".fc-card-head")!.click();
+  assert.ok(!heldHead("chg:h1"), "the change card is not held: the reply is not its");
+  assert.ok(inOwnCard(), "opening the change card moves nothing");
+  await pick(aside, "comments");
+  assert.ok(inOwnCard(), "under Comments: the same card");
+  assert.ok(card(aside, answered.id)!.classes.includes("open"));
+  await pick(aside, "changes");
+  assert.ok(boxParent().classes.includes("fc-panel"), "under Changes: the slot");
+  assert.ok(aside.textContent.includes("The comment's card is hidden while Changes is chosen above (All or Comments shows it); the reply still goes to it."));
+  assert.ok(!heldHead("chg:h1"), "the change card the comment names is not held either");
+  await pick(aside, "all");
+  assert.ok(inOwnCard(), "back in the comment's own card");
   store.delete(SETTINGS_KEY);
 });
 
@@ -839,15 +893,21 @@ test("pins: the delegate action, the header's order, the paint guards, the store
   assert.match(SRC, /if \(!this\.inline\) return;[^\n]*\n\s+if \(this\.activeFilter\(\) === "comments"\) return;/, "Comments: the change painters are not called, after the inline gate");
   assert.match(SRC, /for \(const card of this\.activeFilter\(\) === "changes" \? \[\] : this\.cards\(\)\) \{\n\s+if \(card\.resolved \|\| !card\.anchor\) continue;/, "Changes: no comment highlight is painted");
   assert.match(SRC, /const hideRegions = this\.activeFilter\(\) === "changes";[\s\S]*?if \(card\.resolved\) continue;\n\s+if \(hideRegions\) continue;/, "Changes: the region guard stands after the crop is kept (its effect on the rectangles is driven above, over the figure; the PDF crop it lets through is not, so the order is held here)");
-  assert.match(SRC, /const cards = filter === "changes" \? \[\] : this\.cards\(\)\.filter\(\(c\) => filter === "comments" \|\| c\.hunk === null\);/, "the list: no comment card under Changes; every comment card, bound or not, under Comments");
+  assert.match(SRC, /const cards = filter === "changes" \? \[\] : this\.cards\(\);/, "the list: no comment card under Changes; every comment's own card under All and Comments (the about follow-on, 2026-09-10: none is drawn inside a change card)");
   assert.match(SRC, /const view = filter === "comments" \? \{ cards: \[\], groups: \[\], shown: \[\], hidden: \[\], hiddenChanges: 0 \} : this\.changeView\(\);/, "no change card, group or fold under Comments (the foot hangs off view.cards)");
-  assert.match(SRC, /return c && c\.hunk && this\.activeFilter\(\) !== "comments" \? "chg:" \+ c\.hunk\.id : commentId;/, "a bound comment's card is its own under Comments");
+  assert.match(SRC, /cardKey\(commentId: string\): string \{\n\s+return commentId;\n\s+\}/, "a comment's card is its own under every filter: the key is the id");
+  assert.doesNotMatch(SRC, /"fc-hosted"|renderHosted\(|"fcchangereply"/, "nothing of the hosted rendering is left");
+  // the change card's count tag: a control among the KEY_ACTS, its click All (when Changes hides the comment cards) then the first comment about the change
+  assert.match(SRC, /const KEY_ACTS = new Set\(\["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow", "fcaboutfirst"\]\);/, "the tag takes Enter and Space like the other non-button controls");
+  assert.match(SRC, /const t = el\("span", "fc-tag fc-count fc-about-count", c\.comments \+ \(c\.comments === 1 \? " comment" : " comments"\)\);\n\s+t\.dataset\.act = "fcaboutfirst"; t\.dataset\.id = c\.id; t\.tabIndex = 0; t\.setAttribute\("role", "button"\);/, "the tag: the count of open comments about the change, a control");
+  assert.match(SRC, /private showAbout\(changeId: string\): void \{\n\s+const first = commentsAbout\(this\.cards\(\), changeId\)\[0\];\n\s+if \(!first\) return;\n\s+if \(this\.activeFilter\(\) === "changes"\) this\.setFilter\("all"\);\n\s+this\.showCard\(first\.id\);/, "its click: All when Changes hides the comment cards, then the first comment about the change");
   assert.match(SRC, /onExternalSettingsChange\(\(s\) => \{ if \(live && live\.filter !== s\.commentsFilter\) \{ live\.filter = s\.commentsFilter; live\.paintAll\(\); \} \}\);/, "a pick elsewhere reaches the live panel");
   assert.match(SRC, /const FILTERS: CommentsFilter\[\] = \["all", "comments", "changes"\];\nconst FILTER_KEYS = new Set\(\["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"\]\);/);
   assert.match(SRC, /if \(!t \|\| !t\.dataset \|\| t\.dataset\.act !== "fcfilter" \|\| !this\.owns\(t\)\) return;/, "the arrows act for the panel's own buttons only");
   // the kind cue, in both builders
   assert.match(SRC, /const kind = el\("span", "fc-kind", c\.kind === "region" \? "Region" : "Comment"\);[\s\S]{0,400}head\.appendChild\(kind\);\n\s+head\.appendChild\(this\.chip\(c\.author, c\.authorId\)\);/, "a comment card: the cue before the chip");
   assert.match(SRC, /const kind = el\("span", "fc-kind", "Change"\);[^\n]*\n\s+kind\.title = [^\n]+\n\s+head\.appendChild\(kind\);\n\s+head\.appendChild\(this\.chip\(c\.author, c\.authorId\)\);/, "a change card: the same");
+  assert.match(SRC, /kind\.title = c\.kind === "region" \? "A comment on a region of the picture" : c\.kind === "file" && c\.refs\.length \? "A comment about a change"\n\s+: c\.kind === "file" \? "A comment on the file as a whole" : "A comment on a passage";/, "the cue's title: a comment about a change is one with no passage that names changes; a passage comment stays a comment on a passage");
   assert.match(SRC, /card\.dataset\.cue = "comment";/); assert.match(SRC, /card\.dataset\.cue = "change";/);
   // the store
   assert.match(SETTINGS, /^\s+commentsFilter: CommentsFilter;/m, "a field of the shared settings, like changesInline");

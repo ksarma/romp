@@ -443,42 +443,55 @@ test("provablyNewer: a sidecar or config mtime against an applied null proves no
 
 // ── detached changes ───────────────────────────────────────────────────────────────────────────────
 
-test("a detached change's card offers no Accept, Reject, Reply or Reveal, wears the detached dress and tag, and its group says why; its texts and the comment bound to it are one click down; the foot counts pending changes only", async (t: TestContext) => {
+test("a detached change's card offers no Accept, Reject, Comment on this change or Reveal, wears the detached dress and tag, and its group says why; its texts are one click down; the comment about it is its own card, counted on the change card; the foot counts pending changes only", async (t: TestContext) => {
   // the host decides pending changes only (decidedChanges and buildComment read store.suggestions), so each of those
   // buttons could only be refused `no-change … reload and retry`, and no reload clears it: the sidecar keeps the op
   const w = world(); t.after(() => w.close());
   const { aside, button } = await openPanel(w, status({ store: { ...NO_COMMENTS, comments: [passage, onD1], detached: [D1] }, hunks: [h1] }));
-  assert.equal(button.textContent, "Comments · 2 · 1 change · 1 detached change", "the glance counts the bound comment too, and the detached change apart");
+  assert.equal(button.textContent, "Comments · 2 · 1 change · 1 detached change", "the glance counts the comment about the change too, and the detached change apart");
   const d = card(aside, "chg:d1")!;
   assert.ok(d, "the detached change has a card");
   assert.ok(d.classes.includes("fc-card-detached"), "the comment cards' detached dress");
-  for (const a of ["fcaccept", "fcreject", "fcchangereply", "fcreveal"]) assert.equal(d.querySelector('[data-act="' + a + '"]'), null, "no " + a + " on a detached card");
-  assert.equal(d.querySelector(".fc-actions"), null, "no empty button row either");
+  for (const a of ["fcaccept", "fcreject", "fcchangecomment", "fcreveal"]) assert.equal(d.querySelector('[data-act="' + a + '"]') === null, true, "no " + a + " on a detached card");
+  assert.equal(d.querySelector(".fc-actions") === null, true, "no empty button row either");
   const tag = d.querySelectorAll(".fc-card-head .fc-tag").find((x) => x.textContent === "detached")!;
   assert.ok(tag, "tagged detached");
   assert.match(tag.title, /cannot be accepted or rejected/);
   assert.equal(tags(d).includes("not shown"), false, "no claim about the view: the change is nowhere in it");
   assert.equal(isLink(d), false, "the reference links to no mark");
-  assert.equal(d.querySelector(".fc-count")!.textContent, "1", "the bound comment is counted while collapsed");
+  const count = d.querySelector(".fc-about-count")!;
+  assert.equal(count.textContent, "1 comment", "the comment about the change is counted while collapsed (the about follow-on: a tag, not a hosted card)");
+  assert.equal(count.dataset.act, "fcaboutfirst"); assert.equal(count.dataset.id, "d1");
   const groups = aside.querySelectorAll(".fc-group");
   assert.equal(groups[groups.length - 1].textContent, DETACHED_GROUP_TITLE);
   assert.match(groups[groups.length - 1].title, /no longer holds/, "the group's own tooltip, not the paragraph one");
   // the pending change keeps its buttons; the foot counts it alone
   const c1 = card(aside, "chg:h1")!;
-  assert.deepEqual(texts(c1.querySelectorAll(".fc-actions button")), ["Accept", "Reject", "Reply"]);
+  assert.deepEqual(texts(c1.querySelectorAll(".fc-actions button")), ["Accept", "Reject", "Comment on this change"]);
   act(aside, "fcrejectall")!.click();
   assert.ok(aside.querySelector(".fc-foot .fc-choice")!.textContent.includes("for the change?"), "one pending change: the confirm counts one, not two");
   act(aside, "fcrejectallcancel")!.click();
-  // one click down: the old and new text, and the comment bound to it with its own Reply and Resolve (the card is
-  // re-found: the confirm's two renders rebuilt the list)
+  // one click down: the old and new text, and nothing that decides it (the card is re-found: the confirm's two renders
+  // rebuilt the list)
   card(aside, "chg:d1")!.querySelector(".fc-card-head")!.click();
   const open = card(aside, "chg:d1")!;
   assert.ok(open.classes.includes("open"));
   assert.equal(open.querySelector("del")!.textContent, "cold starts were slow"); assert.equal(open.querySelector("ins")!.textContent, "cold starts stay slow");
-  const hosted = open.querySelector('.fc-hosted[data-id="' + onD1.id + '"]')!;
-  assert.ok(hosted, "the bound comment rides the card");
-  assert.ok(act(hosted, "fcreply", onD1.id) && act(hosted, "fcresolve", onD1.id), "the comment's own Reply and Resolve, by its id — verbs the host takes");
-  assert.equal(open.querySelector('[data-act="fcaccept"]'), null, "open or closed, nothing decides it");
+  assert.equal(open.querySelector(".fc-hosted") === null, true, "no comment rides the card (before the about follow-on, 2026-09-10, the bound comment did)");
+  assert.equal(open.querySelector(".fc-about-count")!.textContent, "1 comment", "the count stands open too");
+  assert.equal(open.querySelector('[data-act="fcaccept"]') === null, true, "open or closed, nothing decides it");
+  // the comment about the detached change: its own card after the changes, the change's words as its reference, the
+  // answered tag naming the change and its state, and its own Reply and Resolve once open, by its id (verbs the host takes)
+  const own = card(aside, onD1.id)!;
+  assert.ok(own, "the comment has its own card");
+  assert.equal(own.querySelector(".fc-ref")!.textContent, "cold starts were slow → cold starts stay slow", "no passage: the change's words are its reference");
+  assert.equal(own.querySelector(".fc-kind")!.title, "A comment about a change");
+  assert.deepEqual(tags(own), ["answered by a change"]);
+  assert.equal(own.querySelector(".fc-tag.fc-about")!.title, "The session answered this comment with: cold starts were slow → cold starts stay slow (detached: the file no longer holds its text)");
+  own.querySelector(".fc-card-head")!.click();
+  const openOwn = card(aside, onD1.id)!;
+  assert.ok(openOwn.classes.includes("open"));
+  assert.ok(act(openOwn, "fcreply", onD1.id) && act(openOwn, "fcresolve", onD1.id), "the comment's own Reply and Resolve, by its id");
   assert.deepEqual(w.modes, [], "no view switch happened");
 });
 
@@ -490,7 +503,7 @@ test("with only detached changes the foot does not render at all: no Accept all,
   assert.equal(aside.querySelector(".fc-foot"), null, "nothing is pending: no foot");
   assert.equal(act(aside, "fcacceptall"), null); assert.equal(act(aside, "fcrejectall"), null);
   assert.equal(aside.querySelector(".fc-empty"), null, "a card shows, so no 'No comments yet'");
-  assert.equal(aside.querySelectorAll('[data-act="fcaccept"], [data-act="fcreject"], [data-act="fcreveal"], [data-act="fcchangereply"]').length, 0);
+  assert.equal(aside.querySelectorAll('[data-act="fcaccept"], [data-act="fcreject"], [data-act="fcreveal"], [data-act="fcchangecomment"]').length, 0);
 });
 
 // ── a refusal whose card is gone ───────────────────────────────────────────────────────────────────

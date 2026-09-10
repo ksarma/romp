@@ -7,7 +7,9 @@
 //   • Accept all under Changes, refused store-moved, and the re-read leaves no change pending: the Changes empty line and
 //     the "Nothing decided" row under it — the clicked decision is not silent (CLAUDE.md, fail loudly);
 //   • a region comment saved under Changes: the line names the card and the rectangle; a saved comment the session then
-//     answers with a revision (bound by suggestionId) shows on the change card, and the line ends there;
+//     answers with a revision (bound by suggestionId) keeps its own card, hidden under Changes like every comment, so the
+//     line stands and the change card counts the comment (the about follow-on, 2026-09-10; before it the comment was drawn
+//     inside the change card and the line ended there);
 //   • Show changes inline under Comments: the toggle stays (its setting governs All, Changes and other panels) and its title
 //     says the filter hides the marks, never that the text carries marks it does not.
 // Synthetic fixtures only: the notes-api world, placeholder ids.
@@ -40,7 +42,8 @@ const passage: StoreComment = {
   id: T0 + "-118", author: "you", ts: T0, body: "Which cache? Say which.",
   anchor: { quote: "shipping the cache in v1.2", prefix: "We recommend ", suffix: "." }, replies: [], resolved: false,
 };
-// a passage comment the session answered with a revision: it keeps its anchor and gains the change's id
+// a passage comment the session answered with a revision: it keeps its anchor and gains the change's id; its own card,
+// wearing an "answered by a change" tag (before the about follow-on, 2026-09-10, it was drawn inside h1's card)
 const hosted: StoreComment = {
   id: T0 + 5000 + "-7", author: "you", ts: T0 + 5000, body: "Cut is the right word.",
   anchor: { quote: "cut p95 latency", prefix: "The api session ", suffix: " by 40%" }, suggestionId: "h1", replies: [], resolved: false,
@@ -571,7 +574,7 @@ test("Accept all under Changes, refused store-moved, and the re-read leaves no c
   store.delete(SETTINGS_KEY);
 });
 
-// ── the saved line: a region comment's mark, and the comment coming to ride a change card ──────────
+// ── the saved line: a region comment's mark, and the comment a change comes to answer ──────────────
 
 test("a region comment saved under Changes, drawn on a figure in rendered markdown: the line names the card and the rectangle, neither shown; All shows both and ends the line", async (t: TestContext) => {
   store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "changes" }));
@@ -611,7 +614,7 @@ test("a region comment saved under Changes, drawn on a figure in rendered markdo
   store.delete(SETTINGS_KEY);
 });
 
-test("the saved line ends when the comment comes to ride a change card: a passage comment saved under Changes, then bound to a change by the poll's status (the session answered it with a revision), shows on the change card and the line is gone, for good", async (t: TestContext) => {
+test("the saved line stands when the session answers the comment with a revision: a passage comment saved under Changes, then bound to a change by the poll's status (suggestionId), keeps its own card, hidden like every comment under Changes, so the line stays as it was; the change card counts the comment, and the count's click (All, the card shown) ends the line, for good", async (t: TestContext) => {
   t.mock.timers.enable({ apis: ["setInterval"] });
   store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "changes" }));
   const w = world(); t.after(() => w.close());
@@ -620,8 +623,10 @@ test("the saved line ends when the comment comes to ride a change card: a passag
   const m = await saveNote(aside, w, "Name the risks.");
   const fresh: StoreComment = { id: T0 + 9500 + "-10", author: "you", ts: T0 + 9500, body: "Name the risks.", anchor: { quote: "fallback path", prefix: "Risks remain in the ", suffix: "." }, replies: [], resolved: false };
   answer(w, withComments([...ALL_COMMENTS, fresh], { storeMtimeNs: "1757145600000000007" }), m); await flush(); await flush();
-  assert.ok(savedLine(aside), "the line for the hidden card");
-  assert.equal(card(aside, fresh.id), null);
+  const LINE = "Your comment is saved; its card and highlight are hidden while Changes is chosen above (All or Comments shows them).✕";
+  assert.equal(savedLine(aside)?.textContent, LINE, "the line for the hidden card");
+  assert.ok(!card(aside, fresh.id), "the card is hidden: Changes is chosen");
+  assert.ok(!card(aside, "chg:h4")!.querySelector(".fc-about-count"), "h4's card counts no comment yet");
   // the session revises the passage in answer (track-edit --thread): the comment keeps its anchor and gains the change's id;
   // the sidecar moved, so the poll re-reads
   const asks = countOf(w, "fileComments", "status");
@@ -629,13 +634,37 @@ test("the saved line ends when the comment comes to ride a change card: a passag
   t.mock.timers.tick(2500); await flush(); await flush(); await flush();
   assert.equal(countOf(w, "fileComments", "status"), asks + 1, "the moved sidecar re-asks status");
   answer(w, withComments([...ALL_COMMENTS, { ...fresh, suggestionId: "h4" }], { storeMtimeNs: "1757145600000000008" })); await flush(); await flush();
-  assert.equal(savedLine(aside), null, "the comment rides h4's card now: the line is over");
-  const h4card = card(aside, "chg:h4")!;
+  // every comment is its own card (the about follow-on, 2026-09-10): the answered comment is hidden under Changes like the
+  // rest, so the line stands with its words unchanged. Before the follow-on the comment was drawn inside h4's card and the
+  // line ended here; now the change card counts the comment instead, and the count is the way to it.
+  assert.equal(savedLine(aside)?.textContent, LINE, "the line stands, its words unchanged: the comment's card is still hidden");
+  assert.equal(savedLine(aside)!.dataset.id, fresh.id, "and still the saved comment's");
+  assert.ok(!card(aside, fresh.id), "the comment's own card is hidden under Changes, answered or not");
+  assert.equal(aside.querySelectorAll(".fc-hosted").length, 0, "no comment is drawn inside a change card");
+  const h4card = card(aside, "chg:h4");
   assert.ok(h4card, "the change card, in the third group (shown)");
-  h4card.querySelector(".fc-card-head")!.click();
-  assert.ok(card(aside, "chg:h4")!.querySelector('.fc-hosted[data-id="' + fresh.id + '"]'), "the comment on the change card");
-  await pick(aside, "all"); await pick(aside, "changes");
-  assert.equal(savedLine(aside), null, "and the line does not come back");
+  const count = h4card!.querySelector(".fc-about-count");
+  assert.ok(count, "the change card counts the comment the change answered");
+  assert.equal(count!.textContent, "1 comment");
+  assert.equal(count!.dataset.act, "fcaboutfirst"); assert.equal(count!.dataset.id, "h4");
+  assert.equal(count!.title, "Show the comment about this change");
+  // the count's click: All first (Changes hides the comment cards), then the comment's own card, open; the card seen, the
+  // line is over and does not come back
+  count!.click(); await flush();
+  assert.deepEqual(chosen(aside), ["all"], "Changes hid the comment cards: All is chosen for the click");
+  const own = card(aside, fresh.id);
+  assert.ok(own, "the comment's own card");
+  assert.ok(own!.classes.includes("open"), "open: the first (and only) comment about h4");
+  const tag = own!.querySelector(".fc-card-head .fc-about");
+  assert.ok(tag, "the tag naming the change that answered it");
+  assert.equal(tag!.textContent, "answered by a change"); assert.equal(tag!.dataset.refs, "h4");
+  assert.ok(tag!.title.startsWith("The session answered this comment with: "), tag!.title);
+  assert.equal(own!.querySelector(".fc-kind")!.title, "A comment on a passage", "a passage comment the session answered keeps its kind");
+  assert.ok(!savedLine(aside), "the card shown: the line is over");
+  await pick(aside, "changes");
+  assert.ok(!savedLine(aside), "and the line does not come back");
+  assert.ok(!card(aside, fresh.id), "Changes hides the card again; the count on h4's card is the way to it");
+  assert.equal(card(aside, "chg:h4")!.querySelector(".fc-about-count")!.textContent, "1 comment");
   store.delete(SETTINGS_KEY);
 });
 

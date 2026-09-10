@@ -1075,16 +1075,19 @@ paragraph and names no paragraph for the changes it passes through. A comment bo
 change is shown on the change's card and leaves the comment list; once the change is decided, the
 comment's card stands on its own again with the change's texts read from the log's accept or reject
 entry, which is also what `describeComment` falls back to, so a manual Accept before the send keeps
-"on your change …" in the message. Reply on a change card writes `comment {suggestionId, note}`,
-an argument the verb list above does not name. The panel re-fetches the view's bytes itself whenever
+the change's words in the message. Since the about follow-on (2026-09-10) every comment is its own card
+whatever it names, and Comment on this change writes `comment {anchor, hintOffset, changeIds: [id], note}`
+over the change's span (a deletion: `{changeIds: [id], note}`), the verb's `changeIds` argument the list
+above does not name; before it, Reply on a change card wrote `comment {suggestionId, note}`. The panel re-fetches the view's bytes itself whenever
 a status lands whose file mtime is not the view's — a reject's reply, the fresh status a moved fence
 asked for, an accept's reply after a write the poll had not seen — one fetch per mtime, with the loader
 over the cards until the paint shows that text: every reply re-baselines the poll, so the poll never
 sees a move a status already reported (the consolidation, 2026-09-06; before it, only a reject's reply
 and a `file-moved` code re-fetched, and a `store-moved` from a `track-edit` left stale bytes up). The new
-elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
-beside their own and need no rule of their own to be usable, all but `.fc-hosted`, which the reply-place
-follow-on below gave a flex-column rule at the turns' gap (the review of 2026-09-07); the sheets are the
+elements (`.fc-change`, `.fc-group`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
+beside their own and need no rule of their own to be usable (`.fc-hosted`, the comment drawn inside a change
+card, had a flex-column rule at the turns' gap from the reply-place follow-on's review, 2026-09-07, and went
+with its element in the about follow-on, 2026-09-10); the sheets are the
 painter's.
 
 The inline-display follow-on (2026-09-07): after walking the loop, the user asked for two things the
@@ -1158,13 +1161,15 @@ adds a line wherever the plan names it, and the four sentences that once anchore
 key say the save. The same walk asked for the reply's box to open where the comment is read (2026-09-07): a
 reply's box now stands inside the card it answers, below the comment's turns and above its buttons, and
 stays in that card across the poll's re-render with its words, caret and height; when the list stops
-showing the card (the comment resolved into the closed fold, its change card behind the "… N more
-changes" row, or gone from the sidecar) the box returns to the panel's slot with the words and a line
+showing the card (the comment resolved into the closed fold, hidden by the Changes filter, or gone from the sidecar;
+until the about follow-on, 2026-09-10, its change card behind the "… N more
+changes" row too) the box returns to the panel's slot with the words and a line
 saying why, and Escape or Cancel hands the keyboard back to the card's Reply
 (`file-comments-reply-place.test.ts`). A comment on a change card (`.fc-hosted`) had no
 rule of its own until then, so as a plain block it stood the box against the turn above and the buttons
-below at 0px, and after a turn of yours the two washes ran together; it is a flex column at the turns' own
-gap now, in both sheets (`feed-fc-hosted-gap.test.ts`).
+below at 0px, and after a turn of yours the two washes ran together; the review gave it a flex column at the
+turns' own gap, in both sheets. The about follow-on (2026-09-10) draws no comment inside a change card, so the
+element, its rule and its test (`feed-fc-hosted-gap.test.ts`) are gone.
 
 The margin-layout follow-on (2026-09-07), panel side. The user, after walking the loop, asked whether comments could
 move with the window when possible, each trying to stay centered near the place in the text it was left as the reader

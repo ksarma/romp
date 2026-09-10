@@ -713,6 +713,26 @@ export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = 
   });
 }
 
+/** The composer's option over a selection that overlaps pending changes, or the words of the change card's Comment on
+ *  this change (the about follow-on): checked, the saved comment names those changes (changeIds); unchecked it is a plain
+ *  passage comment. One change is "this change": the person is looking at its marks. */
+export function aboutOptionLabel(n: number): string {
+  return n === 1 ? "about this change" : "about " + n + " changes";
+}
+/** A comment card's tag for the changes it names (the about follow-on): by source, "about a change" or "about N changes"
+ *  for the person's own pick, "answered by a change" for a legacy binding the session's track-edit --thread made. */
+export function aboutTagWords(n: number, source: RefSource): string {
+  if (source === "answered") return n === 1 ? "answered by a change" : "answered by " + n + " changes";
+  return n === 1 ? "about a change" : "about " + n + " changes";
+}
+/** A ref's state in the tag's title, in the person's words. */
+export function refStateWords(state: CardRef["state"]): string {
+  if (state === "pending") return "pending";
+  if (state === "detached") return "detached: the file no longer holds its text";
+  if (state === "unknown") return "no longer recorded";
+  return state;
+}
+
 /** The open comments that name change `id` (the about follow-on): the count on the change card's tag, and the cards
  *  its click shows, oldest first as cardModel orders them. A resolved comment is under the Resolved fold and not
  *  counted: the tag is for what is still open on the change. */

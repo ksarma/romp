@@ -68,7 +68,7 @@ const ROMP_NOUNS = /\b(romp|card|board|goal|column|cleared|dismissal|nudge|statu
 test("refIds: the about list first, in its order, then the answering change; each id once, an id in both lists is the person's own; read defensively", () => {
   assert.deepEqual(refIds(aboutTwo), [{ id: "h3", source: "about" }, { id: "h4", source: "about" }]);
   assert.deepEqual(refIds(legacyReply), [{ id: "h2", source: "answered" }]);
-  assert.deepEqual(refIds({ changeIds: ["h1", "h1", 7, "", null as unknown as string, "h2"], suggestionId: "h1" }), [{ id: "h1", source: "about" }, { id: "7", source: "about" }, { id: "h2", source: "about" }], "once each, numbers as strings, garbage skipped, the answering id already named as about stays about");
+  assert.deepEqual(refIds({ changeIds: ["h1", "h1", 7, "", null, "h2"] as unknown as string[], suggestionId: "h1" }), [{ id: "h1", source: "about" }, { id: "7", source: "about" }, { id: "h2", source: "about" }], "once each, numbers as strings, garbage skipped, the answering id already named as about stays about");
   assert.deepEqual(refIds({ changeIds: "h1" as unknown as string[] }), [], "a field of the wrong shape claims nothing");
   assert.deepEqual(refIds({ suggestionId: "" }), []);
   assert.deepEqual(refIds({}), []);

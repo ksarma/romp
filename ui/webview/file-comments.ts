@@ -83,6 +83,7 @@ import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map
 import {
   type Status, type Hunk, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, unsentCount, cardCounts, filterOffered, detachedChanges,
+  commentsAbout, aboutOptionLabel, aboutTagWords, refStateWords, changeRef,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, figureTargets, figuresMoved, figureBaseline, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
   pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
@@ -541,12 +542,17 @@ function shrinkable(b: HTMLElement): void {
 // `elsewhere` is set when the pair is stale because the edit reached the passage and its text is now intact
 // only at a copy the edit never touched (followPassage): the pair is kept, nothing is painted, the chip says
 // so, and Save is refused here — the host, given one hit, would place the note on that other copy.
+/** The changes a comment being written is ABOUT (the about follow-on, 2026-09-10): the pending changes whose marks the
+ *  selection overlaps (overlapping), or the change whose card's Comment on this change opened the box. `on` is the box's
+ *  option, checked when the box opens; unchecked, the save is a plain passage comment. `only` when no passage can carry the
+ *  comment (a deletion, whose text is not in the file; a detached change): the box offers the comment about the change
+ *  alone, says so in one line, and the save carries the ids with no anchor. */
+type About = { ids: string[]; on: boolean; only: boolean };
 type Composer =
-  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; tied?: boolean; elsewhere?: boolean; refusal: (MapRefusal & { selText: string }) | null }
+  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; tied?: boolean; elsewhere?: boolean; about?: About; refusal: (MapRefusal & { selText: string }) | null }
   // `resolved`: whether the comment was already resolved when the reply began — the slot's row tells a comment resolved
   // since the reply began from one whose Resolved fold the person closed (replyAway)
   | { kind: "reply"; commentId: string; ref: string; resolved: boolean }
-  | { kind: "change"; changeId: string; ref: string }   // a comment about a change, no passage (comment {changeIds: [id], note})
   // a region drawn on a picture (Slice 3): `img` is the picture (re-found after a repaint), `src` and `range` the
   // embed's dest and source range for a figure in rendered markdown (null for a standalone image), `text` the
   // source the range indexes; `refusal` when the figure's embed line could not be found (nothing to anchor to);
@@ -880,7 +886,7 @@ if (typeof window !== "undefined") window.addEventListener("keydown", claimSaveC
 // The controls that are not <button>s — a card's head, its passage link, a Log row, a painted highlight —
 // and so take Enter and Space here, through the same root the clicks use: a collapsed card is otherwise a
 // dead end for the keyboard (ui/CLAUDE.md, never dead-end a compact view).
-const KEY_ACTS = new Set(["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"]);
+const KEY_ACTS = new Set(["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow", "fcaboutfirst"]);
 /** The filter's options in the header's order (the filter follow-on, 2026-09-07), and the keys that move along them: the
  *  arrows step to the next or previous option and choose it, wrapping at the ends; Home and End go to the first and last. */
 const FILTERS: CommentsFilter[] = ["all", "comments", "changes"];
@@ -1148,6 +1154,7 @@ class Panel {
   // through the click that asked to see the first arrival. The arrival cards and their marks wear data-new (renderCard, renderChangeCard,
   // markNew) until seen; `newKeys` is the set of card keys the current render marks. The set lives with the panel, so a
   // Raw/Rendered switch, a reload, a close and reopen of the aside keep it; a new file is a new panel.
+  lit = new Set<string>();                    // the change ids whose marks a comment's tag lit under the pointer (lightChanges)
   seenKeys: Set<string> | null = null;
   // the texts of every SEEN pending change, by its entry key, as they read when it was marked seen (the seeds above, a
   // gesture, the person's own write: recordSeen, recordPending). The key is the change's id, and the id is stable while the
@@ -1347,7 +1354,8 @@ class Panel {
         },
         fcrejectallgo: () => { this.rejectAllConfirm = false; void this.mutate("reject-all", {}, "changes"); },
         fcrejectallcancel: () => { this.rejectAllConfirm = false; this.render(); },
-        fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
+        fcchangecomment: (x, ev) => { ev.stopPropagation(); this.startChangeComment(x.dataset.id!); },   // Comment on this change (the about follow-on)
+        fcaboutfirst: (x, ev) => { ev.stopPropagation(); this.showAbout(x.dataset.id!); },   // the change card's "N comments" tag: the first comment about the change into view
         fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
         // Show more / Show less on a card the margin layout folded (clipCards): more makes the card the focus and centers its
         // mark, as opening a card by its head does (afterRender); less is a fold and moves nothing. On a loose card the pass
@@ -1396,6 +1404,7 @@ class Panel {
       if (!t || !this.owns(t)) return;                 // a control the file's markup carries flips nothing
       if (k === "todopick") this.todoPick = t.value;   // the radio group: the todo's id, or "" for none (todoOpts)
       else if (k === "todo" || k === "track" || k === "accept") this.sendOpts[k] = t.checked;
+      else if (k === "about") { const c = this.composer; if (c && c.kind === "comment" && c.about) c.about.on = t.checked; return; }   // the composer's about option: unchecked, a plain passage comment (the about follow-on)
       else return;
       // the answer-a-todo verdict has two controls — the box when one todo is offered, the radio group when several — and
       // the next status can swap one for the other (a todo filed or settled elsewhere changes the count; applyStatus keeps
@@ -2296,7 +2305,16 @@ class Panel {
     const res = this.ctx.mode() === "rendered" ? mapRenderedSelection(sel, root, src) : mapRawSelection(sel, root, src);
     const was = this.composer;
     this.openPanel();
-    if (res.ok) this.composer = { kind: "comment", range: res.range, quote: res.quote, text: src, refusal: null };
+    // a selection over a deletion's struck label alone (the about follow-on, section 3): the label is not text of the
+    // file, so no passage can carry the comment; the box offers a comment about that change, by id alone (deletionUnder)
+    const del = !res.ok || res.range.end <= res.range.start ? this.deletionUnder(sel) : null;
+    if (del !== null) this.composer = { kind: "comment", range: null, quote: null, refusal: null, about: { ids: [del], on: true, only: true } };
+    else if (res.ok) {
+      // a selection wholly or partly inside pending changes' marks (overlapping): an ordinary passage comment, with the
+      // option to name those changes checked; unchecked it is a passage comment like any other (the about follow-on)
+      const ids = this.overlapping(res.range);
+      this.composer = { kind: "comment", range: res.range, quote: res.quote, text: src, refusal: null, ...(ids.length ? { about: { ids, on: true, only: false } } : {}) };
+    }
     else this.composer = { kind: "comment", range: null, quote: null, refusal: { ...res, selText } };
     this.errors.delete("composer");
     this.repaintPresel();
@@ -2354,20 +2372,80 @@ class Panel {
   private heldNote(): HTMLElement | null {
     return isCoarsePointer() ? el("div", "fc-note fc-held", HOLD_WORDS + ".") : null;
   }
-  /** Whether the card with this expand key holds the reply being written: the comment's own card, or the change card
-   *  hosting the comment (cardKey). */
+  /** Whether the card with this expand key holds the reply being written: the comment's own card (cardKey; until the about
+   *  follow-on, 2026-09-10, the change card hosting the comment could be that card). */
   private hostsReply(key: string): boolean { const r = this.replyTo(); return r !== null && this.cardKey(r) === key; }
-  /** Reply on a change card: a comment about the change with no passage (comment {changeIds: [id], note}), so the
-   *  message names the change ("about your change …"). */
-  startChangeReply(id: string): void {
+  /** Comment on this change (the about follow-on, 2026-09-10; before it, Reply, which wrote a comment bound to the change
+   *  by the format's own field): the composer opens in the panel's slot anchored over the change's span in the current
+   *  text, as a selection of it would open it, with the about option checked for the change (changeIds [id] on save;
+   *  the message says "about your change …"). A change with no span in the text (a deletion, whose text is not in the
+   *  file; a detached change) takes the comment by id alone, laid at the change's mark while it is pending (markTop). The
+   *  text must be the status's (textCurrent): the change's offsets index the host's text, and over other bytes the span
+   *  would name the wrong words. */
+  startChangeComment(id: string): void {
     const c = this.changeView().cards.find((x) => x.id === id);
     if (!c) return;
+    const src = this.ctx.text(); const s = this.status;
+    const spanned = !c.detached && c.curTo > c.curFrom && src !== null && !!s && this.textCurrent(s) && this.ctx.mode() !== "media";
     this.openCards.add(c.key);
-    this.composer = { kind: "change", changeId: id, ref: c.ref };
+    if (spanned) {
+      const off = s!.bom ? 1 : 0;                       // the host's offsets run one ahead of the view's on a BOM file (viewAt)
+      const range = { start: Math.max(0, c.curFrom - off), end: Math.max(0, c.curTo - off) };
+      this.composer = { kind: "comment", range, quote: src!.slice(range.start, range.end), text: src!, refusal: null, about: { ids: [id], on: true, only: false } };
+    } else {
+      this.composer = { kind: "comment", range: null, quote: null, refusal: null, about: { ids: [id], on: true, only: true } };
+    }
     this.errors.delete("composer");
     this.repaintPresel();
-    this.render();
+    this.render();                                     // the change card opens for it: the cards too, whatever `was` (renderFrom renders the composer alone otherwise)
     this.input.focus();
+  }
+  /** The pending changes whose marks a selection's range overlaps (the about follow-on): an insertion's or a
+   *  substitution's span sharing any character with the range, a deletion's point strictly inside it (a selection that
+   *  ends at the point does not reach across the removed text). In text order. The hunks index the status's text, so
+   *  nothing while the view shows other bytes (textCurrent); on a BOM file the view's offsets run one behind the host's. */
+  private overlapping(range: SourceRange): string[] {
+    const s = this.status;
+    if (!s || !this.textCurrent(s)) return [];
+    const off = s.bom ? 1 : 0;
+    const start = range.start + off, end = range.end + off;
+    const out: string[] = [];
+    for (const h of [...(s.hunks || [])].sort((a, b) => a.curFrom - b.curFrom || (a.ts || 0) - (b.ts || 0))) {
+      const hit = h.curFrom === h.curTo ? start < h.curFrom && h.curFrom < end : h.curFrom < end && h.curTo > start;
+      if (hit) out.push(String(h.id));
+    }
+    return out;
+  }
+  /** The one deletion mark of the panel's a selection intersects, by change id, or null: the struck label is generated
+   *  text under user-select none, so a selection over it alone holds no text of the file (the mapping refuses or maps an
+   *  empty range), and the change it marks is what the person selected. Several marks, or none, is nothing to claim. */
+  private deletionUnder(sel: Selection): string | null {
+    if (!sel.rangeCount) return null;
+    const marks = Array.from(this.ctx.body().querySelectorAll('.fc-del[data-act="fcchange"]')).filter((m) => this.marks.has(m)) as HTMLElement[];
+    const hit = new Set<string>();
+    for (let i = 0; i < sel.rangeCount; i++) {
+      const r = sel.getRangeAt(i);
+      if (typeof r.intersectsNode !== "function") return null;
+      for (const m of marks) if (m.dataset.id && r.intersectsNode(m)) hit.add(m.dataset.id);
+    }
+    return hit.size === 1 ? Array.from(hit)[0] : null;
+  }
+  /** The change card's "N comments" tag (the about follow-on): the first open comment about the change into view as the
+   *  focus, All chosen first when Changes hides the comment cards (the row that shows them). */
+  private showAbout(changeId: string): void {
+    const first = commentsAbout(this.cards(), changeId)[0];
+    if (!first) return;
+    if (this.activeFilter() === "changes") this.setFilter("all");
+    this.showCard(first.id);
+  }
+  /** Light or unlight the marks of the changes a comment's tag names (the about follow-on): the class the sheets ring,
+   *  on every mark the panel painted for those ids; `lit` remembers them so a render (which rebuilds the tag under the
+   *  pointer, and with it the leave event) can unlight them first. */
+  private lightChanges(ids: string[], on: boolean): void {
+    for (const id of ids) {
+      for (const m of this.ownMarks("fcchange", id)) m.classList.toggle("fc-lit", on);
+      if (on) this.lit.add(id); else this.lit.delete(id);
+    }
   }
   closeComposer(): void {
     const was = this.composer;
@@ -2471,7 +2549,6 @@ class Panel {
     this.gesture();
     let r: Status | null;
     if (c.kind === "reply") r = await this.mutate("reply", { commentId: c.commentId, note }, "composer");
-    else if (c.kind === "change") r = await this.mutate("comment", { changeIds: [c.changeId], note }, "composer");
     else if (c.kind === "region") {
       // the target in fractions of the natural size (E1), the host stamping the hash; a figure in rendered markdown
       // also carries the embed line's anchor, built over the text its range indexes as for a passage comment
@@ -2490,6 +2567,8 @@ class Panel {
       // wins, by coincidence — and save the note on a copy the person never selected. With no offset it refuses a tie
       // still standing (anchor-ambiguous), the note stays, and the passage is selected again.
       if (c.tied) delete args.hintOffset;
+      // the changes the comment is about (the about follow-on): the option checked, or the change alone with no passage
+      if (c.about && c.about.on) args.changeIds = c.about.ids;
       r = await this.mutate("comment", args, "composer");
     }
     const hid = r !== null && c.kind !== "reply" && this.noteHiddenSave(before, note);
@@ -3873,6 +3952,18 @@ class Panel {
    *  yet (a figure not loaded, a page not drawn): the loose group, until the load or the draw re-runs the pass. */
   private markTop(key: string): number | null {
     const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
+    let top = this.topOfMarks(act, id);
+    if (top === null && !key.startsWith("chg:")) {
+      // a comment with no mark of its own (no passage, no region) about a pending change (the about follow-on: a deletion's,
+      // whose text is not in the file): laid at that change's mark, the first pending one it names
+      const card = this.cards().find((c) => c.id === key);
+      if (card && !card.anchor && !card.target) {
+        for (const r of card.refs) { if (r.state !== "pending") continue; top = this.topOfMarks("fcchange", r.id); if (top !== null) break; }
+      }
+    }
+    return top;
+  }
+  private topOfMarks(act: string, id: string): number | null {
     let top: number | null = null;
     for (const m of this.ownMarks(act, id)) {
       const r = m.getBoundingClientRect();
@@ -4152,6 +4243,7 @@ class Panel {
     const noting = document.activeElement === this.noteBox;   // the Send confirm's note box, rebuilt around like the composer's
     const noteScroll = this.noteBox.scrollTop;
     this.latchReplyCard();                             // the reply's card stays open by key, whatever key the status gave it
+    if (this.lit.size) this.lightChanges(Array.from(this.lit), false);   // the tag under the pointer is rebuilt below, and its leave never fires: unlight first
     // the arrivals (the arrivals follow-on): the first render with a status seeds the seen set with all of it — the person
     // is looking at the whole file, and nothing in it arrived while they were; the renders after mark the arrival cards
     // (newKeys → renderCard, renderChangeCard) and their marks in the body (markNew)
@@ -4170,11 +4262,11 @@ class Panel {
     if (noting && document.activeElement !== this.noteBox) this.noteBox.focus({ preventScroll: true });
     if (this.noteBox.scrollTop !== noteScroll) this.noteBox.scrollTop = noteScroll;
     // the box moved while the person was typing in it: its card left the list and it went to the slot, above the cards and
-    // off-screen when the list is long; the card came back and it returned; or it went from one card to another, and the
-    // other card may be off-screen as well — its comment bound to a change under the reply (the session's track-edit
-    // answering it) moves it onto the change's card, among the change cards at the top of the list; that change accepted
-    // (Accept on the card, the Send's accept, a decision elsewhere) moves it to the comment's own card, among the comment
-    // cards below. Every one of those puts the box in a node other than `home`, and a rebuild that keeps its card keeps that
+    // off-screen when the list is long; or the card came back and it returned. (Until the about follow-on, 2026-09-10, it
+    // could also go from one card to another: a comment bound to a change under the reply moved onto the change's card and
+    // back to its own when the change was accepted; every comment is its own card now, so a card-to-card move has no
+    // cause left, and the check below still covers one.) Each of those puts the box in a node other than `home`, and a
+    // rebuild that keeps its card keeps that
     // node (swapCards), so the one check covers them; the box is brought into view, the slot's row saying why with it, and a
     // keyboard elsewhere leaves the view where the person put it. After the margin pass (afterRender): in the margin layout
     // a card the fresh list built has no top until the pass places it, so a scroll before the pass went to a place the
@@ -4190,13 +4282,14 @@ class Panel {
     if (moved) this.showComposer();
   }
   /** The cards section takes the fresh list. While the reply's box stands in a card of the LIVE list and the fresh list has
-   *  that card too, the nodes between the section and the box — the list, the card, and for a hosted comment its box on
-   *  the change card — stay in the document and take their fresh counterparts' children instead (graft): a textarea that
+   *  that card too, the nodes between the section and the box — the list and the card — stay in the document and take
+   *  their fresh counterparts' children instead (graft): a textarea that
    *  leaves the document, even to come straight back, loses its undo history, its scroll offset, an IME composition in
    *  flight and (until render puts it back) the keyboard; only the value, the caret and the height survive a detach. The
-   *  box leaves a card when the fresh list shows no card for its comment (placeComposer moves it to the slot), and when the
-   *  list shows the comment in ANOTHER card: a passage comment the session answers with a track-edit bound to it moves onto
-   *  the change's card, and a hosted comment whose change was accepted moves to its own card. That move costs the detach:
+   *  box leaves a card when the fresh list shows no card for its comment (placeComposer moves it to the slot). Until the
+   *  about follow-on (2026-09-10) it also left when the list showed the comment in ANOTHER card, a passage comment the
+   *  session answered with a bound track-edit moving onto the change's card and a hosted comment whose change was accepted
+   *  moving to its own; every comment is its own card now, and the graft still covers a move if one arose. A move costs the detach:
    *  the chain from the section to the box changes depth, so no node of it can stand in for a counterpart, and a node
    *  cannot change parents without leaving the document — the engines' state-preserving move (moveBefore) keeps the focus
    *  and the scroll offset, both of which render restores anyway, and drops the undo history all the same (Chromium 151
@@ -4562,7 +4655,6 @@ class Panel {
         ref.appendChild(el("span", "fc-note" + (away.gone ? " fc-refused" : ""), away.text));
       }
     }
-    else if (c.kind === "change") ref.appendChild(el("span", "fc-note", "Reply on the change " + c.ref));
     else if (c.kind === "replace") {
       // a PDF region whose page the document no longer has (pageGone): no page wears the re-place cue, so the note says so
       const card = c.page ? this.cards().find((x) => x.id === c.commentId) : undefined;
@@ -4603,6 +4695,17 @@ class Panel {
         t.title = c.tied ? PASSAGE_TIED : c.elsewhere ? PASSAGE_ELSEWHERE : "The file changed and this passage was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
         ref.appendChild(t);
       }
+      if (c.about && !c.about.only) ref.appendChild(this.aboutOption(c.about));   // the changes the selection overlaps (the about follow-on)
+    } else if (c.about && c.about.only) {
+      // a comment about a change with no passage to carry it (the about follow-on): the change's words, and one line saying
+      // where the card is laid and why (a deletion's text is not in the file; a detached change's no longer is)
+      const ch = this.changeView().cards.find((x) => x.id === c.about!.ids[0]);
+      ref.appendChild(el("span", "fc-note", "About the change "));
+      const q = el("span", "fc-quote", ch ? ch.ref : c.about.ids[0]);
+      if (ch) q.title = ch.kind === "ins" ? "Added: " + ch.newText : ch.kind === "del" ? "Removed: " + ch.oldText : ch.oldText + " → " + ch.newText;
+      ref.appendChild(q);
+      ref.appendChild(el("span", "fc-note", ch && ch.detached ? "The file no longer holds the change's text, so the comment stands with the change's card."
+        : "The removed text is not in the file, so the comment is laid at the change's point."));
     } else ref.appendChild(el("span", "fc-note", "On this file"));
     const acts = this.composerActs;
     const saving = this.busy.has("composer");
@@ -4618,6 +4721,18 @@ class Panel {
     const err = this.composerErr;
     err.replaceChildren(...[this.loader("composer"), this.errRow("composer")].filter((n): n is HTMLElement => !!n));
     if (!box.contains(this.input)) box.replaceChildren(ref, this.input, acts, err);   // built once; the input keeps its focus across renders
+  }
+  /** The composer's option for the changes a selection overlaps (the about follow-on, 2026-09-10): a checkbox in the
+   *  reference row, checked as the box opens (About.on), "about this change" or "about N changes" (aboutOptionLabel), its
+   *  title the changes' words; unchecked, Save writes a plain passage comment. The row's change listener keeps About.on. */
+  private aboutOption(a: About): HTMLElement {
+    const l = el("label", "fc-opt fc-about-opt");
+    const cb = el("input") as HTMLInputElement;
+    cb.type = "checkbox"; cb.checked = a.on; cb.dataset.opt = "about";
+    l.appendChild(cb); l.appendChild(el("span", undefined, aboutOptionLabel(a.ids.length)));
+    const cards = this.changeView().cards;
+    l.title = a.ids.map((id) => { const ch = cards.find((x) => x.id === id); return ch ? ch.ref : id; }).join("\n");
+    return l;
   }
   /** Where the box stands. A reply's box goes INSIDE the card the list shows for its comment — below the turns and above
    *  the buttons; every other kind's box, a closed one, and a reply whose card the list does not show (the comment
@@ -4862,14 +4977,22 @@ class Panel {
     // state wears the same words, and the title says which copy is painted and why it is a guess
     if (this.unsureCopies.has(c.id)) { const t = el("span", "fc-tag", "passage recurs"); t.title = copyUnsureWords(c); head.appendChild(t); }
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
-    // a comment naming a change the sidecar holds (refs; the about follow-on, 2026-09-10): the tag says the change is
-    // there, on its own card, and which state it is in, since a PENDING change has a card that Accept or Reject decides
-    // and a DETACHED one sits in the detached group (changeCards)
-    const named = c.refs.find((r) => r.state === "pending" || r.state === "detached");
-    if (named) {
-      const t = el("span", "fc-tag", "on a change");
-      t.title = named.state === "pending" ? "This comment is on a pending change; All or Changes above shows the change's card"
-        : "This comment is on a detached change, whose text the file no longer holds; All or Changes above shows the change's card, under Detached changes";
+    // the changes the comment names (refs; the about follow-on, 2026-09-10): one tag per source — "about N changes" for the
+    // person's own pick, "answered by a change" for a legacy binding — its title the changes' words and states, and the
+    // pointer over it lights the pending changes' marks in the text (lightChanges), so the comment and its changes read
+    // together without a click; the change card's own tag counts the comments about it (renderChangeCard)
+    for (const source of ["about", "answered"] as const) {
+      const refs = c.refs.filter((r) => r.source === source);
+      if (!refs.length) continue;
+      const t = el("span", "fc-tag fc-about", aboutTagWords(refs.length, source));
+      t.dataset.refs = refs.map((r) => r.id).join(" ");
+      t.title = (source === "about" ? "This comment is about: " : "The session answered this comment with: ")
+        + refs.map((r) => (r.kind === null ? "a change the file no longer records" : changeRef({ kind: r.kind, oldText: r.oldText, newText: r.newText })) + " (" + refStateWords(r.state) + ")").join("; ");
+      const pending = refs.filter((r) => r.state === "pending").map((r) => r.id);
+      if (pending.length) {
+        t.addEventListener("pointerenter", () => this.lightChanges(pending, true));
+        t.addEventListener("pointerleave", () => this.lightChanges(pending, false));
+      }
       head.appendChild(t);
     }
     if (c.decision) { const d = el("span", "fc-tag", c.decision); d.title = "You " + c.decision + " the change this comment is on"; head.appendChild(d); }
@@ -4996,7 +5119,12 @@ class Panel {
       t.title = "This view does not show the change; Reveal opens it in Raw";
       head.appendChild(t);
     }
-    if (c.comments && !isOpen) head.appendChild(el("span", "fc-tag fc-count", String(c.comments)));
+    if (c.comments) {   // the open comments about this change (the about follow-on): a control, its click showing the first of them
+      const t = el("span", "fc-tag fc-count fc-about-count", c.comments + (c.comments === 1 ? " comment" : " comments"));
+      t.dataset.act = "fcaboutfirst"; t.dataset.id = c.id; t.tabIndex = 0; t.setAttribute("role", "button");
+      t.title = c.comments === 1 ? "Show the comment about this change" : "Show the first of the comments about this change";
+      head.appendChild(t);
+    }
     head.appendChild(el("span", "fc-time", clock(c.ts)));
     card.appendChild(head);
     if (isOpen) {
@@ -5015,7 +5143,8 @@ class Panel {
       no.title = editing ? decide : "Put the old text back in the file";
       if (editing) { ok.classList.add("fileview-btn-blocked"); no.classList.add("fileview-btn-blocked"); }   // real buttons, dimmed: the click answers in place (DECIDES)
       acts.appendChild(ok); acts.appendChild(no);
-      const re = btn("Reply", "fcchangereply"); re.dataset.id = c.id; re.title = "Comment on this change; the session's answer comes back to it";
+      const re = btn("Comment on this change", "fcchangecomment"); re.dataset.id = c.id;   // the about follow-on (before: Reply, a comment bound by the format's own field)
+      re.title = "Leave a comment about this change; the message to the session names the change and its text";
       acts.appendChild(re);
       if (!editing) {   // Reveal switches to Raw and scrolls the read view: neither exists while the editor holds the body, which shows the change itself
         if (c.kind === "del" || !painted) {
