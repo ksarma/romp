@@ -197,7 +197,7 @@ export function initStrip(openSettings: () => void, post?: (m: Record<string, un
   // hidden-set ({type:"stripPanes"}) on every panel create/dispose/view-state.
   const panesWrap = document.createElement("div");
   panesWrap.id = "strip-panes";
-  // ↻ kernel restart — the rail's #rail-refresh twin. The pipes reconnect and the
+  // ↻ kernel restart: the rail's #rail-refresh twin. The pipes reconnect and the
   // host reloads the webviews on their own once the kernel is back; a refusal comes
   // back onto the button (restartFromStrip).
   const refresh = document.createElement("button");
