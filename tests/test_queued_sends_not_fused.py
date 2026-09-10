@@ -121,15 +121,25 @@ class _ControlChannel:
     """The SDK client's private control-request sender, scripted and GATED: the request is recorded the
     moment it is sent (it rides the control channel, not the feeder), and the CLI's answer waits for the
     test's gate, which stands in for the relocation the CLI performs BEFORE it replies to a set_cwd."""
+    instances = []                       # every channel a test made, for tearDown's gate sweep: the client's
+    #                                      _query is only the LAST one, and a channel a later _start_move (or a
+    #                                      subTest that failed before its gate.set) replaced stays shut otherwise
+
     def __init__(self, answer, on_request=None):
         self.answer, self.requests, self.gate = answer, [], threading.Event()
         self.on_request = on_request     # what the CLI does on receipt, before any answer (a relocation)
+        self.worker = None               # the loop's executor thread, once it is parked in gate.wait
+        type(self).instances.append(self)
+
+    def _park(self):
+        self.worker = threading.current_thread()
+        self.gate.wait()
 
     async def _send_control_request(self, req):
         if self.on_request is not None:
             self.on_request(dict(req))
         self.requests.append(dict(req))
-        await asyncio.get_running_loop().run_in_executor(None, self.gate.wait)
+        await asyncio.get_running_loop().run_in_executor(None, self._park)
         return self.answer
 _TextBlock.__name__ = "TextBlock"; _AssistantMessage.__name__ = "AssistantMessage"
 _ResultMessage.__name__ = "ResultMessage"; _SystemMessage.__name__ = "SystemMessage"
@@ -192,6 +202,7 @@ class OneFedTextAtATime(unittest.TestCase):
     def setUp(self):
         sb.SdkSession._stream_fail_seen.clear()
         self._Client.instances = []
+        _ControlChannel.instances = []
         fake = types.ModuleType("claude_agent_sdk")
         fake.__spec__ = ModuleSpec("claude_agent_sdk", loader=None)
         fake.ClaudeSDKClient, fake.ClaudeAgentOptions, fake.HookMatcher = self._Client, self._Options, (lambda **kw: kw)
@@ -218,12 +229,14 @@ class OneFedTextAtATime(unittest.TestCase):
         self.n = 0
 
     def tearDown(self):
-        for c in self._Client.instances:
-            q = getattr(c, "_query", None)
-            if isinstance(q, _ControlChannel):
-                q.gate.set()     # a gate still shut (a move whose CLI never answered) parks the loop's executor
-                #                  thread in gate.wait, and the join below sat out its whole 10 s on it: open every
-                #                  gate first, here rather than in a cleanup, which unittest runs AFTER tearDown
+        for q in _ControlChannel.instances:
+            q.gate.set()     # a gate still shut (a move whose CLI never answered; a subTest that failed between a
+            #                  _start_move and its gate.set) parks the loop's executor thread in gate.wait: the join
+            #                  below sat out its whole 10 s on it, and a worker still parked at interpreter exit
+            #                  hangs the pytest process for good (concurrent.futures joins it without a timeout).
+            #                  Open every gate first, here rather than in a cleanup, which unittest runs AFTER
+            #                  tearDown, and from the fake's registry rather than the client's _query, which names
+            #                  only the LAST channel: the one a later _start_move replaced would stay shut
         sessions = {id(x): x for x in [self.s] + list(self.be.sessions.values())}.values()   # respawns too
         for x in sessions:
             if x.thread.is_alive():          # a session whose CLI exited already closed its loop
@@ -1189,7 +1202,8 @@ class OneFedTextAtATime(unittest.TestCase):
         new = os.path.join(self.state, "moved")
         os.makedirs(new, exist_ok=True)
         c._query = _ControlChannel(answer(new) if callable(answer) else answer, on_request=on_request)
-        out = {}                              # a gate a failed assertion leaves shut is opened by tearDown
+        out = {}                              # a gate a failed assertion leaves shut is opened by tearDown (every
+        self.addCleanup(c._query.gate.set)    # registered gate), and by this backstop after it: a no-op then
         t = threading.Thread(target=lambda: out.__setitem__("r", self.be.move(SID, new)), daemon=True)
         t.start()
         self._wait(lambda: c._query.requests, "the set_cwd request went out")
@@ -1395,6 +1409,32 @@ class OneFedTextAtATime(unittest.TestCase):
         self._wait(lambda: len(c.writes) == 2, "fed at the stale arm's drop")
         self.assertEqual(c.writes[1], ("sent during a hung move", "cli-owned-turn"))
         self.assertFalse(s._move_settle_expected)
+
+    def test_teardown_opens_a_replaced_control_channels_gate_so_its_worker_does_not_outlive_the_test(self):
+        """The fixture's own hazard, pinned (2026-09-10): a scripted channel whose gate stays shut parks the
+        loop's executor thread in gate.wait, and a subTest that fails between a _start_move and its gate.set
+        leaves exactly that, with the next _start_move replacing the client's _query. tearDown once opened
+        only the client's current channel, so the replaced one's worker was still parked at interpreter
+        exit, which concurrent.futures joins without a timeout: the pytest process never exited (a
+        single-process run, as CI's). tearDown opens every gate in the fake's registry instead. The check
+        runs from a cleanup because unittest runs cleanups AFTER tearDown: it sees what tearDown left."""
+        from unittest import mock
+        c = self._idle_after_the_first_turn()
+        with mock.patch.object(sb, "MOVE_CONTROL_TIMEOUT", 0.7):   # the pre-existing round-trip bound, shortened
+            new, t, out = self._start_move(c, None)                # the CLI never answers: the gate stays shut
+            t.join(10)
+        self.assertFalse(t.is_alive(), "move() returned on the control request's timeout")
+        parked = c._query
+        self._wait(lambda: parked.worker is not None, "the loop's executor thread is parked in the shut gate")
+        self.assertTrue(parked.worker.is_alive())
+        c._query = _ControlChannel(None)                           # the replacement: the client names only this one
+        self.assertEqual(_ControlChannel.instances, [parked, c._query], "both channels are registered")
+
+        def no_worker_outlives_the_test():
+            workers = [q.worker for q in _ControlChannel.instances if q.worker is not None]
+            alive = [th.name for th in threading.enumerate() if th in workers]
+            self.assertEqual(alive, [], "a control channel's worker is still parked after tearDown")
+        self.addCleanup(no_worker_outlives_the_test)
 
 
 class QueueEntryWire(unittest.TestCase):
