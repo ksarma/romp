@@ -13,7 +13,7 @@ CLI:
   romp-judge --once               # one caption pass over the live fleet (writes captions/)
   romp-judge --test <transcript>  # caption one transcript's recent units, print them (no write)
 """
-import contextlib, copy, hashlib, json, os, re, secrets, shutil, signal, stat, sys, time, subprocess, threading, traceback, importlib.util
+import contextlib, copy, errno, hashlib, json, os, re, secrets, shutil, signal, stat, sys, time, subprocess, threading, traceback, importlib.util
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -5270,15 +5270,35 @@ def _freeze_store(store, fsid=None):
     return fs
 
 
+class _StatFailed:
+    """_file_key's answer for a path whose stat failed other than "no such file" (EACCES, ELOOP, EIO): a fresh
+    object per call, equal to nothing a memo holds, so the caller reads the file and memoizes nothing, and it
+    carries the error for the caller's log line (round 11 of the unknown-name PR, 2026-09-10: the thread-reg
+    line said "unreadable after a successful stat" for a stat that had failed)."""
+    __slots__ = ("error",)
+
+    def __init__(self, error):
+        self.error = error
+
+    def __repr__(self):
+        return "_StatFailed(%r)" % (self.error,)
+
+
 def _file_key(path_s):
-    """(inode, mtime_ns, size) of a regular file by path; None when there is none; a fresh sentinel when it
-    exists but cannot be stat'ed or is not a regular file, so no entry matches and the fill reports it."""
+    """(inode, mtime_ns, size) of a regular file by path; None when there is none, a name too long for the
+    filesystem included (ENAMETOOLONG: no file can exist under that name, so none does; a session name of 251+
+    characters built sdk/<name>.json past NAME_MAX, the stat's sentinel sent _thread_reg to an open that raised
+    the same error, and every door answered the record's 503 for a file that does not exist, round 11 of the
+    unknown-name PR, 2026-09-10) and a path that is not a regular file; a fresh _StatFailed carrying the error
+    when it exists but cannot be stat'ed, so no entry matches and the fill reports it."""
     try:
         st = os.stat(path_s)
     except FileNotFoundError:
         return None
-    except OSError:
-        return object()
+    except OSError as e:
+        if e.errno == errno.ENAMETOOLONG:
+            return None
+        return _StatFailed(e)
     if not stat.S_ISREG(st.st_mode):
         return None                                  # _replay_overrides' is_file(): not a file is no journal
     return (st.st_ino, st.st_mtime_ns, st.st_size)

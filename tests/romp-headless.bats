@@ -19,16 +19,16 @@ teardown() {
 }
 
 # Start a one-shot fake kernel; writes its port to $TEST_DIR/port and its request to $TEST_DIR/req.
-start_fake_kernel() {   # $1 = response body
-    python3 - "$1" "$TEST_DIR" <<'PY' &
+start_fake_kernel() {   # $1 = response body, $2 = HTTP status (default 200)
+    python3 - "$1" "$TEST_DIR" "${2:-200}" <<'PY' &
 import http.server, json, sys
-body, tdir = sys.argv[1].encode(), sys.argv[2]
+body, tdir, status = sys.argv[1].encode(), sys.argv[2], int(sys.argv[3])
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
         with open(tdir + "/req", "w") as f:
             f.write(self.path + "\n" + self.rfile.read(n).decode())
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -80,6 +80,24 @@ PY
     ROMP_SID="" run "$ROMP_SCRIPT" end self
     [ "$status" -eq 2 ]
     [[ "$output" == *"only works from inside a romp SDK session"* ]]
+}
+
+@test "romp end --when-idle says deferred when the kernel deferred, ok when it killed at once" {
+    # the kernel's when:idle arm answers {"ok": true, "deferred": true} and a far kernel's deferral is
+    # relayed as is; the CLI printed the same bare "ok (web)" for that and for an immediate kill, so a
+    # caller could not tell a session gone from one still finishing its turn (review round 4, 2026-09-09)
+    start_fake_kernel '{"ok": true, "deferred": true}'
+    run "$ROMP_SCRIPT" end web --when-idle
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp end: deferred (web), ends when idle"* ]]
+    [[ "$output" != *"romp end: ok"* ]]
+    grep -q '"when": "idle"' "$TEST_DIR/req"
+    rm -f "$TEST_DIR/port" "$TEST_DIR/req"          # the fake is one-shot: a second one needs a fresh port file
+    start_fake_kernel '{"ok": true}'
+    run "$ROMP_SCRIPT" end web --when-idle
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp end: ok (web)"* ]]
+    [[ "$output" != *"deferred"* ]]
 }
 
 @test "the dashed spellings are silent aliases: --send works and says nothing about it" {
@@ -161,6 +179,107 @@ PY
     run "$ROMP_SCRIPT" send lonely
     [ "$status" -eq 2 ]
     [[ "$output" == *"usage: romp send"* ]]
+}
+
+@test "an unknown session is a 404 the CLI surfaces by its reason, exit 1" {
+    # the kernel used to mint a phantom sid for a typo and answer ok:true; it now refuses with a 404
+    # whose error names the name. curl -f swallowed every 4xx body into "kernel not reachable", so the
+    # status is read off the response instead and the reason is printed
+    start_fake_kernel '{"ok": false, "error": "no live session named '"'"'typo'"'"'"}' 404
+    run "$ROMP_SCRIPT" end typo
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no live session named 'typo'"* ]]
+    [[ "$output" != *"kernel not reachable"* ]]
+    grep -q '"name": "typo"' "$TEST_DIR/req"
+}
+
+@test "a non-JSON refusal body is quoted with its status, and the printf fallback says the same when the parser dies" {
+    # the kernel's own refusals carry {ok:false, error}; a proxy's plain-text 502, or a JSON body with no
+    # error field, has no reason to lift, so the status and the raw answer are printed instead
+    start_fake_kernel 'gateway down' 502
+    run "$ROMP_SCRIPT" interrupt web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp interrupt: the kernel answered HTTP 502: gateway down"* ]]
+    [[ "$output" != *"kernel not reachable"* ]]
+    rm -f "$TEST_DIR/port" "$TEST_DIR/req"          # the fake is one-shot: a second one needs a fresh port file
+    start_fake_kernel '{"ok": false}' 500
+    run "$ROMP_SCRIPT" end web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'romp end: the kernel answered HTTP 500: {"ok": false}'* ]]
+    # the parser itself failing (a python3 that dies on the reason script, and on nothing else: the
+    # payload build in the same block needs the real one) falls to the printf line with the same words
+    _real="$(command -v python3)"
+    mkdir -p "$TEST_DIR/shim"
+    cat > "$TEST_DIR/shim/python3" <<SHIM
+#!/usr/bin/env bash
+[[ "\$*" == *"the kernel answered HTTP"* ]] && exit 1
+exec "$_real" "\$@"
+SHIM
+    chmod +x "$TEST_DIR/shim/python3"
+    rm -f "$TEST_DIR/port" "$TEST_DIR/req"
+    start_fake_kernel 'gateway down' 503
+    PATH="$TEST_DIR/shim:$PATH" run "$ROMP_SCRIPT" interrupt web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp interrupt: the kernel answered HTTP 503: gateway down"* ]]
+}
+
+@test "a verb's own flag in the session slot is usage and exit 2, never a session named --now" {
+    # `romp end --now web` used to POST {"name": "--now"} (and, since the gate, come back "no live session
+    # named '--now'"); the compact verb answers its own misplaced flags with usage, so these do too. Every
+    # other dash-leading word is still a session name
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" end --now web
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp end <session>|self [--now|--when-idle]"* ]]
+    [[ "$output" != *"kernel not reachable"* ]]
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" end --when-idle web
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp end"* ]]
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" send --tag kick web hello there
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp send <session> [--tag <label>] <text>"* ]]
+    [[ "$output" != *"kernel not reachable"* ]]
+    # --tag is end's session name and --now is send's: neither verb owns the other's flag
+    start_fake_kernel '{"ok": true}'
+    run "$ROMP_SCRIPT" end --tag
+    [ "$status" -eq 0 ]
+    grep -q '"name": "--tag"' "$TEST_DIR/req"
+    rm -f "$TEST_DIR/port" "$TEST_DIR/req"
+    start_fake_kernel '{"ok": true}'
+    run "$ROMP_SCRIPT" send -oddname hello
+    [ "$status" -eq 0 ]
+    grep -q '"name": "-oddname"' "$TEST_DIR/req"
+}
+
+@test "the bare verb prints the usage line --help prints, exit 2, without a kernel" {
+    # `romp end` with no session printed a bare `usage: romp end <session> ` (a trailing space from an
+    # empty substitution) while --help spelled the full form; one usage string per verb now (review round 2)
+    for verb in send interrupt end; do
+        ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" "$verb" --help
+        [ "$status" -eq 0 ]
+        _first="${lines[0]}"
+        [[ "$_first" == "usage: romp $verb "* ]]
+        ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" "$verb"
+        [ "$status" -eq 2 ]
+        [ "$output" == "$_first" ]
+    done
+}
+
+@test "romp send, interrupt and end each answer --help without a kernel" {
+    # `romp end --help` used to POST a session named --help (the phantom-sid bug from the other side)
+    for verb in send interrupt end; do
+        ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" "$verb" --help
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"usage: romp $verb <session>"* ]]
+        [[ "$output" != *"kernel not reachable"* ]]
+        ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" "$verb" -h
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"usage: romp $verb <session>"* ]]
+    done
+    run "$ROMP_SCRIPT" send --help
+    [[ "$output" == *"--tag <label>"* ]]
+    run "$ROMP_SCRIPT" end --help
+    [[ "$output" == *"--now"* ]]
+    [[ "$output" == *"self"* ]]
 }
 
 # ── romp compact (2026-08-30, the user via the dashboard team) ──

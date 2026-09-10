@@ -71,10 +71,18 @@ only prints the line for you to add.
 
 **What it does not touch.** It installs nothing into your Python, system or
 user: the kernel and the CLI are standard library only, which is why the SDK's
-dependency gets that separate venv, built against the newest Python 3.10+ on the
-machine and rebuilt when that Python changes. It reads your Claude Code
-transcripts where they already are and never copies them. Every step has an
-opt-out; see [Install-time switches](reference.md#install-time-switches).
+dependency gets that separate venv, built on one Python 3.10+ and rebuilt by
+`bin/romp-sdk-setup` only when you move romp to another Python by setting
+`ROMP_PYTHON`, when the venv's own `bin/python` or `bin/pip` is missing (the
+interpreter it was built with removed, since `bin/python` links to it, or an
+interrupted build), or when that interpreter no longer runs as its version and
+build and no other Python of that version and build remains on `PATH` or in
+`~/.local/bin`; the kernel runs `ROMP_PYTHON` if set, else the interpreter the
+venv's `pyvenv.cfg` records, or another Python of its version and build when
+that one is gone or no longer runs as that version and build. It reads your
+Claude Code transcripts where they already are and never copies them. Every
+step has an opt-out; see
+[Install-time switches](reference.md#install-time-switches).
 
 **Undoing it.** `romp-service uninstall` removes the login service. After that,
 deleting the clone and the `~/.claude` symlinks that point into it leaves the

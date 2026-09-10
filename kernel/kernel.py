@@ -1930,10 +1930,16 @@ def _names_snapshot():
         #                         runs on the pusher thread's bare loop, so it must NEVER raise (review
         #                         find 2026-08-31: one non-UTF-8 entry would have killed the pusher for
         #                         good, and again on every restart while the file persisted)
+        # the eviction walks a COPY of the memo's keys, inside the try: the memo is a module dict that this
+        # function fills and evicts from the pusher thread and from every handler thread that resolves a
+        # name (the client doors' by-name read since round 10 of the unknown-name PR), and a size change by
+        # another thread mid-walk raised RuntimeError out of a comprehension over the live dict, past the
+        # never-raise contract above (review round 11, 2026-09-10; the shape was the base's, reached from
+        # handler threads before, and the pusher would have died until a restart)
+        for gone in [n for n in list(_names_entry_memo) if n not in snap]:
+            _names_entry_memo.pop(gone, None)          # a removed entry drops its memo
     except Exception:
         pass
-    for gone in [n for n in _names_entry_memo if n not in snap]:
-        _names_entry_memo.pop(gone, None)              # a removed entry drops its memo
     return snap
 
 
@@ -16069,9 +16075,11 @@ def _comment_msg_text(rec):
 # new inode and an equal-size rewrite inside one mtime tick still changes the key (the round-3 review's
 # hazard with in-place rewrites; jd._reg_spawned_at and sdk_backend._REG_CACHE record the same rule; the
 # kernel's seed-pin migration rewrites regs through _atomic_write, also os.replace). An absent file is {}
-# and its entry is popped; a stat that fails otherwise is a sentinel key that matches nothing (read, not
-# memoized); a read or parse failure after a successful stat is not memoized (the `fail` counter, one
-# stderr line per episode), since a permission or descriptor failure is not a file version. Dict order is
+# and its entry is popped (a name too long for the filesystem is absent too: no file can exist under it);
+# a stat that fails otherwise (EACCES, ELOOP) is a sentinel key carrying the error that matches nothing
+# (read, not memoized); a read or parse failure is not memoized (the `fail` counter, one stderr line per
+# episode naming the read's error and the stat's when it failed too), since a permission or descriptor
+# failure is not a file version. Dict order is
 # LRU (a hit reinserts), one eviction per insert past the cap, never clear-at-cap: sweeps over dormant
 # sids read through this too, and a clear at the cap would drop the live sessions' entries every cycle
 # (the _JSONL_CACHE lesson, event_model.py). Callers read the returned dict and never write it (a
@@ -16081,8 +16089,26 @@ def _comment_msg_text(rec):
 _thread_reg_memo = {}
 _THREAD_REG_MEMO_MAX = 512
 _thread_reg_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
-_thread_reg_failed = set()      # paths whose last read after a good stat failed: one stderr line per episode
+_thread_reg_failed = set()      # paths whose last read failed (the file exists): one stderr line per episode
 _THREAD_REG_LOCK = threading.Lock()
+
+
+class _UnreadableReg(dict):
+    """_thread_reg's answer for a reg that EXISTS but will not read: an OSError from the read (after a stat that
+    succeeded, or failed other than no-such-file), a body that is not JSON, or JSON that is not an object. An
+    empty mapping, so every `.get` caller reads it
+    exactly as it read the {} it replaces (absent and unreadable were one answer, and a broken record read as
+    no record), and a type, so a caller that must tell a failed read from no record can: `_reg_unreadable`,
+    asked by the control gate (a 503 naming the read, never the 404 for a session that does not exist) and
+    by _confirmed_ended (the None verdict). Never memoized, and a fresh instance per call like every other
+    answer, so a caller's edit reaches no one else (review round 4, 2026-09-09; the fail-loudly rule)."""
+
+
+def _reg_unreadable(sid):
+    """Does an SDK registry entry for `sid` exist that will not read? False for a readable reg AND for no
+    reg at all: only the failed read answers True. The partition _confirmed_ended draws inline (a stat
+    that succeeds, then a read that answers nothing), named once for the gate."""
+    return isinstance(_thread_reg(str(sid)), _UnreadableReg)
 
 
 def _thread_reg_report():
@@ -16094,9 +16120,11 @@ def _thread_reg_report():
 
 
 def _thread_reg(tsid):
-    """The thread's SDK registry entry (authoritative for cwd/lastSid/threadOf), {} when absent or
-    unreadable. Memoized on the file's identity (see _thread_reg_memo); read-only for every caller, and
-    a shallow copy each call so a caller's edit never leaks into the memo."""
+    """The thread's SDK registry entry (authoritative for cwd/lastSid/threadOf), {} when absent, and an
+    _UnreadableReg (an empty mapping of its own type, see there) when the file exists but will not read or
+    is not a JSON object, so a caller that needs the difference has it and the rest read {} as before.
+    Memoized on the file's identity (see _thread_reg_memo); read-only for every caller, and a shallow copy
+    each call so a caller's edit never leaks into the memo."""
     p = str(jd.STATE / "sdk" / (tsid + ".json"))
     key = jd._file_key(p)
     if key is None:                                       # absent: a state, not an entry
@@ -16123,13 +16151,27 @@ def _thread_reg(tsid):
             first = p not in _thread_reg_failed
             _thread_reg_failed.add(p)
         if first:
-            sys.stderr.write("thread-reg: %s unreadable after a successful stat (%r); answered {} and not memoized\n"
-                             % (os.path.basename(p), e))
-        return {}
+            # the read's error, and the stat's when the stat failed too (jd._file_key's _StatFailed carries it:
+            # EACCES, ELOOP); round 11 of the unknown-name PR: this line claimed a successful stat for every failed
+            # read, false for any failed stat other than no-such-file
+            stat_err = getattr(key, "error", None)
+            sys.stderr.write("thread-reg: %s did not read (%r)%s; answered as a failed read and not memoized\n"
+                             % (os.path.basename(p), e, "" if stat_err is None else "; its stat failed (%r)" % (stat_err,)))
+        return _UnreadableReg()
+    if not isinstance(d, dict):
+        # JSON, but not an object: no writer produces this, so it is a broken record like the failed read
+        # above, said once per episode and never memoized (it used to memoize as {} and read as absent)
+        with _THREAD_REG_LOCK:
+            _thread_reg_stats["fail"] += 1
+            first = p not in _thread_reg_failed
+            _thread_reg_failed.add(p)
+        if first:
+            sys.stderr.write("thread-reg: %s is not a JSON object; answered as a failed read and not memoized\n"
+                             % os.path.basename(p))
+        return _UnreadableReg()
     if _thread_reg_failed:
         with _THREAD_REG_LOCK:
             _thread_reg_failed.discard(p)                 # a good read ends the episode; the next failure logs again
-    d = d if isinstance(d, dict) else {}
     if isinstance(key, tuple):                            # never under the sentinel of a failed stat
         with _THREAD_REG_LOCK:
             _thread_reg_memo.pop(tsid, None)
@@ -17120,8 +17162,10 @@ def _comment_seen(parent_sid, tid):
 
 def _comment_kill_all(parent_sid, be):
     """The parent session was ENDED — shut down its open threads' CLIs too, or they outlive the tab
-    that is their only surface as unreachable running processes. Store rows stay untouched: a
-    revived parent finds its threads dormant and a reply resumes them, history intact."""
+    that is their only surface as unreachable running processes. Store rows stay untouched, so the
+    exchange stays readable; a reply into an open row is refused while the reg reads alive=False
+    (SdkBackend.send needs an alive reg), and only a relayed row's reply resumes the CLI
+    (_comment_reply's merged arm)."""
     if not hasattr(be, "kill"):
         return
     for th in _load_comments(parent_sid).get("threads") or []:
@@ -18275,14 +18319,28 @@ def _picker_mid_series(sid):
     return isinstance(i, int) and isinstance(n, int) and i < n
 
 
-def _kernel_knows(sid):
+def _kernel_knows(sid, live=None):
     """Does THIS kernel have a session by this id at all? The names registry is the authority: it is sid-keyed
     and written at launch by BOTH backends, and the entry outlives the session, so a dormant or long-dead
     session still answers True and can be sent to (that revives it). The SDK's own view is checked too, so a
-    session mid-launch — spawned but not yet named — is never called foreign. So is the LIVE set, which both
-    backends report from their own view: a session this kernel can see running right now is ours whatever the
-    registry says, and that ordering keeps an unreadable names file from ever turning a live session away.
-    False means exactly one thing: no session with this id exists here, so nothing local can act on it."""
+    session mid-launch (spawned but not yet named) is never called foreign; a comment thread passes at
+    this door too (its reg is sdk/<tsid>.json, which owns() stats), though sdk_backend.fork withholds its
+    names/ entry and live_sessions hides threadOf regs. So is the LIVE set, which both backends report from
+    their own view: a session this kernel can see running right now is ours whatever the registry says, and
+    that ordering keeps an unreadable names file from ever turning a live session away.
+    False means no record of the session by any of those three reads. Whether that is "no such session" is
+    the caller's verdict once it has asked the reads that can FAIL (an SDK registry entry that exists but
+    will not read, a liveness probe that did not answer): _session_gate, THE one gate for both client doors
+    (the WS _drive gate and the HTTP control gate, _unknown_session_refusal for /send, /interrupt and
+    /end), asks this as its "known" test. A second predicate at the routes (names, the live map, then a
+    threadOf reg only) admitted a dead non-thread SDK reg with no names/ entry at the dashboard's
+    endSession op and refused it 404 at `romp end <sid>` (review round 4, 2026-09-09); the gate then grew
+    the record and liveness verdicts around this one predicate so the doors cannot disagree on a record
+    that will not read either (review round 5). `live`
+    is a Sessions.live() map the caller already read (the routes' _resolve_sid scan), consulted in place
+    of a fresh scan so a refused request scans once; None scans here. A live-scan exception reads False,
+    the refusal, at every caller: _drive then refuses loudly (_refuse_drive's modal, undelivered record and
+    log line), and the routes pass the map they read, so the scan never runs here for them."""
     sid = str(sid or "")
     if not sid:
         return False
@@ -18294,10 +18352,240 @@ def _kernel_knows(sid):
             return True
     except Exception:
         pass
+    if live is not None:
+        return sid in live
     try:
         return sid in Sessions.live()
     except Exception:
         return False
+
+
+def _backend_reports_running(sid):
+    """Does the SDK backend RUN `sid` right now: its in-flight set (running_sids: its live session threads, a
+    comment thread's included, which the live map hides by design). The liveness half of _session_gate's
+    unreadable arm, asked for a sid whose SDK registry entry exists but will not read, and the retry test of
+    _unconfirmed_end_text's reg cause: a running session is admitted, and told try again, whatever its row
+    reads, since its next flip rewrites the row from the backend's cache and the base served such a session.
+    The SDK backend is the only backend asked, because the reg is that backend's record and only its flip
+    rewrites it: a tmux pane carrying the sid (`romp resume <id>` sets a pane's @romp-session-id) is no writer
+    for the reg, and the damage must be surfaced whatever tmux says. Rounds 5 to 8 read the live map here too
+    (a row on the tmux or Codex backend was "running"), and that answer depended on the list_regs cache: the
+    SDK half of Sessions.live() lists every alive=True reg and serves a corrupt reg's cached last good row
+    while the cache is warm (the pusher scans every tick), an SDK row that overwrites the pane's row in the
+    merge, so one torn reg and one pane were admitted at a cold cache (after a restart) and refused with the
+    record's verdict at a warm one; with the probe down the same warmth flip gave the scan's verdict cold and
+    the record's warm. A verdict must not depend on a cache (review round 9, 2026-09-09; round 6 had already
+    ruled that an SDK row in the map is a reg that says alive, never liveness). A backend without the set
+    reads as not running."""
+    sid = str(sid or "")
+    if not sid:
+        return False
+    be = _sdk()
+    try:
+        return bool(be) and sid in (be.running_sids() or [])
+    except Exception:
+        return False
+
+
+def _unreadable_record_text(sid, who=None, named=False):
+    """What both client doors say for a session whose SDK registry entry exists but will not read and that the
+    SDK backend is not running: the record by path (~ for $HOME), that nothing was done, and the way out. Never
+    "try again": no writer serves the retry. Only a flip of a running session (SdkBackend's kill, resume or
+    promote) rewrites the row from the backend's cache, and a session the SDK backend runs is admitted instead
+    of refused; _update_reg skips its write on an unreadable row, and list_regs serves the last good row for a
+    reg it has cached (the pusher's scans keep the cache warm while the kernel runs, with one log line per
+    incident) and omits an uncached one it cannot parse, a body that is JSON but not an object following the
+    same rule, so a dormant session's broken record stays broken until the file is repaired or removed. This
+    text stands in every tmux state (the probe down, the no-server exit, a pane carrying the sid) and at every
+    list_regs cache state: the gate reads no live map for a torn record, because the map's answer for one
+    depends on the cache (round 9; rounds 7 and 8 answered the scan's verdict, try again, while the probe was
+    down and the map listed no row, and admitted the sid while the map listed a pane for it). Removing the
+    file drops the session from the board (the dashboard's revive, which mints a fresh reg, is the other way
+    back) (review round 5, 2026-09-09: the 503 promised a retry that no retry could serve; round 6: the cached
+    row it claimed list_regs omitted). `named` says the caller addressed the session by NAME (`who` is the
+    name, not the sid): the text then adds that IF a live session of that name runs, it is reachable by the
+    name once no torn record bears it, since the doors' resolution reads the names registry first and a torn
+    record of the name is refused ahead of any live namesake bearing it, a tmux pane, a dormant SDK
+    generation or a session an attached host lists under the name, the roster by name being asked on a
+    would-be 404 alone (round 10: resolved through the live map, the by-name verdict was the cache's, the namesake
+    cold and the record warm; a live generation of the name, one the gate admits by id and its backend
+    lists live, is reached by the name ahead of the torn record, rounds 11 and 12). Said whether or not a
+    namesake runs, since that is the live map's answer and this text
+    reads no map, which is why the wording is conditional: for a lone dormant torn generation the next
+    by-name request after the repair or removal is the dormant rule's 404, and several torn generations of
+    one name are refused one file at a time (round 11; round 10 said "reachable by that name again once the
+    file is repaired or removed", a promise that never held for a lone dormant generation)."""
+    text = ("could not read the record for '%s': its registry entry %s exists but will not read; nothing was "
+            "done. Repair or remove that file (removing it drops the session from the board)."
+            % (who or sid, _tilde(str(jd.STATE / "sdk" / (str(sid) + ".json")))))
+    if named:
+        text += " If a live session named '%s' runs, it is reachable by that name once no torn record bears it." % who
+    return text
+
+
+_GATE_ADMITTED, _GATE_UNKNOWN, _GATE_UNREADABLE = "admitted", "unknown", "unreadable"
+# two more refusal verdicts for a read that failed on the way to a verdict, both the by-name miss path's
+# (_named_miss) and neither the gate's own: the tmux scan a NAME's resolution rode (rounds 7 and 8 gave the gate a
+# scan-failed arm for a torn record the map listed no row for, and round 9 took it out: a torn record is the
+# record's verdict in every tmux state), and the comment threads' store (a NAME's read; the gate takes a sid).
+# Both are 503 at the routes and the WS refusal that names the read, and both say try again: the read answers
+# again (review round 7, 2026-09-09)
+_GATE_SCAN_FAILED, _GATE_STORE_UNREADABLE = "scan_failed", "store_unreadable"
+
+
+def _scan_failed_text(who):
+    """What both client doors say when the tmux probe the live scan rides did not answer and the verdict
+    needed that scan: the list could not be read, nothing was done, try again (tmux answers again: this
+    retry has a writer, unlike the unreadable record's). A sentence, period included: the WS records writer
+    joins it to the modal's next sentence (round 8: the modal read "try again Your text is saved")."""
+    return ("could not read the live session list while resolving '%s' (tmux did not answer); nothing was "
+            "done, try again." % who)
+
+
+def _store_unreadable_text(who):
+    """What both client doors say when a bare name reached the comment threads' store and it would not read
+    (_thread_names answered None): the store by path, nothing was done. A sentence, period included, as
+    _scan_failed_text is."""
+    return ("could not read the comment threads' store (%s) while resolving '%s'; nothing was done."
+            % (_tilde(str(jd.STATE / "comments")), who))
+
+
+def _refusal_cause(verdict, sid, who=None):
+    """The stderr cause the WS refusal's records writer logs for a read that failed: which read, in the
+    module voice, so the kernel log says what the modal said (the record by sid; the scan and the store by
+    the caller's spelling, the read that failed being the name's)."""
+    if verdict == _GATE_SCAN_FAILED:
+        return "tmux probe failed while resolving %r" % (who or sid)
+    if verdict == _GATE_STORE_UNREADABLE:
+        return "the comment threads' store will not read while resolving %r" % (who or sid)
+    return "the record for session %s will not read" % sid
+
+
+def _local_spelling(who):
+    """Can `who` name anything this kernel holds? Every sid romp mints is a UUID (both backends' and the CLI
+    launcher's) and every name its doors admit is NAME_RE's, so one test, NAME_RE over the whole spelling, says
+    whether a spelling can be a local sid or a local name at all. False for the roster's host:name (the colon:
+    that spelling is the roster's alone, _remote_session_named, which reads no file), for a path segment, and
+    for anything else. The client doors refuse such a spelling as unknown BEFORE any path is built from it:
+    `romp end ../end-on-idle` reached STATE/sdk/../end-on-idle.json through the gate's record read and answered
+    the record's 503 telling the caller to repair or remove the kernel's own state file, with a thread-reg log
+    line per request; `../palette` and `../session-flags` were ADMITTED through the names door (NAMES / who
+    read a file under STATE as a registry entry), and `../end-on-idle.json` was ended as a registered sid; an
+    absolute path replaces the base the same way (review round 10, 2026-09-09). Asked by _resolve_sid's door
+    read, _session_gate and _named_miss, so a refused spelling touches nothing. `bin/romp new -t` and `romp
+    resume` fold the name to [A-Za-z0-9_-] (the launcher's `tr -c` in bin/romp), inside this alphabet, so a
+    launch never registers a name outside it; a tmux session renamed from inside tmux (prefix-$,
+    :rename-session, choose-tree; tmux folds only '.' and ':') is recorded as tmux spells it by the `romp
+    _renamed` hook, so one renamed outside the alphabet is addressed by id at /send, /interrupt, /end and the
+    WS by-name arm, or by name again after a tmux rename back into the alphabet, which the hook resyncs
+    (round 11; round 10 attributed the class to `new -t`)."""
+    return bool(NAME_RE.fullmatch(str(who or "")))
+
+
+def _session_gate(sid, live=None, who=None):
+    """THE one verdict on whether a request that names a session may act here, for both client doors (the
+    WS _drive gate and the HTTP control gate, _unknown_session_refusal, for /send, /interrupt and /end):
+    (verdict, text), the verdict one of _GATE_ADMITTED, _GATE_UNKNOWN and _GATE_UNREADABLE, the text the
+    refusal carries (None for admitted and unknown). In order of precedence:
+      admitted    the SDK backend RUNS the sid now (_backend_reports_running: an SDK session thread in
+                  running_sids, a comment thread's included), whatever its registry row reads: a running
+                  session's next flip rewrites the row and the base served such a session; else the kernel
+                  knows it (_kernel_knows: the names registry, the SDK registry via owns(), the live map, a
+                  tmux pane or a Codex session in it included), so a dormant session, or a dead one addressed
+                  by id, passes to its idempotent end.
+      unreadable  a session whose SDK registry entry exists but will not read (_reg_unreadable) and that the
+                  SDK backend is not running: the kernel cannot say whether it knows the session, so it says
+                  that, never that no such session exists (the fail-loudly rule). The record's verdict in
+                  every tmux state and at every list_regs cache state, a tmux pane carrying the sid included
+                  (`romp resume <id>` sets a pane's @romp-session-id to an SDK sid): the reg is the SDK
+                  backend's record and only that backend's flip rewrites it, so a pane is no writer for the
+                  damage, which must be surfaced whatever tmux says. By NAME the same: the doors' resolution
+                  reads the on-disk names registry first (_resolve_sid's door read), which answers a live
+                  generation of the name, one this gate admits by id and its own backend lists live, ahead of a
+                  torn one (rounds 11 and 12), so a torn record of the name
+                  is this verdict ahead of any live tmux namesake bearing the name and whatever the list_regs
+                  cache holds, and the text says that if a live session of the name runs it is reachable by it
+                  once no torn record bears the name (round 10, the wording conditional since round 11: for a
+                  lone dormant torn generation the repaired name is the dormant rule's 404; rounds 7 to 9
+                  resolved a name through the live map,
+                  so a torn generation's verdict by name was the cache's: the namesake cold, the record warm,
+                  and with the probe down the scan's verdict cold). Rounds 5 to 8 admitted such a sid when the
+                  live map listed a pane for it and answered the scan's verdict (try again) when the map listed
+                  no row and the probe was down; both read the map, whose answer for a torn reg depends on the
+                  cache (warm, the cached last good row, an SDK row that overwrites the pane's in the merge;
+                  cold, no row), so one reg and one pane were admitted cold and refused warm, and told try
+                  again cold and repair or remove warm with the probe down (review round 9, 2026-09-09). Asked
+                  before _kernel_knows, whose names door (the names registry outlives the session) and
+                  live-map door (list_regs serves a torn reg's cached last good row while the kernel runs)
+                  would admit a dormant session whose record will not read; owns() reads such a body as a
+                  transient failure and answers from the live thread set alone.
+      unknown     no record of any kind: the routes' 404, the dashboard's modal. A spelling that can name
+                  nothing local (_local_spelling: not NAME_RE's alphabet, so a path segment, an absolute path,
+                  the roster's host:name) is this verdict at once, before any path is built from it and any
+                  file is read (round 10).
+    The scan-failed verdict (_GATE_SCAN_FAILED) is the by-name miss path's alone (_named_miss): a NAME whose
+    resolution missed while the tmux probe was down (no reg for the spelling, no row, the scan failed) may
+    route to a running session the map could not list, so whether it does cannot be evaluated; a sid whose
+    record will not read raises no such question, since the record's verdict does not depend on the scan
+    (rounds 7 and 8 gave this gate a scan-failed arm for a torn record the map listed no row for, and round 9
+    took it out). The two doors used to disagree on a record that will not read (the dashboard said "no
+    session with id" where `romp end` said 503 "could not read"), the HTTP door refused a LIVE names-registered
+    session on such a row while the WS door served it, and a dormant names-registered one passed the WS door
+    into the tmux fallthrough (review round 5, 2026-09-09). `live` is a map the caller already read (the
+    routes' _resolve_sid scan), handed to _kernel_knows in place of a fresh scan so a refused request scans
+    once; None scans there. The record is read first because a torn record's verdict needs no map at all, so
+    a readable or absent record costs what _kernel_knows always cost and the routes scan at most once, in the
+    resolution (round 8 scanned in _control_target for a torn record by id, ahead of a gate that scanned for
+    one itself; round 9 removed both scans). `who` is the caller's spelling for the text (the routes' `who`,
+    the WS door's `name` for compact and sendCommand, and _named_miss's `who` on behalf of both doors); the WS
+    door's by-id ops leave it None."""
+    sid = str(sid or "")
+    if not _local_spelling(sid):
+        return _GATE_UNKNOWN, None
+    if _reg_unreadable(sid):
+        if _backend_reports_running(sid):
+            return _GATE_ADMITTED, None
+        return _GATE_UNREADABLE, _unreadable_record_text(sid, who, named=bool(who) and who != sid)
+    known = _kernel_knows(sid) if live is None else _kernel_knows(sid, live=live)
+    return (_GATE_ADMITTED, None) if known else (_GATE_UNKNOWN, None)
+
+
+def _named_miss(who, live, store_unreadable):
+    """The one by-name miss path both client doors read, for a BARE name whose resolution the gate read as
+    unknown, whatever sid the resolution answered for it (the input unchanged, or a comment thread's sid whose
+    registry entry is absent): (sid, verdict, text, cause), or None when nothing more can be said of the name
+    here (the routes go on to the roster by name and the 404; the WS door refuses it as unknown, by the sid the
+    resolution answered). Round 8 dropped the WS door's guard that took this path for the input unchanged
+    only: with the probe down the live map is incomplete, so a live namesake could have won the resolution had
+    tmux answered, and a store-resolved name with no record was a session that does not exist at that door
+    where the routes said the list could not be read; the transient failure is what both doors say now. Two
+    arms, in order: the failed scan (live.tmux_failed, the scan the resolution read: with the probe down,
+    whether the name routes to a running session cannot be evaluated, so the verdict is the scan's, try again,
+    and never a record's), then the comment threads' store, when the resolution got as far as asking it and it
+    would not read. A torn names-registered record of the name is not this path's: the doors' resolution reads
+    the on-disk names registry first (_resolve_sid's door read, _unreadable_dormant_named) and hands that sid
+    to the gate ahead of any scan, so a name whose record will not read never reaches an unknown verdict here
+    (round 10; rounds 5 to 9 looked it up here, after the gate had missed, which put the verdict behind the
+    scan and, with the probe down, behind the list_regs cache: the scan's verdict at a cold cache, the record's
+    at a warm one). A spelling that can name nothing local (_local_spelling: the roster's host:name with its
+    colon, a path segment, anything outside NAME_RE's alphabet) is no local name and no thread's, so neither
+    read can be what fails it: None, and no file is read for it. That check is a backstop here, not the doors'
+    alphabet line: _resolve_sid's door read hands such a spelling back before any read, the gate's unknown
+    verdict follows, and both doors arrive here with the same spelling, so while that read stands this check
+    decides nothing (round 11: deleting it left every module green; deleting the door read instead showed it
+    then alone keeps host:name off the scan-failed 503, which is why it stays). Round 6's colon guard here WAS
+    the line, since the scan ran before it; round 10 moved the line to the alphabet and to the door read.
+    Round 6 gave the torn lookup to _control_target alone and the WS compact and sendCommand
+    door read the same name as unknown, and that door read a failed scan as a session that does not exist
+    from the base on; one routine now, so the doors cannot drift again (review round 7, 2026-09-09). `cause`
+    is the stderr cause the WS records writer logs (_refusal_cause)."""
+    if not _local_spelling(who):
+        return None
+    if live is not None and getattr(live, "tmux_failed", False):
+        return who, _GATE_SCAN_FAILED, _scan_failed_text(who), _refusal_cause(_GATE_SCAN_FAILED, who)
+    if store_unreadable:
+        return who, _GATE_STORE_UNREADABLE, _store_unreadable_text(who), _refusal_cause(_GATE_STORE_UNREADABLE, who)
+    return None
 
 
 # What the user is told when an op names a session this kernel doesn't have. Written for the ONE case that
@@ -18307,7 +18595,20 @@ _FOREIGN_OP_VERB = {"sendMessage": "message", "askFollowUp": "reply", "askText":
                     "addCustomAsk": "answer", "answerAsk": "answer", "submitAsk": "answer",
                     "rewindSend": "edited message", "sendCommand": "command", "renameSession": "rename",
                     "endSession": "end", "interrupt": "interrupt", "compactSession": "compact",
-                    "moveSession": "move"}
+                    "compact": "compact", "moveSession": "move"}
+
+# The drive ops whose `name` is TYPED text (a title the user entered), the text a refusal's row and modal keep when
+# the op carries no `text` or `cmd`; compact and sendCommand carry `name` as the session they ADDRESS (the timeline
+# keys them by session name), which the row keeps under `target` and never offers back as the user's text (review
+# round 8, 2026-09-09: a compact refused by name filed the session name as its text, the modal promised it verbatim
+# and "Copy my text" copied it, under the title "That action was not delivered" since the verb table knew
+# compactSession only). commentCreate's entry is inert for a message its handler accepts, since the handler requires
+# `text` and the fold reads text first; it holds for a text-less create refused at the gate, whose title is then the
+# one typed thing to keep. tests/test_drive_foreign_sid.py pins both tuples to a hand-kept classification of every op
+# the front door accepts, each driven through a refusing gate (round 10; round 9's syntactic walk of the arms for
+# msg["name"] and msg.get("name") missed an alias, a hoisted local, msg.pop and a helper taking the message).
+_TYPED_NAME_OPS = ("renameSession", "forkSession", "commentPromote", "commentCreate")
+_TARGET_NAME_OPS = ("compact", "sendCommand")
 
 
 def _refuse_drive(client, op, sid, msg):
@@ -18318,23 +18619,58 @@ def _refuse_drive(client, op, sid, msg):
       2. `undelivered.jsonl` in the state dir, carrying the text VERBATIM, so anything typed survives the
          refusal and can be copied back out. This is the whole point: the old path lost the words.
       3. stderr → the kernel log, for the case where the browser is gone by the time it happens.
-    Text is capped for the log line, never for the user's own copy of it."""
+    Text is capped for the log line, never for the user's own copy of it. The sibling for a record that
+    will not read is _refuse_drive_unreadable; both write through _refuse_drive_records."""
+    what = _FOREIGN_OP_VERB.get(op, "action")
+    _refuse_drive_records(client, op, sid, msg, what, "this kernel has no session %s" % sid,
+                          "This romp kernel has no session with id %s, so it could not deliver your %s; on a "
+                          "board showing more than one machine, that means the pane addressed the wrong kernel."
+                          % (sid, what))
+
+
+def _refuse_drive_unreadable(client, op, sid, msg, text, cause=None):
+    """_refuse_drive's sibling for every gate verdict that names a read that failed (unreadable, scan failed,
+    and the by-name miss path's store): the same three records (the modal, the verbatim text in
+    undelivered.jsonl, the stderr line), with `text` (the gate's, naming the read and the way out) where the
+    unknown refusal says the kernel has no such session, and `cause` the stderr line's (_refusal_cause; the
+    record's by default, the shape the round-6 pins read). A function of its own rather than a keyword on
+    _refuse_drive, which tests stand in with a four-positional callable (review round 5, 2026-09-09: this
+    door called a record it could not read a session it did not have; round 7: and a failed probe a session
+    it did not have)."""
+    what = _FOREIGN_OP_VERB.get(op, "action")
+    _refuse_drive_records(client, op, sid, msg, what, cause or _refusal_cause(_GATE_UNREADABLE, sid),
+                          text[:1].upper() + text[1:])
+
+
+def _refuse_drive_records(client, op, sid, msg, what, cause, lead):
+    """The three records every refusal of a drive op writes (_refuse_drive's docstring says why each): the
+    modal (`lead`, then where the text went), the text verbatim in undelivered.jsonl, and the stderr line
+    (`cause`). One writer, so the unknown and the unreadable refusals cannot drift in what they keep. The text
+    is the op's typed text: `text`, `cmd`, or `name` for the ops whose name is a title the user typed
+    (_TYPED_NAME_OPS); compact and sendCommand address their session by `name`, which the row keeps under
+    `target`, so the row still says which session was addressed, and never as the text (round 8)."""
     text = ""
     for k in ("text", "cmd", "name"):
+        if k == "name" and op not in _TYPED_NAME_OPS:
+            continue
         if isinstance(msg.get(k), str) and msg[k]:
             text = msg[k]
             break
-    what = _FOREIGN_OP_VERB.get(op, "action")
+    target = str(msg.get("name") or "") if op in _TARGET_NAME_OPS else ""
     try:
         with (jd.STATE / "undelivered.jsonl").open("a") as fh:
             fh.write(json.dumps({"at": int(time.time()), "op": op, "sid": sid, "what": what,
-                                 "itemId": msg.get("itemId") or "", "text": text}) + "\n")
+                                 "itemId": msg.get("itemId") or "", "text": text, "target": target}) + "\n")
     except OSError:
         pass
-    sys.stderr.write("undeliverable %s: this kernel has no session %s — %r\n" % (op, sid, text[:200]))
-    detail = ("Nothing was sent. This romp kernel has no session with id %s, so it could not deliver your %s "
-              "— on a board showing more than one machine, that means the pane addressed the wrong kernel. "
-              "Your text is saved verbatim in undelivered.jsonl under romp's state directory." % (sid, what))
+    sys.stderr.write("undeliverable %s: %s; %r\n" % (op, cause, text[:200]))
+    # the row is written for a text-less op too (interrupt, end, the Continue button): a durable record of
+    # op, sid and item the stderr line does not keep across a log rotation. The modal says what the row
+    # holds, so it promises the text only when there is one (review round 7, 2026-09-09)
+    detail = ("Nothing was sent. %s %s" % (lead, "Your text is saved verbatim in undelivered.jsonl under romp's "
+                                                 "state directory." if text else
+                                                 "The refusal is recorded in undelivered.jsonl under romp's state "
+                                                 "directory."))
     try:
         # `sid` rides along so the shell's error-center entry carries the session it was meant for, the way
         # every card-badge entry does — the bell is a log you read later, and "which one?" is the first thing
@@ -18453,10 +18789,23 @@ def _drive(msg, client):
               "setAuth", "endSession", "renameSession", "moveSession", "stopTask", "rewindFiles", "mcpAction", "forkSession",
               "commentCreate", "commentReply", "commentResolve", "commentDelete", "commentSeen", "commentPromote",
               "userTodoAnswer", "userTodoDismiss", "unpinNote", "commentMerge")
+    live, named, store_unreadable = None, None, False
     if t in ID_OPS and msg.get("id"):
         sid = str(msg["id"])
-    elif t in ("compact", "sendCommand") and msg.get("name"):
-        sid = _sid_of(str(msg["name"]))                   # the timeline keys these by session NAME
+    elif t in _TARGET_NAME_OPS and msg.get("name"):
+        # the timeline keys these by session NAME (the tuple the records writer keeps the name under `target`
+        # for). The routes' own resolution (_resolve_sid, the doors' read): a spelling outside NAME_RE's
+        # alphabet handed back unchanged with nothing read, the on-disk names registry's answer for the name
+        # ahead of any scan (a live generation of the name, ranked by the gate's own by-id verdict and its
+        # backend's liveness, else a torn record, so the gate below admits the live one or gives the record's
+        # verdict whatever the list_regs cache and tmux hold, rounds 10 to 12), else the map it scanned and
+        # what it could not read handed back, so the
+        # gate reads that one scan and the miss path (_named_miss) can say a read failed. _sid_of dropped
+        # both: this door read a failed tmux probe as "no session with id" from the base on, and round 6 left
+        # the torn dormant record's by-name 503 to the HTTP routes alone, so the two doors disagreed on the
+        # same name at both states (review round 7, 2026-09-09)
+        named = str(msg["name"])
+        sid, live, store_unreadable, _scan_failed = _resolve_sid(named, door=True)
     elif t == "askFollowUp" and (msg.get("itemId") or msg.get("id")) and (msg.get("text") or msg.get("cont")):
         # cont:true is the Continue button (2026-08-08), which deliberately carries NO text — the kernel
         # supplies CONTINUE_TEXT in the handler body below. The old text-only guard turned every Continue
@@ -18473,11 +18822,34 @@ def _drive(msg, client):
     # logged. That silence swallowed real user messages (the user 2026-07-29): a federated dashboard sent a
     # card reply here that belonged to another machine's kernel, and it simply ceased to exist — no bubble,
     # no error, no record. Per the fail-loudly rule, an op we cannot deliver must SAY so instead of degrading
-    # into a no-op. `_kernel_knows` is the registry, not liveness: a dead-but-ours session still resolves, so
-    # reviving sends keep working — only a genuinely foreign sid lands here.
-    if not _kernel_knows(sid):
+    # into a no-op. The verdict is _session_gate's, the one gate both client doors ask (the HTTP control
+    # routes through _unknown_session_refusal): the registry, not liveness, so a dead-but-ours session still
+    # resolves and reviving sends keep working; only a genuinely foreign sid is refused as unknown, and a
+    # session the SDK backend is not running whose registry entry exists but will not read is refused as
+    # unreadable, in every tmux state and at every list_regs cache state (round 9), in the same three places,
+    # never called foreign (review round 5, 2026-09-09: this door said "no session with
+    # id" for a record `romp end` said it could not read, and passed a names-registered session on such a
+    # row through to the tmux fallthrough this gate exists to stop). A read that failed on the way is refused
+    # naming the read, with the typed spelling in the modal as in the routes' 503: the tmux scan and the comment
+    # threads' store from the miss path the routes take (_named_miss, round 7), on every unknown verdict for a
+    # typed name whatever sid the resolution answered; a torn dormant record of the typed name from
+    # _session_gate's unreadable arm after _resolve_sid's door read (round 10; rounds 7 to 9 answered it from
+    # the miss path, behind the scan),
+    # as the routes do (round 8: this door took the miss path for a name handed back unchanged only, so a name
+    # the comment threads' store resolved to a sid with no record was refused here as a session that does not
+    # exist while the probe was down, where the routes said the list could not be read).
+    verdict, text = _session_gate(sid, live=live, who=named)
+    cause = None
+    if verdict == _GATE_UNKNOWN and named is not None:
+        miss = _named_miss(named, live, store_unreadable)
+        if miss is not None:
+            sid, verdict, text, cause = miss
+    if verdict == _GATE_UNKNOWN:
         _refuse_drive(client, t, sid, msg)
         return True                                       # consumed: refused, reported, and recorded
+    if verdict != _GATE_ADMITTED:
+        _refuse_drive_unreadable(client, t, sid, msg, text, cause or _refusal_cause(verdict, sid, named))
+        return True
     be = Sessions.backend_for(sid)
     if t == "sendMessage" and msg.get("text"):
         # a typed "/model X" / "/effort X" / "/fast X" is a SETTING, not a message: it takes the kernel's
@@ -18935,9 +19307,8 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn", "text": err}))
             sys.stderr.write("comment promote refused (%s, name %r): %s\n" % (sid[:8], str(msg["name"])[:80], err))   # T289
     elif t == "endSession":
-        sys.stderr.write("kill: %s via endSession WS op\n" % sid)   # kill attribution (the user 2026-07-16)
-        be.kill(sid)
-        # CORROBORATE before broadcasting `closed` (2026-08-18): tmux's kill primitive is fire-and-forget
+        # the one end routine (_end_and_record, the /end route's and the end-on-idle sweep's), which
+        # CORROBORATES before broadcasting `closed` (2026-08-18): tmux's kill primitive is fire-and-forget
         # (a kill-session timeout is swallowed and kill() returns True regardless), so a failed kill used
         # to broadcast a death that hadn't happened — every chat client dismissed the session while the
         # kernel kept listing it, and the next push re-drew it as the dead unclickable swirl. Ask the
@@ -18945,7 +19316,8 @@ def _drive(msg, client):
         # error→[] collapse certified a false death exactly when a wedged server also swallowed the
         # kill: unconfirmed → the honest signal is a warn to the asker, never a dismissal; the death
         # record and the comment-thread teardown belong to a death that actually, provably occurred.
-        ended = _confirmed_ended(sid)
+        why = {}
+        ended = _end_and_record(sid, be, time.time(), "endSession WS op", why=why)
         if ended is not True:
             # TYPED and sid-bearing (2026-08-18): the bare warn told the closer to "Try again" while
             # its own closingTabs suppression hid the very tab to retry on for up to 15s, after which
@@ -18955,12 +19327,8 @@ def _drive(msg, client):
             nm = _name_of(sid) or sid
             client["send"](json.dumps({"type": "endFailed", "id": sid,
                                        "text": ("Couldn't end “%s” — it's still running. Try again." % nm)
-                                               if ended is False else
-                                               ("Couldn't confirm “%s” ended — tmux isn't answering. Try again." % nm)}))
+                                               if ended is False else _unconfirmed_end_text(why, nm, sid=sid)}))
         else:
-            _record_death(sid, int(time.time()), "kill")   # the one SDK event with no designed reviver
-            _comment_kill_all(sid, be)   # its comment threads must not outlive it as unreachable running CLIs
-            _send_to_app("chat", {"type": "closed", "id": sid})
             _confirm_close_now(sid)      # the kill IS the event: the fresh tab set rides it, not the next pusher cycle
         _push_soon()
     elif t == "renameSession" and msg.get("name"):
@@ -19287,6 +19655,19 @@ def _revive_session_inner(sid, client=None):
 # test (tests/test_session_api.py) asserts no `["tmux"` / send-keys / @claude- / list-sessions outside this
 # class so the leak can't reappear. tmux is keyed by session NAME, so the sid-keyed ABC methods map
 # sid→name via _name_of/_tmux_name_of internally. (the user 2026-06-26: tmux + SDK behind one session API.)
+class _LiveMap(dict):
+    """TmuxBackend.live_sessions' answer, and so Sessions.live()'s, which is built on it: the sid -> row map
+    every liveness reader takes as a plain dict, plus `tmux_failed`, True when the tmux probe the map rides did
+    not answer (an exec error, a timeout, an unrecognised nonzero exit: the failure alive_sids reads as None),
+    so a reader that must tell a failed scan from an empty board can, from the scan it read and without a
+    second fork: the control routes' 503 for a name the scan could not map (_control_target). The no-server
+    exit and a tmux-less box are an authoritative empty board and read False. A flag on the result rather than
+    a module global or an attribute on _TMUX, because the pusher thread scans concurrently with every request
+    (review round 6, 2026-09-09: the 503 was decided by a second list-sessions after the gate, so a probe that
+    failed once and answered once turned a live session's name into "no live session named")."""
+    tmux_failed = False
+
+
 class TmuxBackend(sb.SessionBackend):
     # tmux -F format strings (the only place @claude-*/@romp vars are named):
     LANE_FMT = ("#{@romp}|#{@romp-session-id}|#{@claude-state}|#{@claude-state-since}|"
@@ -19364,11 +19745,17 @@ class TmuxBackend(sb.SessionBackend):
         if r is None:
             return None
         if r.returncode != 0:
-            err = (r.stderr or "").lower()
-            if "no server running" in err or "error connecting" in err:
-                return set()
-            return None
+            return set() if self._no_server(r) else None
         return {ln.strip() for ln in r.stdout.splitlines() if ln.strip()}
+
+    @staticmethod
+    def _no_server(r):
+        """Is this nonzero `list-sessions` exit the authoritative no-server answer (verified: 'error connecting
+        ... No such file or directory', or 'no server running')? Any other nonzero exit is a probe that
+        failed. The one classification alive_sids and live_sessions share, so the two scans read one failed
+        probe the same way."""
+        err = (r.stderr or "").lower()
+        return "no server running" in err or "error connecting" in err
 
     def send_keys(self, name, *keys, t=3):
         self._fire(["send-keys", "-t", name, *keys], t)
@@ -19469,9 +19856,20 @@ class TmuxBackend(sb.SessionBackend):
         """Live lane metadata from the tmux @claude-* vars (state/model/effort/context%/compaction%/since/
         identity color/mode), keyed by romp-session-id. Sessions.live() MERGES this with the SDK backend's
         live_sessions for the fleet-wide view. Canonical @claude-state values: working | waiting | idle |
-        permission | compacting (hooks/tmux-status.sh). Best-effort {} when tmux is absent (headless run)."""
-        out = {}
-        for line in self.list_lines(self.LANE_FMT):
+        permission | compacting (hooks/tmux-status.sh). Best-effort {} when tmux is absent (headless run).
+        A _LiveMap: its tmux_failed says the probe did not answer (None from _run, or a nonzero exit that is
+        not the no-server answer, the failure alive_sids reads as None), where list_lines collapsed that to []
+        and a failed scan read as an empty board, so a name the kernel knows mapped to no sid and the control
+        routes answered "no live session named" (review round 5, 2026-09-09) or forked a second probe to tell
+        (round 6). A tmux-less box and the no-server exit are an empty board, never a failed scan."""
+        out = _LiveMap()
+        if not self.available():
+            return out
+        r = self._run(["list-sessions", "-F", self.LANE_FMT], 2.5)
+        if r is None or (r.returncode != 0 and not self._no_server(r)):
+            out.tmux_failed = True
+            return out
+        for line in (r.stdout.splitlines() if r.returncode == 0 else []):
             p = line.split("|")
             if len(p) < 9 or p[0] != "1" or not p[1]:        # p[0]=@romp tag (1 = a romp session)
                 continue
@@ -20016,7 +20414,9 @@ class Sessions:
         """Live lane metadata, MERGING tmux sessions with the SDK backend's live sessions so SDK-backed
         (non-tmux) sessions appear alongside tmux ones everywhere the kernel reads liveness/state. tmux stays
         authoritative for tmux sessions; the SDK backend reports its own (state/model/effort/mode, event-based).
-        A headless box with no tmux still surfaces SDK sessions. SDK rows have no context%/compaction% → None."""
+        A headless box with no tmux still surfaces SDK sessions. SDK rows have no context%/compaction% → None.
+        The map is the tmux scan's _LiveMap with the SDK and Codex rows merged in, so its tmux_failed rides to
+        a reader that must tell a failed tmux probe from an empty board (the control routes' resolution)."""
         out = _TMUX.live_sessions()
         be = _sdk()
         if be:
@@ -22467,6 +22867,66 @@ def _remote_name_of(host, sid):
         return names.get(str(sid or "")) or None
 
 
+def _remote_session_named(who):
+    """The attached host that lists a session NAMED `who`, with that session's far sid: (row, far_sid), from
+    the supervisor's polled roster (_remotes[host]["names"], the copy _remote_name_of reads, beside the
+    sids _host_for_sid routes by). None when no attached host lists the name. `who` is a bare name or the
+    `host:name` spelling list_agents prints, and the match is COMPOSED per roster host (nm == who, or who ==
+    host + ":" + nm), never a split of `who` at a colon: hosts may carry colons (an IPv6 literal such as
+    fd00::1 passes _safe_ssh_host) while names may not (NAME_RE), so a split at the first colon could never
+    pick a session on such a host by the very spelling the 409 below had printed (review round 5,
+    2026-09-09; the postal bus still parses host:name at the first colon, a gap of its own). Only a far sid
+    the row's `sids` list carries counts: the supervisor clears `sids` when it declares a host away (the ssh
+    probe's own verdict) and never clears `names`, so a stale name on an away host routed a by-name request
+    into the dead tunnel, a redial demanded per request, while the same request by id answered 404; the
+    sids list is the liveness the by-id route reads, so both doors agree (round 5). A plain tunnel death
+    without ssh corroboration keeps both lists, so both doors forward and demand the redial, as before.
+    Refusals, a 409 body: a name several hosts list names the candidates as host:name, the spelling that
+    picks one; a name several sessions on ONE host answer to names each as host:name [sid8] and says the
+    bare full far sid routes by id (_host_for_sid), since no host:name spelling can tell them apart (round
+    5: the refusal offered one spelling twice, and that spelling then picked whichever session the roster
+    iterated first). Asked by the control routes (_control_target) only after every LOCAL door missed and
+    the gate would answer 404, so a local session wins, and so does a local torn record of the name: its 503
+    stands, and an attached host's namesake is reached by its far sid or as host:name until that record is
+    repaired or removed (review round 13, 2026-09-10). A local session wins: `romp end far-web` from the hub
+    answered 404 "no live session named 'far-web'"
+    while the roster listed the name and the far session ran on, though the same requests by id forwarded
+    (review round 4). Read-only under _remotes_lock; the match takes the remote arm with the far sid
+    exactly as the sid path does."""
+    who = str(who or "")
+    hits = []                                            # (host, row, far_sid, name)
+    with _remotes_lock:
+        for host, r in _remotes.items():
+            live = (r or {}).get("sids") or []
+            for far_sid, nm in ((r or {}).get("names") or {}).items():
+                if far_sid in live and (nm == who or who == "%s:%s" % (host, nm)):
+                    hits.append((host, r, far_sid, nm))
+    if not hits:
+        return None
+    if len(hits) == 1:
+        return hits[0][1], hits[0][2]
+    by_host = {}                                         # (host, name) -> {far sids}
+    for host, _, far_sid, nm in hits:
+        by_host.setdefault((host, nm), set()).add(far_sid)
+    cands = []
+    for (host, nm), sids in sorted(by_host.items()):
+        if len(sids) == 1:
+            cands.append("%s:%s" % (host, nm))
+        else:
+            cands.extend("%s:%s [%s]" % (host, nm, sid[:8]) for sid in sorted(sids))
+    if len(by_host) == 1:
+        (host, nm), sids = next(iter(by_host.items()))
+        return {"ok": False, "_status": 409,
+                "error": "more than one session on %s answers to '%s' (%s); say which by its full session id, "
+                         "which routes by id" % (host, nm, ", ".join(cands))}
+    note = ("" if all(len(v) == 1 for v in by_host.values()) else
+            " (an id in brackets marks a host where more than one session answers to the name; say which of "
+            "those by its full session id, which routes by id)")
+    return {"ok": False, "_status": 409,
+            "error": "'%s' names a session on more than one attached machine; say which: %s%s"
+                     % (who, ", ".join(cands), note)}
+
+
 def _host_for_sid(sid):
     """The attached remote row that owns this sid (from the supervisor's polled map), or None if local."""
     sid = str(sid)
@@ -22493,7 +22953,23 @@ def _remote_forward_status(r, path, body, method="POST"):
     route is an ANSWER — version skew, not a tunnel fault — and folding it to None sent the user to check
     the tunnel instead of updating the remote (the /emoji review, 2026-09-06). `method="GET"` forwards a
     READ (GET /emoji?target=…, review round 3): `path` carries its own query, `body` is ignored, and the
-    token joins the query with & — the same tunnel, the same status contract."""
+    token joins the query with & (the same tunnel, the same status contract). A caller that needs the far
+    kernel's body on a non-200 reads _remote_forward_answer, which this wraps."""
+    st, res, _text = _remote_forward_answer(r, path, body, method)
+    return st, (res if st == 200 else None)
+
+
+def _remote_forward_answer(r, path, body, method="POST"):
+    """_remote_forward_status with the far kernel's body kept on EVERY status: (status, parsed JSON or
+    None, body text). The session-control arms (/send, /interrupt, /end) relay a far kernel's refusal in
+    its own words through _remote_refusal: a non-200 whose body is JSON with an `error` is the far gate's
+    answer (its 404 for a name no session there answers to), relayed with the far host named and the same
+    status; a non-200 with any other body (the far do_POST's text/plain "not found" for a route that kernel
+    predates) is the status and the body's first line, never dressed as an unknown session (review round
+    2, 2026-09-09: every far 404 was composed locally as the unknown-name text, the status the other
+    remote arms read the opposite way, as version skew). Status 0 (never landed) keeps the redial demand.
+    The 2-tuple wrapper above keeps its contract for every other arm, whose non-None test means
+    "delivered"."""
     import urllib.parse
     try:
         c = http.client.HTTPConnection("127.0.0.1", int(r["local_port"]), timeout=8)
@@ -22509,13 +22985,28 @@ def _remote_forward_status(r, path, body, method="POST"):
     except Exception as e:
         # a forwarded op hitting a dead tunnel is USER DEMAND — re-send the connect signal
         _demand_redial(r.get("host") or "", "refused" if isinstance(e, ConnectionRefusedError) else "timeout")
-        return 0, None
-    if resp.status != 200:
-        return resp.status, None
+        return 0, None, ""
+    text = data.decode("utf-8", "replace")
     try:
-        return 200, json.loads(data.decode("utf-8") or "{}")
-    except (ValueError, UnicodeDecodeError):
-        return 200, None   # answered, with something that is not JSON: not a tunnel fault, no redial
+        parsed = json.loads(text or "{}")
+    except ValueError:
+        parsed = None      # answered, with something that is not JSON: not a tunnel fault, no redial
+    return resp.status, parsed, text
+
+
+def _remote_refusal(r, st, res, text):
+    """The body the session-control arms answer for a far kernel's non-200 (see _remote_forward_answer):
+    the far JSON `error` with the far host named, else the status and the body's first non-empty line.
+    The far kernel's words are relayed VERBATIM, with no coda of the arm's own: the /send arm used to
+    append "; the message was not delivered", and a far kernel whose /send 409 already ends with that
+    sentence came through with it twice (review round 4, 2026-09-09). The coda is the LOCAL refusal's
+    (the /send route's 409), where the sentence is composed once."""
+    host = r.get("host", "?")
+    if isinstance(res, dict) and res.get("error"):
+        return {"ok": False, "error": "%s (the kernel on %s)" % (res["error"], host)}
+    first = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    return {"ok": False, "error": "the remote kernel for %s answered HTTP %s%s"
+            % (host, st, (": " + first) if first else "")}
 
 
 def _poll_remote_version(r):
@@ -25942,10 +26433,11 @@ def _death_boot_pass(now=None):
         sys.stderr.write("death-boot: recorded %d session death(s) from before this kernel\n" % n)
 
 
-def _confirmed_ended(sid, fresh=False, scan=None):
+def _confirmed_ended(sid, fresh=False, scan=None, why=None):
     """Did this session actually END — may a kill/close path record the death, tear down its comment
-    threads, and broadcast `closed`? The four post-kill honesty gates (endSession, the /end route,
-    closeTab, cancelCreate) all ask HERE, mirroring _death_sweep_tick's doctrine: a death is certified
+    threads, and broadcast `closed`? Every post-kill honesty gate asks HERE: _end_and_record (the routine
+    behind endSession, the /end route and the end-on-idle sweep's kill arm), the sweep's already-dead
+    retire check, closeTab and cancelCreate's _end_pending_sid, mirroring _death_sweep_tick's doctrine: a death is certified
     only by the liveness owner's AFFIRMATIVE answer, never by silence. Bare `sid in _tmux_sessions()`
     membership inherits list_lines' error/timeout→[] collapse — and the failures CORRELATE: the same
     wedged tmux server that swallows the fire-and-forget kill (kill() returns True regardless) also
@@ -25953,7 +26445,9 @@ def _confirmed_ended(sid, fresh=False, scan=None):
     durable gone marker, killed live comment threads and broadcast the exact `closed` lie the gates
     exist to prevent, precisely when it mattered. Tri-state:
       True  — ended, corroborated: absent from the merged map AND the owner answered (the SDK reg
-              partition / the headless zero / an answering alive_sids probe without it).
+              partition, which reads a comment thread's alive flag since the merge hides threads / the
+              headless zero / an answering alive_sids probe without it). An SDK reg that exists but
+              will not read is no answer: None, below.
       False — still running: the merged map lists it, or the probe answered WITH it.
       None  — CANNOT CONFIRM (a real probe failure): the writer stands down — warn/ok:false, no
               death record, no comment-thread teardown, no `closed`; a retry after the probe
@@ -25969,19 +26463,41 @@ def _confirmed_ended(sid, fresh=False, scan=None):
     real probe failure) for a batch pass sharing ONE scan across its probes
     (_death_sweep_tick's per-pass idiom) instead of forking a subprocess per sid; the default
     takes its own. Called only when the owner scan is actually needed, so a supplier may
-    memoize lazily."""
+    memoize lazily.
+    `why`, when a dict, receives the None verdict's CAUSE under "cause": "reg" (the SDK reg exists but
+    would not read) or "probe" (the owner scan failed), so a door can phrase its refusal from what
+    actually failed (_unconfirmed_end_text) instead of naming tmux for every None (review round 4,
+    2026-09-09). The verdict itself stays tri-state; the cause rides beside it."""
     sid = str(sid)
     if sid in (Sessions.live() if fresh else _tmux_sessions()):
         return False                             # still listed → nothing ended
     if (jd.SDKDIR / (sid + ".json")).exists():
-        return True                              # SDK-owned: absence from the in-process merge IS the
-    #                                              owner's answer (the death sweep's partition, above)
+        # SDK-owned: absence from the in-process merge IS the owner's answer (the death sweep's partition,
+        # above), except for a comment thread, which the merge hides by design (live_sessions skips threadOf
+        # regs): there the reg's alive flag is the owner's answer, the record thread_sessions reads and the
+        # SDK kill flips first. So a kill that landed still reads True, while a thread the merge never
+        # listed is not certified dead by the existence of its reg (review round 2, 2026-09-09: the
+        # end-on-idle sweep spent a thread's wish with no kill)
+        reg = _thread_reg(sid)
+        if not reg:
+            # the reg exists (the stat above) but would not read, or is not a JSON object: _thread_reg answers
+            # {} for both, and {} used to certify the session dead by silence. Every writer stamps "sid", so a
+            # readable reg is never empty; this is a failed probe, the None verdict, and the writer stands
+            # down. Said here each time: _thread_reg logs once per episode (review round 3, 2026-09-09)
+            sys.stderr.write("kill-corroborate: the SDK reg for %s exists but would not read; treating as "
+                             "unconfirmed (no death record, no closed broadcast)\n" % sid)
+            if why is not None:
+                why["cause"] = "reg"
+            return None
+        return not (reg.get("alive") and reg.get("threadOf"))
     if not _TMUX.available():
         return True                              # headless: no server IS zero-alive (the boot pass's rule)
     scan = scan() if scan is not None else _TMUX.alive_sids()
     if scan is None:
         sys.stderr.write("kill-corroborate: liveness probe failed for %s — treating as still running "
                          "(no death record, no closed broadcast)\n" % sid)
+        if why is not None:
+            why["cause"] = "probe"
         return None
     return False if sid in scan else True
 
@@ -26025,6 +26541,70 @@ def _death_stamp_due(sid):
     return int((last or {}).get("t") or 0) > int(m.get("t") or 0)
 
 
+def _end_and_record(sid, be, now, via, fresh=False, why=None):
+    """The ONE end routine behind the three kill doors that record a death: the dashboard's endSession op,
+    POST /end (`romp end <session>`, `romp end self --now`) and the end-on-idle sweep (`romp end self`,
+    served at the turn's settle). One intentional kill stays outside it on purpose: cancelCreate's
+    _end_pending_sid ends a never-prompted spawn whose Opening cue the webview dismissed. It kills and
+    corroborates through _confirmed_ended like this routine, but records no death (a spawn nobody prompted
+    leaves no history worth a gone marker or an idle row), sweeps no threads (a never-prompted session can
+    own none) and sends its own closed frame, so routing it here would write records that door exists to
+    avoid (review round 4, 2026-09-09). Kill; corroborate with the liveness owner (_confirmed_ended, never
+    bare membership);
+    and on its affirmative answer leave the durable state an ended session leaves: the death record
+    (STATE/gone/<sid>.json plus the idle row), its comment threads' CLIs shut down (_comment_kill_all)
+    and the `closed` frame. A comment thread takes the same path as a plain session, so `romp end self`
+    and `romp end self --now` from inside one leave byte-identical state (review round 3, 2026-09-09:
+    the sweep's arm killed a thread and wrote none of the three while the immediate arm wrote all of
+    them, and its comment promised a dormant thread a reply would revive, which no code performed:
+    SdkBackend.send refuses an alive=False reg). Returns _confirmed_ended's verdict: True (ended and
+    recorded), False (still running) or None (the owner could not say); on either falsy verdict nothing
+    is written and the caller phrases its own refusal, from the cause _confirmed_ended files in `why`
+    (a dict the caller passes; see _unconfirmed_end_text). `fresh` is the sweep's post-kill read (see
+    _confirmed_ended: a probe taken mid-cycle must never consult the cycle's snapshot)."""
+    sys.stderr.write("kill: %s via %s\n" % (sid, via))   # kill attribution (the user 2026-07-16)
+    be.kill(sid)
+    ended = _confirmed_ended(sid, fresh=True, why=why) if fresh else _confirmed_ended(sid, why=why)
+    if ended is not True:
+        return ended
+    _record_death(sid, int(now), "kill")
+    _comment_kill_all(sid, be)   # its comment threads must not outlive it as unreachable running CLIs
+    _send_to_app("chat", {"type": "closed", "id": sid})
+    return True
+
+
+_UNCONFIRMED_END_CAUSE = {
+    "reg": "the session's record could not be read",
+    "probe": "tmux isn't answering",
+}
+
+
+def _unconfirmed_end_text(why, name=None, sid=None):
+    """The refusal both immediate end doors phrase for _end_and_record's None verdict: POST /end's ok:false
+    error, and with `name` the WS endSession op's endFailed toast. The cause is the one _confirmed_ended
+    filed in `why`: "tmux isn't answering" only when the owner scan was the door that failed, "the
+    session's record could not be read" for an SDK reg that exists but would not read. Both doors used
+    to say tmux for every None, including on a headless box with no tmux at all (review round 4,
+    2026-09-09). One routine, so the doors cannot drift; a None with no filed cause (a stubbed probe)
+    names the owner generically rather than guessing tmux. "Try again" is said only when a retry has a
+    writer: always for a failed probe (tmux answers again), and for the reg cause only while the SDK backend
+    reports `sid` running (_backend_reports_running: its next flip rewrites the row from the backend's cache;
+    a tmux pane carrying the sid is no writer for the reg, round 9); a dormant session's broken record is
+    named by path with the way out instead, as the control gate says it (review round 5, 2026-09-09: an
+    unconditional "Try again" for a record no retry could heal)."""
+    cause = (why or {}).get("cause")
+    text = _UNCONFIRMED_END_CAUSE.get(cause, "the liveness owner did not answer")
+    retry = True
+    if cause == "reg":
+        retry = bool(sid) and _backend_reports_running(sid)
+        if not retry:
+            text += (" (%s needs repair or removal; removing it drops the session from the board)"
+                     % _tilde(str(jd.STATE / "sdk" / (str(sid) + ".json"))))
+    if name:
+        return "Couldn't confirm \u201c%s\u201d ended: %s.%s" % (name, text, " Try again." if retry else "")
+    return "couldn't confirm the end: %s%s" % (text, "; try again" if retry else "")
+
+
 # SELF-CLOSE, deferred to idle (the user 2026-08-15: "close yourself after you've done this thing"
 # never worked — an agent could only kill its own process, which romp read as a CRASH and kept the
 # session visible as dormant). `romp end self` records the sid here; the sweep below gives it the
@@ -26051,7 +26631,11 @@ def _end_on_idle_sweep(now, tmux):
     one wedged server would otherwise spend the request against a LIVE session — a false gone
     marker, comment threads torn down, every client dismissing the tab. Unconfirmed → nothing is
     written and the request stays armed; the sweep rides every pusher cycle, so a standing wedge
-    retries loudly each tick (the death-sweep's per-tick reporting idiom), never silently."""
+    retries loudly each tick (the death-sweep's per-tick reporting idiom), never silently. A comment
+    thread's wish (`romp end self` from inside one) is served here too: a thread is in no snapshot by
+    design, so its reg's alive flag stands for the owner's answer and its own transcript (through the
+    reg) for the settle; its end is the same routine as the immediate arm's (_end_and_record), so the
+    deferred and the immediate `romp end self` leave one state (review rounds 2 and 3, 2026-09-09)."""
     reqs = _end_on_idle_load()
     if not reqs:
         return
@@ -26070,7 +26654,14 @@ def _end_on_idle_sweep(now, tmux):
         return scan_memo[0]
 
     for sid in sorted(reqs):
-        if tmux.get(sid) is None:                    # absent from the RAW snapshot — corroborate before
+        reg = _thread_reg(sid)
+        thread = bool(reg.get("alive") and reg.get("threadOf"))
+        # a comment thread is in NO liveness snapshot (live_sessions hides threadOf regs by design), so
+        # absence from it says nothing about one: its reg's alive flag is the owner's answer, the record
+        # thread_sessions reads and the SDK kill flips. Read here so an alive thread takes the settle and
+        # kill path below instead of the absent branch, which spent its wish with no kill while the caller
+        # had been told it was closing (review round 2, 2026-09-09)
+        if tmux.get(sid) is None and not thread:     # absent from the RAW snapshot: corroborate before
             ended = _confirmed_ended(sid, scan=_pass_scan)   # spending: one flaky read here would
             if ended is True:                        # discard the user's gesture, no kill ever attempted
                 reqs.discard(sid); changed = True    # genuinely dead by some other path → spent
@@ -26079,33 +26670,93 @@ def _end_on_idle_sweep(now, tmux):
                                  "alive — request kept for the next cycle\n" % sid)
             # None: _confirmed_ended already reported the failed probe; the request stands
             continue
-        try:
-            ps = _parse(_path_of(sid) or "", sid, now)
-            if _session_working(ps.get("turns") or []):
-                continue                             # the turn it asked from is still open — its end is the event
-        except Exception:
-            continue
-        sys.stderr.write("kill: %s via end-on-idle (self-close)\n" % sid)
-        be = Sessions.backend_for(sid)
-        be.kill(sid)
-        # fresh, own-scan corroboration — never the cycle snapshot, never _pass_scan's memo: this
-        # probe's evidence must POSTDATE the kill, and both of those predate it — the snapshot by
-        # construction (this branch's precondition is the sid being IN it, so a snapshot read
-        # answers "still running" unconditionally and the clean death below is unreachable). The
-        # ENTRY check above may read the snapshot: absence there is its precondition, so it falls
-        # through to fresh owner probes regardless. Kills are user-gesture rare — one owner scan
-        # per killed sid is fine. A confirmed kill spends the request THIS cycle; only one the
-        # owner genuinely denies stays armed to retry.
-        ended = _confirmed_ended(sid, fresh=True)
-        if ended is not True:                        # unconfirmed kill: record nothing, broadcast nothing,
+        dead_fork = False
+        if thread and reg.get("forkOf"):
+            # the fork has not landed: lastSid is still the PARENT's transcript (sdk_backend.fork mints the reg
+            # so, and the CLI init that pins the thread's own fsid pops forkOf), so reading it would gate this
+            # thread's kill on the parent's turn. The wish stays armed until that flip, the exact event, as
+            # _thread_messages stands down on the same field (review round 3, 2026-09-09), and the stand-down
+            # is said each tick like the sibling branches' (it stood down silently, and a wish nothing would
+            # ever serve looked like a wish being waited on). UNLESS the fork will never land: a reg carrying
+            # launchError says the CLI failed to start (_record_launch_error writes it; only a connect proof
+            # clears it), so no turn can be open and nothing waits on the settle, and the wish is served now
+            # through the routine the immediate door already runs on this reg. Guarded on the backend's
+            # in-flight set: a reply that relaunches the CLI leaves launchError AND forkOf set for the whole
+            # launch (launchError clears at the connect proof, forkOf at the init), and a kill then would cut
+            # the turn "when idle" promised to wait for, so only a thread nothing is launching takes it. A
+            # limit:true launchError (a usage-limit hold) would have relaunched when the window reset; the
+            # kill drops that parked queue, which is what the user asked for and what the immediate door
+            # does today (review round 4, 2026-09-09)
+            try:
+                launching = sid in Sessions.backend_for(sid).running_sids()
+            except Exception:
+                launching = False                    # a backend without the set (tmux hosts no threads) launches nothing
+            if reg.get("launchError") and not launching:
+                dead_fork = True                     # nothing to wait for: the kill below, no transcript read
+            else:
+                sys.stderr.write("end-on-idle: %s is a comment thread whose fork has not landed; request kept "
+                                 "for the next cycle\n" % sid)
+                continue
+        if not dead_fork:
+            try:
+                # a thread's transcript is reached through its reg: discovery lists no threads, so _path_of
+                # answers None for one, and an empty path parses as "not working", a kill on the first cycle
+                # even mid-turn. The settle signal itself is the one sessions get: the transcript's open turn
+                path = _thread_transcript_path(reg, sid) if thread else (_path_of(sid) or "")
+                ps = _parse(path, sid, now)
+                working = _session_working(ps.get("turns") or [])
+            except Exception:
+                continue
+            if working:
+                if not thread:
+                    continue                         # the turn it asked from is still open; its end is the event
+                # a thread's open turn with no CLI running it is a turn a kernel restart CUT: threads are not
+                # resumed at boot (_boot_reconcile skips a threadOf reg without a persisted queue), drain leaves
+                # the trailing working row, and the settle this wish waits for comes only with the next human
+                # reply, so the wish would kill the thread at that reply, weeks later, mid-conversation, and
+                # silently until then. Nothing launching the sid (running_sids, read as the forkOf arm reads it:
+                # a backend without the set runs nothing) and an EMPTY persisted queue (pending_queued, which
+                # reads the reg mirror for a session not running) say no settle is coming, and the kill below
+                # serves the wish now. A queued text is the exact event that a launch IS coming (the boot
+                # resume's staggered to_start loop feeds it, and running_sids lists the sid only once its
+                # _ensure runs), so the arm stands down aloud until that resume and the queued reply is not
+                # dropped; a CLI running the turn is the ordinary open turn, waited on in silence like any
+                # session's (review round 5, 2026-09-09)
+                be = Sessions.backend_for(sid)
+                try:
+                    launching = sid in be.running_sids()
+                except Exception:
+                    launching = False                # a backend without the set (tmux hosts no threads) runs nothing
+                if launching:
+                    continue                         # a CLI runs the turn: its settle is the event
+                try:
+                    queued = be.pending_queued(sid)
+                except Exception:
+                    queued = []
+                if queued:
+                    sys.stderr.write("end-on-idle: %s is a comment thread whose turn was cut with a reply queued; "
+                                     "request kept until the resume settles\n" % sid)
+                    continue
+                sys.stderr.write("end-on-idle: %s is a comment thread whose turn was cut and nothing resumes it; "
+                                 "serving the request now\n" % sid)
+        # the one end routine (_end_and_record: the /end route's and the endSession op's), with a FRESH,
+        # own-scan corroboration, never the cycle snapshot, never _pass_scan's memo: the post-kill probe's
+        # evidence must POSTDATE the kill, and both of those predate it, the snapshot by construction
+        # (this branch's precondition is the sid being IN it, so a snapshot read answers "still running"
+        # unconditionally and the clean death is unreachable). The ENTRY check above may read the
+        # snapshot: absence there is its precondition, so it falls through to fresh owner probes
+        # regardless. Kills are user-gesture rare, so one owner scan per killed sid is fine. A confirmed
+        # kill spends the request THIS cycle; only one the owner genuinely denies stays armed to retry. A
+        # comment thread takes the same routine: death record, _comment_kill_all and the closed frame, the
+        # state the immediate arm leaves (review round 3, 2026-09-09)
+        ended = _end_and_record(sid, Sessions.backend_for(sid), now,
+                                "end-on-idle (self-close%s)" % (", a comment thread" if thread else ""), fresh=True)
+        if ended is not True:                        # unconfirmed kill: nothing recorded, nothing broadcast,
             sys.stderr.write("end-on-idle: %s kill unconfirmed (%s) — no death record, request "
                              "kept for the next cycle\n"
                              % (sid, "still running" if ended is False else "probe failed"))
             continue                                 # the armed request IS the retry
-        _record_death(sid, int(now), "kill")
-        _comment_kill_all(sid, be)
-        _send_to_app("chat", {"type": "closed", "id": sid})
-        reqs.discard(sid); changed = True
+        reqs.discard(sid); changed = True            # the push below re-reads the flipped reg
     if changed:
         _end_on_idle_save(reqs)
         _push_soon()
@@ -26447,21 +27098,307 @@ def _parse_send_body(raw):
     return {"who": who, "text": text}
 
 
+def _named_generation_live(sid, cx=None):
+    """Is `sid`, a generation the gate admits by id, live by its own backend's read, the liveness a NAME
+    addresses (a dormant session is addressed by id and is 404 by name, the round-5 rule)? The SDK backend
+    runs it (_backend_reports_running: a session thread in running_sids, whatever its record reads); or its SDK
+    registry entry reads and says alive (_thread_reg: the row the SDK half of Sessions.live() lists for it,
+    which is a conserve-closed session, or one idle at the last kernel restart and not yet driven, the reg
+    alive and no thread); or the Codex backend owns it (CodexBackend.owns: a lock-guarded in-memory lookup and
+    not dead, the predicate Sessions.backend_for routes by, so ranking and routing agree). None of these is
+    the live map: the map's SDK row for a torn reg is the list_regs cache's (round 9), and its tmux half is a
+    fork, so a tmux-backed generation is not live here (see _unreadable_dormant_named for what that costs and
+    why). `cx` is the Codex backend the caller resolved (_codex()), or None for none. Asked by the by-name
+    walk alone (review round 12, 2026-09-10)."""
+    if _backend_reports_running(sid):
+        return True
+    reg = _thread_reg(sid)
+    if not isinstance(reg, _UnreadableReg) and reg.get("alive"):
+        return True
+    try:
+        return cx is not None and bool(cx.owns(sid))
+    except Exception:
+        return False
+
+
+def _unreadable_dormant_named(name):
+    """The sid the on-disk names registry answers for `name` at the client doors, or None. The registry
+    (_names_snapshot, read directly, never the live map or its list_regs cache) is walked in sorted order over
+    the entries bearing the name, and each generation is ranked by the verdict the gate gives it BY ID
+    (_session_gate: admitted, unreadable, unknown), never by a predicate of this walk's own: the first
+    generation the gate admits by id and that is live by its own backend's read (_named_generation_live: an
+    SDK session thread in running_sids, a readable SDK registry entry that says alive, a Codex session the
+    Codex backend owns) wins; else the first generation the gate reads as unreadable (its SDK registry entry
+    exists but will not read, _reg_unreadable, and the SDK backend is not running it); else None, and the
+    resolution goes on to the live map. The principle is the doors': by name they answer as the by-id path
+    would for the generation the name means, the live one (review round 12, 2026-09-10; round 11 asked the
+    SDK backend's running set alone, so a live Codex-backed generation and a conserved SDK generation, its reg
+    alive and no thread after the idle sweep or a restart, ranked below a dead generation's torn record, which
+    refused the live session by name at every door while by id the gate admitted it and the board listed it;
+    round 10 answered a torn generation ahead of a running one). The gate's admitted verdict by id is wider
+    than what a name addresses: a readable DORMANT generation (alive false) is admitted by id through the
+    names door of _kernel_knows (a dormant session is addressed by id, its end idempotent) and is 404 by name,
+    the round-5 rule (test_a_dormant_sessions_record_that_will_not_read_is_a_503_by_name_too in
+    tests/test_kernel_headless_ops.py), so the admitted arm here asks the liveness a name has always required,
+    and reads it from the backends' own state (a thread set, a registry entry, an in-memory session), never
+    from the live map, whose row for a torn reg is the list_regs cache's (round 9) and whose tmux half is a
+    fork. A tmux-backed generation is therefore not ranked here: a live tmux namesake of a name no torn record
+    bears is reached through the live map when this walk answers None, as it always was. What a name answers
+    when generations of different kinds share it, stated as a list (review round 13, 2026-09-10): a live tmux
+    namesake beside a torn SDK record of the name, in either sid order, is the record's 503 by name and 200 by
+    id, the deliberate deviation from "whatever by-id admits" that keeps this walk fork-free (round 10; the
+    pane can carry the torn sid itself, `romp resume <id>` sets a pane's @romp-session-id, and a fork per
+    by-name request would put the torn verdict behind the probe again); a session an attached host lists
+    under the name beside a local torn record is the record's 503 by name too, the far sid and the host:name
+    spelling forwarding, since _control_target asks the roster by name only on a would-be 404 and the record's
+    503 is none (an order older than round 10); a live tmux generation beside a live SDK or Codex generation
+    of the name is answered by the SDK or Codex generation whatever the sids, the pane being unranked, which
+    is the pick the live map's merge already made (Sessions.live() lists the tmux rows first and the SDK and
+    Codex rows after them, and _live_names keeps the last sid for a name), so that outcome is the base's and
+    not this walk's. The sorted order decides only between two generations of one rank, the lower sid first
+    (pinned; an unsorted walk would answer by os.scandir order): a conserved SDK generation (its reg alive, no
+    thread) and a running one are of one rank, so the conserved one answers when its sid is lower, by
+    construction (a shape no kernel door mints, since _claim_session_name refuses a name the live map lists as
+    running; a hand-repaired reg or a claim race can). A readable dormant generation (alive false) on either
+    side of a torn one is passed over, so the torn record answers by name and the dormant generation stays
+    reachable by id (pinned). Degenerate, stated: with no SDK backend at all (_sdk() None: sdk_backend.py
+    failing to load, or SdkBackend() raising; a broken sdkvenv is not that, the module imports without
+    claude_agent_sdk) an alive SDK registry entry on disk still ranks live here and the gate admits its sid,
+    and Sessions.backend_for then falls through to the tmux backend by name, as the base did for the same
+    request; the coherent refusal belongs at backend_for or the gate's admitted arm, for both doors and both
+    address forms, not to this walk. The gate never scans for a generation
+    ranked here: every entry is names-registered, so _kernel_knows answers through its names door before any
+    map read (an entry unregistered between the snapshot and the gate's read is the one exception, and it no
+    longer bears the name). The client doors' by-name resolution reads this FIRST (_resolve_sid's door read,
+    for _control_target and the WS compact and sendCommand arm), ahead of the live map, so the by-name verdict
+    depends on neither the list_regs cache nor tmux: a name whose generations are all dormant and one of them
+    torn is that record's verdict at the gate (the record's 503) in every list_regs cache state and every
+    tmux state, a live tmux namesake bearing the name included, and the text says so (review round 10,
+    2026-09-09: resolved through the live map, the by-name verdict was the cache's, the namesake cold and the
+    record warm, and with the probe down the scan's verdict cold and the record's warm; the live map is not
+    the fallback for a name with a torn record, since at a warm cache two rows bear the name and _live_names
+    picks by os.scandir order). "Dormant" in the name is history: round 5 read this inside the resolution for
+    every _sid_of caller, and the PR-watch contact then took a torn older generation for the live session of
+    the name; round 6 moved it to the doors' miss path, behind the gate's unknown verdict and, from round 7,
+    behind the failed scan; round 10 moved it ahead of the map. _sid_of's callers never read it (the input
+    unchanged on a miss, round 6)."""
+    torn = None
+    try:
+        cx = _codex()
+        for sid, parts in sorted(_names_snapshot().items()):
+            if not parts or parts[0] != name:
+                continue
+            verdict, _text = _session_gate(sid)               # the by-id verdict for this generation
+            if verdict == _GATE_UNREADABLE:
+                if torn is None:
+                    torn = sid
+            elif verdict == _GATE_ADMITTED and _named_generation_live(sid, cx):
+                return sid
+    except Exception as e:
+        # said, never a silent fall to the live map (the fail-loudly rule; review round 11, 2026-09-10: a
+        # RuntimeError from the memo's eviction landed here with nothing logged and the map decided the name)
+        sys.stderr.write("names registry: the by-name lookup of %r failed (%r); the live map decides the name\n" % (name, e))
+        return None
+    return torn
+
+
+def _resolve_sid(who, door=False):
+    """_sid_of with what the resolution read handed back: (sid, live, store_unreadable, scan_failed), where
+    live is the Sessions.live() map the resolution scanned, or None when nothing was scanned (the names
+    registry answered first: a registered sid, or, at a door, a live generation of the name, one the gate
+    admits by id and its own backend lists live, or a torn record of the name); store_unreadable
+    says the comment threads' store could not be read when the resolution got as far as asking it
+    (_thread_names answered None); and scan_failed says the tmux probe THAT map rides did not answer
+    (live.tmux_failed: an exec error, a timeout, an unrecognised nonzero exit; the no-server exit and a
+    tmux-less box are an empty board), so the caller can say "could not read" instead of "no such session" for
+    either read (review rounds 4 and 6, 2026-09-09; the fail-loudly rule). The control routes
+    (_control_target) pass the map to _unknown_session_refusal and read the scan's own verdict, so a request
+    for a name no session answers to costs one live scan (a tmux fork plus a walk of the SDK regs), not two:
+    the failed-scan 503 used to be decided by a second list-sessions after the gate, so a probe that failed
+    once and answered once turned a live session's name into "no live session named", and one that answered
+    once and failed once turned an unknown name into a 503 (round 6). When every door misses the sid is the
+    input unchanged, for every caller.
+    `door` is the client doors' read (_control_target and the WS compact and sendCommand arm), which adds
+    one step ahead of the plain read and one step inside it. Ahead: a spelling that can name nothing local
+    (_local_spelling: outside NAME_RE's alphabet, so a path segment, an absolute path, the roster's
+    host:name) is the input unchanged before any path is built from it, so the gate's unknown verdict follows
+    with no file read (round 10: `../palette` was admitted through the names door). Inside, between the
+    registered-sid check and the live scan: a bare name is looked up in the on-disk names registry
+    (_unreadable_dormant_named) ahead of any scan, each generation of the name ranked by the gate's own by-id
+    verdict, and the first the gate admits that its own backend lists live (an SDK session thread, a readable
+    SDK registry entry that says alive, a Codex session), else the first whose SDK registry entry will not
+    read, is that sid with no map read: a live SDK or Codex session is reached by its name whether its own
+    record is torn or a dead generation's is (rounds 11 and 12), and a torn
+    dormant record is the gate's verdict in every list_regs cache state and every tmux state, ahead of a live
+    tmux namesake bearing the name that the live map would have resolved, and ahead of a session an attached
+    host lists under it, since the roster by name is asked on a would-be 404 alone (review round 10, 2026-09-09:
+    resolved through the map, a torn generation's verdict by name was the cache's, the namesake cold and the
+    record warm, and with the probe down the scan's verdict cold and the record's warm; round 10 also
+    answered a torn generation ahead of a running one, reversed in round 11; round 11 ranked a running SDK
+    generation alone, widened in round 12). A readable dormant generation of the name is admitted by id and
+    not live, so the lookup passes it over and a dormant session stays addressed by id and 404 by name (round
+    5). The rest is the plain read's order: a registered sid as is (checked before the registry
+    lookup, so a name spelled like another session's sid is that sid); a live session of the name through
+    the map; the comment threads' store; else the input unchanged, for the doors' miss path (_named_miss:
+    the failed scan, the store).
+    _sid_of's callers take the plain read: the torn lookup never reaches them (round 5 put it in the
+    resolution for every caller, and the PR-watch escalation contact, add_pr_watch and add_watch, which store
+    the sid, /deliver and /compact then took a torn older generation of a name for the live session that
+    bears it, round 6), and a spelling outside the alphabet keeps the reads it always had. Every other caller
+    reads _sid_of, which keeps only the sid."""
+    who = str(who)
+    if door and not _local_spelling(who):
+        return who, None, False, False
+    if _name_of(who):
+        return who, None, False, False
+    if door:
+        registered = _unreadable_dormant_named(who)       # a live generation of the name, else a torn one
+        if registered:
+            return registered, None, False, False
+    live = Sessions.live()
+    failed = bool(getattr(live, "tmux_failed", False))
+    if who in live:
+        return who, live, False, failed
+    hit = _live_names(live).get(who)
+    if hit:
+        return hit, live, False, failed
+    names = _thread_names()                   # a comment thread's name: the explicit send reaches
+    if names is None:                         # the THREAD (T223), not a phantom sid spelled like a name
+        return who, live, True, failed
+    th = names.get(who)
+    if th:
+        return th[0], live, False, failed
+    return who, live, False, failed           # every door missed: the input unchanged (see the docstring)
+
+
 def _sid_of(who):
     """Resolve an id-or-name to a sid: a sid as-is (the names registry is sid-keyed, so _name_of resolves it
     even when dead), else a LIVE session name → its sid, falling back to the input unchanged. Lets the
-    name-keyed entry points (POST /send, the timeline compact-by-name) route through the sid-keyed backend."""
-    who = str(who)
-    if _name_of(who):
-        return who
-    live = Sessions.live()
-    if who in live:
-        return who
-    hit = _live_names(live).get(who)
-    if hit:
-        return hit
-    th = (_thread_names() or {}).get(who)     # a comment thread's name: the explicit send reaches
-    return th[0] if th else who               # the THREAD (T223) — not a phantom sid spelled like a name
+    name-keyed entry points (POST /send, the timeline compact-by-name) route through the sid-keyed backend.
+    The fallback is a contract its callers read: _pr_watch_contact_sid takes a changed answer as resolved and
+    asks SdkBackend.sid_for_name only for the unchanged input, so a resolution that handed back a dormant
+    torn-reg generation of the name here sent a PR-watch escalation to that generation, classified "its
+    record could not be read" every tick with no bound (review round 6, 2026-09-09). The client doors'
+    by-name lookup of such a record is their own read of this resolution (door=True, round 10), which the
+    plain read here never takes."""
+    return _resolve_sid(who)[0]
+
+
+def _unknown_session_refusal(sid, who, live=None, route=""):
+    """The 404 for a name (or id) that resolves to no session, or None when the kernel knows it. _sid_of
+    hands back its input unchanged when nothing matches, so a typo reaches the backends as a phantom sid:
+    /end "killed" it and _confirmed_ended, finding nothing listed, certified the death; /send handed it to
+    the tmux backend and folded the refusal into ok:true. `romp end <typo>` printed a bare ok while the
+    real session ran on, and a caller that trusted it had to re-check the roster (2026-09-09). The verdict
+    is _session_gate's, the one gate the WS _drive gate asks too, so the two client doors cannot disagree:
+    admitted for a session the SDK backend runs now (running_sids), whatever its record reads, else for one the
+    kernel knows (_kernel_knows: the names registry, a registered sid live or between turns; the SDK registry, a
+    reg the SDK backend wrote, a comment thread's among them, since a thread has no names/ entry and
+    live_sessions skips threadOf regs while _sid_of resolves its name to its tsid on purpose, T223; and the
+    live map, a session up before its registry entry lands); unreadable, a 503 naming the read and the way
+    out, for a session whose registry entry exists but will not read and that the SDK backend is not running,
+    in every tmux state and at every list_regs cache state, a tmux pane carrying the sid included (the kernel
+    cannot say whether it knows the session, so it says that; every step past this gate reads the record and
+    each would answer a different wrong thing); else the 404. History: a gate of names and live map alone
+    refused every thread (review find, 2026-09-09); the routes' own predicate admitted through a threadOf
+    reg only, so a dead non-thread SDK reg with no names/ entry was ended by the dashboard and refused 404
+    here (round 4); the 503 said "try again" for a record no retry could heal and refused a live session on
+    such a row that the dashboard served (round 5). `live` is the map _resolve_sid already read, when it
+    read one, so the refusal path scans once; a caller without one leaves it None and the gate reads the
+    map only where a verdict needs it. Asked by _control_target after the roster by sid (a session on an
+    attached host is in neither local map) and before the roster by name. `who` is the caller's spelling,
+    so the reason names what they typed. `route` is the caller's path for the kernel-log line the gate's
+    scan-failed verdict writes (_gate_refusal), the one place that 503 logs."""
+    verdict, text = _session_gate(str(sid), live=live, who=who)
+    return _gate_refusal(verdict, text, who, route)
+
+
+def _gate_refusal(verdict, text, who, route=""):
+    """The routes' JSON body for a gate verdict (or the by-name miss path's, _named_miss): None when admitted,
+    the 404 naming `who` when unknown, else the 503 carrying the verdict's text (the record that will not
+    read, the live session list the probe did not answer for, the comment threads' store). The scan-failed
+    503 writes its kernel-log line here, once, whichever path answered it (every sibling stand-down on a
+    failed probe logs, review round 6; round 7 gave the gate's own scan-failed verdict the same line, and round 9
+    left the miss path as that verdict's one source)."""
+    if verdict == _GATE_ADMITTED:
+        return None
+    if verdict == _GATE_UNKNOWN:
+        return {"ok": False, "error": "no live session named '%s'" % who, "_status": 404}
+    if verdict == _GATE_SCAN_FAILED:
+        sys.stderr.write("control %s: tmux probe failed while resolving %r; answered 503, nothing done\n"
+                         % (route or "target", who))
+    return {"ok": False, "error": text, "_status": 503}
+
+
+def _control_target(who, route=""):
+    """Where a session-control request (/send, /interrupt, /end) goes, from the caller's spelling `who`:
+    (sid, remote, refusal, live). `route` is the caller's path, for the kernel-log line the failed-scan 503
+    writes (every sibling stand-down on a failed probe logs; this one answered the caller and left the log
+    silent, review round 6, 2026-09-09). `remote` is the attached host's row when the roster lists the sid
+    (_host_for_sid; the request forwards there with the far sid). `refusal` is the JSON body to answer,
+    with its "_status", when the request can go nowhere: the 404 for a session nothing answers to, or a
+    503 when the answer cannot be given because a read failed: the live session list (the tmux probe the
+    resolution's own scan rides did not answer, live.tmux_failed), the comment threads' store
+    (_thread_names answered None while resolving a name) or the sid's own registry entry
+    (_unknown_session_refusal's unreadable verdict). `live` is the map the resolution scanned, else None (the
+    names registry answered and nothing was scanned: a registered sid, a live generation of the name, or a
+    torn record of the name); handed
+    out so the /send arm's dead-pane guard reads the one scan this request made instead of forking a second
+    probe (round 7). A request forks tmux at most once: in the resolution, or in the /send arm's alive_sids
+    read when nothing was scanned (by id to a tmux-backed sid, or a name that is itself a registered sid; a
+    readable SDK reg routes to the SDK backend and forks nothing); a torn record forks zero times when the
+    names registry answers the resolution (a registered sid by id, a registered name) and once otherwise, in
+    the resolution's Sessions.live() (an unregistered sid, a comment thread by id or by its row name; the
+    /send arm is never reached for one, the gate having refused it), since the record's verdict needs no map
+    (round 8 scanned here for a registered sid whose
+    registry entry will not read, ahead of a gate that scanned for one itself; round 9 took both scans out;
+    round 10 took the by-name scan out too, the names registry answering first). A failed read is never
+    reported as a session that does not exist (review rounds 4 and 5, 2026-09-09; the fail-loudly rule).
+    Order: the doors' resolution (_resolve_sid's door read: a spelling outside NAME_RE's alphabet unchanged
+    with nothing read, a registered sid as is, the on-disk names registry's answer for a bare name ahead of
+    any scan (a live generation of the name, else a torn record, rounds 11 and 12), then a local session wins
+    through the live map, then the comment threads' store), the
+    roster by sid, the gate with the live map the resolution read (so a refused request scans once; a torn
+    registry entry is the gate's 503 in every tmux state and at every cache state, by id and by name), and,
+    when the gate would answer 404, the by-name miss path both client doors share (_named_miss, a BARE name
+    only): the failed-scan 503 (with the local scan failed, "a local session wins" cannot be evaluated, so
+    nothing forwards, and no file is named for a transient failure; a name with a torn record never gets
+    here, the resolution having answered it), then the store's 503; then the roster by NAME
+    (_remote_session_named): a session an attached host runs is reached by the name that host lists, with the
+    far sid, as it is by id. The roster by name is asked on a would-be 404 alone, so a name with a torn LOCAL
+    record is that record's 503 while the same far session forwards by its far sid and as host:name, until the
+    record is repaired or removed (an order older than round 10, stated in round 13). A spelling that carries
+    a colon (the roster's host:name, the very spelling the 409 tells the caller to type) is no local name
+    (NAME_RE forbids the colon at every name door, and tmux rewrites one) and no thread's, so no local read is
+    made for it at all (_local_spelling, round 10; round 6 kept the scan and skipped the two 503s): it goes to
+    the roster, where a hit forwards and a miss is the accurate 404, while the local probe is down (round 6:
+    `romp end TESTHOST:far-web` was refused 503 by a failed LOCAL scan, though the same session by far sid
+    forwarded at the same moment)."""
+    sid, live, store_unreadable, scan_failed = _resolve_sid(who, door=True)
+    r = _host_for_sid(sid)
+    if r is not None:
+        return sid, r, None, live
+    refusal = _unknown_session_refusal(sid, who, live, route=route)
+    if refusal is None:
+        return sid, None, None, live
+    if refusal["_status"] == 404:
+        miss = _named_miss(who, live, store_unreadable)
+        if miss is not None:
+            # a read failed on the way to the 404: said, never "no live session named" (the failed-read-as-404
+            # class, closed for threads and by id in round 4, by name in round 5, the scan in rounds 5 and 6).
+            # "Try again" is right for the scan: tmux answers again. A torn record of the name is not answered
+            # here since round 10: the resolution reads the names registry first and the gate refused it
+            # above, whatever the probe did (rounds 6 to 9 looked the record up here, behind the scan). The
+            # no-server exit is the authoritative empty board and a tmux-less box is never asked, so an
+            # SDK-only box keeps its 404s
+            msid, verdict, text, _cause = miss
+            return msid, None, _gate_refusal(verdict, text, who, route), live
+        hit = _remote_session_named(who)
+        if isinstance(hit, dict):
+            return sid, None, hit, live
+        if hit is not None:
+            return hit[1], hit[0], None, live
+    return sid, None, refusal, live
 
 
 def _optimistic_echo(sid, text, author="human"):
@@ -29180,10 +30117,11 @@ def _ask_poll_once():
 # (every row grows st_size), and _seed_fork_stores publishes the forked child's file through a temp +
 # os.replace (a new inode). No writer rewrites a captions file in place, so there is no equal-size rewrite
 # inside one mtime tick for the three components to miss (the round-3 review's hazard; a source-text test
-# pins both writers). An absent file is an empty _Caps and its entry is popped; a stat that fails otherwise
-# is a sentinel key that matches nothing (read, not memoized); a read that fails after a successful stat is
-# not memoized (the `fail` counter, one stderr line per episode), since a permission or descriptor failure
-# is not a file version. Dict order is LRU (a hit reinserts), one eviction per insert past the cap, and
+# pins both writers). An absent file is an empty _Caps and its entry is popped (a name too long for the
+# filesystem is absent too); a stat that fails otherwise (EACCES, ELOOP) is a sentinel key carrying the error
+# that matches nothing (read, not memoized); a read that fails is not memoized (the `fail` counter, one
+# stderr line per episode naming the read's error and the stat's when it failed too), since a permission or
+# descriptor failure is not a file version. Dict order is LRU (a hit reinserts), one eviction per insert past the cap, and
 # build_timeline's full builds release the entries of lanes outside the timeline's lane set (_caps_forget).
 # The feed's held-card path reads live sessions, a subset of the lanes; the postal join (_msg_summaries)
 # reads _sessions(now), discover's 48 h window, a superset of the 12 h lane set, so an entry it made for a
@@ -29197,7 +30135,7 @@ def _ask_poll_once():
 _caps_memo = {}
 _CAPS_MEMO_MAX = 512
 _caps_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
-_caps_failed = set()            # paths whose last read after a good stat failed: one stderr line per episode
+_caps_failed = set()            # paths whose last read failed: one stderr line per episode
 _CAPS_LOCK = threading.Lock()
 
 
@@ -29294,8 +30232,12 @@ def _captions(fsid):
             first = p not in _caps_failed
             _caps_failed.add(p)
         if first:
-            sys.stderr.write("captions: %s unreadable after a successful stat (%r); answered empty and not memoized\n"
-                             % (os.path.basename(p), e))
+            # the read's error, and the stat's when the stat failed too (jd._file_key's _StatFailed carries it:
+            # EACCES, ELOOP), as the thread-reg line says it; round 12 of the unknown-name PR: this line claimed a
+            # successful stat for every failed read, false for any failed stat other than no-such-file
+            stat_err = getattr(key, "error", None)
+            sys.stderr.write("captions: %s did not read (%r)%s; answered empty and not memoized\n"
+                             % (os.path.basename(p), e, "" if stat_err is None else "; its stat failed (%r)" % (stat_err,)))
         return out
     if _caps_failed:
         with _CAPS_LOCK:
@@ -52015,7 +52957,7 @@ sync:"romp moved commits between your machines by itself \u2014 a push to a remo
 locate:"a click that should have jumped to a message in the chat couldn't find it. Usually the chat is missing part of its history; reload the pane if it keeps happening",
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
 refused:"a setting that could not be saved, or a state file that could not be read. A change you made \u2014 a lane or tab setting, a card bell, a lane order \u2014 was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults",
-undelivered:"something you sent never reached a session — the kernel it was addressed to has no session by that id, which on a board showing more than one machine means the pane addressed the wrong one. Nothing was delivered. Your text is kept verbatim in undelivered.jsonl under ~/.local/state/romp"};
+undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read the live session list (tmux did not answer; the same send works once it does), or it could not read the comment threads' store while resolving a session name, or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a refused reply, interrupt, end or compact files a row there with no text; a clear, drop or undo refused over the goals file writes nothing there"};
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
 if(filtBar)KINDS.forEach(function(k){var b=document.createElement('span');
@@ -57573,7 +58515,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not body:
                     return self._send(400, json.dumps({"ok": False, "error":
                         "id and text required (optional tag: one word, letters/digits/dashes, <=24 chars)"}), "application/json")
-                sid = _sid_of(body["who"])
+                sid, r, refusal, live = _control_target(body["who"], route=u.path)
                 # POSTAL ISOLATION holds on every sanctioned route (the user 2026-07-10): postal-SHAPED
                 # content to a mailbox-off session is agent mail arriving by the wrong door — refuse it
                 # here exactly like the bus does. Plain text still passes: /send is the HUMAN channel,
@@ -57584,9 +58526,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "error":
                         "isolation: the target session's mailbox is OFF — agent mail is refused on every "
                         "route; the refusal is final (the user can toggle its mailbox back on)"}), "application/json")
-                r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
-                    res = _remote_forward(r, "/send", {"id": sid, "text": body["text"]})
+                    st, res, text = _remote_forward_answer(r, "/send", {"id": sid, "text": body["text"]})
+                    if st and st != 200:
+                        # the far kernel answered no: relayed with its status and in its words, the far host
+                        # named (_remote_refusal). Its gate's JSON 404 carries the reason; a text/plain 404
+                        # is a route that kernel predates, the reading the other remote arms give the
+                        # status, never an unknown session (review round 2, 2026-09-09). Its words verbatim:
+                        # a far 409 already says the message was not delivered, and this arm's own coda
+                        # doubled it (review round 4)
+                        return self._send(st, json.dumps(_remote_refusal(r, st, res, text)),
+                                          "application/json")
                     if res is None:                                 # the far kernel didn't answer — say so, never
                         return self._send(200, json.dumps({"ok": False, "error":   # pretend it was delivered
                             "the remote kernel for this session (%s) isn't answering — message not delivered"
@@ -57597,6 +58547,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": True, "queued": bool(isinstance(res, dict)
                                                                                   and res.get("queued"))}),
                                       "application/json")
+                if refusal:                                         # a phantom sid delivers nowhere: say so
+                    return self._send(refusal.pop("_status"), json.dumps(refusal), "application/json")
                 # PARKS like a composer send (the user 2026-07-24), through the same FIFO: a message handed
                 # in by a local tool while the account is rate-limited — or while the session compacts —
                 # waits its turn instead of buying a red API-error card. ok:true still means ACCEPTED,
@@ -57604,13 +58556,69 @@ class Handler(BaseHTTPRequestHandler):
                 # isn't a human composer bubble. A typed /model, /effort or /fast takes the setters,
                 # exactly as the composer's does — same door, same registry.
                 be = Sessions.backend_for(sid)
+                not_running = {"ok": False, "error": "the session '%s' is not running; the message was not delivered"
+                                                     % body["who"]}
+                if be is _TMUX:
+                    # a tmux-backed sid the kernel knows but no pane runs: TmuxBackend.send answers truthy (accepted
+                    # for delivery) and hands the paste to _tmux_send's daemon thread, which fails after the route
+                    # has answered, so /send said ok (200, queued:false) for a message nothing received, and a dead
+                    # Codex session by id took the same path (owns() False, so backend_for falls to tmux). The route
+                    # reads the scan the resolution made when it made one (`live`, by name: a row for the sid on
+                    # the tmux backend is a pane that runs it, anything else is a session that is not running, the
+                    # 409 the SDK refusal answers below), and asks the server itself only when nothing was scanned
+                    # (by id, or a name that is itself a registered sid; a torn registry entry never reaches this arm,
+                    # the gate having refused it with no scan), through the
+                    # failure-aware primitive: None is a probe that did not answer (503, nothing done), a set without
+                    # the sid the 409, a tmux-less box runs nothing (the same 409). Either way neither the setters nor
+                    # the paste start, and the request forks tmux once, in every state: round 5 asked alive_sids here
+                    # after the resolution's own scan, so a by-name send forked twice and a second probe that failed
+                    # after the first listed the pane answered 503 for a session the request's own scan saw running
+                    # (review round 7, 2026-09-09); by id to a torn names-registered record the gate's unreadable arm
+                    # scanned and this arm forked again, the same 503 from the same two probes (round 8, which moved
+                    # that scan into _control_target; round 9 then made a torn record the record's verdict with no
+                    # scan at all, so it is refused before this arm).
+                    # The trade-off is stated: a pane that dies between the resolution's scan and the paste is no
+                    # longer caught here; TmuxBackend.send's daemon-thread failure was already the accepted shape.
+                    # TmuxBackend.send keeps that shape on purpose: the WS sendMessage arm ignores _send_or_park's
+                    # result and relies on the never-delivered echo, and the nudge callers arm _tmux_paste_mark on
+                    # it (review round 5, 2026-09-09)
+                    if live is not None:
+                        if getattr(live, "tmux_failed", False):
+                            # symmetry with the probe below; unreachable for a bare name (_control_target answered
+                            # the failed-scan 503) and for a resolved sid the map lists
+                            sys.stderr.write("send %s: tmux probe failed; answered 503, nothing delivered\n" % sid)
+                            return self._send(503, json.dumps({"ok": False, "error":
+                                "tmux isn't answering, so '%s' could not be reached; nothing was done and the "
+                                "message was not delivered; try again" % body["who"]}), "application/json")
+                        row = live.get(sid)
+                        if row is None or (row.get("backend") or "") != "tmux":
+                            return self._send(409, json.dumps(not_running), "application/json")
+                    else:
+                        alive = _TMUX.alive_sids() if _TMUX.available() else set()
+                        if alive is None:
+                            # said in the log too, as every sibling stand-down on a failed probe is (review round 6)
+                            sys.stderr.write("send %s: tmux probe failed; answered 503, nothing delivered\n" % sid)
+                            return self._send(503, json.dumps({"ok": False, "error":
+                                "tmux isn't answering, so '%s' could not be reached; nothing was done and the "
+                                "message was not delivered; try again" % body["who"]}), "application/json")
+                        if sid not in alive:
+                            return self._send(409, json.dumps(not_running), "application/json")
                 meta = {}
                 if _route_meta_command(be, sid, body["text"], state=meta):
                     queued = bool(meta.get("queued"))              # a parked /model, /effort or /fast says so too
                 else:
                     # "parked" is the FIFO arm; anything else is the backend's own send result (truthy when it
                     # went, falsy when refused) — so the compare, never truthiness, says which arm it took
-                    queued = _send_or_park(be, sid, body["text"]) == "parked"
+                    res = _send_or_park(be, sid, body["text"])
+                    if res is False:
+                        # the backend refused: a session it no longer holds (SdkBackend.send's _ensure answers
+                        # None for a missing or alive=False reg: a dead SDK session by id, an ended comment
+                        # thread by name or id). Said with a status and the reason, the unknown-session
+                        # refusal's shape, never folded into ok:true (review round 3, 2026-09-09: the route
+                        # answered 200 ok:true queued:false and `romp send` printed ok for a message nothing
+                        # received). Exactly False: tmux answers a nonce or True, and a fake may answer None
+                        return self._send(409, json.dumps(not_running), "application/json")
+                    queued = res == "parked"
                 # `queued` says which arm it took (the /compact route's shape): a sender that IS the
                 # target's open turn — an agent running `romp send <self> /clear` from its own Bash tool —
                 # read 'ok' otherwise and could not know the command waits for that turn to end (2026-09-03).
@@ -57652,20 +58660,38 @@ class Handler(BaseHTTPRequestHandler):
                     who = ""
                 if not who:
                     return self._send(400, json.dumps({"ok": False, "error": "id or name required"}), "application/json")
-                sid = _sid_of(who)
-                r = _host_for_sid(sid)
+                sid, r, refusal, _live = _control_target(who, route=u.path)
                 if r is not None:                               # remote session → forward over its -L tunnel
                     # …and RELAY the remote's answer, like the /send twin (2026-08-18): the remote
                     # kernel's /end now refuses honestly (ok:false, "the kill didn't take"), and
                     # discarding that here answered ok:true for a kill that never landed — a headless
                     # caller (`romp end web` against an attached host) walked away from a runaway
                     # session believing it dead. A dead far kernel is its own honest failure too.
-                    res = _remote_forward(r, u.path, {"id": sid})
+                    fwd = {"id": sid}
+                    if u.path == "/end" and isinstance(b, dict) and b.get("when") == "idle":
+                        # the deferral rides to the kernel that serves it: forwarded as {id} alone, a far
+                        # `romp end <sid> --when-idle` took that kernel's immediate arm and killed at once
+                        # while the rows promised a settle. The validated field only, never the raw body:
+                        # the caller's `name` key stays here, and /interrupt carries nothing (review round
+                        # 3, 2026-09-09). The far deferred arm's `deferred: true` is relayed below as is
+                        fwd["when"] = "idle"
+                    st, res, text = _remote_forward_answer(r, u.path, fwd)
+                    if st and st != 200:
+                        # the far kernel answered no: relayed with its status and in its words, the far
+                        # host named (_remote_refusal): its gate's JSON 404 with the reason, a text/plain
+                        # 404 (a route that kernel predates) as the status and line, never an unknown
+                        # session (review round 2, 2026-09-09; the /send twin does the same)
+                        return self._send(st, json.dumps(_remote_refusal(r, st, res, text)), "application/json")
                     if res is None:
                         return self._send(200, json.dumps({"ok": False, "error":
                             "the remote kernel for this session (%s) isn't answering"
                             % r.get("host", "?")}), "application/json")
                     return self._send(200, json.dumps(res), "application/json")
+                # a name nothing answers to is a 404, never a kill of a phantom sid that _confirmed_ended
+                # then certifies as a death: `romp end <typo>` read ok:true and nothing had happened; a
+                # record that would not read is a 503 naming the read (_control_target)
+                if refusal:
+                    return self._send(refusal.pop("_status"), json.dumps(refusal), "application/json")
                 be = Sessions.backend_for(sid)
                 if u.path == "/interrupt":
                     be.interrupt(sid)                           # Esc/stop AND settle idle (in the backend)
@@ -57680,24 +58706,20 @@ class Handler(BaseHTTPRequestHandler):
                     _audit_restart_request("end-on-idle", tag=str(sid), addr=str(self.client_address[0]))
                     return self._send(200, json.dumps({"ok": True, "deferred": True}), "application/json")
                 else:
-                    sys.stderr.write("kill: %s via /kill route\n" % sid)   # kill attribution (the user 2026-07-16)
-                    be.kill(sid)
-                    # corroborate like the WS endSession twin (2026-08-18): a kill the liveness owner
-                    # doesn't AFFIRMATIVELY confirm (_confirmed_ended — never bare _tmux_sessions()
-                    # membership, whose error→[] collapse would certify a false death) gets an honest
-                    # ok:false, no death record, no `closed` broadcast — a closed for a still-live sid
-                    # dismisses it on every client and re-draws as the dead swirl on the next push
-                    ended = _confirmed_ended(sid)
+                    # the one end routine (_end_and_record, the WS endSession twin's and the end-on-idle
+                    # sweep's): kill, then corroborate (2026-08-18) with the liveness owner, never bare
+                    # _tmux_sessions() membership, whose error→[] collapse would certify a false death. A
+                    # kill the owner doesn't AFFIRMATIVELY confirm gets an honest ok:false, no death record,
+                    # no `closed` broadcast: a closed for a still-live sid dismisses it on every client and
+                    # re-draws as the dead swirl on the next push
+                    why = {}
+                    ended = _end_and_record(sid, be, time.time(), "/kill route", why=why)
                     if ended is not True:
                         _push_soon()   # ack-fast (the 2026-08-30 wedge: request threads poke the pusher, never build inline)
                         return self._send(200, json.dumps({"ok": False,
                                                            "error": "the session is still running — the kill didn't take"
-                                                                    if ended is False else
-                                                                    "couldn't confirm the end — tmux isn't answering; try again"}),
+                                                                    if ended is False else _unconfirmed_end_text(why, sid=sid)}),
                                           "application/json")
-                    _record_death(sid, int(time.time()), "kill")
-                    _comment_kill_all(sid, be)   # its comment threads must not outlive it (the WS endSession twin)
-                    _send_to_app("chat", {"type": "closed", "id": sid})
                 _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
                 return self._send(200, json.dumps({"ok": True}), "application/json")
             if u.path == "/new":

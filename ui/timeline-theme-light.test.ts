@@ -11,6 +11,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { nodeFactory } from "./test-dom-shim";
 
 const SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "timeline-pane.css"), "utf8");
@@ -45,27 +46,8 @@ test("the tip adopt-copy carries the scoped light rules (substring match, not pr
 });
 
 // ---- (c) headless render: dark output unchanged; the class re-inks on the NEXT draw ----
-// minimal DOM shim (same shape as timeline-render.test.ts)
-function makeNode(tag: string): any {
-  const n: any = {
-    tag, _attrs: {}, children: [] as any[], style: {}, dataset: {}, textContent: "", parentNode: null,
-    classList: { _s: new Set<string>(), add(...a: string[]) { a.forEach((c) => this._s.add(c)); },
-      remove(...a: string[]) { a.forEach((c) => this._s.delete(c)); },
-      toggle(c: string, f?: boolean) { f ? this._s.add(c) : this._s.delete(c); }, contains(c: string) { return this._s.has(c); } },
-    setAttribute(k: string, v: any) { this._attrs[k] = v; }, getAttribute(k: string) { return this._attrs[k]; },
-    setAttributeNS(_n: any, k: string, v: any) { this._attrs[k] = v; }, removeAttribute(k: string) { delete this._attrs[k]; },
-    appendChild(c: any) { c.parentNode = n; this.children.push(c); return c; },
-    insertBefore(c: any, ref: any) { c.parentNode = n; const i = this.children.indexOf(ref); i < 0 ? this.children.push(c) : this.children.splice(i, 0, c); return c; },
-    removeChild(c: any) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); return c; },
-    get firstChild() { return this.children[0] || null; },
-    addEventListener() {}, removeEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; },
-    getBoundingClientRect() { return { width: 1400, height: 420, left: 0, top: 0, right: 1400, bottom: 420 }; },
-    closest() { return null; }, focus() {},
-    createEl(t: string, o: any) { const e = makeNode(t); if (o && o.cls) e.classList.add(o.cls); if (o && o.text) e.textContent = o.text; this.appendChild(e); return e; },
-    createDiv(o: any) { return this.createEl("div", o); }, createSpan(o: any) { return this.createEl("span", o); },
-  };
-  return n;
-}
+// the fake DOM: ui/test-dom-shim.ts, the host measuring 1400x420
+const makeNode = nodeFactory({ rect: { width: 1400, height: 420, left: 0, top: 0, right: 1400, bottom: 420 } });
 const g: any = global;
 g.document = {
   createElement(t: string) { return t === "canvas" ? { getContext() { return { font: "", measureText(s: string) { return { width: (s ? s.length : 0) * 6 }; } }; } } : makeNode(t); },
