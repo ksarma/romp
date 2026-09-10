@@ -14,7 +14,7 @@ import { createRequire } from "node:module";
 import { viewTagUnion } from "./session-views";
 import { parseTabGroups, readTabGroups, writeTabGroups, setSectionCollapsed, toggleSectionCollapsed, isSectionCollapsed, planStrip,
          isHidden, setHidden, toggleHidden, isPinned, setPinned, prunePinned, followTagRenames, followAdoption, tagRenames, headWords,
-         homeSectionOf, neighborOfFolded, sectionRef, TABGROUPS_KEY, type StripHead, type SectionRef, type TabGroupsState } from "./tab-groups";
+         homeSectionOf, neighborOfFolded, sectionRef, TABGROUPS_KEY, TABGROUPS_EVENT, type StripHead, type SectionRef, type TabGroupsState } from "./tab-groups";
 import { snapshotModel, snapshotRow, snapshotHeading, hiddenNeeds, hiddenFoldWords, actWords, rowWords, onYou, standInPip, type SnapModel } from "./tab-snapshot";
 import { sectionPip, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, compactCount, stripAndHidden, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
 import { repeatedClick } from "./tab-snapshot-view";
@@ -588,7 +588,7 @@ class FakeEl {
   static focusCalls = 0;
   focus() { FakeEl.focused = this; FakeEl.focusCalls++; }
   has(cls: string) { return this.className.split(/\s+/).includes(cls); }
-  get classList() { return { contains: (c: string) => this.has(c), add: (c: string) => { this.className += " " + c; }, remove: () => {}, toggle: () => {} }; }
+  get classList() { return { contains: (c: string) => this.has(c), add: (c: string) => { if (!this.has(c)) this.className += " " + c; }, remove: (c: string) => { this.className = this.className.split(/\s+/).filter((k) => k && k !== c).join(" "); }, toggle: () => {} }; }
   click() { const ev = { stopPropagation() {} }; for (const fn of this.listeners.click || []) fn(ev); }
   /** every descendant, depth first, self included */
   all(): FakeEl[] { return [this, ...this.children.flatMap((c) => c.all())]; }
@@ -596,7 +596,7 @@ class FakeEl {
   sub() { return this.all().find((n) => n.has("ctx-item-sub"))?.textContent; }
   icon() { return this.all().find((n) => n.has("ctx-icon")); }
 }
-type MenuHooks = { views: unknown; known: string[]; sessions: Map<string, unknown>; writes: TabGroupsState[]; dismissed: number; renders: number; flags: Array<[string, string, boolean]>; mods: Record<string, unknown>; phone?: boolean; win?: { w: number; h: number }; window?: FakeWin };
+type MenuHooks = { views: unknown; known: string[]; sessions: Map<string, unknown>; writes: TabGroupsState[]; dismissed: number; renders: number; flags: Array<[string, string, boolean]>; mods: Record<string, unknown>; phone?: boolean; win?: { w: number; h: number }; window?: FakeWin; onRender?: () => void };
 /** the page's window as pressHold and the seat read it (round 5): the pane's size, the release listeners a press installs, and `fire` for the release events */
 class FakeWin {
   constructor(private size: () => { w: number; h: number }) {}
@@ -609,6 +609,9 @@ class FakeWin {
   removeEventListener(k: string, fn: (ev: unknown) => void) { this.listeners[k] = (this.listeners[k] || []).filter((f) => f !== fn); }
   fire(k: string, ev: unknown = {}) { for (const fn of (this.listeners[k] || []).slice()) fn(ev); }
   count(k: string) { return (this.listeners[k] || []).length; }
+  /** the phone media rule as render.ts installs its change listener on it (round 6): the listener is kept under "media:change", so a test
+   *  flips the harness's phone flag and fires it, the way a rotation does; `matches` is not read here (showTabMenu reads phoneLayout) */
+  matchMedia(_query: string) { return { matches: false, addEventListener: (k: string, fn: (ev: unknown) => void) => this.addEventListener("media:" + k, fn) }; }
 }
 /** a tick, for pressHold's zero timer at the release */
 const tick = () => new Promise<void>((r) => setTimeout(r, 2));
@@ -618,7 +621,7 @@ function liftShowTabMenu(): (hooks: MenuHooks) => MenuApi {
   // the page's window and the real pressHold bound to it (render.ts calls pressHold(menu) with the default release, the window)
   return (hooks) => {
     hooks.window ??= new FakeWin(() => hooks.win ?? { w: 1200, h: 800 });
-    hooks.mods = { ...hooks.mods, pressHold: (surface: EventTarget) => pressHold(surface, hooks.window as unknown as EventTarget) };
+    hooks.mods = { ...hooks.mods, pressHold: (surface: EventTarget) => pressHold(surface, hooks.window as unknown as EventTarget), TABGROUPS_KEY, TABGROUPS_EVENT };
     return lifted(hooks);
   };
 }
@@ -627,11 +630,21 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
   const end = RENDER.indexOf("seatMenu(e.clientX, e.clientY);", a);
   const b = RENDER.indexOf("\n}\n", end) + 3;
   assert.ok(a > 0 && end > a && b > end, "showTabMenu's anchors moved; re-anchor this lift");
-  const js = requireCjs("esbuild").transformSync(RENDER.slice(a, b), { loader: "ts" }).code;
+  // THE LISTENERS ARE REAL (round 6): the two tab-groups store listeners and the phone media rule's change listener, lifted verbatim with
+  // the notifier they call (viewsChanged), are evaluated against the harness window (FakeWin records them and fires them), so a test that
+  // fires a storage event, TABGROUPS_EVENT or the media flip drives render.ts's own wiring. Round 5's harness called the hook itself
+  // (`changed`), so the store cases passed against a render.ts whose listeners never called the notifier
+  const la = RENDER.indexOf('window.addEventListener("storage", (e) => { if (e.key === TABGROUPS_KEY)');
+  const lb = RENDER.indexOf("\n", RENDER.indexOf('matchMedia(PHONE_LAYOUT_MEDIA).addEventListener("change"', la)) + 1;
+  const notifier = RENDER.match(/\nfunction viewsChanged\(\) \{ tabMenuViewsHook\(\); \}\n/);
+  const media = RENDER.match(/const PHONE_LAYOUT_MEDIA = "([^"]+)";/);
+  assert.ok(la > 0 && lb > la && notifier && media, "the listeners', the notifier's or the media rule's anchor moved; re-anchor this lift");
+  const js = requireCjs("esbuild").transformSync(RENDER.slice(a, b) + RENDER.slice(la, lb) + notifier![0], { loader: "ts" }).code;
   // the page as showTabMenu reads it: the maps and helpers named as render.ts names them
   const prelude = `
     const H = HOOKS;
-    const { FakeEl, viewTagUnion, readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden, pressHold } = H.mods;
+    const { FakeEl, viewTagUnion, readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden, pressHold, TABGROUPS_KEY, TABGROUPS_EVENT } = H.mods;
+    const PHONE_LAYOUT_MEDIA = ${JSON.stringify(media![1])};
     const el = (tag, cls) => new FakeEl(tag, cls);
     const ctxIcon = (kind, off) => { const sp = new FakeEl("span", "ctx-icon" + (off ? " off" : "")); sp.dataset.kind = kind; return sp; };
     const sessions = H.sessions, tabMeta = new Map();
@@ -643,7 +656,7 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
     const billingSubText = () => "";
     const vscodeApi = null;
     let pendingSessionViews = null, tagsFlyNewInput = null, tabMenuViewsHook = () => {};   // the open menu's views hook (round 4): showTabMenu sets it, the arrival paths call it
-    const renderTabs = () => { H.renders++; };
+    const renderTabs = () => { H.renders++; if (H.onRender) H.onRender(); };   // onRender: a test's probe of what the strip's render sees (round 6: the pin row's words before the hook that the same listener runs next)
     // the flyout's edits post an optimistic blob the real postTagEdit holds (holdViews) and effViews reads back: held here the same way
     const postTagEdit = (nv) => { H.views = nv; }, syncNewTagInput = () => {}, createInFlight = () => false, viewsWrites = [];
     const viewTags = (v) => (v && v.tags) || [];
@@ -662,9 +675,9 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
   const epilogue = `
     return { open: (id, copy, at) => { showTabMenu({ clientX: at ? at.x : 10, clientY: at ? at.y : 10 }, id, copy); return ctxMenuEl; }, at: () => ctxMenuAt,
              // a views arrival as the tabOrder frame handler and onViewsAck make it: the blob held (captureViews / takeViews, which effViews reads), then the
-             // notifier (viewsChanged, which runs the hook); 'changed' is the notifier alone, as the tab-groups store listeners and the caps frame run it
-             // after a store write or a revert already made (round 5)
-             push: (views) => { H.views = views; tabMenuViewsHook(); }, changed: () => { tabMenuViewsHook(); } };
+             // notifier (viewsChanged, which runs the hook); 'changed' is the notifier alone, as onKernelCaps runs it after a revert already made (round 5);
+             // the store listeners and the media rule's are the module's own, on the harness window (round 6): a test fires the event instead
+             push: (views) => { H.views = views; viewsChanged(); }, changed: () => { viewsChanged(); } };
   `;
   return new Function("HOOKS", prelude + js + epilogue) as (hooks: MenuHooks) => MenuApi;
 }
@@ -790,7 +803,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
     "the copy as a section ref (round 4): refOf resolves a name to its union's ref, or the name alone for a tag not yet created; heldCopy matches through sameSection (round 5: the ids when both are local, so a pushed rename keeps the copy, else the names, so the ack replaces a placeholder id and a remote-only group is known by its name; two remote-only sections are two); homeNow is a pure function of the ref and the views (round 5): the copy's own group, else the one remaining holder, nothing latched");
   assert.equal(MENU.split("sameSection(").length - 1, 2, "used by heldCopy and by the click's guard (round 5): one comparison of two sections (the declaration reads `sameSection = (`)");
   assert.equal(MENU.split("const sameSection = ").length - 1, 1, "declared once");
-  assert.equal(MENU.split("homeNow()").length - 1, 3, "the row's refresh, its click's (live, round 1) and the flyout's per-build read");
+  assert.equal(MENU.split("homeNow()").length - 1, 3, "the row's gate (rowHome, which its refresh and its click share, round 6), the flyout's per-build read, and the flyout's signature (round 6: the home resolution is an input its rows read; grouping is read through it, never bare)");
   assert.equal(MENU.split("readTabGroups().on").length - 1, 1, "one bare read in the menu, inside homeNow");
   assert.equal(MENU.replace(/\/\/[^\n]*/g, "").split("copyNow").length - 1, 4, "declared, read once by heldCopy (the one matcher, which homeNow and aimAdd share) and written by the user's gestures alone (round 5): the move and the add (aimAdd); a remove leaves it, and no resolution writes it");
   assert.doesNotMatch(MENU, /copyNow = sectionRef\(home0\)/, "round 5: no latch at the resolution (round 4 kept speaking for the one remaining holder after the removed tag came back, and the click hid it)");
@@ -811,20 +824,22 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // across). Round 5: ONE NOTIFIER, viewsChanged, runs the hook, and every site that changes what the strip reads calls it: the tabOrder
   // frame handler after the strip is applied, onViewsAck after the input's re-arm, onKernelCaps once the writes in flight are dropped or
   // the kept blob adopted (before the peek and the repaint, like the other two; round 4 missed it, so a reconnect with an edit in flight
-  // left a "creating..." row and a stale Hide tab row), and the two tab-groups store listeners after their render (another pane's
-  // hide, a grouping flip). Nothing else calls the hook
+  // left a "creating..." row and a stale Hide tab row), the two tab-groups store listeners after their render (another pane's
+  // hide, a grouping flip) and, since round 6, the phone media rule's change listener after its render (a rotation: the Hide tab row
+  // is gated on the same rule, so the flip takes it off the open menu). Nothing else calls the hook
   assert.match(RENDER, /\nlet tabMenuViewsHook: \(\) => void = \(\) => \{\};\s*\nfunction viewsChanged\(\) \{ tabMenuViewsHook\(\); \}\s*\nfunction dismissTabMenu\(\) \{\s*\n\s*ctxMenuEl\?\.remove\(\);\s*\n\s*ctxMenuEl = null;\s*\n\s*tagsFlyNewInput = null;\s*\n\s*tabMenuViewsHook = \(\) => \{\};\s*\n\}/, "declared beside the menu's node, the notifier beside it; a closed menu's hook is a no-op");
   assert.equal(RENDER.split("tabMenuViewsHook()").length - 1, 1, "the hook has one caller, the notifier; no timer, no other caller");
   assert.equal(RENDER.split("function viewsChanged()").length - 1, 1, "one notifier");
-  assert.equal(RENDER.split("viewsChanged();").length - 1, 5, "five callers: the tabOrder frame handler, onViewsAck, onKernelCaps, the storage listener and the TABGROUPS_EVENT listener");
+  assert.equal(RENDER.split("viewsChanged();").length - 1, 6, "six callers: the tabOrder frame handler, onViewsAck, onKernelCaps, the storage listener, the TABGROUPS_EVENT listener and the phone media rule's change listener (round 6)");
   assert.match(RENDER, /captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, [^\n]*\);\s*\n\s*viewsChanged\(\);/, "the tabOrder frame handler calls it once the blob is held and the strip applied");
   assert.match(RENDER, /syncNewTagInput\(\);[^\n]*\n\s*viewsChanged\(\);[^\n]*\n\s*renderTabs\(\);\s*\n\}/, "onViewsAck calls it after the input's re-arm (a create's ack gives a claimed copy its row)");
   assert.match(RENDER, /\} else if \(!adopted\) return;[^\n]*\n\s*viewsChanged\(\);[^\n]*\n\s*if \(activeId\) assertPeekFor\(activeId\);[^\n]*\n\s*renderTabs\(\);\n\}/, "onKernelCaps calls it once the writes in flight are dropped or the kept blob adopted, before the peek and the repaint; a frame that changed nothing shown returns before it");
   assert.match(RENDER, /window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === TABGROUPS_KEY\) \{ renderTabs\(\); viewsChanged\(\); \} \}\);\s*\nwindow\.addEventListener\(TABGROUPS_EVENT, \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\);/, "the two store listeners: the strip's render, then the open menu");
+  assert.match(RENDER, /window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\);/, "the media rule's listener: the same shape (round 6; before, renderTabs alone, and a menu open across a rotation kept its Hide tab row)");
   assert.match(RENDER, /document\.body\.appendChild\(menu\);\s*\n\s*ctxMenuEl = menu;\s*\n\s*tabMenuViewsHook = \(\) => \{ void hold\.defer\(\(\) => \{ if \(gone\(\)\) return; refreshHideRow\(\); refreshTags\(\); \}\); \};[^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "set once the menu is on the page, before the seat: one run through the menu's hold (round 5), the row's refresh and the Tags block's, dropped once the menu is dismissed");
   assert.equal(RENDER.split("tabMenuViewsHook = ").length - 1, 2, "assigned by showTabMenu and cleared by dismissTabMenu; nowhere else (the declaration reads `let tabMenuViewsHook:`)");
   assert.match(MENU, /sb\.textContent = subText\(\);\s*\n\s*tagsItem\.title = sb\.textContent;[^\n]*\n(?:\s*\/\/[^\n]*\n)+\s*let rebuildFly = \(\) => \{\};\s*\n\s*refreshTags = \(\) => \{ sb\.textContent = subText\(\); tagsItem\.title = sb\.textContent; rebuildFly\(\); \};/, "the Tags block's refresh: the sub-line re-read and the row's title with it (round 5), then the flyout's rebuild (a no-op while it is closed)");
-  assert.match(MENU, /const flySig = \(\) => JSON\.stringify\(unionFor\(\)\.map\(\(g\) => \[g\.name, g\.localId, g\.color, !!g\.pending, g\.members\.includes\(id\)\]\)\);\s*\n\s*let builtSig = "";\s*\n(?:\s*\/\/[^\n]*\n)+\s*const nrow = el\("div", "ctx-item ctx-item-newtag"\);\s*\n\s*const inp = el\("input", "ctx-tag-input"\) as HTMLInputElement;[\s\S]{0,2200}?\n\s*nrow\.appendChild\(inp\);\s*\n\s*tagsFlyNewInput = inp; syncNewTagInput\(\);\s*\n\s*sub\.appendChild\(nrow\);[^\n]*\n\s*const add = \(n: HTMLElement\) => sub\.insertBefore\(n, nrow\);[^\n]*\n\s*const build = \(\) => \{\s*\n\s*while \(sub\.firstChild && sub\.firstChild !== nrow\) sub\.firstChild\.remove\(\);[^\n]*\n\s*builtSig = flySig\(\);/, "the New tag… input is ONE node per flyout (round 5), on the flyout before the first build; the rows go in front of it and a build clears only what stands above it; what the rows show is stamped at every build");
+  assert.match(MENU, /const flySig = \(\) => \{ const h = homeNow\(\); return JSON\.stringify\(\[unionFor\(\)\.map\(\(g\) => \[g\.name, g\.localId, g\.color, !!g\.pending, g\.members\.includes\(id\)\]\), h \? \[h\.name, h\.localId, isPinned\(tabGroups\(\), sectionRef\(h\), id\)\] : null\]\); \};\s*\n\s*let builtSig = "";\s*\n(?:\s*\/\/[^\n]*\n)+\s*const nrow = el\("div", "ctx-item ctx-item-newtag"\);\s*\n\s*const inp = el\("input", "ctx-tag-input"\) as HTMLInputElement;[\s\S]{0,2200}?\n\s*nrow\.appendChild\(inp\);\s*\n\s*tagsFlyNewInput = inp; syncNewTagInput\(\);\s*\n\s*sub\.appendChild\(nrow\);[^\n]*\n\s*const add = \(n: HTMLElement\) => sub\.insertBefore\(n, nrow\);[^\n]*\n\s*const build = \(\) => \{\s*\n\s*while \(sub\.firstChild && sub\.firstChild !== nrow\) sub\.firstChild\.remove\(\);[^\n]*\n\s*builtSig = flySig\(\);/, "the New tag… input is ONE node per flyout (round 5), on the flyout before the first build; the rows go in front of it and a build clears only what stands above it; what the rows show is stamped at every build");
   const flyBlock = MENU.slice(MENU.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), MENU.indexOf("const armHoverClose = "));
   assert.doesNotMatch(flyBlock.replace(/\/\/[^\n]*/g, ""), /replaceChildren|sub\.appendChild\(row\)/, "no rebuild sweeps the input or the foot: every row goes through add");
   assert.equal(flyBlock.split("add(").length - 1, 7, "four rows and three dividers go in front of the input");
@@ -863,9 +878,10 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.equal(MENU.split("pressHold(").length - 1, 1, "one hold");
   assert.equal(RENDER.split("hold.defer(").length - 1, 1, "one run goes through it, the views hook's whole run (the row's refresh and the Tags block's, the flyout's rebuild inside); two separate parked runs would replace each other under one press");
   assert.match(RENDER, /^import \{ delegate, pressHold \} from "\.\/actions";$/m, "the shared helper, not a copy");
-  assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*let dressed: string \| null = null;[^\n]*\n\s*refreshHideRow = \(\) => \{\s*\n\s*const home = phoneLayout\(\) \? undefined : homeNow\(\);\s*\n\s*if \(!home\) \{ shown = null; if \(dressed === null\) return; dressed = null; row\.remove\(\); reseat\(\); return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*const lab = hidden \? "Show tab" : "Hide tab";\s*\n\s*const sub = hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`;\s*\n\s*const words = lab \+ "\\n" \+ sub;\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(row\.parentNode && words === dressed\) return;\s*\n\s*dressed = words;\s*\n\s*dressToggle\(row, "tab", hidden, lab, sub\);\s*\n\s*row\.title = sub;[^\n]*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*reseat\(\);\s*\n\s*\};\s*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\);\s*\n\s*const now = homeNow\(\);\s*\n\s*if \(!now\) \{ dismissTabMenu\(\); return; \}\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| !sameSection\(sec, shown\)\) \{ refreshHideRow\(\); return; \}\s*\n\s*dismissTabMenu\(\);\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/,
-    "round 5: the guard runs before the dismissal, so a refused click re-dresses the row on a menu still on the page; the no-home branch dismisses explicitly; a click that writes dismisses first, as every other row does");
-  assert.equal(MENU.split("phoneLayout()").length - 1, 1, "the gate is read once, in the refresh (the flyout's home read is untouched)");
+  assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*let dressed: string \| null = null;[^\n]*\n\s*const rowHome = \(\) => \(phoneLayout\(\) \? undefined : homeNow\(\)\);[^\n]*\n\s*refreshHideRow = \(\) => \{\s*\n\s*const home = rowHome\(\);\s*\n\s*if \(!home\) \{ shown = null; if \(dressed === null\) return; dressed = null; row\.remove\(\); reseat\(\); return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*const lab = hidden \? "Show tab" : "Hide tab";\s*\n\s*const sub = hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`;\s*\n\s*const words = lab \+ "\\n" \+ sub;\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(row\.parentNode && words === dressed\) return;\s*\n\s*dressed = words;\s*\n\s*dressToggle\(row, "tab", hidden, lab, sub\);\s*\n\s*row\.title = sub;[^\n]*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*reseat\(\);\s*\n\s*\};\s*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\);\s*\n\s*const now = rowHome\(\);\s*\n\s*if \(!now\) \{ dismissTabMenu\(\); return; \}\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| !sameSection\(sec, shown\)\) \{ refreshHideRow\(\); return; \}\s*\n\s*dismissTabMenu\(\);\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/,
+    "round 5: the guard runs before the dismissal, so a refused click re-dresses the row on a menu still on the page; the no-home branch dismisses explicitly; a click that writes dismisses first, as every other row does; round 6: the refresh and the click read the copy's section through one gate, rowHome, so a click that lands on the phone layout before the flip's parked refresh writes nothing");
+  assert.equal(MENU.split("phoneLayout()").length - 1, 1, "the gate is read once, in rowHome, which the refresh and the click share (round 6; the flyout's home read is untouched)");
+  assert.equal(MENU.split("rowHome()").length - 1, 2, "read by the refresh and by the click");
   assert.match(MENU, /add\(el\("div", "ctx-sep"\)\);\s*\n\s*tagsItem\.title = subText\(\);[^\n]*\n\s*refreshHideRow\(\);[^\n]*\n\s*\};\s*\n\s*build\(\);/, "the flyout's build ends with the Tags row's title and the refresh: every edit path there (a move, a remove, a +, a new or an existing tag) rebuilds the flyout");
   assert.equal(MENU.split("tagsItem.title = ").length - 1, 3, "the Tags row's title: at the build, in the refresh, at every build of the flyout (round 5)");
   assert.equal(MENU.split("row.title = sub;").length - 1, 1, "the Hide tab row's title is its sub-line, set as the row is dressed (round 5)");
@@ -1503,30 +1519,45 @@ test("executed: THE MENU FOLLOWS THE PUSH (menu review round 4). A views arrival
   });
 });
 
-test("executed: THE STORE'S OWN EVENTS AND THE CAPS FRAME REACH THE MENU (menu review round 5). Another pane's Hide, delivered by the tab-groups store listeners through the one notifier, flips the open menu's row to Show tab and its click shows; a Group tabs by tag switch off takes the row away; the pin row's own write, whose event runs the hook before the row's rebuild, leaves the flyout's rows alone; onKernelCaps runs the notifier once the writes in flight are dropped or the kept blob adopted, and not when nothing shown changed", () => {
+test("executed: THE STORE'S OWN EVENTS AND THE CAPS FRAME REACH THE MENU (menu review rounds 5 and 6). Another pane's Hide, delivered by render.ts's own tab-groups store listeners through the one notifier, flips the open menu's row to Show tab and its click shows; a Group tabs by tag switch off takes the row away and turns the open flyout's Move to rows into + rows, on again brings both back; another pane's pin re-dresses the pin row; the pin row's own write, whose event runs the hook inside the write, rebuilds the flyout for the pin before the row's own build and keeps the typed text; onKernelCaps runs the notifier once the writes in flight are dropped or the kept blob adopted, and not when nothing shown changed", () => {
   // round 4 ran the hook from the two views-arrival paths alone: a hide or show written from another pane (the storage event), a
   // grouping flip (TABGROUPS_EVENT) and a reconnect that dropped an edit in flight (onKernelCaps) left the open menu stale, though the
   // guide said the row follows changes from another pane. Round 5: one notifier, viewsChanged, called from every site that changes what
-  // the strip reads; the harness's `changed` is that notifier (the listeners' render aside), and onKernelCaps is lifted and run
+  // the strip reads. Round 6: the listeners themselves are lifted from render.ts onto the harness window and the events are fired
+  // (round 5's harness called the hook itself, so these cases passed against listeners that never called the notifier), and the
+  // flyout's signature lists every input its rows read (the home resolution and the pin bit with the unions), so a store event that
+  // changes what the rows show rebuilds an open flyout; onKernelCaps is lifted and run
   const hooks = menuHooks();
   const rowOf = (menu: FakeEl) => menu.children.find((it) => it.has("ctx-item-hide"));
   const pinRow = (fly: FakeEl) => fly.children.find((it) => it.has("ctx-item-pin"));
   const inputOf = (fly: FakeEl) => fly.all().find((n) => n.has("ctx-tag-input"))!;
+  const joinRows = (fly: FakeEl) => fly.children.filter((it) => it.label()?.startsWith("+ ") || it.label()?.startsWith("Move to ")).map((it) => it.label());
   const sameNodes = (a: FakeEl[], b: FakeEl[]) => a.length === b.length && a.every((n, i) => n === b[i]);
+  // the menu's own writes dispatch TABGROUPS_EVENT inside writeTabGroups (on the global window, which node has not): the stub fires it on
+  // the harness window after the real write, so the module's listener runs inside the write as it does on the page
+  hooks.mods.writeTabGroups = (st: TabGroupsState) => { writeTabGroups(st); hooks.window!.fire(TABGROUPS_EVENT); };
   withStore(() => {
     const api = liftShowTabMenu()(hooks);
-    // E1: another pane hid api in infra (its write, then the storage event's notifier): the row reads Show tab, and its click shows
+    const win = hooks.window!;
+    assert.deepEqual([win.count("storage"), win.count(TABGROUPS_EVENT), win.count("media:change")], [1, 1, 1], "render.ts's three listeners are on the harness window");
+    const storage = () => win.fire("storage", { key: TABGROUPS_KEY });   // a sibling pane's write, as the browser delivers it
+    // E1: another pane hid api in infra (its write, then the storage event, which the module's listener answers with the strip's render
+    // and the notifier): the row reads Show tab, and its click shows
     let menu = api.open("api", "infra");
     let row = rowOf(menu)!;
     assert.deepEqual([row.label(), row.sub()], ["Hide tab", HIDE_SUB("infra")]);
     writeTabGroups(setHidden(readTabGroups(unions), INFRA, "api", true));   // the other pane's Hide
-    api.changed();
-    assert.deepEqual([row.label(), row.sub(), row.icon()!.has("off")], ["Show tab", "back on the strip in infra", true], "the row follows the other pane's hide (before: it read Hide tab until a views push)");
+    const r1 = hooks.renders;
+    storage();
+    assert.equal(hooks.renders, r1 + 1, "the listener renders the strip");
+    assert.deepEqual([row.label(), row.sub(), row.icon()!.has("off")], ["Show tab", "back on the strip in infra", true], "and runs the notifier: the row follows the other pane's hide (round 4: it read Hide tab until a views push)");
     assert.equal(rowOf(menu), row, "the same node");
     row.click();
     assert.equal(hooks.writes.length, 1);
     assert.deepEqual(hooks.writes[0].hidden, [], "the click shows: hidden false for the copy");
     assert.equal(isHidden(readTabGroups(unions), INFRA, "api"), false);
+    win.fire("storage", { key: "romp:other" });
+    assert.equal(hooks.renders, r1 + 2, "a storage event under another key is not the store's: no render (the listener reads the key)");
     // E2: another pane's Show, the same way
     hooks.writes = [];
     writeTabGroups(setHidden(readTabGroups(unions), INFRA, "api", true));
@@ -1534,43 +1565,70 @@ test("executed: THE STORE'S OWN EVENTS AND THE CAPS FRAME REACH THE MENU (menu r
     row = rowOf(menu)!;
     assert.equal(row.label(), "Show tab");
     writeTabGroups(setHidden(readTabGroups(unions), INFRA, "api", false));   // the other pane's Show
-    api.changed();
+    storage();
     assert.equal(row.label(), "Hide tab", "the row follows the other pane's show");
     row.click();
     assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "infra", id: "g1" }]], "and the click hides");
     writeTabGroups(d);
-    // E3: Group tabs by tag switched off in another pane (the storage event): the row leaves the menu; on again: it is back
+    // E3: Group tabs by tag switched off in another pane (the storage event) with the flyout open: the row leaves the menu and the
+    // flyout's rows follow (no copy to move: + rows, no pin row; round 6, the home resolution being in flySig: round 5's flyout kept
+    // Move to archived, whose click then dropped infra from web while the strip had no sections); on again: both are back
     hooks.writes = [];
     menu = api.open("web", "infra");
     row = rowOf(menu)!;
+    let fly = flyOf(menu);
+    assert.deepEqual([joinRows(fly), pinRow(fly)?.sub()], [["Move to archived"], "keep this tab on the strip while infra is folded"]);
     writeTabGroups({ ...readTabGroups(unions), on: false });
-    api.changed();
+    storage();
     assert.equal(rowOf(menu), undefined, "grouping off: no hide applies, the row left (before: a dead row until a views push)");
+    assert.deepEqual([joinRows(fly), pinRow(fly)], [["+ archived"], undefined], "the flyout followed: an add, not a move, and no pin row (round 6)");
     writeTabGroups({ ...readTabGroups(unions), on: true });
-    api.changed();
+    storage();
     assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"), "grouping on again: the row is back");
     assert.equal(rowOf(menu), row, "the same node");
+    assert.deepEqual([joinRows(fly), pinRow(fly)?.sub()], [["Move to archived"], "keep this tab on the strip while infra is folded"], "and the flyout's Move to and pin rows with it");
     writeTabGroups({ ...readTabGroups(unions), on: false });
-    api.changed();
+    storage();
     assert.equal(rowOf(menu), undefined);
     const dOff = hooks.dismissed;
     row.click();
     assert.deepEqual([hooks.writes.length, hooks.dismissed], [0, dOff + 1], "a click on the row that left (unreachable on the page) writes nothing and dismisses, the no-home branch");
     writeTabGroups({ ...readTabGroups(unions), on: true });
+    // E3b (round 6): another pane pins web in infra: the pin row's words and mark follow (the pin bit is in flySig; before, the row read
+    // 'keep this tab...' with no mark while isPinned was true, and its click then wrote the pin OFF)
+    menu = api.open("web", "infra");
+    fly = flyOf(menu);
+    assert.deepEqual([pinRow(fly)!.sub(), pinRow(fly)!.has("current")], ["keep this tab on the strip while infra is folded", false]);
+    const rowsB = fly.children.slice();
+    writeTabGroups(setPinned(readTabGroups(unions), INFRA, "web", true));   // the other pane's pin
+    storage();
+    assert.deepEqual([pinRow(fly)!.sub(), pinRow(fly)!.has("current")], ["stays on the strip while infra is folded", true], "the other pane's pin re-dressed the pin row");
+    assert.ok(!sameNodes(fly.children, rowsB), "the rows were rebuilt");
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"), "the Hide tab row stands");
+    writeTabGroups(d);
+    // E4: the pin row's OWN write. TABGROUPS_EVENT is dispatched inside writeTabGroups, so the module's listener runs the strip's render and
+    // the notifier BEFORE the click handler's own build(): the render stub reads the pin row's words before the hook (the old words), and a
+    // probe listener installed after the module's reads them after it, still inside the write (the new words: the hook rebuilt the flyout,
+    // the pin bit being in flySig since round 6); the handler's build() is a second pass over the same blob. The typed New tag text stands
+    // through both, the input being one node (round 5's E4 ran the hook before the click, not inside its write, and asserted no rebuild)
+    hooks.writes = [];
     menu = api.open("web", "infra");
     row = rowOf(menu)!;
-    const fly = flyOf(menu);
-    // E4: the pin row's own write dispatches TABGROUPS_EVENT inside writeTabGroups, so the real listener runs the hook BEFORE the row's
-    // build(); the flyout's rows are not what the pin changes (flySig), so the hook's rebuild is a no-op and the typed text stands
-    inputOf(fly).value = "qa-";
-    const rowsBefore = fly.children.slice();
-    api.changed();   // the hook as the listener would run it mid-write
-    assert.ok(sameNodes(fly.children, rowsBefore), "the flyout's rows are the same nodes");
-    assert.equal(inputOf(fly).value, "qa-");
+    fly = flyOf(menu);
+    const inp = inputOf(fly);
+    inp.value = "qa-";
+    let atRender: string | undefined, afterListener: string | undefined;
+    hooks.onRender = () => { atRender = pinRow(fly)!.sub(); };
+    win.addEventListener(TABGROUPS_EVENT, () => { afterListener = pinRow(fly)!.sub(); });
     pinRow(fly)!.click();
     assert.equal(hooks.writes.length, 1, "the pin's write");
-    assert.equal(pinRow(fly)!.sub(), "stays on the strip while infra is folded", "the pin row's own build shows the pin");
+    assert.equal(atRender, "keep this tab on the strip while infra is folded", "the strip's render ran inside the write, before the hook: the old words");
+    assert.equal(afterListener, "stays on the strip while infra is folded", "the hook ran inside the write too and rebuilt the flyout for the pin, before the handler's own build()");
+    assert.deepEqual([pinRow(fly)!.sub(), pinRow(fly)!.has("current")], ["stays on the strip while infra is folded", true], "the pin row shows the pin");
+    assert.equal(inputOf(fly), inp, "the New tag input is the same node");
+    assert.equal(inp.value, "qa-", "and the typed text stands through both builds");
     assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"), "the Hide tab row stands");
+    hooks.onRender = undefined;
   });
   // E5: onKernelCaps itself, lifted from render.ts and run over stubs with a counter for the notifier: a caps frame with a write in
   // flight drops it and notifies; one that adopts the kept blob notifies; one with nothing in flight and nothing adopted returns first
@@ -1894,10 +1952,39 @@ test("executed: ABSENT ON THE PHONE LAYOUT (menu review round 1). Under the phon
     hooks.phone = false;
     menu = api.open("web", "infra");
     assert.equal(rowOf(menu)!.label(), "Hide tab", "off the phone, the same page: the row");
+    // THE FLIP WHILE THE MENU IS OPEN (round 6). The media rule's change listener, render.ts's own (lifted with the store listeners onto
+    // the harness window), renders the strip and runs the notifier: the row leaves the open menu, the menu stands, nothing is written;
+    // the flip back returns the same node. Before, the listener rendered the strip alone, so a menu open across a rotation kept the row
+    // and its click wrote a hide the flat phone plan never shows
+    const win = hooks.window!;
+    const row = rowOf(menu)!;
+    const fly = flyOf(menu);
+    assert.equal(win.count("media:change"), 1, "render.ts's listener is on the media rule");
+    hooks.phone = true;
+    const r0 = hooks.renders;
+    win.fire("media:change");
+    assert.equal(hooks.renders, r0 + 1, "the flip renders the strip");
+    assert.equal(rowOf(menu), undefined, "and takes the row off the open menu (before: the row stood)");
+    assert.equal(menu.isConnected, true, "the menu stands");
+    assert.equal(fly.isConnected, true, "the flyout too");
+    assert.equal(hooks.writes.length, 0);
+    hooks.phone = false;
+    win.fire("media:change");
+    assert.equal(rowOf(menu), row, "the flip back: the same node returns");
+    assert.equal(row.sub(), HIDE_SUB("infra"));
+    // THE CLICK READS THE GATE (round 6): the layout flips and the click lands before the flip's refresh (a finger held across the rotation
+    // parks the hook's run through the menu's hold): the row still stands, and its click writes nothing and dismisses, the no-home branch.
+    // Before, the click read homeNow alone and wrote hidden [{web, infra, g1}], which planStrip(phone) never shows
+    hooks.phone = true;   // no listener fired
+    assert.equal(rowOf(menu), row, "the row still stands: nothing ran the refresh");
+    const d0 = hooks.dismissed;
+    row.click();
+    assert.deepEqual([hooks.writes.length, hooks.dismissed, menu.isConnected], [0, d0 + 1, false], "the click reads the gate: nothing written on the phone layout, the menu dismissed");
   });
   // pinned: the same predicate the switch reads (render.ts), so what the strip flattens and what the menu offers cannot disagree
   assert.match(RENDER, /\.\.\.\(phoneLayout\(\) \? \{\} : \{\s*\n\s*groupToggle: \{ label: "Group tabs by tag"/, "the switch's gate");
   assert.match(RENDER, /const PHONE_LAYOUT_MEDIA = "\(pointer:coarse\) and \(max-width:1024px\)";\s*\nfunction phoneLayout\(\): boolean \{/, "one media rule behind it");
+  assert.match(RENDER, /\ntry \{ window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\); \} catch \{ \/\* no matchMedia \*\/ \}\n/, "the flip runs the notifier after the strip's render, the store listeners' shape (round 6)");
 });
 
 test("executed + pinned: ONCE PER GESTURE (round 1). A double-click on Hide acts on one row: the platform's click count, no timer", () => {

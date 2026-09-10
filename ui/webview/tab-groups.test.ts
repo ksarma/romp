@@ -177,8 +177,10 @@ test("executed: the PHONE layout renders the flat strip — every visible id, no
   // crossing the boundary (an iPad rotation) re-plans the strip: the CSS side of the same rule flips
   // the instant the media query does, so a plan sampled per render only went stale under the phone
   // list (folded tabs absent from the scrape) until the next push. The flip IS the event — one
-  // listener on the same MediaQueryList, beside the fold-state listeners; no resize polling.
-  assert.match(RENDER, /try \{ window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => renderTabs\(\)\); \} catch \{/);
+  // listener on the same MediaQueryList, beside the fold-state listeners; no resize polling. The
+  // open tab menu reads the flip through the same listener (viewsChanged, round 6 of the tab menu
+  // review: its Hide tab row is gated on the rule), the store listeners' shape
+  assert.match(RENDER, /try \{ window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\); \} catch \{/);
   assert.ok(RENDER.indexOf("window.addEventListener(TABGROUPS_EVENT, () => { renderTabs(); viewsChanged(); });") < RENDER.indexOf('matchMedia(PHONE_LAYOUT_MEDIA).addEventListener("change"'),
     "installed once at module scope with the other strip listeners, never inside a render");
 });
@@ -1902,7 +1904,7 @@ test("the tab menu speaks for the right-clicked copy's group: Move to drops THAT
   const menuAt = RENDER.indexOf("function showTabMenu(");
   const menu = RENDER.slice(menuAt, RENDER.indexOf("document.body.appendChild(menu);", menuAt));
   assert.match(menu, /const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;/);
-  assert.equal(menu.split("homeNow()").length - 1, 3, "the Hide tab row's refresh, its click's (the click is live, review round 1) and the flyout's");
+  assert.equal(menu.split("homeNow()").length - 1, 3, "the Hide tab row's gate (rowHome, shared by its refresh and its click; round 6 of the tab menu review), the flyout's per-build read and the flyout's signature");
   assert.ok(menu.indexOf("const homeNow = ") < menu.indexOf('"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"') && menu.indexOf('"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"') < menu.indexOf("const home = homeNow();   // read per build"));
   assert.match(menu, /copyNow = sectionRef\(to\);/, "the move writes the tracked section");
   assert.match(menu, /const home = homeNow\(\);   \/\/ read per build[^\n]*\n\s*for \(const g of others\) \{/, "the flyout's read, where its own copy of the two lines stood");

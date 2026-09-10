@@ -6356,7 +6356,10 @@ let ctxMenuAt: { x: number; y: number } | null = null;   // the tab menu's last 
 // handler (a views push), onViewsAck (an edit's answer), onKernelCaps (a reconnect that drops the writes in flight and the
 // optimistic copy; before, an open menu kept a "creating..." row and a stale Hide tab row across it) and the two tab-groups
 // store listeners (TABGROUPS_EVENT from this window, the storage event from a sibling pane: another pane's Hide or Show, or
-// the Group tabs by tag switch, re-dresses the row or takes it off). tab-hide.test pins the five callers.
+// the Group tabs by tag switch, re-dresses the row or takes it off), and the phone media rule's change listener (round 6: the
+// Hide tab row is gated on phoneLayout, so a rotation across the boundary takes the row off the open menu and the flip back
+// returns it; before, a menu open across a rotation kept the row and its click wrote a hide the flat phone plan never shows).
+// tab-hide.test pins the six callers.
 let tabMenuViewsHook: () => void = () => {};
 function viewsChanged() { tabMenuViewsHook(); }
 function dismissTabMenu() {
@@ -6681,8 +6684,11 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // group's header, and the guide says so; the sub-line stays short and true in both). Present only while
   // the strip is sectioned and the right-clicked copy has a home section, and never on the phone layout
   // (phoneLayout, the gate the Group tabs by tag switch uses: planStrip flattens there, so a hide would
-  // write and show nothing): hides do not apply on the flat strip, to an untagged session, under a tag
-  // whose create is still in flight or on the phone, so the row is absent there. THE ROW FOLLOWS THE COPY,
+  // write and show nothing; the refresh and the click read the gate through one helper, rowHome, and the
+  // media rule's flip runs the notifier, so a rotation while the menu is open takes the row off and a click
+  // that lands before the parked refresh writes nothing, round 6): hides do not apply on the flat strip, to
+  // an untagged session, under a tag whose create is still in flight or on the phone, so the row is absent
+  // there. THE ROW FOLLOWS THE COPY,
   // THE CLICK IS LIVE (rounds 1 and 2): the row is one node with a refresh that reads the copy's section
   // (homeNow, tracked through the flyout's Move to) and the stored state, dresses it (Hide tab on a shown
   // copy, Show tab on a hidden one) and seats it after Notify me, or takes it off the menu while the copy
@@ -6712,8 +6718,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     let hidden = false;   // the stored bit the row shows; the click sets its opposite
     let shown: ReturnType<typeof sectionRef> | null = null;   // the section the row names (round 4): the click writes for that copy or not at all
     let dressed: string | null = null;   // the words the row shows; null while it is off the menu (round 5)
+    const rowHome = () => (phoneLayout() ? undefined : homeNow());   // the row's own resolution (round 6): none on the phone layout, where the strip is flat and a hide shows nothing; the refresh and the click read the same gate
     refreshHideRow = () => {
-      const home = phoneLayout() ? undefined : homeNow();
+      const home = rowHome();
       if (!home) { shown = null; if (dressed === null) return; dressed = null; row.remove(); reseat(); return; }
       shown = sectionRef(home);
       hidden = isHidden(tabGroups(), shown, id);
@@ -6731,7 +6738,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     };
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      const now = homeNow();
+      const now = rowHome();
       if (!now) { dismissTabMenu(); return; }
       const sec = sectionRef(now), st = tabGroups();
       // the copy the row named, or nothing (round 4): every change to what the strip reads re-dresses the row (viewsChanged), so the
@@ -6931,10 +6938,14 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       if (openFly) return openFly as HTMLElement;
       menu.querySelector(".ctx-sub")?.remove();                  // one flyout at a time (Billing's rule)
       const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");
-      // what these rows show, as one string (round 4): each union's name, id, colour, pending state and hold on this session. A
-      // views arrival rebuilds the flyout only when it changed (rebuildFly, below): a frame that changed nothing here leaves the
-      // rows alone, and one that did rebuilds them in front of the New tag… input, which stays as it is
-      const flySig = () => JSON.stringify(unionFor().map((g) => [g.name, g.localId, g.color, !!g.pending, g.members.includes(id)]));
+      // what these rows show, as one string: EVERY input build() reads (round 6). Each union's name, id, colour, pending state and
+      // hold on this session (round 4), and the copy's home resolution with its pin bit: homeNow reads the store's grouping switch
+      // and the copy's ref, and the pin row reads isPinned, so a switch flipped or a pin written in another pane changes the string.
+      // Round 5 listed the unions alone, so a store event delivered by the notifier re-dressed the Hide tab row and left an open
+      // flyout stale (Move to rows where + rows belonged, the pin row's words and mark). A views arrival or a store event rebuilds
+      // the flyout only when the string changed (rebuildFly, below): a change that touched nothing here leaves the rows alone, and
+      // one that did rebuilds them in front of the New tag… input, which stays as it is
+      const flySig = () => { const h = homeNow(); return JSON.stringify([unionFor().map((g) => [g.name, g.localId, g.color, !!g.pending, g.members.includes(id)]), h ? [h.name, h.localId, isPinned(tabGroups(), sectionRef(h), id)] : null]); };
       let builtSig = "";
       // THE NEW TAG… INPUT IS ONE NODE (round 5): built once per flyout and never moved, so a rebuild keeps its text, caret, selection,
       // focus, undo stack and IME composition with no restore code (round 4 built a new input on every build and copied the value and
@@ -7054,7 +7065,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
           bodyE.appendChild(sb2);
           row.appendChild(bodyE);
-          // the click SETS the state this row showed (!on): a toggle would flip whatever a re-render stored between the render and the click
+          // the click SETS the state this row showed (!on): a toggle would flip whatever a re-render stored between the render and the click.
+          // The write dispatches TABGROUPS_EVENT, whose listener runs the notifier, and the pin bit is in flySig (round 6), so the flyout is
+          // rebuilt inside the write; the build() after it is a second pass over the same blob, kept so this row's refresh does not hang on
+          // the event's delivery (writeTabGroups dispatches inside a try, and a page with no window has no listener)
           row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroupsPruned(setPinned(tabGroups(), sec, id, !on)); build(); });
           add(row);
         }
@@ -17942,17 +17956,22 @@ window.addEventListener("storage", (e) => {
 });
 // TAB SECTIONS state (tab-groups.ts): a fold/open, a hide or show, a pin, or the "Group tabs by tag" switch, from this
 // window (the CustomEvent) or a sibling pane (the storage event), re-renders the strip, and re-dresses the open tab menu
-// (viewsChanged, round 5 of the tab menu review: another pane's Hide flips the row to Show tab; grouping off takes it away).
-// The CustomEvent is dispatched inside writeTabGroups, so a write from the menu's own rows runs the hook before the row's
-// own rebuild: the Hide tab row's write comes after its dismissal (the hook is cleared), and the pin row's changes nothing
-// the flyout's rows are built from (flySig), so its rebuild is a no-op there
+// (viewsChanged, round 5 of the tab menu review: another pane's Hide flips the row to Show tab; grouping off takes it away;
+// round 6: another pane's pin or grouping flip rebuilds an open Tags flyout too, since flySig lists the home resolution and
+// the pin bit). The CustomEvent is dispatched inside writeTabGroups, so a write from the menu's own rows runs the hook before
+// the row's own rebuild: the Hide tab row's write comes after its dismissal (the hook is cleared), and the pin row's write
+// changes flySig, so the hook rebuilds the flyout inside the write and the row's own build() after it is a second pass over
+// the same blob (the pin row's comment says why it stays)
 window.addEventListener("storage", (e) => { if (e.key === TABGROUPS_KEY) { renderTabs(); viewsChanged(); } });
 window.addEventListener(TABGROUPS_EVENT, () => { renderTabs(); viewsChanged(); });
 // …and so does crossing the phone/desktop boundary (an iPad rotation): renderTabs samples
 // phoneLayout() per render, and the kernel's CSS swaps the strip for its scraped session list the
 // instant the same media rule flips — so the DOM kept the desktop plan (folded tabs absent from the
-// scrape) under the phone list until the next push happened to re-render. The flip IS the event.
-try { window.matchMedia(PHONE_LAYOUT_MEDIA).addEventListener("change", () => renderTabs()); } catch { /* no matchMedia */ }
+// scrape) under the phone list until the next push happened to re-render. The flip IS the event, and
+// the open tab menu reads it too (viewsChanged, round 6): its Hide tab row is gated on the same rule,
+// so the row leaves on the flip and returns on the flip back; before, a menu open across a rotation
+// kept the row, and its click wrote a hide the flat phone plan never shows.
+try { window.matchMedia(PHONE_LAYOUT_MEDIA).addEventListener("change", () => { renderTabs(); viewsChanged(); }); } catch { /* no matchMedia */ }
 setupComposer();
 setupSettings();
 // Tab-bar clicks are DELEGATED to the stable #tabs container (installed once), not hung on the per-tab nodes
