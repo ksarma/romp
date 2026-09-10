@@ -70,7 +70,7 @@ test('the note says Escape or Cancel moves the focus to the All button, and the 
   assert.match(panel, /else if \(act === "cancel"\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); this\.closeComposer\(\); \}/, 'cancel closes the composer');
   assert.match(panel, /if \(was && was\.kind === "reply" && held\) this\.focusAway\(was\);/, 'closeComposer hands a hidden reply\'s keyboard to focusAway');
   // the hidden-card case names the filter row, and focusAway takes the first button carrying that action
-  assert.match(panel, /if \(this\.activeFilter\(\) === "changes" && card\.hunk === null\) return \{ gone: false, back: "fcfilter", /, 'replyAway: the filter hides the card');
+  assert.match(panel, /if \(this\.activeFilter\(\) === "changes"\) return \{ gone: false, back: "fcfilter", /, 'replyAway: the filter hides the card (every comment\'s card since the about follow-on, 2026-09-10)');
   assert.match(panel, /const back = this\.replyAway\(was\)\.back;\n\s+const row = back \? root\.querySelector\('\[data-act="' \+ back \+ '"\]'\) as HTMLElement \| null : null;\n\s+if \(row\) row\.focus\(\{ preventScroll: true \}\);/, 'focusAway focuses the first control with that action');
   // …and the header offers All first, so that button is All
   const order = /\["all", "All", [^\]]+\],\s*\["comments", "Comments " \+ n\.comments, [^\]]+\],\s*\["changes", "Changes " \+ n\.changes, [^\]]+\],/.exec(panel);

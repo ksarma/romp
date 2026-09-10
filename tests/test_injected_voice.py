@@ -471,6 +471,18 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                  {"id": "1781100000001-0", "desc": 'on your change "40%" to "35%"',
                   "body": "Keep the measured number."}],
                 4, 1, True, True),
+            # the about follow-on (2026-09-10): a comment names the changes it is about (its stored
+            # `changeIds`, the person's own pick), and the desc names the passage first and then the
+            # changes, in the change card's words — "about your change …", "about the text you added …",
+            # "about the text you removed …", several as a list; with no passage the clause stands alone
+            "file comments message (about changes)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md",
+                [{"id": "1781100000000-40", "desc": 'on "shipping the cache in v1.3", about your change "v1.2" to "v1.3"',
+                  "body": "Which version ships it?"},
+                 {"id": "1781100000001-31",
+                  "desc": 'about the text you removed "quickly " and the text you added "Cold starts stay slow."',
+                  "body": "Why drop the word?"}],
+                0, 0, True, True),
             # …and the DECISIONS-ONLY shape (Slice 2): a send carrying an Accept or Reject and no
             # comments wears its own prose (the file, the decisions line, that nothing needs a reply,
             # the same closing ask). A distinct body with its own words, so it is rendered here too —
@@ -580,9 +592,10 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         composers = (
             ("file-comments-model.ts", "describeComment",
              ("on this file", 'on "', "on your change", "the region at ", ", the one ", "after ", "before ",
-              ", which appears more than once"),
+              ", which appears more than once", "about ", "your change "),
              (("region-geometry.ts", "regionDesc"), ("file-comments-model.ts", "decodeSrc"),
-              ("file-comments-model.ts", "passageDesc"), ("file-comments-model.ts", "RECURS_CLAUSE"))),
+              ("file-comments-model.ts", "passageDesc"), ("file-comments-model.ts", "RECURS_CLAUSE"),
+              ("file-comments-model.ts", "aboutClause"), ("file-comments-model.ts", "changeDesc"))),
             ("region-geometry.ts", "regionDesc",
              ("the region at ", " of page ", "?"),
              (("region-geometry.ts", "fmt2"), ("region-geometry.ts", "UNREADABLE"))),

@@ -145,11 +145,11 @@ test('commentsApartFromAnchorAt: anchorAt added, moved or removed reads the same
   assert.equal(apart([null, 7]), '[null,7]');
 });
 
-// A project the exported stage can write into: the fixture text, one sidecar with four comments in
+// A project the exported stage can write into: the fixture text, one sidecar with five comments in
 // the shapes the host and the CLIs write (comment key order as file-comments-host-anchors pins it):
 // a passage comment whose anchorAt is STALE (three short of where its passage sits), a passage
-// comment the CLI wrote (no anchorAt at all), a change comment bound by suggestionId, and a
-// whole-file comment.
+// comment the CLI wrote (no anchorAt at all), a legacy change comment bound by suggestionId, a
+// whole-file comment, and a comment about a change (changeIds, the field romp writes).
 let projects = 0;
 function project() {
   const root = path.join(SCRATCH, `p${++projects}`);
@@ -164,6 +164,7 @@ function project() {
     { id: 'c2', author: 'web', ts: 2, anchor: cold.anchor, body: 'Still?', replies: [], resolved: false },
     { id: 'c3', author: 'you', ts: 3, suggestionId: 'x1', body: 'Keep the number.', replies: [{ author: 'web', ts: 4, kind: 'note', note: 'Will do.' }], resolved: false },
     { id: 'c4', author: 'you', ts: 5, body: 'Overall fine.', replies: [], resolved: true },
+    { id: 'c5', author: 'you', ts: 6, changeIds: ['x1'], body: 'Which version?', replies: [], resolved: false },
   ];
   const storePath = storePathFor(root, file);
   saveStore(root, storePath, { v: 3, path: 'docs/report.md', suggestions: [], comments, detached: [] }, text);
@@ -186,6 +187,7 @@ test('a stage that only refreshes anchorAt passes the check: the staged bytes ca
   assert.equal(bytes.comments[1].anchorAt, p.coldAt, 'the missing position added');
   assert.equal('anchorAt' in bytes.comments[2], false);
   assert.equal('anchorAt' in bytes.comments[3], false);
+  assert.equal('anchorAt' in bytes.comments[4], false);
   assert.notEqual(JSON.stringify(bytes.comments), JSON.stringify(readSidecar(p.storePath).comments), 'the staged comments differ from the loaded ones — in anchorAt alone');
   assert.equal(apart(bytes.comments), loaded);
   assert.deepEqual(fs.readFileSync(p.storePath), p.disk, 'nothing landed');
@@ -203,6 +205,9 @@ test('a comment changed between the load and the stage, in any field, refuses in
     ['resolved cleared', (cs) => { cs[3].resolved = false; }],
     ['the binding dropped', (cs) => { delete cs[2].suggestionId; }],
     ['the binding changed', (cs) => { cs[2].suggestionId = 'x2'; }],
+    ['the about list dropped', (cs) => { delete cs[4].changeIds; }],
+    ['the about list changed', (cs) => { cs[4].changeIds = ['x2']; }],
+    ['the about list grown', (cs) => { cs[4].changeIds.push('x2'); }],
     ['a reply appended', (cs) => { cs[0].replies.push({ author: 'web', ts: 6, kind: 'note', note: 'Done.' }); }],
     ['a reply dropped', (cs) => { cs[2].replies.pop(); }],
     ['the body changed', (cs) => { cs[3].body = 'Overall fine!'; }],
@@ -211,7 +216,7 @@ test('a comment changed between the load and the stage, in any field, refuses in
     ['the anchor changed', (cs) => { cs[0].anchor.quote = cs[0].anchor.quote.toUpperCase(); }],
     ['a field added', (cs) => { cs[3].sent = true; }],
     ['a comment dropped', (cs) => { cs.pop(); }],
-    ['a comment added', (cs) => { cs.push({ id: 'c5', author: 'you', ts: 7, body: 'New.', replies: [], resolved: false }); }],
+    ['a comment added', (cs) => { cs.push({ id: 'c6', author: 'you', ts: 7, body: 'New.', replies: [], resolved: false }); }],
     ['the order changed', (cs) => { cs.reverse(); }],
   ];
   for (const [name, mutate] of faults) {
@@ -256,7 +261,7 @@ test('a check on a store nothing has staged throws (a program fault, not a refus
 // exercised for real, with the check in its place — and asserts the sidecar after equals the sidecar
 // before apart from anchorAt, with anchorAt where the refresh puts it.
 
-test('accept-all: a passage comment left stale by a track-edit above it and a CLI comment with no position both gain the refreshed anchorAt; the bound, the whole-file and every other field are as loaded; nothing is refused', () => {
+test('accept-all: a passage comment left stale by a track-edit above it and a CLI comment with no position both gain the refreshed anchorAt; the comment about a change, the whole-file and every other field are as loaded; nothing is refused', () => {
   const w = world();
   let st = edit(w, w.report, 'shipping the cache in v1.2', 'shipping the cache in v1.3');   // X, below the passage
   const X = hunkFor(st, 'shipping the cache in v1.2');
@@ -268,8 +273,8 @@ test('accept-all: a passage comment left stale by a track-edit above it and a CL
   assert.equal(passage.anchorAt, cut.idx);
   st = comment(w, w.report, st, { note: 'Overall fine.' });
   const whole = st.store.comments[1];
-  st = comment(w, w.report, st, { suggestionId: X.id, note: 'Which version?' });
-  const bound = st.store.comments[2];
+  st = comment(w, w.report, st, { changeIds: [X.id], note: 'Which version?' });
+  const about = st.store.comments[2];
   cliOk(w, 'comment', ['--file', w.report, '--anchor', 'Cold starts remain slow', '--note', 'Still?']);
   st = status(w, w.report);
   const fromCli = st.store.comments.find((c) => c.author === 'web' && c.anchor);
@@ -291,13 +296,13 @@ test('accept-all: a passage comment left stale by a track-edit above it and a CL
   assert.notEqual(JSON.stringify(disk.comments), JSON.stringify(before.comments), 'and anchorAt did change: the carve-out was exercised');
   assert.equal(byId(disk.comments, passage.id).anchorAt, cut.idx + inserted.length, 'the stale position refreshed');
   assert.equal(byId(disk.comments, fromCli.id).anchorAt, cold.idx + inserted.length, 'the missing position added');
-  assert.equal(byId(disk.comments, bound.id).resolved, false, 'a decision never resolves a comment');
-  assert.equal(byId(disk.comments, bound.id).suggestionId, X.id, 'the binding stays on disk');
+  assert.equal(byId(disk.comments, about.id).resolved, false, 'a decision never resolves a comment');
+  assert.deepEqual(byId(disk.comments, about.id).changeIds, [X.id], 'the about list stays on disk');
   assert.deepEqual(byId(disk.comments, whole.id), whole, 'the whole-file comment is untouched');
   assert.deepEqual(r.store.comments, disk.comments);
 });
 
-test('reject-all: the reversal moves the passage back; the comment bound to the rejected change is as loaded; nothing is refused', () => {
+test('reject-all: the reversal moves the passage back; the comment about the rejected change is as loaded; nothing is refused', () => {
   const w = world();
   const inserted = 'Added line one.\nAdded line two.\n';
   cliOk(w, 'edit', ['--file', w.report, '--old', '# Latency report\n', '--new', `# Latency report\n${inserted}`]);
@@ -308,8 +313,8 @@ test('reject-all: the reversal moves the passage back; the comment bound to the 
   st = comment(w, w.report, st, { anchor: cut.anchor, note: 'Say reduced.', hintOffset: cut.hintOffset });
   const passage = st.store.comments[0];
   assert.equal(passage.anchorAt, cut.idx);
-  st = comment(w, w.report, st, { suggestionId: Y.id, note: 'Not these.' });
-  const bound = st.store.comments[1];
+  st = comment(w, w.report, st, { changeIds: [Y.id], note: 'Not these.' });
+  const about = st.store.comments[1];
   const before = readSidecar(st.storePath);
 
   const r = rejectAll(w, w.report, st);
@@ -319,12 +324,12 @@ test('reject-all: the reversal moves the passage back; the comment bound to the 
   assert.equal(apart(disk.comments), apart(before.comments), 'every comment as loaded apart from anchorAt');
   assert.equal(byId(disk.comments, passage.id).anchorAt, cut.idx - inserted.length, 'the position follows the passage back');
   assert.equal(byId(before.comments, passage.id).anchorAt, cut.idx);
-  assert.equal(byId(disk.comments, bound.id).resolved, false);
-  assert.equal(byId(disk.comments, bound.id).suggestionId, Y.id, 'the binding stays, though the change is gone');
+  assert.equal(byId(disk.comments, about.id).resolved, false);
+  assert.deepEqual(byId(disk.comments, about.id).changeIds, [Y.id], 'the about list stays, though the change is gone');
   assert.deepEqual(r.store.comments, disk.comments);
 });
 
-test('save carrying an accept: the person\'s edit above moves the passage; the comment bound to the accepted change is as loaded; nothing is refused', () => {
+test('save carrying an accept: the person\'s edit above moves the passage; the comment about the accepted change is as loaded; nothing is refused', () => {
   const w = world();
   writeTrackedPaths(w.root, ['docs/report.md']);
   let st = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 35%');
@@ -334,8 +339,8 @@ test('save carrying an accept: the person\'s edit above moves the passage; the c
   st = comment(w, w.report, st, { anchor: ship.anchor, note: 'Which version?', hintOffset: ship.hintOffset });
   const passage = st.store.comments[0];
   assert.equal(passage.anchorAt, ship.idx);
-  st = comment(w, w.report, st, { suggestionId: A.id, note: 'Keep the number.' });
-  const bound = st.store.comments[1];
+  st = comment(w, w.report, st, { changeIds: [A.id], note: 'Keep the number.' });
+  const about = st.store.comments[1];
   const before = readSidecar(st.storePath);
   // In the editor: accept A (the field drops it), then type " (draft)" into the title above.
   const field = engine.acceptSuggestion(st.store.suggestions, A.id).suggestions;
@@ -351,8 +356,8 @@ test('save carrying an accept: the person\'s edit above moves the passage; the c
   assert.equal(apart(disk.comments), apart(before.comments), 'every comment as loaded apart from anchorAt');
   assert.equal(byId(disk.comments, passage.id).anchorAt, ship.idx + ' (draft)'.length, 'the position follows the typed text');
   assert.equal(byId(before.comments, passage.id).anchorAt, ship.idx);
-  assert.equal(byId(disk.comments, bound.id).resolved, false, 'a decision taken in the editor never resolves a comment either');
-  assert.equal(byId(disk.comments, bound.id).suggestionId, A.id);
+  assert.equal(byId(disk.comments, about.id).resolved, false, 'a decision taken in the editor never resolves a comment either');
+  assert.deepEqual(byId(disk.comments, about.id).changeIds, [A.id]);
   assert.deepEqual(r.store.comments, disk.comments);
 });
 

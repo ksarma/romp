@@ -75,15 +75,16 @@ test('the note says the Changes option carries the label\'s detached count and i
 test('the note says a comment saved under Changes gets a dismissable line at the top of the list with the ends it names; the panel keeps that state', () => {
   assert.ok(note.includes('the panel keeps the saved comment\'s id (`hiddenSaved`) and renders a dismissable line at the top of the list saying the comment is saved and that All or Comments shows it (`hiddenSavedRow`)'));
   assert.ok(note.includes('the line ends once the card shows, the comment is gone from the file, the ✕ is clicked, or the panel closes, a later return to Changes does not bring it back, and the kept choice is unchanged'));
-  assert.ok(note.includes('a comment made from a change card\'s Reply rides that card under Changes and gets no line'));
+  assert.ok(note.includes('since the about follow-on every comment is its own card, so a comment made from the change card\'s Comment on this change is hidden under Changes like any other and gets the line'));
+  assert.ok(panel.includes('if (!mine || this.activeFilter() !== "changes") return false;'), 'noteHiddenSave: every comment saved under Changes, whatever it names');
   assert.ok(/^\s+hiddenSaved: string \| null = null;/m.test(panel), 'the kept id');
   assert.ok(panel.includes('const hid = r !== null && c.kind !== "reply" && this.noteHiddenSave(before, note);'), 'a save, not a reply, may raise the line');
-  assert.ok(panel.includes('if (!mine || mine.hunk !== null || this.activeFilter() !== "changes") return false;'), 'only a comment on no change, under Changes');
+
   assert.ok(panel.includes('"Your comment is saved; its card" + (mark ? " and " + mark + " are" : " is")'), 'the line says the comment is saved');
   assert.ok(panel.includes('" hidden while Changes is chosen above (All or Comments shows " + (mark ? "them" : "it") + ")."'), 'and names the options that show it');
   assert.ok(panel.includes('const x = btn("✕", "fchiddenx", "fileview-btn fc-x");'), 'dismissable');
   assert.ok(panel.includes('fchiddenx: () => { this.hiddenSaved = null; this.render(); },'), 'the ✕ ends it');
-  assert.ok(panel.includes('if (!card || filter !== "changes" || card.hunk !== null) { this.hiddenSaved = null; return null; }'), 'the card showing, or gone, ends it for good');
+  assert.ok(panel.includes('if (!card || filter !== "changes") { this.hiddenSaved = null; return null; }'), 'the card showing, or gone, ends it for good');
   // the close ends it: the assignment stands in the panel's close, between the landing clear and the poll stop
   assert.ok(/this\.clearLanding\(\);[^\n]*\n\s+this\.hiddenSaved = null;[^\n]*\n\s+this\.stopPoll\(\);/.test(panel), 'closing the panel ends it');
   // at the top of the list: the row is appended before the empty states and the cards
@@ -118,14 +119,14 @@ test('the note says the Track scope choice, the Stop confirm and the track slot\
   assert.ok(!/underToggles\(this\.errRow\("(head|poll|edit|save)"\)/.test(panel), 'and none of them goes above the filter');
 });
 
-test('the note says under Comments a bound comment is read as one on no change for the reply\'s place, the tag title says pending or detached, and a detached change\'s cue offers no decision; the panel does each', () => {
-  assert.ok(note.includes('Under Comments a comment bound to a change is read as one on no change when the reply\'s box is placed (`replyAway`), so a resolved bound comment\'s line names the Resolved fold, where its card is, and Cancel focuses that fold; Comments never names a "… N more changes" row it does not render'));
-  assert.ok(panel.includes('const card = this.activeFilter() === "comments" ? { ...found, hunk: null } : found;'), 'replyAway reads the bound comment as one on none under Comments');
-  assert.ok(panel.includes('if (card.resolved && card.hunk === null) return { gone: false, back: "fcresolved",'), 'so the Resolved fold is the row that hides it');
-  assert.ok(note.includes('The "on a change" tag\'s title says the change is pending only when it is among the status\'s hunks and says detached otherwise, naming the Detached changes group, and a detached change card\'s kind cue offers no accept or reject'));
-  assert.ok(panel.includes('const pending = !!this.status && (this.status.hunks || []).some((h) => h.id === c.hunk!.id);'), 'pending is read from the status\'s hunks');
-  assert.ok(panel.includes('t.title = pending ? "This comment is on a pending change; All or Changes above shows the change\'s card"'), 'the pending title');
-  assert.ok(panel.includes(': "This comment is on a detached change, whose text the file no longer holds; All or Changes above shows the change\'s card, under Detached changes";'), 'the detached title names the group');
+test('the note says under Comments a resolved comment\'s line names the Resolved fold (the change fold case gone with the hosting), the tag says each named change\'s state, and a detached change\'s cue offers no decision; the panel does each', () => {
+  assert.ok(note.includes('Under Comments a resolved comment\'s line names the Resolved fold, where its card is, and Cancel focuses that fold (`replyAway`; until the about follow-on, 2026-09-10, a comment bound to a change was read there as one on no change'));
+  assert.ok(note.includes('no comment rides a change card now, so the fold case is gone'));
+  assert.ok(panel.includes('if (found.resolved) return { gone: false, back: "fcresolved",'), 'the Resolved fold is the row that hides a resolved comment\'s card');
+  assert.ok(!panel.includes('back: "fcmore"'), 'no change fold case: no comment is behind the "… N more changes" row');
+  assert.ok(note.includes('The tag a comment wears for the changes it names says each change\'s state, pending or detached (`refStateWords`'));
+  assert.ok(model.includes('export function refStateWords(state: CardRef["state"]): string {'), 'the state words are the model\'s');
+  assert.ok(panel.includes('+ " (" + refStateWords(r.state) + ")").join("; ");'), 'the tag\'s title says each named change\'s state');
   assert.ok(panel.includes('kind.title = c.detached ? "A change the session made to the file, whose text the file no longer holds; nothing here accepts or rejects it" : "A change the session made to the file, for you to accept or reject";'), 'the cue offers no decision on a detached change');
 });
 
@@ -137,7 +138,7 @@ test('the note and the Tests bullet name the review suite and this pin, both exi
   }
   assert.ok(tests.includes('drives the review\'s six fixes over the same stand-in'));
   const suite = read('ui', 'webview', 'file-comments-filter-review.test.ts');
-  for (const phrase of ['Changes 0 · 1 detached', 'saved under Changes', 'while the editor is up the filter row is offered', 'above the filter\'s', 'DETACHED change wears the \'on a change\' tag', 'not a \'… N more changes\' row Comments never renders']) {
+  for (const phrase of ['Changes 0 · 1 detached', 'saved under Changes', 'while the editor is up the filter row is offered', 'above the filter\'s', 'DETACHED change answered wears the \'answered by a change\' tag', 'has no change fold case (the about follow-on']) {
     assert.ok(suite.includes(phrase), 'the review suite drives: ' + phrase);
   }
 });

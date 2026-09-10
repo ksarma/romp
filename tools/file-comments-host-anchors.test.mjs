@@ -371,14 +371,14 @@ test('the refresh leaves a position it cannot better: a passage the session rewr
   assert.equal('anchorAt' in cs[1], false, 'the whole-file comment has no anchor');
 });
 
-test('comments without an anchor never gain anchorAt: whole-file, change, and standalone region comments, across later writes', () => {
+test('comments without an anchor never gain anchorAt: whole-file, about a change, and standalone region comments, across later writes', () => {
   const w = world();
   const r1 = comment(w, w.report, { note: 'Tighten the summary.' });
   cliOk(w, 'edit', ['--file', w.report, '--old', 'Cold starts remain slow', '--new', 'Cold starts stay slow']);
   const st1 = status(w, w.report);
   const change = st1.hunks[0];
   assert.ok(change, 'the edit is a pending change');
-  const r2 = ok(w, { verb: 'comment', path: w.report, args: { suggestionId: change.id, note: 'Keep "remain".' }, fence: fenceFor(st1) });
+  const r2 = ok(w, { verb: 'comment', path: w.report, args: { changeIds: [change.id], note: 'Keep "remain".' }, fence: fenceFor(st1) });
   const png = path.join(w.root, 'docs', 'chart.png');
   fs.writeFileSync(png, tinyPng(40, 90, 200));
   const r3 = ok(w, { verb: 'comment', path: png, args: { note: 'Label the axes.', target: { kind: 'image', region: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 } } }, fence: { storeMtimeNs: '' } });
@@ -387,7 +387,7 @@ test('comments without an anchor never gain anchorAt: whole-file, change, and st
   const r4 = ok(w, { verb: 'comment', path: w.report, args: { anchor: retry.anchor, note: 'Once.', hintOffset: retry.hintOffset }, fence: fenceFor(r2) });
   for (const c of readSidecar(r4.storePath).comments) {
     if (c.anchor) assert.equal(c.anchorAt, retry.idx);
-    else assert.equal('anchorAt' in c, false, `no anchorAt on ${c.suggestionId ? 'a change comment' : 'a whole-file comment'}`);
+    else assert.equal('anchorAt' in c, false, `no anchorAt on ${c.changeIds ? 'a comment about a change' : 'a whole-file comment'}`);
   }
   const rc = readSidecar(r3.storePath).comments[0];
   assert.equal('anchorAt' in rc, false, 'no anchorAt on a region comment with no anchor');

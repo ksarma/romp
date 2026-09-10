@@ -28,9 +28,14 @@ export type StoreReply = { author: string; authorId?: string; ts: number; body?:
  *  located at, set by the host when the comment is made and refreshed on every sidecar write it makes. The painter
  *  passes it to the engine as the tie-break, so a comment on text that recurs with the same surroundings past the
  *  anchor's context stays on the copy that was chosen. Only an anchored comment carries it. */
+/** `changeIds` is the third romp-only field (the about follow-on, 2026-09-10): the changes the comment is ABOUT, the
+ *  person's own pick (a change card's Comment on this change; the composer's "about N changes" option over a selection
+ *  that overlaps their marks), by id, with or without an anchor. `suggestionId` is the format's own field, the one the
+ *  other editors bind a comment to a change on: romp reads one (a sidecar from before the follow-on, or one `track-edit
+ *  --thread` wrote) as the change that ANSWERED the comment and never writes it (decision 45). */
 export type StoreComment = {
   id: string; author: string; authorId?: string; ts: number; body: string;
-  replies?: StoreReply[]; resolved?: boolean; anchor?: Anchor | null; anchorAt?: number; suggestionId?: string; target?: Target;
+  replies?: StoreReply[]; resolved?: boolean; anchor?: Anchor | null; anchorAt?: number; changeIds?: string[]; suggestionId?: string; target?: Target;
 };
 export type Store = {
   v: number; id?: string; path: string; suggestions: unknown[]; comments: StoreComment[];
@@ -169,18 +174,18 @@ function readDetached(list: unknown[] | null | undefined): DetachedChange[] {
   return out.sort((x, y) => x.ts - y.ts || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
 }
 
-/** A detached change in the engine's hunk shape, so a comment bound to it rides its card the way a comment on
- *  a pending change does (Card.hunk). The offsets are the op's last place, not a position in the current text. */
+/** A detached change in the engine's hunk shape, so boundChange describes it as it describes a pending one (its
+ *  texts, its kind). The offsets are the op's last place, not a position in the current text. */
 function detachedHunk(d: DetachedChange): Hunk {
   return { id: d.id, author: d.author, ts: d.ts, kind: d.kind, curFrom: d.from, curTo: d.from + d.newText.length,
     baseFrom: d.from, baseTo: d.from + d.oldText.length, oldText: d.oldText, newText: d.newText, anchor: d.anchor };
 }
 
-/** Where a bound comment's change is now, with its texts: pending (a hunk), detached (the sidecar keeps it
+/** Where a change a comment names is now, with its texts: pending (a hunk), detached (the sidecar keeps it
  *  unplaced), or decided (the log's accept or reject entry, else the host's `decided`, which reads the whole log
  *  where the reply's `log` is a tail) — looked up in that order, so a change that is still in the sidecar is never
- *  read from an older log entry. `hunk` is set for the two states the sidecar still holds, which is what puts the
- *  comment on the change's card. */
+ *  read from an older log entry. `hunk` is set for the two states the sidecar still holds: the change has a card
+ *  and, while pending, marks in the text (the panel lights them from a comment's tag). */
 export type BoundChange = {
   state: "pending" | "detached" | "accepted" | "rejected"; kind: HunkKind; oldText: string; newText: string; hunk: Hunk | null;
 };
@@ -193,6 +198,39 @@ export function boundChange(id: string, hunks: Hunk[], detached: unknown[] | nul
   const e = decidedChange(log, id) || (decided && decided[id]) || null;
   if (e) return { state: e.decision, kind: kindOf(e.oldText, e.newText), oldText: e.oldText, newText: e.newText, hunk: null };
   return null;
+}
+
+/** Where a comment names a change (the about follow-on, 2026-09-10): in `changeIds`, the changes it is ABOUT, the
+ *  person's own pick; or in `suggestionId`, the format's own field, which romp reads as the change that ANSWERED the
+ *  comment (a sidecar from before the follow-on, or one `track-edit --thread` wrote) and never writes. */
+export type RefSource = "about" | "answered";
+/** A change a comment names, resolved through boundChange: its source, where the change is now and its texts. A
+ *  change the sidecar no longer holds and no log entry names is `unknown` (kind null, no texts): the reference stands,
+ *  since the comment was made about it, but nothing here can say what it was. */
+export type CardRef = { id: string; source: RefSource; state: BoundChange["state"] | "unknown"; kind: HunkKind | null; oldText: string; newText: string };
+/** The change ids a comment names, each once, by source: the about list first, in its order, then the answering
+ *  change; an id in both lists is the person's own (about). Read defensively, the sidecar being JSON anyone can edit. */
+export function refIds(c: Pick<StoreComment, "changeIds" | "suggestionId">): Array<{ id: string; source: RefSource }> {
+  const out: Array<{ id: string; source: RefSource }> = [];
+  const seen = new Set<string>();
+  for (const raw of Array.isArray(c.changeIds) ? c.changeIds : []) {
+    if ((typeof raw !== "string" && typeof raw !== "number") || raw === "") continue;
+    const id = String(raw);
+    if (seen.has(id)) continue;
+    seen.add(id); out.push({ id, source: "about" });
+  }
+  const a = c.suggestionId;
+  if ((typeof a === "string" || typeof a === "number") && a !== "" && !seen.has(String(a))) out.push({ id: String(a), source: "answered" });
+  return out;
+}
+/** The refs of a comment: each change it names, with its source and state (boundChange's lookup, the sidecar first). */
+export function commentRefs(c: Pick<StoreComment, "changeIds" | "suggestionId">, hunks: Hunk[], detached: unknown[] | null | undefined,
+                            log: LogEntry[] | null | undefined, decided?: Decided | null): CardRef[] {
+  return refIds(c).map(({ id, source }) => {
+    const b = boundChange(id, hunks, detached, log, decided);
+    if (b) return { id, source, state: b.state, kind: b.kind, oldText: b.oldText, newText: b.newText };
+    return { id, source, state: "unknown", kind: null, oldText: "", newText: "" };
+  });
 }
 
 /** The parenthetical for a comment bound to a change, in the person's voice, by the change's kind: a
@@ -266,35 +304,65 @@ export function passageDesc(a: Anchor): string {
   return head + ", the one " + sides.join(" and ");
 }
 
-/** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). A comment bound to a
- *  change describes the change while it is pending or detached, and from the accept or reject entry after a
- *  decision (a manual Accept before the send would otherwise describe it as "on this file") — the log's own when
- *  the tail carries it, else the host's `decided`, read off the whole log. When the log given is a truncated tail
- *  and neither holds the decision (a host from before `decided`), the comment is still on a change — "on this file"
- *  would claim something false — so it names the change by id; a full log with no entry means the change left the
- *  sidecar with no decision the log knows, and the comment falls back to its anchor, its region, or the file like
- *  any other. A region comment names the region — "the region at x, y, w, h", "… of page N" on a PDF — and on a
- *  figure embedded in a text file ALSO the figure, by its `src` DECODED the way the viewer loads it and the host
- *  hashes it ("… of figs/p95 latency.png" for an embed written `figs/p95%20latency.png`; decodeSrc): such a comment
- *  carries the embed line's anchor as well, but the region wins over the anchor, and the fractions alone say which
- *  part of a picture without saying which picture — on a page with several figures the session would have to open
- *  the sidecar to learn which one, and the message is what it reads. A person would name the picture, and by the
- *  name it has on disk (CLAUDE.md, the injected voice): the encoded spelling is a path that does not exist, and a
- *  session that ran `ls` on it got ENOENT while the host had hashed the decoded file (the review of 2026-09-06).
- *  The standalone forms are the plan's own; the figure's name is this module's addition to them, and so is the
- *  surroundings clause a passage comment gains when its anchor was widened for text that recurs — the sides whole
- *  up to DESC_CTX_MAX, else the short RECURS_CLAUSE (passageDesc). */
-export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] = [], opts: DescribeOpts = {}): string {
-  if (c.suggestionId) {
-    const b = boundChange(c.suggestionId, hunks, opts.detached, log, opts.decided);
-    if (b) return changeDesc(b);
+/** The change a comment is about, named in the person's voice without the "on": the changeDesc forms less their
+ *  lead-in, so a substitution is `your change "<old>" to "<new>"`, an insertion `the text you added "<new>"`, a deletion
+ *  `the text you removed "<old>"`. */
+export function changeWords(h: { kind: HunkKind; oldText: string; newText: string }): string {
+  return changeDesc(h).replace(/^on /, "");
+}
+
+/** The clause a comment's about refs add to its description (the about follow-on, 2026-09-10): `about your change
+ *  "<old>" to "<new>"`, several joined as a list ("a, b and c"), each change by its kind's words (changeWords) — the
+ *  same words the change card and the tag use, so the card and the message agree. A ref whose change nothing can
+ *  describe is named by id when the log given is a truncated tail (the decision may sit in the part not sent; "on this
+ *  file" would claim something false) and left out otherwise (the change left the sidecar with no decision the log
+ *  knows); with every ref left out the clause is null. */
+export function aboutClause(refs: CardRef[], logTruncated = false): string | null {
+  const parts: string[] = [];
+  for (const r of refs) {
+    if (r.source !== "about") continue;
+    if (r.kind !== null) parts.push(changeWords({ kind: r.kind, oldText: r.oldText, newText: r.newText }));
+    else if (logTruncated) parts.push("your change " + r.id);
   }
+  return parts.length ? "about " + listWords(parts) : null;
+}
+
+/** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). The passage, the region or
+ *  the file first, then the changes the comment is ABOUT (the about follow-on, 2026-09-10; aboutClause): a passage
+ *  comment about a change reads `on "<quote>", about your change "<old>" to "<new>"`, and a comment about a change
+ *  with no passage (a deletion, whose text is not in the file) `about the text you removed "<old>"` alone — the
+ *  change's texts while it is pending or detached, and from the accept or reject entry after a decision (a manual
+ *  Accept before the send would otherwise lose them): the log's own when the tail carries it, else the host's
+ *  `decided`, read off the whole log. A comment a change ANSWERED (a legacy `suggestionId`; refIds) is described by
+ *  its passage or its region like any other; with neither, the old Reply-on-a-change shape, the change describes it
+ *  (`on your change …`, changeDesc), and when the log given is a truncated tail and nothing holds the decision, by id
+ *  — "on this file" would claim something false. A region comment names the region — "the region at x, y, w, h", "…
+ *  of page N" on a PDF — and on a figure embedded in a text file ALSO the figure, by its `src` DECODED the way the
+ *  viewer loads it and the host hashes it ("… of figs/p95 latency.png" for an embed written `figs/p95%20latency.png`;
+ *  decodeSrc): such a comment carries the embed line's anchor as well, but the region wins over the anchor, and the
+ *  fractions alone say which part of a picture without saying which picture — on a page with several figures the
+ *  session would have to open the sidecar to learn which one, and the message is what it reads. A person would name
+ *  the picture, and by the name it has on disk (CLAUDE.md, the injected voice): the encoded spelling is a path that
+ *  does not exist, and a session that ran `ls` on it got ENOENT while the host had hashed the decoded file (the
+ *  review of 2026-09-06). The standalone forms are the plan's own; the figure's name is this module's addition to
+ *  them, and so is the surroundings clause a passage comment gains when its anchor was widened for text that recurs
+ *  — the sides whole up to DESC_CTX_MAX, else the short RECURS_CLAUSE (passageDesc). */
+export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] = [], opts: DescribeOpts = {}): string {
+  const refs = commentRefs(c, hunks, opts.detached, log, opts.decided);
+  let head: string | null = null;
   if (c.target && c.target.region) {
     const at = regionDesc(c.target.region, c.target.kind === "pdf" ? c.target.page : null);
-    return "on " + (typeof c.target.src === "string" && c.target.src ? at + " of " + decodeSrc(c.target.src) : at);
+    head = "on " + (typeof c.target.src === "string" && c.target.src ? at + " of " + decodeSrc(c.target.src) : at);
+  } else if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) head = passageDesc(c.anchor);
+  const about = aboutClause(refs, opts.logTruncated === true);
+  if (head && about) return head + ", " + about;
+  if (about) return about;
+  if (head) return head;
+  const answered = refs.find((r) => r.source === "answered");
+  if (answered) {
+    if (answered.kind !== null) return changeDesc({ kind: answered.kind, oldText: answered.oldText, newText: answered.newText });
+    if (opts.logTruncated) return "on your change " + answered.id;
   }
-  if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) return passageDesc(c.anchor);
-  if (c.suggestionId && opts.logTruncated) return "on your change " + c.suggestionId;
   return "on this file";
 }
 
@@ -552,7 +620,10 @@ export function figureFenceHash(s: Pick<Status, "fileHash" | "embeddedHashes"> |
 }
 
 // ── the card model ─────────────────────────────────────────────────────────────────────────────────
-export type CardKind = "passage" | "file" | "change" | "region";
+/** What a comment is ON: a passage, the file as a whole, or a region of a picture. The changes it is ABOUT are its
+ *  `refs` (the about follow-on, 2026-09-10), whatever its kind; a comment about a change with no passage (a deletion's)
+ *  is kind "file" with refs, and the panel words its cue by the refs. */
+export type CardKind = "passage" | "file" | "region";
 /** One turn under a comment: words (a reply), or a revision — the session's `track-edit --thread` records
  *  its edit as a reply with no body and the old and new text instead (the VS Code host's weave), and the
  *  card shows it as a row of its own, in `ts` order among the words. */
@@ -561,10 +632,12 @@ export type CardTurn =
   | { kind: "rev"; author: string; authorId: string | null; ts: number; oldText: string; newText: string };
 export type Card = {
   id: string; author: string; authorId: string | null; ts: number; body: string; resolved: boolean;
-  kind: CardKind; ref: string; anchor: Anchor | null; hunk: Hunk | null; target: Target | null;
+  kind: CardKind; ref: string; anchor: Anchor | null; target: Target | null;
   /** the stored position beside the anchor (StoreComment.anchorAt), the painter's tie-break; null without one */
   anchorAt: number | null;
-  /** for a comment bound to a change the log has decided: which way, so the card can say so */
+  /** the changes the comment names (commentRefs): the ones it is about, and a legacy answering one; empty for most */
+  refs: CardRef[];
+  /** when every change the comment names has been decided the same way: which way, so the card can say so in one tag */
   decision: "accepted" | "rejected" | null;
   replies: CardTurn[];
 };
@@ -608,30 +681,29 @@ export function todoChoiceLabel(c: TodoChoice): string {
 }
 
 /** One card per comment, oldest first, from the sidecar and the engine's hunks — no card model
- *  crosses the wire. `ref` is the collapsed card's one-line reference (the quote, the change, the
- *  region, or "this file"); the message's `desc` is describeComment's job, kept separate on purpose.
- *  A comment bound to a change the sidecar still holds — PENDING, or DETACHED (`hunk` set either way) — is
- *  shown on that change's card (changeCards), not in the comment list; once the change is decided, `hunk`
- *  is null, `decision` says which way from the log (the tail's entry, else the host's `decided`), and the card
- *  stands on its own again with the change's texts as its reference, worded as the change card words them
- *  (changeRef). */
+ *  crosses the wire. `ref` is the collapsed card's one-line reference (the quote, the region, the changes the comment
+ *  is about when it has no passage, or "this file"); the message's `desc` is describeComment's job, kept separate on
+ *  purpose. Every comment is its own card (the about follow-on, 2026-09-10; before it a comment bound to a change the
+ *  sidecar held was drawn inside the change's card): the changes it names are its `refs`, worded as the change card
+ *  words them (changeRef), each with its state, and `decision` says which way when every one of them was decided
+ *  alike. */
 export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = [], decided?: Decided | null): Card[] {
   if (!store) return [];
   return [...store.comments].sort((a, b) => (a.ts || 0) - (b.ts || 0)).map((c) => {
-    const b = c.suggestionId ? boundChange(c.suggestionId, hunks, store.detached, log, decided) : null;
-    const hunk = b ? b.hunk : null;
-    const verdict = b && (b.state === "accepted" || b.state === "rejected") ? b.state : null;
+    const refs = commentRefs(c, hunks, store.detached, log, decided);
+    const verdicts = new Set(refs.map((r) => r.state));
+    const verdict = refs.length && verdicts.size === 1 && (refs[0].state === "accepted" || refs[0].state === "rejected") ? refs[0].state : null;
     const target = c.target && c.target.region ? c.target : null;
     const anchor = c.anchor && typeof c.anchor.quote === "string" ? c.anchor : null;
     const anchorAt = anchor && typeof c.anchorAt === "number" && Number.isFinite(c.anchorAt) ? c.anchorAt : null;
     let kind: CardKind; let ref: string;
-    if (b) { kind = "change"; ref = changeRef(b); }
-    else if (target) { kind = "region"; ref = describeComment(c, hunks).replace(/^on /, ""); }
+    if (target) { kind = "region"; ref = describeComment({ ...c, changeIds: undefined, suggestionId: undefined }, hunks).replace(/^on /, ""); }
     else if (anchor && anchor.quote) { kind = "passage"; ref = oneLine(anchor.quote, 72); }
+    else if (refs.some((r) => r.kind !== null)) { kind = "file"; ref = oneLine(refs.filter((r) => r.kind !== null).map((r) => changeRef({ kind: r.kind!, oldText: r.oldText, newText: r.newText })).join("; "), 72); }
     else { kind = "file"; ref = "this file"; }
     return {
       id: c.id, author: c.author, authorId: c.authorId || null, ts: c.ts, body: c.body, resolved: !!c.resolved,
-      kind, ref, anchor, hunk, target, anchorAt, decision: verdict,
+      kind, ref, anchor, target, anchorAt, refs, decision: verdict,
       replies: (c.replies || []).map((r): CardTurn | null => {
         if (typeof r.body === "string") return { kind: "msg", author: r.author, authorId: r.authorId || null, ts: r.ts, body: r.body };
         if (r.kind === "edit") return { kind: "rev", author: r.author, authorId: r.authorId || null, ts: r.ts, oldText: r.oldText || "", newText: r.newText || "" };
@@ -641,9 +713,37 @@ export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = 
   });
 }
 
+/** The composer's option over a selection that overlaps pending changes, or the words of the change card's Comment on
+ *  this change (the about follow-on): checked, the saved comment names those changes (changeIds); unchecked it is a plain
+ *  passage comment. One change is "this change": the person is looking at its marks. */
+export function aboutOptionLabel(n: number): string {
+  return n === 1 ? "about this change" : "about " + n + " changes";
+}
+/** A comment card's tag for the changes it names (the about follow-on): by source, "about a change" or "about N changes"
+ *  for the person's own pick, "answered by a change" for a legacy binding the session's track-edit --thread made. */
+export function aboutTagWords(n: number, source: RefSource): string {
+  if (source === "answered") return n === 1 ? "answered by a change" : "answered by " + n + " changes";
+  return n === 1 ? "about a change" : "about " + n + " changes";
+}
+/** A ref's state in the tag's title, in the person's words. */
+export function refStateWords(state: CardRef["state"]): string {
+  if (state === "pending") return "pending";
+  if (state === "detached") return "detached: the file no longer holds its text";
+  if (state === "unknown") return "no longer recorded";
+  return state;
+}
+
+/** The open comments that name change `id` (the about follow-on): the count on the change card's tag, and the cards
+ *  its click shows, oldest first as cardModel orders them. A resolved comment is under the Resolved fold and not
+ *  counted: the tag is for what is still open on the change. */
+export function commentsAbout(cards: Card[], id: string): Card[] {
+  return cards.filter((c) => !c.resolved && c.refs.some((r) => r.id === id));
+}
+
 // ── the change cards (Slice 2) ──────────────────────────────────────────────────────────────────────
 // One card per pending change (a hunk from the engine's toHunks), ordered by its place in the current text,
-// with the comments bound to it (suggestionId) ON the card, and grouped by the paragraph it falls in — the
+// with the count of open comments about it (the about follow-on, 2026-09-10; before it the comments bound to
+// the change rode ON its card), and grouped by the paragraph it falls in — the
 // VS Code host's buildCards idea over the kernel's `store` + `hunks` + the viewer's text, with the buttons
 // that host deliberately lacks added by the panel. Then one card per DETACHED change (store.detached[]), in
 // a group of their own after the paragraphs: the sidecar keeps them and the contract has a host show them,
@@ -657,8 +757,8 @@ export type ChangeCard = {
   curFrom: number; curTo: number; oldText: string; newText: string;
   /** the collapsed card's one line: `old → new`, `added new`, or `removed old` */
   ref: string;
-  /** the comments bound to this change, oldest first, each with its turns */
-  comments: Card[];
+  /** how many open comments name this change (commentsAbout): the card's tag, whose click shows the first */
+  comments: number;
   /** true for a change the load-time rebase could not place: kept in the sidecar, not pending, nothing accepts it */
   detached: boolean;
 };
@@ -688,18 +788,18 @@ export function changeRef(h: { kind: HunkKind; oldText: string; newText: string 
 }
 
 export function changeCards(store: Store | null, hunks: Hunk[], log: LogEntry[] = [], decided?: Decided | null): ChangeCard[] {
-  const bound = cardModel(store, hunks, log, decided).filter((c) => c.hunk !== null);
+  const cards = cardModel(store, hunks, log, decided);
   const pending: ChangeCard[] = [...hunks].sort((a, b) => a.curFrom - b.curFrom || (a.ts || 0) - (b.ts || 0)).map((h) => ({
     key: "chg:" + h.id, id: h.id, kind: h.kind, author: h.author, authorId: authorIdOf(store, h.id), ts: h.ts,
     curFrom: h.curFrom, curTo: h.curTo, oldText: h.oldText, newText: h.newText, ref: changeRef(h),
-    comments: bound.filter((c) => c.hunk!.id === h.id), detached: false,
+    comments: commentsAbout(cards, h.id).length, detached: false,
   }));
-  // the sidecar's detached ops carry their own authorId (toHunks never saw them); a comment bound to one rides
-  // its card the way a pending change's does (cardModel sets hunk for both states the sidecar holds)
+  // the sidecar's detached ops carry their own authorId (toHunks never saw them); a comment about one counts on its
+  // card the way a pending change's does
   const detached: ChangeCard[] = detachedChanges(store).map((d) => ({
     key: "chg:" + d.id, id: d.id, kind: d.kind, author: d.author, authorId: d.authorId, ts: d.ts,
     curFrom: d.from, curTo: d.from + d.newText.length, oldText: d.oldText, newText: d.newText, ref: changeRef(d),
-    comments: bound.filter((c) => c.hunk!.id === d.id), detached: true,
+    comments: commentsAbout(cards, d.id).length, detached: true,
   }));
   return pending.concat(detached);
 }
@@ -1021,8 +1121,8 @@ export type Entry = {
   key: string;
   kind: EntryKind;
   author: string; authorId: string | null;
-  /** what the panel shows it on: a change's card key, or the comment's id (the panel maps a comment bound to a change onto
-   *  the change's card, as its list does) */
+  /** what the panel shows it on: a change's card key, or the comment's id (every comment is its own card since the
+   *  about follow-on, 2026-09-10) */
   subject: string;
   /** a change the sidecar still holds pending (a hunk); false for a detached change, a comment, a reply */
   pending: boolean;
@@ -1097,6 +1197,25 @@ export function partitionPending(hunks: Hunk[], seen: ReadonlySet<string> | null
   for (const h of hunks) (seen && seen.has("chg:" + h.id) ? out.seen : out.unseen).push(h);
   return out;
 }
+
+/** The person's open comments the session has answered (decision 46, 2026-09-10; the about follow-on): unresolved, the
+ *  person's own (YOU, by decision 6), with a turn by another author after the person's last turn on the comment, the
+ *  comment's own words or their latest reply. A revision (a turn of kind rev, the session's track-edit) counts as an
+ *  answer; the person's own reply after the session's does not leave the comment answered. Oldest first, as the cards
+ *  come. Read off the cards when the header action is pressed, never kept: a status is the one source. */
+export function answeredComments(cards: Card[]): Card[] {
+  return cards.filter((c) => {
+    if (c.resolved || c.author !== YOU) return false;
+    let answered = false;
+    for (const r of c.replies) answered = r.author !== YOU;   // ts order: the last turn's author decides
+    return answered;
+  });
+}
+/** The header action's words and the confirm's one line (decision 46). */
+export function resolveAnsweredLabel(n: number): string { return "Resolve answered (" + n + ")"; }
+export function resolveAnsweredAsk(n: number): string { return "Resolve the " + plural(n, "comment", "comments") + " the session has answered?"; }
+/** The acknowledgment after the resolve, in the sent acknowledgment's position. */
+export function resolvedWords(n: number): string { return "Resolved " + plural(n, "comment", "comments"); }
 
 /** The saved line's words (file-comments.ts savedLine; decision 43, 2026-09-09): a save never moves the view, and when the
  *  card it landed in is out of view the line at the panel's foot says which side of the box it is on — the side the

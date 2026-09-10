@@ -35,7 +35,7 @@ function between(doc, from, to) {
   return doc.slice(a, b).replace(/\s+/g, ' ');
 }
 const op = between(plan, '**`fileCommentsSend`**, the send op:', '### The message to the session');
-const note = between(plan, 'The arrivals follow-on (2026-09-09):', '### Slice 3: region comments on images');
+const note = between(plan, 'The arrivals follow-on (2026-09-09):', 'The about follow-on (2026-09-10):');   // the about follow-on's note stands after this one
 const d40 = between(plan, '40. **The Send confirm\'s message preview gives way to a note box**', '## Open questions for the user');
 const docs = between(plan, '\n## Docs', '\n## Deliberately not in v1');
 const tests = between(plan, '\n## Tests', '\n## Docs');

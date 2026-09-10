@@ -81,17 +81,19 @@ test("hunk kinds are the engine's three strings everywhere (D1): the type, the f
   assert.equal(h3.curFrom, h3.curTo, "a deletion is a point in the current text");
 });
 
-test("changeCards: one card per hunk in text order, keyed apart from comment ids, with the sidecar's authorId and the comments bound to it", () => {
-  const cards = changeCards(status({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, bound] }, hunks: [h3, h1] }).store, [h3, h1]);
+test("changeCards: one card per hunk in text order, keyed apart from comment ids, with the sidecar's authorId and the count of comments naming it", () => {
+  const st = status({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, bound] }, hunks: [h3, h1] });
+  const cards = changeCards(st.store, [h3, h1]);
   assert.deepEqual(cards.map((c) => c.id), ["h1", "h3"], "ordered by curFrom, whatever order the reply gave");
   assert.deepEqual(cards.map((c) => c.key), ["chg:h1", "chg:h3"], "the expand key is prefixed: a change id and a comment id can never collide");
   assert.equal(cards[0].authorId, SID, "toHunks drops authorId; the sidecar record has it");
   assert.equal(cards[1].authorId, null, "a record without one: neutral");
-  assert.equal(cards[0].comments.length, 1); assert.equal(cards[0].comments[0].id, bound.id);
-  assert.deepEqual(cards[0].comments[0].replies.map((r) => r.kind), ["rev", "msg"], "an edit turn is a revision row, in ts order among the words");
-  const rev = cards[0].comments[0].replies[0];
+  assert.equal(cards[0].comments, 1, "the count of open comments naming the change (the about follow-on: the comment is its own card, not the change card's)");
+  assert.equal(cards[1].comments, 0);
+  const own = cardModel(st.store, [h3, h1]).find((c) => c.id === bound.id)!;
+  assert.deepEqual(own.replies.map((r) => r.kind), ["rev", "msg"], "an edit turn is a revision row, in ts order among the words");
+  const rev = own.replies[0];
   assert.ok(rev.kind === "rev" && rev.oldText === "cut" && rev.newText === "trimmed");
-  assert.equal(cards[1].comments.length, 0);
   assert.deepEqual(changeCards(null, [h1]).map((c) => c.authorId), [null], "no sidecar in the reply: still a card per hunk");
   assert.equal(authorIdOf(status().store, "h1"), SID); assert.equal(authorIdOf(status().store, "nope"), null); assert.equal(authorIdOf(null, "h1"), null);
 });
@@ -221,9 +223,9 @@ test("a decided change is remembered from the log: describeComment and the card 
   assert.equal(decidedChange([ACCEPT_LOG, later], "h1")!.decision, "rejected", "the newest entry wins");
   assert.equal(decidedChange([{ ts: "", kind: "accept", author: "you", ids: ["h1"] }], "h1"), null, "an entry without the texts remembers nothing");
   const cards = cardModel({ v: 3, path: "docs/report.md", suggestions: [], comments: [bound] }, [], [ACCEPT_LOG]);
-  assert.equal(cards[0].kind, "change"); assert.equal(cards[0].hunk, null); assert.equal(cards[0].decision, "accepted"); assert.equal(cards[0].ref, "reduced → cut");
+  assert.equal(cards[0].kind, "file"); assert.equal(cards[0].refs[0].state, "accepted"); assert.equal(cards[0].decision, "accepted"); assert.equal(cards[0].ref, "reduced → cut");
   const pending = cardModel({ v: 3, path: "docs/report.md", suggestions: [], comments: [bound] }, [h1], []);
-  assert.equal(pending[0].decision, null); assert.equal(pending[0].hunk?.id, "h1");
+  assert.equal(pending[0].decision, null); assert.deepEqual(pending[0].refs.map((r) => [r.id, r.source, r.state]), [["h1", "answered", "pending"]], "a legacy suggestionId reads as the change that answered the comment");
   // sendParts describes from the status's log too, so a manual Accept before the send keeps the change in the message
   const p = sendParts(status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [bound] }, hunks: [], log: [ACCEPT_LOG],
     unsent: { comments: [bound.id], replies: [], accepted: 1, rejected: 0, watermark: null } }));
@@ -234,7 +236,7 @@ test("a decided change is remembered from the log: describeComment and the card 
 
 test("the data-act names, all in the one delegate map; the file-writing verbs' fence; the send sequence; the third checkbox", () => {
   const map = SRC.split("delegate(row, {")[1].split("\n    });")[0];
-  for (const act of ["fcaccept", "fcreject", "fcacceptall", "fcrejectall", "fcrejectallgo", "fcrejectallcancel", "fcchangereply", "fcmore", "fcchange", "fcreveal"]) {
+  for (const act of ["fcaccept", "fcreject", "fcacceptall", "fcrejectall", "fcrejectallgo", "fcrejectallcancel", "fcchangecomment", "fcaboutfirst", "fcmore", "fcchange", "fcreveal"]) {
     assert.match(map, new RegExp("^\\s*" + act + ": ", "m"), act + " is a key of the one delegate map");
   }
   assert.equal((SRC.match(/\bdelegate\(/g) || []).length, 1, "still one delegate root");
@@ -244,7 +246,7 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
   assert.match(map, /fcrejectallgo: \(\) => \{ this\.rejectAllConfirm = false; void this\.mutate\("reject-all", \{\}, "changes"\); \}/, "Reject all goes after its pane-local confirm");
   assert.match(map, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); if \(this\.dragClick\(ev\)\) return; this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \}/,
     "an inline mark opens its card, and cancels the click: a mark inside an author's target=_blank link must not also open the tab, and one inside a URL the viewer linked (file-view-links.ts) must not open it either; the click that ends a drag-selection inside the mark opens nothing (dragClick; file-comments-markclick.test.ts)");
-  assert.match(SRC, /const KEY_ACTS = new Set\(\["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"\]\);/, "…by keyboard too");
+  assert.match(SRC, /const KEY_ACTS = new Set\(\["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow", "fcaboutfirst"\]\);/, "…by keyboard too (the change card's count tag among the keyed controls since the about follow-on)");
   // the fence: fileMtimeNs for reject and reject-all ONLY, from the last status/result reply
   assert.match(SRC, /const FILE_VERBS = new Set\(\["reject", "reject-all"\]\);/);
   const once = SRC.split("private async mutateOnce(")[1].split("\n  }\n")[0];
@@ -598,40 +600,47 @@ const texts = (els: El[]) => els.map((e) => e.textContent);
 
 // ── the panel, driven ──────────────────────────────────────────────────────────────────────────────
 
-test("the change cards render first, grouped by paragraph, in text order, the buttons visible on a collapsed card; a comment bound to a change sits ON its card", async (t: TestContext) => {
+test("the change cards render first, grouped by paragraph, in text order, the buttons visible on a collapsed card; a comment naming a change is its own card, counted on the change's", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside, button } = await openPanel(w, status({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, bound] } }));
   assert.equal(button.textContent, "Comments · 2 · 2 changes", "the glance");
   const cards = aside.querySelectorAll(".fc-card");
-  assert.deepEqual(cards.map((c) => c.dataset.id), ["chg:h1", "chg:h3", passage.id], "changes first, then the comments that stand on their own");
-  assert.equal(card(aside, bound.id), null, "the bound comment has no card of its own");
+  assert.deepEqual(cards.map((c) => c.dataset.id), ["chg:h1", "chg:h3", passage.id, bound.id], "changes first, then every comment's own card (the about follow-on, 2026-09-10: no comment is drawn inside a change card)");
+  assert.ok(card(aside, bound.id), "the comment naming a change has a card of its own");
+  assert.equal(aside.querySelector(".fc-hosted"), null, "…and no box on the change card");
   const groups = aside.querySelectorAll(".fc-group");
   assert.deepEqual(texts(groups), ["## Findings", "We recommend shipping the cache in v1.2."], "each group named by its paragraph's first line");
   const c1 = card(aside, "chg:h1")!;
   assert.equal(c1.dataset.act, "fccard", "collapsed: the whole card expands");
   assert.equal(c1.querySelector(".fc-ref")!.textContent, "reduced → cut");
   assert.equal(c1.querySelector(".fc-chip")!.textContent, "api", "the author's chip through the colour map");
-  assert.deepEqual(texts(c1.querySelectorAll(".fc-actions button")), ["Accept", "Reject"], "Accept and Reject never hide; with a comment on the card, its own Reply is the way");
-  assert.equal(c1.querySelector(".fc-count")!.textContent, "1", "one comment on it, counted while collapsed");
+  assert.deepEqual(texts(c1.querySelectorAll(".fc-actions button")), ["Accept", "Reject", "Comment on this change"], "Accept and Reject never hide; Comment on this change stands whether or not a comment names the change");
+  assert.equal(c1.querySelector(".fc-count")!.textContent, "1 comment", "one comment names it, counted on the head");
   const c3 = card(aside, "chg:h3")!;
-  assert.deepEqual(texts(c3.querySelectorAll(".fc-actions button")), ["Accept", "Reject", "Reply", "Reveal"], "a deletion: Reply (no comment yet) and Reveal");
+  assert.deepEqual(texts(c3.querySelectorAll(".fc-actions button")), ["Accept", "Reject", "Comment on this change", "Reveal"], "a deletion: Comment on this change and Reveal");
   assert.equal(c3.querySelector(".fc-ref")!.textContent, "removed quickly");
-  // expand h1: the old and new text, then the bound comment with its turns and its own Reply/Resolve
+  assert.equal(c3.querySelector(".fc-count"), null, "no comment names it: no count");
+  // expand h1: the old and new text, nothing else
   c1.querySelector(".fc-card-head")!.click();
   const open = card(aside, "chg:h1")!;
   assert.ok(open.classes.includes("open"));
   assert.equal(open.querySelector("del")!.textContent, "reduced"); assert.equal(open.querySelector("ins")!.textContent, "cut");
-  const hosted = open.querySelector('.fc-hosted[data-id="' + bound.id + '"]')!;
-  assert.ok(hosted, "the bound comment is on the change's card");
+  assert.ok(!open.textContent.includes("Say cut, not reduced."), "the comment's words are on its own card");
+  // the comment's own card: collapsed, its head says it names a change the sidecar holds; open, its turns and its own Reply/Resolve
+  const own = card(aside, bound.id)!;
+  assert.deepEqual(texts(own.querySelectorAll(".fc-card-head .fc-tag")), ["answered by a change", "2"], "the tag on the head (a legacy binding: the change answered it), and the turn count while collapsed");
+  own.querySelector(".fc-card-head")!.click();
+  const hosted = card(aside, bound.id)!;
+  assert.ok(hosted.classes.includes("open"));
   assert.ok(hosted.textContent.includes("Say cut, not reduced."));
-  assert.deepEqual(texts(hosted.querySelectorAll(".fc-tag")), ["revised"], "the session's edit turn shows as a revision row");
+  assert.deepEqual(texts(hosted.querySelectorAll(".fc-replies .fc-tag")), ["revised"], "the session's edit turn shows as a revision row");
   assert.equal(hosted.querySelectorAll(".fc-reply del")[0].textContent, "cut"); assert.equal(hosted.querySelectorAll(".fc-reply ins")[0].textContent, "trimmed");
   assert.ok(hosted.textContent.includes("Done."), "…in ts order with the words");
   assert.ok(act(hosted, "fcreply", bound.id) && act(hosted, "fcresolve", bound.id), "the comment's own Reply and Resolve, by its id");
-  // Reply on the hosted comment is the reply verb into that comment
+  // Reply on the comment is the reply verb into that comment
   act(hosted, "fcreply", bound.id)!.click();
   const input = aside.querySelector(".fc-input")!;
-  assert.ok(aside.querySelector('.fc-hosted[data-id="' + bound.id + '"] .fc-composer'), "the box opens inside the hosted comment (the reply follow-on)");
+  assert.ok(aside.querySelector('.fc-card[data-id="' + bound.id + '"] .fc-composer'), "the box opens inside the comment's card (the reply follow-on)");
   input.value = "Trimmed is fine.";
   dispatch(input, new Ev("keydown", { key: "Enter", ctrlKey: true })); await flush();
   const m = lastOf(w, "fileComments", "reply");
@@ -862,24 +871,28 @@ test("repaints over the SAME body leave one mark per change: the open (status tw
   assert.deepEqual(counts(), { ...first, h1: 0 }, "…its marks with it, and every other change is painted as before");
 });
 
-test("Reply on a change card writes a comment bound to the change: comment {suggestionId, note}, and the composer names the change", async (t: TestContext) => {
+test("Comment on this change writes a comment about the change: comment {anchor over the change's span, changeIds: [id], note}, no suggestionId; the saved comment is its own card and the change card counts it", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
-  act(card(aside, "chg:h1")!, "fcchangereply", "h1")!.click();
-  assert.ok(card(aside, "chg:h1")!.classes.includes("open"), "the card opens for the reply");
-  assert.equal(aside.querySelector(".fc-composer-ref")!.textContent, "Reply on the change reduced → cut");
+  act(card(aside, "chg:h1")!, "fcchangecomment", "h1")!.click();
+  assert.ok(card(aside, "chg:h1")!.classes.includes("open"), "the card opens for it");
+  assert.equal(aside.querySelector(".fc-composer-ref .fc-quote")!.textContent, "cut", "the composer is anchored over the change's new text");
+  assert.equal(aside.querySelector('input[data-opt="about"]')!.checked, true, "the about option, checked");
   const input = aside.querySelector(".fc-input")!;
   input.value = "Keep reduced; the abstract uses it.";
   dispatch(input, new Ev("keydown", { key: "Enter", ctrlKey: true })); await flush();
   const m = lastOf(w, "fileComments", "comment");
   assert.ok(m, "the comment verb went");
-  assert.deepEqual(m.args, { suggestionId: "h1", note: "Keep reduced; the abstract uses it." }, "bound by suggestionId, no anchor");
+  assert.deepEqual(m.args, { note: "Keep reduced; the abstract uses it.", anchor: { quote: "cut", prefix: DOC.slice(at("cut") - 24, at("cut")), suffix: DOC.slice(at("cut") + 3, at("cut") + 27) }, hintOffset: at("cut"), changeIds: ["h1"] }, "about the change by its stored id (decision 45), the passage anchor beside it, never suggestionId");
   assert.deepEqual(m.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003" });
-  const withComment: StoreComment = { id: T0 + 5000 + "-1", author: "you", ts: T0 + 5000, body: "Keep reduced; the abstract uses it.", suggestionId: "h1", replies: [], resolved: false };
+  const withComment: StoreComment = { id: T0 + 5000 + "-" + at("cut"), author: "you", ts: T0 + 5000, anchor: m.args.anchor, anchorAt: at("cut"), changeIds: ["h1"], body: "Keep reduced; the abstract uses it.", replies: [], resolved: false };
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: m.reqId, ...status({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, withComment] },
     storeMtimeNs: "1757145600000000006", unsent: { comments: [passage.id, withComment.id], replies: [], accepted: 0, rejected: 0, watermark: null } }) } })); await flush();
-  assert.ok(card(aside, "chg:h1")!.querySelector('.fc-hosted[data-id="' + withComment.id + '"]'), "the new comment is on the card");
-  assert.equal(act(card(aside, "chg:h1")!, "fcchangereply", "h1"), null, "with a comment on the card, its own Reply takes over");
+  assert.equal(card(aside, "chg:h1")!.querySelector(".fc-hosted"), null, "the new comment is not drawn inside the change card");
+  assert.ok(card(aside, withComment.id), "…it is its own card");
+  assert.deepEqual(texts(card(aside, withComment.id)!.querySelectorAll(".fc-card-head .fc-tag")), ["about a change"]);
+  assert.equal(card(aside, "chg:h1")!.querySelector(".fc-count")!.textContent, "1 comment");
+  assert.ok(act(card(aside, "chg:h1")!, "fcchangecomment", "h1"), "Comment on this change stands for the next comment about it");
   assert.equal(aside.querySelector(".fc-composer")!.hidden, true, "saved: the composer closes");
 });
 

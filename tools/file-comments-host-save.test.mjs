@@ -216,11 +216,11 @@ test('save writes the file and the remapped sidecar together, leaves every comme
   const cur = fs.readFileSync(w.report, 'utf8');
   const A = hunkFor(st, 'cut p95 latency by 40%');
   const B = hunkFor(st, 'shipping the cache in v1.2');
-  st = ok(w, { verb: 'comment', path: w.report, args: { suggestionId: A.id, note: 'Keep the number.' }, fence: fenceFor(st) });
+  st = ok(w, { verb: 'comment', path: w.report, args: { changeIds: [A.id], note: 'Keep the number.' }, fence: fenceFor(st) });
   st = ok(w, { verb: 'comment', path: w.report, args: { note: 'Overall fine.' }, fence: fenceFor(st) });
-  const [bound, whole] = st.store.comments;
-  assert.equal(bound.suggestionId, A.id);
-  assert.equal(whole.suggestionId, undefined);
+  const [about, whole] = st.store.comments;
+  assert.deepEqual(about.changeIds, [A.id]);
+  assert.equal(whole.changeIds, undefined);
   const recordB = recordFor(st, B.id);
   const logPath = logPathFor(st.storePath);
   assert.equal(fs.existsSync(logPath), false);
@@ -242,7 +242,7 @@ test('save writes the file and the remapped sidecar together, leaves every comme
   assert.notEqual(r.storeMtimeNs, st.storeMtimeNs);
   assert.equal(r.storePath, st.storePath);
   // The sidecar: the remapped record in recordAgentEdit's shape, its anchor unchanged because the
-  // text around it is, the fingerprint over the new text, the comments kept as they were — the bound one open too: a
+  // text around it is, the fingerprint over the new text, the comments kept as they were, the one about a change open too: a
   // decision taken in the editor never resolves a comment (decision 42; before it, the save marked the bound one resolved).
   const disk = readSidecar(st.storePath);
   assert.equal(disk.v, 3);
@@ -260,7 +260,7 @@ test('save writes the file and the remapped sidecar together, leaves every comme
   assert.equal(s.oldText, 'shipping the cache in v1.2');
   assert.deepEqual(s.anchor, recordB.anchor, 'an unmoved record keeps its anchor byte for byte');
   assert.deepEqual(s.anchor, engine.makeAnchor(content, s.from, s.from + s.newText.length));
-  assert.deepEqual(disk.comments.map((c) => [c.id, c.resolved, c.body]), [[bound.id, false, 'Keep the number.'], [whole.id, false, 'Overall fine.']]);
+  assert.deepEqual(disk.comments.map((c) => [c.id, c.resolved, c.body]), [[about.id, false, 'Keep the number.'], [whole.id, false, 'Overall fine.']]);
   // The reply is the status the panel holds next.
   assert.deepEqual(r.hunks, engine.toHunks(r.store.suggestions));
   assert.equal(r.hunks.length, 1);
@@ -288,7 +288,7 @@ test('save writes the file and the remapped sidecar together, leaves every comme
   assert.equal(acc.author, 'you');
   assert.match(acc.ts, ISO_RE);
   assert.deepEqual(acc.changes, [{ id: A.id, oldText: 'cut p95 latency by 40%', newText: 'reduced p95 latency by 35%' }]);
-  assert.deepEqual(r.unsent, { comments: [bound.id, whole.id], replies: [], accepted: 1, rejected: 0, watermark: null });
+  assert.deepEqual(r.unsent, { comments: [about.id, whole.id], replies: [], accepted: 1, rejected: 0, watermark: null });
   // The session's next track-edit reads the host's sidecar against the new file: nothing was lost,
   // and B still sits where the sidecar says.
   const st2 = edit(w, w.report, 'Cold starts remain slow', 'Cold starts stay slow');
