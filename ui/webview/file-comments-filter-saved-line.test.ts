@@ -74,7 +74,7 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string; clientX: number; clientY: number; pointerId: number; button: number; buttons: number;
-  constructor(public type: string, init: Init = {}) { this.key = init.key || ""; this.clientX = init.clientX ?? 0; this.clientY = init.clientY ?? 0; this.pointerId = init.pointerId ?? 1; this.button = init.button ?? 0; this.buttons = init.buttons ?? 1; }
+  constructor(public type: string, init: Init = {}) { this.key = init.key || ""; this.clientX = init.clientX ?? 0; this.clientY = init.clientY ?? 0; this.pointerId = init.pointerId ?? 1; this.button = init.button ?? 0; this.buttons = init.buttons ?? 1; hideEdges(this); }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }

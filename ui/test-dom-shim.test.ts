@@ -65,6 +65,19 @@ test("the rule on a bare object: objects, arrays, functions, null, undefined and
   assert.deepEqual([staysEnumerable(null), staysEnumerable(undefined), staysEnumerable({}), staysEnumerable([]), staysEnumerable(() => 0)], [false, false, false, false, false]);
 });
 
+test("an event-shaped object: hideEdges hides target and currentTarget (null at construction, nodes after dispatch), the primitives stay, and a dump of the event names no node", () => {
+  // the shape the webview tests' Ev classes take: target and currentTarget start null, and dispatch assigns nodes later
+  class Ev { target: any = null; currentTarget: any = null; defaultPrevented = false; key: string; constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; hideEdges(this); } }
+  const ev = new Ev("keydown", { key: "Enter" });
+  assert.deepEqual(Object.keys(ev).sort(), ["_nid", "defaultPrevented", "key", "type"], "the primitives and the serial");
+  const root = makeNode("div"), n = root.createDiv({ text: "x" });
+  ev.target = n; ev.currentTarget = root;   // dispatch's later writes to existing properties keep them non-enumerable
+  for (const k of ["target", "currentTarget"]) assert.equal(Object.getOwnPropertyDescriptor(ev, k)!.enumerable, false, k + " is an own, non-enumerable property");
+  same(ev.target, n); same(ev.currentTarget, root);
+  const dump = inspect(ev, ASSERT_INSPECT);
+  assert.ok(!dump.includes("target") && !dump.includes("tag:") && lines(dump) <= 12, "the event dumps its own primitives alone, got:\n" + dump);
+});
+
 test("after construction: a property product code hangs on a node enumerates whatever its type, and stays bounded on its own; the shim's own later write (_sel) does not", () => {
   const n = makeNode("div"), other = makeNode("span");
   n._key = "k"; n._build = () => 0; n._session = { name: "web", tags: ["a", "b"] }; n._sub = other;
