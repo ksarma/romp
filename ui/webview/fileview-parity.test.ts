@@ -5,7 +5,10 @@
 // This pins the shared chrome byte-equal so it cannot drift again. Rules that are deliberately
 // pane-specific (wrap mode, the pane's own load cue `.fileview-load {`) are not pinned. The md body's
 // own rule IS (since Slice 1 of plans/markdown-viewer.md): its `contain: layout` is what keeps a note's
-// fixed-positioned element inside the note, and it has to hold in both documents.
+// fixed-positioned element inside the note, and it has to hold in both documents, as do the width caps
+// on the media a file draws itself (svg, canvas, video), which under containment would otherwise be
+// clipped and unreachable, and the table rules that give a wide table its pane-wide break-out and a
+// horizontal scroll of its own for the same reason.
 // The reader (`rulesOf`) matches a head at a LINE START only, and pins every rule declared under it. A shorter head
 // can end a longer one (`.fileview-md h5, .fileview-md h6 {` is the tail of the six-heading head), and a plain
 // indexOf read the longer rule's body twice and never the h5/h6 dim rule (Slice 3 of plans/markdown-viewer.md,

@@ -33,7 +33,7 @@ test("the picker's Billing row shows for SDK whenever availability is known", ()
   // row wears the same chip grammar, and a selected tag must never read as the backend)
   assert.match(RENDER, /const row = pickerBillingRow\(a\);\s*\n\s*const show = !pickMode && row\.show && pickerBackendChoice\(\) === "sdk";/);
   assert.match(BILLING, /const show = !!\(a && \(a\.login \|\| a\.key \|\| a\.default === "key"\)\);/);
-  assert.match(RENDER, /function pickerBackendChoice\(\): string \{\s*\n\s*const beSel = document\.querySelector\("#picker \.picker-backend:not\(\.picker-host\):not\(\.picker-auth\):not\(\.picker-tags\) \.picker-be-opt\.sel"\) as HTMLElement \| null;\s*\n\s*return beSel\?\.dataset\.be \|\| loadSettings\(\)\.backend;/);
+  assert.match(RENDER, /function pickerBackendChoice\(\): string \{\s*\n\s*const beSel = document\.querySelector\("#picker \.picker-backend:not\(\.picker-host\):not\(\.picker-auth\):not\(\.picker-tags\) \.picker-be-opt\.sel"\) as HTMLElement \| null;\s*\n\s*return beSel\?\.dataset\.be \|\| effectiveDefaultBackend\(loadSettings\(\)\.backend, kernelTmuxBackend\);/);
   assert.match(RENDER, /const both = row\.both;/);
   assert.match(BILLING, /const both = !!\(a && a\.login && a\.key\);/);
   assert.match(RENDER, /auWrap\.style\.display = "none";\s*\/\/ hidden until a sessionList reply carries authAvail/);

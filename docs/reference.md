@@ -492,11 +492,11 @@ CLI's own picker), a value the kernel cannot vouch for (a typo), or a longer
 message that merely opens with the command goes to the CLI verbatim, and the
 chat shows the CLI's own reply.
 
-The two backends apply the change differently. An SDK session switches model
-live but reloads to apply a new effort: the chat shows "Reloading session…"
-and the effort badge shows switching-dots until the reload completes, and a
-session that is mid-turn reloads when the turn ends. A terminal (tmux) session
-gets the CLI's own command typed into its pane. `/model` there asks for a
+The backends apply the change differently. A Claude Code session switches
+model live but reloads to apply a new effort: the chat shows "Reloading
+session…" and the effort badge shows switching-dots until the reload completes,
+and a session that is mid-turn reloads when the turn ends. A Claude Code (tmux)
+session gets the CLI's own command typed into its pane. `/model` there asks for a
 confirmation, which the kernel accepts on your behalf so the pane is never
 left waiting on a keystroke the dashboard cannot send; `/effort` and `/fast`
 apply in place.
@@ -526,7 +526,7 @@ romp to hold no key). The per-session pick decides only whether the helper
 runs for that session.
 
 The new-session picker's **Billing** row states the case whenever the backend
-toggle says SDK: segmented buttons when the selected host offers both choices,
+toggle says Claude Code: segmented buttons when the selected host offers both choices,
 and with only one real choice, the same spot writes out which applies,
 `Login (name@example.com)` or `API key`. The key choice exists when Claude
 Code's settings for the kernel's working directory carry a helper; romp reads
@@ -587,6 +587,11 @@ sessions are not
 covered by the picker: their CLI lives in the tmux server's environment, which
 the kernel does not control, and resolves its credential the way any `claude`
 in a terminal does.
+
+A tab not yet loaded after a reconnect shows "Not loaded yet — click to load"
+as its hover tooltip, until its transcript arrives. The strip's skeleton tabs
+appear after the page's bundle has said it is listening (its `ready`), never
+before it.
 
 An SDK session's chat tab carries the same fact as a `Billing` row in its hover
 tooltip, one-auth machines included; tmux sessions, whose billing romp cannot
@@ -701,7 +706,10 @@ output, cache writes, and cache reads. Cache reads are most of it: every API
 call within a turn (one per tool step) re-reads the whole context from the
 cache, so a long session's single turn can read tens of millions of tokens at
 a tenth of the input price. The hover splits each window's count by kind, so
-the size of the number carries its explanation.
+the size of the number carries its explanation. A result that carries no
+per-model usage map is counted from the main loop alone, and the error center
+says so once: once per session when the CLI left the map out, once per kernel
+run when the Agent SDK the kernel imported has no field for it.
 
 ### Self-scheduled work wakes an idle session
 
@@ -732,7 +740,8 @@ For `./install.sh`:
 
 - `ROMP_NO_SERVICE=1` skips the login service.
 - `ROMP_NO_EXT=1` skips the VS Code / Cursor extension.
-- `ROMP_NO_SDK=1` skips the SDK backend's venv (tmux sessions still work).
+- `ROMP_NO_SDK=1` skips the Claude Code backend's Agent SDK venv (Claude Code
+  (tmux) sessions still work).
 
 For the one-line installer (`bootstrap.sh`), which passes all of the above
 through to `install.sh`:
@@ -769,6 +778,21 @@ yes. The gear reports a machine that is missing node or the comment tools.
   applies on the judges' next pass with no restart, wins over the variable,
   and follows to every connected machine like the other judge settings; its
   Default option clears the setting back to the variable, else 6.
+
+### Session backends
+
+- **Enable Claude Code tmux backend** (the gear's Updates & debug section; off
+  by default) decides whether the new-session picker and the gear's Default
+  backend list offer **Claude Code (tmux)**, a Claude Code session in a
+  terminal pane that Romp follows by reading the terminal. The setting gates
+  the offer alone: sessions already running on that backend keep working and
+  keep their label, `romp new -t` still works, and a saved default of Claude
+  Code (tmux) is set aside while the setting is off (new sessions use Claude
+  Code) and returns when it comes back. Like the judge settings, a change
+  applies at once, without a restart, and follows to every connected machine.
+  The backends read as **Claude Code** (the default), **Claude Code (tmux)**
+  and **Codex** everywhere: the picker, the gear, the tab tooltip's Backend
+  row.
 
 ### Ports
 
@@ -2467,5 +2491,5 @@ Effective immediately, no restart.
 `touch` to **enable**, `rm` to turn back off:
 
 - `~/.claude/romp-summarize-on`: the live tmux activity phrase. Off by default,
-  because it spends tokens on every turn and the SDK backend reports what a
-  session is doing without it.
+  because it spends tokens on every turn and the Claude Code backend reports
+  what a session is doing without it.

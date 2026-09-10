@@ -347,7 +347,9 @@ test("the highlight is highlighter-YELLOW — never the selection blue — and o
 });
 
 test("the create dialog names the thread right there: prefilled <session>-comment-<N>, validated", () => {
-  assert.match(UI, /nameBox\.value = commentDrafts\.get\(nk\)\s*\n\s*\|\| \(\(sess0\?\.name \|\| "session"\)\.replace\(\/\[\^A-Za-z0-9._-\]\/g, "-"\)\s*\n\s*\+ "-comment-" \+ \(\(commentThreads\.get\(sid\) \|\| \[\]\)\.length \+ 1\)\);/);
+  // T289: the prefill is a HINT from the BARE session name (comment-name.ts), remembered on the box so an
+  // untouched one is sent as "" and the kernel picks its own default
+  assert.match(UI, /const prefill = defaultCommentName\(sess0\?\.name, sid, \(commentThreads\.get\(sid\) \|\| \[\]\)\.length\);\s*\n\s*nameBox\.dataset\.prefill = prefill;\s*\n\s*nameBox\.value = commentDrafts\.get\(nk\) \|\| prefill;/);
   // the name lives IN the header ("New comment: <name>"), the button says Comment, and the picks ride along
   assert.match(UI, /"New comment:"/);
   assert.match(UI, /if \(nameBox\) head\.append\(title, nameBox, closeBtn\);/);
@@ -611,7 +613,8 @@ test("a create refused by parse lag holds its mark and retries on the frame even
   // …and the kernel PARKS the lag-refused create and retries it per pusher cycle (the file it is
   // waiting on is its own): a settled session emits no further frames, so the client-side re-post
   // alone starved — the park covers that; the client's frame-keyed belt covers a restart's lost park
-  assert.match(KERNELSRC, /_park_create\(\{"sid": sid, "uuid": str\(msg\["uuid"\]\)/);   // under the list's lock (2026-09-06)
+  assert.match(KERNELSRC, /with _create_lock:\s*\n\s+if not any\(_create_key\([^)]*\) == key for pk in _parked_creates\):\s*\n\s+_parked_creates\.append\(\{"sid": sid, "uuid": str\(msg\["uuid"\]\)/,
+    "the park is under the create lock and once per key (upstream #1208; ruling S1 of the 2026-09-10 fold retired the fork's own park wrapper and its second lock)");
   assert.match(KERNELSRC, /def _retry_parked_creates\(\):/);
   assert.match(KERNELSRC, /_retry_parked_creates\(\)   # lag-parked comment creates ride every pusher cycle \(T106\)/);
   assert.match(KERNELSRC, /_PARK_MAX_TRIES = 30/);

@@ -295,7 +295,7 @@ test("a folded section renders its header alone with the folded-away count and o
   assert.match(head, /const stand = standInPip\(hidden\.map\(\(id\) => \(\{ session: sessions\.get\(id\), ledger: ledgers\.get\(id\) \}\)\)\);/,
     "one summary pip, classified by tab-state.ts's rule, the same the tab itself wears (tab-state.test), with the feed's verdict folded in (tab-snapshot.ts standInPip; tab-hide.test)");
   assert.match(head, /const said = sectionPipTitle\(stand\.kind, stand\.names\);\s*\n\s*pip\.title = door \? `\$\{said\}; \$\{doorClick\(shown\)\}` : said;/, "the tooltip names the sessions");
-  assert.ok(head.indexOf('el("span", "tab-group-count")') < head.indexOf("standInPip("), "after the count");
+  assert.ok(head.indexOf('el("span", "tab-group-count")') < head.indexOf("standInPip("), "after the count (the row's last child when folded, T284; this fork's user-todo flag, when one shows, follows it)");
   assert.ok(!head.includes("tabStateClass("), "the header itself wears no state class");
   assert.ok(!head.includes('"tab-dot"'), "never a .tab-dot — the kernel's mobile scrape keys on the tab pips' vocabulary");
   // the user 2026-09-08: the fork flows inline by default, so the trail stands behind the pre-T264 divider unless
@@ -337,7 +337,7 @@ test("the picker's Tags row is for SDK and Codex sessions: disabled behind a not
   assert.match(sync, /wrap\.classList\.toggle\("disabled", !takes\);/);
   assert.match(sync, /\.forEach\(\(b\) => \{ b\.disabled = !takes; \}\);/);
   assert.match(sync, /note\.style\.display = takes \? "none" : "";/);
-  assert.match(RENDER, /tgNote\.textContent = "Tags apply to SDK and Codex sessions";/);
+  assert.match(RENDER, /tgNote\.textContent = `Tags apply to \$\{backendLabel\("sdk"\)\} and \$\{backendLabel\("codex"\)\} sessions`;/, "the shared names (T288)");
   assert.match(RENDER, /beWrap\.addEventListener\("click", \(\) => \{ syncPickerAuth\(\); syncPickerTags\(\); \}\);/, "re-decided on every backend toggle");
   assert.match(RENDER, /syncPickerTags\(\);\s+\/\/ the backend toggle was just reset/, "…and on every open, after the backend reset");
   assert.match(RENDER, /const tags = backendTakesTags\(backend\)\s*\n\s*\? Array\.from\(tgWrap\.querySelectorAll<HTMLElement>\("\.picker-be-opt\.sel"\)\)/,
@@ -373,7 +373,7 @@ test("dragging a header reorders tagOrder through the views path — the store t
 
 test("the switch lives at the foot of the chat tag-lens menu beside Configure tags…, desktop mount only", () => {
   assert.match(MENU, /groupToggle\?: \{ label: string; on: \(\) => boolean; toggle: \(\) => void \};/);
-  assert.match(MENU, /if \(opts\.groupToggle\)\s*\n\s*row\(opts\.groupToggle\.label, opts\.groupToggle\.on\(\), null, true\)\.addEventListener\("click", \(\) => \{ opts\.groupToggle!\.toggle\(\); build\(\); \}\);/,
+  assert.match(MENU, /if \(opts\.groupToggle\)\s*\n\s*row\(opts\.groupToggle\.label, opts\.groupToggle\.on\(\), true\)\.addEventListener\("click", \(\) => \{ opts\.groupToggle!\.toggle\(\); build\(\); \}\);/,
     "✓-marked when on; flips and repaints in place like the tag rows");
   assert.ok(MENU.indexOf("if (opts.groupToggle)") < MENU.indexOf('row("Configure tags…"'), "beside — above — Configure tags…");
   assert.match(RENDER, /groupToggle: \{ label: "Group tabs by tag", on: \(\) => readTabGroups\(\)\.on,/);
@@ -511,11 +511,24 @@ test("executed: a session under two tags is placed under BOTH — the user's rul
 });
 
 
-test("the header's structure and gestures read as a label: chevron (flips with the fold) → color bar → name → count; a keyboard button; hover/focus say fold, never open; tokens only (the user 2026-09-06)", () => {
+test("the header's structure and gestures read as a label: the tag's chip, then the chevron (flips with the fold) and the count at the right; a keyboard button; hover/focus say fold, never open; tokens only (the user 2026-09-06)", () => {
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   const at = (t: string) => { const i = head.indexOf(t); assert.ok(i >= 0, "present: " + t); return i; };
-  assert.ok(at('el("span", "tab-group-caret")') < at('tagChip(name, sec.color, { inheritSize: true })')
-    && at('tagChip(name, sec.color, { inheritSize: true })') < at('el("span", "tab-group-count")'), "chevron, the tag's CHIP, count");
+  assert.ok(at('tagChip(name, sec.color, { inheritSize: true })') < at('el("span", "tab-group-caret")')
+    && at('el("span", "tab-group-caret")') < at('el("span", "tab-group-count")'), "the tag's CHIP, then chevron and count at the right (T284)");
+  // T284 (the user 2026-09-09): the chip, then the caret and the count right after it, the feed's grouped
+  // headers' order (name at the left, caret and count together at the right); the folded gist's pip comes
+  // last, so the folded and the open row share one shape and the caret is always the chip's neighbour.
+  // Read from the builder's appends (the only way a child joins the head).
+  // On this fork the header carries one more child after the pip: the user-todo flag (b, tab-group-flags.test), a
+  // standing fork mechanism (R8); the pin reads the resolved makeGroupHead (R4, the 2026-09-10 fold).
+  const appends = [...head.matchAll(/head\.appendChild\((\w+)\)/g)].map((m) => m[1]);
+  assert.deepEqual(appends, ["chip", "caret", "n", "pip", "b"], "chip, caret, count, the folded pip, then the fork's user-todo flag: " + appends.join(","));
+  // the pin reads named appendChild calls, so every other way a child could join the head is ruled out (the
+  // review's find: an inline appendChild(el(...)), a prepend or an insertBefore would have slipped past it)
+  assert.equal((head.match(/head\.appendChild\(/g) || []).length, appends.length, "every appendChild passes one of the named children");
+  assert.ok(!/head\.(append|prepend|insertBefore|insertAdjacentElement|insertAdjacentHTML|replaceChildren)\(/.test(head),
+    "children join one at a time through appendChild, which the pin above reads");
   assert.match(head, /caret\.textContent = "▸";/);
   assert.match(CSS, /\.tab-group-head:not\(\.collapsed\) \.tab-group-caret \{ transform: rotate\(90deg\); \}/,
     "the fold state flips it — the sheet's fold-caret idiom, a CSS transition, no timer");
@@ -1806,7 +1819,7 @@ test("executed: the words of the way back: the open header whose snapshot the pa
 
 test("the group header wears the SHARED tag chip — one vocabulary with the tags bar and the feed (T251)", () => {
   const MENU = ui("webview", "tag-menu.ts");
-  assert.match(MENU, /export function tagChip\(label: string, color\?: string \| null, opts\?: \{ inheritSize\?: boolean \}\): HTMLElement \{/,
+  assert.match(MENU, /export function tagChip\(label: string, color\?: string \| null, opts\?: \{ inheritSize\?: boolean; off\?: boolean \}\): HTMLElement \{/,
     "the chip is a named builder, not a lookalike");
   assert.match(MENU, /const chip = tagChip\(c\.label, c\.color\);/, "the tags bar builds its chips through it");
   assert.match(MENU, /\("var\(--dim, " \+ TAG_BTN_GRAY \+ "\)"\)/, "the uncoloured fallback is a THEME TOKEN — the light theme is never handed a dark gray");
@@ -1829,7 +1842,7 @@ test("the section snapshot holds the reader's place in the hidden transcript (th
   const HIDE = RENDER.slice(RENDER.indexOf("function hideSnapshot(): void {"), RENDER.indexOf("function snapshotHoldsFocus("));
   assert.match(HIDE, /if \(snapKeep\) \{ snapKeep\.v\.scrollTop = snapKeep\.scrollTop; snapKeep\.v\.stick = snapKeep\.stick; snapKeep = null; \}/,
     "written back when the snapshot hides, which every exit takes (leaveSnapshot, a row pick, the section gone from the strip) before landActive reads the spot");
-  assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? sessions\.get\(activeId\) : null;/, "the hide, and so the write-back, precedes the transcript path's land");
+  assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? liveSession\(activeId\) : null;/, "the hide, and so the write-back, precedes the transcript path's land (read through liveSession since upstream #1017: a skeleton active shows no stale transcript)");
   assert.match(RENDER, /followReader\(activeId \? views\.get\(activeId\) : null, c\.scrollTop, atBottom\(c\), pendingBuildRaf != null\);/, "the listener itself is upstream's, untouched (T261 reads the true bottom: atBottom)");
 });
 

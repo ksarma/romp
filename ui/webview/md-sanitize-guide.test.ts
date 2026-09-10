@@ -10,7 +10,7 @@
 // link scrolls (the Links paragraph above it says as much, and md-sanitize-viewer-links-browser.test.ts proves it).
 // The third is the colour clause: the paragraph once said an inline style keeps color and background-color "so a
 // coloured span keeps its colour" (review round 6, 2026-09-08), while decision 6's grammar (md-sanitize.ts,
-// isLiteralColour) keeps only a bare keyword, a hex literal, or rgb()/rgba()/hsl()/hsla(); a span coloured with
+// isLiteralColor) keeps only a bare keyword, a hex literal, or rgb()/rgba()/hsl()/hsla(); a span coloured with
 // oklch(), lab(), color-mix(), var() or any other function loses its style attribute and renders in the page's
 // colour. The paragraph names the forms that survive and says what happens to the rest.
 import { test } from "node:test";
@@ -59,7 +59,7 @@ test("the guide does not promise that every coloured span keeps its colour; it n
   const style = clauses.filter((c) => c.includes("inline `style`"));
   assert.equal(style.length, 1, "one clause covers the inline style attribute");
   for (const form of [/color name/, /hex code/, /`rgb\(\)`/, /`rgba\(\)`/, /`hsl\(\)`/, /`hsla\(\)`/]) {
-    assert.match(style[0], form, "the clause names a colour form isLiteralColour keeps");
+    assert.match(style[0], form, "the clause names a colour form isLiteralColor keeps");
   }
   for (const c of clauses) {
     assert.doesNotMatch(c, /a colou?red span keeps its colou?r/, "the unqualified promise: oklch(), lab(), color-mix() and var() are dropped");

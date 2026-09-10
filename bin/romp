@@ -109,14 +109,14 @@ _romp_record() {   # <sid> <name> <dir> [bg] [fg] [emoji] — write/replace the 
     # users from reading anything beneath it (the traverse bit is enough).
     # Idempotent; best-effort.
     chmod 700 "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}" 2>/dev/null || true
-    # ATOMIC (review round 3, 2026-09-06): the line goes to a temp file in the same directory and is
-    # moved into place — one rename(2), so no reader ever sees the file empty or half-written. The old
-    # `printf > file` truncated first and wrote second, and the kernel's names writers (a rename from
-    # the tab, a recolor, set_emoji — the first one an agent drives) read the file between the two: a
-    # read in that window published a record with no name and no cwd, and the kernel's own atomic write
-    # then won over this one. This is the ONE shell writer of a names record (_romp_rename_record and
-    # _romp_free_title both come through here). The temp is dot-prefixed: bash globs skip it
-    # (_romp_free_title's loop) and the resume picker's listing does too, so it never shows as a session.
+    # Atomic: the line is written to a temp in the same directory and moved into place, one rename(2),
+    # so no reader ever sees the record empty or half-written. The kernel's names writers read the
+    # record while this hook rewrites it (its rename writer runs right after a live tmux rename; its
+    # color, emoji and palette writers touch any session's record) and publish their edit over what they
+    # read, so a truncate-then-write here cost the session its name and cwd. This is the one shell
+    # writer of a record (_romp_rename_record and _romp_free_title come through here). The temp is
+    # dot-prefixed, so _romp_free_title's glob and the resume picker's listing skip it; a failed write
+    # or move removes it.
     local tmp="$ROMP_NAMES_DIR/.$sid.tmp.$$"
     if [[ -n "$emoji" ]]; then
         printf '%s\t%s\t%s\t%s\t%s\n' "$nm" "$dir" "$bg" "$fg" "$emoji" > "$tmp" || { rm -f "$tmp"; return 1; }

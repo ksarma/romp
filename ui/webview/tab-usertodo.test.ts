@@ -39,7 +39,7 @@ test("the glyph is not a pip and does not fight the pip/gauge/close layout", () 
   assert.doesNotMatch(block, /tab-dot/);
   const labelAt = renderTabs.indexOf("tab.appendChild(label)");
   const glyphAt = renderTabs.indexOf('el("span", "tab-usertodo")');
-  const gaugeAt = renderTabs.indexOf("tabCtxGauge(");
+  const gaugeAt = renderTabs.indexOf("appendTabCtxGauge(tab, s)");   // the gauge builder moved into a helper shared with the skeleton tab (upstream #1017); renderTabs calls it after the glyph
   assert.ok(labelAt < glyphAt && glyphAt < gaugeAt, "label, then glyph, then ctx gauge");
 });
 

@@ -25,7 +25,7 @@ const SHOW_SIG = "function showActive(keep?: { uuid: string; y: number } | null)
 const SHOW_AT = RENDER.indexOf(SHOW_SIG);
 assert.ok(SHOW_AT >= 0, "render.ts: showActive's signature moved; re-anchor SNAP and SHOW");
 const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), SHOW_AT);
-const SHOW = RENDER.slice(SHOW_AT, SHOW_AT + 7500);   // wide enough for the transcript path's composer lines (the snapKeep re-target grew the snapshot branch, 2026-09-08)
+const SHOW = RENDER.slice(SHOW_AT, RENDER.indexOf("function landActive(", SHOW_AT));   // the whole function: a fixed width fell short of the composer lines once upstream #1017's skeleton-click ask joined the loading branch (2026-09-10 fold)
 const TABS = RENDER.slice(RENDER.indexOf("function renderTabs() {"), RENDER.indexOf("function dismissTabMenu() {"));
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
 const DELEGATE = RENDER.slice(RENDER.indexOf('"toggle-group": (el) => {'), RENDER.indexOf('"toggle-group": (el) => {') + 1400);
@@ -48,7 +48,7 @@ test("the section gone from the strip while its snapshot shows puts the transcri
   assert.match(TABS, /const shown = snapView;\s*\n\s*const held = shown \? snapshotHoldsFocus\(\) : false;\s*\n\s*if \(snapView\) renderSnapshot\(\);\s*\n\s*if \(shown && !snapView\) \{ showActive\(\); if \(held\) focusActiveTab\(\); \}/,
     "renderSnapshot clears snapView when the section is not in the plan; the transcript comes back in the same render");
   assert.match(SNAP, /if \(!head\) \{ snapView = null; hideSnapshot\(\); return false; \}/, "the section's absence is the event");
-  assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? sessions\.get\(activeId\) : null;/, "showActive's transcript path hides the host…");
+  assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? liveSession\(activeId\) : null;/, "showActive's transcript path hides the host… (the read is liveSession's since upstream #1017's skeleton tabs)");
   assert.match(SHOW, /composer\.disabled = closed \|\| viewer;\s*\n\s*composer\.placeholder = closed \? "Session closed — read-only" : composerRestingPlaceholder\(\);/, "…and re-enables the composer for a live session (upstream's subagent viewer, read-only by nature, stays disabled; 2026-09-07 fold)");
   // executed: the event on the real planner. The shown section's last visible member gone → no header of that name.
   // api sits under qa AND infra: since T264b (upstream, folded 2026-09-08) a session appears under every tag it holds,

@@ -517,6 +517,58 @@ test("the committed drop's rebuild runs the pass (review round 3): the strip reb
   drag(null);
 });
 
+test("a skeleton tab is a group's first tab for the keep pass (ruling S2, the 2026-09-10 fold): the header keeps with it, a skeleton is a row member for the hairlines, and the fill leaves the break where it was", () => {
+  const { paintTabRowLines } = lift();
+  // makeSkeletonTab builds div.tab.tab-skeleton[data-id] (render.ts) and renderTabs appends it where the loaded tab would
+  // go, so the pass's first-member read (.tab with a data-id) is true for it; pinned at the source so the model here
+  // cannot drift from the builder
+  const sk = RENDER.slice(RENDER.indexOf("function makeSkeletonTab("), RENDER.indexOf("function appendTabCtxGauge("));
+  assert.match(sk, /el\("div", "tab tab-skeleton"/, "a skeleton wears .tab");
+  assert.match(sk, /tab\.dataset\.id = id;/, "…with the id the pass reads");
+  assert.match(RENDER, /if \(!first \|\| !first\.classList\.contains\("tab"\) \|\| !first\.dataset\.id\) continue;/,
+    "the pass keys a group's first member on .tab and data-id, nothing a skeleton lacks");
+  const skeleton = (id: string, w = 100) => { const t = new Item("tab tab-skeleton", w); t.dataset.id = id; return t; };
+  // 300 wide: web's header + two tabs fill 240; api's header (60) fits at the end of row 0 and its first member, a
+  // skeleton (the kernel LISTS b1 after a redial; this page holds no current copy), wraps to row 1
+  const api = head("api"), b1 = skeleton("b1"), b2 = skeleton("b2");
+  const bar = strip(300, head("web"), tab("a1"), tab("a2", 80), api, b1, b2, add());
+  assert.deepEqual(bar.rows(), [["web", "a1", "a2", "api"], ["b1", "b2", "tab tab-add"]], "the premise: the header ends row 0 above its skeleton");
+  paintTabRowLines(bar);
+  assert.equal(bar.keeps().length, 1, "a skeleton counts as the group's first tab");
+  assert.equal(api.offsetTop, b1.offsetTop, "the header never dangles at a row's end above a skeleton");
+  assert.deepEqual(bar.rows(), [["web", "a1", "a2"], ["api", "b1", "b2", "tab tab-add"]]);
+  assert.deepEqual(bar.lines(), [ROW_H], "a skeleton is a row member for the hairlines, like a loaded tab");
+  const rows = bar.rows();
+  // the FILL: onFull drops the id from the skeleton set, the strip's signature changes and renderTabs rebuilds through
+  // replaceChildren with a loaded tab in the skeleton's place at the same width (render.ts's fill is a rebuild, not an
+  // in-place swap); the pass re-runs inside the rebuild's paint as a pure function of content and width, so the break
+  // is re-placed where it stood
+  const items = bar.children.filter((c) => !c.isLine && !c.isSentinel && !c.classList.contains("tab-keep-break"));
+  bar.replaceChildren();
+  for (const it of items) bar.appendChild(it === b1 ? tab("b1") : it);
+  paintTabRowLines(bar);
+  assert.equal(bar.keeps().length, 1, "one break after the fill");
+  assert.deepEqual(bar.rows(), rows, "the fill moved no break: the rows are as they were");
+  assert.equal(api.previousElementSibling, bar.keeps()[0], "still ahead of api");
+  assert.deepEqual(bar.lines(), [ROW_H]);
+  // the other reading of "the same element": the skeleton's own node loses its class and becomes the loaded tab at the
+  // same width; the repaint over it leaves the rows as they were too
+  const api2 = head("api"), c1 = skeleton("c1");
+  const two = strip(300, head("web"), tab("a1"), tab("a2", 80), api2, c1, skeleton("c2"), add());
+  paintTabRowLines(two);
+  const rows2 = two.rows();
+  assert.equal(api2.offsetTop, c1.offsetTop, "the premise: the break placed");
+  c1.cls = "tab"; two.dirty();
+  paintTabRowLines(two);
+  assert.equal(two.keeps().length, 1);
+  assert.deepEqual(two.rows(), rows2, "a class swap on the same node moves no break");
+  assert.equal(api2.offsetTop, c1.offsetTop);
+  // a header whose skeleton fits beside it needs no break, like a loaded tab
+  const fits = strip(400, head("web"), tab("a1"), tab("a2", 80), head("api"), skeleton("b1"), add());
+  paintTabRowLines(fits);
+  assert.equal(fits.keeps().length, 0, "the pair shares row 0: nothing to break from");
+});
+
 test("event-keyed only: the pass rides the painter, which the rebuild, the width observer, the fonts events and the drag's insert run, and nothing else does; no timer, no frame callback", () => {
   const painter = RENDER.slice(RENDER.indexOf("function paintTabRowLines("), RENDER.indexOf("let tabRowObserver"));
   const arming = RENDER.slice(RENDER.indexOf("let tabRowObserver"), RENDER.indexOf("function tabEmojiNode("));

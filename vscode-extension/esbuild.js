@@ -140,32 +140,30 @@ function testBuild() {
   };
 }
 
-// Every production bundle is built into memory and dist/ is written only once ALL of them have built.
-// esbuild writes each build()'s outputs as that build finishes, so with the extension bundle first and
-// the webview bundle second, a webview failure left dist/extension.js rewritten and every webview
-// bundle old. The common failure is exactly that shape: a merge imports a package this checkout's
-// node_modules predates (pdfjs-dist, 2026-09-06, the first build-required dependency the kernel's
-// in-place rebuild could meet). The kernel's cache token is the newest mtime under dist/, so the
-// half-written dist bumped it: every open dashboard was told a newer build existed and reloaded into
-// the same stale bundles, and the kernel's drift pass then read dist as newer than the sources it had
-// just failed to build. A failed build now leaves dist/ byte-for-byte as it was, so "the rebuild
-// failed" and "dist is older than the sources" stay true together. Watch mode and the test build
+// Every bundle of a one-shot build (`node esbuild.js`, with or without --production) is built into memory and
+// dist/ is written only once ALL of them have built. esbuild writes each build()'s outputs as that build
+// finishes, so with the extension bundle first and the webview bundle second, a webview failure left
+// dist/extension.js rewritten and every webview bundle old.
+// The common failure has exactly that shape: a merge imports a package this checkout's node_modules predates
+// (the 2026-08-10 katex import broke every restart's rebuild for a day). The kernel's cache token is the
+// newest mtime under dist/, so the half-written dist bumped it: every open dashboard was told a newer build
+// existed and reloaded into the same stale bundles, and the kernel's drift pass then read dist as newer than
+// the sources it had just failed to build. A failed build now leaves dist/ byte-for-byte as it was, so "the
+// rebuild failed" and "dist is older than the sources" stay true together. Watch mode and the test build
 // write directly as before: a dev loop wants each rebuild on disk at once.
 //
-// Each output then reaches its served name by RENAME, not by a write into it. The kernel serves /dist/
-// from this directory on other threads while it rebuilds, and a write into the served path truncates
-// the file first and fills it afterwards, so a request in that window got an empty or partial bundle.
-// For most bundles that is one failed page load; for dist/pdf-worker.js, the largest output, the
-// failure lasts past the write: a module Worker whose script fails to parse makes pdf.js disable its
-// Worker path with a flag it never resets, so every PDF opened afterwards failed until the page was
-// reloaded, long after the file on disk was whole (the review, 2026-09-06). So each output is written
-// whole to a hidden sibling in its own directory (`.<name>.tmp-<pid>-<n>`: the same filesystem, so the
-// rename is atomic; a name ending in neither .js nor .css, so the kernel's newest-mtime token never
-// counts it) and then renamed over the served name, and a reader gets the old bytes or the new,
-// complete either way. Every output is staged before any is renamed, so an fs error while staging (no
-// space, a permission) removes the staged files and leaves dist/ unchanged. A staging file an earlier
-// run left behind (killed between its write and its rename) is removed once that run's pid is gone,
-// and kept while the pid runs: two builds on one dist/ each rename their own.
+// Each output then reaches its served name by RENAME, not by a write into it. The kernel serves /dist/ from
+// this directory on other threads while it rebuilds, and a write into the served path truncates the file
+// first and fills it afterwards, so a request in that window got an empty or partial bundle (longest for
+// render.js, the largest output) and the page that loaded it ran a bundle cut mid-statement until a reload.
+// So each output is written whole to a hidden sibling in its own directory (`.<name>.tmp-<pid>-<n>`: the same
+// filesystem, so the rename is atomic; a name ending in neither .js nor .css nor .map, so the kernel's
+// newest-mtime token (dist/*.js) never counts it and its /dist route never types it) and then renamed over
+// the served name, and a reader gets the old bytes or the new, complete either way. Every output is staged
+// before any is renamed, so an fs error while staging (no space, a permission) removes the staged files and
+// leaves dist/ unchanged. A staging file an earlier run left behind (killed between its write and its rename)
+// is removed once that run's pid is gone, and kept while the pid runs: two builds on one dist/ each rename
+// their own.
 const STAGING = /^\..+\.tmp-(\d+)-\d+$/;
 
 function stagingPath(final, n) {
@@ -206,23 +204,23 @@ async function buildAll(configs) {
   return outputs.map((f) => f.path);
 }
 
-// The LAST line on stderr is the one the kernel shows: its in-place rebuild puts the tail of this
-// process's stderr into the notice that tells the person the served UI is stale, and the tail of an
-// esbuild BuildFailure printed whole is its stack through esbuild's own transport (`at Socket.emit`,
-// `errors: [Getter/Setter]`), which names neither the failing import nor what to do about it. esbuild
-// has already printed each error with its code frame (logLevel "info"), so this names the cause in one
-// line of at most 300 characters (the kernel's tail) and, for the common cause, the fix: an unresolvable
-// package — a bare specifier or a node_modules/ path that is not a file of this checkout — is a
-// dependency this node_modules lacks, and `npm install` is what fixes it. A relative import or a syntax
-// error gets its text and no npm install line. `untouched` names the output dir the failed build left
-// unchanged, when that is what failed.
+// The LAST line on stderr is the one the kernel shows: its in-place rebuild puts the tail of this process's
+// stderr into the notice that tells the person the served UI is stale, and the tail of an esbuild
+// BuildFailure printed whole is its stack through esbuild's own transport (`at Socket.emit`,
+// `errors: [Getter/Setter]`), which names neither the failing import nor what to do about it. esbuild has
+// already printed each error with its code frame (logLevel "info"), so this names the cause in one line of
+// at most 300 characters (the kernel's tail: _rebuild_dist in kernel/kernel.py) and, for the common cause,
+// the fix: an unresolvable package, a bare specifier or a node_modules/ path that is not a file of this
+// checkout, is a dependency this node_modules lacks, and `npm install` is what fixes it. A relative import or
+// a syntax error gets its text and no npm install line. `untouched` names the output dir the failed build
+// left unchanged, when that is what failed.
 //
 // Every line goes out through `fit`: cut to 300 characters from the END, so the head (what failed, what is
-// unchanged) is what the kernel shows and the tail of the last clause is what goes. The parts above are
-// sized so a plausible line fits whole (specifiers cut at 60, the text at 120, two named and the rest
-// counted), so the cut is reached only by a long text over a long location path — the location is never
-// shortened, since a cut path names no file — and by a non-esbuild error's message, which is whatever
-// Node wrote. Without it, the kernel's `[-300:]` drops the head instead (src/esbuild-failure-cap.test.ts).
+// unchanged) is what the kernel shows and the tail of the last clause is what goes. The parts are sized so a
+// plausible line fits whole (specifiers cut at 60, the text at 120, two named and the rest counted), so the
+// cut is reached only by a long text over a long location path (the location is never shortened, since a cut
+// path names no file) and by a non-esbuild error's message, which is whatever Node wrote. Without it, the
+// kernel's `[-300:]` drops the head instead (src/esbuild-failure-cap.test.ts).
 function failureSummary(e, untouched) {
   const fit = (s) => s.length > 300 ? s.slice(0, 297) + "..." : s;
   const errors = e && Array.isArray(e.errors) ? e.errors : null;
@@ -242,7 +240,8 @@ function failureSummary(e, untouched) {
     const shown = unresolved.slice(0, 2).map(quote).join(", ") +
                   (unresolved.length > 2 ? " (+" + (unresolved.length - 2) + " more)" : "");
     line += unresolved.some(isDep)
-      ? " Unresolved: " + shown + " — not in this checkout's node_modules; run npm install in vscode-extension/ and rebuild."
+      ? " Unresolved: " + shown +
+        ", not in this checkout's node_modules; run npm install in vscode-extension/ and rebuild."
       : " Unresolved: " + shown + ".";
   } else {
     const x = errors[0];
@@ -270,9 +269,10 @@ async function main() {
   }
 }
 
-// Exported for the tests: src/esbuild-build.test.ts drives buildAll and failureSummary against synthetic entries,
-// and editor-lazy.test.ts bundles one entry with the real configs and counts CodeMirror copies in the chunk's
-// metafile. The build runs only when this file is the script (`node esbuild.js`), never on require.
+// Exported for the tests: src/esbuild-build.test.ts and its siblings drive buildAll and failureSummary against
+// synthetic entries and stub the real configs' entry points. oneCodeMirror is exported for
+// ui/webview/editor-lazy.test.ts, which bundles the editor chunk with the real alias and counts CodeMirror copies
+// in the chunk's metafile. The build runs only when this file is the script (`node esbuild.js`), never on require.
 module.exports = { buildAll, failureSummary, extension, webview, testBuild, oneCodeMirror };
 
 if (require.main === module) {

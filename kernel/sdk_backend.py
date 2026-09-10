@@ -792,171 +792,128 @@ def last_record_uuid(path, tail_bytes: int = 262144) -> str:
     return ""
 
 
-# ── spend metering: which of the result event's token counters to fold ─────────────────────────────
-# A ResultMessage carries TWO token accounts, and only one of them is fit for accounting (verified
-# against Claude Code 2.1.261's own schema text, 2026-09-05):
-#   `usage`       — "MAIN AGENT LOOP ONLY … per-turn in streaming-input sessions. Prefer modelUsage for
-#                   token/cost accounting". It omits every subagent, sidechain and internal call, and in
-#                   a streaming session it is THIS TURN's count, not a running total. Diffing it as a
-#                   cumulative counter under-counted a 2.6M-token turn as 6,346 tokens.
-#   `modelUsage`  — cumulative across the CLI process, per model, covering the main loop, subagents,
-#                   sidechains and internal calls (the SDK passes it through as `model_usage`, camelCase
-#                   keys). Summed across models per field it is the counter the dollars already diff.
-# The spend recorder keys its token fields by the `usage` dict's names, so the camelCase fields map
-# onto those. `usage` is the FALLBACK when a paid result carries no modelUsage, and then it is folded
-# for what it is: this turn's main-loop count (per-turn on every CLI build we can read, 2.1.224 through
-# 2.1.261), never diffed as a counter, with ONE problem line per session saying the token columns are
-# main-loop-only from there on (usage_fallback_notice). Two routes reach it. A claude-agent-sdk older
-# than 0.1.51 has no model_usage field on ResultMessage at all; the kernel imports whichever copy
-# importlib finds first, so one installed outside the sdkvenv shadows the venv's current SDK
-# (kernel._ensure_sdk_on_path). Such an SDK also lacks ClaudeAgentOptions.session_id, so fresh sessions
-# die at launch with a logged TypeError while plain RESUMES (no session_id kwarg) connect and take this
-# path on every turn. The other route is a CLI that emits no modelUsage on a paid result (2.1.261 omits
-# it on zero-cost results only, which the total > 0 gate skips).
-_MODEL_USAGE_KEYS = (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"),
-                     ("cache_read_input_tokens", "cacheReadInputTokens"),
-                     ("cache_creation_input_tokens", "cacheCreationInputTokens"))
-
-
-def model_usage_totals(model_usage):
-    """Sum a `modelUsage` map ({model: {inputTokens, outputTokens, cacheReadInputTokens,
-    cacheCreationInputTokens, …}}) across models into the four `usage`-named token fields. None when
-    the map is absent, empty or holds no per-model dict — the caller falls back to `usage` then."""
-    if not isinstance(model_usage, dict) or not model_usage:
-        return None
-    out = {k: 0 for k, _ in _MODEL_USAGE_KEYS}
-    seen = False
-    for per_model in model_usage.values():
-        if not isinstance(per_model, dict):
-            continue
-        seen = True
-        for k, ck in _MODEL_USAGE_KEYS:
-            n = per_model.get(ck)
-            if isinstance(n, (int, float)):
-                out[k] += int(n)
-    return out if seen else None
-
-
-def result_token_totals(msg):
-    """The token counters a ResultMessage carries, in `usage`-dict names, with what KIND of counter
-    they are: (modelUsage summed across models, True) when the CLI emits it — cumulative per process,
-    the settle diffs it — else (the `usage` dict itself, False): this turn's main-loop count, which
-    the settle folds as is. Missing fields read 0."""
-    totals = model_usage_totals(getattr(msg, "model_usage", None))
-    if totals is not None:
-        return totals, True
-    u = getattr(msg, "usage", None)
-    u = u if isinstance(u, dict) else {}
-    out = {}
-    for k, _ in _MODEL_USAGE_KEYS:
-        v = u.get(k)
-        out[k] = int(v) if isinstance(v, (int, float)) else 0
-    return out, False
-
-
-def usage_fallback_is_sdk(msg):
-    """True when a paid result's missing modelUsage is the SDK's doing: a ResultMessage with no
-    model_usage ATTRIBUTE at all is a claude-agent-sdk older than 0.1.51 (a dataclass field from there
-    on — None, not missing, when the CLI sends nothing). A HOST-level fact: the kernel imported one SDK
-    for every session it runs."""
-    return not hasattr(msg, "model_usage")
-
-
-def usage_fallback_notice(name, msg):
-    """The problem line for a paid result with no modelUsage (result_token_totals took the `usage`
-    fallback). The cause the message can tell apart decides both the words and how often the settle
-    says them: the SDK cause (usage_fallback_is_sdk) is the same for every session, so its line names no
-    session and is said ONCE PER KERNEL LIFE, on the backend's flag — said per session it filled the
-    error center with one near-identical card per live session (texts differing only by name, so they
-    could not collapse) and another on every dormant revive, for one remedy (2026-09-06); a field that
-    is there but empty is THIS session's CLI's doing on this result, which can differ per session, so
-    that line names the session and is said once per session."""
-    if usage_fallback_is_sdk(msg):
-        return ("spend: every session's token columns are per-turn main-loop figures from here on (no subagent, "
-                "sidechain or compaction tokens; dollars are unaffected). Cause: the ResultMessage has no "
-                "model_usage field, so the kernel imported a claude-agent-sdk that predates 0.1.51. A copy "
-                "installed outside the sdkvenv shadows the venv's: upgrade or remove it.")
-    return ("spend: %s's token columns are per-turn main-loop figures from here on (no subagent, sidechain or "
-            "compaction tokens; dollars are unaffected). Cause: the CLI emitted no modelUsage on a paid result."
-            % name)
-
-
-# The first cost delta after a connect above which the recorder leaves a trace in the kernel log: an
-# INFO line, not a problem. On Claude Code 2.1.261 a print-mode CLI resumes with its cost counters at
-# zero (a resume neither restores a cost-state record nor arms its writer; probed 2026-09-06), so a
-# first delta this large is the turn's own cost, recorded right, with nothing for the user to act on (a
-# problem card here sent them to check a ledger that was correct). The trace is for the day a CLI
-# restores history in print mode: then a first result carries the whole history in total_cost_usd,
-# and the figure is wrong only if that restore and the seed read different files (see last_cost_state).
+# The first result after a connect whose cost delta exceeds this is traced as an INFO line in the settle
+# (SdkSession._on_message), never a problem. On the CLI as probed (print mode, 2026-09-06) a resumed
+# process starts its counters at zero: a resume neither restores a cost-state record nor arms its writer.
+# So a first delta this large is the turn's own cost, recorded right, with nothing for the user to act
+# on; a problem row here would send them to check a figure that is correct. The trace is for the day a
+# CLI restores cost history in print mode: then a first result carries the whole history in
+# total_cost_usd, and the figure is wrong only if that restore and the connect-time seed read different
+# files (last_cost_state).
 SANE_TURN_USD = 200.0
 
 
-def last_cost_state(path):
-    """The resumed transcript's LAST `cost-state` record, as the watermarks a CLI that restores it
-    would hold: {"total": totalCostUSD, "tokens": modelUsage summed per field} — or None when the file
-    has no such record.
+def cost_state_watermarks(o):
+    """The watermarks a CLI would hold after restoring the `cost-state` transcript record `o`, or None
+    when `o` is not one or its total is unusable: {"total": float, "tokens": {snake_case: int}}. The
+    tokens are the record's modelUsage summed per field across models into the four keys
+    SdkSession._turn_usage diffs against, the same sum it makes of a result's map; an absent or empty
+    map seeds no token watermarks."""
+    if not isinstance(o, dict) or o.get("type") != "cost-state":
+        return None
+    total = o.get("totalCostUSD")
+    if not isinstance(total, (int, float)) or not (0 <= total < float("inf")):
+        return None
+    tokens = {}
+    mu = o.get("modelUsage")
+    if isinstance(mu, dict) and mu:
+        tokens = {k: 0 for k, _ in SdkSession._USAGE_KEYS}
+        for m in mu.values():
+            if not isinstance(m, dict):
+                continue
+            for k, mk in SdkSession._USAGE_KEYS:
+                v = m.get(mk)
+                tokens[k] += int(v) if isinstance(v, (int, float)) else 0
+    return {"total": float(total), "tokens": tokens}
 
-    Where a record can land (Claude Code 2.1.261, probed in print mode under a hermetic config dir,
-    2026-09-06): the CLI's writer runs only while its cost ledger has an owner. The interactive TUI
-    claims one at startup; a print-mode (SDK) process gets one only from the /clear session-id
-    rotation — a print-mode resume sets none, and restores nothing. The /clear saver runs before the
-    rotation, so the SECOND and later /clear in one process appends a record to the episode that
-    /clear abandons; the episode romp resumes (the reg's lastSid, the current one) never carries one,
-    and a record-carrying episode resumed in print mode gains none. So every romp seed today reads
-    zero, and the CLI's counters start at zero on the same resume: the two agree. The one way a record
-    reaches a resumed file is lastSid stranded on an abandoned episode (the kernel dying between the
-    saver's write and the init flip); the print-mode CLI still starts at zero there, and the
-    shrink-folds-whole rule folds the first turn whole while its own total sits below the seed — the
-    residual, a first turn costlier than the whole recorded history, under-counts that turn by the seed.
 
-    Why read it at all: the CLI HAS a restore path for this record (its transcript loader files
-    `cost-state` as last-wins; interactive resumes restore totalCostUSD + modelUsage, the two counters
-    the settle diffs). Should a CLI restore it in print mode, the first result after a reconnect would
-    carry the whole session's history in total_cost_usd, and watermarks reset to zero would fold that
-    history as one turn's spend; seeding from the same file the CLI reads makes the first delta this
-    turn's work. The seed reads transcript_path(cwd, resume_sid), and re-reads it when init corrects
-    the cwd (the CLI's own string keys its transcript path) — with the sid the CLI LOADED when that init
-    also landed a new fsid (a fork landing moves resume_sid to the file the CLI will write) — so the two
-    sides open the same file.
+def last_cost_state(path, scan_bytes: int = 8 << 20, max_line: int = 4 << 20):
+    """The resumed transcript's LAST `cost-state` record, as the watermarks a CLI that restores it would
+    hold (cost_state_watermarks), or None when the file has no such record or cannot be read.
 
-    Scans BACKWARDS in chunks and stops at the first hit, so a transcript that carries the record
-    (near its tail: the writer appends it at /clear, not per turn) costs a chunk or two, and one that
-    never carried it costs one sequential read of the file at connect time."""
+    Why read it: the CLI has a restore path for this record. Its transcript loader files `cost-state`
+    as last-wins, its writer emits totalCostUSD and modelUsage, the two counters the settle diffs, and
+    a resume that restores the record sets both. Should a CLI restore them in print mode, the first
+    result after a reconnect would carry the whole session's history in total_cost_usd, and watermarks
+    reset to zero would record that history as one turn's spend; seeding from the same file the CLI
+    reads makes the first delta this turn's own work. The seed reads transcript_path(cwd, resume_sid)
+    and reads it again when init corrects the cwd (the CLI's own string keys its transcript path), with
+    the sid the CLI LOADED when that init also landed a new fsid, so the two sides open the same file
+    (SdkSession._seed_spend_watermarks).
+
+    What the CLI does today, as probed in print mode (2026-09-06): its writer runs only once the process
+    has claimed its cost state. The interactive TUI claims it at startup; a print-mode (SDK) process
+    claims it only through the /clear session-id rotation, and a print-mode resume claims nothing and
+    restores nothing. The /clear saver runs before the rotation, so the SECOND and later /clear in one
+    process appends a record to the conversation that /clear abandons; the conversation romp resumes
+    (the reg's lastSid, the current one) never carries one. So every seed today reads zero, and the
+    CLI's counters start at zero on the same resume: the two agree. A record reaches a resumed file two
+    ways: a lastSid left on an abandoned conversation (the kernel dying between the saver's write and
+    the init flip), and a transcript the interactive CLI wrote (its writer runs from startup) that romp
+    later resumes; the print-mode CLI still starts at zero in both, and the shrunken-counter rule
+    records the first turn whole while its own total sits below the seed. The residual: a first
+    turn costlier than the whole recorded history is under-counted by the seed, and the same holds per
+    token field (_turn_usage diffs each field on its own), so a first turn whose count in one field
+    exceeds the recorded history's is under-counted in that field.
+
+    Scans BACKWARDS in 64 KB chunks and stops at the first hit, so a transcript that carries the record
+    costs a chunk or two. A line split across chunks is reassembled ONCE, when the scan reaches the
+    newline before it: its pieces are kept in a list as the chunks arrive and joined there, so each byte
+    read is copied a fixed number of times however long the line is (concatenating the carried fragment
+    onto every chunk copied it once per chunk, quadratic in the line; review find, 2026-09-09). A line
+    longer than `max_line` (4 MB by default) is not a record, since a record is under 1 KB: its pieces
+    are dropped as they arrive and the line is skipped unjoined, which also bounds the memory the scan
+    holds by the cap rather than by the line. The scan is BOUNDED to the last `scan_bytes` (8 MB by
+    default; last_record_uuid's tail read has the same reason: a transcript can be tens of MB and this
+    runs on the event loop at every connect): a record older than that is treated as absent, which is
+    the answer the print-mode CLI gives for its own counters today (it restores nothing), so the two
+    sides still agree (review find, 2026-09-09); the line the bound cuts through is a fragment and is
+    never joined."""
     marker = b'"cost-state"'
     try:
         with open(path, "rb") as f:
             f.seek(0, os.SEEK_END)
             pos = f.tell()
-            carry = b""
-            while pos > 0:
-                step = min(pos, 1 << 16)
+            floor = max(0, pos - int(scan_bytes))   # the oldest byte the bounded scan may reach
+            frags = []          # the pieces read so far of the line the last chunk opened with, in file
+            #                     order (each chunk read is earlier in the file than the one before)
+            carried = 0         # that line's length so far, counted whether or not its pieces are kept: past
+            #                     max_line the line is not a record, so its pieces are dropped as they
+            #                     arrive and the line is skipped without a join
+            while pos > floor:
+                step = min(pos - floor, 1 << 16)
                 pos -= step
                 f.seek(pos)
-                chunk = f.read(step) + carry     # carry: the earlier-read chunk's first-line fragment,
-                #                                  which this chunk's last line continues into
-                head, nl, body = chunk.partition(b"\n")
-                if pos > 0:
-                    carry = head                 # the chunk's first line is a fragment: it completes in
-                    #                              the next (earlier) chunk, so it travels there whole
-                    if not nl:
-                        continue                 # no line boundary in this chunk at all
+                parts = f.read(step).split(b"\n")   # leading piece, complete lines, trailing piece; ONE
+                #                                      element when the chunk holds no newline at all
+                lines = []                          # the lines this chunk completes, newest first
+                if len(parts) > 1:
+                    # the carried line begins after this chunk's last newline: its pieces are joined here
+                    if carried + len(parts[-1]) <= max_line:
+                        lines.append(b"".join([parts[-1]] + frags))
+                    lines.extend(reversed(parts[1:-1]))
+                    frags, carried = [], 0
+                if pos == 0:
+                    # the file's head: the leading piece is the start of the carried line, or all of it
+                    if carried + len(parts[0]) <= max_line:
+                        lines.append(b"".join([parts[0]] + frags))
                 else:
-                    carry, body = b"", chunk     # the file's head: every line here is complete
-                if marker not in body:
-                    continue
-                for line in reversed(body.split(b"\n")):
-                    if marker not in line:
+                    # the leading piece continues into the earlier chunk: carried, not copied, while the
+                    # line is short enough to be a record
+                    carried += len(parts[0])
+                    if carried <= max_line:
+                        frags.insert(0, parts[0])
+                    else:
+                        frags = []
+                for line in lines:
+                    if len(line) > max_line or marker not in line:
                         continue
                     try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    if not isinstance(o, dict) or o.get("type") != "cost-state":
-                        continue
-                    total = o.get("totalCostUSD")
-                    if not isinstance(total, (int, float)) or total < 0:
-                        continue
-                    return {"total": float(total), "tokens": model_usage_totals(o.get("modelUsage")) or {}}
+                        rec = cost_state_watermarks(json.loads(line))
+                    except (ValueError, OverflowError, TypeError):
+                        continue                # not JSON, or a field no int() takes: skipped like an unusable total
+                    if rec is not None:
+                        return rec
     except OSError:
         return None
     return None
@@ -3060,6 +3017,37 @@ def sdk_importable() -> bool:
         return False
 
 
+def usage_fallback_is_sdk(msg) -> bool:
+    """A paid result carried no modelUsage map (SdkSession._turn_usage read the flat `usage` dict instead): is
+    that the imported SDK's doing? The current claude-agent-sdk declares `model_usage` as a field of
+    ResultMessage, None when the CLI sends no map, so a result with no such ATTRIBUTE at all came from
+    an older copy of the SDK, whichever one the kernel's interpreter imported: a copy found on sys.path
+    ahead of the dedicated venv's (kernel._ensure_sdk_on_path takes an importable copy first), or the
+    venv's own, as old as its last bin/romp-sdk-setup run. That is a fact about the host, the same for
+    every session this kernel runs; a field that is there but empty is this session's CLI's doing on
+    this result."""
+    return not hasattr(msg, "model_usage")
+
+
+def usage_fallback_notice(name, msg) -> str:
+    """The problem line for a paid result with no modelUsage map, by the cause usage_fallback_is_sdk
+    tells apart. The SDK cause names no session (it holds for all of them) and names the copy the
+    kernel imported, so the remedy is a path and not a search; the CLI cause names the session. Either
+    way the reader learns what the token columns now count and that the dollars are unaffected: the
+    flat dict is the main loop's own per-turn total, so what subagents and sidechains spent is not in
+    it, while total_cost_usd stays the process total."""
+    if usage_fallback_is_sdk(msg):
+        where = getattr(sys.modules.get("claude_agent_sdk"), "__file__", None) or "an unknown path"
+        return ("spend: every session's token columns count the main loop alone from here on (no subagent or "
+                "sidechain tokens; the dollars are unaffected). Cause: the claude-agent-sdk the kernel imported "
+                "(%s) has no model_usage field on ResultMessage, so the CLI's modelUsage map never reaches the "
+                "kernel. Run bin/romp-sdk-setup to install a current one, or remove a copy that shadows the "
+                "venv's, then restart romp." % where)
+    return ("spend (%s): a paid turn's tokens were recorded from the main loop alone (no subagent or sidechain "
+            "tokens; the dollars are unaffected): the CLI emitted no modelUsage on the result. Said once per "
+            "session." % name)
+
+
 # What the SDK puts on ProcessError.stderr when NOBODY registered an options.stderr callback: it does
 # not pipe the child's stderr at all, and substitutes this literal (subprocess_cli.py). Surfacing it is
 # worse than useless — it tells the user to go read an output romp never captured, and it outranked the
@@ -4455,21 +4443,24 @@ class SdkSession:
         #   the bundle: the result event's total_cost_usd sits beside total_duration/lines counters),
         #   so spend folds the DELTA between results — folding the raw value re-added the whole
         #   session-so-far cost every turn (the user 2026-08-08, whose spend line was fiction). Reset
-        #   at each connect: a fresh CLI process starts its counter at zero.
-        self._last_usage_totals = {}  # same for the TOKEN counts: per-field watermarks of the result
-        #   event's cumulative counters: `modelUsage` summed across models (see result_token_totals and _turn_usage;
-        #   the `usage` dict is per-turn and main-loop-only on current CLIs, so diffing IT under-counted
-        #   tokens by orders of magnitude, 2026-09-05), each field folding as a delta — raw folding
-        #   compounded the token readout exactly like the dollars (the user 2026-08-08, round two: the
-        #   hover's 5h/7d/month $-per-token ratios diverged wildly because each window carried a
-        #   different inflation factor).
-        self._spend_first_result = False   # True from a connect until its first result settles: that
-        #   result's delta is checked against SANE_TURN_USD (an info-line trace — see the constant), and
-        #   the init handler may re-seed the watermarks while it is still True (a cwd correction)
-        self._usage_fallback_noted = False  # the once-per-session problem line for paid results whose
-        #   modelUsage the CLI left empty (usage_fallback_notice) has been logged: the token columns are
-        #   main-loop-only. The SDK cause (no model_usage field at all) is host-level and has the
-        #   BACKEND's once flag, _usage_fallback_sdk_noted — one card per kernel life, not per session
+        #   at each connect to what the CLI process it starts holds: zero for a fresh process, or the
+        #   totals of the resumed transcript's last cost-state record when it carries one
+        #   (_seed_spend_watermarks, last_cost_state).
+        self._last_usage_totals = {}  # the TOKEN watermarks — kept against the result's `model_usage`
+        #   map (the CLI's modelUsage), the per-model counter the CLI documents as cumulative like
+        #   total_cost_usd, same lifecycle, so each field folds as a delta exactly like the dollars.
+        #   Raw folding compounded the token readout (the user 2026-08-08, round two: the hover's
+        #   5h/7d/month $-per-token ratios diverged wildly because each window carried a different
+        #   inflation factor). NOT kept against the flat `usage` dict any more: that was the process
+        #   total when the deltas were written (`usage: this.totalUsage`) and is the TURN's own total
+        #   on the current CLI — diffing it under-counted every turn but the first (the user
+        #   2026-09-06). Which counter is which, and the measurement: _turn_usage.
+        self._spend_first_result = False   # True from a connect until its first result settles: that result's
+        #   delta is checked against SANE_TURN_USD (an info-line trace; see the constant), and the init
+        #   handler may re-seed the watermarks while it is still True (a cwd correction; _seed_spend_watermarks)
+        self._usage_fallback_noted = False  # the once-per-session line for a paid result whose modelUsage map
+        #   is there but empty (usage_fallback_notice, the CLI cause); the SDK cause is said once per
+        #   backend on its flag, _usage_fallback_sdk_noted (see _note_usage_fallback)
         # Pending conversation REWIND (the chat's edit-message branch): the target record uuid +
         # the transcript leaf recorded at request time (the one-shot guard — see rewind_disposition).
         # Seeded from the reg so a kernel death mid-rewind re-applies it iff nothing landed since.
@@ -5591,7 +5582,7 @@ class SdkSession:
                     self.backend._push_session(self.sid)
                     self._connected.set()   # the control channel exists from here (move() waits on this)
                     self._seed_spend_watermarks()   # a fresh CLI process starts its cumulative counters at
-                    #   zero — or at what it restores from the resumed transcript's cost-state record
+                    #   zero, or at what it restores from the resumed transcript's cost-state record
                     # The CLI is demonstrably up, so any recorded launch failure is HISTORY — clear it
                     # here, at the proof, rather than on a timer. This is what lifts the usage-limit
                     # hold once the window resets: the next _ensure connects, the error record goes, and
@@ -5898,52 +5889,83 @@ class SdkSession:
         self._cli_working = (state == "working")
         append_state(self.backend.state_dir, self.sid, state)
 
-    def _fold_turn_tokens(self, totals: dict, cumulative: bool) -> dict:
-        """THIS turn's token counts from a result's counters (result_token_totals), the watermarks
-        updated. A CUMULATIVE map (modelUsage summed across models: per process, subagent-inclusive,
-        the same kind of counter as the dollars) folds as per-field DELTAS against the watermarks, a
-        field below its watermark folding whole (a reset we did not watch: a /clear, a new process).
-        A per-turn `usage` dict (no modelUsage on this result) lands WHOLE as the turn's figure, and is
-        ADDED to the watermarks so they keep meaning "tokens this process has accounted for": should
-        modelUsage appear later in the same process, its delta catches up the subagent tokens without
-        re-counting what landed here. Diffing the per-turn dict as a counter recorded turn-to-turn
-        growth (the 2.6M-token turn that landed as 6,346; the user 2026-09-06)."""
-        turn_u = {}
-        if cumulative:
-            for k, v in totals.items():
-                last = self._last_usage_totals.get(k, 0)
-                turn_u[k] = v - last if v >= last else v
-                self._last_usage_totals[k] = v
-        else:
-            for k, v in totals.items():
-                turn_u[k] = v
-                self._last_usage_totals[k] = self._last_usage_totals.get(k, 0) + v
-        return turn_u
+    # (snake_case API name, camelCase modelUsage name) — the four token kinds the ledger keeps
+    _USAGE_KEYS = (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"),
+                   ("cache_read_input_tokens", "cacheReadInputTokens"),
+                   ("cache_creation_input_tokens", "cacheCreationInputTokens"))
 
     def _turn_usage(self, msg):
-        """THIS turn's token counts for _record_spend, one dict in the API's snake_case names: the
-        result's modelUsage map diffed against the watermarks when the CLI emits it, else its per-turn
-        `usage` dict folded whole (result_token_totals decides which; _fold_turn_tokens keeps the
-        watermarks). The name upstream's spend ledger gave the same fold (their #956, 2026-09-06);
-        the settle calls the two halves itself so it can say when the fallback was taken
-        (usage_fallback_notice).
+        """THIS turn's token counts for _record_spend, one dict in the API's snake_case names.
 
-        Why the two counters are not the same kind of number (upstream's measurement, 2026-09-06, on
-        CLI 2.1.263: a three-turn session read against its own transcript's per-call `usage` blocks):
-        `model_usage` (the CLI's modelUsage map) is a RUNNING TOTAL per model, process-wide, the same
-        lifecycle as total_cost_usd; the CLI documents it as cumulative (read the latest result rather
-        than summing across results) and a /clear zeroes it, so it folds as per-field deltas and a
-        field below its watermark is a reset we did not watch. The flat `usage` dict is the TURN's own
-        total, the main loop's per-query accumulator, equal to the sum of that turn's API calls (the
-        bundle emits it from a query-local beside `total_cost_usd` from a process-wide getter). It was
-        the process total when the delta logic was written (2026-08-08, `usage: this.totalUsage`); the
-        CLI has since moved it per-turn, and diffing a per-turn figure against the previous turn's
-        recorded a fraction of every turn (roughly half a day's tokens went missing, and five sessions'
-        recorded totals matched that subtraction to the token). Cache reads dominate either way, since
-        every API call of a turn re-reads the whole context, and the hover breaks the count down by
-        kind so the size of the number has its explanation."""
-        totals, cumulative = result_token_totals(msg)
-        return self._fold_turn_tokens(totals, cumulative)
+        Two token counters ride a ResultMessage and they are NOT the same kind of number (measured
+        2026-09-06 on CLI 2.1.263: a three-turn session read against its own transcript's per-call
+        `usage` blocks):
+        - `model_usage` (the CLI's modelUsage map) is a RUNNING TOTAL per model, process-wide, the
+          same lifecycle as total_cost_usd — the CLI documents it as cumulative, "read the latest
+          result rather than summing across results"; a /clear zeroes it. Sum it across models and
+          fold the per-field DELTA against the last result, exactly as the dollars fold; a field
+          below its watermark is a reset we did not watch (a /clear, a new process) and folds whole.
+        - `usage` (the flat dict) is the TURN's own total — the main loop's per-query accumulator,
+          equal to the sum of that turn's API calls (the bundle emits it from a query-local beside
+          `total_cost_usd` from a process-wide getter). It was the process total when the delta
+          logic was written (2026-08-08, `usage: this.totalUsage`); the CLI has since moved it
+          per-turn, and diffing a per-turn figure against the previous turn's recorded a fraction
+          of every turn — roughly half a day's tokens went missing, and five sessions' recorded
+          totals matched that subtraction to the token (the user 2026-09-06, who did not believe
+          the count and was right, in the other direction). So the flat dict is never diffed: when
+          the map is absent it folds WHOLE, and the fallback is said once (_note_usage_fallback): it
+          is the main loop's count alone, and a reader of the token columns has to know that.
+        Cache reads dominate either way — every API call of a turn re-reads the whole context — and
+        the hover breaks the count down by kind so the size of the number has its explanation."""
+        mu = getattr(msg, "model_usage", None)
+        if isinstance(mu, dict) and mu:
+            tot = {k: 0 for k, _ in self._USAGE_KEYS}
+            for m in mu.values():
+                if not isinstance(m, dict):
+                    continue
+                for k, mk in self._USAGE_KEYS:
+                    v = m.get(mk)
+                    tot[k] += int(v) if isinstance(v, (int, float)) else 0
+            out = {}
+            for k, v in tot.items():
+                last = self._last_usage_totals.get(k, 0)
+                out[k] = v - last if v >= last else v
+                self._last_usage_totals[k] = v
+            return out
+        u = getattr(msg, "usage", None)
+        u = u if isinstance(u, dict) else {}
+        out = {k: (int(u[k]) if isinstance(u.get(k), (int, float)) else 0) for k, _ in self._USAGE_KEYS}
+        self._note_usage_fallback(msg)   # after the count: a count that raises is the containment's one report
+        return out
+
+    def _note_usage_fallback(self, msg):
+        """_turn_usage read the flat `usage` dict because the paid result carried no modelUsage map:
+        this turn's token columns are the main loop's count alone. Recorded silently before, so a kernel
+        on an old SDK under-counted every session with nothing in the error center naming why. Said as a
+        problem the user can act on (usage_fallback_notice), by the cause the message tells apart
+        (usage_fallback_is_sdk): the SDK cause is the host's, one for every session this kernel runs, so
+        it is said ONCE PER BACKEND on the backend's flag (per session it would be one near-identical
+        card per live session, and another per dormant revive, for a single remedy), checked and set
+        under the backend's lock because sessions settle on their own threads and a bare check-then-set
+        lets two first paid results both say it; the CLI cause is this session's, so once per session on
+        its own flag, which only this session's thread touches. The line is not worth the count: this
+        runs inside the token count, ahead of the spend write and after the cost watermark moved, so a
+        log callback that raises here would lose the turn's dollars and tokens for the sake of a line.
+        The raise is swallowed instead (the flag is set first, and the ring row lands before the callback
+        runs, so nothing is said twice). The `total > 0` gate in the settle keeps zero-cost results out."""
+        if usage_fallback_is_sdk(msg):
+            with self.backend._lock:
+                if self.backend._usage_fallback_sdk_noted:
+                    return
+                self.backend._usage_fallback_sdk_noted = True
+        else:
+            if self._usage_fallback_noted:
+                return
+            self._usage_fallback_noted = True
+        try:
+            self.backend._log(usage_fallback_notice(self.name, msg), problem=True)
+        except Exception:
+            pass    # a raising log callback: the count proceeds (the docstring's rule)
 
     # ---- /api-health ingestion (ApiHealth) — every hook getattr-guards the session/backend fields so
     # a __new__-built test double, or a backend fake without the aggregator, passes through unharmed ----
@@ -6030,20 +6052,20 @@ class SdkSession:
                 _lg("api-health: give-up ingest failed: %s" % e)
 
     def _seed_spend_watermarks(self, resume_sid=None):
-        """Reset the spend watermarks for the CLI process a connect just started. Zero for a fresh
-        process — or, when the resumed transcript carries a `cost-state` record, the counters that
-        record holds, because a CLI that restores them reports its first total_cost_usd as the whole
-        session's history plus this turn (last_cost_state has the full story, including why every
-        romp resume reads zero today). Arms the first-result check either way. Called at connect, and
-        again from the init handler when the CLI's cwd corrects the registry's before any result has
-        settled — the transcript path is keyed on the cwd, so that is when the seed can have read the
-        wrong file. `resume_sid` names the transcript the CLI LOADED when that differs from
-        self.resume_sid: the init that corrects the cwd may in the same message have landed a new fsid
-        (a born-as-a-fork copy, or the CLI's adoption gate turning a plain resume into a fork under a
-        fresh id), and the file a restoring CLI took its counters from is the OLD one — the new fsid's
-        file has no record yet (2026-09-06; the fix's test double showed a 12.5 seed landing at zero)."""
+        """Reset the spend watermarks for the CLI process a connect just started: zero for a fresh
+        process, or, when the resumed transcript carries a `cost-state` record, the counters that record
+        holds, because a CLI that restores them reports its first total_cost_usd as the whole session's
+        history plus this turn (last_cost_state has the full story, including why every seed reads zero
+        on the CLI as probed). Arms the first-result check either way. Called at connect, and again from
+        the init handler when the CLI's cwd corrects the registry's before any result has settled: the
+        transcript path is keyed on the cwd, so that is when the seed can have read the wrong file. That
+        second call is for a resumed session only (a fresh process has no loaded transcript to read), and
+        an init that ends a /clear skips it: the watermarks keep the zero the event set.
+        `resume_sid` names the transcript the CLI LOADED when that differs from self.resume_sid: the
+        init that corrects the cwd may in the same message have landed a new fsid, and the file a
+        restoring CLI took its counters from is the old one; the new fsid's file has no record yet."""
         self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero
-        self._last_usage_totals = {}  # …and its cumulative token counters
+        self._last_usage_totals = {}  # and its cumulative token counters
         self._spend_first_result = True
         sid = resume_sid or self.resume_sid
         if not sid:
@@ -6053,8 +6075,9 @@ class SdkSession:
             return
         self._last_cost_total = cs["total"]
         self._last_usage_totals = dict(cs["tokens"])
-        self.backend._log("spend: %s resumes a transcript with a cost-state record — watermarks seeded at its "
-                  "totals (cumulative $%.2f) so the first result folds only this turn" % (self.name, cs["total"]))
+        self.backend._log("spend: %s resumes a transcript with a cost-state record: watermarks seeded at its "
+                          "totals (cumulative $%.2f) so the first result records only this turn"
+                          % (self.name, cs["total"]), problem=False)
 
     async def _drain(self, client, AssistantMessage, ResultMessage, SystemMessage):
         """The receive loop. Every streamed message goes through _handle_stream_message, which keeps
@@ -6258,8 +6281,8 @@ class SdkSession:
             # rail's /usage bars — see _note_auth_source.
             self.backend._note_auth_source(self, d.get("apiKeySource"))
             fsid = d.get("session_id")
-            loaded_sid = self.resume_sid   # the transcript the CLI LOADED — a flip below moves resume_sid to
-            #                                the fsid it will WRITE, and the spend re-seed wants the former
+            loaded_sid = self.resume_sid   # the transcript the CLI LOADED: a flip below moves resume_sid to the
+            #                                fsid it will WRITE, and the spend re-seed wants the former
             if fsid and fsid != self.resume_sid:
                 old = self.resume_sid
                 self.resume_sid = fsid
@@ -6275,6 +6298,8 @@ class SdkSession:
                     # rule in _turn_usage / the cost delta stays as the backstop for a reset we did not see.
                     self._last_cost_total = 0.0
                     self._last_usage_totals = {}
+                    loaded_sid = None   # zero IS the seed here: the cwd re-seed below stands down (the loaded
+                    #                     file may carry a record the /clear saver wrote as it abandoned it)
                 # A RESUME landing on a NEW fsid = a fresh-headed fork: record the old->new lineage
                 # (see append_resume_fork for the full story — the parser stitches the chain from it,
                 # the user 2026-08-14). A /clear's flip and a born-as-a-fork copy record nothing.
@@ -6301,15 +6326,14 @@ class SdkSession:
                 self.backend._log("sdk %s: adopting CLI cwd %r (registry had %r)" % (self.sid[:8], cli_cwd, self.cwd))
                 self.cwd = cli_cwd
                 self.backend._update_reg(self.sid, cwd=cli_cwd)
-                if getattr(self, "_spend_first_result", False):   # getattr: __new__-built test doubles
-                    # The connect-time seed read the transcript under the REGISTRY's cwd; the CLI loaded
-                    # the one under ITS cwd (the same keying). No result has settled since the connect,
-                    # so re-seed from the file the CLI opened — a registry variant that holds no transcript
-                    # left the seed at zero for a file that carries a record, or the reverse. Never after
-                    # a settle: resetting the watermarks mid-process would fold the counters whole again.
-                    # The file the CLI opened is the PRE-flip sid's: when this same init also landed a new
-                    # fsid (a fork landing), resume_sid now names the file the CLI will write, which holds
-                    # no record — seeding from it read zero for a loaded file that carried one (2026-09-06).
+                if loaded_sid and getattr(self, "_spend_first_result", False):   # getattr: __new__-built test doubles
+                    # The connect-time seed read the transcript under the REGISTRY's cwd; the CLI loaded the
+                    # one under ITS cwd (the same keying). No result has settled since the connect, so re-seed
+                    # from the file the CLI opened: a registry variant that holds no transcript left the seed
+                    # at zero for a file that carries a record, or the reverse. Never after a settle: resetting
+                    # the watermarks mid-process would count the cumulative counters whole again. The file the
+                    # CLI opened is the PRE-flip sid's: when this same init also landed a new fsid, resume_sid
+                    # now names the file the CLI will write, which holds no record yet.
                     self._seed_spend_watermarks(resume_sid=loaded_sid)
             self.backend._poke()   # publish the model + permission-mode from init promptly: the snapshot reads
                                    # self.model, but with no poke the new model would wait out the 3s producer
@@ -6549,46 +6573,30 @@ class SdkSession:
                 if isinstance(total, (int, float)) and total > 0:
                     delta = total - self._last_cost_total if total >= self._last_cost_total else total
                     self._last_cost_total = float(total)
-                    if getattr(self, "_spend_first_result", False):   # getattr: __new__-built test doubles
-                        self._spend_first_result = False
-                        if delta > SANE_TURN_USD:
-                            # A first-after-connect delta above the mark: the turn's own cost on this CLI (a
-                            # print-mode resume starts its counters at zero — see SANE_TURN_USD), so recorded
-                            # as is and traced as an INFO line, not a problem — the figure is right and there
-                            # is nothing for the user to act on. It is wrong only if a CLI that restores cost
-                            # history in print mode read a different file than the seed (last_cost_state).
-                            self.backend._log("spend: %s's first result after connect cost $%.2f, above %.0f USD for "
-                                      "one turn (the CLI's cumulative total: $%.2f). Recorded as is: on this CLI a "
-                                      "resumed process starts its cost at zero, so this is the turn's own cost. It "
-                                      "would be wrong only if a CLI that restores cost history read a different "
-                                      "transcript than the connect-time seed (last_cost_state)."
-                                      % (self.name, delta, SANE_TURN_USD, total), problem=False)
-                    # the tokens: THIS turn's counts, from whichever result counter is a running total
-                    # (result_token_totals; the flat `usage` is per-turn now), folded against the watermarks
-                    # by _fold_turn_tokens (upstream's _turn_usage is the same two halves in one call)
-                    totals, cumulative = result_token_totals(msg)
-                    turn_u = self._fold_turn_tokens(totals, cumulative)
-                    if not cumulative:
-                        # No modelUsage on a paid result: the `usage` dict landed as the turn's own figure
-                        # (see _fold_turn_tokens). Said as a problem the user can act on
-                        # (usage_fallback_notice): the token columns are main-loop-only from here on; the
-                        # dollars are unaffected. ONCE PER KERNEL LIFE for the SDK cause, which is the host's
-                        # (the backend's flag: per session it was one card per live session plus one per
-                        # dormant revive, for a single remedy); once per session for the CLI cause, which is
-                        # this session's.
-                        if usage_fallback_is_sdk(msg):
-                            if not getattr(self.backend, "_usage_fallback_sdk_noted", False):   # getattr: test doubles
-                                self.backend._usage_fallback_sdk_noted = True
-                                self.backend._log(usage_fallback_notice(self.name, msg), problem=True)
-                        elif not getattr(self, "_usage_fallback_noted", False):   # getattr: __new__-built doubles
-                            self._usage_fallback_noted = True
-                            self.backend._log(usage_fallback_notice(self.name, msg), problem=True)
+                    first = getattr(self, "_spend_first_result", False)   # getattr: __new__-built test doubles
+                    self._spend_first_result = False   # the watermark moved: the process's first result is in
+                    # the tokens: THIS turn's counts, from whichever result counter is a running total —
+                    # the two are not the same kind (see _turn_usage; the flat `usage` is per-turn now)
+                    turn_u = self._turn_usage(msg)
                     self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
                                                sid=self.thread_of or self.sid)   # the rail's spend —
                     #   a comment THREAD bills its owning session (T144: whole-session truth for the
                     #   rail and the optimizer; a deliberate fork has no threadOf and bills itself)
                     #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
                     #   honest on a mixed host (see _record_spend)
+                    if first and delta > SANE_TURN_USD:
+                        # A first-after-connect delta above the mark: on the CLI as probed a resumed process
+                        # starts its counters at zero (SANE_TURN_USD), so this is the turn's own cost, recorded
+                        # as is and traced as an INFO line, not a problem: the figure is right and there is
+                        # nothing for the user to act on. It is wrong only if a CLI that restores cost history
+                        # read a different file than the connect-time seed (last_cost_state). After the record,
+                        # so a raising log callback costs the line and never the count.
+                        self.backend._log("spend: %s's first result after connect cost $%.2f, above %.0f USD for "
+                                          "one turn (the CLI's cumulative total: $%.2f). Recorded as is: a resumed "
+                                          "CLI process starts its cost at zero, so this is the turn's own cost. It "
+                                          "would be wrong only if a CLI that restores cost history read a different "
+                                          "transcript than the connect-time seed (last_cost_state)."
+                                          % (self.name, delta, SANE_TURN_USD, total), problem=False)
             finally:
                 # THE SETTLE — everything that makes the turn over for the kernel — runs whatever the
                 # bookkeeping above did (api-health, the rewind flags, the live-tail sweep, the refreshes,
@@ -8037,8 +8045,8 @@ class SdkBackend:
         self.append_prompt_path = append_prompt_path
         self._log_cb = log
         self._thinking_override_logged = False   # thinking_override_note said once per backend (see _options)
-        self._usage_fallback_sdk_noted = False   # usage_fallback_notice's SDK cause said once per kernel life:
-        #   the imported SDK is the host's, one for every session (the CLI cause keeps a per-session flag)
+        self._usage_fallback_sdk_noted = False   # usage_fallback_notice's SDK cause said once per backend: the
+        #   imported SDK is one fact for every session (SdkSession._note_usage_fallback)
         self.sessions: dict[str, SdkSession] = {}
         self._lock = threading.Lock()
         self._turn_seq: dict = {}                 # sid -> turns ended this kernel life (turn_seq; under _lock)
