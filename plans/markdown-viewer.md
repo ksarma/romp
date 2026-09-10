@@ -612,7 +612,10 @@ text, and which test holds each rule:
      and the one-tag html block, the paragraph opening with an inline tag and the one opening with an autolink as
      their own Raw row and the return within 1.5px; file-view-place-blocks.test.ts the same over the stand-in, its
      DOMParser built on the same parser, and codeOf's html `<pre>` exclusion (null; a fenced block skip 1, an indented
-     block skip 0).
+     block skip 0). Since the Slice 5 build (its note, items 1 and 1b) the map pairs the wrapper to itself and each
+     block nested in it to its own element, and the reader's place descends into the wrapper, so refusals (1) and (2)
+     are history: the html, wrapper-end and edits legs pin exact round trips from a nested paragraph, a picture or a
+     rule after a wrapper and the README pair, and a Raw row of the wrapper's own still seats nothing.
    - *Where it runs.* renderBody reads the place against the text the body was PAINTED from (`shownText`: a reload
      has put the new bytes in `text` before the swap), swaps, runs the seam's hooks, then seats, the order the #348
      selection keeper set (hooks first, then the restore), so the panel's paint pass has run before the body moves
@@ -2038,6 +2041,324 @@ text recurs maps to the wrong occurrence's offsets, the rest refuse. A tag test 
 names its element) closes the kept-element and hoisted-text shapes; an html `<p>` carrying the next paragraph's
 text needs the run confirmed past it. Acceptance: the text-alike html node is refused and each paragraph after it
 maps to its own offsets.
+
+**The Slice 5 build** (2026-09-10). Branch `mdviewer-s5`, cut from the fork's main at 5bae9a67 (the merge of Slice 4,
+fork PR #707) and moved to a3edbaaf7 before its first commit. A probe over the real viewer (2026-09-09, at 4def8dd8)
+recorded each defect before the build, and the ten rulings of 2026-09-09 on the points the text above left open are
+cited below by number with what each said. The items take the numbers of the sentence above, in the order it names
+them (the parenthesis on `<details>` is item 5; the reader's place inside a wrapper is item 1b and the merge review's
+text-alike node item 1c), and a reference to an item below is to that numbering. The standing rule for the build:
+these changes cause the file-comments feature no trouble, which item 10's last entry states as the guarantees every
+test family re-verifies. Where the code as built departs from the text above, why, and which test holds each rule:
+1. *Item 1, the flattened walk: a linear tag scan and the nodes a wrapper nests.* An html block that leaves a `<div
+   align="center">` or a `<details><summary>x</summary>` open is one top-level node holding the rest of the document
+   in a browser, so its nested blocks' text occurred in no top-level node, the resync across it (`runFits`) fit at no
+   end, the block took every node to the document's end and every later selection was refused as an HTML block at the
+   wrapper's offset (the probe: four of four selections after a div refused; a `<details>` at offset 205 took nine
+   elements). Now `topTags` (anchor-map.ts, on the Walked row beside `tagOf`, left to right with no backtracking, as
+   the comment scan is) reads an html token's raw once per source and answers the block's closed top-level tags in
+   order and the chain it leaves open, with the parser's implied ends that decide the block's nodes: a `<p>` closes at
+   a block-level start tag and at the raw's end (every block marked renders after it opens with a p-closing tag, so an
+   open top-level `<p>` is no wrapper and a `<p align="center">` badge row keeps its one element), a stray `</p>` is
+   the parser's empty `<p>`, void elements never open, comments and raw-text elements are skipped. The pairing
+   (`analyzeRendered`) reads the scan first: a closed tag takes the next node when that node is its element (a
+   `<style>` block whose element the sanitizer dropped takes none; `<p>Alpha</p>` over `<p>Beta</p>` take one each,
+   where the map had paired them as nothing and both); an open tag takes its element and splices the element's
+   children (elements, and text that is not blank) into the pairing right after it, so the blocks after the wrapper
+   pair against the nodes the browser nested in it and the element is one of the block's wrappers; a wrapper inside a
+   wrapper splices again, as two blocks or as `<div><div>` in one; the wrapper's own children in the raw (a summary)
+   go to the html block through the resync as before; a block that is a closing tag alone (`</div>`, `</details>`)
+   owns no element, as a comment's does. Then the resync runs from there. Where no end lines up and the scan took an
+   element, the scan's answer stands and the mismatch that follows is refused with its own node (the stripped-style
+   scene of anchor-map-fixtures/blank-scenes.json, the Slice 4 note's item 10 (d): the list item whose source the
+   sanitizer shortened is a mismatch with its own element and the paint reaches the closing paragraph); a block whose
+   scan took nothing (a dropped `<style>` before a mismatched paragraph) still takes every node, as before, recorded
+   and not changed. Three consumers of the top-level assumption changed with it: a selection boundary descends from
+   the top-level node to the deepest node holding it that a block renders as (`locate`), whitespace between nested
+   blocks snapping to the nested block beside it and a boundary on a wrapper landing on its first or last nested
+   block; `formulaExtra` reads the nearest node with a block, so a formula inside a nested paragraph names that
+   paragraph's hole; and the cached index's shape (`shapeOf`) holds every wrapper's children, so the regions layer
+   wrapping a picture inside a wrapper re-analyses as it does at the top level. One export for the reader's place
+   (item 1b): `renderedBlockWrappers(renderedRoot, source, b): Element[]`, the elements of block b whose children the
+   pairing took, in document order, empty for every other block; `renderedBlockIndex` answers for a nested node, and
+   `renderedBlockElements` for a nested paragraph's block is its one `<p>`, for the wrapper's block the wrapper and
+   what the resync left it (the summary). The wrapper's own rows (the `<div align="center">` line, a summary) stay
+   refused in both directions (ruling 2). Two consequences, accepted and pinned: a selection from the paragraph before
+   a wrapper into a nested paragraph refuses as an HTML block, since the wrapper's block owns a node and is the first
+   obstacle in the span (the probe had that selection mapping to a quote holding the `<div align="center">` line; a
+   quote should not carry raw HTML the person did not select as text, and the Raw offer stands), and its mirror, a
+   selection from a nested paragraph past `</div>`, maps with the closing tag's line inside the quote, as a comment
+   block's does. The cost: a mark inside a document-wide wrapper reads every highlight unit under the wrapper
+   (`wrapBetween` and `unitsUnder` read the root's child holding the mark, which is the wrapper, so the scoped walk
+   the Files pane freeze fixes brought is lost for such notes). Measured on the stand-in, 40 marks over a
+   1,000-paragraph note: 7.1 ms flat against 14.3 ms inside one `<div>`, the index plus one map 38.4 against 29.9 ms;
+   a 2x per-mark cost, accepted; `topChildOf` reading the nearest ancestor that holds a block is a small follow-up if
+   a browser measurement disagrees. Not modelled by the scan and left to the resync: the parser's implied ends other
+   than `<p>`'s (li, dt and dd, option), a top-level `<td>` or `<tr>` the parser drops, and raw html nesting inside an
+   open `<p>` from an earlier block. anchor-map-wrappers.test.ts (10 cases over anchor-map-fixtures/wrappers-plain.md,
+   wrappers-2block.md and wrappers-unclosed.md, synthetic, and every scene of blank-scenes.json reaching its closing
+   paragraph, the sanitizer's drops stood in for) and anchor-map-wrappers-browser.test.ts (3 legs over the real viewer
+   and the real panel, real-viewer-leg.ts: the Files pane at 900 and 380 px, the two-block fixture, the chat modal;
+   each drag maps to the passage's offsets, offers the float and opens the composer with the quote and Save; the
+   anchor-map exports ride a probe bundle injected after the load, so its cache is not the panel's, and the panel's
+   own mapping is read through the composer's quote). md-config-paint-trim-browser.test.ts's confinement of its
+   rendered-blank oracle to the blocks the paint reached is lifted: every scene reaches its closing paragraph, and the
+   fixture's note says so.
+2. *Item 1b, the reader's place inside a wrapper* (ruling 1: build the descent in this slice, since the pairing alone
+   made the Raw to Rendered direction seat a nested paragraph while Rendered to Raw still read no place). readPlace's
+   Rendered read (reader-place.ts `readRendered`) is one level of element children at a time: topVisibleIndex over the
+   level's boxes, then, for the child the search lands on, its block's wrappers; a child that is one of them stands
+   for the blocks nested in it and its element children are read in its place the same way, recursively; a child
+   paired to a wrapper's block that is not itself a wrapper (a `<summary>`; a `<p>Alpha</p>` the same block closed
+   before opening the `<div>`) is a row of the block's own and is passed over for the block after it, never the place,
+   so the wrapper's box at the edge reads the first nested block and a closed `<details>`, whose content has no
+   layout, reads the block after it; a level holding nothing at or below the edge hands back to its parent's. Per
+   level rather than over one flattened list: the map's index checks the root's shape child by child on every read and
+   readPlace runs on every scroll frame (file-view.ts notePlace), so a read per top-level child would cost the square
+   of the document. The two differ in one shape, not pinned: a floated figure inside a wrapper whose box reaches below
+   the wrapper's bottom while the edge is past that bottom beside the figure reads the next top-level element here
+   where the flat list would pass to the figure's neighbour. Beyond what was first designed, which named the summary
+   alone: every element paired to a wrapper's block that is not a wrapper is passed over, the closed-before-open
+   `<p>Alpha</p>` included, where it was refused before (the numeric scrollTop stood); the same rule as ruling 2's, a
+   stale scrollTop being worse than the first nested block. The seat direction is unchanged (ruling 2): ownedElements'
+   DOMParser check refuses the wrapper's own block, so a Raw row of the wrapper's own (`<div align="center">`,
+   `<summary>`) seats nothing; a nested paragraph's row seats at its own `<p>`; a closing tag's row (no element) seats
+   the last nested paragraph through the nearest-before fallback. file-view-place-blocks.test.ts (13; the two wrapper
+   tests rewritten, the stand-in's wrapper children given boxes stacked inside the wrapper; the stand-in stays on the
+   shim ratchet's allowlist, unswitched, since fork PR #569 migrates every stand-in),
+   file-view-place-html-browser.test.ts (6; tests 3 and 4 now exact round trips: the picture after a `<details>` back
+   at its depth within the Raw row's whole-pixel snap scaled by the picture's height over the row's, about 5 px at 900
+   px; the rule scene moved 2 px below the edge, since `.fileview-md hr` is a 1 px hairline whose bottom at 0 sits on
+   the very bound topVisibleIndex reads and the browser's sub-pixel snap then decides which block is the place; the
+   summary row to Rendered still writes nothing), file-view-place-wrapper-end-browser.test.ts (3; tests 1 and 2 exact:
+   nested paragraph 60 in a centred div closed last, never closed and `<details open>` closed at the end lands on its
+   own Raw row and returns within 1.5 px, and its Raw row 3 px above the edge seats its own `<p>` at the row's depth
+   scaled), file-view-place-edits-browser.test.ts (4; test 1 tightened to exact, paragraph 80's own row and back at
+   the same height). The Slice 2 note above records refusals (1) and (2) as history now.
+3. *Item 1c, the text-alike html node* (ruling 10: the tag test with the two-block confirmation, the last-block
+   exception stated). `fits` requires a mapped block's element tag as well as its text when the block has text
+   (`tagOf` names P, H1 to H6, UL, OL, BLOCKQUOTE, PRE, TABLE, HR, DETAILS, DIV); the empty-text branch stays
+   text-only, since an image paragraph wrapped by the regions layer's span pairs by empty text. `runFits` confirms a
+   run by TWO mapped blocks with text where two exist, so an html `<p>Go</p>` before the paragraph `Go` fits the first
+   and not the second and is not taken for it; the same-text list item (`- **a**` after a block rendering `a`, the
+   other trigger of the Slice 4 note's item 10 (d)) is closed by the tag test alone, a UL never fitting a P. The
+   last-block exception as it now stands: a closed tag the scan can see (`<p>Go</p>`) is taken before the resync, so
+   the exception needs a dropped wrapper, and a `Go` hoisted out of a dropped `<form>` before the note's FINAL
+   paragraph `Go` is taken for that paragraph (the quote is still the paragraph's own source; the leftover `<p>` is no
+   block's), pinned as it stands. The tag test can turn a wrong pairing into a mismatch refusal and never the reverse
+   (md-sanitize-anchor-map-browser.test.ts's mismatch refusals stand). anchor-map-wrappers.test.ts.
+4. *Items 2 and 8, code quotes raw and table quotes with their pipes as blanks, at paint time* (ruling 5: the plan's
+   "strip cell delimiters from a table quote" is read as a PAINT-time rule; the stored quote stays the exact source
+   slice, which the host's byte-exact locate requires, renderComposer is untouched, and the browser leg pins the
+   posted anchors). paintRendered's fallback matched a quote stripped of inline markup against the rendered text, the
+   strip that serves prose: the emphasis rule took the asterisks out of `total = a * b * 2` and the needle occurred
+   nowhere (the comment painted in Raw alone, its card offering Reveal and no Scroll link), the heading rule took the
+   `# ` off `# a comment` so it painted two characters in, and a Raw comment across two cells kept its pipe in the
+   needle against cells with nothing between them. Now the scope's source and the quote are read line by line by hole
+   kind (`scopeMapped`, beside `stripMarkupMapped`, which is its no-hole case byte for byte): a line outside every
+   hole is stripped as before; a line of a code hole is kept as the source holds it, a fence line dropped since it
+   renders nothing (so a quote over the whole block, fences included, still paints, from its first character), the
+   container's prefix before the hole on its first line dropped and a quoted hole's following lines shed of the
+   quote's markers, as the walk's suffix view reads them (a two-line quote in a quoted fence goes on painting); a line
+   of a table hole reads each unescaped `|` as a blank, `\|` literal, the inline strip kept for a cell's own markup
+   and the lead rules skipped (a cell beginning `- ` shows those characters). Per line and not the whole scope raw,
+   which was first proposed: a code token the list item's prose repeats inside a link's label and URL would count the
+   URL's copy on the source side and the guard would paint nothing (anchor-map-fallback-markup.test.ts test 10 pins
+   the difference as a control). The hay puts a blank between two adjacent table parts (`hayRuns`; `codeRuns`
+   unchanged), which fires only in a DOM without whitespace nodes between the cells (Chromium's table DOM carries
+   them). Needle and scope read alike, so the count guard stays exact and a repeated code line or a repeated row
+   paints the range's own by ordinal; a quote spanning the delimiter row paints nothing and the card keeps Reveal; a
+   quote across two body rows paints both cells. The hole reasons are constants (CODE_HOLE, INDENTED_CODE_HOLE,
+   TABLE_HOLE), their strings unchanged. Inherited from the strip and left: a table row's inline rules run over the
+   whole row, so a `*` opening in one cell and closing in another reads as emphasis on the source side while both
+   asterisks show; a code line beginning `>` inside a QUOTED fence loses that character to the quote-marker rule; a
+   code line opening with three backticks inside a longer or different fence is dropped on the source side while the
+   rendering shows it (a token-exact fence read is a small follow-up if it bites). A range spanning prose and a hole
+   is placed by the exact path from its positioned characters, the hole at the edge unpainted (item 10 (b) below), so
+   the mixed-kind needle matters only for a range with no positioned character, where both sides agree line by line.
+   anchor-map-fallback-markup.test.ts (12; six new), anchor-map-code-table-paint-browser.test.ts (2 legs over the real
+   viewer and panel: a Raw drag over each passage saved through the float and the composer, the posted anchors the
+   exact slices, then the switch to Rendered painting the code line whole inside the fence's first row and one mark in
+   each of the row's two cells, each card offering Scroll and not Reveal; the same comments served before a fresh
+   open, on the pane and in the chat modal). The store's side: tools/file-comments-host-anchors.test.mjs (2 guards)
+   and tests/test_file_comments_e2e.py (2 cases) pin that uniqueAnchor, locateExact and the comment verb, over the
+   kernel wire, keep the slice with its operator or its delimiter and stamp anchorAt; the host was byte-exact before
+   the slice, so both say they are guards.
+5. *Item 3, the Raw offer at a formula, and refusals in the person's terms* (rulings 7 and 9). The math holes and the
+   formula refusal landed with Slice 4 (its note, item 2), but `formulaExtra` took the Raw range from the selected
+   RENDERED text, and KaTeX's glyphs are not in the source: Switch to Raw preselected the prose the drag ran into
+   (`math and`) or nothing for a formula selected alone. Now, when the formula's hole is found, the offer is the
+   hole's span with its delimiters, `$E = mc^2$` or the `$$` block through its closing line (the line feeds a display
+   block's raw carries after it, and any indent before it, trimmed), rawHasQuote true and rawRange starting at
+   blockStartOffset, so the switch preselects the formula and the composer quotes it with Save; where the hole is not
+   found (a hand-typed `.katex` placeholder before the real formula makes the count disagree; a formula under no
+   block) the offer falls back to the selected text's occurrence as before, pinned. Six message sites carried a token
+   type (`a ${t.type} the mapping could not place` in the inline walk, the block walk and the token placement,
+   `${t.type} marks the mapping could not place`, and two defaults with `(${t.type})`). `refusalNoun(type, inline)`
+   gives each token its noun: the Slice 4 constructs by what they show (a footnote definition, a footnote reference, a
+   display formula, a formula, the front matter, a callout, a highlight for `mark`, a wikilink), marked's built-ins
+   with their article (a paragraph, a heading, a list, a list item, a table, a code block, a quote, a rule, blank
+   lines, a link definition, text, an escaped character, an inline code span, emphasis, strong emphasis, a
+   strikethrough, a link, an image, a line break), `html` as an HTML block or, inline, an HTML tag, and "content" for
+   a kind the map has no name for; the sites read `${noun} the mapping could not place` and `${noun} whose marks the
+   mapping could not place`, and the defaults are the constant "content of a kind the mapping does not handle" with no
+   type. No input the lexer accepts today reaches those sites (every token raw tiles the source; fifty odd shapes
+   probed produce only refusals in the person's terms), so the closure is held by the catalogue through a test-facing
+   export and by a source pin (anchor-map.ts interpolates no `${t.type}`); the refusal sentence's shape is untouched,
+   so the guide's pinned clause and the composer pins stand. A gesture fact for the formula legs: a drag begun at the
+   centre of a lone KaTeX glyph collapses to a caret in Chromium (five shapes probed), so a leg begins at the
+   formula's edge or drags from the prose into it, and a page over real-viewer-leg.ts needs KaTeX's sheet added, since
+   the leg drops the sheet's import. anchor-map-obsidian.test.ts (25; four new: the offer in each of the fill's three
+   shapes, inline and display; the placeholder's fallback; no token type in any refusal over the obsidian and refusals
+   fixtures and 46 odd constructs, a case in the catalogue for every type the lexer emits over a kitchen-sink note and
+   every extension name, the misplaced footnote definition's sentence, the source pin; the first obstacle, item 4),
+   md-config-math-map-browser.test.ts (5; one new over the real viewer and panel on the pane and in the chat modal: a
+   real drag from the inline formula's edge into the prose and a real triple-click on the display formula, refused
+   with the Raw button promising the passage, the switch preselecting `$E = mc^2$` or the `$$` block in view, the
+   composer quoting it with Save).
+6. *Item 4, the first obstacle in document order.* mapRenderedSelection ran a loop over the span's blocks for a
+   REFUSED block and only then read the characters for a hole, so a visible html block anywhere in the span was named
+   over an earlier table or code hole (the probe: a table cell or the math paragraph dragged to a `<details>` summary
+   read "an HTML block" at the summary's offset where the table came first). Now one pass over the blocks from the
+   span's first to its last names the first obstacle it meets: a refused block with an element on the page refuses
+   when reached, a mapped block's selected characters are read for a hole before the next block is considered, a
+   refused block with no element (a comment, a closing tag alone) is passed over as before, and the characters are
+   read only when the endpoints stand in order, so the whitespace between two blocks is still "only whitespace" and
+   the block beside it is not scanned. blockExtra and rawExtra are unchanged, so each refusal's Raw offer is what it
+   was; the two probe scenes name the table with the table's Raw offer, and the paragraph before a div into its nested
+   paragraph still names the HTML block, the wrapper's block being the first obstacle (item 1). Untouched: a selection
+   ending at a formula's element is judged before the pass (the formula check at the top), so a span from a table cell
+   into a formula's glyphs names the formula. anchor-map-obsidian.test.ts (a note with a code block, a table and an
+   html block), anchor-map-wrappers.test.ts (the two scenes over wrappers-plain.md, and the code line past the div
+   wrapper naming the code block).
+7. *Item 5, opening `<details>` ancestors in goTo: landed with Slice 4* (revealMarks in file-comments.ts, run first in
+   goTo, in scrollCard and before the pass for a card the head click opened;
+   md-config-goto-closed-details-browser.test.ts and the two focus plan pins hold it). Nothing built here; the guide
+   gains the sentence (item 10). In the list layout a card-head click toggles the card and reveals no fold, by design
+   (the reveal runs on the head click in the margin layout alone; the quote button reveals in both layouts); left as
+   it is, since a head click in that layout has never scrolled.
+8. *Item 6, overlapping highlights: one wash, a click opens every covering card* (ruling 3: every covering card opens,
+   the clicked one is the focus, no chooser). The later-painted comment nests inside the earlier one's mark wherever
+   they overlap (wrapNode wraps each text node in place; the pass paints in cards() order and repaintPresel keeps it),
+   so the delegate resolved the innermost mark, fcopen opened that one card, and the outer card could not be reached
+   from the overlapped text; the sheets had no nested rule, so the overlap composited a second wash and a second inset
+   ring. Now the fcopen handler, after the dragClick guard, opens the cards of every comment whose highlight covers
+   the clicked mark (`openCovering`: each fcopen mark of the panel's own above the clicked one, opened as a head click
+   opens a card, in one render) and shows the clicked one as the focus (showCard, level with its mark in the margin
+   layout); Enter on a mark takes the same path through the row's keydown, KEY_ACTS an exact set still. Both sheets
+   gain `.fc-hl .fc-hl { background: none; box-shadow: none; }` byte-equal, the head in the fileview-parity RULES
+   list. The rule drops the wash and the ring only: the padding stays, so every wrap point stays where the nest legs
+   measure it (the layout-neutral mark, item 10 (f) below, is the person's call, not applied); the dashed context cue
+   is an outline and stays; the arrivals dot's rule comes later at the same weight and stays. With a composer pending
+   on a target in the same line, the repaint has painted the highlights again in cards() order with the target among
+   them: the nested mark is still transparent, the click opens both cards, and in the margin layout the pending
+   composer's box holds the slot level with its target so the cards stack under it, the clicked first; that stacking
+   is the margin layout's standing rule, and a clicked card level with its mark while a composer stands would be a
+   card-layout question, not this item's. file-comments-overlap.test.ts (5), file-comments-overlap-browser.test.ts (1
+   leg over the real panel at 900 and 600 px: the nested mark's computed background transparent and no ring while the
+   outer keeps both; a real click on the overlap opening both cards, the clicked one level with its mark in the margin
+   layout and both open in the list; the same pending and after Cancel). tools/file-review-plan-markclick.test.mjs's
+   pin on the handler line is re-aimed with its intent.
+9. *Item 7, paintAll's sequential hint, the narrow version* (ruling 4: build it and move the four verbatim pins with
+   it, an inserted line not sparing the two regex pins that require the lines adjacent). paintAll hands the engine a
+   card's stored position as the tie-break; a card with none (written by the CLI or another editor) took no hint, so
+   two such comments with the same anchor on a repeated line both painted on the first copy. Now such a card takes a
+   sequential hint when a card painted before it in cards() order has the same anchor, equality being the quote with
+   its prefix and suffix (`anchorKey`, the host's own reading of a tie): a position whose nearest tied copy is the
+   first copy AFTER that card's (`nextCopyHint`). The engine breaks a tie by the copy nearest the hint, so the
+   previous card's located end alone, the shape first proposed, would name the next copy only when it starts within a
+   quote's length of that end, a repeated line; the probe steps the hint right from the previous copy's start,
+   doubling the distance, until the engine's pick moves past that copy, which the doubling keeps at or short of the
+   next copy, so the pick is that copy and never one beyond it, in log2(gap over quote) engine scans, one scan when no
+   copy follows and then no hint (the engine's earliest pick, as before); a repeated paragraph is covered too, and the
+   rule is still narrow, positionless cards with an equal anchor alone paying the scans. copyUnsure still receives the
+   STORED position, never the hint, so the pick stays a guess: the dashed cue, the "passage recurs" tag, the mark's
+   title saying no position is stored; a card with a position is unaffected wherever it stands, and a unique anchor
+   takes no hint. The pins moved: file-comments-anchors.test.ts, tools/file-review-plan.test.mjs,
+   tools/file-review-plan-anchors-states.test.mjs (its includes on the unsure line stands).
+   file-comments-hint-order.test.ts (3: three copies a thousand characters apart with two positionless comments on the
+   first and second, one positioned on the third unaffected, a fourth with no copy left back on the first, a unique
+   anchor plain; the hint scoped to an equal anchor; the probe's back-to-back line with a two-character context).
+10. *Item 9, the Comment offer on a keyboard selection* (ruling 6: the listener lives in the panel, not the seam,
+   whose onSelect also seeds the quote chip with a fetch of the file per gesture and must not run per keystroke). The
+   float rode the seam's mouseup and touchend alone, so a selection made or changed from the keyboard (Shift+Arrow
+   over a drag's selection, caret browsing, assistive technology) offered nothing and the float stayed where the drag
+   had left it while the selection shrank under it. The panel now hears the document's selectionchange
+   (`onSelectionChange`), installed after the seam's hook line (file-view-place.test.ts requires the body's scroll
+   listener line immediately followed by that hook) and removed at dispose, with four guards and then the seam's own
+   path (onSelection): nothing while a pointer is down (`pointerHeld`, set by the capture mousedown and touchstart
+   beside hideFloatOnDown, cleared at mouseup, touchend, touchcancel and dragend, since a press that becomes a native
+   drag of selected text sees no mouseup; a drag keeps its one offer at mouseup and the float does not flicker
+   mid-drag); nothing while the editor holds the body; the selection the float is already offered beside changes
+   nothing (`offeredFor`, its text and two ends recorded by onSelection, so the seam's re-seat of the same ends after
+   a paint makes no second offer and an offer a scroll hid stays hidden, a scroll firing no selectionchange); a
+   collapsed selection, or one with an end outside the body (Ctrl+A puts one at the page's start; a selection in the
+   aside), HIDES a passage's float, one point beyond what was first designed, which had the outside-body case do
+   nothing (the passage the float was offered for is no longer the selection; a picture's float stands); a different
+   non-collapsed selection inside the body shows the float at its rect. The quote-chip seed stays on mouseup and
+   touchend; the seam comment at file-view.ts onSelection says where the keyboard's path lives. In Chromium a keyboard
+   selection needs an existing selection or caret browsing (F7), so the gain is the float following a
+   keyboard-adjusted selection and the offer for caret-browsing and assistive users.
+   file-comments-keyboard-offer.test.ts (7), file-comments-keyboard-offer-browser.test.ts (1 leg over the real panel
+   at 380 and 900 px: a drag, then Shift+ArrowLeft three times, the float at the shrunk selection's own rect; a
+   text-size step leaves it hidden; the next keyboard change offers again at the reflowed rect; Ctrl+A hides it; a
+   drag offers once more).
+11. *Item 10, the records, and what was routed here from Slice 4.* docs/guide.md's Comments paragraph gains three
+   clauses (the button follows a keyboard selection; two comments over one text carry one highlight and a click on the
+   overlap opens both cards, the clicked one in front; going to a comment inside a closed fold opens the fold first),
+   pinned by tests/test_guide_files_keyboard_overlap_fold.py against the source that keeps each; the vocabulary and
+   anchors pins' clauses stand where they were. The ledger entry is upstream/2026-09-10-markdown-viewer-slice5.md
+   (tier feature). CONTEXT.md is unchanged: the build coined no term (a wrapper is the Slice 2 note's own word for the
+   element the browser nests markdown into). From the Slice 4 note's item 10, decided with the build: (a) the
+   html-block resync defect, its same-text trigger closed by item 1c's tag test and its sanitizer-shortened trigger by
+   item 1's closed-tag rule, the trim leg's confinement lifted; (b) a hole at a range's edge stays unpainted and the
+   callout title stays text, the rule as it stands with its two pins (anchor-map-obsidian.test.ts: the alert body
+   maps, a nested fold's title inside the range is painted with the rest), since painting a hole at the edge would
+   paint tables and code blocks there too and is Slice 8's neighbourhood; (c) the whitespace alphabet at a selection's
+   edge stays JavaScript's `\s` on every side, since a narrower one is a change to the walk, the matching and the
+   panel's normalize together and nothing here needs it; (d) the unpaint normalizes each parent once:
+   `unwrapMarks(marks)`, exported from file-comments.ts beside unframeImage, collects the parents over the loop and
+   normalizes each after it (the 9,999 marks over the 5,000-link paragraph unwrap in 11 ms against 469), Panel.unpaint
+   and Panel.unwrap (repaintPresel's step) run it, nested marks coming outer first so the inner's parent is the block
+   by the time it is read (given inner first the detached outer's normalize is a no-op and the block is still
+   normalized once); file-comments-unpaint-normalize.test.ts (2, the normalize counted per element) and
+   md-config-paint-whitespace-browser.test.ts's timing legs re-aimed at the panel's own function in place of their
+   private copies; (e) a display formula under a highlight stays bare, decided with Slice 8's block-level paint; (f)
+   the layout-neutral mark not applied (item 6); (g) paintPresel untouched, nothing to record; (h) the list layout's
+   head click unchanged (item 5); (i) Slice 8's boundary stands: a cell or a code line selected from Rendered refuses
+   with the Raw offer and the switch preselects the passage, a selection across two cells refuses with no preselect,
+   and item 4's one pass changes neither (one obstacle in those spans). Also decided: one PR for Slice 5 alone, Slice
+   8 to extend its test files; the new node tests in the test-DOM shim's idiom (hideEdges on every node, as the
+   ratchet requires) with the existing stand-ins left unswitched for fork PR #569's migration; the two paint calls,
+   the class line, the onSelection wiring, switchToRaw's body, the panel's CSS block, the KEY_ACTS set, goTo's
+   selector and the reveal lines keep their source-text pins, none moved but item 7's four and item 6's one. Costs
+   recorded: the tag scan is linear in an html token's raw and runs once per source on the Walked row (the one
+   Lexer.lex across three roots stands, file-view-place-source-cache.test.ts); the wrapper's cost to a mark is item
+   1's measurement; the sequential hint costs one engine scan for a positionless same-anchor card whose copies are
+   used up and log2(gap over quote) plus one otherwise, paid by such cards alone; the descent costs one shape check
+   per level read, not one per top-level child (item 1b); the nested mark rule changes no box the trim or the margin
+   layout reads. Tests, by file (every new node test on the shim's stand-ins with hideEdges; every browser leg over
+   headless Chromium and the real bundles, 0 skipped, counted on every run): anchor-map-wrappers (10),
+   anchor-map-wrappers-browser (3), anchor-map-fallback-markup (12, six new), anchor-map-code-table-paint-browser (2),
+   anchor-map-obsidian (25, four new), md-config-math-map-browser (5, one new), md-config-paint-trim-browser (5, the
+   confinement lifted), the fixtures anchor-map-fixtures/wrappers-plain.md, wrappers-2block.md, wrappers-unclosed.md
+   (new) and blank-scenes.json (its note); file-view-place-blocks (13, two rewritten), file-view-place-html-browser
+   (6, two rewritten), file-view-place-wrapper-end-browser (3, two rewritten), file-view-place-edits-browser (4, one
+   tightened); file-comments-overlap (5), file-comments-overlap-browser (1), file-comments-hint-order (3),
+   file-comments-keyboard-offer (7), file-comments-keyboard-offer-browser (1), file-comments-unpaint-normalize (2),
+   fileview-parity (the nested head), file-comments-anchors and md-config-paint-whitespace-browser (re-aimed);
+   tools/file-review-plan.test.mjs, tools/file-review-plan-anchors-states.test.mjs and
+   tools/file-review-plan-markclick.test.mjs (pins moved); tools/file-comments-host-anchors.test.mjs (14, two new),
+   tests/test_file_comments_e2e.py (25, two new), tests/test_guide_files_keyboard_overlap_fold.py (8, new). Every case
+   that changes behaviour fails over a `git archive` of a3edbaaf7 (the branch's base) and says how in its commit; the
+   guards say they are guards. The guarantees the families re-verify: highlights are measured `<mark class="fc-hl">`
+   elements over the range's text nodes with their data-act, id, tabIndex, role and title, the margin layout reading
+   their boxes (the walk, the raw needle and the cell gap change where marks appear, never their shape; the nested
+   rule their paint, not their boxes); the pairing is the one table the reader's place, the change marks and the
+   selection map read; the regions layer's span over a picture is in the index's shape at every depth; PRE and TD stay
+   refused, so the fallback's ordinal keeps marking the changed cell or line under the raw needle and the pipe rule;
+   the float, the composer and the save keep their rules under the keyboard offer and the composer's quote stays the
+   exact source slice; and Slice 8's boundary stands.
 
 ### Slice 6: reaching a section without scrolling
 
