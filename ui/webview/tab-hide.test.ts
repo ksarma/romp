@@ -831,9 +831,9 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // local id and name, matched by the id first and the name second, and every resolution latches what it found), and three callers
   assert.match(MENU, /const unionFor = \(\) => viewTagUnion\(effViews\(\)\);\s*\n\s*const holding = \(\) => unionFor\(\)\.filter\(\(g\) => g\.members\.includes\(id\)\);\s*\n\s*const refOf = \(name: string\): SectionRef => \{ const g = unionFor\(\)\.find\(\(u\) => u\.name === name\); return g \? sectionRef\(g\) : \{ name, localId: null \}; \};[^\n]*\n\s*let copyNow: SectionRef \| undefined = copy \? refOf\(copy\) : undefined;\s*\n\s*const sameSection = \(a: SectionRef, b: SectionRef\) => \(a\.localId !== null && b\.localId !== null \? a\.localId === b\.localId : a\.name === b\.name\);[^\n]*\n\s*const heldCopy = \(held: TagUnion\[\]\): TagUnion \| undefined => \{\s*\n\s*const c = copyNow;\s*\n\s*if \(!c\) return undefined;\s*\n\s*return \(c\.localId !== null \? held\.find\(\(g\) => g\.localId === c\.localId\) : undefined\) \?\? held\.find\(\(g\) => g\.name === c\.name\);[^\n]*\n\s*\};\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;\s*\n\s*const held = holding\(\);\s*\n\s*const home0 = heldCopy\(held\) \?\? \(held\.length === 1 && !held\[0\]\.pending \? held\[0\] : undefined\);[^\n]*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};\s*\n\s*let refreshHideRow = \(\) => \{\};[^\n]*\n\s*let refreshTags = \(\) => \{\};/,
     "the copy as a section ref (round 4): refOf resolves a name to its union's ref, or the name alone for a tag not yet created; heldCopy matches in two passes (round 6): by the local id over every held union first, then by the name when no union carries the ref's id, so a pushed rename keeps the copy whatever the drag order, the ack replaces a placeholder id, a remote-only group is known by its name, and a same-named tag under a new id keeps the copy the strip still shows; homeNow is a pure function of the ref and the views (round 5): the copy's own group, else the one remaining holder, nothing latched");
-  assert.equal(MENU.split("sameSection(").length - 1, 3, "three comparisons of two sections (the declaration reads `sameSection = (`): the Hide tab row's click guard (round 6; heldCopy resolves in its own two passes, id then name; round 5 shared the comparison, so a same-named union under a new id was no match and the copy fell through), Move to's source guard (round 8: the copy's home at the click must be the section the row was built for) and the carried cue's match (round 8: the refused row's section against each rebuilt row's)");
+  assert.equal(MENU.split("sameSection(").length - 1, 4, "four comparisons of two sections (the declaration reads `sameSection = (`): the Hide tab row's click guard (round 6; heldCopy resolves in its own two passes, id then name; round 5 shared the comparison, so a same-named union under a new id was no match and the copy fell through), Move to's source guard (round 8: the copy's home at the click must be the section the row was built for), the carried cue's match (round 8: the refused row's section against each rebuilt row's) and the pin row's home guard (round 9: the copy's home at the click must be the row's section, Move to's rule; round 7 guarded on the row's union alone, so a copy re-homed under the press wrote a pin the prune dropped)");
   assert.equal(MENU.split("const sameSection = ").length - 1, 1, "declared once");
-  assert.equal(MENU.split("homeNow()").length - 1, 4, "the row's gate (rowHome, which its refresh and its click share, round 6), the flyout's per-build read, the flyout's signature (round 6: the home resolution is an input its rows read; grouping is read through it, never bare) and Move to's source at the click (round 8)");
+  assert.equal(MENU.split("homeNow()").length - 1, 5, "the row's gate (rowHome, which its refresh and its click share, round 6), the flyout's per-build read, the flyout's signature (round 6: the home resolution is an input its rows read; grouping is read through it, never bare), Move to's source at the click (round 8) and the pin row's home at the click (round 9)");
   assert.equal(MENU.split("readTabGroups().on").length - 1, 1, "one bare read in the menu, inside homeNow");
   assert.equal(MENU.replace(/\/\/[^\n]*/g, "").split("copyNow").length - 1, 4, "declared, read once by heldCopy (the one matcher, which homeNow and aimAdd share) and written by the user's gestures alone (round 5): the move and the add (aimAdd); a remove leaves it, and no resolution writes it");
   assert.doesNotMatch(MENU, /copyNow = sectionRef\(home0\)/, "round 5: no latch at the resolution (round 4 kept speaking for the one remaining holder after the removed tag came back, and the click hid it)");
@@ -878,6 +878,8 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.doesNotMatch(flyBlock, /typed|focused/, "no value or focus copied back: the round-4 restore is gone with the node it restored");
   assert.match(RENDER, /type TabGroupsState, type SectionRef \} from "\.\/tab-groups";/, "SectionRef reaches render.ts");
   assert.match(MENU, /plus\.addEventListener\("click", \(e2\) => \{ e2\.stopPropagation\(\); const live = liveUnion\(ref\); if \(!live\) \{ refuse\("other", ref, lb\.textContent \?\? ""\); return; \} aimAdd\(live\.name\); editUnion\(live, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); \}\);/, "the + beside a Move to row aims too (round 5), on the union resolved at the click (round 7): from the one-holder fallback it confirms that holder as the copy, so the add is an add and the row stays");
+  assert.match(MENU, /const h = homeNow\(\); if \(!h \|\| !sameSection\(sectionRef\(h\), sec\)\) \{ refuse\("pin", sec, sb2\.textContent \?\? ""\); return; \} writeTabGroupsPruned\(setPinned\(tabGroups\(\), sectionRef\(h\), id, !on\)\); build\(\);/, "the pin row's section is the copy's home at the click, and it must be the row's, Move to's rule (round 9; G2 executes the re-home, the two-holder re-home and the same-named tag under a new id; round 7 guarded on the row's union alone, so a copy re-homed under the press while its home's tag stood wrote a pin the prune dropped, with no cue)");
+  assert.doesNotMatch(MENU, /liveUnion\(sec\)/, "the pin row no longer resolves its union by the ref (a home guard that then wrote the live union's ref still wrote a pruned pin in the renamed-away-plus-same-name corner)");
   // round 3: THE MENU'S SEAT. One seat for the menu (the cursor's corner clamped inside the pane; the emoji picker's anchor follows),
   // re-run from the menu's own corner by the row's refresh, and the open flyout re-placed after it; the seat runs once the menu is on
   // the page (the lift's anchor)
@@ -1834,7 +1836,7 @@ test("executed: A RENAME PUSHED WHILE THE MENU IS OPEN (menu review rounds 4 and
   });
 });
 
-test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 and 8). A remote same-named tag joining the copy's union with the session, or an already-joined one taking the session, rebuilds the open flyout's rows, and the x then clears every tag of the name; under a pressed pointer the rebuild is parked and the x and Move to resolve the union again at the click, so the remote copy is cleared too; the click resolves the union as heldCopy does, by its id over every union and by its name when none carries the id (round 8: a rename under the press by the id; a remote-only union, a union whose local half went and a tag made again under the same name by the name); Move to's source is the copy's home at the click; a refused click's cue rides the rebuild to the row of the same kind and section, and a union gone at the click has its row's removal for the answer; the + beside Move to, the + <name> row and Show when folded resolve at the click", async () => {
+test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 and 8). A remote same-named tag joining the copy's union with the session, or an already-joined one taking the session, rebuilds the open flyout's rows, and the x then clears every tag of the name; under a pressed pointer the rebuild is parked and the x and Move to resolve the union again at the click, so the remote copy is cleared too; the click resolves the union as heldCopy does, by its id over every union and by its name when none carries the id (round 8: a rename under the press by the id; a remote-only union, a union whose local half went and a tag made again under the same name by the name); Move to's source and Show when folded's section are the copy's home at the click (round 9 for the pin row); a refused click's cue rides the rebuild to the row of the same kind and section, and a union gone at the click has its row's removal for the answer; the + beside Move to, the + <name> row and Show when folded resolve at the click", async () => {
   // Round 6's signature listed each union's name, id, colour, pending state and hold on the session, so a remote infra tag arriving
   // with the session (the union already held it through the local tag) or an already-joined remote infra taking the session changed
   // nothing in the string: rebuildFly was a no-op, the x's handler kept the union it was built from (remotes empty, or the remote's
@@ -1847,7 +1849,9 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
   // the x, Move to and the pin row refused a union whose local half had gone while a remote same-named tag held the session, where the
   // Hide tab row's guard wrote); Move to's source is the copy's home at the click, and the refusal's cue rides the rebuild to the row of
   // the same kind and section (F, G; round 7 pulsed the row the click landed on, which the parked rebuild took off a macrotask later);
-  // the + beside Move to, the + <name> row and Show when folded resolve at the click (G, H: a build-time closure fails each)
+  // the + beside Move to, the + <name> row and Show when folded resolve at the click (G, H: a build-time closure fails each). Round 9: the
+  // pin row's section must be the copy's home at the click, Move to's rule (G2: a one-holder re-home refused once with the cue on the
+  // rebuilt row, a two-holder re-home with no row and no cue, a same-named tag under a new id refused once under the same words)
   type Views = { active: string; tags: Array<{ id: string; name: string; color: string; members: string[] }>; remoteTags?: Array<{ id: string; host: string; name: string; color: string; members: string[] }>; tagOrder?: string[]; seq: number };
   const hooks = menuHooks();
   const rowOf = (menu: FakeEl) => menu.children.find((it) => it.has("ctx-item-hide"));
@@ -2153,6 +2157,71 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
     assert.equal(pinNew.title, NOTE("keep this tab on the strip while infra is folded"), "the note names what was refused");
     await tick();
     assert.ok(pinRow(fly) === pinNew && pinNew.has("romp-acted"));
+    // G2 (round 9): THE PIN ROW'S SECTION MUST BE THE COPY'S HOME AT THE CLICK, Move to's rule. web under infra alone, the flyout on it; the
+    // press; a push moves web out of infra into a new ops tag while infra stands; the release; Show when folded: round 8 guarded on the
+    // row's union alone (liveUnion), so infra standing let the click write a pin for web under infra, which the prune dropped at once (a
+    // no-op write, its event, a strip re-render, no cue), while the rebuilt row spoke for ops. Now the home at the click (ops) is not the
+    // row's section (infra): nothing written, the cue on the rebuilt pin row, which names ops, and the second click pins ops
+    hooks.views = V; hooks.writes = [];
+    menu = api.open("web", "infra");
+    fly = flyOf(menu);
+    const pinG3 = pinRow(fly)!;
+    assert.equal(pinG3.sub(), "keep this tab on the strip while infra is folded");
+    press(menu);
+    const V_WEB_OPS: Views = { ...V, tags: [{ ...V.tags[0], members: ["api", "tests"] }, V.tags[1], { id: "g6", name: "ops", color: "#f0f", members: ["web"] }], seq: 5 };
+    api.push(V_WEB_OPS);
+    win.fire("pointerup");
+    pinG3.click();
+    assert.equal(hooks.writes.length, 0, "nothing written: the copy's home is ops where the row was built for infra (round 8 wrote a pin for infra, which the prune dropped)");
+    const pinOps = pinRow(fly)!;
+    assert.ok(pinOps !== pinG3 && pinOps.isConnected && !pinG3.isConnected, "the pin row rebuilt for ops");
+    assert.equal(pinOps.sub(), "keep this tab on the strip while ops is folded");
+    assert.ok(pinOps.has("romp-acted"), "the cue rides to it");
+    assert.equal(pinOps.title, NOTE("keep this tab on the strip while infra is folded"), "the note names what was refused");
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("ops"), "the Hide tab row names ops, the one holder");
+    await tick();
+    assert.ok(pinRow(fly) === pinOps && pinOps.has("romp-acted"), "the parked run found the signature built and left the pulsing row");
+    pinOps.click();
+    assert.deepEqual(hooks.writes.map((w) => w.pinned), [[{ sid: "web", name: "ops", id: "g6" }]], "the second click, on a row built for ops, pins ops");
+    await tick();
+    writeTabGroups(d);
+    // the two-holder re-home: web out of infra into ops and archived at once; the copy has no home, so no pin row is rebuilt: nothing
+    // written, no row, no cue (round 8 wrote the dropped pin here too)
+    hooks.views = V; hooks.writes = [];
+    menu = api.open("web", "infra");
+    fly = flyOf(menu);
+    const pinG4 = pinRow(fly)!;
+    press(menu);
+    api.push({ ...V_WEB_OPS, tags: [V_WEB_OPS.tags[0], { ...V_WEB_OPS.tags[1], members: ["old1", "old2", "web"] }, V_WEB_OPS.tags[2]], seq: 6 });
+    win.fire("pointerup");
+    pinG4.click();
+    assert.equal(hooks.writes.length, 0, "two holders, neither the copy's own: nothing written");
+    assert.equal(pinRow(fly), undefined, "no pin row: the copy has no home");
+    assert.equal(cued(fly).length, 0, "no cue anywhere");
+    assert.equal(rowOf(menu), undefined, "and no Hide tab row");
+    await tick();
+    // the words-unchanged variant: infra (g1) renamed away from under api while a new tag named infra (g9) takes api, so the rebuilt pin
+    // row reads the same sentence; the home at the click is g9 where the row was built for g1: refused once with the cue (the words alone
+    // would show nothing), and the second click pins g9 (round 8's liveUnion found g1 by its id and wrote a pin for api under platform,
+    // which the prune dropped, so the byte-identical rebuild showed nothing at all)
+    hooks.views = V_API_BOTH; hooks.writes = [];
+    menu = api.open("api", "infra");
+    fly = flyOf(menu);
+    const pinG5 = pinRow(fly)!;
+    press(menu);
+    const V_G1_AWAY: Views = { ...V_API_BOTH, tags: [{ ...V_API_BOTH.tags[0], name: "platform", members: ["web", "tests"] }, V_API_BOTH.tags[1], { id: "g9", name: "infra", color: "#4EC9B0", members: ["api"] }], seq: 7 };
+    api.push(V_G1_AWAY);
+    win.fire("pointerup");
+    pinG5.click();
+    assert.equal(hooks.writes.length, 0, "nothing written: the home is g9 where the row was built for g1");
+    const pinG9 = pinRow(fly)!;
+    assert.ok(pinG9 !== pinG5 && pinG9.isConnected && pinG9.has("romp-acted") && pinG9.title === NOTE("keep this tab on the strip while infra is folded"), "the same words on the rebuilt row, so the cue is the whole acknowledgement");
+    assert.equal(pinG9.sub(), "keep this tab on the strip while infra is folded");
+    await tick();
+    pinG9.click();
+    assert.deepEqual(hooks.writes.map((w) => w.pinned), [[{ sid: "api", name: "infra", id: "g9" }]], "the second click pins the same-named tag under its new id");
+    await tick();
+    writeTabGroups(d);
     // H (round 8): THE + BESIDE MOVE TO and THE + <NAME> ROW resolve at the click. qa replaced under a new id (g5 by g55, both qa) under the
     // press: the + on Move to qa adds api to g55, the union the name finds (a build-time closure adds to g5, which the blob no longer has,
     // so nothing posts; round 7 refused). The trail's copy with the rows + infra and + archived, infra replaced by g9 under the press: + infra

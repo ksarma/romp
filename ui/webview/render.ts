@@ -7164,9 +7164,12 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           // The write dispatches TABGROUPS_EVENT, whose listener runs the notifier, and the pin bit is in flySig (round 6), so the flyout is
           // rebuilt inside the write; the build() after it is a second pass over the same blob, kept so this row's refresh does not hang on
           // the event's delivery (writeTabGroups dispatches inside a try, and a page with no window has no listener). The section is the
-          // home's as it stands at the click (round 7: liveUnion by the ref this build read, so a rename under the press pins the new
-          // name with the id, and a home gone by the click refuses with the cue)
-          row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(sec); if (!live) { refuse("pin", sec, sb2.textContent ?? ""); return; } writeTabGroupsPruned(setPinned(tabGroups(), sectionRef(live), id, !on)); build(); });
+          // copy's home as it stands at the click (homeNow), and it must be the section this row was built for (sameSection, Move to's and
+          // the Hide tab row's rule), or the click is refused with the cue (round 9). So a rename under the press pins the new name with the
+          // id, and a copy re-homed under the press, its home's tag gone, or its home the same name under a new id, refuses once and the
+          // second click pins where the copy now sits. Round 7 asked only that the row's union still exist (liveUnion by the ref), so a
+          // push that moved the copy out of its home while the home's tag stood wrote a pin the prune dropped, with no cue
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); const h = homeNow(); if (!h || !sameSection(sectionRef(h), sec)) { refuse("pin", sec, sb2.textContent ?? ""); return; } writeTabGroupsPruned(setPinned(tabGroups(), sectionRef(h), id, !on)); build(); });
           const note = carried("pin", sec); if (note !== null) cue(row, null, note);   // a refused click's cue, carried to this rebuild (round 8)
           add(row);
         }
