@@ -15,3 +15,5 @@ Status detail (migrated from the table): **offered** — their PR #952 (2026-09-
 MERGED 2026-09-06T19:50Z as their PR #952 (merge `47e0d174`), as offered, together with the Outline-pane entry. The review found one regression (the watchdog's `abandon()` skipped the close rule, so the stale prompt never raised after a silent reconnect), fixed upstream as their PR #957 (its own entry, `shim-watchdog-abandon-stale-prompt`).
 
 2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #952 is in the folded range).
+
+2026-09-10: their PR #952 did not carry the ready-gate layer of (1): upstream's shim at 459e50d6 has no `bundleReady`, `readyQueued` or `READY_GATE_CAP`, so the hold of every push until the bundle's `ready` stayed fork-only (found by the slice 4 fold's review). It goes upstream with the shim-redial-gate candidate (`upstream/2026-09-10-shim-redial-gate.md`, fix tier, from the fold), which carries the two shim bits with the term; the merged status above covers the rest of the three layers.
