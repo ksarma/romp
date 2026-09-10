@@ -2263,10 +2263,11 @@ class UnknownSessionRefused(_RouteServer):
             km._thread_reg_failed.clear()
 
     def test_a_torn_record_under_a_failed_probe_is_the_scans_verdict_not_the_records(self):
-        # for a names-registered sid whose SDK reg is torn and whose pane the probe failed to list,
-        # _session_gate answered the record's 503 ("Repair or remove that file", no "try again") at every door
-        # and flipped to admitted the moment the probe answered: the read that decided the verdict
-        # (live.tmux_failed) was not named and a retry was denied for a verdict a retry changes. The gate scans
+        # for a names-registered sid whose SDK reg is torn and whose pane the probe failed to list, at a cold
+        # list_regs cache (the map lists no row for the sid; a listed SDK row is the record's verdict in every
+        # tmux state, the next test), _session_gate answered the record's 503 ("Repair or remove that file", no
+        # "try again") at every door and flipped to admitted the moment the probe answered: the read that decided
+        # the verdict (live.tmux_failed) was not named and a retry was denied for a verdict a retry changes. The gate scans
         # once itself when handed no map, reads the map's own failure, and answers the scan-failed verdict:
         # try again, the control routes' log line, by id and by name and at the WS door; the record's 503
         # comes back once tmux answers (the no-server exit), and a pane that carries the sid admits it
@@ -2335,6 +2336,101 @@ class UnknownSessionRefused(_RouteServer):
                     code, resp = self._post("/interrupt", {"name": name})
                     self.assertEqual((code, resp), (200, {"ok": True}))
                     fake.interrupt.assert_called_once_with(sid)
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {sid})
+            _unregister(sid)
+            _drop_regs([reg_path])
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
+    def test_a_torn_record_the_map_lists_is_the_records_verdict_whatever_tmux_answers(self):
+        # the gate's scan-failed arm answered "try again" for a torn names-registered sid the live map lists as
+        # an SDK row (a warm list_regs cache: the reg read once, then broken, the map serving its cached last
+        # good row), but no tmux answer can change that verdict: the SDK row wins the merge in Sessions.live()
+        # and _backend_reports_running reads an SDK row as not running, so the moment the probe answered the
+        # verdict flipped to the record's 503 with the real remedy. The gate reads the map's own failure only
+        # when the map lists no row for the sid; a listed row is the record's verdict in every tmux state, the
+        # probe down, the no-server exit, and a pane carrying the sid, which the SDK row overwrites in the merge
+        # (review round 8, 2026-09-09). The warm state is built the real way: a good reg, one Sessions.live()
+        # read, the file torn, the thread-reg memos cleared; _drop_regs evicts the cached row at the end.
+        import subprocess
+        sid, name = "dcdc7777-8888-9999-0000-111111111111", "warm-torn-web"
+        reg_path = km.jd.STATE / "sdk" / (sid + ".json")
+        reg_path.parent.mkdir(parents=True, exist_ok=True)
+        _register(sid, name)
+        reg_path.write_text(json.dumps({"sid": sid, "alive": True, "name": name}))
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        frames = []
+        client = {"send": lambda s: frames.append(json.loads(s))}
+        fake = mock.Mock()
+        gone = subprocess.CompletedProcess(args=[], returncode=1, stdout="",
+                                           stderr="no server running on /tmp/tmux-1000/default")
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda s: fake)), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+                 mock.patch.object(km._TMUX, "available", lambda: True):
+                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
+                    scan = km.Sessions.live()
+                    self.assertEqual(scan.get(sid, {}).get("backend"), "sdk", "the scan cached the readable row")
+                    reg_path.write_bytes(b"{not json")
+                    km._thread_reg_memo.clear()
+                    km._thread_reg_failed.clear()
+                    warm = km.Sessions.live()
+                    self.assertTrue(warm.tmux_failed, "the probe is down")
+                    self.assertEqual(warm.get(sid, {}).get("backend"), "sdk", "the premise: the map serves the cached row")
+                    self.assertTrue(km._reg_unreadable(sid))
+                    self.assertFalse(km._backend_reports_running(sid, warm), "an SDK row is not liveness")
+                    verdict, text = km._session_gate(sid)
+                    self.assertEqual(verdict, km._GATE_UNREADABLE, text)
+                    self.assertIn("Repair or remove", text)
+                    self.assertNotIn("try again", text.lower())
+                    for path, body in (("/end", {"id": sid}), ("/end", {"name": name}), ("/interrupt", {"id": sid}),
+                                       ("/interrupt", {"name": name}), ("/send", {"id": sid, "text": "hello"}),
+                                       ("/send", {"name": name, "text": "hello"})):
+                        who = body.get("id") or body.get("name")
+                        err = io.StringIO()
+                        with contextlib.redirect_stderr(err):
+                            code, resp = self._post(path, body)
+                        self.assertEqual(code, 503, (path, body, resp))
+                        self.assertIn("could not read the record for '%s'" % who, resp.get("error", ""), (path, body))
+                        self.assertIn(km._tilde(str(reg_path)), resp.get("error", ""), (path, body))
+                        self.assertIn("Repair or remove", resp.get("error", ""), (path, body))
+                        self.assertNotIn("try again", resp.get("error", "").lower(), (path, body))
+                        self.assertNotIn("tmux probe failed", err.getvalue(), (path, body))
+                    self.assertNotIn(sid, km._end_on_idle_load(), "a refused deferred end records no wish")
+                    for msg, who in (({"type": "sendMessage", "id": sid, "text": "keep this"}, sid),
+                                     ({"type": "compact", "name": name}, name)):
+                        del frames[:]
+                        err = io.StringIO()
+                        with contextlib.redirect_stderr(err):
+                            self.assertTrue(km._drive(msg, client))
+                        errs = [f for f in frames if f.get("type") == "err"]
+                        self.assertEqual(len(errs), 1, (msg, frames))
+                        self.assertIn("could not read the record for '%s'" % who, errs[0]["text"].lower(), msg)
+                        self.assertIn("Repair or remove", errs[0]["text"], msg)
+                        self.assertNotIn("try again", errs[0]["text"].lower(), msg)
+                        self.assertEqual(errs[0]["sid"], sid, msg)
+                        self.assertIn("undeliverable %s: the record for session %s will not read" % (msg["type"], sid),
+                                      err.getvalue(), msg)
+                    self.assertEqual(fake.method_calls, [], "nothing reached a backend at either door")
+                # the no-server exit: the same verdict, no flip
+                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: gone):
+                    self.assertEqual(km._session_gate(sid)[0], km._GATE_UNREADABLE, "tmux answered: the record's verdict")
+                    code, resp = self._post("/interrupt", {"name": name})
+                    self.assertEqual(code, 503, resp)
+                    self.assertIn("could not read the record for '%s'" % name, resp.get("error", ""))
+                    self.assertNotIn("try again", resp.get("error", "").lower())
+                # a pane carries the sid: the SDK row overwrites the pane's row in the merge, so the warm state
+                # stays the record's verdict (the cold pane case is admitted, the round-7 test above)
+                with mock.patch.object(km._TMUX, "_run", _tmux_server([sid])):
+                    scan = km.Sessions.live()
+                    self.assertEqual(scan.get(sid, {}).get("backend"), "sdk", "the SDK row wins the merge")
+                    self.assertEqual(km._session_gate(sid)[0], km._GATE_UNREADABLE, "warm: still the record's verdict")
+                    code, resp = self._post("/interrupt", {"id": sid})
+                    self.assertEqual(code, 503, resp)
+                    self.assertIn("could not read the record for '%s'" % sid, resp.get("error", ""))
+                fake.interrupt.assert_not_called()
         finally:
             km._end_on_idle_save(km._end_on_idle_load() - {sid})
             _unregister(sid)

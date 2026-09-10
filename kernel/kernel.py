@@ -18361,8 +18361,10 @@ def _backend_reports_running(sid, live=None):
     the dashboard's message went to a pane that did not exist and `romp end <sid>` killed a same-named
     tmux session (review round 6, 2026-09-09). A backend without the set reads as not running. A failed
     tmux scan lists no pane, so this answers False for a tmux sid then; the gate reads the map's own
-    tmux_failed beside this answer and says the list could not be read (its scan-failed verdict), never
-    that the session is not running (review round 7, 2026-09-09)."""
+    tmux_failed beside this answer, when the map lists no row for the sid, and says the list could not be
+    read (its scan-failed verdict), never that the session is not running (review round 7, 2026-09-09; a
+    row the map lists on the SDK backend is a cached reg no tmux answer changes, so the gate reads the
+    record's verdict then, round 8)."""
     sid = str(sid or "")
     if not sid:
         return False
@@ -18382,8 +18384,10 @@ def _backend_reports_running(sid, live=None):
 def _unreadable_record_text(sid, who=None):
     """What both client doors say for a NOT-running session whose SDK registry entry exists but will not
     read: the record by path (~ for $HOME), that nothing was done, and the way out. Never "try again":
-    no writer serves the retry (the gate answers this text only once the tmux scan it consulted answered;
-    while that probe is down the verdict is the scan's and says try again, _scan_failed_text). Only a flip of a running session (SdkBackend's kill, resume or promote)
+    no writer serves the retry (when the map lists no row for the sid, the gate answers this text only once
+    the tmux scan it consulted answered; while that probe is down the verdict is the scan's and says try
+    again, _scan_failed_text; a row the map lists on the SDK backend is a cached reg no tmux answer changes,
+    so this text stands then whatever the probe did). Only a flip of a running session (SdkBackend's kill, resume or promote)
     rewrites the row from the backend's cache, and a running session is admitted instead of refused;
     _update_reg skips its write on an unreadable row, and list_regs serves the last good row for a reg it
     has cached (the pusher's scans keep the cache warm while the kernel runs, with one log line per
@@ -18442,13 +18446,16 @@ def _session_gate(sid, live=None, who=None):
                   running session's next flip rewrites the row and the base served such a session; else the
                   kernel knows it (_kernel_knows: the names registry, the SDK registry via owns(), the live
                   map), so a dormant session, or a dead one addressed by id, passes to its idempotent end.
-      scan failed the sid's SDK registry entry exists but will not read AND the tmux probe the live scan
-                  rides did not answer (live.tmux_failed): whether a pane runs the session is exactly what
-                  decides the verdict below, and that read failed, so the gate says the list could not be
-                  read, try again (_scan_failed_text; the probe decides, and a retry changes the answer),
-                  never the record's verdict, which tells the caller to repair or remove a file a retry
-                  may make irrelevant (review round 7, 2026-09-09). The no-server exit and a tmux-less box
-                  are an empty board, not a failed scan.
+      scan failed the sid's SDK registry entry exists but will not read, the map lists no row for the sid,
+                  AND the tmux probe the live scan rides did not answer (live.tmux_failed): whether a pane
+                  runs the session is exactly what decides the verdict below, and that read failed, so the
+                  gate says the list could not be read, try again (_scan_failed_text; the probe decides, and
+                  a retry changes the answer), never the record's verdict, which tells the caller to repair
+                  or remove a file a retry may make irrelevant (review round 7, 2026-09-09). The no-server
+                  exit and a tmux-less box are an empty board, not a failed scan. A row the map does list
+                  for the sid is an SDK row (a row on any other backend was admitted above): the reg's cached
+                  last good row, which no tmux answer changes, so the verdict below stands whatever the probe
+                  did (round 8: it said try again for a retry that could change nothing).
       unreadable  a NOT-running session whose SDK registry entry exists but will not read (_reg_unreadable),
                   the scan having answered: the kernel cannot say whether it knows the session, so it says
                   that, never that no such session exists (the fail-loudly rule). Asked before
@@ -18479,7 +18486,7 @@ def _session_gate(sid, live=None, who=None):
                 live = _LiveMap()
         if _backend_reports_running(sid, live):
             return _GATE_ADMITTED, None
-        if getattr(live, "tmux_failed", False):
+        if live.get(sid) is None and getattr(live, "tmux_failed", False):
             return _GATE_SCAN_FAILED, _scan_failed_text(who or sid)
         return _GATE_UNREADABLE, _unreadable_record_text(sid, who)
     known = _kernel_knows(sid) if live is None else _kernel_knows(sid, live=live)
