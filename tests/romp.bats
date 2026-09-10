@@ -240,7 +240,7 @@ MOCK
     touch "$MOCK_LOG"
     run run_romp new -t -m "do the thing" ideabox
     [ "$status" -eq 2 ]
-    [[ "$output" == *"-m needs the default (SDK) session"* ]]
+    [[ "$output" == *"-m needs the default (Claude Code) session"* ]]
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
@@ -1186,7 +1186,7 @@ MOCK
     touch "$MOCK_LOG"
     run run_romp new -t --in pool ideabox
     [ "$status" -eq 2 ]
-    [[ "$output" == *"--in needs an SDK or Codex session; a terminal session cannot join a group"* ]]
+    [[ "$output" == *"--in needs a Claude Code or Codex session; a terminal session cannot join a group"* ]]
     [[ "$output" == *"romp tag pool --add ideabox"* ]]
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
     run run_romp help
@@ -3268,7 +3268,7 @@ PY
     touch "$MOCK_LOG"
     run run_romp new -t --model claude-fable-5 x
     [ "$status" -eq 2 ]
-    [[ "$output" == *"--model/--effort/--env need the default (SDK) session"* ]]
+    [[ "$output" == *"--model/--effort/--env need the default (Claude Code) session"* ]]
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
@@ -3376,10 +3376,10 @@ PY
     touch "$MOCK_LOG"
     run run_romp new -t --env FEATURE_FLAG=1 x
     [ "$status" -eq 2 ]
-    [[ "$output" == *"need the default (SDK) session"* ]]
+    [[ "$output" == *"need the default (Claude Code) session"* ]]
     run run_romp new -t --no-env x
     [ "$status" -eq 2 ]
-    [[ "$output" == *"need the default (SDK) session"* ]]
+    [[ "$output" == *"need the default (Claude Code) session"* ]]
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 

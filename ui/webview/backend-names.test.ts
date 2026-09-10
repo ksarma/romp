@@ -48,10 +48,18 @@ test("no user-facing copy in the picker, the tooltip or the gear says SDK; every
   const picker = RENDER.slice(RENDER.indexOf('const beWrap = el("div", "picker-backend")'), RENDER.indexOf("actions.appendChild(newSess)"));
   assert.ok(picker.length > 1000 && picker.length < 40000, "the picker's builder located");
   for (const m of picker.matchAll(/"([^"\n]*)"|`([^`\n]*)`/g)) assert.doesNotMatch(m[1] || m[2] || "", /\bSDK\b/, (m[1] || m[2] || "").slice(0, 80));
-  // the kernel's own copy that names a backend to the user (warn toasts, refusals) reads the shared names too
-  const KERNEL = read("kernel", "kernel.py");
-  for (const phrase of ["needs the SDK backend", "need an SDK or Codex session", "needs an SDK session", "runs on tmux, so there is nothing", "tmux sessions still work"])
-    assert.ok(!KERNEL.includes(phrase), "kernel copy still says: " + phrase);
+  // the kernel's own copy that names a backend to the user (warn toasts, refusals) reads the shared names too.
+  // Exact retired forms, never the bare words: comments, docstrings and operator log lines still say "SDK session"
+  // and "SDK backend" by design, and this is a whole-file substring check.
+  const RETIRED = ["needs the SDK backend", "need an SDK or Codex session", "needs an SDK session", "runs on tmux, so there is nothing", "tmux sessions still work",
+    // renamed when the fold took upstream's #1199 (2026-09-10): the error-center row and its tooltip, the dismiss and
+    // account-switch toasts, the revive detail, the api-health 503 body and the usage-rail tooltip in kernel.py...
+    "romp's Agent SDK backend", "the SDK backend could not", "the SDK backend is unavailable", "romp's SDK backend", "it isn't an SDK session",
+    "only tmux sessions show", "tmux session is seen through", "tmux sessions are seen through",
+    // ...and the session card's text, the unavailable and refusal texts, the not-importable log and the MCP status in sdk_backend.py
+    "tmux-backed sessions are unaffected", "every SDK session will report", "no live SDK session"];
+  for (const [name, text] of [["kernel.py", read("kernel", "kernel.py")], ["sdk_backend.py", read("kernel", "sdk_backend.py")]])
+    for (const phrase of RETIRED) assert.ok(!text.includes(phrase), name + " copy still says: " + phrase);
   const gearHtml = GEAR.slice(0, GEAR.indexOf("var gclock") > 0 ? GEAR.length : GEAR.length);
   const userStrings = [...gearHtml.matchAll(/'([^'\n]*<span class=rs-sub>[^'\n]*)'/g)].map((m) => m[1]);
   for (const s of userStrings) assert.doesNotMatch(s, /\bSDK\b/, s.slice(0, 80));

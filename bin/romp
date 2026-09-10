@@ -676,7 +676,7 @@ EOF
     _romp_cmd "romp new --effort <level> <name>" -      "Reasoning effort for the SDK session (e.g. high, ultracode); re-asserted if <name> already runs"
     _romp_cmd "romp new --env NAME=VALUE <name>" -      "Per-session env var for the SDK session (repeatable; toggles, never secrets); a re-run on a running <name> replaces the whole set"
     _romp_cmd "romp new --no-env <name>"   -            "Clear a running SDK session's per-session env (declares the empty set)"
-    _romp_cmd "romp new --in <tag> <name>" -            "Put the new SDK or Codex session in a tag (repeatable; a new name creates the tag) — its tab lands in that group"
+    _romp_cmd "romp new --in <tag> <name>" -            "Put the new Claude Code or Codex session in a tag (repeatable; a new name creates the tag) — its tab lands in that group"
     _romp_cmd "romp new --no-inherit <name>" -          "Run from inside a session, a new session joins that session's tags by default; this starts it outside them"
     _romp_cmd "romp resume [<id>]"         -            "Resume a past conversation (full-screen picker; or an exact UUID)"
     _romp_cmd "romp status"                romp-manager "Show manager + kernel status (a kernel stopped by romp down says so)"
@@ -3010,18 +3010,18 @@ case "${1:-}" in
         if [[ -n "$msg_arg" ]] && $use_tmux; then
             # the tmux variant attaches a terminal you type into yourself; delivering a first
             # prompt is the SDK path's job. Refuse loudly rather than dropping the text.
-            echo "romp new: -m needs the default (SDK) session — with -t you type into the terminal yourself" >&2; exit 2
+            echo "romp new: -m needs the default (Claude Code) session — with -t you type into the terminal yourself" >&2; exit 2
         fi
         if [[ -n "$model_arg$effort_arg" || ${#env_args[@]} -gt 0 ]] || $no_env && $use_tmux; then
             # per-spawn model/effort/env ride the kernel's /new (SDK); a terminal session picks
             # model/effort inside Claude itself and takes env from the tmux server's environment.
             # Refuse loudly rather than dropping the flags (no silent divergence).
-            echo "romp new: --model/--effort/--env need the default (SDK) session — with -t, pick model/effort inside Claude itself (env comes from the tmux environment)" >&2; exit 2
+            echo "romp new: --model/--effort/--env need the default (Claude Code) session — with -t, pick model/effort inside Claude itself (env comes from the tmux environment)" >&2; exit 2
         fi
         if [[ ${#in_args[@]} -gt 0 ]] && $use_tmux; then
             # a terminal session's id is not known until it starts, so nothing could tag it at
             # spawn; say so rather than drop the flag (tag it afterwards with `romp tag`)
-            echo "romp new: --in needs an SDK or Codex session; a terminal session cannot join a group — tag it after it starts: romp tag ${in_args[0]} --add $session_arg" >&2; exit 2
+            echo "romp new: --in needs a Claude Code or Codex session; a terminal session cannot join a group — tag it after it starts: romp tag ${in_args[0]} --add $session_arg" >&2; exit 2
         fi
         ;;
     resume|--resume)

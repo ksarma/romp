@@ -582,11 +582,10 @@ pick to the key when a helper is configured; with neither, to the side
 picker's Billing row writes `API key` out even when the box has no Claude login
 to show beside it. A remembered
 key pick on a box whose settings carry no helper leaves new sessions unpicked,
-and the kernel log says so once, naming the settings file to configure. tmux
-sessions are not
-covered by the picker: their CLI lives in the tmux server's environment, which
-the kernel does not control, and resolves its credential the way any `claude`
-in a terminal does.
+and the kernel log says so once, naming the settings file to configure.
+Claude Code (tmux) sessions are not covered by the picker: their CLI lives in
+the tmux server's environment, which the kernel does not control, and resolves
+its credential the way any `claude` in a terminal does.
 
 A tab not yet loaded after a reconnect shows "Not loaded yet — click to load"
 as its hover tooltip, until its transcript arrives. The strip's skeleton tabs
@@ -2335,7 +2334,7 @@ kernel. `waiting` is `retrying` plus `blocked`. `cls` is the plurality class ove
 affected sessions, ties resolved 429, then 529, then offline, then errors.
 `since` is the pause's time when paused, else the earliest affected session's
 event (a record's timestamp, or the retrying turn's start), else 0. `tmux`
-counts alive tmux-backed sessions, which the cell sees through their
+counts alive Claude Code (tmux) sessions, which the cell sees through their
 transcripts only. Every timestamp is an event's time, never the clock, so an
 unchanged world sends nothing. On-you failures (a too-long prompt, a spent
 model allowance, a dead credential, a refusal) are not counted; a spend cap is,
