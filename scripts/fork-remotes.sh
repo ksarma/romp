@@ -7,7 +7,8 @@
 # `remote.pushDefault` aims at the wrong place. Both are easy to type and neither
 # is easy to take back, so the guard is configuration rather than care:
 #
-#   origin    = your fork      fetch + push        (everything goes here)
+#   origin    = your fork      fetch + push        (everything goes here;
+#                                                   gh's default repository)
 #   upstream  = the project    fetch ONLY          (push URL set to a dead
 #                                                   sentinel, so a push fails
 #                                                   loudly instead of landing)
@@ -16,6 +17,20 @@
 # `git push upstream` dies with "does not appear to be a git repository" before
 # it can contact anything. That is the loud failure we want — not a silent
 # fallback that quietly does the wrong thing.
+#
+# gh is the other door. `gh pr view N` or `gh pr merge N` without -R resolves N
+# against a default repository gh reads from git config: the remote carrying
+# `gh-resolved = base` (what `gh repo set-default` writes). gh consults the
+# remotes in its own order, upstream before origin, and with no key and no
+# terminal to ask on it takes the first: on a fresh clone with both remotes a
+# bare PR number is the PROJECT's PR N (verified 2026-09-09 with gh 2.97 — a
+# fork PR read as merged because the project's PR of that number was, and a
+# merge by number would have aimed at the project). So the guard also sets
+# `remote.origin.gh-resolved = base`, with plain git config (no gh call: it
+# works offline and in tests), and clears the key from every other remote: gh
+# ranks upstream and github above origin, so a key on either shadows origin's,
+# and origin should be the only default in any case. --check reads it the way
+# it reads pushDefault.
 #
 # Idempotent: run it whenever, including on a fresh clone. `--check` verifies
 # without changing anything and exits non-zero if the clone is unsafe, which is
@@ -105,8 +120,23 @@ if [ $check_only -eq 1 ]; then
         [ "$_pr_val" = "origin" ] && continue
         note "$_pr_key is '$_pr_val' — a bare push from that branch would not go to your fork"
     done < <(git config --get-regexp '^branch\..*\.pushRemote$' 2>/dev/null || true)
+    # gh's default repository (see the header): origin must carry `gh-resolved = base` and no other
+    # remote may carry the key at all (gh reads upstream's and github's before origin's, and a
+    # default anywhere but origin is one too many). A value other than 'base' on origin names some
+    # OWNER/REPO outright, which gh then uses instead of origin.
+    gh_origin="$(git config --get remote.origin.gh-resolved || true)"
+    if [ -z "$gh_origin" ]; then
+        note "gh has no default repository (remote.origin.gh-resolved is unset) — a bare 'gh pr merge N' from a script would aim at the project, not your fork"
+    elif [ "$gh_origin" != "base" ]; then
+        note "remote.origin.gh-resolved is '$gh_origin', not 'base' — gh would resolve a bare PR number against that repo, not your fork"
+    fi
+    while read -r _gh_key _gh_val; do
+        [ -z "$_gh_key" ] && continue
+        [ "$_gh_key" = "remote.origin.gh-resolved" ] && continue
+        note "$_gh_key is '$_gh_val' — only origin should carry gh's default-repository key; gh may resolve a bare PR number there, not on your fork"
+    done < <(git config --get-regexp '^remote\..*\.gh-resolved$' 2>/dev/null || true)
     if [ $problems -eq 0 ]; then
-        echo "  ✓ origin (your fork) is the only pushable remote"
+        echo "  ✓ origin (your fork) is the only pushable remote and gh's default repository"
         exit 0
     fi
     echo "Run scripts/fork-remotes.sh to fix." >&2
@@ -130,10 +160,20 @@ while read -r _pr_key _pr_val; do
     [ "$_pr_val" = "origin" ] && continue
     git config --unset "$_pr_key" || true
 done < <(git config --get-regexp '^branch\..*\.pushRemote$' 2>/dev/null || true)
+# gh's default repository is origin, and origin alone: the same key on upstream or github is read
+# before origin's (see the header), and on any remote it is a second default, so it goes too.
+# --replace-all, because a hand `git config --add` can leave two values under origin's key and a
+# plain set then refuses to overwrite them, which would stop set mode after the push guards.
+git config --replace-all remote.origin.gh-resolved base
+while read -r _gh_key _gh_val; do
+    [ -z "$_gh_key" ] && continue
+    [ "$_gh_key" = "remote.origin.gh-resolved" ] && continue
+    git config --unset "$_gh_key" || true
+done < <(git config --get-regexp '^remote\..*\.gh-resolved$' 2>/dev/null || true)
 
 echo "fork-remotes: configured"
-echo "  origin   $origin_url  (fetch + push — your fork)"
+echo "  origin   $origin_url  (fetch + push — your fork; gh's default repository)"
 echo "  upstream $UPSTREAM_URL  (fetch only; push disabled)"
-echo "  a bare 'git push' goes to origin"
+echo "  a bare 'git push' goes to origin, and so does a bare 'gh pr <cmd> N'"
 echo
 echo "Check what the project has added since:  scripts/upstream-check.sh"

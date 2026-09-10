@@ -144,11 +144,17 @@ repos are in play and only ONE of them is ours to write to:
   by editing the entry's `status:` line.
 - **The guard is configuration, not care.** `scripts/fork-remotes.sh` sets
   `upstream`'s push URL to a dead sentinel, so a stray `git push upstream` fails
-  loudly instead of landing on someone else's project, and points
-  `remote.pushDefault` at the fork so a bare `git push` cannot wander.
-  `scripts/fork-remotes.sh --check` verifies a clone without changing it — worth
-  a run in any new clone or worktree, since this lives in git config and a fresh
-  clone starts without it.
+  loudly instead of landing on someone else's project, points
+  `remote.pushDefault` at the fork so a bare `git push` cannot wander, and makes
+  the fork gh's default repository (`remote.origin.gh-resolved = base`, the key
+  `gh repo set-default` writes, on origin and on no other remote) so a bare
+  `gh pr view N` or `gh pr merge N` reads the fork's PR N. Without that key gh
+  consults `upstream` first: on a fresh clone with both remotes and no terminal
+  to ask on, `gh pr view N` read the project's PR N (2026-09-09), and
+  `scripts/land.sh`, which merges by number without `-R`, would have aimed a
+  merge at the project. `scripts/fork-remotes.sh --check` verifies all of it
+  without changing anything — worth a run in any new clone or worktree, since
+  this lives in git config and a fresh clone starts without it.
 - **Checking for upstream changes.** `scripts/upstream-check.sh` fetches and
   reports what the project has added since we diverged, and which of those files
   we have also changed — the ones a merge will actually cost attention on. It
