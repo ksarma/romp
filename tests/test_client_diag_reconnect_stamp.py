@@ -15,12 +15,15 @@ The pair: both true, a declared redial; both false, a drop before the bundle sai
 bundleReady true, the ready queued during the close and the redial carried no term. `readyQueued` is not recorded
 because the pair already carries it: at the one close where it is true (a ready that arrived while the socket was
 going down) the pair reads reconnect false, bundleReady true, and the redial's onopen clears it; at the other
-closes it is false. A ready that lands after onclose and before the redial leaves bundleReady false on the row and
-reads as the gated pair (false, false), correctly.
+closes it is false. A ready that lands after onclose and before the redial (READY_AFTER_CLOSE below) leaves
+bundleReady false on the row, which was built at the close, and reads as the gated pair (false, false), correctly;
+the shim half of that shape (the redial dialing as a fresh page, the queued ready going out once) is
+tests/test_chat_skeleton_reconnect_gate.py test_10, not re-asserted here.
 
 Three legs: the handler alone (a client dict with and without the dial record), the REAL shim core under node
 (the row's field in each shape, and the row's place against the ready: ahead of the re-sent ready on the declared
-shape, behind the queued ready on the ready-during-close shape), and the two joined (the real
+shape, behind the queued ready on the ready-during-close shape, ahead of it on the ready-after-close shape), and
+the two joined (the real
 handshake dialed with the URL the shim built, the shim's own row dispatched on that client, the pair read back
 from the file; a chat socket after the real strip's consumption and a feed socket, which has no strip, read alike). Synthetic only: placeholder UUIDs, TESTHOST. Never run raw: pytest's conftest poisons the live ports.
 """
@@ -75,10 +78,11 @@ function drop(){sock().readyState=3;sock().onclose();redial();}
 function ready(){window.__rompLocalSend({type:"ready"});}
 """ % S1
 
-# the three shapes, as the scenario that drives the first socket to its drop and leaves the redial dialed
+# the four shapes, as the scenario that drives the first socket to its drop and leaves the redial dialed
 DECLARED = "open();ready();drop();"                                   # the bundle said ready on the socket that died
 GATED = "open();drop();"                                              # the socket died before the bundle said ready
 CLOSING = "open();sock().readyState=2;ready();sock().readyState=3;sock().onclose();redial();"   # the ready landed while the socket was closing
+READY_AFTER_CLOSE = "open();sock().readyState=3;sock().onclose();ready();redial();"             # the ready landed after the close, before the redial
 
 # the wsclose row's data keys, all eight: a ninth under any spelling (readyQueued, rq) would keep a source-text pin
 # green, so every test that holds the executed row asserts the whole list
@@ -198,6 +202,18 @@ class TheShimRowCarriesBundleReady(unittest.TestCase):
         self.assertIs(closes[0]["data"]["bundleReady"], True)
         self.assertEqual(kinds, ["ready", "wsclose"], "the bundle's own ready queued first (during the close), once, then the row")
 
+    def test_a_ready_after_the_close_is_the_gated_shapes_corollary(self):
+        # the row was built at the close, before the ready, so it reads bundleReady false like the gated shape; the
+        # shim half (the redial dials as a fresh page, the queued ready goes out once) is pinned by
+        # tests/test_chat_skeleton_reconnect_gate.py test_10 and is only read here (review round 2, tests-1)
+        q, kinds, closes = _shim_close(READY_AFTER_CLOSE)
+        self.assertNotIn("reconnect", q, q)
+        self.assertEqual(len(closes), 1)
+        self.assertEqual(sorted(closes[0]["data"]), ROW_KEYS)
+        self.assertIs(closes[0]["data"]["bundleReady"], False, "the shim's state at the close, not at the flush")
+        self.assertIs(closes[0]["data"]["everConnected"], True)
+        self.assertEqual(kinds, ["wsclose", "ready"], "the row queued at the close, the ready behind it, both once")
+
     def test_the_row_is_built_from_the_shim_state_at_the_close(self):
         js = km._shim("chat", caps=km.READY_GATE_CAP)
         self.assertIn("everConnected:everConnected,bundleReady:bundleReady}", js)
@@ -259,6 +275,9 @@ class ThePairInTheLog(_State):
 
     def test_ready_during_the_close(self):
         self.assertEqual(self._pair(CLOSING), (False, True))
+
+    def test_a_ready_after_the_close_reads_as_the_gated_pair(self):
+        self.assertEqual(self._pair(READY_AFTER_CLOSE), (False, False))
 
     def test_the_stamp_is_the_dial_record_unchanged_by_the_strip(self):
         # on a declared chat redial the first strip sender's _resolve_reconnect consumes `reconnect` and fixes the
