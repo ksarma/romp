@@ -462,7 +462,10 @@ class InputsDeriveFromEsbuild(unittest.TestCase):
     package named like one, punycode, keeps the install wording), added the config's chain to the requirer's whatever
     the require stack holds (node fills it with each module's first loader), took package-imports specifiers (`#x`)
     out of the environment, and had the preload realpath the requirer's filename before comparing it with the
-    config's (an inherited `--preserve-symlinks` on NODE_OPTIONS makes node keep the textual path)."""
+    config's (an inherited `--preserve-symlinks` on NODE_OPTIONS makes node keep the textual path); round 13 gave the
+    root on the requirer's chain its wording for any requirer (a helper of the checkout with the package installed on
+    its own chain was told to install it) and took a one-segment scoped name (`@scope` alone, which npm installs
+    nothing under) out of the bare shapes in both rules."""
 
     def setUp(self):
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="lab-dist-inputs-"))
@@ -1240,7 +1243,9 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         the stand-in (the preload's requirer test fails it); the reader's line used to call every non-config requirer
         an installed package and tell the developer to run npm ci, which changes nothing here. The line now says the
         helper is a module the config loaded and that only the config's own requires are filed as the environment or
-        stood in: move the require to esbuild.js, or install the package."""
+        stood in: move the require to esbuild.js, or install the package. That line is for a root ABSENT from the
+        helper's chain (`ghost3` is installed nowhere); with the root present the miss is a subpath the installed
+        package does not have, and the line names the root (the round-13 test below)."""
         self.no_install()
         helper = os.path.join(self.root, "tools", "helper.js")
         _write(helper, 'const g = require("ghost3");\nmodule.exports = { version: g.version };\n')
@@ -1769,6 +1774,81 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
             self.assertIn(lab_dist.CONFIG_ENV + " is not set", r.stderr)
             self.assertNotIn("Cannot find module", r.stderr, "the preload's refusal, not node's error")
             self.assertFalse(os.path.exists(out), "nothing was derived")
+
+    # Round 13: the root on the requirer's chain gives the installed-subpath wording for any requirer, and a one-segment
+    # scoped name is bare in neither rule.
+    def test_a_subpath_typo_in_a_helper_with_the_package_on_its_chain_names_the_root_not_a_package_to_install(self):
+        """A helper the config requires relatively requires `pkg/nope` with `pkg` installed on the HELPER's chain, in two
+        layouts: the helper inside the extension dir (`ext/tools/helper.js`, setUp's `ext/node_modules/pkg` on its chain)
+        and the helper beside its own install (`tools/helper.js` with `tools/node_modules/pkg2`, off the config's chain).
+        The reader found the root on the requirer's chain and, the requirer being neither the config nor installed, fell
+        through to the round-10 line telling the developer to move the require or install the package, which is
+        installed. Now the root present is the evidence for any requirer: the line names the root as installed and the
+        miss as a subpath it does not have, a typo in the helper or an install at a version without that file, plain and
+        under the stand-in (which rethrows: the helper is not the config), with nothing to install and no npm ci. The
+        control: `require("pkg")` from the same helper loads. The round-10 test above keeps the move-or-install line for
+        a root ABSENT from the helper's chain. The third leg: an installed requirer with the root on its chain keeps its
+        line, a dependency of an installed package is missing, run npm ci, and names the root beside it."""
+        _write(os.path.join(self.ext, "node_modules", "pkg", "index.js"), "module.exports = { v: 1 };\n")
+        _write(os.path.join(self.root, "tools", "node_modules", "pkg2", "index.js"), "module.exports = { v: 2 };\n")
+        inside, beside = os.path.join(self.ext, "tools", "helper.js"), os.path.join(self.root, "tools", "helper.js")
+        for helper, spec, request, root in (
+                (inside, "./tools/helper.js", "pkg/nope", os.path.join(self.ext, "node_modules", "pkg")),
+                (beside, "../tools/helper.js", "pkg2/nope", os.path.join(self.root, "tools", "node_modules", "pkg2"))):
+            _write(helper, 'const p = require(%s);\nmodule.exports = { version: p.v };\n' % json.dumps(request))
+            _write(self.config, 'const h = require(%s);\n'
+                                'module.exports = { x: { entryPoints: ["src/extension.ts"], banner: { js: "// " + h.version } } };\n'
+                                % json.dumps(spec))
+            for under_stub in (False, True):
+                msg = self.derivation_error(under_stub)
+                self.assertIn("Cannot find module '%s'" % request, msg, (helper, under_stub))
+                self.assertIn(helper + " requires '%s', a subpath of a package that IS installed (%s): a typo in %s, or an install "
+                              "at a version without that file" % (request, root, helper), msg, (helper, under_stub))
+                self.assertNotIn("install the package", msg, (helper, under_stub))
+                self.assertNotIn("is a module the config loaded", msg, (helper, under_stub))
+                self.assertNotIn("npm ci", msg, (helper, under_stub))
+                self.assertNotIn("tests/lab_dist_stub.py", msg, (helper, under_stub))
+            # the control: the package itself loads from the helper, so it is installed where the helper looks
+            _write(helper, 'const p = require(%s);\nmodule.exports = { version: p.v };\n' % json.dumps(request.split("/")[0]))
+            self.assertEqual(self.roots(), ["ext"], (helper, "the package resolves from the helper"))
+        a = os.path.join(self.ext, "node_modules", "a", "index.js")
+        _write(a, 'const n = require("pkg/nope");\nmodule.exports = {};\n')
+        _write(self.config, 'const a = require("a");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        for under_stub in (False, True):
+            msg = self.derivation_error(under_stub)
+            self.assertIn(a + " requires 'pkg/nope', which node cannot find: a dependency of an installed package is missing", msg, under_stub)
+            self.assertIn("IS installed (%s)" % os.path.join(self.ext, "node_modules", "pkg"), msg, under_stub)
+            self.assertIn("npm ci", msg, under_stub)
+            self.assertNotIn("install the package", msg, under_stub)
+            self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+
+    def test_a_one_segment_scoped_request_is_a_typo_never_an_install_and_never_the_environment(self):
+        """`require("@scope")` and `require("@scope/")` name a scope, not a package: npm installs packages under a scope
+        directory (`node_modules/@scope/q`) and nothing at the directory itself, so a miss on a one-segment scoped name
+        is a typo in the requirer whatever is installed (node itself would load a hand-made `node_modules/@scope/index.js`,
+        so the premise is npm's layout, not node's resolver). Both rules took the name as bare and packageName answered
+        the scope directory: with a sibling `@scope/q` installed the directory existed, so the reader called the typo a
+        package that IS installed and does not load, run npm ci, and the preload rethrew the same; with no node_modules
+        the reader filed the typo as the environment (a skip) and the preload stood in for it, so the typo read green in
+        the real-tree pins. Now a scoped request with fewer than two segments is bare in neither file, like `./x` and
+        `#x`: node's error stands, with no reader line and no stand-in, plain and under the stand-in, with and without
+        node_modules. The control: the two-segment sibling `@scope/q` loads."""
+        _write(os.path.join(self.ext, "node_modules", "@scope", "q", "index.js"), "module.exports = { q: 1 };\n")
+        _write(self.config, 'const q = require("@scope/q");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"], q: q.q } };\n')
+        self.assertEqual(self.roots(), ["ext"], "the control: the two-segment sibling resolves")
+        for with_install in (True, False):
+            if not with_install:
+                self.no_install()
+            for request in ("@scope", "@scope/"):
+                _write(self.config, 'const s = require(%s);\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n'
+                                    % json.dumps(request))
+                for under_stub in (False, True):
+                    msg = self.derivation_error(under_stub)
+                    self.assertIn("Cannot find module '%s'" % request, msg, (with_install, request, under_stub))
+                    self.assertNotIn(" requires '", msg, (with_install, request, under_stub, "no reader line: node's error alone"))
+                    self.assertNotIn("IS installed", msg, (with_install, request, under_stub))
+                    self.assertNotIn("npm ci", msg, (with_install, request, under_stub))
+                    self.assertNotIn("tests/lab_dist_stub.py", msg, (with_install, request, under_stub))
 
     def test_a_missing_node_is_an_error(self):
         """Without node on PATH nothing is derived: the error names node and the config."""

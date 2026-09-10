@@ -5,7 +5,7 @@ narrowed it to the config's own requires, to packages whose root is nowhere on t
 with no node_modules beside the config; round 10 made the requirer test read the requirer's filename rather than
 the depth of the load; round 11 made that test exact: the harness names the config to the preload; round 12 realpaths
 the requirer's filename before the compare, tests the package's root ahead of a core module's name and excludes
-package-imports specifiers).
+package-imports specifiers; round 13 excludes a one-segment scoped name, `@scope` alone).
 
 The harness (tests/lab_dist.py) derives the build's inputs by requiring the extension's build config under node
 and reading what it exports. The config's first line requires esbuild, a dependency of the BUILD and not of the
@@ -24,7 +24,9 @@ This module stands the packages in, test-side only: `bare_package_stub()` writes
 NODE_OPTIONS (`--require <preload>`) for the duration of the block, so every node the block starts, the harness's
 `node -e` reader included, loads it first. The preload wraps `Module._load`, the door every `require()` takes, and a
 bare specifier (`esbuild`, `@scope/pkg`; never `./x`, never an absolute path, never `#x`, an imports-map specifier
-the nearest package.json resolves, which npm ci cannot install) that fails to resolve returns the throwing stand-in
+the nearest package.json resolves, which npm ci cannot install, and never `@scope` alone, a scoped name with one
+segment: npm installs packages under a scope directory and nothing at the directory itself, so the miss is a typo in
+the requirer and node's error stays, whatever is installed) that fails to resolve returns the throwing stand-in
 in place of the MODULE_NOT_FOUND under three conditions, each of which tells the environment the
 stand-in exists for, a checkout without node_modules, from a real error:
 - the CONFIG itself made the require: the requirer's filename, realpathed, is the config's realpath, which the
@@ -40,7 +42,9 @@ stand-in exists for, a checkout without node_modules, from a real error:
   real environment, in the package's top level, in a function the config calls at load, or in a getter chain the
   reader's JSON.stringify triggers after the config's load returned; a package hard-requiring a missing dependency
   is a broken install; and a helper file the config requires relatively is a module of the checkout whose bare
-  requires are its own to move into the config or install, not the environment. The config's own requires are
+  requires are its own to fix, not the environment (a subpath into a package on the helper's own chain is a typo in
+  the helper, or an install at a version without that file, and the reader names the root; a package on no chain is
+  one to move into the config or install). The config's own requires are
   stood in at any time too: one made after its load returned, from a getter on the exported object, is stood in
   and fails as the stand-in's refusal naming the read (both exit 1), whatever other module loaded in between.
   Round 10 inferred the config from the loads instead (the last module loaded outside any load in progress), which
@@ -80,9 +84,11 @@ depth; a module a pre-existing `--require` loaded before the config is not taken
 node's error; the variable absent is the refusal naming it, and the harness sets it to the config's realpath. The
 pins run the same code on both kinds of checkout, and the run with node_modules present reads the real package. The
 harness itself stays strict: nothing in tests/lab_dist.py knows this module exists (its reader classifies a miss by
-the same three tests, requirer, root and bare shape, but files the config's own miss as a skip, never a stand-in;
-it publishes the config's realpath for any preload and names none), so a served lab on a checkout without
-node_modules still skips, and a derivation that fails still raises.
+the requirer, root and bare-shape tests, in the same order, and files the config's own miss as a skip, never a
+stand-in; it has no counterpart to the third condition above, so on a stale install it skips where this module
+refuses, the one case the two rules answer differently, the reader quietly and the stand-in loudly; it publishes the
+config's realpath for any preload and names none), so a served lab on a checkout without node_modules still skips,
+and a derivation that fails still raises.
 
 The stand-in refuses every read: a Proxy trapping property reads, the `in` operator, enumeration (Object.keys, a
 spread, for...in, Object.assign) and own-property lookup, each throwing an error that names this file, the package,
@@ -109,10 +115,11 @@ from lab_dist import CONFIG_ENV     # the one spelling of the variable the harne
 PRELOAD = r'''
 // The served labs' test-side stand-in for the bare packages a checkout without node_modules lacks
 // (tests/lab_dist_stub.py), loaded through NODE_OPTIONS=--require ahead of the harness's reader. The rule (review
-// round 9; the requirer test corrected in round 10, made exact in round 11 and realpathed in round 12): a bare
-// specifier (never `./x`, an absolute path or `#x`, a package-imports specifier the nearest package.json resolves,
-// which npm ci cannot install) node cannot resolve is stood in only when the config itself required it (the
-// requirer's filename, realpathed, is the config's realpath, which the harness publishes in the environment variable
+// round 9; the requirer test corrected in round 10, made exact in round 11 and realpathed in round 12; a one-segment
+// scoped name excluded in round 13): a bare specifier (never `./x`, an absolute path or `#x`, a package-imports
+// specifier the nearest package.json resolves, which npm ci cannot install; never `@scope` alone, a scoped name with
+// one segment, which npm installs nothing under) node cannot resolve is stood in only when the config itself required
+// it (the requirer's filename, realpathed, is the config's realpath, which the harness publishes in the environment variable
 // named below; a require made from inside any other module stays node's error at any depth and at any time, an
 // installed package's probe or hard require, in its top level, in a function the config calls at load or in a getter
 // the reader triggers, and a helper the config requires relatively alike), only when the package's root is nowhere on
@@ -167,7 +174,8 @@ function standIn(request, from) {
   });
 }
 
-// The package a bare specifier names: its first segment, two for a scoped one (`@scope/pkg/sub` names @scope/pkg).
+// The package a bare specifier names: its first segment, two for a scoped one (`@scope/pkg/sub` names @scope/pkg). A
+// one-segment scoped name (`@scope`) is not bare (below) and never reaches here, so a scope directory is never a root.
 function packageName(request) {
   const parts = request.split("/");
   return (request.startsWith("@") ? parts.slice(0, 2) : parts.slice(0, 1)).join("/");
@@ -199,8 +207,13 @@ Module._load = function (request, parent, isMain) {
   try {
     return realLoad.apply(this, arguments);
   } catch (e) {
-    // bare: never `./x`, an absolute path or `#x` (a package-imports specifier, which npm ci cannot install)
-    const bare = typeof request === "string" && !request.startsWith(".") && !request.startsWith("#") && !path.isAbsolute(request);
+    // bare: never `./x`, an absolute path or `#x` (a package-imports specifier, which npm ci cannot install), and never
+    // `@scope` alone (a scoped name with fewer than two segments: npm installs packages under a scope directory and
+    // nothing at the directory itself, so the directory the sibling packages created is no root and the miss is a typo
+    // in the requirer; round 13, before which rootPresent found that directory and rethrew, so the reader called the
+    // typo a package that does not load, and with no node_modules the miss was stood in)
+    const bare = typeof request === "string" && !request.startsWith(".") && !request.startsWith("#") && !path.isAbsolute(request) &&
+                 !(request.startsWith("@") && request.split("/").filter(Boolean).length < 2);
     const hit = e && e.code === "MODULE_NOT_FOUND" && /^Cannot find module '([^']+)'/.exec(String(e.message));
     const from = parent && typeof parent.filename === "string" ? parent.filename : null;
     // hit[1] === request: a miss nested inside a module that did resolve names another request and is rethrown by
@@ -228,8 +241,9 @@ Module._load = function (request, parent, isMain) {
 
 @contextlib.contextmanager
 def bare_package_stub():
-    """A block in which `require()` of a bare package (never `./x`, an absolute path or a `#x` package-imports
-    specifier) that the config itself requires (the requirer's filename, realpathed, is the config's realpath, which
+    """A block in which `require()` of a bare package (never `./x`, an absolute path, a `#x` package-imports
+    specifier or `@scope` alone, a one-segment scoped name) that the config itself requires (the requirer's filename,
+    realpathed, is the config's realpath, which
     the harness publishes to every reader run in the environment variable lab_dist.CONFIG_ENV names), that node
     cannot resolve, whose root is nowhere on the lookup paths and whose name is not a core module's returns the
     throwing stand-in instead of failing, in every node the block starts, on a checkout with no node_modules beside
@@ -239,7 +253,8 @@ def bare_package_stub():
     inside any other module (an installed package, in its top level, in a function the config calls at load or in a
     getter the reader triggers; a helper the config requires relatively; a module a pre-existing `--require` loaded),
     a subpath into an installed package (one named like a core module included) or into one of node's core modules,
-    a package-imports specifier, and a node_modules that exists and lacks the package are errors (the last one thrown
+    a package-imports specifier, a one-segment scoped name, and a node_modules that exists and lacks the package are
+    errors (the last one thrown
     by the preload, naming this file). A node started inside the block without the
     variable (the harness sets it on the reader's run only) gets no stand-in: the preload throws on the first bare
     miss it would have judged, naming the variable. `require.resolve()` of a bare package is outside the stand-in (it
