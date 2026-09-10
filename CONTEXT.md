@@ -46,10 +46,24 @@ the second (cleared only by answer, dismiss, or withdraw).
 **File comment**:
 A comment a person leaves on a file: on a passage of its text, on a region of an image or a
 page, or on the file as a whole. It is stored beside the file, carries its replies, and can be
-resolved. It belongs to the file, not to a session or a conversation, and outlives both.
+resolved. It belongs to the file, not to a session or a conversation, and outlives both. It may
+name the changes it is about (the About entry below); it is never drawn inside a change's card.
+Only the person resolves one: by its own button, or all the comments the session has answered at
+once (Resolve answered).
 _Avoid_: thread (a comment thread is a forked side session anchored to the chat), annotation,
 note (a note goes with one send and is never stored beside the file: the Note entry below),
-review comment (a file comment needs no review to exist)
+review comment (a file comment needs no review to exist), change comment (a comment about a
+change is a file comment like any other)
+
+**About (a comment about a change)**:
+The changes a file comment names as its subject, picked by the person when the comment is made:
+from a change's card, or by selecting text that a change's marks cover. Stored by the changes'
+ids, so the reference survives the passage being rewritten and the change being accepted or
+rejected; shown as a tag on the comment and a count on each change; said to the session in the
+message ("about your change"). A change the session made in answer to a comment is not what the
+comment is about: an older binding of that kind is read as "answered by".
+_Avoid_: bound to, linked to (the old binding the session's edit made), on a change (a comment is on
+its passage or its file, and about the changes it names), thread
 
 **Change**:
 An edit a session made to a file that awaits the person's accept or reject; the file already

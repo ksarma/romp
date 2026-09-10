@@ -32,7 +32,7 @@ function between(doc, from, to) {
   return doc.slice(a, b).replace(/\s+/g, ' ');
 }
 const LABEL = 'The arrivals follow-on (2026-09-09):';
-const note = between(plan, LABEL, '### Slice 3: region comments on images');
+const note = between(plan, LABEL, 'The about follow-on (2026-09-10):');   // the about follow-on's note stands after this one under Slice 2
 const tests = between(plan, '\n## Tests', '\n## Docs');
 const docs = between(plan, '\n## Docs', '\n## Deliberately not in v1');
 

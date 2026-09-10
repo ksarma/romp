@@ -428,7 +428,7 @@ test('the filter follow-on note stands beside the other follow-on notes under Sl
   // the three states, as the list and the painters build them
   assert.ok(filterNote.includes('paints no change mark in the text') && /if \(this\.activeFilter\(\) === "comments"\) return;/.test(panel));
   assert.ok(filterNote.includes('paints no comment highlight or region rectangle') && /this\.activeFilter\(\) === "changes" \? \[\] : this\.cards\(\)/.test(panel) && /const hideRegions = this\.activeFilter\(\) === "changes";/.test(panel));
-  assert.ok(filterNote.includes('an "on a change" tag') && /el\("span", "fc-tag", "on a change"\)/.test(panel));
+  assert.ok(filterNote.includes('a comment naming a change included with its tag') && /el\("span", "fc-tag fc-about", aboutTagWords\(refs\.length, source\)\)/.test(panel), 'the tag a comment wears for the changes it names (the about follow-on; before it "on a change")');
   assert.ok(filterNote.includes('Send to session is not filtered'));
   // the cue
   assert.ok(filterNote.includes('Comment, Change, or Region') && /el\("span", "fc-kind", c\.kind === "region" \? "Region" : "Comment"\)/.test(panel) && /el\("span", "fc-kind", "Change"\)/.test(panel));
