@@ -6969,8 +6969,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     // Move to and the pin row refused where the Hide tab row's guard, which compares names when either side lacks an id, wrote), a
     // remote-only union is found by its name (its ref has no id), a tag renamed under the press by its id, and a tag deleted and made
     // again under the same name is the same group by its name, as the strip's section, keyed by the name, still shows it. A union no
-    // longer there at the click (its tag deleted, no remote of the name) is a refused click: nothing written, and the refusal is
-    // recorded for the rows' rebuild (refuse, in the flyout below, which carries the cue). Move to asks more of its source (the row)
+    // longer there at the click (its tag deleted, no remote of the name) is a refused click: nothing written, the rows rebuilt at once,
+    // and the row's removal is the answer (round 9: no record, since no rebuilt row can be of a section no union has by id or name).
+    // Move to's source and the pin row's section ask more: the copy's home at the click, and it must be the row's (refuse, in the flyout
+    // below, which carries the cue to the rebuilt row)
     const liveUnion = (ref: SectionRef): TagUnion | undefined => {
       const all = unionFor();
       return (ref.localId !== null ? all.find((g) => g.localId === ref.localId) : undefined) ?? all.find((g) => g.name === ref.name);
@@ -7004,16 +7006,18 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       if (openFly) return openFly as HTMLElement;
       menu.querySelector(".ctx-sub")?.remove();                  // one flyout at a time (Billing's rule)
       const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");
-      // THE REFUSED CLICK'S CUE RIDES THE REBUILD (round 8). A refused click (its union gone at the click, or Move to's source no longer
-      // the copy's home) is acknowledged the way the Hide tab row acknowledges one: the sheet's .romp-acted pulse, off on the animation's
-      // own end, and a tooltip note, on the row and on its button (the x or the +: the innermost title is the one shown under the pointer).
-      // Round 7 put both on the row the click landed on, and the rebuild parked under the press took that row off one macrotask later:
-      // the class stood for a frame and animationstart never fired, the note sat on a detached node, and nothing reached the user. The
-      // refusal is recorded instead (the row's kind, its section, its words), the rows are rebuilt at once, and build() puts the cue (above)
-      // on the new row of the same kind for the same section (sameSection, the click guards' comparison; the one pin row by its kind alone),
-      // then clears the record; the parked run then finds the signature already built and leaves the pulsing row alone. A refusal that
-      // leaves no such row, a union gone at the click, has the row's removal for its answer, which is what the click asked for. No timer
-      type Refused = { kind: "held" | "other" | "pin"; ref: SectionRef; words: string };
+      // THE REFUSED CLICK'S CUE RIDES THE REBUILD (round 8). A refused click (Move to's source no longer the copy's home, or the pin row's
+      // section no longer the home, round 9) is acknowledged the way the Hide tab row acknowledges one: the sheet's .romp-acted pulse, off
+      // on the animation's own end, and a tooltip note, on the row and on its button (the +: the innermost title is the one shown under the
+      // pointer). Round 7 put both on the row the click landed on, and the rebuild parked under the press took that row off one macrotask
+      // later: the class stood for a frame and animationstart never fired, the note sat on a detached node, and nothing reached the user.
+      // The refusal is recorded instead (the row's kind, its section, its words), the rows are rebuilt at once, and build() puts the cue
+      // (above) on the new row of the same kind for the same section (sameSection, the click guards' comparison; the one pin row by its
+      // kind alone), then clears the record; the parked run then finds the signature already built and leaves the pulsing row alone. A
+      // click whose union is gone (the x, the +, the + <name> row) records nothing and rebuilds the rows at once: no rebuilt row can be of
+      // a section no union has by id or name, so the row's removal is the answer, which is what the click asked for (round 9 removed the
+      // record those clicks made and the held row's carried cue, which could never match). No timer
+      type Refused = { kind: "other" | "pin"; ref: SectionRef; words: string };
       let refused: Refused | null = null;
       const refuse = (kind: Refused["kind"], ref: SectionRef, words: string) => { refused = { kind, ref, words }; build(); };
       const carried = (kind: Refused["kind"], ref: SectionRef): string | null => (refused && refused.kind === kind && (kind === "pin" || sameSection(refused.ref, ref)) ? refused.words : null);
@@ -7084,9 +7088,8 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const x = el("button", "ctx-tag-x") as HTMLButtonElement;
           x.type = "button"; x.textContent = "✕"; x.title = "remove this tag from the session — everywhere it holds it";
           const ref = sectionRef(g);   // this row's union by its ref; the click resolves it again (round 7)
-          x.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse("held", ref, g.name); return; } editUnion(live, { remove: [id] }); build(); sb.textContent = subText(); });
+          x.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { build(); return; } editUnion(live, { remove: [id] }); build(); sb.textContent = subText(); });   // the union gone at the click: the rows rebuilt at once, and this row's removal is the answer (round 9: no record, no cue)
           row.appendChild(x);
-          const note = carried("held", ref); if (note !== null) cue(row, x, note);   // a refused click's cue, carried to this rebuild (round 8)
           add(row);
         }
         const others = unionFor().filter((g) => !g.members.includes(id) && !g.pending);   // a tag being created is not joinable yet
@@ -7116,7 +7119,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
             row.appendChild(bodyE);
             plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;
             plus.type = "button"; plus.textContent = "+"; plus.title = "add this tag too — the session keeps its other tags";
-            plus.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse("other", ref, lb.textContent ?? ""); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });
+            plus.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { build(); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });   // the destination gone at the click: the rows rebuilt, its row's removal the answer (round 9)
             row.appendChild(plus);
             // THE MOVE'S SOURCE IS THE COPY'S HOME AT THE CLICK (round 8): homeNow, and it must be the section this build read (sameSection,
             // the Hide tab row's guard's comparison), or the click is refused. Round 7 asked only that the source union still exist, so a
@@ -7126,7 +7129,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           } else {
             lb.textContent = "+ " + g.name; bodyE.appendChild(lb);
             row.appendChild(bodyE);
-            row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse("other", ref, lb.textContent ?? ""); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { build(); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });   // the tag gone at the click: the rows rebuilt, this row's removal the answer (round 9)
           }
           row.title = lb.textContent ?? "";   // the whole label as the row's tooltip (round 6): a 40-character destination elides at the cap and was readable nowhere in the menu; the + keeps its own title
           const note = carried("other", ref); if (note !== null) cue(row, plus, note);   // a refused click's cue, carried to this rebuild (round 8)
