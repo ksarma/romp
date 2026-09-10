@@ -6625,12 +6625,15 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // beside a new tag under the old name resolves to the renamed tag; the id pass runs over every held union before the name is
   // tried, so a remote-only union under the old name cannot take the copy by coming first in the drag order (round 5 took the
   // first union either comparison matched, and the copy depended on tagOrder). The name carries the copy where the id cannot:
-  // a tag claimed at its create wears the placeholder id the ack replaces; a union only remote hosts' tags make has no local id
-  // (so a rename of a remote-only group loses the copy, the one limit); and a local tag deleted and created again under the same
-  // name has a new id, so the same-named union holds the copy, as the strip's section, keyed by the name, still shows it. The
-  // click's guard compares the row's section and the resolution through sameSection (the ids when both are local, else the
-  // names, so two remote-only sections are two), so a copy re-identified under the same words refuses the click once, with the
-  // row's cue, and the second click writes for the new id.
+  // a tag typed into the flyout while the copy had no group is claimed by its name alone (aimAdd runs before the create is posted,
+  // so the ref never carries an id); a copy right-clicked under a tag whose create the kernel had not yet answered carries the
+  // placeholder id the ack replaces, which no union carries afterwards (round 7); a union only remote hosts' tags make has no
+  // local id; and a local tag deleted and created again under the same name has a new id, so the same-named union holds the copy,
+  // as the strip's section, keyed by the name, still shows it. A copy the name alone carries is lost to a rename pushed while the
+  // session is under two or more groups (the row leaves, a click writes nothing), the limit the guide states for the remote-only
+  // group and the tag whose create was unanswered. The click's guard compares the row's section and the resolution through
+  // sameSection (the ids when both are local, else the names, so two remote-only sections are two), so a copy re-identified under
+  // the same words refuses the click once, with the row's cue, and the second click writes for the new id.
   const unionFor = () => viewTagUnion(effViews());
   const holding = () => unionFor().filter((g) => g.members.includes(id));
   const refOf = (name: string): SectionRef => { const g = unionFor().find((u) => u.name === name); return g ? sectionRef(g) : { name, localId: null }; };   // a tag not yet created: its name alone

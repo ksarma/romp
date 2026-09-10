@@ -181,9 +181,11 @@ follows the copy you right-clicked, through your edits in the **Tags** flyout an
 that arrive from elsewhere (another pane, another dashboard). The menu knows the group by its
 tag's id, and by its name when no tag has that id: a tag renamed meanwhile keeps the row under its
 new name, and a tag removed and made again under the same name keeps it too. Two kinds of group
-are known by name alone, a group that only another machine's tags make and a tag you created by
-typing its name into the **Tags** flyout while the tab had no group: renamed while the session is
-under two or more groups, the row leaves, and a click writes nothing. Moving it to another group
+are known by name alone, a group that only another machine's tags make and a tag that was still
+being created when the menu started following the tab under it (you typed its name into the
+**Tags** flyout while the tab had no group, or you right-clicked the tab while the tag's row under
+**Tags** said creating): renamed while the session is under two or more groups, the row leaves, and
+a click writes nothing. Moving it to another group
 changes the group the line names. Removing that group's tag takes the row away, unless the session is left under
 exactly one other tag, whose group the line then names: under two or more, the menu cannot tell
 which copy you mean. If the removed tag comes back (a removal the kernel refused, or the tag added
