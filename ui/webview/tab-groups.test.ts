@@ -1523,7 +1523,7 @@ test("executed: prunePinned drops the pins of tags and sessions that no longer e
   // on a transient frame (a views blob mid-write, a host's tags not yet arrived) and put a tab away
   assert.equal(RENDER.split("prunePinned(").length - 1, 1, "one call site: writeTabGroupsPruned, which the pin row and the snapshot's Hide and Show share (tab-hide.test)");
   assert.match(RENDER, /function writeTabGroupsPruned\(st: TabGroupsState\): void \{\s*\n\s*writeTabGroups\(prunePinned\(st, viewTagUnion\(effViews\(\)\), knownTabIds\(\), reachableHosts\(\)\)\);\s*\n\}/);
-  assert.match(RENDER, /const h = homeNow\(\); if \(!h \|\| !sameSection\(sectionRef\(h\), sec\)\) \{ refuse\("pin", sec, sb2\.textContent \?\? ""\); return; \} writeTabGroupsPruned\(setPinned\(tabGroups\(\), sectionRef\(h\), id, !on\)\); build\(\);/,
+  assert.match(RENDER, /const h = homeNow\(\); if \(!h \|\| !sameSection\(sectionRef\(h\), sec\)\) \{ refuse\("pin", sec\); return; \} writeTabGroupsPruned\(setPinned\(tabGroups\(\), sectionRef\(h\), id, !on\)\); build\(\);/,
     "the row SETS the state it rendered (!on) through the one prune site: a toggle would flip whatever a re-render stored between the render and the click; the section is the copy's home as it stands at the click, and it must be the section the row was built for, Move to's rule (round 9 of the tab menu review; round 7 asked only that the row's union exist, so a copy moved out of its home under the press while the home's tag stood wrote a pin the prune dropped, with no cue), else the click refuses with the cue");
   assert.match(RENDER, /function knownTabIds\(\): Set<string> \{ return new Set<string>\(\[\.\.\.order, \.\.\.tabMeta\.keys\(\)\]\); \}/);
   const TG = ui("webview", "tab-groups.ts");
