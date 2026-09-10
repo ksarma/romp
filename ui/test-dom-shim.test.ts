@@ -706,6 +706,14 @@ const NEGATIVE: Array<[string, string, string]> = [   // [what it is, scratch so
   ["a conditional carrying a call (out of scope)", "n.EDGE = mk(x ? y : kid);", "firstChild"],
   ["a comparison inside a conditional, not an assignment", "const same = n.EDGE === x ? a : kid;", "parentNode"],
   ["a logical value (out of scope)", "n.EDGE = p || null; m.EDGE = p && q;", "parentNode"],
+  // the shapes the docstring names out of scope by design, one case each, so a detector that starts reading one of
+  // them moves its case to POSITIVE and the docstring's account (and the callers-pin message) with it
+  ["a shorthand key, inline or alone on a line (out of scope)", "const n = { tag: 'div', EDGE, appendChild() {} };\nconst m = {\n  tag: 'span',\n  EDGE,\n};", "children"],
+  ["a computed key, a string or an identifier (out of scope)", "const n = { ['EDGE']: null, tag: 'div' }; const m = { [k]: null, tag: 'span' };", "parentNode"],
+  ["a spread of an object built elsewhere (out of scope)", "const edges = Object.fromEntries([['EDGE', null]]);\nconst n = { tag: 'div', ...edges, appendChild() {} };", "parentNode"],
+  ["a bracket-notation write (out of scope)", "c['EDGE'] = this; c.appendChild(x);", "parentNode"],
+  ["a compound assignment (out of scope)", "c.EDGE ??= this; d.EDGE ||= this; c.appendChild(x);", "parentNode"],
+  ["a class field whose type starts on the line after the colon, with an initializer or declared only (out of scope)", "class N {\n  tag = 'x';\n  EDGE:\n    N | null = null;\n  appendChild() {}\n}\nclass M {\n  tag = 'y';\n  EDGE:\n    M | null;\n}", "parentNode"],
 ];
 const INDISTINGUISHABLE: Array<[string, string, string, string]> = [   // [what it is, the shape it reads as, scratch source, edge name]
   // the forms a line start reaches: a destructuring default or a type literal's member on its own line
