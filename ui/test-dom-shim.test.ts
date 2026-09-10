@@ -1,11 +1,12 @@
 // The shared fake-DOM shim's PROJECTION RULE, pinned on its own (ui/test-dom-shim.ts; ui/timeline-tags-scale.test.ts
-// pins it over a live dialog at scale), and a RATCHET over the other UI test files, one rule for every file under
-// ui/: a test file whose CODE initialises an edge-named property (parentNode, parentElement, parent, childNodes,
-// children, firstChild, lastChild, nextSibling, previousSibling, ownerDocument or host) as a plain enumerable own
-// property, in any shape the detector below reads (comments and the contents of string, template and regex literals
-// are blanked first, so a source pin or a comment is not code), either CALLS hideEdges( or nodeFactory( imported from
-// the shared shim (a named or a namespace import, either quote style on the specifier, with or without .js; an import
-// without a call in code is not switched) or is named on the allowlist below, the files that predate the rule, whose
+// pins it over a live dialog at scale) with the SERIAL that tells two projections apart and sameNodes, the assertion
+// over a node list, and a RATCHET over the other UI test files, one rule for every file under ui/: a test file whose
+// CODE initialises an edge-named property (parentNode, parentElement, parent, childNodes, children, firstChild,
+// lastChild, nextSibling, previousSibling, ownerDocument or host) as a plain enumerable own property, in any shape
+// the detector below reads (comments and the contents of string, template and regex literals are blanked first, so a
+// source pin or a comment is not code), either CALLS hideEdges( or nodeFactory( imported from the shared shim (a named
+// or a namespace import, either quote style on the specifier, with or without .js; an import without a call in code
+// is not switched) or is named on the allowlist below, the files that predate the rule, whose
 // length ALLOWLIST_MAX pins exactly: a renamed file replaces its entry, a file that comes off lowers the constant in
 // the same commit, a new file may not join. There is no vocabulary gate: a window stand-in's parent, a goal
 // fixture's children and a class's parentNode are the same kind of property, a failing dump walks each, and the
@@ -22,7 +23,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { inspect } from "node:util";
-import { nodeFactory, hideEdges, staysEnumerable, FLAT_RECT } from "./test-dom-shim";
+import { nodeFactory, hideEdges, staysEnumerable, sameNodes, describeNode, FLAT_RECT } from "./test-dom-shim";
 
 // node's assert inspects the two sides of a failed strict assertion with these options
 // (lib/internal/assert/assertion_error.js, inspectValue) before it diffs them line by line
@@ -36,7 +37,7 @@ const lines = (s: string) => s.split("\n").length;
 test("a fresh node enumerates its primitives alone; the edges, records, methods and accessors are non-enumerable and still reachable", () => {
   const n = makeNode("div");
   for (const k of Object.keys(n)) assert.ok(staysEnumerable(n[k]), k + " is enumerable and holds a " + typeof n[k]);
-  assert.deepEqual(Object.keys(n).sort(), ["_scrollTop", "_text", "selectionEnd", "selectionStart", "tag", "value"], "the projection");
+  assert.deepEqual(Object.keys(n).sort(), ["_nid", "_scrollTop", "_text", "selectionEnd", "selectionStart", "tag", "value"], "the projection");
   for (const k of ["children", "parentNode", "_attrs", "style", "dataset", "classList", "_listeners", "_stacks", "appendChild", "getBoundingClientRect", "firstChild", "textContent", "scrollTop"]) {
     const d = Object.getOwnPropertyDescriptor(n, k);
     assert.ok(d && d.enumerable === false, k + " is an own, non-enumerable property");
@@ -54,9 +55,11 @@ test("a fresh node enumerates its primitives alone; the edges, records, methods 
 test("the rule on a bare object: objects, arrays, functions, null, undefined and accessors hide; strings, numbers, booleans stay; twice is the same", () => {
   const o: any = { s: "x", i: 1, b: true, z: null, u: undefined, r: {}, l: [], f() { return 1; }, get acc() { return 2; } };
   hideEdges(o);
-  assert.deepEqual(Object.keys(o).sort(), ["b", "i", "s"]);
+  assert.deepEqual(Object.keys(o).sort(), ["_nid", "b", "i", "s"], "the primitives, and the serial the call stamped");
+  const nid = o._nid;
   hideEdges(o);
-  assert.deepEqual(Object.keys(o).sort(), ["b", "i", "s"], "idempotent");
+  assert.deepEqual(Object.keys(o).sort(), ["_nid", "b", "i", "s"], "idempotent");
+  assert.equal(o._nid, nid, "the second call keeps the serial");
   assert.equal(o.f(), 1); assert.equal(o.acc, 2); assert.deepEqual(o.l, []); assert.equal(o.z, null);
   assert.deepEqual([staysEnumerable("a"), staysEnumerable(0), staysEnumerable(false), staysEnumerable(10n), staysEnumerable(Symbol("s"))], [true, true, true, true, true]);
   assert.deepEqual([staysEnumerable(null), staysEnumerable(undefined), staysEnumerable({}), staysEnumerable([]), staysEnumerable(() => 0)], [false, false, false, false, false]);
@@ -76,11 +79,11 @@ test("after construction: a property product code hangs on a node enumerates wha
     for (const step of order) step === "select" ? m.select() : m.setSelectionRange(1, 2);
     const d = Object.getOwnPropertyDescriptor(m, "_sel")!;
     assert.ok(d && d.enumerable === false && d.writable && d.configurable, order.join(" then ") + ": _sel is an own, non-enumerable, writable property");
-    assert.deepEqual(Object.keys(m).sort(), ["_scrollTop", "_text", "selectionEnd", "selectionStart", "tag", "value"], order.join(" then ") + ": the projection is unchanged");
+    assert.deepEqual(Object.keys(m).sort(), ["_nid", "_scrollTop", "_text", "selectionEnd", "selectionStart", "tag", "value"], order.join(" then ") + ": the projection is unchanged");
   }
 });
 
-test("a failing assertion on a node in a deep chain-first tree returns a short message; a deepEqual of two nodes compares projections", () => {
+test("a failing assertion on a node in a deep chain-first tree returns a short message; a deepEqual of two nodes compares projections, which the serial tells apart", () => {
   // depth 24 along first children with five siblings at every level: the shape whose dump passed util.inspect's
   // 2^27-character budget at depth 17 before the rule (the first-child getter re-expanded children[0] per level)
   const root = makeNode("div"); let cur = root;
@@ -93,9 +96,48 @@ test("a failing assertion on a node in a deep chain-first tree returns a short m
     let msg = ""; try { assert.equal(n, null, "a node against null"); } catch (e: any) { msg = String(e.message); }
     assert.ok(msg && lines(msg) <= 40, what + " against null: a short message, got " + lines(msg) + " lines");
   }
-  // two fresh nodes are deepEqual, their projections agree: node identity is compared with ===, behind a message
-  assert.deepEqual(makeNode("div"), makeNode("div"));
-  assert.ok(makeNode("div") !== makeNode("div"));
+  // two fresh nodes are NOT deepEqual: their projections differ in the serial (until 2026-09-10 they agreed, and a
+  // deepEqual meant as identity passed for any node of the tag). A node is deepEqual to itself; identity is still ===
+  const a = makeNode("div"), b = makeNode("div");
+  assert.notDeepEqual(a, b, "two fresh nodes of one tag project differently");
+  assert.deepEqual(a, a);
+  assert.ok(a !== b);
+  let msg = ""; try { assert.deepEqual(a, b); } catch (e: any) { msg = String(e.message); }
+  assert.ok(msg.includes("_nid") && lines(msg) <= 40, "the failing deepEqual names the serial in a short diff, got " + lines(msg) + " lines");
+});
+
+test("the serial: every node hideEdges touches carries an enumerable, distinct, increasing _nid, stamped once; sameNodes asserts a node list by identity with a one-line message", () => {
+  const nodes = [makeNode("div"), makeNode("span"), makeNode("div")];
+  for (const n of nodes) assert.ok(typeof n._nid === "number" && Object.getOwnPropertyDescriptor(n, "_nid")!.enumerable, "an enumerable number");
+  assert.ok(nodes[0]._nid < nodes[1]._nid && nodes[1]._nid < nodes[2]._nid, "increasing in creation order");
+  assert.equal(new Set(nodes.map((n) => n._nid)).size, 3, "distinct");
+  const kid = nodes[0].createDiv({}); assert.ok(kid._nid > nodes[2]._nid, "a child made later has a later serial");
+  // the class idiom the webview tests use: a constructor that defines its edges non-enumerable and ends in hideEdges(this),
+  // and a subclass constructor that calls it again; the node gets one serial, from the first call. The edges here are
+  // named up and kids, not by their DOM names, so this file does not trip its own ratchet (the scratch sources use EDGE)
+  class El { up!: El | null; kids: El[]; tagName: string; constructor(tag: string) { this.tagName = tag; this.kids = []; Object.defineProperty(this, "up", { value: null, writable: true, enumerable: false, configurable: true }); hideEdges(this); } }
+  class Txt extends El { data: string; constructor(d: string) { super("#text"); this.data = d; hideEdges(this); } }
+  const t = new Txt("x"), e = new El("div");
+  assert.deepEqual(Object.keys(t).sort(), ["_nid", "data", "tagName"], "the subclass's own field stays, its edges hide, one serial");
+  assert.ok((t as any)._nid !== undefined && (t as any)._nid < (e as any)._nid, "stamped in the base constructor's call, kept by the subclass's");
+  assert.notDeepEqual(new El("div"), new El("div"), "two class nodes of one tag are not deepEqual either");
+  // describeNode: tag and serial, for messages
+  assert.equal(describeNode(e), "div#" + (e as any)._nid); assert.equal(describeNode(nodes[1]), "span#" + nodes[1]._nid);
+  assert.equal(describeNode(null), "null"); assert.equal(describeNode(undefined), "undefined"); assert.equal(describeNode(3), "3");
+  assert.equal(describeNode({}), "Object", "a plain object with no tag: its class name");
+  // sameNodes: the same nodes in the same order pass; a wrong node, a wrong order, a missing node, a foreign node and no
+  // list fail with `message` and one line naming the index and both tags, never a dump
+  const [d1, s1, d2] = nodes;
+  sameNodes([d1, s1, d2], [d1, s1, d2], "the same list"); sameNodes([], [], "two empty lists");
+  const fails = (actual: any, expected: any[]) => { try { sameNodes(actual, expected, "the rows"); } catch (e: any) { return String(e.message); } return ""; };
+  let m = fails([d1, s1, d2], [d1, s1, makeNode("div")]);
+  assert.ok(m.startsWith("the rows: index 2 is another node: got div#" + d2._nid + ", expected div#"), "a different node of the same tag, by index and serial: " + m);
+  m = fails([d1, s1, d2], [d1, d2, s1]); assert.ok(m.startsWith("the rows: index 1 is another node: got span#" + s1._nid + ", expected div#" + d2._nid), "a reorder: " + m);
+  m = fails([d1, s1], [d1, s1, d2]); assert.equal(m, "the rows: 2 nodes where 3 were expected", "a missing node");
+  m = fails([d1, s1, d2, kid], [d1, s1, d2]); assert.equal(m, "the rows: 4 nodes where 3 were expected", "an extra node");
+  m = fails(null, [d1]); assert.equal(m, "the rows: no node list, got null where 1 nodes were expected", "no list at all");
+  m = fails([null], [d1]); assert.ok(m.startsWith("the rows: index 0 is another node: got null, expected div#"), "a null in the list: " + m);
+  for (const bad of [fails([d1, s1, d2], [d1, s1, makeNode("div")]), fails([d1, s1], [d1, s1, d2])]) assert.ok(lines(bad) === 1, "one line, got " + lines(bad));
 });
 
 test("the factory: the rect (the node's own, then the module hook, then the factory's), the scroll clamp, focus, the caret, the listener stack, the DOM's move and replace semantics", () => {
