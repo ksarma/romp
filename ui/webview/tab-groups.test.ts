@@ -1523,7 +1523,7 @@ test("executed: prunePinned drops the pins of tags and sessions that no longer e
   // on a transient frame (a views blob mid-write, a host's tags not yet arrived) and put a tab away
   assert.equal(RENDER.split("prunePinned(").length - 1, 1, "one call site: writeTabGroupsPruned, which the pin row and the snapshot's Hide and Show share (tab-hide.test)");
   assert.match(RENDER, /function writeTabGroupsPruned\(st: TabGroupsState\): void \{\s*\n\s*writeTabGroups\(prunePinned\(st, viewTagUnion\(effViews\(\)\), knownTabIds\(\), reachableHosts\(\)\)\);\s*\n\}/);
-  assert.match(RENDER, /const live = liveUnion\(sec\); if \(!live\) \{ refuse\(row, sb2\.textContent \?\? ""\); return; \} writeTabGroupsPruned\(setPinned\(tabGroups\(\), sectionRef\(live\), id, !on\)\); build\(\);/,
+  assert.match(RENDER, /const live = liveUnion\(sec\); if \(!live\) \{ refuse\("pin", sec, sb2\.textContent \?\? ""\); return; \} writeTabGroupsPruned\(setPinned\(tabGroups\(\), sectionRef\(live\), id, !on\)\); build\(\);/,
     "the row SETS the state it rendered (!on) through the one prune site: a toggle would flip whatever a re-render stored between the render and the click; the section is the home's as it stands at the click (round 7 of the tab menu review), so a home gone by then refuses with the cue");
   assert.match(RENDER, /function knownTabIds\(\): Set<string> \{ return new Set<string>\(\[\.\.\.order, \.\.\.tabMeta\.keys\(\)\]\); \}/);
   const TG = ui("webview", "tab-groups.ts");
@@ -1904,7 +1904,7 @@ test("the tab menu speaks for the right-clicked copy's group: Move to drops THAT
   const menuAt = RENDER.indexOf("function showTabMenu(");
   const menu = RENDER.slice(menuAt, RENDER.indexOf("document.body.appendChild(menu);", menuAt));
   assert.match(menu, /const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;/);
-  assert.equal(menu.split("homeNow()").length - 1, 3, "the Hide tab row's gate (rowHome, shared by its refresh and its click; round 6 of the tab menu review), the flyout's per-build read and the flyout's signature");
+  assert.equal(menu.split("homeNow()").length - 1, 4, "the Hide tab row's gate (rowHome, shared by its refresh and its click; round 6 of the tab menu review), the flyout's per-build read, the flyout's signature and Move to's source at the click (round 8)");
   assert.ok(menu.indexOf("const homeNow = ") < menu.indexOf('"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"') && menu.indexOf('"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"') < menu.indexOf("const home = homeNow();   // read per build"));
   assert.match(menu, /copyNow = sectionRef\(to\);/, "the move writes the tracked section");
   assert.match(menu, /const home = homeNow\(\);   \/\/ read per build[^\n]*\n\s*for \(const g of others\) \{/, "the flyout's read, where its own copy of the two lines stood");

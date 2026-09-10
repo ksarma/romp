@@ -6961,14 +6961,25 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     // tag joining that union with the session, or an already-joined one taking the session, was then unknown to the x and to Move to,
     // whose remove walks the union's remote tags (applyUnionEdit): the local half went, the remote copy kept the session, the row stood
     // after the click and the Hide tab row still named the group (the x's tooltip promises everywhere). Every mutating handler names
-    // its union by the ref it was built from (the local id when the union has one, else its name, as heldCopy matches) and resolves it
-    // from unionFor() at the click, the live store, never the build-time union. A union no longer there at the click (its tag deleted,
-    // or replaced under a new id) takes the refused click's cue on the row the click landed on (refuse: the Hide tab row's
-    // acknowledgement, the sheet's pulse off on the animation's own end and a tooltip note) and writes nothing; the parked rebuild lands
-    // on the release and the rows say what is there
-    const liveUnion = (ref: SectionRef): TagUnion | undefined => unionFor().find((g) => (ref.localId !== null ? g.localId === ref.localId : g.name === ref.name));
-    const refuse = (row: HTMLElement, words: string) => {
-      row.title = `${words}. The tags changed just before your click, so it did nothing; click again.`;
+    // its union by the ref it was built from and resolves it from unionFor() at the click, the live store, never the build-time union.
+    // THE RESOLUTION IS heldCopy's (round 8): the ref's local id over every union first, its name only when no union carries that id,
+    // the rule the guide states for the group the menu knows. So a union whose local half was deleted under the press while a remote
+    // same-named tag still holds the session is found by its name (round 7 matched a ref that carried an id by the id alone, so the x,
+    // Move to and the pin row refused where the Hide tab row's guard, which compares names when either side lacks an id, wrote), a
+    // remote-only union is found by its name (its ref has no id), a tag renamed under the press by its id, and a tag deleted and made
+    // again under the same name is the same group by its name, as the strip's section, keyed by the name, still shows it. A union no
+    // longer there at the click (its tag deleted, no remote of the name) is a refused click: nothing written, and the refusal is
+    // recorded for the rows' rebuild (refuse, in the flyout below, which carries the cue). Move to asks more of its source (the row)
+    const liveUnion = (ref: SectionRef): TagUnion | undefined => {
+      const all = unionFor();
+      return (ref.localId !== null ? all.find((g) => g.localId === ref.localId) : undefined) ?? all.find((g) => g.name === ref.name);
+    };
+    // the refused click's cue on a flyout row: the Hide tab row's acknowledgement (the sheet's pulse, off on the animation's own end) and
+    // a tooltip note on the row and on its button, the x or the +, since the innermost title is the one shown under the pointer (round 8)
+    const cue = (row: HTMLElement, btn: HTMLElement | null, words: string) => {
+      const note = `${words}. The tags changed just before your click, so it did nothing; click again.`;
+      row.title = note;
+      if (btn) btn.title = note;
       row.classList.remove("romp-acted");
       void row.offsetWidth;   // a reflow between the remove and the add, so a second refusal pulses again
       row.classList.add("romp-acted");
@@ -6992,6 +7003,19 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       if (openFly) return openFly as HTMLElement;
       menu.querySelector(".ctx-sub")?.remove();                  // one flyout at a time (Billing's rule)
       const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");
+      // THE REFUSED CLICK'S CUE RIDES THE REBUILD (round 8). A refused click (its union gone at the click, or Move to's source no longer
+      // the copy's home) is acknowledged the way the Hide tab row acknowledges one: the sheet's .romp-acted pulse, off on the animation's
+      // own end, and a tooltip note, on the row and on its button (the x or the +: the innermost title is the one shown under the pointer).
+      // Round 7 put both on the row the click landed on, and the rebuild parked under the press took that row off one macrotask later:
+      // the class stood for a frame and animationstart never fired, the note sat on a detached node, and nothing reached the user. The
+      // refusal is recorded instead (the row's kind, its section, its words), the rows are rebuilt at once, and build() puts the cue (above)
+      // on the new row of the same kind for the same section (sameSection, the click guards' comparison; the one pin row by its kind alone),
+      // then clears the record; the parked run then finds the signature already built and leaves the pulsing row alone. A refusal that
+      // leaves no such row, a union gone at the click, has the row's removal for its answer, which is what the click asked for. No timer
+      type Refused = { kind: "held" | "other" | "pin"; ref: SectionRef; words: string };
+      let refused: Refused | null = null;
+      const refuse = (kind: Refused["kind"], ref: SectionRef, words: string) => { refused = { kind, ref, words }; build(); };
+      const carried = (kind: Refused["kind"], ref: SectionRef): string | null => (refused && refused.kind === kind && (kind === "pin" || sameSection(refused.ref, ref)) ? refused.words : null);
       // what these rows show, as one string: EVERY input build() reads (round 6). Each union's name, id, colour, pending state and
       // hold on this session (round 4), and the copy's home resolution with its pin bit: homeNow reads the store's grouping switch
       // and the copy's ref, and the pin row reads isPinned, so a switch flipped or a pin written in another pane changes the string.
@@ -7059,8 +7083,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const x = el("button", "ctx-tag-x") as HTMLButtonElement;
           x.type = "button"; x.textContent = "✕"; x.title = "remove this tag from the session — everywhere it holds it";
           const ref = sectionRef(g);   // this row's union by its ref; the click resolves it again (round 7)
-          x.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse(row, g.name); return; } editUnion(live, { remove: [id] }); build(); sb.textContent = subText(); });
+          x.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse("held", ref, g.name); return; } editUnion(live, { remove: [id] }); build(); sb.textContent = subText(); });
           row.appendChild(x);
+          const note = carried("held", ref); if (note !== null) cue(row, x, note);   // a refused click's cue, carried to this rebuild (round 8)
           add(row);
         }
         const others = unionFor().filter((g) => !g.members.includes(id) && !g.pending);   // a tag being created is not joinable yet
@@ -7083,21 +7108,27 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label");
           const ref = sectionRef(g);   // this row's union by its ref; the click resolves it again (round 7)
+          let plus: HTMLButtonElement | null = null;   // the Move to row's +, which a carried cue notes as well as the row (round 8)
           if (home) {
-            const from = sectionRef(home);   // the copy's group as this build read it; the move resolves it again too
+            const from = sectionRef(home);   // the copy's group as this build read it; the move reads the copy's home again at the click
             lb.textContent = "Move to " + g.name; bodyE.appendChild(lb);
             row.appendChild(bodyE);
-            const plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;
+            plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;
             plus.type = "button"; plus.textContent = "+"; plus.title = "add this tag too — the session keeps its other tags";
-            plus.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse(row, lb.textContent ?? ""); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });
+            plus.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse("other", ref, lb.textContent ?? ""); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });
             row.appendChild(plus);
-            row.addEventListener("click", (e2) => { e2.stopPropagation(); const to = liveUnion(ref), fromNow = liveUnion(from); if (!to || !fromNow) { refuse(row, lb.textContent ?? ""); return; } moveUnion(fromNow, to); build(); sb.textContent = subText(); });
+            // THE MOVE'S SOURCE IS THE COPY'S HOME AT THE CLICK (round 8): homeNow, and it must be the section this build read (sameSection,
+            // the Hide tab row's guard's comparison), or the click is refused. Round 7 asked only that the source union still exist, so a
+            // push under the press that took the copy out of its group, or re-homed it, passed: the move's remove found no member and its
+            // add posted alone, and the session ended under the destination as well as wherever the push had put it
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); const to = liveUnion(ref), fromNow = homeNow(); if (!to || !fromNow || !sameSection(sectionRef(fromNow), from)) { refuse("other", ref, lb.textContent ?? ""); return; } moveUnion(fromNow, to); build(); sb.textContent = subText(); });
           } else {
             lb.textContent = "+ " + g.name; bodyE.appendChild(lb);
             row.appendChild(bodyE);
-            row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse(row, lb.textContent ?? ""); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { refuse("other", ref, lb.textContent ?? ""); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });
           }
           row.title = lb.textContent ?? "";   // the whole label as the row's tooltip (round 6): a 40-character destination elides at the cap and was readable nowhere in the menu; the + keeps its own title
+          const note = carried("other", ref); if (note !== null) cue(row, plus, note);   // a refused click's cue, carried to this rebuild (round 8)
           add(row);
         }
         // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
@@ -7134,9 +7165,11 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           // the event's delivery (writeTabGroups dispatches inside a try, and a page with no window has no listener). The section is the
           // home's as it stands at the click (round 7: liveUnion by the ref this build read, so a rename under the press pins the new
           // name with the id, and a home gone by the click refuses with the cue)
-          row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(sec); if (!live) { refuse(row, sb2.textContent ?? ""); return; } writeTabGroupsPruned(setPinned(tabGroups(), sectionRef(live), id, !on)); build(); });
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(sec); if (!live) { refuse("pin", sec, sb2.textContent ?? ""); return; } writeTabGroupsPruned(setPinned(tabGroups(), sectionRef(live), id, !on)); build(); });
+          const note = carried("pin", sec); if (note !== null) cue(row, null, note);   // a refused click's cue, carried to this rebuild (round 8)
           add(row);
         }
+        refused = null;   // a carried cue is placed by this build or by none (round 8)
         if (holding().length || others.length) add(el("div", "ctx-sep"));
         tagsItem.title = subText();   // the Tags row's tooltip follows the flyout's own edits (its sub-line is written by their handlers after this build)
         refreshHideRow();   // every edit above rebuilds this flyout: the Hide tab row speaks for the copy where it now sits (keyed on the write, no timer), and the refresh ends by placing the menu and this flyout at its new size (round 6: after every build and rebuild, whatever the row's words did)
