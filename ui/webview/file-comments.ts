@@ -1504,8 +1504,10 @@ class Panel {
         // (`[![p95](figs/p95.png)](url)`, which mdBlock gives target=_blank) opened a new tab on every click, Enter and
         // handed-on press on a rectangle inside it, since the overlay and its rectangles stand inside the <a>
         // (the 2026-09-06 review). Cancelling the click ends the anchor's activation; the card opens as before — unless
-        // the click ends a drag-selection inside the highlight (dragClick), as for a change mark above.
-        fcopen: (x, ev) => { ev.preventDefault(); if (this.dragClick(ev)) return; this.openPanel(); this.showCard(this.cardKey(x.dataset.id!)); },
+        // the click ends a drag-selection inside the highlight (dragClick), as for a change mark above. Two comments over one
+        // passage nest their marks, and the mark under a click on the overlap is the innermost: the covering comments' cards
+        // open with it (openCovering), the clicked one the focus.
+        fcopen: (x, ev) => { ev.preventDefault(); if (this.dragClick(ev)) return; this.openPanel(); this.openCovering(x); this.showCard(this.cardKey(x.dataset.id!)); },
         fcreplace: (x, ev) => { ev.stopPropagation(); this.startReplace(x.dataset.id!); },   // a region comment's Re-place (Slice 3)
       }),
     });
@@ -3139,6 +3141,20 @@ class Panel {
     this.filter = f;
     saveSettings({ commentsFilter: f });
     this.paintAll();
+  }
+  /** The cards of the OTHER comments whose highlights cover the mark `x` a click or Enter landed on, opened with it (plans/
+   *  markdown-viewer.md Slice 5, item 6). Two comments over one passage nest their marks: the later paint wraps the text where it
+   *  stands, inside the earlier comment's mark (anchor-map.ts wrapNode; paintAll paints in cards() order and repaintPresel keeps
+   *  that order), and the Raw view nests the same way (paintRaw wraps the row's text in place). So the mark under the overlap is
+   *  the innermost, the delegate resolves the control to it (actions.ts, closest("[data-act]")), and the outer comment's card
+   *  could not be reached from that text. Every fcopen mark of ours above the clicked one (owns) is a covering comment: its card
+   *  opens as a head click would open it (openCards), in the same render as the clicked card, which is the focus (showCard, the
+   *  caller's next step). The sheets draw the nest as one wash and one ring (`.fc-hl .fc-hl`); the marks' own attributes
+   *  (data-new, tabIndex, the title) stay per mark. */
+  private openCovering(x: HTMLElement): void {
+    for (let e = x.parentElement; e; e = e.parentElement) {
+      if (e.dataset.act === "fcopen" && e.dataset.id && this.marks.has(e)) this.openCards.add(this.cardKey(e.dataset.id));
+    }
   }
   /** Expand and scroll to a card by key — a change card inside the fold unfolds it first. */
   showCard(key: string): void {
