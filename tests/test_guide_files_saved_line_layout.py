@@ -40,7 +40,8 @@ def _flat(text):
 
 # the claim the qualifier scopes (the exact text is tests/test_guide_files_arrivals.py's), the qualifier, and what follows it
 FOOT = ("When the new card lands out of view, a line at the foot of the panel, **Saved · the card is above** (or **below**), "
-        "says where it went; click the line to bring the card into view, or leave it: it goes with your next scroll, click, tap, or key.")
+        "says where it went; click the line to bring the card into view, or leave it: it goes with your next scroll, click, tap, or key, "
+        "except Tab or a modifier key pressed on its own, so you can reach it from the keyboard.")
 LIST = "In the list under a narrow column, the line stands under the panel's header instead."
 AFTER = "**Comment on this file** leaves a comment on the file as a whole"
 # the section's own name for the layout, given where it first scopes a claim to the panel beside the file

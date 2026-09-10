@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The guide's save sentences say a save leaves the text where it is, that a line at the foot of the panel says whether the new
 card is above or below, that clicking the line brings the card into view, and that the line goes with your next gesture; the
-sentences name every kind of gesture the panel counts, and the panel does each of those.
+sentences name every kind of gesture the panel counts, and the keys it does not count (a Tab or a modifier pressed alone, the
+keyboard's way to the line), and the panel does each of those.
 
 Decision 43 (2026-09-09): the user prefers no scroll after a save, a scroll being disruptive, and accepts that the person
 may then have to look for the card; the line at the panel's foot is the answer to that. Before it, the arrivals follow-on
@@ -76,6 +77,21 @@ class TheSaveSentencesNameEveryGestureThatEndsTheLine(unittest.TestCase):
             for w in (words if isinstance(words, tuple) else (words,)):
                 self.assertIn(w, self.sentence, "the save sentences do not say %r (the %s listener)" % (w, ev))
         self.assertIn("it goes with your next scroll, click, tap, or key", self.sentence)
+
+    def test_the_keys_that_leave_the_line_are_the_panels_nav_keys(self):
+        # the sentence's exception is the panel's NAV_KEYS filter: Tab and the modifiers a keydown reports, returned from
+        # gesture() before the line is ended, so the keyboard can Tab to the line (the seen follow-on's review, 2026-09-09)
+        self.assertIn("except Tab or a modifier key pressed on its own, so you can reach it from the keyboard", self.sentence)
+        m = re.search(r'const NAV_KEYS = new Set\(\[([^\]]*)\]\);', self.panel)
+        self.assertTrue(m, "the panel's NAV_KEYS set")
+        keys = set(re.findall(r'"([A-Za-z]+)"', m.group(1)))
+        self.assertIn("Tab", keys)
+        self.assertEqual(keys - {"Tab"}, {"Shift", "Control", "Alt", "AltGraph", "Meta"}, "the rest are the modifier keys, and nothing else")
+        gesture = self.panel[self.panel.index("gesture(ev?: Event): void {"):self.panel.index("private entryShown(")]
+        skip = gesture.index("if (kb && NAV_KEYS.has(kb.key)) return;")
+        self.assertLess(skip, gesture.index("if (over) this.savedOut = null;"), "the filter returns before the line is ended")
+        # and the guide claims no other exception: every listed gesture kind still ends the line
+        self.assertIn("it goes with your next scroll, click, tap, or key, except", self.sentence)
 
     def test_the_line_ends_at_a_gesture_and_not_at_a_press_on_itself(self):
         # the sentences' "goes with your next ..." is the gesture handler ending the line, the line's own press excepted (its click is what it is for)

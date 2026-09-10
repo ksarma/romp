@@ -43,7 +43,8 @@ NOTICE = ("A line under the panel's header counts the changes, comments, and rep
 BEFORE_SAVE = "on a phone or a tablet the button is the way, and the line under the box says so."
 SAVE = ("Saving leaves the text where it is. When the new card lands out of view, a line at the foot of the panel, "
         "**Saved · the card is above** (or **below**), says where it went; click the line to bring the card into view, or leave it: "
-        "it goes with your next scroll, click, tap, or key.")
+        "it goes with your next scroll, click, tap, or key, except Tab or a modifier key pressed on its own, so you can reach it "
+        "from the keyboard.")
 
 
 class TheTwoSentences(unittest.TestCase):
