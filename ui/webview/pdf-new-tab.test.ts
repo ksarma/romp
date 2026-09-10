@@ -11,6 +11,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import { openPdfTab, fileUrl, wantsOwnTab } from "./preview";
 import { fileLinkRoute } from "./file-route";
 
@@ -26,6 +28,14 @@ const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.m
 
 const SID = "11111111-2222-3333-4444-555555555555";
 const g = globalThis as any;
+/** A window stand-in over `o` (an EventTarget, or an object with an `open`): its parent is `parent`, or itself when unframed.
+ *  The parent is an edge to another stand-in, hidden by hideEdges (ui/test-dom-shim.ts) so a failing assertion over a window
+ *  dumps the window's own primitives, never the chain; the members `o` brought stay reachable, as does the parent. */
+function windowStandIn<T extends object>(o: T, parent?: object): T & { parent: any } {
+  const w = o as T & { parent: any };
+  w.parent = parent ?? w;
+  return hideEdges(w);
+}
 
 function withBrowser(protocol: string, open: ((...a: unknown[]) => unknown) | null, run: () => void): unknown[][] {
   const calls: unknown[][] = [];
@@ -190,7 +200,7 @@ test("an oversize PDF's tab is not a dead end, and the listing marks such a file
 test("openPath, executed: a modified click on a PDF opens the tab on every route; a plain click, a blocked tab or a non-PDF goes to the route's opener, the shell relay for a pane", async () => {
   // file-view.ts's import graph touches window/document/localStorage at load: the stand-in the figure tests use
   const savedWin = g.window, savedDoc = g.document, savedLs = g.localStorage;
-  const win0: any = new EventTarget(); win0.parent = win0;
+  const win0: any = windowStandIn(new EventTarget());
   g.window = win0;
   g.document = { createElement: () => ({ style: {}, classList: { add() {}, remove() {} }, appendChild: (c: unknown) => c, setAttribute() {}, addEventListener() {} }),
     createTextNode: (t: string) => t, getElementById: () => null, addEventListener() {}, removeEventListener() {}, body: { classList: { add() {}, remove() {} } } };
@@ -209,8 +219,8 @@ test("openPath, executed: a modified click on a PDF opens the tab on every route
     const run = (c: Case) => {
       const opened: unknown[][] = [], posted: unknown[][] = [];
       const parent = { postMessage: (m: unknown, target: unknown) => posted.push([m, target]) };
-      const win: any = { open: (...a: unknown[]) => { opened.push(a); return c.blocked ? null : { opener: { theDashboard: true } }; } };
-      win.parent = c.framed === false ? win : parent;
+      const win: any = windowStandIn({ open: (...a: unknown[]) => { opened.push(a); return c.blocked ? null : { opener: { theDashboard: true } }; } },
+        c.framed === false ? undefined : parent);
       const loc = { protocol: "https:" };
       g.window = win; g.location = loc;   // preview.ts reads the globals inside the gesture
       try {
@@ -266,4 +276,16 @@ test("the guide says so, in the user's terms", () => {
   assert.match(flat, /\*\*Opening a PDF\.\*\* [^*]{0,160}opens inside the dashboard like an image/);
   assert.match(flat, /Cmd-click it instead \(Ctrl on Windows and Linux\), or middle-click, and it opens in a new browser tab in the browser's own viewer/);
   assert.match(flat, /If the browser blocks that new tab, the PDF opens inside the dashboard instead; a PDF too large to show offers a download in its place\./);
+});
+
+// ── the window stand-ins are projections (ui/test-dom-shim.ts): a failing assertion dumps a window's own primitives, never its parent chain ──
+test("a window stand-in enumerates no parent edge, and a dump of it names neither the parent nor its poster", () => {
+  const shell = { postMessage: () => {} };
+  for (const n of [windowStandIn(new EventTarget()), windowStandIn({ open: () => null }, shell), windowStandIn({ open: () => null })]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "a window stand-in keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parent") && !dump.includes("postMessage"), "a window stand-in dumps its parent chain:\n" + dump);
+  }
+  const framed = windowStandIn({}, shell), unframed = windowStandIn({});
+  assert.ok(framed.parent === shell && unframed.parent === unframed, "the parent is still reachable: the shell when framed, itself when not");
 });
