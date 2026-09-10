@@ -7,17 +7,18 @@ kernel's log could not say which kind of redial followed a close: a declared one
 fresh page, or a `ready` that reached the shim while its socket was going down and rode the redial as the page's
 own. Two fields fix that, each recorded where it is known:
 - the kernel's clientDiag handler stamps EVERY row with `reconnect`, whether the socket that carried the row
-  declared the redial. The shim queues the `wsclose` row while its socket is down and flushes it onto the redial
-  ahead of the re-sent `ready`, whose strip consumes the flag, so the row is stamped while the flag still stands;
+  declared the redial: the socket's dial record (`redial`, set at accept beside the consumable `reconnect` and
+  never consumed), so every row a socket carries reads the same value on every pane, before and after the strip
+  has consumed the flag. The shim queues the `wsclose` row while its socket is down and flushes it onto the redial;
 - the shim's `wsclose` row carries `bundleReady`, the shim's state at the close.
 The pair: both true, a declared redial; both false, a drop before the bundle said ready; reconnect false with
 bundleReady true, the ready queued during the close and the redial carried no term. `readyQueued` is not recorded:
 it is false at every close the row is built at, and the pair above already separates the shapes.
 
-Three legs: the handler alone (a client dict with and without the flag), the REAL shim core under node (the
-row's field in each shape, and the row's place ahead of the queued ready), and the two joined (the real handshake
-dialed with the URL the shim built, the shim's own row dispatched on that client, the pair read back from the
-file). Synthetic only: placeholder UUIDs, TESTHOST. Never run raw: pytest's conftest poisons the live ports.
+Three legs: the handler alone (a client dict with and without the dial record), the REAL shim core under node
+(the row's field in each shape, and the row's place ahead of the queued ready), and the two joined (the real
+handshake dialed with the URL the shim built, the shim's own row dispatched on that client, the pair read back
+from the file; a chat socket after the real strip's consumption and a feed socket, which has no strip, read alike). Synthetic only: placeholder UUIDs, TESTHOST. Never run raw: pytest's conftest poisons the live ports.
 """
 import contextlib
 import io
@@ -76,9 +77,9 @@ GATED = "open();drop();"                                              # the sock
 CLOSING = "open();sock().readyState=2;ready();sock().readyState=3;sock().onclose();redial();"   # the ready landed while the socket was closing
 
 
-def _shim_close(scenario):
-    """Run the REAL shim core under node through `scenario`, then open the redial socket (its onopen flushes the
-    queue). Returns the redial's URL query minus the page identity, the frames the redial socket carried in order
+def _shim_close(scenario, app="chat"):
+    """Run the REAL shim core under node, built for `app`, through `scenario`, then open the redial socket (its
+    onopen flushes the queue). Returns the redial's URL query minus the page identity, the frames the redial socket carried in order
     (each clientDiag row as its `what`, every other frame as its type), and the `wsclose` rows it carried."""
     node = shutil.which("node")
     if not node:
@@ -86,7 +87,7 @@ def _shim_close(scenario):
     fx = tempfile.mkdtemp()
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
-        f.write(_SHIM_HARNESS + km._shim_core_js(app="chat", caps=km.READY_GATE_CAP) + "\n" + scenario
+        f.write(_SHIM_HARNESS + km._shim_core_js(app=app, caps=km.READY_GATE_CAP) + "\n" + scenario
                 + "\nvar url=sock().url;open();var fr=sock().sent.map(function(x){return JSON.parse(x);});"
                 + "process.stdout.write(JSON.stringify({url:url,"
                 + "kinds:fr.map(function(m){return m.type==='clientDiag'?m.what:m.type;}),"
@@ -145,13 +146,20 @@ class TheHandlerStampsTheCarryingSocket(_State):
 
     def test_a_row_on_a_fresh_socket_is_stamped_false(self):
         self.post({"wid": WID})                             # a first socket, or a redial that carried no term
-        self.post({"wid": WID, "redial": True})             # a declared redial after its strip consumed the flag
         self.post({"wid": WID, "reconnect": False})
-        self.assertEqual([r["reconnect"] for r in self.rows()], [False, False, False])
+        self.assertEqual([r["reconnect"] for r in self.rows()], [False, False])
 
-    def test_the_stamp_is_a_bool_whatever_the_flag_holds(self):
-        self.post({"wid": WID, "reconnect": 1})
-        self.post({"wid": WID, "reconnect": None})
+    def test_the_stamp_is_the_dial_record_not_the_consumable_flag(self):
+        # `redial` is set at accept beside `reconnect` and never consumed; the strip's _resolve_reconnect pops
+        # `reconnect` on a chat socket and nothing pops it on the other panes, so only the record reads alike
+        # on every row of every pane (route B, review round 1)
+        self.post({"wid": WID, "redial": True})             # a declared redial after its strip consumed the flag
+        self.post({"wid": WID, "reconnect": True})          # the consumable flag alone is not a dial record
+        self.assertEqual([r["reconnect"] for r in self.rows()], [True, False])
+
+    def test_the_stamp_is_a_bool_whatever_the_record_holds(self):
+        self.post({"wid": WID, "redial": 1})
+        self.post({"wid": WID, "redial": None})
         self.assertEqual([r["reconnect"] for r in self.rows()], [True, False])
 
 
@@ -198,8 +206,8 @@ class ThePairInTheLog(_State):
         km._clients.extend(self._clients)
         super().tearDown()
 
-    def _dial(self, query):
-        """The real handshake for one socket whose peer closes at once; returns the client dict it registered."""
+    def _dial(self, query, app="chat"):
+        """The real handshake for one `app` socket whose peer closes at once; returns the client dict it registered."""
         got = []
         real_reg, real_recv = km._register_ws_client, km._ws_recv
         km._register_ws_client = lambda c: (got.append(c), km._clients.append(c))
@@ -207,7 +215,7 @@ class ThePairInTheLog(_State):
         km._pusher_wake.clear()
         try:
             with contextlib.redirect_stderr(io.StringIO()):
-                km.Handler._ws(_fake_self("/ws?app=chat&delta=1&iid=page-c&wid=%s&" % WID + query))
+                km.Handler._ws(_fake_self("/ws?app=%s&delta=1&iid=page-c&wid=%s&" % (app, WID) + query))
         finally:
             km._register_ws_client, km._ws_recv = real_reg, real_recv
             for c in got:
@@ -220,8 +228,8 @@ class ThePairInTheLog(_State):
         q, kinds, closes = _shim_close(scenario)
         c = self._dial(q)
         self.assertIn("wsclose", kinds, "the row rides the redial")
-        if c.get("reconnect"):
-            self.assertEqual(kinds[0], "wsclose", "on a declared redial the row is flushed ahead of the re-sent ready whose strip consumes the flag")
+        if c.get("redial"):
+            self.assertEqual(kinds[0], "wsclose", "on a declared redial the shim flushes the queued row ahead of the re-sent ready (a shim fact; the stamp reads the dial record and does not depend on it)")
         km.Handler._dispatch_ws(None, closes[0], c)
         rows = self.rows()
         self.assertEqual(len(rows), 1)
@@ -238,20 +246,41 @@ class ThePairInTheLog(_State):
     def test_ready_during_the_close(self):
         self.assertEqual(self._pair(CLOSING), (False, True))
 
-    def test_the_stamp_reads_the_flag_before_the_strip_consumes_it(self):
-        # on a declared redial the flag stands until _resolve_reconnect runs for the strip the re-sent ready
-        # triggers; the row is dispatched ahead of that ready (kinds above), so it is stamped True; a row that
-        # lands after the strip reads False, and `redial` (never consumed) is not what the stamp reads
+    def test_the_stamp_is_the_dial_record_unchanged_by_the_strip(self):
+        # on a declared chat redial the first strip sender's _resolve_reconnect consumes `reconnect` and fixes the
+        # skeleton set; `redial`, set beside it at accept, is never consumed, and the stamp reads that, so a row
+        # dispatched after the real consumption reads True like the wsclose row before it (route B, review round 1)
         q, kinds, closes = _shim_close(DECLARED)
         c = self._dial(q)
         self.assertIs(c.get("reconnect"), True)
         self.assertIs(c.get("redial"), True)
         km.Handler._dispatch_ws(None, closes[0], c)
-        c.pop("reconnect")                                   # what the first strip's _resolve_reconnect does
+        km._resolve_reconnect(c, [])                         # the first strip sender's consumption, for real
+        self.assertIsNone(c.get("reconnect"), "the strip consumed the flag")
+        self.assertIs(c.get("redial"), True, "and left the dial record")
+        self.assertEqual(c.get("skeleton"), set(), "the whole path ran: the set exists, empty with no sessions")
+        self.assertEqual(c.get("skeletonOrder"), [])
         km.Handler._dispatch_ws(None, {"type": "clientDiag", "surface": "pane-shim", "what": "stale-raise",
                                        "data": {"app": "chat", "why": "reconnect"}}, c)
         self.assertEqual([(r["what"], r["reconnect"]) for r in self.rows()],
-                         [("wsclose", True), ("stale-raise", False)])
+                         [("wsclose", True), ("stale-raise", True)])
+
+    def test_a_feed_socket_reads_its_dial_record_too(self):
+        # the by-app symmetry: no strip ever runs on a feed socket, so nothing consumes its `reconnect`; the stamp
+        # reads the same record there as on chat, declared True and fresh False, so the field means one thing
+        # on every pane (route B, review round 1)
+        q, kinds, closes = _shim_close(DECLARED, app="feed")
+        c = self._dial(q, app="feed")
+        self.assertIs(c.get("redial"), True)
+        km.Handler._dispatch_ws(None, closes[0], c)
+        km.Handler._dispatch_ws(None, {"type": "clientDiag", "surface": "pane-shim", "what": "stale-raise",
+                                       "data": {"app": "feed", "why": "reconnect"}}, c)
+        q2, kinds2, closes2 = _shim_close(GATED, app="feed")
+        c2 = self._dial(q2, app="feed")
+        self.assertIsNone(c2.get("redial"), "a fresh dial leaves no record")
+        km.Handler._dispatch_ws(None, closes2[0], c2)
+        self.assertEqual([(r["what"], r["reconnect"]) for r in self.rows()],
+                         [("wsclose", True), ("stale-raise", True), ("wsclose", False)])
 
 
 if __name__ == "__main__":

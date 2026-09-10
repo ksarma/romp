@@ -406,8 +406,9 @@ test("the wsclose row says whether the bundle had said ready at the close, besid
   assert.deepEqual(kinds, ["ready", "wsclose"], "the ready queued first, during the close; this socket declared no term, so the order does not touch the stamp");
   assert.equal(h.diags("wsclose")[0].data.bundleReady, true);
   assert.equal(h.readys(), 1, "the queued ready went out once; nothing re-sent it");
-  // on the declared shape the order is the other way round: the row is flushed ahead of the re-sent ready whose
-  // strip consumes the kernel's flag, so the kernel stamps the row while the flag still stands
+  // on the declared shape the order is the other way round: the shim flushes the queued row ahead of the re-sent
+  // ready (a shim fact; the kernel's stamp reads the socket's dial record, set at accept and never consumed, so it
+  // does not depend on this order)
   h = FEED();
   h.ws.open(); h.bundleReady(); h.ws.msg({ type: "feed", asks: [] }); h.ws.close(); h.runTimers(); h.ws.open();
   assert.deepEqual(h.sent.slice(-2).map((m) => (m.type === "clientDiag" ? m.what : m.type)), ["wsclose", "ready"]);

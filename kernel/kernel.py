@@ -51037,8 +51037,9 @@ enqueue(msg);};   // the handoff to the bundle is the ONE deferred step (see the
 // watchdog-close row, when there is one, went down the quiet socket before the abandon (the foreground
 // path sends none), so it lands only if that socket still carried writes; for an armed socket the "-quiet"
 // raise abandon() queues for the redial is the record that survives. send() queues while the socket is
-// down, so the row rides the reconnect, and the kernel stamps every row with whether the socket that carried
-// it declared the redial (?reconnect=1); the row's own bundleReady is this page's state at the close, so the
+// down, so the row rides the reconnect, and the kernel stamps every row with the carrying socket's dial record
+// (whether it declared ?reconnect=1; set at accept and never consumed, so every row a socket carries reads
+// alike); the row's own bundleReady is this page's state at the close, so the
 // two together tell a declared redial (both true) from a mid-load drop redialed as a fresh page (both false)
 // and from a ready that reached the shim while the socket was going down and rode the redial as the page's
 // own (no term, bundleReady true) (2026-09-10). A handshake that never opened fires onclose too (every 1.5 s redial
@@ -59618,13 +59619,16 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 rec = {"t": int(time.time()), "wid": str(client.get("wid") or ""),
                        "surface": str(msg.get("surface") or ""), "what": str(msg.get("what") or ""),
-                       # whether the socket that CARRIED the row declared the redial (?reconnect=1). The shim
-                       # queues a `wsclose` row while its socket is down and flushes it onto the redial, ahead of
-                       # the re-sent `ready` whose strip consumes the flag, so that row says which kind of socket
-                       # the redial was; with the row's own `bundleReady` (the shim's state at the close) the
-                       # log tells a declared redial from one the shim's dial term gated off (review find,
-                       # 2026-09-10: everConnected alone could not). Rows after the strip read False.
-                       "reconnect": bool(client.get("reconnect")),
+                       # whether the socket that CARRIED the row declared the redial (?reconnect=1): the socket's
+                       # dial record, `redial`, set at accept beside the consumable `reconnect` and never popped,
+                       # so every row a socket carries reads the same value on every pane. (The strip's
+                       # _resolve_reconnect consumes `reconnect` on a chat socket and nothing consumes it on the
+                       # other panes, so a stamp of that flag meant the opposite thing by app; review round 1.)
+                       # The shim queues a `wsclose` row while its socket is down and flushes it onto the redial,
+                       # so with the row's own `bundleReady` (the shim's state at the close) the log tells a
+                       # declared redial from one the shim's dial term gated off (review find, 2026-09-10:
+                       # everConnected alone could not).
+                       "reconnect": bool(client.get("redial")),
                        "data": msg.get("data")}
                 # past the size cap the file becomes .1 and a new one starts; the check, rename and write are one
                 # locked step, since every pane's socket posts from its own handler thread
@@ -60268,8 +60272,9 @@ class Handler(BaseHTTPRequestHandler):
             # out), so that redial carries the term, its re-sent `ready` keeps the state, and the page is served
             # skeleton tabs that fill on click or the idle prefetch, never less than it asks for. The record of
             # which path a redial took is in client-diag.jsonl: the clientDiag handler stamps every row with this
-            # socket's `reconnect`, and the shim's queued `wsclose` row (flushed onto the redial ahead of the
-            # re-sent `ready`) carries the shim's `bundleReady` at the close.
+            # socket's `redial` (the dial record: never consumed, so every row the socket carries reads alike),
+            # and the shim's queued `wsclose` row, which rides the redial, carries the shim's `bundleReady` at
+            # the close.
             client["redial"] = True
         _register_ws_client(client)
         if client.get("reconnect"):
