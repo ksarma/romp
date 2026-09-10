@@ -3703,17 +3703,24 @@ function utForgetSession(sid: string, rows: UserTodo[] | undefined): void {
 // "Waiting on you · 3" over two rows read wrong until the next push. The heading goes with the last
 // row, as renderTodo paints it (the section auto-hides when empty) — and so does the card when that
 // heading was all it had: the kernel ships no todo event when both lists are empty, so an empty
-// bordered .todo-card and its rail dot stood until the next push. The turn is HIDDEN, never removed:
-// syncViewInner keys on v.el.childNodes, and the next push's render replaces the node either way.
+// to-do notice and its rail dot stood until the next push. The list is the notice body's .todo-list,
+// which holds the checklist and the section alike. The turn is HIDDEN, never removed: syncViewInner
+// keys on v.el.childNodes, and the next push's render replaces the node either way.
 function utDropRow(row: Element | null): void {
   if (!row) return;
-  const card = row.closest(".todo-card");
+  const card = row.closest(".todo-list");
   row.remove();
   if (!card) return;
   const head = card.querySelector(".ut-head");
   if (!head) return;
   const n = card.querySelectorAll(".ut-item").length;
-  if (n) { head.textContent = `Waiting on you · ${n}`; return; }
+  // the notice head names the section when there is no checklist to name (renderTodo's gist): it follows the count too
+  const gist = card.closest(".notice")?.querySelector(".notice-gist");
+  if (n) {
+    head.textContent = `Waiting on you · ${n}`;
+    if (gist && /^waiting on you · /.test(gist.textContent || "")) gist.textContent = `waiting on you · ${n}`;
+    return;
+  }
   head.remove();
   if (!card.childElementCount) (card.closest(".turn-todo") as HTMLElement | null)?.style.setProperty("display", "none");
 }

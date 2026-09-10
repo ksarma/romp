@@ -206,7 +206,7 @@ test("optimistic removal keeps the heading's count honest: one helper for both s
   assert.match(helper, /head\.remove\(\)/, "…and drops it with the last row");
   assert.equal((RENDER.match(/utDropRow\(/g) || []).length, 3, "the definition plus the two removal sites");
   assert.doesNotMatch(RENDER, /closest\("\.ut-item"\)\?\.remove\(\)/, "no site removes a row on its own");
-  // the last row of a card with no checklist: the bordered .todo-card and its rail dot stood empty until
+  // the last row of a card with no checklist: the empty to-do notice and its rail dot stood until
   // the next push (the kernel ships no todo event when both lists are empty). The turn is HIDDEN, never
   // removed — syncViewInner keys on v.el.childNodes, so a removed node would shift every unit after it
   assert.match(helper, /if \(!card\.childElementCount\) \(card\.closest\("\.turn-todo"\) as HTMLElement \| null\)\?\.style\.setProperty\("display", "none"\)/);
@@ -304,7 +304,7 @@ test("the waiting-on-you styles reuse the todo card vocabulary", () => {
   assert.ok(bad, ".ut-reply-input.bad rule exists");
   assert.match(bad, /border-color: var\(--err\)/);
   assert.doesNotMatch(bad, /#[0-9a-f]{3,8}\b/i, "tokens only");
-  // the hint wears the row's chrome rung (.ut-btn / .todo-head) in the dim text color — a
+  // the hint wears the row's chrome rung (.ut-btn / .ut-head) in the dim text color — a
   // disclosure cue, never the accent; inline-block keeps the text's dotted hover underline off it
   const rule = (CSS.match(/\.ut-more \{[^}]*\}/) || [""])[0];
   assert.ok(rule, ".ut-more rule exists");

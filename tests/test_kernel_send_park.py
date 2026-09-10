@@ -1016,7 +1016,7 @@ class SendReturnShape(unittest.TestCase):
         self.assertEqual(km._send_or_park(self.be, SID, "Re: the port — 8443.", user_todo="ut-9f2c1a34"), "parked")
         self.assertEqual(self.be.calls, [], "not handed over: the queue that appeared owns the order")
         self.assertEqual(km._pending_ops[SID],
-                         [("compact",), ("send", "Re: the port — 8443.", None, "ut-9f2c1a34")],
+                         [("compact",), ("send", "Re: the port — 8443.", None, None, "ut-9f2c1a34")],
                          "behind the peer's op, id intact")
 
 

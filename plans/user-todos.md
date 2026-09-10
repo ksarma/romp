@@ -493,8 +493,10 @@ The interview settled the design; the two build-time calls it left open were mad
 1. The tab glyph is **⚑**, right after the session name and before the ctx gauge — non-numeric
    as decided, and its own element, never a `.tab-dot` (pips encode turn state, and the mobile
    scrape keys on the pip classes).
-2. The split card's headings are **"To-do · n/m"** (the agent's plan, with its done count) and
-   **"Waiting on you · N"** (the open todos).
+2. The split card is the transcript's to-do notice: its head reads the agent's plan as **"to-do ·
+   n of m done"** (the head every chat notice shares since 2026-09-08, "unavailable" when a store
+   could not be read, and **"waiting on you · N"** when there is no checklist to name), and the
+   open todos sit under their own heading, **"Waiting on you · N"**, inside the notice body.
 
 ## Vocabulary
 

@@ -342,7 +342,8 @@ erase.
 ### What you see
 
 **The card by the composer.** The card at the bottom of a session's
-transcript lists the agent's own checklist (**To-do · 0/3** in the picture).
+transcript lists the agent's own checklist under a **to-do · 0 of 3 done** head
+(the picture shows an older spelling of that head).
 When the session has open requests, the card gains a second section, **Waiting
 on you · N**, with one row per request, oldest first. Each row is the session's
 one-line request. A small "▸ details" hint after the line means there is more
