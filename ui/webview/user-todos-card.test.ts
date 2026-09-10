@@ -3,12 +3,16 @@
 // share ONE transcript-bottom card, each section auto-hiding when empty, so today's behavior is
 // unchanged when no todos exist. Per-row Reply (injects the user's answer, anchored) and Dismiss
 // (clears without one); a row WITH detail says so at a glance ("▸ details") and opens on click.
-// Source pins — render.ts has no jsdom harness (the repo convention).
+// Source pins (render.ts has no jsdom harness, the repo convention), plus the optimistic removal EXECUTED:
+// el(), notice(), renderTodo and utDropRow lifted from render.ts and run over a fake DOM the way
+// chat-exact-tail-exec.test.ts lifts chatTail, so a removal that walks the wrong anchor fails here.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 
+const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
@@ -211,6 +215,170 @@ test("optimistic removal keeps the heading's count honest: one helper for both s
   // removed — syncViewInner keys on v.el.childNodes, so a removed node would shift every unit after it
   assert.match(helper, /if \(!card\.childElementCount\) \(card\.closest\("\.turn-todo"\) as HTMLElement \| null\)\?\.style\.setProperty\("display", "none"\)/);
   assert.doesNotMatch(helper, /turn-todo"\)[^\n]*\.remove\(\)/, "hidden, not removed");
+});
+
+// ── The optimistic removal, executed ─────────────────────────────────────────────────────────────────
+
+/** A render.ts slice, transpiled (TS to JS) with esbuild at run time and required dynamically so the test bundle
+ *  does not bundle esbuild itself (the chat-exact-tail-exec.test.ts pattern). */
+function liftBetween(startAnchor: string, endAnchor: string): string {
+  const a = RENDER.indexOf(startAnchor), b = RENDER.indexOf(endAnchor, a);
+  assert.ok(a > 0 && b > a, `anchors not found: ${startAnchor.slice(0, 40)} or ${endAnchor.slice(0, 40)} moved; re-anchor`);
+  return requireCjs("esbuild").transformSync(RENDER.slice(a, b), { loader: "ts" }).code;
+}
+
+type Compound = { tag: string | null; classes: string[]; attrs: [string, string | null][] };
+/** One compound selector as the lifted code writes them: an optional tag, .classes and [data-x="v"] attributes. */
+function parseCompound(s: string): Compound {
+  const c: Compound = { tag: null, classes: [], attrs: [] };
+  const re = /^([a-z][\w-]*)|\.([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]/y;
+  let last = 0;
+  for (let m = re.exec(s); m; m = re.exec(s)) {
+    if (m[1]) c.tag = m[1]; else if (m[2]) c.classes.push(m[2]); else c.attrs.push([m[3], m[4] ?? null]);
+    last = re.lastIndex;
+  }
+  if (last !== s.length) throw new Error("unsupported selector " + s);
+  return c;
+}
+
+/** Enough of Element for el(), notice(), renderTodo and utDropRow: a class list, children, a dataset, text, an inline
+ *  style, and closest / querySelector / querySelectorAll over class and data-attribute selectors with the descendant
+ *  combinator, so the removal walks the rendered notice the way it walks the real one. Assertions compare primitives
+ *  read off the tree, never a node: a failing deep comparison over parent-linked nodes is what node's differ chokes on. */
+class FakeEl {
+  childNodes: FakeEl[] = []; parentNode: FakeEl | null = null;
+  classes = new Set<string>(); dataset: Record<string, string> = {}; attrs: Record<string, string> = {};
+  textContent = ""; title = ""; type = "";
+  style: { props: Record<string, string>; setProperty: (k: string, v: string) => void };
+  constructor(public tagName: string) {
+    const props: Record<string, string> = {};
+    this.style = { props, setProperty: (k, v) => { props[k] = v; } };
+  }
+  get className(): string { return [...this.classes].join(" "); }
+  set className(v: string) { this.classes = new Set(v.split(/\s+/).filter(Boolean)); }
+  get classList() {
+    const c = this.classes;
+    return {
+      add: (...ks: string[]) => { for (const k of ks) c.add(k); },
+      remove: (...ks: string[]) => { for (const k of ks) c.delete(k); },
+      contains: (k: string) => c.has(k),
+      toggle: (k: string, force?: boolean) => { const on = force ?? !c.has(k); if (on) c.add(k); else c.delete(k); return on; },
+    };
+  }
+  get childElementCount(): number { return this.childNodes.length; }
+  appendChild(c: FakeEl): FakeEl { c.parentNode?.removeChild(c); c.parentNode = this; this.childNodes.push(c); return c; }
+  append(...cs: FakeEl[]): void { for (const c of cs) this.appendChild(c); }
+  removeChild(c: FakeEl): void { this.childNodes = this.childNodes.filter((x) => x !== c); c.parentNode = null; }
+  remove(): void { this.parentNode?.removeChild(this); }
+  setAttribute(k: string, v: string): void { this.attrs[k] = v; if (k.startsWith("data-")) this.dataset[k.slice(5)] = v; }
+  getAttribute(k: string): string | null {
+    if (k.startsWith("data-")) { const d = k.slice(5).replace(/-([a-z])/g, (_, ch: string) => ch.toUpperCase()); return d in this.dataset ? this.dataset[d] : null; }
+    return k in this.attrs ? this.attrs[k] : null;
+  }
+  addEventListener(): void {}
+  matchesCompound(c: Compound): boolean {
+    if (c.tag && c.tag !== this.tagName) return false;
+    for (const k of c.classes) if (!this.classes.has(k)) return false;
+    for (const [name, value] of c.attrs) { const v = this.getAttribute(name); if (v === null) return false; if (value !== null && v !== value) return false; }
+    return true;
+  }
+  matches(sel: string): boolean {
+    const parts = sel.trim().split(/\s+/).map(parseCompound);
+    if (!this.matchesCompound(parts[parts.length - 1])) return false;
+    let anc: FakeEl | null = this.parentNode;
+    for (let i = parts.length - 2; i >= 0; i--) {
+      while (anc && !anc.matchesCompound(parts[i])) anc = anc.parentNode;
+      if (!anc) return false;
+      anc = anc.parentNode;
+    }
+    return true;
+  }
+  closest(sel: string): FakeEl | null { for (let n: FakeEl | null = this; n; n = n.parentNode) if (n.matches(sel)) return n; return null; }
+  querySelector(sel: string): FakeEl | null { for (const e of this.walk()) if (e.matches(sel)) return e; return null; }
+  querySelectorAll(sel: string): FakeEl[] { return [...this.walk()].filter((e) => e.matches(sel)); }
+  *walk(): Generator<FakeEl> { for (const c of this.childNodes) { yield c; yield* c.walk(); } }
+}
+
+type Row = { id: string; text: string; detail?: string };
+type Task = { subject: string; status: string; activeForm?: string };
+type Lifted = { renderTodo: (ev: { kind: "todo"; tasks: Task[]; userTodos: Row[] }) => FakeEl; utDropRow: (row: FakeEl | null) => void };
+/** el(), notice(), paintUtDismiss and the run from utDropRow through renderTodo, lifted from render.ts and run over the
+ *  fake DOM. The module state they read (the open-state sets, the rendering session, the arm and detail sets) and the
+ *  helpers beside the point (the tooltip, the glyph, the link pass, the completed-bulk label) are stubbed. */
+function liftTodoCard(): Lifted {
+  const elFn = liftBetween("function el(tag: string, cls?: string): HTMLElement {", "\n// ONE sanitizer for both renderers");
+  const noticeFn = liftBetween("function notice(spec: NoticeSpec): HTMLElement {", "\n// A word button for a notice's action slot");
+  const paint = liftBetween("function paintUtDismiss(node: HTMLElement, armed: boolean): void {", "function utRetireDisarmer(");
+  const todo = liftBetween("function utDropRow(row: Element | null): void {", "\nfunction todoFoldLabel(");
+  const prelude = `
+    const W = WORLD;
+    const document = { createElement: (tag) => new W.FakeEl(tag) };
+    const openFolds = new Set(), noticeSeeded = new Set();
+    const applyFold = (target, cls, key) => { if (key && openFolds.has(key)) target.classList.add(cls); };
+    const dot = (kind) => el("span", "dot " + kind);
+    const noticeGlyph = (kind) => el("span", "notice-glyph notice-glyph-" + kind);
+    const setTip = () => {};
+    let renderingSid = W.sid;
+    const utArmed = new Set(), utDetailOpen = new Set();
+    const isCoarsePointer = () => false;
+    const linkifyFileUris = () => {};
+    const todoFoldLabel = () => {};
+  `;
+  const make = new Function("WORLD", prelude + elFn + noticeFn + paint + todo + "\nreturn { renderTodo, utDropRow };") as
+    (w: { FakeEl: typeof FakeEl; sid: string }) => Lifted;
+  return make({ FakeEl, sid: "web" });
+}
+
+/** A rendered to-do notice over the rows waiting on the person (and a checklist when given), with readers for what the
+ *  assertions compare, by the classes utDropRow itself reads. `drop` finds the row by its Reply button's id, the way
+ *  showUserTodoReply's removal does, and hands it to utDropRow: the optimistic removal path, executed. */
+function todoCard(rows: Row[], tasks: Task[] = []) {
+  const api = liftTodoCard();
+  const turn = api.renderTodo({ kind: "todo", tasks, userTodos: rows });
+  return {
+    turn,
+    gist: () => turn.querySelector(".notice-gist")?.textContent ?? null,
+    head: () => turn.querySelector(".ut-head")?.textContent ?? null,
+    items: () => turn.querySelectorAll(".ut-item").length,
+    listCount: () => turn.querySelector(".todo-list")?.childElementCount ?? -1,
+    hidden: () => turn.style.props.display === "none",
+    drop: (id: string) => api.utDropRow(turn.querySelector(`.ut-item [data-tid="${id}"]`)?.closest(".ut-item") ?? null),
+  };
+}
+
+test("executed: removing a row recounts the section head AND the notice head's gist; the last row hides the notice", () => {
+  const c = todoCard([{ id: "u1", text: "which name for the new tab" }, { id: "u2", text: "ok to delete the old branch" }]);
+  assert.equal(c.turn.classList.contains("turn-todo"), true, "renderTodo rendered the to-do turn");
+  assert.equal(c.items(), 2);
+  assert.equal(c.head(), "Waiting on you · 2");
+  assert.equal(c.gist(), "waiting on you · 2", "with no checklist the notice head names the section");
+  c.drop("u9");
+  assert.equal(c.items(), 2, "an id the card does not hold removes nothing");
+  c.drop("u1");
+  assert.equal(c.items(), 1, "the row goes now");
+  assert.equal(c.head(), "Waiting on you · 1", "the section head follows the count");
+  assert.equal(c.gist(), "waiting on you · 1", "and so does the notice head");
+  assert.equal(c.hidden(), false);
+  c.drop("u2");
+  assert.equal(c.items(), 0);
+  assert.equal(c.head(), null, "the section head goes with the last row");
+  assert.equal(c.listCount(), 0, "nothing is left in the list");
+  assert.equal(c.hidden(), true, "the empty notice is hidden until the next push replaces it");
+  assert.doesNotMatch(c.gist() || "", /· 0$/, "never a zero count on the notice head: the hidden notice keeps its last count unseen");
+});
+
+test("executed: with a checklist standing, the notice head keeps its 'n of m done' and the notice stays up after the last row", () => {
+  const c = todoCard([{ id: "u1", text: "which name for the new tab" }, { id: "u2", text: "ok to delete the old branch" }],
+                     [{ subject: "write the tests", status: "pending" }]);
+  assert.equal(c.gist(), "0 of 1 done");
+  assert.equal(c.listCount(), 4, "one checklist row, the section head, two rows");
+  c.drop("u1");
+  assert.equal(c.head(), "Waiting on you · 1");
+  assert.equal(c.gist(), "0 of 1 done", "the notice head is rewritten only when it names the section");
+  c.drop("u2");
+  assert.equal(c.head(), null);
+  assert.equal(c.listCount(), 1, "the checklist row stands");
+  assert.equal(c.hidden(), false, "a notice with a checklist stays up");
 });
 
 test("a dismissed session takes its keyed user-todo state with it", () => {
