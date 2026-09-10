@@ -2214,6 +2214,27 @@ class Wiring(unittest.TestCase):
         self.assertIn("converges in place with the kernel left up", para)
         self.assertIn("`romp refresh --quiet`", para, "the paragraph names the quiet window's one door")
 
+    def test_the_reference_documents_the_click_on_a_kernel_no_manager_started(self):
+        # review round 6 of the confirm step (2026-09-10): the Update-notices paragraph documented the red Restart
+        # and the "manager did not answer" hedge and never the kernel no manager started (round 5's fifth label
+        # form: a green Update confirm, nothing restarted). The copy is coupled to label() and face(), whose text
+        # it quotes, and to the two things the second click then does: the in-place converge when the change is
+        # outside kernel code (the route line pinned above), else the code on disk with `romp up` named as the
+        # step that runs it
+        ref = (Path(BIN).parent / "docs" / "reference.md").read_text()
+        para = next(p for p in re.split(r"\n\s*\n", ref) if p.lstrip().startswith("**Update notices.**"))
+        para = re.sub(r"\s+", " ", para)
+        self.assertIn("When no manager started the kernel", para)
+        clause = para[para.index("When no manager started the kernel"):]
+        self.assertIn('"Update romp on disk now; restart it yourself to run it"', clause, "the label the banner shows, quoted")
+        self.assertIn("green Update", clause, "the confirm reads Update in green, not the red Restart")
+        self.assertIn("nothing restarts", clause)
+        self.assertIn("converges in place when the change is outside kernel code", clause, "the in-place route runs first")
+        self.assertIn("`romp up`", clause, "the step that runs kernel code landed on disk")
+        self.assertNotIn("\u2014", clause[:clause.index("The gear")], "no em dash in the new clause")
+        self.assertIn("if(impact.manager===false)return 'Update romp on disk now; restart it yourself to run it';", self.src, "the label the copy quotes")
+        self.assertIn("cf.textContent=disk?'Update':'Restart';", self.src, "the confirm the copy names")
+
     def test_the_banner_names_the_restart_the_user_must_run_when_the_update_landed_on_disk(self):
         # `updated` from /update-check means ON DISK, not running: the banner carries the reason
         # the restart did not happen and names the step that runs the new code
