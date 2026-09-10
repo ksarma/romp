@@ -2386,8 +2386,9 @@ if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
                     echo "  hand a session a message through the kernel. While the session is busy the message"
                     echo "  queues and delivers when the session is quiet. --tag <label> (one word) shows the text"
                     echo "  as machine-sent under that label instead of as your typed words; pass one from scripts"
-                    echo "  and cron. A known session that is not running (an ended session by id, an ended comment"
-                    echo "  thread) is refused with the kernel's reason and exit 1; the message is not delivered." ;;
+                    echo "  and cron. A known session that is not running (an ended SDK session addressed by id, an"
+                    echo "  ended comment thread by id or name, a tmux-backed session no pane runs) is refused with"
+                    echo "  the kernel's reason and exit 1; the message is not delivered." ;;
                 interrupt)
                     echo "  stop the session's current turn (Esc) through the kernel; the session stays open." ;;
                 end)

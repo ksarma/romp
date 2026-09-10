@@ -28,6 +28,17 @@ FLAG = re.compile(r"(?<![\w-])(--[a-z][a-z-]*|self)(?![\w-])")
 REFUSAL_ROW = "an unknown session is refused with the kernel's reason, exit 1"
 REFUSAL_DOC = "An unknown session is refused with the kernel's reason and exit 1"
 REFUSAL_HELP = "An unknown session name exits 1 with the kernel's reason."
+# the known-but-refusing clause (`romp send` only): a session the kernel knows whose backend refuses the send
+# answers 409 with the reason and the message is not delivered. The contract sentence per surface, and the
+# one example the two surfaces that list examples had drifted on (review round 6, 2026-09-09: the -h list
+# lacked the tmux-backed case the reference row named)
+NOT_RUNNING_HELP = ("A known session that is not running (an ended SDK session addressed by id, an ended comment "
+                    "thread by id or name, a tmux-backed session no pane runs) is refused with the kernel's reason "
+                    "and exit 1; the message is not delivered.")
+NOT_RUNNING_ROW = "a known session that is not running is refused the same way (409, not delivered)"
+NOT_RUNNING_DOC = ("a session the kernel knows whose backend refuses it (an ended SDK session addressed by id, an "
+                   "ended comment thread by id or name, a tmux-backed session no pane runs) is refused the same "
+                   "way, HTTP 409 with the kernel's reason, and the message is not delivered")
 
 
 def _read(rel):
@@ -130,6 +141,13 @@ class HelpSurfacesAgree(unittest.TestCase):
             self.assertIn(REFUSAL_HELP, rendered, verb)
             self.assertIn(REFUSAL_ROW, self._help_row(verb, form), verb)
             self.assertIn(REFUSAL_DOC, self._reference_row(form), verb)
+
+    def test_the_send_surfaces_state_the_known_but_refusing_contract(self):
+        # the -h text wraps across echo lines, so it is compared with its whitespace folded
+        form, rendered = self._usage_form("send")
+        self.assertIn(NOT_RUNNING_HELP, " ".join(rendered.split()))
+        self.assertIn(NOT_RUNNING_ROW, self._help_row("send", form))
+        self.assertIn(NOT_RUNNING_DOC, self._reference_row(form))
 
 
 if __name__ == "__main__":
