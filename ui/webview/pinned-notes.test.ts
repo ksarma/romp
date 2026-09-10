@@ -17,6 +17,8 @@ import { buildPinnedNotes, pinnedNotesKey, pinnedMoreLabel, pinnedSplit, pinnedM
   PINNED_VISIBLE, PINNED_ACT, PINNED_UNPIN_LABEL, PINNED_UNPIN_ARMED, PINNED_CUT_CLASS, PINNED_BREAK_CLASS, PINNED_DETAIL_CLASS, PINNED_FOLD_CLASSES,
   type PinnedNote, type PinnedFoldState, type PinnedLinkers, type UnpinLatch, type PinnedStripRoot } from "./pinned-notes";
 import { linkifyPrRefs } from "./pr-links";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const read = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", ...p), "utf8");
 const RENDER = read("ui", "webview", "render.ts");
@@ -29,10 +31,16 @@ const dStart = RENDER.indexOf("// PINNED NOTES (the user 2026-09-08): the strip 
 const DELEGATE = RENDER.slice(dStart, RENDER.indexOf("\n})();", dStart));
 
 // ── a DOM stand-in: text and element nodes with the members the builder and the PR linker touch ──
+/** the DOM's detach: a node that left its parent's list forgets the parent. A helper, so no class assigns an edge of
+ *  its own (the ratchet in ui/test-dom-shim.test.ts reads a class's own null assignment to parentNode as an enumerable edge). */
+const detach = (n: { parentNode: E | null }): void => { n.parentNode = null; };
 class T {
   nodeType = 3;
-  parentNode: E | null = null;
-  constructor(public textContent: string) {}
+  parentNode!: E | null;
+  constructor(public textContent: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get data(): string { return this.textContent; }
   get parentElement(): E | null { return this.parentNode; }
   /** the URL and path walks splice a text node into its pieces and the links between them (path-links.ts rewriteSpan) */
@@ -41,14 +49,18 @@ class T {
     const i = p.childNodes.indexOf(this);
     for (const k of frag.childNodes) k.parentNode = p;
     p.childNodes.splice(i, 1, ...frag.childNodes);
-    this.parentNode = null;
+    detach(this);
   }
 }
-class F { childNodes: Array<E | T> = []; appendChild<N extends E | T>(c: N): N { this.childNodes.push(c); return c; } }
+class F {
+  childNodes!: Array<E | T>;
+  constructor() { Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true }); hideEdges(this); }
+  appendChild<N extends E | T>(c: N): N { this.childNodes.push(c); return c; }
+}
 class E {
   nodeType = 1;
-  parentNode: E | null = null;
-  childNodes: Array<E | T> = [];
+  parentNode!: E | null;
+  childNodes!: Array<E | T>;
   href = ""; target = ""; rel = ""; title = ""; className = "";
   natural = 0; width = 0; right = 0;   // the measured widths, fractional (a test sets them to stand for a layout): a text's natural width, the box, its right edge
   getBoundingClientRect() { return { width: this.width, right: this.right, left: this.right - this.width }; }
@@ -57,7 +69,11 @@ class E {
   dataset: Record<string, string | undefined> = {};
   attrs: Record<string, string> = {};
   listeners: Record<string, Array<(ev: any) => void>> = {};
-  constructor(public tagName: string) {}
+  constructor(public tagName: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   addEventListener(type: string, fn: (ev: any) => void): void { (this.listeners[type] ||= []).push(fn); }
   removeEventListener(type: string, fn: (ev: any) => void): void { this.listeners[type] = (this.listeners[type] || []).filter((f) => f !== fn); }
   fire(type: string, ev: any = {}): void { for (const f of [...(this.listeners[type] || [])]) f(ev); }
@@ -75,7 +91,7 @@ class E {
     };
   }
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; if (v) this.appendChild(new T(v)); }
+  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; if (v) this.appendChild(new T(v)); }
   appendChild<N extends E | T>(c: N): N { c.parentNode = this; this.childNodes.push(c); return c; }
   insertBefore<N extends E | T>(n: N, ref: E | T | null): N {
     const i = ref ? this.childNodes.indexOf(ref) : -1;
@@ -576,4 +592,16 @@ test("the rows reach the strip through the chat frames the pane already reads, a
   assert.equal(pinnedNotesKey(SID, undefined), pinnedNotesKey(SID, []));
   assert.match(RENDER_FN, /const key = pinnedNotesKey\(s \? s\.id : "", notes\);\s*\n\s*if \(!force && key === pnPainted\) return;/);
   assert.doesNotMatch(RENDER_FN, /setTimeout|setInterval|Date\.now/, "events, not timers");
+});
+
+// The projection rule (ui/test-dom-shim.ts, hideEdges): a stand-in node enumerates its primitives alone, so a failing
+// assertion's dump of one stops at the node instead of walking the whole tree through its edges.
+test("a stand-in node enumerates its primitives alone, and a dump of it names neither parentNode nor childNodes", () => {
+  const root = new E("DIV"); const kid = root.appendChild(new E("SPAN")); kid.appendChild(new T("x"));
+  const nodes = [root, kid, kid.childNodes[0]];
+  for (const n of nodes) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "every enumerable own key holds a primitive");
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
 });

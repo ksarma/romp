@@ -4,9 +4,11 @@
 // source-pinned (chat-view/src/host-chrome.test.ts covers the builders).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { usageColor, fmtAgo, fmtReset, fmtUsd, fmtTok, usageWindows, apiCell, STRIP_PANES, fillHostSelect, droppedRowsNote } from "./strip";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 test("fmtTok: 3 significant figures at every magnitude (the user 2026-08-13)", () => {
   assert.equal(fmtTok(1_318_619_909), "1.32B");
@@ -243,12 +245,18 @@ test("an unknown window is not drawn on the bar at all — its last-known lives 
 class FakeEl {
   tagName: string;
   value = "";
-  children: FakeEl[] = [];
+  children!: FakeEl[];
   attrs: Record<string, string> = {};
   private _text = "";
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this._text; }
-  set textContent(v: string) { this._text = v; this.children = []; }   // the DOM's: assigning text drops children
+  set textContent(v: string) { this._text = v; this.children.length = 0; }   // the DOM's: assigning text drops children
   set innerHTML(_v: string) { throw new Error("innerHTML is not how host options are built"); }
   appendChild(c: FakeEl): FakeEl { this.children.push(c); return c; }
   setAttribute(k: string, v: string): void { this.attrs[k] = v; }
@@ -313,4 +321,16 @@ test("loadHosts routes both outcomes through fillHostSelect — no innerHTML hos
   assert.match(src, /fillHostSelect\(sel, d && d\.hosts, "\(no ~\/\.ssh\/config hosts\)"\)/);
   assert.match(src, /fillHostSelect\(sel, \[\], "\(kernel unreachable\)"\)/);
   assert.doesNotMatch(src, /<option value="\$\{h\}">/, "the template that rendered an alias as markup");
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names no children", () => {
+  const sel = new FakeEl("select"), opt = new FakeEl("option"); sel.appendChild(opt); opt.value = "h1"; opt.textContent = "h1"; opt.setAttribute("data-k", "v");
+  for (const n of [sel, opt]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("children") && !dump.includes("parentNode") && !dump.includes("childNodes"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(sel.children[0] === opt, "the edge still holds the tree"); assert.deepEqual(opt.attrs, { "data-k": "v" });
+  sel.textContent = ""; assert.equal(sel.children.length, 0, "the DOM's setter drops the children");
 });

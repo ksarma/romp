@@ -8,6 +8,7 @@
 // over the real sanitizer. Fixtures are synthetic (a notes-api world) and live in anchor-map-fixtures/.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -25,6 +26,7 @@ import {
 } from "./anchor-map";
 // @ts-ignore -- untyped CommonJS module (see anchor-map.ts)
 import engine from "../../vendor/track-changents/engine.js";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 const FIX = (f: string) => path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map-fixtures", f);
 const fixture = (f: string) => fs.readFileSync(FIX(f), "utf8");
@@ -48,14 +50,20 @@ for (const [name, lang] of Object.entries({ python, py: python, xml, html: xml, 
 // ── a DOM stand-in: the structural surface anchor-map.ts walks, plus an HTML fragment parser ─────
 class FakeNode {
   nodeType = 0;
-  parentNode: FakeNode | null = null;
-  childNodes: FakeNode[] = [];
-  constructor(public ownerDocument: FakeDocument) {}
+  parentNode!: FakeNode | null;
+  childNodes!: FakeNode[];
+  constructor(public ownerDocument: FakeDocument) {
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as FakeText).data : this.childNodes.map((c) => c.textContent).join(""); }
 }
 class FakeText extends FakeNode {
   nodeType = 3;
-  constructor(doc: FakeDocument, public data: string) { super(doc); }
+  constructor(doc: FakeDocument, public data: string) { super(doc); hideEdges(this); }
   get length(): number { return this.data.length; }
   splitText(offset: number): FakeText {
     const tail = new FakeText(this.ownerDocument, this.data.slice(offset));
@@ -68,7 +76,7 @@ class FakeText extends FakeNode {
 class FakeElement extends FakeNode {
   nodeType = 1;
   attrs = new Map<string, string>();
-  constructor(doc: FakeDocument, public tagName: string) { super(doc); }
+  constructor(doc: FakeDocument, public tagName: string) { super(doc); hideEdges(this); }
   getAttribute(n: string): string | null { return this.attrs.has(n) ? (this.attrs.get(n) as string) : null; }
   setAttribute(n: string, v: string): void { this.attrs.set(n, v); }
   removeChild(n: FakeNode): FakeNode { const i = this.childNodes.indexOf(n); if (i >= 0) this.childNodes.splice(i, 1); n.parentNode = null; return n; }
@@ -893,7 +901,7 @@ test("Rendered paint reads the top-level blocks a range touches and no other: a 
   const one = paintRendered(El(box), source, { start: s1, end: s1 + q.length }, "fc-hl") as unknown as FakeElement[];
   assert.equal(one.map((m) => m.textContent).join(""), q);
   const oneTouched = blocks.filter((b) => reads.has(b));
-  assert.deepEqual(oneTouched, [holder(one[0])], "only the block holding the passage was read; read: " + oneTouched.length + " of " + blocks.length);
+  sameNodes(oneTouched, [holder(one[0])], "only the block holding the passage was read; read: " + oneTouched.length + " of " + blocks.length + ", blocks " + oneTouched.map((b) => blocks.indexOf(b)).join(",") + " where " + blocks.indexOf(holder(one[0])!) + " was expected");   // by identity (ui/test-dom-shim.ts sameNodes)
   // several blocks: the run from the first mark's block to the last mark's block, none before or after
   reads.clear();
   const start = source.indexOf("Key points"), end = source.indexOf("minutes.") + "minutes.".length;
@@ -904,7 +912,7 @@ test("Rendered paint reads the top-level blocks a range touches and no other: a 
   const run = blocks.slice(i0, i1 + 1);
   assert.ok(run.length < blocks.length, "blocks outside the range exist");
   const manyTouched = blocks.filter((b) => reads.has(b));
-  assert.deepEqual(manyTouched, run, "the blocks between the two ends were read and no other; read: " + manyTouched.length + " of " + blocks.length);
+  sameNodes(manyTouched, run, "the blocks between the two ends were read and no other; read: " + manyTouched.length + " of " + blocks.length + ", blocks " + manyTouched.map((b) => blocks.indexOf(b)).join(",") + " where " + i0 + ".." + i1 + " were expected");
 });
 
 // ── Rendered: holes, html resync, inline html, autolinks, cache validity ───────────────────────────
@@ -1165,11 +1173,11 @@ test("Raw change marks over the CRLF fixture: the walks stay exact, no text node
   const marksOf = (id: string) => painted.filter((m) => m.getAttribute("class") === "fc-ins" && m.getAttribute("data-id") === id);
   const insMarks = marksOf("c-ins");
   assert.equal(new Set(insMarks.map(rowOf)).size, 2);
-  assert.deepEqual([...new Set(insMarks.map(rowOf))], [rows[1], rows[2]]);
+  sameNodes([...new Set(insMarks.map(rowOf))], [rows[1], rows[2]], "the insertion's marks sit in rows 1 and 2, in order");   // by identity (ui/test-dom-shim.ts sameNodes)
   assert.equal(noEol(insMarks.map((m) => m.textContent).join("")), noEol(byId["c-ins"].newText!));
   const subMarks = marksOf("c-sub");
   // the blank CRLF rows in between show their CR as an LF, which the range covers, so each holds one mark over it
-  assert.deepEqual([...new Set(subMarks.map(rowOf))], [rows[4], rows[5], rows[6], rows[7]]);
+  sameNodes([...new Set(subMarks.map(rowOf))], [rows[4], rows[5], rows[6], rows[7]], "the substitution's marks sit in rows 4 to 7, in order");
   assert.deepEqual(subMarks.filter((m) => rowOf(m) === rows[5] || rowOf(m) === rows[6]).map((m) => m.textContent), ["\n", "\n"]);
   assert.equal(noEol(subMarks.map((m) => m.textContent).join("")), noEol(byId["c-sub"].newText!));
   // the substitution's point comes first, right before its first mark
@@ -1622,4 +1630,18 @@ test("unpaintChanges walks elements only: a text node's children are never read 
   unpaintChanges(El(code));
   assert.equal(serialize(code), before, "every mark unwrapped, the text joined back, nothing thrown");
   assert.ok(!/fc-(ins|del)/.test(serialize(code)));
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names neither parentNode nor childNodes", () => {
+  const doc = new FakeDocument();
+  const root = doc.createElement("div"), p = doc.createElement("p"), t = doc.createTextNode("alpha");
+  root.appendChild(p); p.appendChild(t); p.setAttribute("class", "row");
+  for (const n of [root, p, t]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(p.parentNode === root && root.childNodes[0] === p && t.parentNode === p, "the edges still hold the tree");
+  assert.equal(root.textContent, "alpha"); assert.equal(p.getAttribute("class"), "row");
 });

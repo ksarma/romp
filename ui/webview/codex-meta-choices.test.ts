@@ -7,6 +7,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -180,16 +182,29 @@ test("executed: a non-2xx answer is recorded as its HTTP status, not as a JSON p
 // dataset, children, textContent, listeners, a rect, and isConnected (a walk up to the body). A rect read
 // on a DETACHED element is the bug under test (a browser answers all zeros there, which puts a fixed menu
 // off-screen), so the stand-in records every such read for the assertion instead of guessing at pixels.
-class FakeText { constructor(public textContent: string) {} parent: FakeEl | null = null; }
+class FakeText {
+  parent!: FakeEl | null;                   // defined in the constructor, non-enumerable: an edge, not part of the node's projection
+  constructor(public textContent: string) {
+    Object.defineProperty(this, "parent", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
+}
 type Kid = FakeEl | FakeText;
 const detachedRectReads: FakeEl[] = [];
 const rectReads: FakeEl[] = [];   // every rect read, attached or not: a landing that positions nothing reads none
 let BODY: FakeEl;
 class FakeEl {
   tagName: string; className = ""; id = ""; title = ""; tabIndex = -1; dataset: Record<string, string> = {};
-  style: Record<string, string> = {}; children: Kid[] = []; parent: FakeEl | null = null;
-  listeners: Record<string, Array<(e: any) => void>> = {}; rect = { left: 0, top: 0, right: 0, bottom: 0 }; html = "";
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  style: Record<string, string> = {}; html = "";
+  children!: Kid[]; parent!: FakeEl | null;   // both edges are defined in the constructor, non-enumerable (ui/test-dom-shim.ts hideEdges):
+                                              // a node inspects as its primitives, never as the tree it hangs in
+  listeners: Record<string, Array<(e: any) => void>> = {}; rect = { left: 0, top: 0, right: 0, bottom: 0 };
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "parent", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);   // dataset, style, listeners and rect hide too: a later `btn.rect = {...}` keeps the attribute
+  }
   classes(): string[] { return this.className.split(/\s+/).filter(Boolean); }
   get classList() {
     const self = this;
@@ -505,4 +520,15 @@ test("executed: a skeleton tab's stale session builds no menu, on the landing's 
   api.toggleMetaMenu("model", first.btn, null);
   assert.deepEqual(rows(api.menu as FakeEl), ["GPT-5 Test"], "released, the same badge opens the landed list");
   assert.deepEqual(detachedRectReads, []);
+});
+
+// ── the stand-in's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps a node's primitives, never the tree ──
+test("a node of the menu's DOM stand-in enumerates its primitives alone, and a dump of it names neither parent nor children", () => {
+  const root = new FakeEl("div"); const kid = new FakeEl("span"); root.appendChild(kid); kid.append("text"); kid.rect = { left: 1, top: 2, right: 3, bottom: 4 };
+  for (const n of [root, kid, kid.children[0]] as Kid[]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.constructor.name + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parent", "children", "listeners", "rect"]) assert.ok(!dump.includes(edge), n.constructor.name + " dumps " + edge + ":\n" + dump);
+  }
+  assert.ok(kid.parent === root && root.children[0] === kid && kid.children[0].parent === kid, "the edges are still reachable");
 });

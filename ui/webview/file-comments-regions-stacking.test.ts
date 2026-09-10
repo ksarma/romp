@@ -11,8 +11,10 @@
 // and a real click show the order doing its work. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── the DOM stand-in: what the constructor and paint() reach for, and nothing more ────────────────
 const kebab = (k: string | symbol): string => String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
@@ -20,8 +22,8 @@ class Doc {
   createElement(tag: string): E { return new E(this, tag.toUpperCase()); }
 }
 class E {
-  parentNode: E | null = null;
-  childNodes: E[] = [];
+  parentNode!: E | null;
+  childNodes!: E[];
   attrs = new Map<string, string>();
   title = ""; tabIndex = -1;
   naturalWidth = 0; naturalHeight = 0; complete = true;
@@ -33,12 +35,15 @@ class E {
     contains: (c: string) => this.classes().includes(c),
   };
   constructor(public ownerDocument: Doc, public tagName: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
     this.dataset = new Proxy({} as Record<string, string | undefined>, {
       get: (_t, k) => (typeof k === "string" ? this.attrs.get("data-" + kebab(k)) : undefined),
       set: (_t, k, v) => { this.attrs.set("data-" + kebab(k), String(v)); return true; },
       deleteProperty: (_t, k) => { this.attrs.delete("data-" + kebab(k)); return true; },
       has: (_t, k) => this.attrs.has("data-" + kebab(k)),
     });
+    hideEdges(this);
   }
   private classes(): string[] { return (this.attrs.get("class") || "").split(/\s+/).filter(Boolean); }
   private setClasses(c: string[]): void { this.attrs.set("class", [...new Set(c)].join(" ")); }
@@ -146,4 +151,16 @@ test("source: the module cites the plan by headings a reader can find, never a l
   }
   assert.ok(LAYER.includes('"Images and PDFs"') && /\nImages and PDFs\. /.test(PLAN), "the UX paragraph the header points at");
   assert.ok(LAYER.includes("decision 26") && /\n26\. \*\*Phone\*\*/.test(PLAN), "the coarse-pointer gate cites the decision that made region drawing desktop-only");
+});
+
+// ── the projection: a node's edges are own, non-enumerable properties (ui/test-dom-shim.ts), so a failing
+// assertion's dump of a node stops at the node instead of walking the tree ────────────────────────────
+test("a node of the stand-in enumerates its primitives alone, and its dump names neither its parent nor its children", () => {
+  const root = doc.createElement("div"), row = root.appendChild(doc.createElement("p")), leaf = row.appendChild(doc.createElement("span"));
+  leaf.setAttribute("data-id", "x");
+  for (const n of [root, row, leaf] as any[]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable(n[k])), "every enumerable own property is a primitive: " + Object.keys(n).join(", "));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
 });

@@ -13,19 +13,28 @@
 // from the unwrapped shape, and checks the two shapes read alike. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { codeRuns, codeText, codeLineAt, codeLineStart } from "./anchor-map";
 import { wrapLinesHtml } from "./code-block";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in: elements with a class attribute, text nodes with data ─────────────────────────
 type N = { nodeType: number; childNodes: N[]; parentNode: N | null; data?: string; tagName?: string; cls?: string; getAttribute(n: string): string | null };
-const text = (data: string): N => ({ nodeType: 3, childNodes: [], parentNode: null, data, getAttribute: () => null });
-const el = (tag: string, cls: string | null, kids: N[]): N => {
-  const e: N = { nodeType: 1, childNodes: kids, parentNode: null, tagName: tag, cls: cls || undefined, getAttribute: (n) => (n === "class" ? cls : null) };
+/** A node from its own fields and its children: the edges (childNodes, parentNode) are defined non-enumerable and every
+ *  other object the node holds is hidden (hideEdges, ui/test-dom-shim.ts), so a failing assertion's dump of a node is its
+ *  own primitives, never the tree it hangs in. */
+const node = (own: Omit<N, "childNodes" | "parentNode">, kids: N[]): N => {
+  const e = own as N;
+  Object.defineProperty(e, "childNodes", { value: kids, writable: true, enumerable: false, configurable: true });
+  Object.defineProperty(e, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
   for (const k of kids) k.parentNode = e;
-  return e;
+  return hideEdges(e);
 };
+const text = (data: string): N => node({ nodeType: 3, data, getAttribute: () => null }, []);
+const el = (tag: string, cls: string | null, kids: N[]): N =>
+  node({ nodeType: 1, tagName: tag, cls: cls || undefined, getAttribute: (n) => (n === "class" ? cls : null) }, kids);
 /** wrapLinesHtml's output (rows of one text run each, or empty; hljs spans inside a row) parsed into the stand-in. */
 function parseRows(html: string): N {
   const rows: N[] = [];
@@ -106,9 +115,10 @@ test("codeLineStart: where a line starts, in the wrapped and the unwrapped shape
   assert.equal(codeLineStart(D(wrapped), 5), null, "no sixth line");
   // unwrapped: the character after the k-th newline, in the same text node or the next
   const plain = el("code", null, [text("a\nb"), text("\nc\n")]);
-  assert.deepEqual(codeLineStart(D(plain), 1), { node: plain.childNodes[0], offset: 2 });
-  assert.deepEqual(codeLineStart(D(plain), 2), { node: plain.childNodes[1], offset: 1 }, "a newline ending a node starts the line in the next node");
-  assert.deepEqual(codeLineStart(D(plain), 3), { node: plain.childNodes[1], offset: 3 }, "the newline that ends the text: the end position");
+  // the node by identity (a node inspects as its projection, so a deepEqual over one would compare projections)
+  const p1 = codeLineStart(D(plain), 1)!; assert.equal(p1.node as unknown as N, plain.childNodes[0]); assert.equal(p1.offset, 2);
+  const p2 = codeLineStart(D(plain), 2)!; assert.equal(p2.node as unknown as N, plain.childNodes[1], "a newline ending a node starts the line in the next node"); assert.equal(p2.offset, 1);
+  const p3 = codeLineStart(D(plain), 3)!; assert.equal(p3.node as unknown as N, plain.childNodes[1], "the newline that ends the text: the end position"); assert.equal(p3.offset, 3);
   assert.equal(codeLineStart(D(plain), 4), null);
   assert.equal(codeLineStart(D(el("code", null, [])), 0), null, "no text, no line");
 });
@@ -131,4 +141,16 @@ test("codeLineAt and codeLineStart have no caller in production: exported for Sl
   const header = fs.readFileSync(path.join(UI, "anchor-map.ts"), "utf8").split("\n").filter((l) => l.startsWith("//")).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
   assert.match(header, /codeLineAt and codeLineStart, the line of a DOM position and the position where a line starts, are exported for Slice 8's exact mapping of code lines and have no caller in production today/);
   assert.doesNotMatch(header, /codeLineAt and codeLineStart stay for paintRendered's fallback/, "the fallback reads codeRuns; the round 3 sentence was not true");
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names neither parentNode nor childNodes", () => {
+  const t = text("alpha"), row = el("span", "cl", [el("span", "ct", [t])]), code = el("code", null, [row]);
+  for (const n of [code, row, t]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(row.parentNode === code && code.childNodes[0] === row && t.parentNode === row.childNodes[0], "the edges still hold the tree");
+  assert.equal(row.getAttribute("class"), "cl"); assert.equal(codeText(D(code)), "alpha");
 });

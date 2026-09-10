@@ -6,6 +6,7 @@
 // world, placeholder ids, TESTHOST.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -15,6 +16,7 @@ import {
   type Status, type Hunk, type StoreComment, type MessageOpts, unsentCount, actionLabel, describeComment, sendParts, buildSendMessage, neutralizeRompMarkers,
   cardModel, logRowText, pollBaseline, headVerdict, pollTargets, mtimeMoved, editBlockedReason, lineStartOffset, folderOf, ABSENT,
 } from "./file-comments-model";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -529,7 +531,7 @@ class El {
   href = ""; target = ""; rel = "";
   dataset: Record<string, string> = {};
   style: Record<string, string> = {};
-  childNodes: Array<El | string> = [];
+  childNodes!: Array<El | string>;
   parentElement: El | null = null;
   private attrs = new Map<string, string>();
   private classes = new Set<string>();
@@ -539,7 +541,10 @@ class El {
     toggle: (c: string, on?: boolean) => { if (on === undefined ? !this.classes.has(c) : on) this.classes.add(c); else this.classes.delete(c); },
     contains: (c: string) => this.classes.has(c),
   };
-  constructor(public tagName: string) {}
+  constructor(public tagName: string) {
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get className(): string { return [...this.classes].join(" "); }
   set className(v: string) { this.classes = new Set(v.split(/\s+/).filter(Boolean)); }
   get textContent(): string { return this.childNodes.map((c) => (typeof c === "string" ? c : c.textContent)).join(""); }
@@ -952,4 +957,17 @@ test("docs: the guide covers the panel, the poll, the consent, either view and m
   assert.ok(chat.includes("**Comments**"), "…and point at the panel for anything worth keeping");
   assert.ok(files.includes("folder a session will write into"), "track the folder before the session writes");
   assert.match(ADR, /^Status: accepted \(2026-09-06\), with Slice 1 of `plans\/file-review\.md`$/m);
+});
+
+test("the stand-in's nodes inspect as their projection: no enumerable edge, so a failing assertion's dump cannot walk the tree", () => {
+  const root = new El("div");
+  const kid = new El("span");
+  root.appendChild(kid);
+  kid.textContent = "leaf";
+  root.setAttribute("data-x", "1"); root.classList.add("c");
+  for (const n of [root, kid]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as unknown as Record<string, unknown>)[k])), "only primitives stay enumerable on " + n.constructor.name);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump: " + dump);
+  }
 });

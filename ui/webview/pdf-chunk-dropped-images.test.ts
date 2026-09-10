@@ -24,6 +24,8 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { makeRender, droppedImages, droppedImagesMessage, type PdfLib } from "./pdf-chunk";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const EXT = process.cwd();                                        // vscode-extension, where npm test runs
 const ROOT = path.resolve(EXT, "..");
@@ -61,7 +63,7 @@ class FakeEl {
   className = "";
   dataset: Record<string, string> = {};
   style: Record<string, string> = {};
-  children: FakeEl[] = [];
+  children!: FakeEl[];                       // defined in the constructor, non-enumerable: an edge, not part of the node's projection
   parentElement: FakeEl | null = null;
   textContent = "";
   /** the width layout gives this box — set on the host; inherited by what is inside it (the chunk fits pages to its root's) */
@@ -72,7 +74,11 @@ class FakeEl {
   set width(v: number) { this._w = v; }
   get height(): number { return this._h; }
   set height(v: number) { this._h = v; }
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);   // parentElement, style, dataset and the other edges hide too: a node inspects as its primitives (ui/test-dom-shim.ts)
+  }
   appendChild(c: FakeEl): FakeEl { c.remove(); c.parentElement = this; this.children.push(c); return c; }
   remove(): void { const p = this.parentElement; if (p) { p.children.splice(p.children.indexOf(this), 1); this.parentElement = null; } }
   querySelectorAll(sel: string): FakeEl[] {
@@ -281,7 +287,7 @@ const SKIP_LEGACY = fs.existsSync(LEGACY) && fs.existsSync(LEGACY_WORKER) && nap
 class CanvasEl extends FakeEl {
   private napi: any;
   private w = 300; private h = 150;
-  constructor() { super("canvas"); this.napi = napi.createCanvas(300, 150); }
+  constructor() { super("canvas"); this.napi = napi.createCanvas(300, 150); hideEdges(this); }
   get width(): number { return this.w; }
   set width(v: number) { this.w = v; if (v > 0) this.napi.width = v; }
   get height(): number { return this.h; }
@@ -435,5 +441,15 @@ test("in Chromium: the built chunk over the fixture — the null reaches the sto
     await page.evaluate(() => (window as any).__h.dispose());
   } finally {
     await browser.close();
+  }
+});
+
+// ── the fake DOM's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps an element's primitives, never the tree ──
+test("a fake element enumerates its primitives alone, and a dump of it names neither its children nor its parent", () => {
+  const root = new FakeEl("div"); const kid = new FakeEl("span"); root.appendChild(kid); kid.appendChild(new FakeEl("canvas"));
+  for (const n of [root, kid]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.tagName + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parentNode", "childNodes", "children", "parentElement"]) assert.ok(!dump.includes(edge), n.tagName + " dumps " + edge + ":\n" + dump);
   }
 });

@@ -15,6 +15,8 @@ import { test, mock, after } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const FEED_SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
 
@@ -34,8 +36,11 @@ class Style {
 }
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public textContent: string) {}
+  parentNode!: El | null;                   // defined in the constructor, non-enumerable: an edge, not part of the node's projection
+  constructor(public textContent: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get nextSibling(): El | Txt | null { return sib(this, 1); }
   remove(): void { this.parentNode?.removeChild(this); }
 }
@@ -70,8 +75,8 @@ class El extends EventTarget {
   scrollTop = 0;
   clicks = 0;                               // activations through click() — what the card cursor's Enter fires
   onclick: ((ev: any) => void) | null = null;
-  parentNode: El | null = null;
-  childNodes: Array<El | Txt> = [];
+  parentNode!: El | null;                   // both edges are defined in the constructor, non-enumerable (ui/test-dom-shim.ts hideEdges):
+  childNodes!: Array<El | Txt>;             // a node inspects as its primitives, never as the tree it hangs in
   dataset: Record<string, string | undefined> = {};
   style = new Style();
   private attrs = new Map<string, string>();
@@ -87,7 +92,12 @@ class El extends EventTarget {
     },
     contains: (c: string) => this.classes.has(c),
   };
-  constructor(public tagName: string) { super(); this.tagName = tagName.toUpperCase(); }
+  constructor(public tagName: string) {
+    super(); this.tagName = tagName.toUpperCase();
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get className(): string { return [...this.classes].join(" "); }
   set className(v: string) { this.classes = new Set(v.split(/\s+/).filter(Boolean)); }
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
@@ -101,7 +111,7 @@ class El extends EventTarget {
   get previousElementSibling(): El | null { for (let n = sib(this, -1); n; n = sib(n, -1)) if (n instanceof El) return n; return null; }
   get nextElementSibling(): El | null { for (let n = sib(this, 1); n; n = sib(n, 1)) if (n instanceof El) return n; return null; }
   get isConnected(): boolean { return this === body || body.contains(this); }
-  private detachAll(): void { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; }
+  private detachAll(): void { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; }
   private adopt(c: El | Txt | string): El | Txt { const n = typeof c === "string" ? new Txt(c) : c; n.parentNode?.removeChild(n); n.parentNode = this; return n; }
   appendChild<T extends El | Txt>(c: T): T { this.childNodes.push(this.adopt(c) as T); return c; }
   append(...cs: Array<El | Txt | string>): void { for (const c of cs) this.childNodes.push(this.adopt(c)); }
@@ -232,8 +242,8 @@ Object.assign(doc, {
 const T0 = 1781100000;
 const K0 = T0 - 300;
 const WEB = "11111111-2222-3333-4444-555555555555", API = "11111111-2222-3333-4444-666666666666", TESTS = "11111111-2222-3333-4444-777777777777";
-const node = (id: string, text: string, who: string, whoSid: string) =>
-  ({ id, kind: "ask", text, who, whoSid, whoColor: null, status: "open", t: K0 - 240, last: K0 - 240, children: [] as string[] });
+const node = (id: string, text: string, who: string, whoSid: string, children: string[] = []) =>
+  ({ id, kind: "ask", text, who, whoSid, whoColor: null, status: "open", t: K0 - 240, last: K0 - 240, children });
 const cardOf = (itemId: string, sid: string, name: string, bg: string, text: string) => ({
   itemId, sid, name, color: { bg, fg: "#ffffff" }, text, t: K0 - 240, live: true, turnId: "turn-" + itemId, column: "working",
   summary: null, blockSummary: null, tree: [node(itemId, text, name, sid)],
@@ -405,4 +415,32 @@ test("source: kbDropClickFocus spares the scope's control, drops in-card leftove
   const keyRead = kb.indexOf("const k = e.key");
   assert.ok(drop >= 0 && yieldAt > drop, "the in-card drop runs right before the yield reads the focus");
   assert.ok(keyRead > yieldAt && move > keyRead, "the move's drop runs once the key is known to be an arrow, before either mode acts on it");
+});
+
+// ── the stand-in's nodes are projections (ui/test-dom-shim.ts): a bare node dumps its primitives, never the tree. A node
+// feed.ts decorated dumps those plus feed.ts's own node references (some fifty on a rendered card: its title, rows, bell
+// and the rest, hung after the constructor ran, so the rule never saw them), each itself a node whose edges are hidden,
+// so a rendered card's dump is bounded by the count of hung references (about 1.3k lines), never by the tree (318,835
+// lines before the rule, the 40 GB case) ──
+test("a node of the DOM stand-in enumerates its primitives alone, and a dump of it names neither parentNode nor childNodes; a rendered card's dump is bounded by feed.ts's hung references, never the tree", async () => {
+  const ASSERT_INSPECT = { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true };
+  const root = new El("div"); const kid = new El("span"); kid.append("text"); root.append(kid, new Txt("tail"));
+  for (const n of [root, kid, root.childNodes[1]] as Array<El | Txt>) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.constructor.name + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, ASSERT_INSPECT);
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), n.constructor.name + " dumps an edge:\n" + dump);
+  }
+  // a rendered card: the references feed.ts hung on it enumerate (the rule runs at creation), each a node of this
+  // stand-in with its own edges hidden, so the dump stops one hop out and never reaches parentNode or childNodes
+  await dispatch(frame([g1, g2, g3]));
+  const c = card("g1");
+  const hung = Object.keys(c).filter((k) => !staysEnumerable((c as any)[k]));
+  assert.ok(hung.length > 0, "feed.ts hangs node references on a rendered card; this pin is about them");
+  const dump = inspect(c, ASSERT_INSPECT);
+  const n = dump.split("\n").length;
+  assert.ok(n < 3000, "a rendered card dumps in " + n + " lines, bounded by feed.ts's " + hung.length + " hung references and not by the tree; the ceiling is 3000");
+  // the stand-in's edges are parentNode and childNodes (children is a prototype getter, never an own key in a dump); a
+  // `children:` line at depth is the goal record feed.ts hangs on the card, its list of child goal ids, data and no edge
+  const edges = dump.split("\n").filter((l) => /^\s*(parentNode|childNodes):/.test(l));
+  assert.deepEqual(edges, [], "a rendered card's dump names an edge");
 });

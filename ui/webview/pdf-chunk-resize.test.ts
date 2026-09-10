@@ -18,6 +18,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { makeRender, type PdfLib, type PageInfo } from "./pdf-chunk";
+import { inspect } from "node:util";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 // ── a fake DOM: what the chunk touches of an element, and nothing else ──────────────────────────
 
@@ -26,7 +28,7 @@ class FakeEl {
   className = "";
   dataset: Record<string, string> = {};
   style: Record<string, string> = {};
-  children: FakeEl[] = [];
+  children!: FakeEl[];                       // defined in the constructor, non-enumerable: an edge, not part of the node's projection
   parentElement: FakeEl | null = null;
   textContent = "";
   clientWidth = 0;                            // a plain field: the test lays the root out by setting it
@@ -36,7 +38,11 @@ class FakeEl {
   getContext(kind: string): { canvas: FakeEl; drawImage(): void } | null {
     return kind === "2d" && this.tagName === "CANVAS" ? { canvas: this, drawImage: () => {} } : null;
   }
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);   // parentElement, style, dataset and the other edges hide too: a node inspects as its primitives (ui/test-dom-shim.ts)
+  }
   appendChild(c: FakeEl): FakeEl { c.remove(); c.parentElement = this; this.children.push(c); return c; }
   remove(): void {
     const p = this.parentElement;
@@ -146,7 +152,7 @@ test("a width change redraws the pages on screen at the new width — the same c
   const wraps = root.children;
   assert.equal(FakeRO.instances.length, 1, "one ResizeObserver for the document");
   const ro = FakeRO.instances[0];
-  assert.deepEqual(ro.targets, [root], "it watches the root the pages are fit to");
+  sameNodes(ro.targets, [root], "it watches the root the pages are fit to");   // by identity (ui/test-dom-shim.ts sameNodes)
   const io = FakeIO.instances[0];
   // an unlaid-out root (0 wide) draws page 1 at the page's natural width
   assert.deepEqual(brief(drawn), [[1, 612]]);
@@ -227,7 +233,8 @@ test("without a ResizeObserver the chunk renders and no observer is asked for; w
   let observedWhenResolved: FakeEl[] | null = null;
   const h2 = await makeRender(fakeLib(1).lib)(new ArrayBuffer(16), asEl(t2.container));
   observedWhenResolved = FakeRO.instances[0]?.targets ?? null;
-  assert.deepEqual(observedWhenResolved, [t2.container.children[0]]);
+  assert.equal(observedWhenResolved?.length, 1, "one target observed once resolved");
+  assert.ok(observedWhenResolved![0] === t2.container.children[0], "the observed target is the root (by identity: a node inspects as its projection)");
   h2.dispose();
 });
 
@@ -375,5 +382,15 @@ test("in Chromium: narrowing the body under two drawn pages redraws each once at
     assert.deepEqual(errors, [], errors.join("\n"));
   } finally {
     await browser.close();
+  }
+});
+
+// ── the fake DOM's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps an element's primitives, never the tree ──
+test("a fake element enumerates its primitives alone, and a dump of it names neither its children nor its parent", () => {
+  const root = new FakeEl("div"); const kid = new FakeEl("span"); root.appendChild(kid); kid.appendChild(new FakeEl("canvas"));
+  for (const n of [root, kid]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.tagName + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parentNode", "childNodes", "children", "parentElement"]) assert.ok(!dump.includes(edge), n.tagName + " dumps " + edge + ":\n" + dump);
   }
 });
