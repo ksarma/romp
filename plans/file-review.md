@@ -1056,8 +1056,8 @@ for `files.ts` and the relay / ~160 / ~260, plus about 150 lines of tests on eac
 ### Slice 2: the session's changes as accept/reject cards and inline marks
 
 User-visible: change cards grouped by paragraph with Accept, Reject, Accept all, Reject all, and
-Comment on this change (a comment about the change, its own card in the list, cross-linked to the
-change card by tags; the about follow-on, 2026-09-10. Before it a Reply that wrote a comment bound
+Comment on this change (a comment about the change, its own card in the list, the comment and the
+change each carrying a tag for the other; the about follow-on, 2026-09-10. Before it a Reply that wrote a comment bound
 to the change by the format's own field and drawn inside the change card; the `track-edit --thread`
 link that folded the session's revisions into that card left the
 loop with decision 42); inline
@@ -2711,7 +2711,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   modules they name; `tools/file-review-plan-about-records.test.mjs` holds the hosted-era sentences the follow-on
   superseded elsewhere in this document (the Show more row's order, the focus module's fold, the filter module's saved
   line) to the panel and the modules as history, decision 46 to the vocabulary, and the note's citation of the
-  assessment to the tree (the report is outside it). From the about follow-on's review (2026-09-10):
+  assessment to the tree (the report is outside it), and, since the review's consolidation (2026-09-10), the relation's
+  names in the records, the panel, the ADR and the host to CONTEXT.md's About entry (each carries a tag for the other;
+  never linked, cross-linked or thread), with the filter's option titles and the decision tag held to the guide's words.
+  From the about follow-on's review (2026-09-10):
   `file-comments-about-fixes.test.ts` (the stand-in with the editor's seam: the span cut from the file as the editor
   loaded it, Comment on this change withheld in flux and in media mode and standing on a deletion, a refused selection
   crossing a deletion's mark, a BOM file's offsets, `deletionUnder`'s one mark, the open card's line naming the
@@ -2749,7 +2752,8 @@ changes you have seen and says how many unseen ones stay pending, and that a cha
 looked at it is unseen until you look again (`tests/test_guide_files_seen.py` and `tests/test_guide_files_seen_definition.py`
 hold the sentence to the panel). With the about follow-on (2026-09-10), that Comment on this change opens the box over
 the change's text with "about this change" checked so the message names the change, that a comment is never shown inside
-a change's card and the two are linked by tags, that a selection inside a change leaves an ordinary comment with the same
+a change's card and the comment and the change each carry a tag for the other, that a selection inside a change leaves
+an ordinary comment with the same
 box checked, that an older binding reads "answered by a change", and that nothing resolves a comment but you, singly or
 with Resolve answered (`tests/test_guide_files_about.py` holds the sentences to the panel).
 `docs/reference.md`, under install-time switches, notes the
@@ -2992,7 +2996,7 @@ document stands on its own, each with the reasoning it was given.
     a change is an ordinary comment. Built as `changeIds` on the comment, romp's third additive field: Comment on this
     change (the change card's Reply until now) and the composer's checked "about this change" option over a selection
     that overlaps pending changes' marks write the ids beside the anchor, or alone for a deletion, whose text is not in
-    the file; the card wears "about a change" and the change card "N comments", the two cross-linked; the message says
+    the file; the card wears "about a change" and the change card "N comments", each a tag for the other; the message says
     "about your change …" after the passage. Stored ids over a derived overlap because an explicit list is what saying
     which changes a comment is about means, and it survives the passage's rewrite and the change's acceptance (the
     texts come from the sidecar or the comments log). The format's own `suggestionId` is read as the change that

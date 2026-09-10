@@ -39,7 +39,8 @@ must live in the second file.
   `anchorAt` (the offset at which a passage comment's anchor was located; the anchors follow-on,
   2026-09-07) and `changeIds` (the changes the comment is about, by id, the person's own pick; the
   about follow-on, 2026-09-10); all are romp-only, ignored by older readers, and written back
-  whole by the other editors. romp never writes the format's own `suggestionId`, the other editors'
-  thread key, and reads one it finds as the change that answered the comment.
+  whole by the other editors. romp never writes the format's own `suggestionId`, the key the other
+  editors set on a comment their change answers, and reads one it finds as the change that answered
+  the comment.
 - A romp-only field is read defensively wherever it is read: the sidecar is JSON anyone can edit,
   and a field of the wrong shape must claim nothing rather than fail the panel.

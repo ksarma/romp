@@ -12,7 +12,7 @@
 //   • A session's pending changes (Slice 2) are cards too: one per change, grouped by the paragraph it
 //     falls in, with Accept, Reject, Comment on this change (the about follow-on, 2026-09-10: a comment of the person's
 //     naming the change by its stored id, changeIds, its own card in the list) and Reveal; no comment is drawn inside a
-//     change's card, and the two are linked by tags ("about N changes" on the comment, "N comments" on the change). Past
+//     change's card, and each carries a tag for the other ("about N changes" on the comment, "N comments" on the change). Past
 //     three groups the rest fold behind one row. The changes are also marked inline in both views — insertions
 //     tinted, deletions struck at their point (Rendered places it through the index map since the inline-display
 //     follow-on, 2026-09-07; a deletion the map cannot place is card-only) — through anchor-map's change painters
@@ -4777,8 +4777,8 @@ class Panel {
       // editor's marks stay — the row is offered there all the same, since finding a comment among the change cards is
       // what the filter is for (Show changes inline, which governs marks alone, is not)
       const editing = this.ctx.editing();
-      const commentsTitle = "Show only the comments, including comments on changes; " + (editing ? "the editor keeps every change marked in its text" : "the change marks in the text are hidden with the change cards");
-      const changesTitle = "Show only the changes, each with the comments made on it" + (editing ? "" : "; the comment highlights in the text are hidden with the comment cards")
+      const commentsTitle = "Show only the comments, comments about changes among them; " + (editing ? "the editor keeps every change marked in its text" : "the change marks in the text are hidden with the change cards");
+      const changesTitle = "Show only the changes, each counting the comments about it" + (editing ? "" : "; the comment highlights in the text are hidden with the comment cards")
         + (d ? "; the " + (d === 1 ? "detached change is" : d + " detached changes are") + " listed too, in a group of " + (d === 1 ? "its" : "their") + " own" : "");
       const options: Array<[CommentsFilter, string, string]> = [
         ["all", "All", "Show every comment and change"],
@@ -5091,7 +5091,7 @@ class Panel {
     const list = el("div", "fc-cards");
     // the filter (activeFilter): "all" is the whole list, the change cards then every comment's own card (the about
     // follow-on, 2026-09-10: no comment is drawn inside a change card any more; a comment about a change is its own card,
-    // the two cross-linked by their tags); "comments" shows the comment cards and no change card; "changes" the change
+    // each carrying a tag for the other); "comments" shows the comment cards and no change card; "changes" the change
     // cards alone. The keyed expand state is untouched by the choice: a card opened under one filter is open under the
     // next that shows it.
     const filter = this.activeFilter();
@@ -5289,12 +5289,13 @@ class Panel {
       head.appendChild(t);
     }
     // the decision, when every change the comment names was decided alike (cardModel): the person's own pick (about) is the
-    // changes the comment is ABOUT, one or several (CONTEXT.md's vocabulary; before the about follow-on a comment named one
-    // change, by the format's field, and the title said "on"); a legacy binding keeps the words it had
+    // changes the comment is ABOUT, one or several, and a legacy binding (the format's field alone) is the change that ANSWERED
+    // the comment (CONTEXT.md's vocabulary, which sets "on a change" aside: a comment is on its passage or its file; before the
+    // about follow-on a comment named one change, by the format's field, and the title said "on" — the consolidation, 2026-09-10)
     if (c.decision) {
       const d = el("span", "fc-tag", c.decision);
       const about = c.refs.filter((r) => r.source === "about");
-      d.title = "You " + c.decision + (about.length > 1 ? " the " + about.length + " changes this comment is about" : about.length ? " the change this comment is about" : " the change this comment is on");
+      d.title = "You " + c.decision + (about.length > 1 ? " the " + about.length + " changes this comment is about" : about.length ? " the change this comment is about" : " the change that answered this comment");
       head.appendChild(d);
     }
     if (c.resolved) head.appendChild(el("span", "fc-tag", "resolved"));

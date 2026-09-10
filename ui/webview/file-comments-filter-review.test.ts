@@ -12,7 +12,9 @@
 //     session's answer): a pending one, or a detached one whose text the file no longer holds (cardModel sets `refs` for
 //     both); the change card counts the open comments about it; its kind cue says a detached change is nobody's to decide;
 //   • the filter is offered while the editor is up (Slice 5), where the list half works and the editor keeps its own
-//     marks: the option titles say so there, and say the read view's marks rule otherwise;
+//     marks: the option titles say so there, and say the read view's marks rule otherwise; the titles name a comment's
+//     relation to a change as CONTEXT.md's About entry does (comments about changes; each counting the comments about
+//     it), never as the hosted era did (the consolidation, 2026-09-10);
 //   • a comment saved while Changes is chosen: its card and mark are hidden by that choice, so the list says so where the
 //     card would be, with a ✕ — the kept choice stands; the line is over once the card shows or the comment is gone, and
 //     does not come back on a later Changes; a comment about a change (the change card's Comment on this change) is its
@@ -604,26 +606,26 @@ test("while the editor is up the filter row is offered (its list half is the poi
   store.delete(SETTINGS_KEY);
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, full());
-  assert.equal(option(aside, "comments").title, "Show only the comments, including comments on changes; the change marks in the text are hidden with the change cards");
-  assert.equal(option(aside, "changes").title, "Show only the changes, each with the comments made on it; the comment highlights in the text are hidden with the comment cards");
+  assert.equal(option(aside, "comments").title, "Show only the comments, comments about changes among them; the change marks in the text are hidden with the change cards");
+  assert.equal(option(aside, "changes").title, "Show only the changes, each counting the comments about it; the comment highlights in the text are hidden with the comment cards");
   // Edit: begin() runs at the click and renders; the viewer then holds the body and answers editing()
   w.editing = true;
   const begun = w.tracked!.begin()!;
   assert.equal(begun.records.length, SUGG.length, "the sidecar's records ride into the editor, whatever the filter (pendingRecords reads the store)");
   assert.ok(filterRow(aside), "the filter row stands in edit mode");
   assert.equal(act(aside, "fcinline"), null, "Show changes inline does not: the editor draws every change itself");
-  assert.equal(option(aside, "comments").title, "Show only the comments, including comments on changes; the editor keeps every change marked in its text");
-  assert.equal(option(aside, "changes").title, "Show only the changes, each with the comments made on it", "the editor paints no comment highlight: nothing to claim hidden");
+  assert.equal(option(aside, "comments").title, "Show only the comments, comments about changes among them; the editor keeps every change marked in its text");
+  assert.equal(option(aside, "changes").title, "Show only the changes, each counting the comments about it", "the editor paints no comment highlight: nothing to claim hidden");
   await pick(aside, "comments");
   assert.deepEqual(changeCards(aside), [], "the list half works in the editor");
   assert.deepEqual(commentCards(aside).map((c) => c.dataset.id), [passage.id, whole.id, region.id, hosted.id], "every comment card on its own, oldest first");
   assert.equal(stored()!.commentsFilter, "comments");
-  assert.equal(option(aside, "comments").title, "Show only the comments, including comments on changes; the editor keeps every change marked in its text");
+  assert.equal(option(aside, "comments").title, "Show only the comments, comments about changes among them; the editor keeps every change marked in its text");
   // the edit ends: the read view's titles are back
   w.editing = false;
   await pick(aside, "all");
-  assert.equal(option(aside, "comments").title, "Show only the comments, including comments on changes; the change marks in the text are hidden with the change cards");
-  assert.equal(option(aside, "changes").title, "Show only the changes, each with the comments made on it; the comment highlights in the text are hidden with the comment cards");
+  assert.equal(option(aside, "comments").title, "Show only the comments, comments about changes among them; the change marks in the text are hidden with the change cards");
+  assert.equal(option(aside, "changes").title, "Show only the changes, each counting the comments about it; the comment highlights in the text are hidden with the comment cards");
   store.delete(SETTINGS_KEY);
 });
 
@@ -740,7 +742,7 @@ test("a file with detached changes alone: the label says '1 detached change', th
   assert.equal(button.textContent, "Comments · 0 · 1 detached change");
   assert.deepEqual(cardCounts(only), { comments: 0, changes: 0 }, "the shared counts are unchanged: a detached change is not pending");
   assert.deepEqual(texts(filterRow(aside)!.childNodes as El[]), ["All", "Comments 0", "Changes 0 · 1 detached"]);
-  assert.equal(option(aside, "changes").title, "Show only the changes, each with the comments made on it; the comment highlights in the text are hidden with the comment cards; the detached change is listed too, in a group of its own");
+  assert.equal(option(aside, "changes").title, "Show only the changes, each counting the comments about it; the comment highlights in the text are hidden with the comment cards; the detached change is listed too, in a group of its own");
   await pick(aside, "changes");
   assert.deepEqual(changeCards(aside).map((c) => c.dataset.id), ["chg:d1"], "the option opens on the card it counted");
   assert.equal(aside.querySelector(".fc-empty"), null);

@@ -153,7 +153,7 @@ test('comment {changeIds} with no anchor: a comment about a change whose text is
   const c = readSidecar(r.storePath).comments[0];
   assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'changeIds', 'body', 'replies', 'resolved']);
   assert.deepEqual(c.changeIds, [d.id]);
-  assert.equal(c.id, `${c.ts}-${d.curFrom}`, 'the change\'s point names the place, as the other hosts\' change threads did');
+  assert.equal(c.id, `${c.ts}-${d.curFrom}`, 'the change\'s point names the place, where the other hosts put a comment whose suggestionId names the change');
   assert.equal('anchor' in c, false);
   assert.equal('anchorAt' in c, false);
   assert.equal('target' in c, false);

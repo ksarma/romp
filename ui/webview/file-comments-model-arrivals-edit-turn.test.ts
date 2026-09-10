@@ -61,7 +61,8 @@ test("a comment's replies in words are entries, an edit turn between them is not
   const es = statusEntries(status([c], [hunk("h2", T0 + 2000)]));
   assert.deepEqual(keys(es), ["chg:h2", c.id, c.id + "|" + (T0 + 1000), c.id + "|" + (T0 + 4000)]);
   assert.deepEqual(es.filter((e) => e.kind === "reply").map((e) => e.author), ["api", "you"]);
-  // the edit turn's change is where the arrival shows: the hunk's card, which the bound comment's card is
+  // the edit turn's arrival shows on the change's card (chg:h2); the comment the change answered has a card of its own
+  // since the about follow-on (2026-09-10), and the word reply's arrival is that card's
   const arrivals = arrivalsAmong(es, new Set([c.id, c.id + "|" + (T0 + 4000)]));
   assert.deepEqual(keys(arrivals), ["chg:h2", c.id + "|" + (T0 + 1000)]);
   assert.deepEqual(arrivals.map((e) => e.subject), ["chg:h2", c.id]);

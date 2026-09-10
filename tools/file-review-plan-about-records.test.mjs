@@ -11,7 +11,12 @@
 // reworded sentences and the modules' titles, not the superseded sentences, so the stale ones passed 15/15. This module
 // holds each of them to the source that makes it true now: the panel (no hosted comment, the change card's order), the
 // focus module (its title and its assertions), the filter module (its saved-line test), the model (the rule's own
-// words), the vocabulary and the tree. Synthetic: only the repo's own text.
+// words), the vocabulary and the tree. The consolidation of the review (2026-09-10) added the relation's own names: the
+// records (the Slice 2 lead, decision 45, the Docs restatement), the panel's comments, the ADR's consequences bullet and
+// the host's changeIds note said "linked", "cross-linked" or "thread" for what CONTEXT.md's About entry calls "about",
+// and the filter's option titles and the decision tag on a legacy binding still spoke in the hosted era's words ("comments
+// on changes", "each with the comments made on it", "the change this comment is on"); the guide and the plan's filter
+// paragraph had moved on. Each is held here to the entry's Avoid list and to the words the guide uses.
 // Run: node --test tools/file-review-plan-about-records.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -146,4 +151,59 @@ test('the Tests section\'s about bullet names this module and says what it holds
   assert.ok(aboutBullet.includes('`tools/file-review-plan-about-records.test.mjs` holds the hosted-era sentences the follow-on superseded elsewhere in this document (the Show more row\'s order, the focus module\'s fold, the filter module\'s saved line) to the panel and the modules as history, decision 46 to the vocabulary, and the note\'s citation of the assessment to the tree (the report is outside it)'));
   assert.ok(focusNote.includes('From the about follow-on\'s review (2026-09-10), `tools/file-review-plan-about-records.test.mjs` holds the sentences here the follow-on superseded, the Show more row\'s order and the focus module\'s fold, to the panel and the module as history.'));
   assert.ok(focusBullet.includes('From the about follow-on\'s review (2026-09-10), `tools/file-review-plan-about-records.test.mjs` holds this paragraph\'s superseded sentences, the Show more row\'s order and the focus module\'s fold, to the panel and the module as history.'));
+});
+
+// ── the relation's names: CONTEXT.md's About entry, in the records and the code (the consolidation, 2026-09-10) ─────
+
+const adr = read('docs', 'adr', '0002-file-comments-in-the-track-changents-sidecar.md');
+const host = read('tools', 'file-comments-host.mjs');
+const settings = read('ui', 'webview', 'settings.ts');
+const guide = read('docs', 'guide.md').replace(/\s+/g, ' ');
+const slice2Lead = between(plan, 'User-visible: change cards grouped by paragraph with Accept, Reject, Accept all, Reject all, and', 'Acceptance: accept changes the sidecar only');
+const d45 = between(plan, '45. **A comment names the changes it is about by stored ids the person picks', '46. **Resolve answered');
+const docsSection = between(plan, '\n## Docs', '\n## Deliberately not in v1');
+
+test('the records and the code say each carries a tag for the other, never linked or cross-linked: the Slice 2 lead, decision 45, the Docs restatement, the about paragraph, the panel\'s comments (CONTEXT.md, About: Avoid)', () => {
+  assert.ok(/linked to \(the old binding the session's edit made\)/.test(context.replace(/\s+/g, ' ')), 'the entry sets "linked" aside for the old binding');
+  for (const [name, text] of [['the Slice 2 lead', slice2Lead], ['decision 45', d45], ['the Docs section', docsSection], ['the about paragraph', aboutNote]]) {
+    assert.doesNotMatch(text, /\bcross-linked\b|\blinked (?:by|to)\b/i, name + ' names the relation as the entry does');
+  }
+  assert.ok(slice2Lead.includes('its own card in the list, the comment and the change each carrying a tag for the other; the about follow-on, 2026-09-10.'));
+  assert.ok(d45.includes('the card wears "about a change" and the change card "N comments", each a tag for the other; the message says "about your change …" after the passage.'));
+  assert.ok(docsSection.includes('that a comment is never shown inside a change\'s card and the comment and the change each carry a tag for the other, that a selection inside a change leaves an ordinary comment with the same box checked'), 'the Docs restatement says what the guide says');
+  assert.ok(guide.includes('every comment is its own card, and the comment and the change each carry a tag for the other, **about a change** on the comment'), 'and the guide says it');
+  assert.doesNotMatch(panel, /linked by tags|cross-linked/, 'the panel\'s own comments');
+  assert.ok(panel.includes('no comment is drawn inside a\n//     change\'s card, and each carries a tag for the other ("about N changes" on the comment, "N comments" on the change).'), 'the header');
+  assert.ok(panel.includes('a comment about a change is its own card,\n    // each carrying a tag for the other); "comments" shows the comment cards and no change card'), 'renderCards');
+});
+
+test('the format\'s key is not called a thread: the ADR\'s consequences bullet and the host\'s changeIds note say what the other editors set it for (CONTEXT.md, File comment and About: Avoid)', () => {
+  const bullet = between(adr, '- Under that rule the sidecar now carries three additive fields on a comment', '- A romp-only field is read defensively');
+  assert.ok(bullet.includes('romp never writes the format\'s own `suggestionId`, the key the other editors set on a comment their change answers, and reads one it finds as the change that answered the comment.'));
+  assert.doesNotMatch(bullet, /\bthreads?\b/i, 'the ADR');
+  const note = between(host, '// `changeIds` is the person\'s own pick of the changes a comment is ABOUT', 'function readChangeIds(args) {').replace(/ \/\/ /g, ' ');
+  assert.ok(note.includes('takes its id from the first change\'s current offset (a detached change\'s last place), where the other hosts put a comment whose `suggestionId` names the change.'));
+  assert.doesNotMatch(note, /\bthreads?\b/i, 'the host\'s note');
+  const hostTest = read('tools', 'file-comments-host-about.test.mjs');
+  assert.ok(hostTest.includes('where the other hosts put a comment whose suggestionId names the change'), 'and the host test\'s message');
+  assert.doesNotMatch(hostTest, /change threads/, 'the host test');
+});
+
+test('the filter\'s option titles and the decision tag on a legacy binding speak as the guide and the plan\'s filter paragraph do: comments about changes, each counting the comments about it, the change that answered this comment; never the hosted era\'s "on"', () => {
+  assert.ok(panel.includes('const commentsTitle = "Show only the comments, comments about changes among them; "'), 'the Comments option');
+  assert.ok(panel.includes('const changesTitle = "Show only the changes, each counting the comments about it"'), 'the Changes option');
+  assert.doesNotMatch(panel, /comments made on it|including comments on changes/, 'the hosted era\'s titles are gone');
+  assert.ok(guide.includes('**Comments** lists only the comments, comments about changes among them, and hides the change marks in the file; **Changes** lists only the changes, each counting the comments about it'), 'the guide\'s words, which the titles follow');
+  assert.ok(plan.replace(/\s+/g, ' ').includes('**Changes** lists the change cards alone, each counting the comments about it (before the about follow-on, each with the comments made on it drawn inside)'), 'the plan\'s filter paragraph, which records the old words as history');
+  assert.ok(settings.includes('"changes" (change cards, each counting the comments about it; no comment highlights or region rectangles)'), 'the setting\'s comment');
+  assert.ok(panel.includes(' : about.length ? " the change this comment is about" : " the change that answered this comment");'), 'the decision tag: about for the person\'s pick, answered for a legacy binding');
+  assert.doesNotMatch(panel, /this comment is on"/, 'never "on a change"');
+  assert.ok(/on a change \(a comment is on its passage or its file, and about the changes it names\)/.test(context.replace(/\s+/g, ' ')), 'the rule the words follow');
+  // the stand-ins pin the same words
+  const filterReview = read('ui', 'webview', 'file-comments-filter-review.test.ts');
+  assert.ok(filterReview.includes('"Show only the comments, comments about changes among them; the change marks in the text are hidden with the change cards"'));
+  assert.ok(filterReview.includes('"Show only the changes, each counting the comments about it; the comment highlights in the text are hidden with the comment cards"'));
+  const changesReview = read('ui', 'webview', 'file-comments-changes-review2.test.ts');
+  assert.ok(changesReview.includes('assert.equal(tag.title, "You accepted the change that answered this comment"'));
+  assert.ok(changesReview.includes('assert.equal(tag2.title, "You rejected the change that answered this comment");'));
 });

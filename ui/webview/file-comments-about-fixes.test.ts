@@ -564,5 +564,5 @@ test("the decision tag on a comment whose named changes the person decided alike
   const title = (id: string): string => { const tag = card(aside, id)!.querySelectorAll(".fc-card-head .fc-tag").find((x) => x.textContent === "accepted"); assert.ok(tag, id + " wears the decision"); return tag!.title; };
   assert.equal(title(both.id), "You accepted the 2 changes this comment is about");
   assert.equal(title(one.id), "You accepted the change this comment is about");
-  assert.equal(title(legacy.id), "You accepted the change this comment is on", "a legacy binding (the format's suggestionId): the words it had");
+  assert.equal(title(legacy.id), "You accepted the change that answered this comment", "a legacy binding (the format's suggestionId): the change that answered the comment, never \"on\" (the consolidation, 2026-09-10)");
 });

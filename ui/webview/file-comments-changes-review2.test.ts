@@ -596,7 +596,7 @@ test("a comment bound to a change the log has decided stands on its own card, ta
   assert.equal(c.querySelector(".fc-ref")!.textContent, "reduced → cut", "the change's texts, from the log");
   const tag = c.querySelectorAll(".fc-card-head .fc-tag").find((x) => x.textContent === "accepted")!;
   assert.ok(tag, "tagged with the decision");
-  assert.equal(tag.title, "You accepted the change this comment is on");
+  assert.equal(tag.title, "You accepted the change that answered this comment", "a legacy binding: the change that answered the comment, never \"on\" (CONTEXT.md, About: Avoid; the consolidation, 2026-09-10)");
   assert.equal(tags(c).includes("resolved"), false, "the decision is not 'resolved'");
   w.close();
   const w2 = world(); t.after(() => w2.close());
@@ -604,7 +604,7 @@ test("a comment bound to a change the log has decided stands on its own card, ta
   const c2 = card(a2, bound.id)!;
   const tag2 = c2.querySelectorAll(".fc-card-head .fc-tag").find((x) => x.textContent === "rejected")!;
   assert.ok(tag2);
-  assert.equal(tag2.title, "You rejected the change this comment is on");
+  assert.equal(tag2.title, "You rejected the change that answered this comment");
   assert.equal(c2.querySelectorAll(".fc-card-head .fc-tag").filter((x) => x.textContent === "accepted").length, 0);
 });
 
