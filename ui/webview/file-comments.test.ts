@@ -393,7 +393,7 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
   const script = [
     "import json, os, sys",
     // the tests dir on the child's path: load_source is tests/romp_load.py's, the repo's file-path importer
-    // (kernel/loadsource.py); SourceFileLoader.load_module() warns on 3.12+ and is removed in Python 3.15
+    // (kernel/loadsource.py); SourceFileLoader.load_module() warns since Python 3.10 and is removed in 3.15
     "sys.path.insert(0, os.path.join(sys.argv[1], 'tests'))",
     "from romp_load import load_source",
     "os.environ.pop('ROMP_STATE_DIR', None)",
