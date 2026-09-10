@@ -261,8 +261,9 @@ class RefusesForeignDriveOps(_ForeignDriveFixture):
             self.assertEqual(m["title"], "That action was not delivered", "no verb in the table for these three")
 
     def test_a_record_that_will_not_read_refuses_the_typed_text_into_the_same_three_records(self):
-        # _session_gate's unreadable verdict (a NOT-running session whose SDK registry entry exists but will not
-        # read) refuses through _refuse_drive_unreadable, the sibling of the unknown refusal above, and the two
+        # _session_gate's unreadable verdict (a session the SDK backend is not running whose SDK registry entry
+        # exists but will not read) refuses through _refuse_drive_unreadable, the sibling of the unknown refusal
+        # above, and the two
         # write through one records writer: the same modal with the text offered back, the same undelivered.jsonl
         # row with the text verbatim, the same stderr line, with the cause naming the record. Pinned with typed
         # text: the two-doors table drives interrupt, which carries none, so a refusal that kept the modal and

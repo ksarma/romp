@@ -18790,8 +18790,9 @@ def _drive(msg, client):
     # into a no-op. The verdict is _session_gate's, the one gate both client doors ask (the HTTP control
     # routes through _unknown_session_refusal): the registry, not liveness, so a dead-but-ours session still
     # resolves and reviving sends keep working; only a genuinely foreign sid is refused as unknown, and a
-    # NOT-running session whose registry entry exists but will not read is refused as unreadable, in the
-    # same three places, never called foreign (review round 5, 2026-09-09: this door said "no session with
+    # session the SDK backend is not running whose registry entry exists but will not read is refused as
+    # unreadable, in every tmux state and at every list_regs cache state (round 9), in the same three places,
+    # never called foreign (review round 5, 2026-09-09: this door said "no session with
     # id" for a record `romp end` said it could not read, and passed a names-registered session on such a
     # row through to the tmux fallthrough this gate exists to stop). A read that failed on the way (the tmux
     # scan, a torn dormant record of the typed name, the comment threads' store) is refused naming the read,
@@ -27161,14 +27162,15 @@ def _unknown_session_refusal(sid, who, live=None, route=""):
     the tmux backend and folded the refusal into ok:true. `romp end <typo>` printed a bare ok while the
     real session ran on, and a caller that trusted it had to re-check the roster (2026-09-09). The verdict
     is _session_gate's, the one gate the WS _drive gate asks too, so the two client doors cannot disagree:
-    admitted for a session a backend reports running, whatever its record reads, else for one the kernel
-    knows (_kernel_knows: the names registry, a registered sid live or between turns; the SDK registry, a
+    admitted for a session the SDK backend runs now (running_sids), whatever its record reads, else for one the
+    kernel knows (_kernel_knows: the names registry, a registered sid live or between turns; the SDK registry, a
     reg the SDK backend wrote, a comment thread's among them, since a thread has no names/ entry and
     live_sessions skips threadOf regs while _sid_of resolves its name to its tsid on purpose, T223; and the
     live map, a session up before its registry entry lands); unreadable, a 503 naming the read and the way
-    out, for a NOT-running session whose registry entry exists but will not read (the kernel cannot say
-    whether it knows the session, so it says that; every step past this gate reads the record and each
-    would answer a different wrong thing); else the 404. History: a gate of names and live map alone
+    out, for a session whose registry entry exists but will not read and that the SDK backend is not running,
+    in every tmux state and at every list_regs cache state, a tmux pane carrying the sid included (the kernel
+    cannot say whether it knows the session, so it says that; every step past this gate reads the record and
+    each would answer a different wrong thing); else the 404. History: a gate of names and live map alone
     refused every thread (review find, 2026-09-09); the routes' own predicate admitted through a threadOf
     reg only, so a dead non-thread SDK reg with no names/ entry was ended by the dashboard and refused 404
     here (round 4); the 503 said "try again" for a record no retry could heal and refused a live session on

@@ -485,8 +485,8 @@ class UnknownSessionRefused(_RouteServer):
     printed a bare ok while the real session kept running; /send handed the phantom to the tmux
     backend, whose refusal the route folded into ok:true. A caller that trusted those oks had to
     re-check the roster to learn nothing had happened. The verdict is _session_gate's, one gate for the WS
-    drive door and these routes: a session a backend reports running is admitted whatever its record reads;
-    else _kernel_knows (the names registry; the SDK registry, any reg the SDK backend wrote, a comment
+    drive door and these routes: a session the SDK backend runs (running_sids) is admitted whatever its record
+    reads; else _kernel_knows (the names registry; the SDK registry, any reg the SDK backend wrote, a comment
     thread's included since a thread has no names/ entry and live_sessions hides it; the live map), so a
     registered-but-idle sid and a dead non-thread SDK reg both pass and a dead session addressed by id keeps
     its idempotent end; a registry entry that exists but will not read is a 503 naming the read, not a 404,
@@ -1850,9 +1850,10 @@ class UnknownSessionRefused(_RouteServer):
         # modal, no undelivered.jsonl row and no log line, `romp interrupt <name>` sent Esc to a tmux target
         # named after the session, `romp end <sid>` killed a same-named tmux session and said the kill did not
         # take, and _unconfirmed_end_text promised "try again". The 503 the tests modelled appeared only with a
-        # cold cache (after a kernel restart). Running means the backend runs the session now: the tmux pane
-        # set or running_sids, never an SDK row in the map (review round 6, 2026-09-09). Through the REAL
-        # Sessions.live() (tmux off: the map is the SDK half only), by id and by name, at both doors.
+        # cold cache (after a kernel restart). Round 6's rule was that running means the backend runs the session
+        # now, the tmux pane set or running_sids, never an SDK row in the map; since round 9 it is running_sids
+        # alone, the SDK backend's own set (review rounds 6 and 9, 2026-09-09). Through the REAL Sessions.live()
+        # (tmux off: the map is the SDK half only), by id and by name, at both doors.
         sid, name = "abab2222-3333-4444-5555-666666666666", "warm-web"
         reg_path = km.jd.STATE / "sdk" / (sid + ".json")
         reg_path.parent.mkdir(parents=True, exist_ok=True)
