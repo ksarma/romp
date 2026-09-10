@@ -16684,6 +16684,23 @@ def _comments_frame(sid, tmux=None):
                 meta = be.session_meta(tsid) or {}
             except Exception:
                 meta = {}
+        # The thread's effort is the value the live backend reports (session_meta carries the snapshot's
+        # effort since review round 6, 2026-09-10: what the process RUNS, also while an effort pick is held
+        # for the thread's live work); the reg's effort serves a dormant thread only (meta empty). The reg is
+        # what set_effort rewrites at pick time, so a thread read from it showed a held pick as applied, and
+        # the popover's effort badge check-marked the pick while the chat's tagged it as waiting (ui-1). The
+        # tints follow the same value. The hold rides with it (pickHeld, effortPending), so the popover's
+        # badges and menus read it the way the chat's do (threadMetaStatus), and the thread's events end on
+        # the chat's `reconnecting` element under the live row's own gate (build_session: effortPending or
+        # pickHeld), the waiting line while a pick is held and the reloading line for the armed effort
+        # reconnect. Appended after the projection's reads (unread, lastUuid) so a marker without a uuid
+        # never stands in for the newest record; _thread_events hands out a copy, so the served build is
+        # never appended to.
+        effort = str(meta.get("effort") or "") if "effort" in meta else ((reg.get("effort") or "") if reg else "")
+        pick_held = meta.get("pickHeld") or None
+        effort_pending = bool(meta.get("effortPending"))
+        if effort_pending or pick_held:
+            events = events + [_reconnecting_event(meta)]
         threads.append({"tid": th.get("tid"), "anchorUuid": th.get("anchorUuid"),
                         "relayedT": th.get("relayedT") or 0,   # the persistent sent-back indicator's stamp (T145)
                         "name": th.get("name") or "", "color": th.get("color") or "",
@@ -16695,7 +16712,8 @@ def _comments_frame(sid, tmux=None):
                         "unreachable": unreachable or None,            # a broken thread (missing transcript / lost cut): owes nothing
                         "promotedName": th.get("promotedName") or "",
                         "model": (reg.get("liveModel") or reg.get("model") or "") if reg else "",
-                        "effort": (reg.get("effort") or "") if reg else "",
+                        "effort": effort,                              # the running value on a live thread (see above)
+                        "pickHeld": pick_held, "effortPending": effort_pending,   # the hold and the armed reconnect, as the live row's status carries them
                         "sinceEpoch": since_ms,
                         "mode": str(meta.get("mode") or ""), "fast": str(meta.get("fast") or ""),
                         # the same rank tints the chat statusline's badges wear (the user 2026-08-25,
@@ -16703,10 +16721,9 @@ def _comments_frame(sid, tmux=None):
                         # reads these and the frame never carried them)
                         "modelColor": _model_color((reg.get("liveModel") or reg.get("model") or "") if reg else "",
                                                    cm.stops_for(_colormap())),
-                        "effortColor": _effort_color((reg.get("effort") or "") if reg else "",
-                                                     cm.stops_for(_colormap())),
+                        "effortColor": _effort_color(effort, cm.stops_for(_colormap())),
                         "modelTone": _model_tone((reg.get("liveModel") or reg.get("model") or "") if reg else ""),
-                        "effortTone": _effort_tone((reg.get("effort") or "") if reg else ""),
+                        "effortTone": _effort_tone(effort),
                         "msgs": msgs, "events": events})
     return {"type": "comments", "id": sid, "threads": threads}
 

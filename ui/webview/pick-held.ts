@@ -53,7 +53,10 @@ export function heldRowValue(now: string, kind: string, h: PickHeld, picked?: st
 // their marks from here; until round 5 the badge menus checked the running value (they never read the hold) while
 // the Billing flyout checked the pick, so the same hold read two ways on one screen. Returns null when the kind is
 // not held, and the menu marks its current value as it always did. A payload without the picked value (an older
-// kernel) checks no row rather than a wrong one, and still tags the running value.
+// kernel) checks no row rather than a wrong one, and still tags the running value; auth is the one kind whose
+// status field (st.auth) carries the pick rather than the running value (authLive is the CLI's report), so its
+// flyout falls back to it when `current` is empty (render.ts, review round 6), where the badge kinds' fields
+// report the running value and have nothing to fall back on.
 export interface HeldMenuMarks { current: string; running: string }
 
 export const RUNNING_TAG = "running";

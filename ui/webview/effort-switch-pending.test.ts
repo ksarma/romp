@@ -8,7 +8,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { heldMenuMarks } from "./pick-held";
+import { heldMenuMarks, badgeHeldTip, RUNNING_TAG } from "./pick-held";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
@@ -124,9 +124,11 @@ test("the badge menus and the Billing flyout mark a held pick the same way: the 
   // the Billing flyout, the same rule: the check on the pick and the tag on the side the CLI reports while held
   const flyout = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub");'), RENDER.indexOf("menu.appendChild(sub);"));
   assert.match(flyout, /const heldAuth = heldMenuMarks\("auth", st\.pickHeld, st\.authLive \|\| ""\);/);
-  assert.match(flyout, /const current = heldAuth \? heldAuth\.current === c\.value : st\.auth === c\.value;/);
+  // (the flyout falls back to st.auth, the field that carries the billing pick, when the payload names none:
+  // review round 6, executed in auth-selector.test.ts)
+  assert.match(flyout, /const current = heldAuth \? \(heldAuth\.current \|\| st\.auth\) === c\.value : st\.auth === c\.value;/);
   assert.match(flyout, /const running = !!heldAuth && heldAuth\.running === c\.value;/);
-  assert.match(flyout, /el\("div", "ctx-item" \+ \(current \? " current" : ""\) \+ \(running \? " running" : ""\)\)/);
+  assert.match(flyout, /el\("div", "ctx-item" \+ \(current \? " current" : ""\) \+ \(running \? " running" : ""\) \+ \(c\.why \? " disabled" : ""\)\)/);   // main's greyed unavailable side rides beside the held marks (billing-one-auth.test.ts)
   assert.match(flyout, /if \(running\) opt\.appendChild\(runningTag\(\)\);/);
   // the tag is the menu sub-line vocabulary, spaced from the label; no size of its own (ui/CLAUDE.md)
   assert.match(RENDER, /function runningTag\(\): HTMLElement \{\n\s+const tag = el\("span", "meta-item-sub running-tag"\);\n\s+tag\.textContent = " " \+ RUNNING_TAG;/);
@@ -164,4 +166,142 @@ test("executed: metaRowMarks checks the picked row and tags the running row whil
   // the running value picked again is no hold, so it is simply current (the kernel reconnects nothing for it)
   assert.equal(api.isCurrentMeta("effort", plain, "high"), true);
   assert.equal(api.matchesMeta("mode", "normal", "default"), true);
+});
+
+// A minimal element for the executed statusline slice below: the reads and writes syncMetaControls and metaButton
+// make (single-class selectors, dataset, the label's text and dots, the held mark's insertBefore); nothing more
+class FakeEl {
+  tagName: string; className = ""; dataset: Record<string, string> = {}; style: Record<string, string> = {};
+  children: FakeEl[] = []; parent: FakeEl | null = null; text = ""; html = ""; attrs: Record<string, string> = {};
+  constructor(tag: string, cls?: string) { this.tagName = tag.toUpperCase(); if (cls) this.className = cls; }
+  classes(): string[] { return this.className.split(/\s+/).filter(Boolean); }
+  get classList() {
+    const self = this;
+    return {
+      add: (...c: string[]) => { self.className = [...new Set([...self.classes(), ...c])].join(" "); },
+      remove: (...c: string[]) => { self.className = self.classes().filter((x) => !c.includes(x)).join(" "); },
+      toggle: (c: string, on?: boolean) => { const has = self.classes().includes(c); if (on ?? !has) self.classList.add(c); else self.classList.remove(c); },
+      contains: (c: string) => self.classes().includes(c),
+    };
+  }
+  appendChild<T extends FakeEl>(n: T): T { n.remove(); n.parent = this; this.children.push(n); return n; }
+  insertBefore<T extends FakeEl>(n: T, ref: FakeEl | null): T {
+    n.remove(); n.parent = this;
+    const i = ref ? this.children.indexOf(ref) : -1;
+    if (i >= 0) this.children.splice(i, 0, n); else this.children.push(n);
+    return n;
+  }
+  removeChild(n: FakeEl): void { const i = this.children.indexOf(n); if (i >= 0) { this.children.splice(i, 1); n.parent = null; } }
+  remove(): void { this.parent?.removeChild(this); }
+  replaceChildren(...ns: FakeEl[]): void { for (const c of [...this.children]) this.removeChild(c); this.text = ""; for (const n of ns) this.appendChild(n); }
+  get firstElementChild(): FakeEl | null { return this.children[0] ?? null; }
+  get textContent(): string { return this.text + this.children.map((c) => c.textContent).join(""); }
+  set textContent(v: string) { this.replaceChildren(); this.text = v; }
+  set innerHTML(v: string) { this.html = v; }
+  setAttribute(k: string, v: string): void { this.attrs[k] = v; }
+  addEventListener(): void {}
+  descendants(): FakeEl[] { const out: FakeEl[] = []; for (const c of this.children) out.push(c, ...c.descendants()); return out; }
+  querySelectorAll(sel: string): FakeEl[] { return this.descendants().filter((d) => d.classes().includes(sel.slice(1))); }
+  querySelector(sel: string): FakeEl | null { return this.querySelectorAll(sel)[0] ?? null; }
+}
+
+// render.ts's statusline slice, metaCurrent through syncMetaControls (the menu-row rule, the local loader's arm and
+// its hold-end retirement, the badge builder), lifted and run with the chat's helpers stubbed to their identities
+function liftStatusline(activeId: string) {
+  const requireCjs = createRequire(__filename);
+  const start = RENDER.indexOf("function metaCurrent(kind: MetaKind, st: Status): string {");
+  const end = RENDER.indexOf("\n}\n", RENDER.indexOf("function syncMetaControls(")) + 3;
+  assert.ok(start > 0 && end > start, "the slice anchors moved; re-anchor");
+  const js = requireCjs("esbuild").transformSync(RENDER.slice(start, end), { loader: "ts" }).code;
+  const names = ["heldMenuMarks", "badgeHeldTip", "RUNNING_TAG", "el", "setTip", "modeIconSvg", "riskyMode", "toggleMetaMenu",
+                 "pickTone", "readableRgb", "prettyMode", "prettyFast", "fastAvailable", "activeId"];
+  const body = js + "\nreturn { syncMetaControls, armMetaPending, settleMetaHold, isMetaPending, metaCurrent, metaPending };";
+  return new Function(...names, body)(
+    heldMenuMarks, badgeHeldTip, RUNNING_TAG, (tag: string, cls?: string) => new FakeEl(tag, cls), () => {}, () => "", () => false,
+    () => {}, () => undefined, (c: unknown) => c, (m: string) => m || "default", (f: string) => f || "", () => true, activeId);
+}
+
+test("executed: a click on the running row arms no loader, and the hold-cleared frame retires one armed during the hold", () => {
+  // pickValue armed the 20 s metaPending loader for every row, the running one included, so cancelling a held pick
+  // by clicking the row tagged running showed the effort badge's dots (a mode's dim pulse) until the timer ended
+  // though nothing reloaded, and a no-hold click on the checked current row did the same (review round 6, ui-2).
+  // The arm is armMetaPending now: no loader for a value equal to the running one; and settleMetaHold, run per
+  // badge from syncMetaControls, retires any loader armed during a hold on the frame where the hold ends
+  const SID = "11111111-2222-3333-4444-555555555555";
+  const api = liftStatusline(SID);
+  const meta = new FakeEl("span", "spinner-meta");
+  const hold = { surfaces: ["effort"], subagents: 1, tasks: 0, inflight: true, picked: { effort: "max" } };
+  const heldSt = { state: "working", sinceEpoch: null, effort: "high", mode: "default", model: "Opus 5", fast: "off", pickHeld: hold };
+  const plainSt = { ...heldSt, pickHeld: null };
+  const btn = (kind: string) => meta.querySelectorAll(".meta-btn").find((b) => b.dataset.kind === kind)!;
+  const label = (kind: string) => btn(kind).querySelector(".meta-label")!;
+  const dots = (kind: string) => !!label(kind).querySelector(".meta-dots");
+  const pulse = (kind: string) => btn(kind).classList.contains("meta-pending");
+  api.syncMetaControls(meta, heldSt);                                   // the held frame
+  assert.ok(btn("effort").classList.contains("meta-held"), "the badge wears the held mark");
+  assert.equal(label("effort").textContent, "high", "the label is the running value");
+  assert.equal(dots("effort"), false);
+  // the cancel: the row tagged running (high) clicked while max is held; pickValue's arm with was == value
+  api.armMetaPending(SID, "effort", btn("effort"), api.metaCurrent("effort", heldSt), "high");
+  assert.equal(api.metaPending.size, 0, "no loader armed for the running value");
+  assert.equal(pulse("effort"), false);
+  api.syncMetaControls(meta, plainSt);                                  // the withdrawal's frame: the hold gone, high still runs
+  assert.equal(dots("effort"), false, "showDots false: nothing reloads");
+  assert.equal(pulse("effort"), false);
+  assert.equal(btn("effort").classList.contains("meta-held"), false);
+  assert.equal(label("effort").textContent, "high");
+  // no hold, the checked current row clicked again: no loader either (the kernel reconnects nothing for it)
+  api.armMetaPending(SID, "effort", btn("effort"), "high", "high");
+  api.syncMetaControls(meta, plainSt);
+  assert.equal(api.metaPending.size, 0);
+  assert.equal(dots("effort"), false);
+  // a real change (no hold) still arms: the dots until the value lands (the event that clears them) or the timer
+  api.armMetaPending(SID, "effort", btn("effort"), "high", "low");
+  assert.ok(api.metaPending.has(`${SID}:effort`));
+  assert.ok(pulse("effort"));
+  api.syncMetaControls(meta, plainSt);
+  assert.equal(dots("effort"), true, "the local loader covers the beat before the server's effortPending");
+  api.syncMetaControls(meta, { ...plainSt, effort: "low" });
+  assert.equal(dots("effort"), false);
+  assert.equal(api.metaPending.size, 0, "the landing clears it");
+  // the mode kind: a change wears the dim pulse, never the dots; the running row and its '' alias arm nothing
+  api.armMetaPending(SID, "mode", btn("mode"), "default", "acceptEdits");
+  api.syncMetaControls(meta, plainSt);
+  assert.ok(pulse("mode"), "the mode badge's meta-pending class");
+  assert.equal(dots("mode"), false);
+  api.syncMetaControls(meta, { ...plainSt, mode: "acceptEdits" });
+  assert.equal(pulse("mode"), false);
+  api.armMetaPending(SID, "mode", btn("mode"), "default", "default");
+  api.armMetaPending(SID, "mode", btn("mode"), "", "default");
+  assert.equal(api.metaPending.size, 0, "the mode row that is the running value arms nothing, '' aliasing default");
+  // the model kind is exempt from the guard: its match is a family prefix, so a matching row can still be a change
+  api.armMetaPending(SID, "model", btn("model"), "Opus 5", "opus");
+  assert.ok(api.metaPending.has(`${SID}:model`), "the Latest row keeps its local dots");
+  api.metaPending.clear();
+  btn("model").classList.remove("meta-pending");
+  // the hold-cleared frame: a re-pick during the hold armed a loader the hold hid; the frame where the hold ends
+  // retires it (the event), where it ran to the 20 s timer before
+  api.syncMetaControls(meta, heldSt);
+  api.armMetaPending(SID, "effort", btn("effort"), api.metaCurrent("effort", heldSt), "low");
+  assert.ok(api.metaPending.has(`${SID}:effort`));
+  api.syncMetaControls(meta, heldSt);                                   // still held: the loader stays hidden
+  assert.equal(dots("effort"), false);
+  assert.equal(pulse("effort"), false);
+  api.syncMetaControls(meta, plainSt);                                  // the hold ends with high still running
+  assert.equal(api.metaPending.has(`${SID}:effort`), false, "retired by the hold's end, not by the timer");
+  assert.equal(dots("effort"), false);
+  assert.equal(pulse("effort"), false);
+  assert.equal(api.isMetaPending("effort", plainSt), false);
+  // the server's own signal still drives the dots for an effort reload after the hold
+  api.syncMetaControls(meta, { ...plainSt, effortPending: true });
+  assert.equal(dots("effort"), true);
+  // the popover's badges are synced under their thread's sid; the hold-end retires that sid's loader, not the chat's
+  const pop = new FakeEl("span", "spinner-meta");
+  const TSID = "66666666-7777-8888-9999-aaaaaaaaaaaa";
+  api.syncMetaControls(pop, heldSt, TSID);
+  api.armMetaPending(TSID, "effort", pop.querySelectorAll(".meta-btn").find((b) => b.dataset.kind === "effort")!, "high", "low");
+  api.armMetaPending(SID, "effort", btn("effort"), "high", "low");
+  api.syncMetaControls(pop, plainSt, TSID);
+  assert.equal(api.metaPending.has(`${TSID}:effort`), false);
+  assert.equal(api.metaPending.has(`${SID}:effort`), true, "the chat's own loader is not the popover's to retire");
 });

@@ -263,7 +263,11 @@ class ThreadForkInvisibility(unittest.TestCase):
         # CLI's documented fastMode opt-in key. A refusal clears the ask + toasts, same model.
         import inspect
         self.assertIn('self.fast_opt = bool(reg.get("fast"))', inspect.getsource(sb.SdkSession.__init__))
-        self.assertIn("fast=sess.fast_opt", inspect.getsource(sb.SdkBackend._options))
+        # (one read of the ask under the hold lock since review round 6, handed on by name; the reconnect loop
+        # snapshotted the flag from the session after this returned before, so a set_fast landing in between
+        # made a flagless connect read as flagged)
+        self.assertIn("fast_opt = sess.fast_opt", inspect.getsource(sb.SdkBackend._options))
+        self.assertIn("fast=fast_opt,", inspect.getsource(sb.SdkBackend._options))
         self.assertIn('keys["fastMode"] = True', inspect.getsource(sb.flag_settings_path))
         refusal = inspect.getsource(sb.SdkSession._adopt_fast_state)
         self.assertIn('refused_ask = bool(reason) and self.fast_opt and fast != "on"', refusal)
@@ -527,6 +531,66 @@ class ThreadProjection(CommentBase):
         km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         km._sdk = lambda: self._State(state)
         return km._comments_frame(PARENT)["threads"][0]
+
+    def test_frame_takes_a_live_thread_effort_and_hold_from_the_backend_and_the_reg_for_a_dormant_one(self):
+        """Review round 6 (2026-09-10, ui-1): the frame's effort was the reg's, which set_effort rewrites at
+        pick time, so an effort pick HELD for the thread's live work showed in the popover as applied (its
+        badge and menu check-marked the pick) while the chat's badge tagged it as waiting. The frame now takes
+        the effort the live backend reports (session_meta's, what the process RUNS), tints it by that value,
+        carries the hold beside it (pickHeld, effortPending) and ends the thread's events on the chat's
+        reconnecting element under the live row's gate; a dormant thread (session_meta {}) still reads the reg."""
+        self._seed_thread()
+        regp = jd.SDKDIR / (THREAD + ".json")
+        reg = json.loads(regp.read_text())
+        reg["effort"] = "max"                                  # the pick rewrote the reg at pick time
+        regp.write_text(json.dumps(reg))
+        held = {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "inflight": True, "picked": {"effort": "max"}}
+
+        class _Held(self._State):
+            meta = {"mode": "default", "fast": "off", "effort": "high", "effortPending": False, "pickHeld": held}
+            def session_meta(self, sid):
+                return dict(type(self).meta)
+
+        def frame():
+            km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
+            return km._comments_frame(PARENT)["threads"][0]
+
+        stops = km.cm.stops_for(km._colormap())
+        km._sdk = lambda: _Held("working")
+        th = frame()
+        self.assertEqual(th["effort"], "high", "the running value, not the reg's picked one")
+        self.assertEqual(th["pickHeld"], held, "the hold rides the frame")
+        self.assertIs(th["effortPending"], False)
+        self.assertEqual(th["effortColor"], km._effort_color("high", stops), "the tint follows the running value")
+        self.assertEqual(th["effortTone"], km._effort_tone("high"))
+        recon = [e for e in th["events"] if e.get("kind") == "reconnecting"]
+        self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": held}],
+                         "the chat's waiting line, once, naming no effort while held")
+        self.assertEqual(th["events"][-1]["kind"], "reconnecting", "appended after the projection")
+        held_last_uuid = th["lastUuid"]
+        # the armed effort reload (effortPending, no hold): the reloading line names the effort
+        _Held.meta = {"mode": "default", "fast": "off", "effort": "max", "effortPending": True, "pickHeld": None}
+        th = frame()
+        self.assertEqual(th["effort"], "max")
+        self.assertIs(th["effortPending"], True)
+        self.assertIsNone(th["pickHeld"])
+        self.assertEqual(th["events"][-1], {"kind": "reconnecting", "effort": "max", "held": None})
+        # a live thread with nothing pending: no marker, no element, and the same newest record as during the hold
+        _Held.meta = {"mode": "default", "fast": "off", "effort": "high", "effortPending": False, "pickHeld": None}
+        th = frame()
+        self.assertEqual(th["effort"], "high")
+        self.assertIsNone(th["pickHeld"])
+        self.assertIs(th["effortPending"], False)
+        self.assertFalse([e for e in th["events"] if e.get("kind") == "reconnecting"])
+        self.assertEqual(th["lastUuid"], held_last_uuid, "the marker never stands in for the newest record")
+        # dormant (session_meta {}): the reg's effort, no hold, no element
+        km._sdk = lambda: self._State("")
+        th = frame()
+        self.assertEqual(th["effort"], "max", "a dormant thread reads the reg")
+        self.assertIsNone(th["pickHeld"])
+        self.assertIs(th["effortPending"], False)
+        self.assertFalse([e for e in th["events"] if e.get("kind") == "reconnecting"])
+        self.assertEqual(th["effortColor"], km._effort_color("max", stops))
 
     def _tool_result(self, t, uuid, parent, tool_uuid):
         return {"type": "user", "timestamp": iso(t), "uuid": uuid, "parentUuid": parent,

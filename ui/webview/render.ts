@@ -7153,12 +7153,16 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       const sub = el("div", "ctx-menu ctx-sub");
       // while the billing pick is HELD for live work the check stays on the pick and the side the CLI reports
       // (what bills meanwhile) wears the running tag: the one menu convention the badge menus follow too
-      // (pick-held.ts heldMenuMarks, review round 5); not held, the check marks the intent as before. The side
-      // this box cannot bill (c.why, from st.authAvail) stays greyed with its reason, held or not (2026-09-08)
+      // (pick-held.ts heldMenuMarks, review round 5); not held, the check marks the intent as before.
+      // Auth is the one kind whose status field (st.auth) carries the PICK rather than the running value
+      // (authLive is the CLI's report), so when the held payload names no picked value (an older kernel)
+      // the flyout falls back to it, as it did before round 5 (review round 6); the badge kinds' fields
+      // report the running value and have nothing to fall back on, so their menus check no row then.
+      // The side this box cannot bill (c.why, from st.authAvail) stays greyed with its reason, held or not (2026-09-08)
       const heldAuth = heldMenuMarks("auth", st.pickHeld, st.authLive || "");
       for (const c of [{ label: st.authAcct ? `Login (${st.authAcct})` : "Login", value: "login", why: avail.login ? "" : (avail.loginWhy || "no Claude login signed in on this machine") },
                        { label: "API key", value: "key", why: avail.key ? "" : (avail.keyWhy || "no apiKeyHelper configured") }]) {
-        const current = heldAuth ? heldAuth.current === c.value : st.auth === c.value;
+        const current = heldAuth ? (heldAuth.current || st.auth) === c.value : st.auth === c.value;
         const running = !!heldAuth && heldAuth.running === c.value;
         const opt = el("div", "ctx-item" + (current ? " current" : "") + (running ? " running" : "") + (c.why ? " disabled" : ""));
         opt.textContent = c.label;
@@ -10193,12 +10197,17 @@ function refillOpenCommentPop(): void {
 /** The open thread's status, in the chat's own Status shape — what the SHARED statusline builders
  *  (syncMetaControls / toggleMetaMenu) consume, so the popover renders the chat statusline's full
  *  element set (mode · model · effort · fast; the user 2026-08-25) through the one code path.
- *  metaPending's switching-dots ride the same keys, sid-scoped. */
+ *  metaPending's switching-dots ride the same keys, sid-scoped. A pick HELD for the thread's live work
+ *  rides too (pickHeld, and effortPending for the armed effort reload; review round 6, 2026-09-10): the
+ *  frame's effort is the value the thread RUNS, and the held marker beside it is what syncMetaControls'
+ *  held mark and tip, and metaRowMarks' check-on-the-pick, read. Without it the popover's effort badge
+ *  check-marked a held pick as applied while the chat's badge tagged it as waiting. */
 function threadMetaStatus(th: CommentThread): Status {
   const stuck = threadStuck(th.state);
   return { state: stuck ? "needsInput" : (threadBusy(th.state) ? "working" : "ready"),
            sinceEpoch: th.sinceEpoch || null, mode: th.mode || "", model: th.model || "",
            effort: th.effort || "default", fast: th.fast || "", backend: "sdk",
+           pickHeld: th.pickHeld || null, effortPending: !!th.effortPending,
            modelColor: th.modelColor, effortColor: th.effortColor,
            modelTone: (th as any).modelTone, effortTone: (th as any).effortTone } as Status;
 }
@@ -14670,6 +14679,31 @@ function isMetaPending(kind: MetaKind, st: Status): boolean {
   if (cur !== p.was || Date.now() > p.until) { metaPending.delete(key); return false; }
   return true;
 }
+// A menu pick arms the local loader (the dots, or the dim .meta-pending pulse for mode and fast) only when the
+// picked value differs from the one the session runs: a click on the row that IS the running value changes
+// nothing (the kernel reconnects nothing for it, and during a hold it is the cancel: the withdrawal clears the
+// hold that hid the loader, which then ran to the 20 s timer though nothing reloaded; review round 6,
+// 2026-09-10). The model kind is exempt: matchesMeta's model rule is a family-prefix match ("Opus 4.8" matches the
+// family row and its Latest row alike), so a match there does not prove no change (Latest on a pinned family, a
+// family row whose default is not the running version), and model is never a held kind.
+function armMetaPending(opSid: string, kind: MetaKind, btn: HTMLElement, was: string, value: string): void {
+  if (kind !== "model" && matchesMeta(kind, was, value)) return;
+  metaPending.set(`${opSid}:${kind}`, { was, until: Date.now() + 20_000 });
+  btn.classList.add("meta-pending");
+}
+// "<sessionId>:<kind>" → the kind was held on the last statusline sync for that session (syncMetaControls).
+// The frame where the hold ENDS is the event that retires any local loader a pick armed during the hold (a
+// re-pick, or a pick the hold then withdrew): the loader was hidden while held and would otherwise run from
+// that frame to its 20 s timer with nothing reloading. An effort reload that follows the hold's end drives
+// the dots from the server (st.effortPending); a mode or fast pick that ARMS at the hold's end shows no local
+// pulse between the arm and its landing, where the value changes (review round 6, 2026-09-10: the reg
+// reflecting the pick should replace the timer altogether).
+const metaHeldLast = new Set<string>();
+function settleMetaHold(sid: string, kind: MetaKind, held: boolean): void {
+  const key = `${sid}:${kind}`;
+  if (held) { metaHeldLast.add(key); return; }
+  if (metaHeldLast.delete(key)) metaPending.delete(key);
+}
 
 // Three pulsing accent-blue dots shown IN the model badge while a /model switch resolves (the user
 // 2026-07-03) — the romp loader's dot motif, so a wait always reads as "something's happening, it's
@@ -14770,6 +14804,7 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
     // on. Neither the loader dots nor the dim pulse: both claimed a change in progress, and the badge
     // disagreed with the chat's waiting line beside it (review round 2).
     const held = !!st.pickHeld && st.pickHeld.surfaces.includes(kind);
+    settleMetaHold(forSid || activeId || "", kind, held);   // the hold-cleared frame retires a loader armed during it
     const pending = !held && ((kind === "model" && !!st.modelPending) || (kind === "effort" && !!st.effortPending)
       || isMetaPending(kind, st));
     const showDots = pending && (kind === "model" || kind === "effort");   // both apply via a resolve/reconnect the server tracks
@@ -14842,8 +14877,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
       if (floating) op.floating = true;   // the submenu's Latest row: the kernel forgets the family's pin
       vscodeApi.postMessage(op);
       const was = metaCurrent(kind, s.status);
-      metaPending.set(`${opSid}:${kind}`, { was, until: Date.now() + 20_000 });
-      btn.classList.add("meta-pending");
+      armMetaPending(opSid, kind, btn, was, value);   // the local loader, only for a value that differs from the running one
     }
     closeMetaMenu();
   };
