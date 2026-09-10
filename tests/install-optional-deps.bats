@@ -346,6 +346,28 @@ EOF
     [[ "$output" == *"3.11"* && "$output" == *"3.12"* ]]   # the cfg's version, not a bare "?"
 }
 
+@test "romp-sdk-setup: a venv whose interpreter is gone is rebuilt by the pip gate even with another python of the SAME tag on PATH" {
+    # The seam between the picker and the gate. pick_python finds the other 3.11 and says so ("so the venv
+    # still matches"), the tag compare agrees (no REBUILDING line), and the pip gate rebuilds anyway:
+    # bin/python is a symlink to the removed base interpreter, so neither it nor bin/pip's shebang can
+    # run. docs/architecture.md names this case as its own rebuild trigger; a doc that reads the picker's
+    # line as "nothing is rebuilt" is wrong (review round 2).
+    export ROMP_STATE_DIR="$TEST_DIR/state"
+    VENV="$TEST_DIR/state/sdkvenv"; mkdir -p "$VENV/bin" "$VENV/lib/python3.11/site-packages"
+    ln -s "$TEST_DIR/gone/python3.11" "$VENV/bin/python"      # dangling: the recorded interpreter was removed
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$VENV/bin/pip"; chmod +x "$VENV/bin/pip"
+    printf 'home = %s\nversion = 3.11.9\nexecutable = %s\n' "$TEST_DIR/gone" "$TEST_DIR/gone/python3.11" > "$VENV/pyvenv.cfg"
+    write_stub_py "$STUB/python3.11" 3.11                     # another 3.11, first on PATH
+
+    PATH="$(bare_path)" run "$ROMP_DIR/bin/romp-sdk-setup"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"so the venv still matches"* ]]           # pick_python took the same-tag python
+    [[ "$output" != *"REBUILDING"* ]]                          # the tag compare saw no mismatch
+    [[ "$output" == *"creating venv at $VENV"* ]]              # the pip gate rebuilt anyway
+    grep -q "venv-build 3.11 $VENV" "$CALL_LOG"                # with the same-tag python
+}
+
 @test "romp-sdk-setup: the rebuild check reads the venv's record, never its live bin/python (a repointed unversioned base rebuilds)" {
     # The venv was built under ROMP_PYTHON=<prefix>/python3 when that was a 3.12, so bin/python is a
     # symlink to the UNVERSIONED base. A distro upgrade has since repointed python3 at 3.14: the symlink

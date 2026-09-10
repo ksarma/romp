@@ -857,11 +857,13 @@ not `python3`, which an upgrade repoints.
 Moving romp to another Python, whether another version or the free-threaded
 build of the same one, takes four steps, and skipping any one of them leaves a
 kernel that cannot start sessions: set `ROMP_PYTHON` to the new interpreter in
-`service.env`, run `bin/romp-sdk-setup` with the same value, run the test
-suite on that interpreter, then restart the manager. The setup script compares
-the venv's record (the version `pyvenv.cfg` holds plus the tag of its
-`lib/python3.X` directory, never the venv's own `bin/python`, a symlink that
-follows a repointed base interpreter) against the new interpreter's tag,
+`service.env`, run `bin/romp-sdk-setup` with the same value (and, if the Codex
+backend is set up, re-run `bin/romp-codex-setup` after it: it follows the SDK
+venv's record, so a plain run rebuilds `codexvenv` for the new interpreter),
+run the test suite on that interpreter, then restart the manager. The setup
+script compares the venv's record (the version `pyvenv.cfg` holds plus the tag
+of its `lib/python3.X` directory, never the venv's own `bin/python`, a symlink
+that follows a repointed base interpreter) against the new interpreter's tag,
 rebuilds on any difference and says from what to what. A kernel that does come
 up on a Python the venv was not built for logs one line naming both tags, and
 each Claude Code session reports the mismatch and the remedy that fits: the
@@ -872,7 +874,10 @@ of the request, so a venv rebuilt while the kernel runs is reported on both
 surfaces as set up after romp started, with the restart as the remedy. The
 Codex venv (`codexvenv`, built by `bin/romp-codex-setup`) follows the same
 pick and the same rebuild check, and the kernel adds only the site-packages
-built for its own tag from it as well.
+built for its own tag from it as well; nothing on the restart path runs the
+script, so a move needs its own re-run of `bin/romp-codex-setup`, and until
+then the kernel logs the mismatch once, naming that remedy, and refuses Codex
+sessions.
 
 ### Service environment and credentials
 
@@ -1045,8 +1050,10 @@ in the vault, and everywhere within the TTL.
 
 `service.env` loads when the manager starts: the service reads it into the
 manager's environment, every kernel inherits that environment, and `romp
-refresh` restarts kernels only, so a value added, changed or removed there
-reaches the kernel at the next manager restart, `systemctl --user restart
+refresh` restarts kernels, not the manager (unless `bin/romp-manager` itself
+changed since the manager started: then a supervised manager exits and its
+respawn reads the file), so a value added, changed or removed there reaches
+the kernel at the next manager restart, `systemctl --user restart
 romp-manager` on Linux and `launchctl kickstart -k gui/$(id
 -u)/com.romp.manager` on macOS. A line in the unit's own `Environment=`, in a
 drop-in, or in the profile a shell-wrapped `ExecStart` sources (Linux), or in
