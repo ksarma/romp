@@ -5983,7 +5983,8 @@ class SdkSession:
     def _withdraw_held_pick(self, surface: str, how: str = "withdrawn", standing: bool = False) -> None:
         """A newer pick made `surface`'s pending reconnect moot: the ONE withdraw routine for every surface
         (review round 3, 2026-09-09). set_mode calls it for a live pick of a non-bypass mode while a pick
-        INTO bypass waits (review round 2); set_effort, set_auth, set_fast and set_env call it when the pick
+        INTO bypass waits (review round 2; recorded, or since round 12 riding the arm that stands in the gap between
+        a landing and the loop top); set_effort, set_auth, set_fast and set_env call it when the pick
         returns to the value the process runs while a different pick is pending (held for live work, or
         deferred to the turn's end; set_env since review round 4). Two halves, one per thread (review round 4,
         2026-09-10):
@@ -13816,7 +13817,8 @@ class SdkBackend:
         s = self.sessions.get(sid)
         if s:
             # the declared intent before this pick: a pending mode pick's value while one waits on a
-            # reconnect (the "mode" surface), else the confirmed mode. The revert target if the CLI refuses a
+            # reconnect (the "mode" surface; since round 12 the name riding the arm that stands after a landing
+            # too), else the confirmed mode. The revert target if the CLI refuses a
             # live switch (T139) is the last CONFIRMED mode: while a mode pick is pending, perm_mode holds
             # that declared, unconfirmed value and the confirmed mode is the one the process runs
             # (_launched_mode: the launch, the last live switch the CLI accepted, or the mode the CLI's own
@@ -13837,11 +13839,20 @@ class SdkBackend:
             # reads routed a spawn-window pick to the live branch
             with s._hold_write():
                 declared = s.perm_mode
-                pending_mode = "mode" in s._reconnect_surfaces
-                switching = s._mode_switching
-                running = switching or s._launched_mode
                 launching = s._launching                            # the connect in progress, arm to landing
                 connecting = s._connecting                          # its composed half (round 10: the standing rule)
+                # a mode pick pending in a form the branches below do not read off the launching stamp (review round 12,
+                # 2026-09-10; the review's regression-1): recorded and not yet armed (the surface set), or, with no
+                # connect in progress, riding the arm that stands (_pending_names, the one definition of pending since
+                # round 11), the gap between a landing and the loop top, where the landing moved the arm's names into the
+                # riding set. Until round 12 the surface set alone decided: in that gap a revert left the riding pick's
+                # name on the arm and modePending true, with the declared pick as the revert target, and a re-pick of the
+                # riding bypass pick took the live branch, set_permission_mode(bypass) asked of a process launched in
+                # another mode (the CLI's refusal while the old client stood). In the spawn window the surface set alone
+                # still decides, as before: its branches read a riding pick against the connect in progress
+                pending_mode = "mode" in (s._reconnect_surfaces if launching is not None else s._pending_names())
+                switching = s._mode_switching
+                running = switching or s._launched_mode
                 launching_mode = (launching or {}).get("mode")
                 s.mode = mode
                 s.perm_mode = mode      # snapshot reflects it immediately (clears the picker's meta-pending)

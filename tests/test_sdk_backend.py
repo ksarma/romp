@@ -8939,6 +8939,71 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         init(s, "bypassPermissions")
         self.assertEqual(mode_view(s), ("bypassPermissions", "bypassPermissions", "bypassPermissions", False))
 
+    def _bypass_pick_riding_in_the_gap(self, live):
+        """The shape review round 12's regression-1 names: an effort reload's compose with a bypass pick armed inside it,
+        landed. The arm stands for the bypass pick, whose surface the arm cleared and whose name the landing moved into
+        the riding set; no connect is in progress, no client (the teardown), and the loop has not reached its top.
+        `live` collects set_mode_live's calls."""
+        s = self._sess(mode="default", effort="high")
+        s.perm_mode = s._launched_mode = "default"; s._launched_effort = sb.effort_launch_shape("high")
+        s.thread = mock.Mock(is_alive=lambda: True); s.client = None
+        s.set_mode_live = lambda mode, prev="default": live.append((mode, prev))
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        s._reset_reconnect_state()                                           # the loop top and _options: the effort compose
+        s._launching = s.backend._launch_shape(s); s._connecting = True; s._fast_unlocked = bool(s.fast_opt)
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        self.assertEqual(set(s._reconnect_riding_next), {"mode"})
+        self.assertIsNone(s._connect_landed(), "a pick into bypass is the reconnect's, never the landing's switch")
+        self.assertTrue(s._reconnect); self.assertIsNone(s._launching); self.assertFalse(s._connecting)
+        self.assertEqual(set(s._reconnect_riding), {"mode"}); self.assertNotIn("mode", s._reconnect_surfaces)
+        self.assertTrue(s.snapshot()["modePending"])
+        del self.logs[:]; del live[:]
+        return s
+
+    @staticmethod
+    def _loop_top(s):
+        """The loop top and _options after the gap: the arm's own connect, composed from the session."""
+        s._reset_reconnect_state()
+        s._launching = s.backend._launch_shape(s); s._connecting = True; s._fast_unlocked = bool(s.fast_opt)
+
+    def test_y12_a_revert_in_the_gap_after_a_landing_withdraws_the_mode_pick_riding_the_arm(self):
+        # set_mode's pending_mode read the surface set alone (review round 12, regression-1): a bypass pick armed in the
+        # composed half of another pick's compose rides the arm through the landing, and in the gap between that landing
+        # and the loop top a revert found nothing pending: the name kept riding, modePending stayed true, the line named
+        # no withdrawal and the revert target was the declared bypass. With no connect in progress the read is
+        # _pending_names, the one definition of pending (round 11): the surface set and the riding sets. In the spawn
+        # window the surface set alone still decides, as before: its branches read a riding pick against the connect in
+        # progress (launching_mode), and test_y7's shapes pin them. The arm stands (test_y7 g's shape for fast: no connect
+        # is in progress, so the settle disarms nothing, and the loop top composes the reg's shape)
+        live = []
+        s = self._bypass_pick_riding_in_the_gap(live)
+        self.assertTrue(s.backend.set_mode(self.SID, "default"))
+        self.assertNotIn("mode", s._reconnect_riding, "the withdrawn pick's name leaves the arm it rode")
+        self.assertFalse(s.snapshot()["modePending"])
+        self.assertTrue(s._reconnect, "the arm stands"); self.assertFalse(s._reconnect_when_idle)
+        self.assertTrue(any("mode (web): set to default; no connected client for the live switch; the reg carries the pick "
+                            "to the next connect; the held bypass pick is withdrawn" in str(m) for m in self.logs), self.logs)
+        self.assertEqual(live, [("default", "default")], "the revert target is the confirmed running mode, not the pick")
+        self._loop_top(s); s._connect_landed()
+        self.assertEqual((s.snapshot()["modePending"], s._launched_mode), (False, "default"))
+
+    def test_y12b_a_re_pick_in_the_gap_after_a_landing_finds_the_riding_mode_pick_already_applying(self):
+        # the other half of round 12's regression-1: a re-pick of the bypass pick riding the arm in the gap read no pending
+        # pick, so it took the live branch and asked set_permission_mode(bypass) of a process launched in default (the
+        # CLI's refusal, when the client still stands). It is already applying: nothing is sent live, nothing is
+        # re-requested, and the name keeps riding until the loop top composes it
+        live = []
+        s = self._bypass_pick_riding_in_the_gap(live)
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        self.assertTrue(any("mode (web): set to bypassPermissions; already applying, no new request" in str(m) for m in self.logs), self.logs)
+        self.assertEqual(live, [], "never a live switch into bypass on a process launched in another mode")
+        self.assertIn("mode", s._reconnect_riding); self.assertTrue(s.snapshot()["modePending"]); self.assertTrue(s._reconnect)
+        self.assertEqual(s._reconnect_surfaces, set())
+        self._loop_top(s)
+        self.assertEqual(s._launching["mode"], "bypassPermissions", "the loop top composes the pick")
+        s._connect_landed()
+        self.assertEqual((s.snapshot()["modePending"], s._launched_mode), (False, "bypassPermissions"))
+
 
 class SettingsPickThroughTheLoop(unittest.TestCase):
     """The reconnect a settings pick asks for, driven through the REAL loop (_amain) against a stand-in SDK
