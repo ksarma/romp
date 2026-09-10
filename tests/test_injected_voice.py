@@ -793,8 +793,9 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                       sb.task_death_notice([{"desc": "a"}], cause=sb.SdkSession._RECONNECT_CAUSE))
 
     def test_the_crash_resume_notices_speak_plainly_past_their_prefix(self):
-        # the three crash resume forms (bare; out of memory; killed by signal 9 with no out-of-memory kill counted,
-        # the round-3 form of 2026-09-10) are the same [romp]-prefixed mechanics family as the restart notices:
+        # the three crash resume forms (bare; out of memory; killed by signal 9 with no out-of-memory kill on record,
+        # the round-3 form of 2026-09-10, one text for every no-record cell since round 5) are the same
+        # [romp]-prefixed mechanics family as the restart notices:
         # past the markers and the prefix each speaks plainly, to "you", with none of the vocabulary above
         import os as _os
         sb = load_source("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py"))
@@ -809,9 +810,13 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                     self.assertNotIn(word, body, "the notice speaks plainly past its prefix (%r: %s)" % (word, why))
                 self.assertTrue(sb.is_crash_resume_nudge(text), "one lead sentence for the three forms")
         killed = forms["killed"].split("]", 1)[1]
-        self.assertIn("(killed by signal 9 part-way through the last turn; its own memory accounting counted no out-of-memory "
-                      "kill, so the machine's memory watchdog or a kill by hand ended it; keep memory use modest for now)", killed)
+        self.assertIn("(killed by signal 9 partway through the last turn; no out-of-memory kill is on record for it, which does "
+                      "not rule one out; keep memory use modest for now)", killed)
         self.assertNotIn("out of memory:", killed, "the killed form never claims the death was out of memory")
+        # round 5 (correctness-1): the one text is queued for the flat-counter cell AND the collected cells the journal
+        # cannot confirm, so it names no definite cause: nothing about a watchdog, a hand, or what "ended it"
+        for claim in ("watchdog", "by hand", "ended it", "counted no", "accounting"):
+            self.assertNotIn(claim, killed, "a definite cause on a no-record cell would be a quietly wrong notice (%s)" % claim)
         self.assertNotIn("\u2014", killed)
 
     def test_the_untitled_fallback_names_no_romp_object(self):

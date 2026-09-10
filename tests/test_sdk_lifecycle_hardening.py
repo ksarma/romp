@@ -897,11 +897,13 @@ class CrashHeal(unittest.TestCase):
         # memory (a definite verdict needs a definite record), with the journal's clause in both lines
         cases = (("Started only", dict(journal=self.JOURNAL_STARTED),
                   "its scope's journal records no OOM kill", "the journal's newest lines for the scope record no OOM kill"),
-                 ("empty", dict(journal=""), "its scope's journal records no OOM kill", "the journal has no line for the scope"),
+                 # round 5 (correctness-1): a journal with no line at all for the scope reads like a failed read, not like
+                 # the Started-only silence: a manager that never logged the unit excludes nothing
+                 ("empty", dict(journal=""), "no OOM kill is on record for its scope", "the journal has no line for the scope"),
                  ("raises", dict(journal_raise=subprocess.TimeoutExpired(["journalctl"], 10)),
-                  "its scope's journal could not be read, so no OOM kill is on record", "journalctl did not answer ("),
+                  "no OOM kill is on record for its scope", "journalctl did not answer ("),
                  ("exits 1", dict(journal_returncode=1, journal_stderr="No journal files were found.\nmore\n"),
-                  "its scope's journal could not be read, so no OOM kill is on record",
+                  "no OOM kill is on record for its scope",
                   "journalctl exited 1 (No journal files were found.)"))
         for label, kw, head, said in cases:
             with self.subTest(journal=label):
@@ -1300,9 +1302,9 @@ class CrashHeal(unittest.TestCase):
                       "the plain fallback when the caller gave no note")
         kind, ev = sb.oom_verdict({}, None, K, 0, counter_note=note, journal=None, journal_note="journalctl exited 1 (no journal)")
         self.assertEqual(kind, "sigkill")
-        self.assertEqual(ev, "the CLI was killed by signal 9 and its scope's journal could not be read, so no OOM kill is on record (a kill "
-                             "by hand, a userspace killer, or the OOM killer with its record unread); %s (oom_kill was 0 at the turn's "
-                             "start); journalctl exited 1 (no journal)" % note)
+        self.assertEqual(ev, "the CLI was killed by signal 9 and no OOM kill is on record for its scope (a kill by hand, a userspace "
+                             "killer, or the OOM killer with its record unread or missing); %s (oom_kill was 0 at the turn's start); "
+                             "journalctl exited 1 (no journal)" % note)
         self.assertEqual(sb.oom_verdict({}, None, K, 0, counter_note=note)[0], "oom",
                          "no journal read and no note (a show that failed: the unit's state unknown): the exit stands alone")
         # journal_life cuts the window at the LAST Started line of the unit, so an earlier same-named unit's death
@@ -1569,8 +1571,9 @@ class CrashHeal(unittest.TestCase):
         self.assertNotIn("out of memory", line.lower())
         q = sb.read_reg(Path(d), self.SID).get("queue")
         self.assertEqual(q, [sb.CRASH_RESUME_NUDGE_KILLED], "the third form of the notice: killed, no OOM kill counted")
-        self.assertIn("killed by signal 9 part-way through the last turn", q[0])
-        self.assertIn("counted no out-of-memory kill", q[0])
+        self.assertIn("killed by signal 9 partway through the last turn", q[0])
+        self.assertIn("no out-of-memory kill is on record for it, which does not rule one out", q[0],
+                      "round 5: the one text says what is on record and rules nothing out; the log line keeps the counter")
         self.assertIn("keep memory use modest for now", q[0])
         self.assertNotIn("out of memory:", q[0], "never the out-of-memory form's claim")
         self.assertTrue(sb.is_crash_resume_nudge(q[0]), "the readers that re-head or hide the crash notice match it")

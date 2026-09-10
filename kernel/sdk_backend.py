@@ -2932,12 +2932,18 @@ RENAME_PING_HEAD = "<!-- romp-injected --><!-- romp-system -->[romp] This sessio
 #     stop once the unit is gone. It does not say whether the rest of the session's processes went too:
 #     under OOMPolicy=continue the kill took one process, under `stop` systemd ended the whole scope,
 #     and the notice is one text for both, so it asks the session to check what it had running.
-#   * the KILLED form (round 3, 2026-09-10) is queued when the CLI's exit was SIGKILL but its scope's
-#     counter was READ and did not rise over the turn's baseline: the counter counts the memcg killer's
-#     and the global killer's kills alike, so a flat one excludes the kernel's killers and leaves a
-#     userspace killer (earlyoom, which the counter cannot see) or a kill by hand. Saying "out of
-#     memory" there would be a quietly wrong notice, so this form names the signal, says no
-#     out-of-memory kill was counted, and asks for modest memory use meanwhile.
+#   * the KILLED form (round 3, 2026-09-10; one text for every cell since round 5) is queued for every
+#     "sigkill" verdict: the CLI's exit was SIGKILL and no OOM kill is on record for it. That is the
+#     flat-counter cell (the counter was READ and did not rise over the turn's baseline; it counts the
+#     memcg killer's and the global killer's kills alike, so a flat one excludes the kernel's killers and
+#     leaves a userspace killer such as earlyoom, which the counter cannot see, or a kill by hand) and
+#     the collected cells the journal cannot confirm (the Started line alone; no line for the unit; a
+#     journalctl that failed; a user manager without the memory controller, which records no kill).
+#     The kernel's log line keeps the finer evidence per cell; the notice says only what holds on all of
+#     them: a kill by signal 9, and no out-of-memory kill on record, which does not rule one out. Saying
+#     "out of memory" there would be a quietly wrong notice, and naming a definite cause on a no-record
+#     cell was one too (round 5), so this form names the signal, says what is on record, and asks for
+#     modest memory use meanwhile.
 #   * a contained tool-child kill the CLI outlived, or a plain crash, gets the bare "killed or crashed"
 #     form.
 # The rest is the same disarming of the stop record as BOOT_RESUME_NUDGE.
@@ -2953,9 +2959,8 @@ CRASH_RESUME_NUDGE_OOM = (_CRASH_NUDGE_LEAD
                             "else that was running under it may have been stopped with it; check what you had running "
                             "before relying on it)" + _CRASH_NUDGE_REST)
 CRASH_RESUME_NUDGE_KILLED = (_CRASH_NUDGE_LEAD
-                             + " (killed by signal 9 part-way through the last turn; its own memory accounting counted no "
-                               "out-of-memory kill, so the machine's memory watchdog or a kill by hand ended it; keep memory "
-                               "use modest for now)" + _CRASH_NUDGE_REST)
+                             + " (killed by signal 9 partway through the last turn; no out-of-memory kill is on record for it, "
+                               "which does not rule one out; keep memory use modest for now)" + _CRASH_NUDGE_REST)
 
 
 # A CLI that cannot even START says so on the way out — and the ONE cause that reliably does this is the
@@ -3628,18 +3633,21 @@ def oom_verdict(props: dict, oom_kill: int | None, exit_code: int | None, baseli
     caller's reason an unreadable counter could not be read (only the caller knows whether the scope was
     collected, the unit loaded with no readable file, or the show failed; None reads plainly); `journal`
     is the newest life of the unit's journal tail (journal_life) when the caller read it (a not-found
-    unit, whatever the exit), None when it was not read or the read failed, and `journal_note` is the
-    caller's clause about that read (what the journal said, or why it could not be read), None when no
-    read was attempted (a loaded unit). The cells, primary first:
+    unit, whatever the exit), None when it was not read, the read failed, or the journal has no line at
+    all for the unit (a manager that never logged the unit is silent about everything, so that silence
+    excludes nothing; round 5), and `journal_note` is the caller's clause about that read (what the
+    journal said, or why nothing is on record), None when no read was attempted (a loaded unit). The cells, primary first:
       * a SIGKILL exit (SIGKILL_EXIT) with the counter risen over the turn-start baseline is "oom": the
         killer's signature under OOMPolicy=continue, the cgroup's own killer and the kernel's global one
         alike, the counter stated as corroboration;
       * a SIGKILL exit with the counter unreadable and the journal READ (a collected scope) is decided by
         the journal (round 4): "oom" when the newest life carries the manager's OOM-killer line
-        (journal_oom_kill) or its whole-scope stop line (journal_oom_stop), else "sigkill" with the
-        journal's silence as the evidence (a kill by hand, or a userspace killer, leaves no line). A
-        journal that could not be read or has no line for the unit is "sigkill" too, the note saying so:
-        a definite out-of-memory verdict needs a definite record. With NO journal read (a loaded unit
+        (journal_oom_kill: the OOM killer's line or systemd-oomd's, round 5) or its whole-scope stop line
+        (journal_oom_stop), else "sigkill" with the journal's silence as the evidence (a kill by hand, or
+        a userspace killer such as earlyoom, leaves no line). A journal that could not be read or has no
+        line for the unit is "sigkill" too (journal None with the caller's note), the evidence saying no
+        OOM kill is on record and ruling none out: a definite out-of-memory verdict needs a definite
+        record. With NO journal read (a loaded unit
         whose memory.events could not be read, a legacy hierarchy, a show that failed) the SIGKILL stands
         alone as "oom" with the counter note, and a loaded unit's Result is stated beside it;
       * a SIGKILL exit with a READABLE counter that did not rise (`oom_kill <= (baseline or 0)`, so a
@@ -3684,9 +3692,9 @@ def oom_verdict(props: dict, oom_kill: int | None, exit_code: int | None, baseli
                                    "hand, or a userspace killer the cgroup counter and so the journal cannot see); %s%s; %s"
                                    % (counter(), base, journal_note or "the journal's newest lines record no OOM kill"))
             if journal_note is not None:
-                return ("sigkill", "the CLI was killed by signal 9 and its scope's journal could not be read, so no OOM kill "
-                                   "is on record (a kill by hand, a userspace killer, or the OOM killer with its record "
-                                   "unread); %s%s; %s" % (counter(), base, journal_note))
+                return ("sigkill", "the CLI was killed by signal 9 and no OOM kill is on record for its scope (a kill by hand, "
+                                   "a userspace killer, or the OOM killer with its record unread or missing); %s%s; %s"
+                                   % (counter(), base, journal_note))
             return ("oom", "the CLI was killed by signal 9; %s%s%s" % (counter(), base, shown))
         if oom_kill > (baseline or 0):
             return ("oom", "the CLI was killed by signal 9; %s, Result=%s" % (counter(), result))
@@ -13562,7 +13570,10 @@ class SdkBackend:
             return None, "journalctl exited %s (%s)" % (rc, detail)
         raw = getattr(r, "stdout", "") or ""
         if not raw.strip():
-            return "", "the journal has no line for the scope"
+            # not even a Started line: the manager never logged this unit (its log level, journald's
+            # retention), so its silence about a kill excludes nothing; None, like a failed read, so the
+            # verdict is the hedged one and never the flat-counter reading (round 5, correctness-1)
+            return None, "the journal has no line for the scope"
         text = "\n".join(journal_life(raw, unit))
         if journal_oom_stop(text):
             return text, "the journal says systemd stopped the scope over an OOM kill (%s)" % SCOPE_JOURNAL_OOM_LINE
