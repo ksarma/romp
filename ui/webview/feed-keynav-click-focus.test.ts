@@ -417,12 +417,30 @@ test("source: kbDropClickFocus spares the scope's control, drops in-card leftove
   assert.ok(keyRead > yieldAt && move > keyRead, "the move's drop runs once the key is known to be an arrow, before either mode acts on it");
 });
 
-// ── the stand-in's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps a node's primitives, never the tree ──
-test("a node of the DOM stand-in enumerates its primitives alone, and a dump of it names neither parentNode nor childNodes", () => {
+// ── the stand-in's nodes are projections (ui/test-dom-shim.ts): a bare node dumps its primitives, never the tree. A node
+// feed.ts decorated dumps those plus feed.ts's own node references (some fifty on a rendered card: its title, rows, bell
+// and the rest, hung after the constructor ran, so the rule never saw them), each itself a node whose edges are hidden,
+// so a rendered card's dump is bounded by the count of hung references (about 1.3k lines), never by the tree (318,835
+// lines before the rule, the 40 GB case) ──
+test("a node of the DOM stand-in enumerates its primitives alone, and a dump of it names neither parentNode nor childNodes; a rendered card's dump is bounded by feed.ts's hung references, never the tree", async () => {
+  const ASSERT_INSPECT = { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true };
   const root = new El("div"); const kid = new El("span"); kid.append("text"); root.append(kid, new Txt("tail"));
   for (const n of [root, kid, root.childNodes[1]] as Array<El | Txt>) {
     assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.constructor.name + " keeps an enumerable edge: " + Object.keys(n).join(","));
-    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    const dump = inspect(n, ASSERT_INSPECT);
     assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), n.constructor.name + " dumps an edge:\n" + dump);
   }
+  // a rendered card: the references feed.ts hung on it enumerate (the rule runs at creation), each a node of this
+  // stand-in with its own edges hidden, so the dump stops one hop out and never reaches parentNode or childNodes
+  await dispatch(frame([g1, g2, g3]));
+  const c = card("g1");
+  const hung = Object.keys(c).filter((k) => !staysEnumerable((c as any)[k]));
+  assert.ok(hung.length > 0, "feed.ts hangs node references on a rendered card; this pin is about them");
+  const dump = inspect(c, ASSERT_INSPECT);
+  const n = dump.split("\n").length;
+  assert.ok(n < 3000, "a rendered card dumps in " + n + " lines, bounded by feed.ts's " + hung.length + " hung references and not by the tree; the ceiling is 3000");
+  // the stand-in's edges are parentNode and childNodes (children is a prototype getter, never an own key in a dump); a
+  // `children:` line at depth is the goal record feed.ts hangs on the card, its list of child goal ids, data and no edge
+  const edges = dump.split("\n").filter((l) => /^\s*(parentNode|childNodes):/.test(l));
+  assert.deepEqual(edges, [], "a rendered card's dump names an edge");
 });
