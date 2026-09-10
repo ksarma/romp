@@ -25625,13 +25625,17 @@ def _manager_headers():
 
 
 def _manager_refusal(door, status, body):
-    """What a 4xx or 5xx from a manager write door means, in the user's terms: (why, fix, err). `err` is the
-    manager's own one-line error (it names its token file, never a token); `why` names the status and the
-    cause; `fix` is the way out. 401 is the write gate not holding the token this kernel sent (read from
-    ROMP_SERVE_TOKEN or this kernel's token file: another state root, or a manager that is not this kernel's);
-    503 is a manager that cannot read its own token file (it mints an absent one at its start, so this is a
-    file that exists and cannot be read). `romp refresh` from a terminal runs the manager's control client,
-    which reads the manager's own file, so it lands where this kernel's hop did not."""
+    """What a 4xx or 5xx from a manager write door means, in the user's terms: (why, fix, err, src). `err`
+    is the manager's own one-line error (it names its token file, never a token); `why` names the status
+    and the cause; `fix` is the way out; `src` is where this kernel read the token it sent (ROMP_SERVE_TOKEN,
+    or this kernel's token file). 401 is the write gate not holding the token this kernel sent (another
+    state root, or a manager that is not this kernel's); 503 is a manager that cannot read its own token
+    file (it mints an absent one at its start, so this is a file that exists and cannot be read). `romp
+    refresh` from a terminal runs the manager's control client, which reads the token file under that
+    shell's own state root, so it lands where this kernel's hop did not once that root is the manager's.
+    `why` and `fix` are FIXED texts with no path in them (review round 2, 2026-09-10): the bell shows a
+    notice cut at SYNC_NOTICE_FIT, the state-root path is unbounded, and with it in the text the way out
+    was what got cut; the stderr line and the audit row carry `src`."""
     try:
         raw = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body or "")
         err = str((json.loads(raw) or {}).get("error") or "").strip()
@@ -25639,29 +25643,30 @@ def _manager_refusal(door, status, body):
         err = ""
     src = "ROMP_SERVE_TOKEN" if (os.environ.get("ROMP_SERVE_TOKEN") or "").strip() else str(jd.STATE / "serve-token")
     if status == 401:
-        why = ("the manager refused it (HTTP 401) because it does not hold the serve token this kernel sent, "
-               "read from %s" % src)
+        why = "the manager refused (HTTP 401): it does not hold the serve token this kernel sent"
         fix = "Run romp refresh from a terminal; it reads the manager's own token file"
     elif status == 503:
-        why = "the manager refused it (HTTP 503) because it cannot read its own serve-token file"
-        fix = "Make that file a regular 0600 file that you own, under the manager's state root, then run romp refresh"
+        why = "the manager refused (HTTP 503): it cannot read its own serve-token file"
+        fix = "Make that file a regular 0600 file you own, under the manager's state root, then run romp refresh"
     else:
         why = "the manager answered HTTP %d" % status
         fix = "Restart it yourself: romp refresh"
-    return why, fix, err
+    return why, fix, err, src
 
 
 def _report_manager_refusal(door, status, body, reason="", head="The restart did not happen"):
     """A manager write door answered 4xx or 5xx: say it three ways (review round 1, 2026-09-10; the answer
     used to be discarded, after the /restart handler had already acked restarting:true). One plain stderr
-    line naming the door, the status, the manager's own words and this kernel's token file; an audit row
-    of its own action (_MANAGER_REFUSED_ACTION, in _NO_RESTART_ACTIONS: no kernel restarted, so the cut
-    reader never takes it for a request); and a sync notice the user reads in the bell, `head` first.
+    line naming the door, the status, the manager's own words and where this kernel read the token it
+    sent; an audit row of its own action (_MANAGER_REFUSED_ACTION, in _NO_RESTART_ACTIONS: no kernel
+    restarted, so the cut reader never takes it for a request) carrying the same source; and a sync notice
+    the user reads in the bell, `head` first, built to fit the bell whole (SYNC_NOTICE_FIT) for either head.
     Returns the notice text, for a handler that answers its caller with it."""
-    why, fix, err = _manager_refusal(door, status, body)
-    sys.stderr.write("romp-kernel: the manager refused POST %s (HTTP %d%s); this kernel's token file: %s\n"
-                     % (door, status, (": " + err) if err else "", jd.STATE / "serve-token"))
-    _audit_restart_request(_MANAGER_REFUSED_ACTION, door=door, status=status, reason=reason, error=err[:200])
+    why, fix, err, src = _manager_refusal(door, status, body)
+    sys.stderr.write("romp-kernel: the manager refused POST %s (HTTP %d%s); this kernel's token was read from %s\n"
+                     % (door, status, (": " + err) if err else "", src))
+    _audit_restart_request(_MANAGER_REFUSED_ACTION, door=door, status=status, reason=reason, error=err[:200],
+                           tokenSrc=src)
     text = "%s: %s. %s." % (head, why, fix)
     _sync_notice(text, ok=False)
     return text

@@ -140,19 +140,56 @@ class ManagerHopsCarryTheToken(unittest.TestCase):
         said = [m for m, ok in notices if not ok]
         self.assertEqual(len(said), 1, notices)
         self.assertIn("romp is updated on disk but the restart request failed", said[0])
-        self.assertIn("the manager refused it (HTTP 401)", said[0])
-        self.assertIn("ROMP_SERVE_TOKEN", said[0], "names where this kernel's token came from (the env spelling here)")
+        self.assertIn("the manager refused (HTTP 401)", said[0])
         self.assertIn("romp refresh", said[0], "and the way out")
-        self.assertLessEqual(len(said[0]), km.SYNC_NOTICE_FIT + 60, "close to the bell's cut; the point comes first")
+        # review round 2 (2026-09-10): the notice used to name where this kernel read its token, and the
+        # state-root path is unbounded, so the bell (cut at SYNC_NOTICE_FIT) lost the way out; the source
+        # rides the stderr line and the audit row instead
+        self.assertNotIn("read from", said[0])
+        self.assertLessEqual(len(said[0]), km.SYNC_NOTICE_FIT, "the bell shows the whole notice")
         line = [l for l in err.getvalue().splitlines() if "refused POST /restart-all" in l]
         self.assertEqual(len(line), 1, err.getvalue())
         self.assertIn("HTTP 401", line[0])
         self.assertIn("serve token required", line[0], "the manager's own words ride along")
-        self.assertIn(str(km.jd.STATE / "serve-token"), line[0])
+        self.assertIn("this kernel's token was read from ROMP_SERVE_TOKEN", line[0], "where the token came from (the env spelling here)")
         rows = [r for r in self._audit_rows() if r.get("action") == km._MANAGER_REFUSED_ACTION]
         self.assertEqual(len(rows), 1, self._audit_rows())
         self.assertEqual((rows[0]["status"], rows[0]["door"], rows[0]["reason"]), (401, "/restart-all", "main-converge: restart"))
+        self.assertEqual(rows[0]["tokenSrc"], "ROMP_SERVE_TOKEN", "the row carries the source too")
         self.assertNotIn(km.TOKEN, err.getvalue() + json.dumps(rows) + said[0], "never the token itself")
+
+    def test_every_refusal_notice_fits_the_bell_under_a_realistic_state_path(self):
+        # review round 2 (2026-09-10): measured under a profile root, the 401 notice ran to 289 characters
+        # against the bell's 240, and the remedy sat last, so what the user saw ended mid-way-out (for the
+        # converge's 503 the cut landed inside the command). Both heads, both statuses, the FILE spelling
+        # of the token under a long state root: every text fits whole, and none carries the path.
+        import pathlib
+        root = pathlib.Path("/home/someone/.local/state/romp-profiles/research-kernel-with-a-long-name")
+        bodies = {401: json.dumps({"ok": False, "error": "serve token required: send it in X-Romp-Token (the serve-token file "
+                                                          "under the kernel's state root: %s/serve-token for the primary kernel, "
+                                                          "its own stateDir for a kernels.json profile)" % root}).encode(),
+                  503: json.dumps({"ok": False, "error": "the manager cannot read the serve token (%s/serve-token: EACCES); "
+                                                          "state-changing requests are refused until it can" % root}).encode()}
+        notices = []
+        with mock.patch.dict(os.environ, {}, clear=False), \
+             mock.patch.object(km.jd, "STATE", root), \
+             mock.patch.object(km, "_audit_restart_request", lambda *a, **k: None), \
+             mock.patch.object(km, "_sync_notice", side_effect=lambda m, ok=True, **k: notices.append(m)), \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            os.environ.pop("ROMP_SERVE_TOKEN", None)
+            for head in ("The restart did not happen", "romp is updated on disk but the restart request failed"):
+                for status in (401, 503):
+                    with self.subTest(head=head, status=status):
+                        text = km._report_manager_refusal("/restart-all", status, bodies[status], reason="r", head=head)
+                        self.assertTrue(text.startswith(head + ": "), text)
+                        self.assertLessEqual(len(text), km.SYNC_NOTICE_FIT, "%d chars: %s" % (len(text), text))
+                        self.assertNotIn(str(root), text, "the path is unbounded, so it stays out of the notice")
+                        self.assertIn("HTTP %d" % status, text)
+                        self.assertIn("romp refresh", text, "the way out is in the text, whole")
+                        self.assertTrue(text.endswith("."), text)
+        self.assertEqual(len(notices), 4, "one notice per head and status")
+        self.assertIn("this kernel's token was read from %s/serve-token" % root, err.getvalue(),
+                      "the stderr line carries the file the notice no longer names")
 
     def test_a_refused_restart_this_kernel_is_said_three_ways_and_returned(self):
         # the /restart handler and the converge share this hop; its answer used to be discarded
