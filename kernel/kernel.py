@@ -56181,6 +56181,11 @@ _UPD_CSS = (
     "#rupd.rup-arm .rup-armed{display:flex;align-items:center;align-self:stretch;padding:6px 0;flex:1 1 0}"
     "#rupd .rup-confirm{background:var(--err,#c0392b);color:#fff;font-weight:600;border-color:rgba(0,0,0,0.25);margin-left:12px}"
     "#rupd .rup-confirm:hover:not(:disabled){background:var(--err,#c0392b);filter:brightness(1.1)}"
+    # the confirm of an update that restarts nothing (no manager started this kernel: the code lands on
+    # disk; review round 5, 2026-09-10) reads Update and wears Update's green, not the error red: the
+    # red marks a cut, and there is none. The class is set by face() beside the label
+    "#rupd .rup-confirm.rup-disk{background:#54B204;color:#0c1a00;border-color:#3f8a00}"
+    "#rupd .rup-confirm.rup-disk:hover:not(:disabled){background:#62c80a;filter:none}"
     # Widths (review round 1 of the confirm step; one row at desktop widths since round 4). A fixed box
     # with left:50% shrink-to-fits against the HALF viewport, so a long armed label wrapped the message
     # to two lines on a desktop and, on a phone, pushed Cancel past the viewport's edge as a sliver no
@@ -56268,7 +56273,16 @@ _UPD_JS = (
     # know yet) drops the held counts, so the label falls back to its count-less form instead of showing
     # a previous life's numbers; a failed read is no information and changes nothing. The kernel holds
     # the same line: /update refuses a body without confirmed:true.
-    "function label(){if(!impact)return 'Restart every session now';var n=impact.sessions,m=impact.midTurn,o=impact.others;"
+    # The fifth form (review round 5, 2026-09-10): /update-check carries manager:false when no manager
+    # started this kernel (ROMP_MANAGER_PORT absent, empty or not a port). Neither door restarts anything
+    # then: the drift door leaves the new code on disk and says so, the tag door's script does the same,
+    # so the label names that ("Update romp on disk now; restart it yourself to run it") and the confirm
+    # reads Update, in Update's green (face below): nothing is cut, so the destructive red would lie.
+    # The same wording serves the boot window (sessions null with manager false), since no count is
+    # named. 0 other kernels alone could not tell this case from a manager running this kernel by
+    # itself, which is why the field exists; without it (an older kernel) the restart forms stand.
+    "function label(){if(!impact)return 'Restart every session now';if(impact.manager===false)return 'Update romp on disk now; restart it yourself to run it';"
+    "var n=impact.sessions,m=impact.midTurn,o=impact.others;"
     "var here=(o||o===null)?' here':'',tail=o===null?'; other kernels may restart too (the manager did not answer)':"
     "o?('; the other kernel'+(o===1?' restarts':'s restart')+' too'):'';"
     "if(n===null)return 'Restart every session'+here+' now'+tail;"
@@ -56280,9 +56294,16 @@ _UPD_JS = (
     # registry count and the label says the other kernels restart too without naming this kernel's
     # sessions. label() tests the session count for null BEFORE its falsy test: null is falsy, and the
     # 0 form ("nothing to interrupt") is a claim about a count the kernel has not made. A kernel no
-    # manager started answers 0 other kernels (the registry read asks nothing), so its label is the plain form
+    # manager started answers 0 other kernels (the registry read asks nothing) and manager:false, and its
+    # label is the on-disk form (label above); `manager` is false only when the field says so, since an
+    # older kernel's answer has no field and its restart forms stand
     "function note(d){if(!d)return;impact={sessions:(typeof d.sessions==='number')?d.sessions:null,midTurn:d.midTurn||0,"
-    "others:(typeof d.otherKernels==='number')?d.otherKernels:null};}"
+    "others:(typeof d.otherKernels==='number')?d.otherKernels:null,manager:d.manager!==false};}"
+    # the confirm's face follows the label (review round 5): Update, in Update's green, when the click
+    # updates on disk and restarts nothing; Restart, in the error red, when it restarts sessions. Set at
+    # the arm and again when the re-read changes the label, before fit() measures the row
+    "function face(){var disk=!!(impact&&impact.manager===false);cf.textContent=disk?'Update':'Restart';"
+    "if(disk)cf.classList.add('rup-disk');else cf.classList.remove('rup-disk');}"
     # `back`: the gesture was the user's own cancel (Cancel, Escape) with focus inside the banner, so
     # focus returns to the Update button the armed row replaced; every other disarm leaves focus where
     # the event that caused it put it (a pane, another control, nothing). Cancel's click passes `always`:
@@ -56302,9 +56323,9 @@ _UPD_JS = (
     # resize while armed (the listener is added here and removed by disarm; the plain row is then
     # re-measured, plainRects below). The re-read of an arm that has since ended is ignored (`arms`, a
     # sequence number): its answer would fit a label against a row that is no longer on screen
-    "function arm(){var t=label(),seq=++arms;plain=plainRects();armed=true;lbl.textContent=t;lbl.hidden=false;cf.hidden=false;cx.hidden=false;dm.hidden=true;"
+    "function arm(){var t=label(),seq=++arms;plain=plainRects();armed=true;lbl.textContent=t;face();lbl.hidden=false;cf.hidden=false;cx.hidden=false;dm.hidden=true;"
     "try{lbl.focus({preventScroll:true});}catch(e){}box.classList.add('rup-arm');fit();wireFrames();window.addEventListener('resize',refit);"
-    "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){if(seq!==arms)return;note(d);if(armed){lbl.textContent=label();fit();}})"
+    "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){if(seq!==arms)return;note(d);if(armed){lbl.textContent=label();face();fit();}})"
     "['catch'](function(e){});}"
     # The armed row is laid over the plain row it replaced, measured, never assumed (fit, review round
     # 4 of the confirm step, 2026-09-10; rounds 2 and 3 widened the label until its right edge reached

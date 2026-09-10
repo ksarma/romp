@@ -41,14 +41,14 @@ Enter, two taps at the Update button's point, a spread second tap past its right
 on the confirm, a real click on Cancel, a click and a drag on the banner's own text, Tab and Enter on
 Cancel, Escape, a press inside a same-origin iframe, Tab out of the banner into the iframe, a press on
 the banner released over the iframe or outside the viewport, a right and a middle click inside it, the
-phone-width layout, the armed row's geometry against the plain row's at ten desktop widths with four
+phone-width layout, the armed row's geometry against the plain row's at ten desktop widths with five
 label forms, after a resize while armed and after the re-read replaced a long label with a short one. The kernel side
 (the route's refusal of an unconfirmed body, the audit row, the counts and the registry read on
 /update-check, with its timeout and its stderr line) is in tests/test_kernel_update.py. Synthetic values
 only.
 
-Every process this module runs, itself included, carries a dead ROMP_MANAGER_PORT and ROMP_KERNEL_PORT
-(1), pytest's conftest floor or not: on 2026-09-10 a review probe of this change, run with the manager
+Every process this module runs, itself included, carries a dead ROMP_MANAGER_PORT, ROMP_KERNEL_PORT and
+ROMP_SERVE_PORT (1), pytest's conftest floor or not: on 2026-09-10 a review probe of this change, run with the manager
 variable absent while the drift door still mapped the absence to the manager's default port, reached the
 live manager of a development box and restarted every session on it. The kernel guesses no port any more
 (absent means no manager started it), and the floor stays regardless: no probe here depends on the code
@@ -158,6 +158,7 @@ function posts() { return FETCHES.filter(function (f) { return f.url === "/updat
 function caps(ls) { return (ls || []).map(function (l) { return l.cap; }); }
 function state() {
   return { shown: BOX.classList.contains("show"), msg: MSG.textContent, go: GO.textContent, label: LBL.textContent,
+           confirm: CF.textContent, confirmDisk: CF.classList.contains("rup-disk"),
            armed: BOX.classList.contains("rup-arm"), goHidden: GO.hidden, goDisabled: GO.disabled,
            labelHidden: LBL.hidden, confirmHidden: CF.hidden, cancelHidden: CX.hidden, notNowHidden: DM.hidden, posts: posts(),
            checks: FETCHES.filter(function (f) { return f.url === "/update-check"; }).length, reloads: RELOADS,
@@ -233,7 +234,9 @@ out({ atOnce: atOnce, after: state() });""")
 
     def test_the_label_reads_naturally_for_one_session_nothing_to_stop_and_nothing_interrupted(self):
         # the empty case claims only what is counted: the sessions a restart stops (a tmux session
-        # survives it, so a box of tmux sessions is rightly "nothing to interrupt", not "no sessions")
+        # survives it, so a box of tmux sessions is rightly "nothing to interrupt", not "no sessions").
+        # These are the plain restart forms: a manager runs this kernel by itself (otherKernels 0 and no
+        # manager:false in the answer); the no-manager case has a form of its own (the test below)
         cases = ((1, 1, "Restart 1 session now, interrupting 1"),
                  (4, 0, "Restart 4 sessions now"),
                  (0, 0, "Restart now, nothing to interrupt"))
@@ -251,7 +254,8 @@ out({ atOnce: atOnce, after: state() });""")
         # the manager did not answer the read (null, or the field absent) the label says other kernels MAY
         # restart too (no article: whether there is another is the one thing the kernel does not know then),
         # never the single-kernel form, since a manager that missed a 1 s read can still take the restart
-        # request. The 0 case is also a kernel no manager started: its registry read asks nothing
+        # request. The 0 case is a manager running this kernel by itself; a kernel no manager started
+        # answers 0 too, with manager:false beside it, and has a form of its own (the test below)
         null_tail = "; other kernels may restart too (the manager did not answer)"
         cases = ((1, 3, 1, "Restart 3 sessions here now, interrupting 1; the other kernel restarts too"),
                  (2, 1, 1, "Restart 1 session here now, interrupting 1; the other kernels restart too"),
@@ -284,6 +288,40 @@ out({ atOnce: atOnce, after: state() });""")
 CHECK.otherKernels = 1; GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: atOnce, after: state() });""")
         self.assertEqual(s["atOnce"]["label"], "Restart 3 sessions now, interrupting 1")
         self.assertEqual(s["after"]["label"], "Restart 3 sessions here now, interrupting 1; the other kernel restarts too")
+
+    def test_with_no_manager_the_label_names_the_update_on_disk_and_the_confirm_reads_update(self):
+        # review round 5 (2026-09-10): on a kernel no manager started the label read the plain restart form
+        # over a red Restart while neither door restarts anything (the drift door leaves the new code on disk
+        # and says so; _restart_this_kernel is a no-op without a manager), and otherKernels 0 alone could not
+        # tell that case from a manager running this kernel by itself. /update-check now carries manager:false
+        # for it; the label names the update on disk, the confirm reads Update in Update's green (rup-disk),
+        # and the same wording serves the boot window (no session count yet). Without the field (an older
+        # kernel's answer, or a manager present) the restart forms stand and the confirm reads Restart in red
+        disk = "Update romp on disk now; restart it yourself to run it"
+        for name, check in (("counts known", {"manager": False, "otherKernels": 0, "sessions": 3, "midTurn": 1}),
+                            ("nothing to interrupt", {"manager": False, "otherKernels": 0, "sessions": 0, "midTurn": 0}),
+                            ("the boot window", {"manager": False, "otherKernels": 0, "sessions": None, "midTurn": None})):
+            s = run_banner("GO.onclick(); var atOnce = state(); await tick(); await tick(); CF.onclick(); await tick(); out({ atOnce: atOnce, after: state() });",
+                           check=check)
+            a = s["atOnce"]
+            self.assertEqual((a["label"], a["confirm"], a["confirmDisk"], a["armed"], a["posts"]), (disk, "Update", True, True, []), name)
+            self.assertEqual(len(s["after"]["posts"]), 1, name + ": the click on the confirm posts once, as before")
+        # the field absent (an older kernel) or a manager present: the restart forms and the red Restart
+        for name, check in (("absent", {}), ("a manager", {"manager": True})):
+            s = run_banner("GO.onclick(); await tick(); await tick(); out(state());", check=check)
+            self.assertEqual((s["label"], s["confirm"], s["confirmDisk"]), ("Restart 3 sessions now, interrupting 1", "Restart", False), name)
+        # the re-read moves the face with the label: the page loaded before the field was known
+        s = run_banner("""
+CHECK.manager = false; GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: atOnce, after: state() });""")
+        self.assertEqual((s["atOnce"]["label"], s["atOnce"]["confirm"], s["atOnce"]["confirmDisk"]), ("Restart 3 sessions now, interrupting 1", "Restart", False))
+        self.assertEqual((s["after"]["label"], s["after"]["confirm"], s["after"]["confirmDisk"]), (disk, "Update", True), "the re-read's answer")
+        # and back: a second arm after the kernel gained a manager (the field gone) reads Restart again
+        s = run_banner("""
+CHECK.manager = false; GO.onclick(); await tick(); await tick(); var first = state(); CX.onclick(); delete CHECK.manager;
+GO.onclick(); var second = state(); await tick(); await tick(); out({ first: first, second: second, after: state() });""")
+        self.assertEqual((s["first"]["confirm"], s["first"]["confirmDisk"]), ("Update", True))
+        self.assertEqual((s["after"]["label"], s["after"]["confirm"], s["after"]["confirmDisk"]), ("Restart 3 sessions now, interrupting 1", "Restart", False),
+                         "the class comes off with the field")
 
     def test_unknown_counts_arm_with_the_label_without_counts_and_the_re_read_fills_them_in(self):
         # /update-check answers null while the kernel's SDK backend is still being built: the banner
@@ -799,7 +837,13 @@ class Wiring(unittest.TestCase):
         js = km._UPD_JS
         self.assertIn("function arm(){var t=label(),seq=++arms;plain=plainRects();armed=true;", js, "the plain row is measured before it hides")
         self.assertIn("box.classList.add('rup-arm');fit();wireFrames();window.addEventListener('resize',refit);", js)
-        self.assertIn("if(seq!==arms)return;note(d);if(armed){lbl.textContent=label();fit();}", js, "the re-read re-fits, unless its arm has ended")
+        self.assertIn("if(seq!==arms)return;note(d);if(armed){lbl.textContent=label();face();fit();}", js,
+                      "the re-read re-fits (and re-faces the confirm), unless its arm has ended")
+        self.assertIn("function face(){var disk=!!(impact&&impact.manager===false);cf.textContent=disk?'Update':'Restart';", js,
+                      "the confirm reads Update when the click restarts nothing")
+        self.assertIn("if(impact.manager===false)return 'Update romp on disk now; restart it yourself to run it';", js)
+        self.assertIn("#rupd .rup-confirm.rup-disk{background:#54B204;color:#0c1a00;border-color:#3f8a00}", km._UPD_CSS,
+                      "the on-disk confirm wears Update's green, not the error red")
         self.assertIn("var w=p.g.right-p.n.left-12;if(w>l.width)lbl.style.minWidth=Math.ceil(w)+'px';", js,
                       "the label spans from 12px right of Not now's left edge to Update's right edge at least")
         self.assertIn("var dx=p.g.right-l.right;if(dx>0.5||dx<-0.5)box.style.transform='translateX(calc(-50% + '+dx.toFixed(2)+'px))';", js,
@@ -898,6 +942,7 @@ const st = () => page.evaluate(() => {
   const a = document.activeElement;
   const cs = getComputedStyle(lbl);
   return { armed: box.classList.contains("rup-arm"), shown: box.classList.contains("show"), go: go.textContent, label: lbl.textContent,
+           confirm: cf.textContent, confirmDisk: cf.classList.contains("rup-disk"),
            goVisible: go.getClientRects().length > 0, labelHidden: lbl.hidden, confirmHidden: cf.hidden, cancelHidden: cx.hidden,
            notNowHidden: dm.hidden, goDisabled: go.disabled,
            active: a ? (a.id || a.tagName) : "", cfBg: getComputedStyle(cf).backgroundColor,
@@ -947,13 +992,15 @@ await step("widths", async () => {
   return out;
 });
 // 1b. the armed row's geometry against the plain row's with each label form (the standard label, the
-// shortest, the longest with two-digit counts and the count-less form when the manager did not answer) at
-// the two phone widths and the ten desktop widths (Escape disarms between widths); then a resize while
-// armed (armed at 1280, resized to 700, the phone width, 1000 and 660, each resize given its frames), the
-// plain row at each width measured after the disarm
+// shortest, the longest with two-digit counts, the count-less form when the manager did not answer, and the
+// on-disk form of a kernel no manager started, whose confirm reads Update) at the two phone widths and the
+// ten desktop widths (Escape disarms between widths); then a resize while armed (armed at 1280, resized to
+// 700, 740, the phone width, 1000 and 660, each resize given its frames; 740 is the width where the fit sets
+// the box's min-height for the shortest label, measured, so the phone width has that to clear), the plain
+// row at each width measured after the disarm
 await step("geometry", async () => {
   const out = {};
-  for (const variant of ["std", "shortest", "longest", "unknown"]) {
+  for (const variant of ["std", "shortest", "longest", "unknown", "nomanager"]) {
     await load(variant);
     out[variant] = { widths: {}, resize: {} };
     for (const w of [390, 360].concat(GEOM_WIDTHS)) {
@@ -963,13 +1010,13 @@ await step("geometry", async () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.click("#rupd-go");
     const armed = {};
-    for (const w of [700, 360, 1000, 660]) {
+    for (const w of [700, 740, 360, 1000, 660]) {
       await page.setViewportSize({ width: w, height: 800 });
       await frames();
       armed[w] = await st();
     }
     await page.keyboard.press("Escape");
-    for (const w of [700, 360, 1000, 660]) {
+    for (const w of [700, 740, 360, 1000, 660]) {
       await page.setViewportSize({ width: w, height: 800 });
       await frames();
       const s = armed[w];
@@ -1211,14 +1258,19 @@ CHECK = {"cur": "v0.1.0", "tag": "v0.2.0", "mode": "ask", "state": "", "boot": "
 # the four labels the geometry is measured with: the standard one, the shortest form the script can
 # produce (one session, nothing interrupted, one kernel), the longest (two-digit counts, the manager did
 # not answer) and the count-less form of the boot window with the manager not answering
+# and the fifth, the on-disk form of a kernel no manager started (manager:false), whose confirm reads Update
 CHECKS = {"std": CHECK,
           "shortest": dict(CHECK, sessions=1, midTurn=0),
           "longest": dict(CHECK, sessions=32, midTurn=12, otherKernels=None),
-          "unknown": dict(CHECK, sessions=None, midTurn=None, otherKernels=None)}
+          "unknown": dict(CHECK, sessions=None, midTurn=None, otherKernels=None),
+          "nomanager": dict(CHECK, manager=False)}
 LABELS = {"std": "Restart 32 sessions now, interrupting 3",
           "shortest": "Restart 1 session now",
           "longest": "Restart 32 sessions here now, interrupting 12; other kernels may restart too (the manager did not answer)",
-          "unknown": "Restart every session here now; other kernels may restart too (the manager did not answer)"}
+          "unknown": "Restart every session here now; other kernels may restart too (the manager did not answer)",
+          "nomanager": "Update romp on disk now; restart it yourself to run it"}
+VARIANTS = tuple(LABELS)
+CONFIRMS = {v: ("Update" if v == "nomanager" else "Restart") for v in VARIANTS}
 LABEL = LABELS["std"]
 GEOM_WIDTHS = (640, 660, 680, 700, 740, 800, 840, 1000, 1280, 1366)     # the desktop widths the driver measures (its own list matches)
 
@@ -1470,36 +1522,46 @@ class Browser(unittest.TestCase):
     def test_the_label_covers_update_and_restart_is_on_its_row_at_every_desktop_width_for_every_label(self):
         # ruling B (round 3) as the standing design (round 4): at 640, 660, 680, 700, 740, 800, 840, 1000,
         # 1280 and 1366 px, with the standard label, the shortest, the longest (two-digit counts, the
-        # manager not answering) and the count-less form, the label covers Update's plain rect, Restart
-        # stands to its right on Update's row and Cancel never shares a pixel with Not now: where the row
-        # is short of room the label's text wraps inside it, never the row. Red before round 4 at 640 to
-        # 680 (Cancel over Not now), at 740 to 840 (Restart on a row of its own) and for the longest label
-        # at 1280 to 1366 (the same)
+        # manager not answering), the count-less form and the on-disk form (no manager; the confirm reads
+        # Update, round 5), the label covers Update's plain rect, the confirm stands to its right on
+        # Update's row and Cancel never shares a pixel with Not now: where the row is short of room the
+        # label's text wraps inside it, never the row. Red before round 4 at 640 to 680 (Cancel over Not
+        # now), at 740 to 840 (Restart on a row of its own) and for the longest label at 1280 to 1366 (the
+        # same)
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
-                for variant in ("std", "shortest", "longest", "unknown"):
+                for variant in VARIANTS:
                     for vw in GEOM_WIDTHS:
                         s = r["geometry"][variant]["widths"][str(vw)]
-                        self.assertEqual(s["label"], LABELS[variant], (engine, variant, vw))
+                        self.assertEqual((s["label"], s["confirm"], s["confirmDisk"]),
+                                         (LABELS[variant], CONFIRMS[variant], variant == "nomanager"), (engine, variant, vw))
                         self._armed_row_holds((engine, variant, vw), s)
 
     def test_a_resize_while_armed_re_fits_the_row(self):
-        # armed at 1280 and resized to 700, then the phone width, then 1000, then 660: the geometry above
-        # holds at each desktop width against the plain row the page has at that width (the arm's
+        # armed at 1280 and resized to 700, 740, then the phone width, then 1000, then 660: the geometry
+        # above holds at each desktop width against the plain row the page has at that width (the arm's
         # measurement is stale after a resize: the plain row is re-measured from a hidden clone), and at
         # the phone width the label and the buttons take their rows with the desktop fit cleared
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
-                for variant in ("std", "shortest", "longest", "unknown"):
+                for variant in VARIANTS:
                     rz = r["geometry"][variant]["resize"]
-                    for vw in ("700", "1000", "660"):
+                    for vw in ("700", "740", "1000", "660"):
                         self.assertTrue(rz[vw]["armed"], (engine, variant, vw, "still armed after the resize"))
                         self._armed_row_holds((engine, variant, vw, "after a resize"), rz[vw])
                     s = rz["360"]
                     self.assertTrue(s["armed"], (engine, variant))
                     self.assertGreaterEqual(s["lblRect"]["top"], s["msg"]["bottom"], (engine, variant, "the phone rows after a resize", s))
                     self.assertGreaterEqual(s["cf"]["top"], s["lblRect"]["bottom"], (engine, variant, s))
-                    self.assertEqual((s["boxTransform"], s["boxMaxWidth"], s["lblMinWidth"]), ("", "", ""), (engine, variant, "the desktop fit is cleared on the phone"))
+                    # all four inline properties fit() sets are cleared on the phone (the box's transform,
+                    # max-width and min-height, the label's min-width). The 740 px step before this resize is
+                    # where the fit sets a min-height: the plain box is the taller there (its message wraps
+                    # under the plain cap while the armed row, on the wider armed cap, holds the shortest label
+                    # and the message on one line), measured at 59 px in all three legs (review round 5,
+                    # 2026-09-10; no other measured width sets it with the release message), so the clearing is
+                    # exercised, not vacuous. Not pinned: the width is a fact about the banner's font
+                    self.assertEqual((s["boxTransform"], s["boxMaxWidth"], s["boxMinHeight"], s["lblMinWidth"]), ("", "", "", ""),
+                                     (engine, variant, "the desktop fit is cleared on the phone"))
                     self.assertLessEqual(s["docWidth"], s["vw"], (engine, variant))
 
     def test_the_re_read_re_fits_a_shorter_label(self):
@@ -1562,7 +1624,7 @@ class Browser(unittest.TestCase):
         # the label's. The label does not select
         for engine, r in self.R.items():
             with self.subTest(engine=engine):
-                for variant, widths in [("std", r["widths"])] + [(v, r["geometry"][v]["widths"]) for v in ("std", "shortest", "longest", "unknown")]:
+                for variant, widths in [("std", r["widths"])] + [(v, r["geometry"][v]["widths"]) for v in VARIANTS]:
                     for vw, s in widths.items():
                         where = (engine, variant, vw)
                         self.assertTrue(s["armed"], where)
