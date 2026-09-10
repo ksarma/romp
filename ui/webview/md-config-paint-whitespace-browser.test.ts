@@ -17,16 +17,17 @@
 //    The layout is read box for box, unpainted against painted and again after the panel's unpaint and a repaint; the controls
 //    (a space inside an inline element beside an image, mid-line and rendered; a figure whose body is a paragraph) hold the
 //    rule's two sides.
-// 3. The paint's cost is linear in a paragraph's inline children: besideNonWs and follows step over the DOM's sibling pointers
-//    (round 8 indexed the parent's child list per whitespace node, so one mark across 3,000 links cost 850 ms against 27 ms
-//    before the rule). Timed as equal work in the same run: a paragraph of LARGE links painted once against a paragraph of SMALL
-//    links painted LARGE / SMALL times, seven pairs, the median of the pair ratios bounded at LINEAR_BOUND (a linear paint gives
-//    about 1, the quadratic one about LARGE / SMALL; the method md-config-block-start-memo.test.ts adopted in round 8, whose
-//    equal-work legs hold under a CPU quota where unequal ones did not), with an absolute guard on the large paint as the
-//    load-independent catcher. The source table (anchor-map.ts sourceTable) is one entry keyed on the source, and marked's lex
-//    of a 5,000-link paragraph is 300 ms of its own, so each timed paint follows an untimed one over the same source (the table
-//    warm, as it is for the panel, which paints one text many times) and the marks are unwrapped between paints, the DOM built
-//    once a size. Skips LOUDLY without a playwright browser (CI installs none). Synthetic prose, no paths.
+// 3. The paint's cost is linear in a paragraph's inline children: the neighbour reads (contentBeside, stepping with sibling) and
+//    follows step over the DOM's sibling pointers (round 8 indexed the parent's child list per whitespace node, so one mark across
+//    3,000 links cost 850 ms against 27 ms before the rule). Timed as equal work in the same run: a paragraph of LARGE links
+//    painted once against a paragraph of SMALL links painted LARGE / SMALL times, seven pairs, the median of the pair ratios
+//    bounded at LINEAR_BOUND (a linear paint gives about 1, the quadratic one about LARGE / SMALL; the method
+//    md-config-block-start-memo.test.ts adopted in round 8, whose equal-work legs hold under a CPU quota where unequal ones did
+//    not), with an absolute guard on the large paint as the load-independent catcher. The source table (anchor-map.ts sourceTable)
+//    is one entry keyed on the source, and marked's lex of a 5,000-link paragraph is 300 ms of its own, so each timed paint follows
+//    an untimed one over the same source (the table warm, as it is for the panel, which paints one text many times) and the marks
+//    are unwrapped between paints, the DOM built once a size. Skips LOUDLY without a playwright browser (CI installs none).
+//    Synthetic prose, no paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";

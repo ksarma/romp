@@ -8,7 +8,9 @@
 // fieldset, which the sanitizer strips, and lacked center, dir, menu, search, hgroup, col and colgroup, and anchor-map-obsidian's
 // scenes pin a tag only when one of them holds it (the Slice 4 review, round 10). Nothing here needs a browser: a hand edit
 // fails on CI, the tags that differ named, and a DOMPurify upgrade that allows a block tag it strips today (listing, say)
-// fails the same way until the set has it. Tag names only, no prose fixture.
+// fails the same way until the set has it. The section's blocks the sanitizer strips are pinned both ways against
+// MD_FORBID_TAGS too, so a fixture that omits one of them fails by name (round 10's lacked option; the Slice 4 review, round 11).
+// Tag names only, no prose fixture.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -27,6 +29,11 @@ const FIXTURE = JSON.parse(fs.readFileSync(path.join(UI, "anchor-map-fixtures", 
 const BLOCK_DISPLAYS = ["block", "list-item", "table", "table-caption", "table-column", "table-column-group", "table-header-group", "table-row-group", "table-footer-group", "table-row", "table-cell"];
 /** The document's own elements, which the HTML parser never places in a fragment (a `<body>` in a note's html is dropped). */
 const NEVER_IN_A_FRAGMENT = ["html", "body"];
+/** The tags of MD_FORBID_TAGS the section lays out as blocks: dialog, form and legend (15.3.3 Flow content), fieldset (15.3.12
+ *  The fieldset and legend elements), option and optgroup (15.5.16 The select element, a bare `option { display: block }` rule
+ *  above optgroup's). The rest of the forbid list it renders inline-block (button, select), hides (style, datalist, area) or
+ *  gives no display rule (textarea, label, output, meter, progress, map), so none of those is a block by the section. */
+const STRIPPED_BLOCKS = ["dialog", "fieldset", "form", "legend", "optgroup", "option"];
 
 /** DOMPurify's html allowlist, read off the installed module's own source (the package's main file, resolved from the
  *  extension): the frozen array of tag names its html profile allows. The library exports no list and, without a window, no
@@ -54,7 +61,13 @@ test("the fixture is the rendering section's list: html and body on it, every va
     assert.equal(t, t.toLowerCase(), "tag names as the section spells them: " + t);
     assert.ok(BLOCK_DISPLAYS.includes(d), t + " has a block-level or table display: " + d);
   }
-  for (const t of ["dialog", "form", "fieldset", "legend", "optgroup"]) assert.ok(tags.includes(t) && MD_FORBID_TAGS.includes(t), t + " is a block by the section and a tag the sanitizer strips: on the fixture, off the set by the forbid list");
+  // the section's blocks the sanitizer strips, both ways: every MD_FORBID_TAGS tag the section lays out as a block is on the
+  // fixture, no other forbidden tag is, and the note names each one, so a block the fixture omits, or carries without saying so,
+  // fails here by name (round 10's fixture had optgroup and not option, the rule directly above it in the section)
+  const stripped = tags.filter((t) => MD_FORBID_TAGS.includes(t)).sort();
+  assert.deepEqual(stripped, [...STRIPPED_BLOCKS].sort(), "the fixture's tags the sanitizer strips are the section's block form controls and the dialog: missing " + JSON.stringify(minus(STRIPPED_BLOCKS, stripped)) + ", extra " + JSON.stringify(minus(stripped, STRIPPED_BLOCKS)));
+  const note = FIXTURE.note.join(" ");
+  for (const t of STRIPPED_BLOCKS) assert.ok(new RegExp("\\b" + t + "\\b").test(note), "the note names " + t + " among the stripped blocks the fixture carries on purpose");
   for (const t of ["listing", "plaintext", "xmp"]) assert.ok(tags.includes(t), t + " is a block by the section: on the fixture, off the set because DOMPurify's allowlist lacks it");
   for (const t of ["li", "table", "caption", "colgroup", "col", "thead", "tbody", "tfoot", "tr", "td", "th", "details", "summary", "hgroup", "search", "center", "dir", "menu"]) assert.ok(tags.includes(t), t + " is on the fixture");
   assert.equal(new Set(tags).size, tags.length);

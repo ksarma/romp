@@ -12,9 +12,12 @@
 //    page's 14px sans-serif), and the layout is unchanged box for box, painted, unpainted and repainted. The collapsible
 //    controls paint no whitespace-only mark.
 // 3. The space between two inline children of a list item, a task item, a badge row, an html blockquote or a section, which main's
-//    container rule skipped whatever the neighbours: it renders 4.75 px before the paint, and after it the marks on the line
-//    are contiguous (the space's mark abuts its neighbours' rings), where before there was a bare gap of the space's width.
-//    Block children and the root's own white space paint no whitespace-only mark and no top-level mark.
+//    container rule skipped whatever the neighbours: it renders 3.89 px before the paint at this page's 14px sans-serif (the
+//    viewer's sheet, where `--fs` is defined, renders it 4.75 px; this page defines no `--fs`, so `.fileview-md`'s font-size
+//    is invalid at computed-value time and the prose inherits the body's 14px, the size every number in this file is read at),
+//    and after it the marks on the line are contiguous (the space's mark, 7.89 x 16, abuts its neighbours' rings), where before
+//    there was a bare gap of the space's width. Block children and the root's own white space paint no whitespace-only mark
+//    and no top-level mark.
 // Skips LOUDLY without a playwright browser (CI installs none). Synthetic prose, no paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

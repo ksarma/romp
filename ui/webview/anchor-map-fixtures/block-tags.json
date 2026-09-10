@@ -5,10 +5,10 @@
     "table-column, table-column-group, table-header-group, table-row-group, table-footer-group, table-row or table-cell,",
     "read on 2026-09-09 from https://html.spec.whatwg.org/multipage/rendering.html (15.3.2 The page; 15.3.3 Flow content;",
     "15.3.6 Sections and headings, whose `:heading` is h1 to h6; 15.3.7 Lists; 15.3.8 Tables; the details and summary",
-    "section; the form controls' sections, fieldset and optgroup). The value is the display the rule gives the element (a",
+    "section; the form controls' sections, fieldset, option and optgroup). The value is the display the rule gives the element (a",
     "summary first under a details is a list-item by a second rule; a closed dialog is hidden by one). The list is the",
-    "section's, whatever the sanitizer does: dialog, form, fieldset, legend and optgroup are on it and md-sanitize.ts",
-    "strips all five; listing, plaintext and xmp are on it and DOMPurify's allowlist lacks them. Two readers:",
+    "section's, whatever the sanitizer does: dialog, form, fieldset, legend, option and optgroup are on it and",
+    "md-sanitize.ts strips all six; listing, plaintext and xmp are on it and DOMPurify's allowlist lacks them. Two readers:",
     "md-config-block-boxes.test.ts holds anchor-map.ts BLOCK_BOXES equal to these tags less the ones the sanitizer strips",
     "or the parser never places in a fragment (html, body), in node, where CI runs;",
     "md-config-paint-whitespace-browser.test.ts leg 1 holds this list to Chromium's computed display over the tags the",
@@ -26,7 +26,7 @@
     "table": "table", "caption": "table-caption", "colgroup": "table-column-group", "col": "table-column",
     "thead": "table-header-group", "tbody": "table-row-group", "tfoot": "table-footer-group", "tr": "table-row",
     "td": "table-cell", "th": "table-cell",
-    "fieldset": "block", "optgroup": "block",
+    "fieldset": "block", "option": "block", "optgroup": "block",
     "details": "block", "summary": "block"
   }
 }

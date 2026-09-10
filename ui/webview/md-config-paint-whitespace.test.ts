@@ -1,14 +1,14 @@
-// The paint's neighbour reads cost a paragraph its inline children once, not once per whitespace node. skipBlockWs
-// (anchor-map.ts) judges a whitespace-only text node by the nearest non-whitespace sibling on either side (besideNonWs), and
-// wrapRuns joins adjacent units by asking whether one follows the other (follows); both step over the DOM's own sibling
-// pointers when the node offers them, constant time a step, and index the parent's child list only for a stand-in without
-// them. Round 8 of the Slice 4 review indexed every time: each space between two inline elements of a paragraph is a
-// whitespace-only node the rule reads both neighbours of, and each read scanned the paragraph's child list from the start,
-// so one mark across a paragraph of N links cost N squared child reads (over 3,000 links, 850 ms in Chromium against 27 ms
-// before the rule; md-config-paint-whitespace-browser.test.ts times the same in equal-work legs over the real bundle). Here
-// the stand-in offers the pointers and each element counts the indexed reads of its child list through a Proxy the stand-in's
-// own methods bypass, so the count is the paint's alone; the bound is linear in the children with room, and the marks are
-// the ones a stand-in WITHOUT pointers paints (the fallback path, which the other test files' stand-ins take). Synthetic prose.
+// The paint's neighbour reads cost a paragraph its inline children once, not once per whitespace node. skipBlockWs (anchor-map.ts)
+// judges a whitespace-only text node by what the browser lays out beside it on either side (contentBeside, which reads the siblings
+// through readBeside and steps with sibling), and wrapRuns joins adjacent units by asking whether one follows the other (follows);
+// both step over the DOM's own sibling pointers when the node offers them, constant time a step, and index the parent's child list
+// only for a stand-in without them. Round 8 of the Slice 4 review indexed every time: each space between two inline elements of a
+// paragraph is a whitespace-only node the rule reads both neighbours of, and each read scanned the paragraph's child list from the
+// start, so one mark across a paragraph of N links cost N squared child reads (over 3,000 links, 850 ms in Chromium against 27 ms
+// before the rule; md-config-paint-whitespace-browser.test.ts times the same in equal-work legs over the real bundle). Here the
+// stand-in offers the pointers and each element counts the indexed reads of its child list through a Proxy the stand-in's own
+// methods bypass, so the count is the paint's alone; the bound is linear in the children with room, and the marks are the ones a
+// stand-in WITHOUT pointers paints (the fallback path, which the other test files' stand-ins take). Synthetic prose.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked } from "marked";

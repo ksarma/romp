@@ -80,10 +80,13 @@ type DNode = {
   nodeType: number;
   parentNode: DNode | null;
   childNodes: ArrayLike<DNode>;
-  /** The DOM's sibling pointers, when the node offers them (a browser's Node does; a test's stand-in may not): a step to a
-   *  neighbour in constant time, where indexing the parent's child list costs its length (besideNonWs, follows). */
+  /** The DOM's sibling and end-child pointers, when the node offers them (a browser's Node does; a test's stand-in may not): a
+   *  step to a neighbour or to a first or last child in constant time, where indexing the parent's child list costs its length
+   *  (sibling, endChild, follows). */
   previousSibling?: DNode | null;
   nextSibling?: DNode | null;
+  firstChild?: DNode | null;
+  lastChild?: DNode | null;
 };
 type DText = DNode & { data: string; splitText(offset: number): DText };
 type DElement = DNode & {
@@ -1455,14 +1458,34 @@ function nthNonWs(node: DNode, k: number): { t: DText; off: number } | null {
 
 /** White space the browser collapses: HTML's ASCII white space (space, tab, line feed, form feed, carriage return), which
  *  CSS's white-space processing folds into one space inside a line and drops at a line's edges, so a text node of it alone
- *  renders nothing beside a block, at a block's edge or between two `<br>`s. JavaScript's `\s` matches these AND the Unicode
- *  spaces (a no-break space, an ideographic space, an em space, a thin space), which the browser renders as glyphs of their
- *  own width wherever they stand (3.89 px for U+00A0 and 14 px for U+3000 at 14px sans-serif in Chromium), so a node of those
- *  is the passage's text to the paint (skipBlockWs, besideNonWs). stripWs, which the walk and the matching use, keeps `\s`:
- *  the source and the rendering agree on it either way (the Slice 4 review, round 10; md-config-paint-rendered-space.test.ts
+ *  renders nothing beside a block, at a block's edge, between two `<br>`s, or right after another collapsible space. JavaScript's
+ *  `\s` matches these AND the Unicode spaces (a no-break space, an ideographic space, an em space, a thin space), which the
+ *  browser renders as glyphs of their own width wherever they stand (3.89 px for U+00A0 and 14 px for U+3000 at 14px sans-serif
+ *  in Chromium), so a node of those is the passage's text to the paint (skipBlockWs), with one exception: U+FEFF, the zero
+ *  width no-break space, is `\s` and renders nothing (ZERO_WIDTH_ONLY). stripWs, which the walk and the matching use, keeps
+ *  `\s`: the source and the rendering agree on it either way (the Slice 4 review, round 10; md-config-paint-rendered-space.test.ts
  *  and its browser leg). */
 const COLLAPSIBLE_WS_ONLY = /^[ \t\n\r\f]*$/;
 const isCollapsibleWs = (s: string): boolean => COLLAPSIBLE_WS_ONLY.test(s);
+/** A text node of zero-width format characters alone: the zero width space, non-joiner and joiner (U+200B to U+200D), the word
+ *  joiner and the invisible operators (U+2060 to U+2064) and the zero width no-break space (U+FEFF, a byte order mark that
+ *  reached the text, a file assembled from BOM-prefixed chunks). Such a node renders no glyph wherever it stands, so a mark
+ *  around it is the sheet's 4 px of padding and nothing else, and skipBlockWs skips it whatever its neighbours (the Slice 4
+ *  review, round 11: round 10's ASCII alphabet had painted a lone U+FEFF as that box under a div, a list item or a paragraph,
+ *  where round 9 and main's container rule left it alone; a lone U+200B was the box on main too). The characters are not
+ *  collapsible: as a NEIGHBOUR of a collapsible space they are characters, and the space stays rendered after `a ` plus a zero
+ *  width character (contentBeside reads them so, measured in Chromium), and a node MIXING them with ASCII white space is the
+ *  passage's text, painted (the white space around a zero-width character renders where a run of spaces alone would collapse).
+ *  Only U+FEFF is in JavaScript's `\s`, so the others are positioned characters of the mapping (Emitter.put keeps them), and a
+ *  passage that is one such character alone gets a card and no highlight: the exact path wraps nothing and the fallback's
+ *  skip is the same rule (md-config-paint-collapsed-blank.test.ts pins it). */
+const ZERO_WIDTH_ONLY = /^[\u200b-\u200d\u2060-\u2064\ufeff]+$/;
+/** Text whose last character is collapsible white space: the collapsible space right after it, in the same line, is collapsed
+ *  (CSS Text, white space processing: a collapsible space following another is removed, across inline boundaries), so a
+ *  whitespace-only text node after `<b>Label: </b>` renders nothing while the space inside the bold does. Not the first
+ *  character: a space BEFORE text that begins with one is the retained one (`<i>a</i> <b> b</b>` renders the node between, and
+ *  the bold's own leading space collapses). */
+const ENDS_COLLAPSIBLE = /[ \t\n\r\f]$/;
 /** Every tag the sanitizer keeps (DOMPurify's html profile less MD_FORBID_TAGS, md-sanitize.ts) that Chromium lays out as a
  *  block-level box or a table or one of a table's parts (display block, list-item, table, table-caption, table-column, the
  *  row and column groups, table-row, table-cell), the document's own `html` and `body`, which the parser never places in a
@@ -1491,79 +1514,145 @@ const isBlockBox = (n: DNode): boolean => isElement(n) && (BLOCK_BOXES.has(n.tag
  *  space, and the browser collapses both away (a paragraph's `line one<br>\n<br>\nline three` has such a node between the
  *  two breaks, which a mark around it made an empty ringed box on the blank line; the Slice 4 review, round 9). */
 const isLineEdge = (n: DNode): boolean => isBlockBox(n) || (isElement(n) && n.tagName.toUpperCase() === "BR");
-/** The nearest sibling of `t` on the side `dir` (-1 before, 1 after) that is not a text node of collapsible white space alone
- *  (isCollapsibleWs: a no-break space is text, and the nearest sibling); null at the parent's edge. A step at a time over the
- *  node's own sibling pointers when it has them (a browser's Node: constant time a step), else by the index of `t` in its
- *  parent's child list (the tests' stand-ins). Indexing every time made a paint quadratic in a paragraph's inline children:
- *  each space between two inline elements is a whitespace-only node skipBlockWs reads both neighbours of, and each read
- *  scanned the paragraph's child list from the start, so one mark across a paragraph of 3,000 links cost 850 ms in Chromium
- *  against 27 ms before the neighbour rule; with the pointers 32 ms (the Slice 4 review, round 9;
- *  md-config-paint-whitespace.test.ts counts the child-list reads, its browser leg times equal work). */
-function besideNonWs(t: DNode, dir: -1 | 1): DNode | null {
-  const key = dir < 0 ? "previousSibling" : "nextSibling";
-  let n = t[key];
-  if (n !== undefined) {
-    while (n && isText(n) && isCollapsibleWs(n.data)) n = n[key];
-    return n === undefined ? null : n;
-  }
-  const p = t.parentNode;
+/** Inline elements laid out as a box of their own whatever they hold, an atomic inline: the replaced and form elements the
+ *  sanitizer keeps, and `kbd`, which both sheets lay out as an inline-block with a border (`a.fv-embed` likewise, by class).
+ *  Collapsible white space beside one is inside the line, not at its edge: an empty `<kbd></kbd>` renders its box, and the space
+ *  after it renders too (3.89 px), where the space after an empty `<code></code>`, an inline with padding but no box of its own,
+ *  is the line's leading white space and collapses (measured in Chromium; the Slice 4 review, round 11). */
+const ATOMIC_INLINES: ReadonlySet<string> = new Set(["IMG", "VIDEO", "AUDIO", "CANVAS", "PICTURE", "INPUT", "SELECT", "TEXTAREA", "BUTTON", "METER", "PROGRESS", "KBD"]);
+const isAtomicInline = (n: DElement): boolean => ATOMIC_INLINES.has(n.tagName.toUpperCase()) || hasClass(n, "fv-embed");
+/** An element the browser does not render: the `hidden` attribute in every state but `until-found`, which the sanitizer keeps
+ *  (md-sanitize.ts) and which is `display: none` in the browser's own sheet; `until-found` is content-visibility, which does
+ *  not apply to an inline, so such a span renders as if the attribute were absent (measured in Chromium). */
+const isHidden = (n: DElement): boolean => { const h = n.getAttribute("hidden"); return h !== null && h.toLowerCase() !== "until-found"; };
+/** The sibling of `n` on the side `dir` (-1 before, 1 after), null at the parent's edge: the DOM's own pointer when the node
+ *  offers one (a browser's Node: constant time a step), else by the index of `n` in its parent's child list (the tests'
+ *  stand-ins). Indexing every time made a paint quadratic in a paragraph's inline children: each space between two inline
+ *  elements is a whitespace-only node skipBlockWs reads both neighbours of, and each read scanned the paragraph's child list
+ *  from the start, so one mark across a paragraph of 3,000 links cost 850 ms in Chromium against 27 ms before the neighbour
+ *  rule; with the pointers 32 ms (the Slice 4 review, round 9; md-config-paint-whitespace.test.ts counts the child-list reads,
+ *  its browser leg times equal work). */
+function sibling(n: DNode, dir: -1 | 1): DNode | null {
+  const s = dir < 0 ? n.previousSibling : n.nextSibling;
+  if (s !== undefined) return s;
+  const p = n.parentNode;
   if (!p) return null;
   const kids = p.childNodes;
-  let i = -1;
-  for (let k = 0; k < kids.length; k++) if (kids[k] === t) { i = k; break; }
-  if (i < 0) return null;
-  for (let k = i + dir; k >= 0 && k < kids.length; k += dir) {
-    const c = kids[k];
-    if (isText(c) && isCollapsibleWs(c.data)) continue;
-    return c;
+  for (let k = 0; k < kids.length; k++) if (kids[k] === n) { const j = k + dir; return j >= 0 && j < kids.length ? kids[j] : null; }
+  return null;
+}
+/** The child of `e` nearest the side `dir` (its last child for -1, its first for 1), null when it has none; the DOM's pointer
+ *  when offered, else one indexed read of the child list. */
+function endChild(e: DNode, dir: -1 | 1): DNode | null {
+  const c = dir < 0 ? e.lastChild : e.firstChild;
+  if (c !== undefined) return c;
+  const kids = e.childNodes;
+  return kids.length ? kids[dir < 0 ? kids.length - 1 : 0] : null;
+}
+/** What one node beside a whitespace-only text node puts in the line on the side `dir`, read from the DOM alone: true when it
+ *  is content the browser lays out (a character that is not collapsible white space, an atomic inline, a control), false when
+ *  it ends the line (a block-level box or a `<br>`, isLineEdge; a block inside an inline splits it, so the white space before
+ *  or after the block is a line's edge as well), null when it renders nothing and the node beyond it decides (an empty text
+ *  node; an inline element with no rendered content, an `<a name="x"></a>` anchor, an icon `<i class="icon"></i>`, an empty
+ *  `<span>`, `<sup>` or `<code>`, a `<wbr>`, one whose every child renders nothing; an element with the `hidden` attribute).
+ *  Text is read by its near end. Before the node (dir -1): text ending in collapsible white space collapses the node (a
+ *  whitespace-only sibling with it) and is false; any other text is content, a zero-width character's node included. After the
+ *  node (dir 1): a text node of collapsible white space alone renders nothing of its own and is looked past (the node itself is
+ *  the retained space of the run), any other text is content, its own leading space collapsed. */
+function readBeside(n: DNode, dir: -1 | 1): boolean | null {
+  if (isText(n)) {
+    const d = n.data;
+    if (!d.length) return null;
+    if (dir < 0) return !ENDS_COLLAPSIBLE.test(d);
+    return isCollapsibleWs(d) ? null : true;
+  }
+  if (!isElement(n)) return null;
+  if (isHidden(n)) return null;
+  if (isLineEdge(n)) return false;
+  if (isControl(n) || isAtomicInline(n)) return true;
+  for (let c = endChild(n, dir); c; c = sibling(c, dir)) {
+    const r = readBeside(c, dir);
+    if (r !== null) return r;
   }
   return null;
 }
-/** Whitespace-only text between block elements: marking it would paint a stray blob. Whitespace-only is the browser's
- *  collapsible white space (isCollapsibleWs), not JavaScript's `\s`: a text node of no-break or ideographic spaces renders a
- *  blank of its glyphs' width and is the passage's text, painted as on main, whatever stands beside it (round 9's readings
- *  below judged it with `\s` through stripWs and unpainted the `&nbsp;` spacer cell of a table, a `<p>&nbsp;</p>` spacer, a
- *  nbsp before a paragraph's first inline element or alone between two `<br>`s and a paragraph's full-width indent, each a
- *  visible 7.89 x 16 or 18 x 16 px mark on main and at round 8; the Slice 4 review, round 10). Two readings, either enough:
- *  a block-level box or a `<br>` stands beside the node on either side, any collapsible-whitespace siblings between them
- *  looked past (isLineEdge over BLOCK_BOXES); or it stands at the edge of a parent that is itself a block-level box, no
- *  non-whitespace sibling on that side, the block's leading or trailing white space, which the browser collapses away
- *  whatever stands on the node's other side (an author's `<figure>\n<img>\n<figcaption>` has its image beside such a node at
- *  both edges) but not under `pre`, where white space is preserved. And one guard: a text node directly under the render
- *  root is skipped whenever the block pairing would not read it as content (`\s`-only through stripWs, analyzeRendered's own
- *  test), a no-break space included, since the top-level children are what the pairing reads and a mark there is an element
- *  the next paint's pairing meets (the "\n" an author's html block of two `<img>` lines leaves between them at the top level;
- *  anchor-map-obsidian.test.ts holds that no mark is a top-level node). Main's rule, kept through round 9, read the parent's
- *  tag from a list of block containers (UL, OL, LI, BLOCKQUOTE, DIV, TABLE and its parts, SECTION, ARTICLE, BODY) and skipped
- *  the node whatever its neighbours, so a rendered space between two inline children of a list item (`- **a** *b*`, a task
- *  item's after its checkbox), a centred badge row (`<div align="center"><a><img></a> <a><img></a></div>`), an html
+/** Whether the browser lays out content beside the whitespace-only text node `t` on the side `dir`, in t's own line: the siblings
+ *  on that side read through readBeside until one decides; when the parent's children run out, the parent's edge is the line's
+ *  when the parent is a block-level box (or the render root), else the parent is an inline element and its own siblings on
+ *  that side decide (a space leading `<p><em> <b>a</b></em></p>` is the paragraph's leading white space, collapsed, as is one
+ *  trailing an inline at the end of its block). */
+function contentBeside(t: DNode, dir: -1 | 1, root: DNode): boolean {
+  let n: DNode = t;
+  for (;;) {
+    for (let s = sibling(n, dir); s; s = sibling(s, dir)) {
+      const r = readBeside(s, dir);
+      if (r !== null) return r;
+    }
+    const p = n.parentNode;
+    if (!p || p === root || !isElement(p) || isBlockBox(p)) return false;
+    n = p;
+  }
+}
+/** Whitespace-only text the browser renders nothing of: marking it would paint a stray blob, the sheet's 4 px of padding around
+ *  nothing, so it is skipped. Whitespace-only is the browser's collapsible white space (isCollapsibleWs), not JavaScript's `\s`:
+ *  a text node of no-break or ideographic spaces renders a blank of its glyphs' width and is the passage's text, painted as on
+ *  main, whatever stands beside it (round 9's readings judged it with `\s` through stripWs and unpainted the `&nbsp;` spacer
+ *  cell of a table, a `<p>&nbsp;</p>` spacer, a nbsp before a paragraph's first inline element or alone between two `<br>`s and
+ *  a paragraph's full-width indent, each a visible 7.89 x 16 or 18 x 16 px mark on main and at round 8; the Slice 4 review,
+ *  round 10); and a text node of zero-width format characters alone (ZERO_WIDTH_ONLY) renders no glyph anywhere and is skipped
+ *  whatever stands beside it (round 11). The rule for a collapsible-whitespace node is CSS's own, read from the DOM: the node
+ *  renders a space only when the browser lays out content on BOTH sides of it within its line (contentBeside), and is skipped
+ *  otherwise. That covers, on either side, a block-level box or a `<br>` (isLineEdge over BLOCK_BOXES; the white space before a
+ *  break is its line's trailing space and the white space after it the next line's leading space), the edge of the block
+ *  the node stands in, its leading or trailing white space, whatever stands on the node's other side (an author's
+ *  `<figure>\n<img>\n<figcaption>` has its image beside such a node at both edges), reached through any inline ancestors
+ *  (`<p><em> <b>a</b></em></p>`) and past any inline element that renders nothing (an `<a name="x"></a>` anchor or an icon
+ *  `<i></i>` leading a list item, an anchor closing one, a `hidden` element; round 11, where the neighbour reading stopped at
+ *  any element and painted the collapsed space beside such an element as the 4 px box under LI, DIV and BLOCKQUOTE, where
+ *  main's container rule had skipped it, and under P, where main painted it too), and, before the node, text ending in
+ *  collapsible white space (`<b>Label: </b> <i>value</i>`, `[docs ](#a) *x*`, a `<code>x </code>` span, a `<br>` closing the
+ *  neighbour), after which the browser collapses the node's own space (round 11, the same history); the after side reads
+ *  no text, since the node is the retained space before text that begins with one. Not under `pre`, where white space is
+ *  preserved and nothing is skipped (round 11 reads the ancestors; before it the parent's tag alone, so a node deeper in a code
+ *  block was judged as prose). And one guard: a text node directly under the render root is skipped whenever the block pairing
+ *  would not read it as content (`\s`-only through stripWs, analyzeRendered's own test), a no-break space included, since the
+ *  top-level children are what the pairing reads and a mark there is an element the next paint's pairing meets (the "\n" an
+ *  author's html block of two `<img>` lines leaves between them at the top level; anchor-map-obsidian.test.ts holds that no
+ *  mark is a top-level node).
+ *  History. Main's rule, kept through round 9, read the parent's tag from a list of block containers (UL, OL, LI, BLOCKQUOTE,
+ *  DIV, TABLE, THEAD, TBODY, TR, SECTION, ARTICLE, BODY; TD never on it, which is why the `&nbsp;` spacer cell painted on main)
+ *  and skipped the node whatever its neighbours, so a rendered space between two inline children of a list item (`- **a** *b*`,
+ *  a task item's after its checkbox), a centred badge row (`<div align="center"><a><img></a> <a><img></a></div>`), an html
  *  blockquote or a section was never painted and the ring broke at it, two ringed boxes with a bare gap of the space's width
- *  (4.75 px under the viewer's sheet), on main too; the two readings and the root guard cover every case the list did (a
- *  container's block children stand beside the node, and its leading and trailing white space is its edge), so the list is
- *  gone (round 10; md-config-paint-rendered-space.test.ts drives both changes from the paragraph before the block to the
- *  paragraph after, and its browser leg measures the rendered blank before the paint and the mark after, the layout box for
- *  box unchanged). The parent's tag alone had
- *  missed the "\n" text nodes marked leaves between the blocks inside a folded callout's `details` (md-config.ts:
- *  `<details><summary>..</summary><p>..</p>\n<p>..</p>\n</details>`), DETAILS not being on the list, so a comment across two
- *  body paragraphs of a fold, or from a fold's last block into the block after it, wrapped each such node as a mark of its
- *  own: an empty ringed box on a line between the blocks (4 x 18 px in the viewer), the details 22 px taller per mark and
- *  everything below moved down, on every paint pass and in the composer's pending target; a closed fold showed the box the
- *  moment a card's quote button opened it. The same markdown was a plain blockquote on main and painted clean (round 8;
+ *  (4.75 px under the viewer's sheet), on main too; round 10 removed the list for the neighbour and edge readings
+ *  (md-config-paint-rendered-space.test.ts drives both changes from the paragraph before the block to the paragraph after, and
+ *  its browser leg measures the rendered blank before the paint and the mark after, the layout box for box unchanged). The
+ *  parent's tag alone had missed the "\n" text nodes marked leaves between the blocks inside a folded callout's `details`
+ *  (md-config.ts: `<details><summary>..</summary><p>..</p>\n<p>..</p>\n</details>`), DETAILS not being on the list, so a
+ *  comment across two body paragraphs of a fold, or from a fold's last block into the block after it, wrapped each such node as
+ *  a mark of its own: an empty ringed box on a line between the blocks (4 x 18 px in the viewer), the details 22 px taller per
+ *  mark and everything below moved down, on every paint pass and in the composer's pending target; a closed fold showed the box
+ *  the moment a card's quote button opened it. The same markdown was a plain blockquote on main and painted clean (round 8;
  *  anchor-map-obsidian.test.ts, md-config-fold-paint-browser.test.ts over the real bundle). Round 8's neighbour rule alone
  *  still ringed the node between an author's `<figure>` or `<details>` and its `<img>` (the parent's edge, an inline
  *  neighbour), the one beside a `<center>`, `<menu>`, `<dir>` or `<search>` (tags its list lacked) and the one between two
  *  `<br>`s, each pre-existing on main (round 9; anchor-map-obsidian.test.ts and md-config-paint-whitespace-browser.test.ts
- *  drive an author's figure, details and center with an image, the four tags and the double break through paintRendered
- *  from the paragraph before to the paragraph after). A whitespace-only text node between two INLINE elements, in a
- *  paragraph, a list item or any other block, is the passage's own space, rendered, and is painted. */
+ *  drive an author's figure, details and center with an image, the four tags and the double break through paintRendered from
+ *  the paragraph before to the paragraph after). Round 11's readings above are pinned by
+ *  md-config-paint-collapsed-blank.test.ts and its browser leg, each whitespace-only node measured before the paint. The
+ *  remaining shape, recorded and not changed (round 11): a collapsible space between two inline children at which the browser
+ *  BREAKS THE LINE is collapsed too (the line's trailing space) and is painted as the padding alone, a 4 x 18 px box at the end
+ *  of the line before the wrap (`- [Docs](a) [Guide](b) [API](c)` in a pane narrower than the item; a paragraph of the same
+ *  links shows the box on main). No reading of the DOM can tell where a line wraps; the fix would be a layout-time trim of
+ *  zero-width marks after the paint, out of this slice's scope and stale on the next resize. */
 const skipBlockWs = (t: DText, root: DNode): boolean => {
   const p = t.parentNode;
   if (!p || !isElement(p)) return false;
   if (p === root) return stripWs(t.data) === "";
+  if (ZERO_WIDTH_ONLY.test(t.data)) return true;
   if (!isCollapsibleWs(t.data)) return false;
-  const edge = p.tagName.toUpperCase() !== "PRE" && isBlockBox(p);
-  const before = besideNonWs(t, -1), after = besideNonWs(t, 1);
-  return (before === null ? edge : isLineEdge(before)) || (after === null ? edge : isLineEdge(after));
+  for (let a: DNode | null = p; a && a !== root; a = a.parentNode) if (isElement(a) && a.tagName.toUpperCase() === "PRE") return false;
+  return !contentBeside(t, -1, root) || !contentBeside(t, 1, root);
 };
 
 /** A formula element (FORMULA_CLASSES) that stands in a line of text: KaTeX's inline layout, its flag on TeX it could not parse,
@@ -1593,7 +1682,7 @@ function highlightUnits(root: DNode, from: DNode = root, out: DNode[] = []): DNo
 function follows(a: DNode, b: DNode): boolean {
   const p = a.parentNode;
   if (!p || b.parentNode !== p) return false;
-  if (a.nextSibling !== undefined) return a.nextSibling === b;   // the DOM's pointer, constant time (besideNonWs's note)
+  if (a.nextSibling !== undefined) return a.nextSibling === b;   // the DOM's pointer, constant time (sibling's note)
   const kids = p.childNodes;
   for (let i = 0; i < kids.length; i++) if (kids[i] === a) return kids[i + 1] === b;
   return false;

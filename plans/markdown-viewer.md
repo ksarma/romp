@@ -1281,15 +1281,35 @@ as built departs from the text above, why, and which test holds each rule:
    unpainted the `&nbsp;` spacer cell of a table, a `<p>&nbsp;</p>` spacer, a nbsp before a paragraph's first inline
    element or alone between two `<br>`s and a paragraph's full-width indent, each a visible 7.89 x 16 or 18 x 16 px
    mark on main and at round 8); and main's own first reading, the parent's tag from a list of block containers (UL,
-   OL, LI, BLOCKQUOTE, DIV, TABLE and its parts, SECTION, ARTICLE, BODY), is gone, since it skipped the rendered space
-   between two inline children of a list item (`- **a** *b*`, a task item's after its checkbox), a centred badge row,
-   an html blockquote or a section whatever the neighbours, and the ring broke at it, on main too; the neighbour and
-   edge readings cover every block-child case the list did, and one guard stays, for the render root alone, whose
-   whitespace node is the block pairing's (`\s`-only, the pairing's own test) and never a mark. The consequence:
-   `<div>&nbsp;</div>` and `<li>&nbsp;</li>`, which the list skipped, paint, a blank line the note renders
+   OL, LI, BLOCKQUOTE, DIV, TABLE, THEAD, TBODY, TR, SECTION, ARTICLE, BODY; TD was never on it, which is why the
+   `&nbsp;` spacer cell painted on main), is gone, since it skipped the rendered space between two inline children of
+   a list item (`- **a** *b*`, a task item's after its checkbox), a centred badge row, an html blockquote or a section
+   whatever the neighbours, and the ring broke at it, on main too; the neighbour and edge readings cover every
+   block-child case the list did, and one guard stays, for the render root alone, whose whitespace node is the block
+   pairing's (`\s`-only, the pairing's own test) and never a mark. The consequence: `<div>&nbsp;</div>` and
+   `<li>&nbsp;</li>`, which the list skipped, paint, a blank line the note renders
    (md-config-paint-rendered-space.test.ts drives every shape from the paragraph before to the paragraph after over a
    stand-in that keeps `&nbsp;` as U+00A0, the sibling stand-ins decoding it to a plain space; its browser leg
    measures the blank before the paint and the mark after, the layout box for box unchanged).
+   Round 11 finished the skip's reading of the DOM in three places, each shape measured at 0 px before the paint in
+   Chromium and painted by round 10 as the sheet's 4 px of padding around nothing: a text node of zero-width format
+   characters alone (U+FEFF, which is `\s` and which round 10's ASCII alphabet made text, U+200B to U+200D, U+2060 to
+   U+2064) is skipped wherever it stands (anchor-map.ts ZERO_WIDTH_ONLY; as a neighbour such a character keeps the
+   space after it rendered, and a node mixing them with ASCII white space is text, painted); a whitespace-only node is
+   judged by what the browser lays out on each side of it within its line (contentBeside), read past inline elements
+   that render nothing (an `<a name>` anchor or an icon `<i>` leading a list item, an anchor closing one, an empty
+   span, sup or code, a `hidden` element, one nested in another) and through inline ancestors
+   (`<p><em> <b>a</b></em></p>`), a block inside an inline splitting the line and an atomic inline (an image, a
+   checkbox, an empty `kbd`, `a.fv-embed`) counting as content, where round 10's reading stopped at any element and
+   painted the collapsed space beside an empty anchor as the box under LI, DIV, BLOCKQUOTE and TD (main's container
+   rule had skipped it there; under P main painted it too); and, before the node, text ending in collapsible white
+   space or a `<br>` closing the neighbour (`<b>Label: </b> <i>value</i>`, `[docs ](#a) *x*`) collapses the node, the
+   after side reading no text since the node is the retained space before text that begins with one. Under `pre`
+   nothing is skipped, the ancestors read (a code line's indentation under the per-line wrap). A passage that is one
+   zero-width character alone gets a card and no highlight (md-config-paint-collapsed-blank.test.ts drives every shape
+   from the paragraph before to the paragraph after over a stand-in, with pointers and on the index path; its browser
+   leg measures each blank before the paint over the real bundle, 0 px skipped, a width painted, the layout box for
+   box unchanged).
    anchor-map-obsidian.test.ts and the browser leg select across the formula and get the TeX between. The fill's two
    fallback shapes, KaTeX's `span.katex-error`
    on TeX it cannot parse and the belt's `code.md-math-src` past a bound, are controls like `.katex` (anchor-map.ts
@@ -1707,7 +1727,21 @@ as built departs from the text above, why, and which test holds each rule:
    to the glyph after it: its highlight starts one glyph in (14 px at 14px sans-serif for U+3000) while the quote
    anchors; the trim is a pinned rule (anchor-map.test.ts, whitespace at the selection's edges), and a narrower
    alphabet is a change to the walk, the matching and the panel's normalize together, main's contract, for Slice 5's
-   painter items.
+   painter items. Open after the review round 11: a collapsible space between two inline children at which the browser
+   breaks the line is collapsed as the line's trailing space and is painted as the padding alone, a 4 x 18 px box at
+   the end of the line before the wrap (`- [Docs](a) [Guide](b) [API](c)` in a pane narrower than the item; a
+   paragraph of the same links shows the box on main, and round 10's rendered-space fix brought the shape to list
+   items, divs, blockquotes and sections); no reading of the DOM can tell where a line wraps, and the fix, a
+   layout-time trim of zero-width marks after the paint, is out of this slice's scope and stale on the next resize, so
+   it is recorded here and in skipBlockWs's header, for Slice 5's painter items; and a footnote definition's literal
+   separator, the space md-config.ts emits between the back link and the body for the author's space after the colon
+   that the marker's regex consumes (marked's task item puts one after its checkbox the same way), is a rendered space
+   at the head of the body, so a highlight across the note paints it as a mark of its own beside the back link, which
+   no mark holds, as it paints the task item's after its checkbox (a ruling, not a slip: the separator stays, since
+   without it the note's copied and accessible text reads `1alpha` for `1 alpha`, an inline-block adding no separator
+   of its own to a selection's text, and the sheets' margin-right alone halves the label's gap, 7.45 px to 3.86 at
+   15px; md-config-footnote-paint.test.ts and its browser leg pin the mark; a paint rule skipping a rendered space
+   beside a control would skip the checkbox's too and reopen round 10's pin).
 
 ### Slice 5: comments anchor on real notes
 

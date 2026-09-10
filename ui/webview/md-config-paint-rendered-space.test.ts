@@ -10,11 +10,12 @@
 //    spaces is the passage's text wherever it stands, so `<div>&nbsp;</div>` and `<li>&nbsp;</li>`, which main's container rule
 //    skipped, paint too (a blank line the note renders).
 // 2. Main's first reading skipped any whitespace-only node whose PARENT was one of twelve block containers (UL, OL, LI,
-//    BLOCKQUOTE, DIV, TABLE and its parts, SECTION, ARTICLE, BODY), whatever its neighbours, so the rendered space between two
-//    inline children of a list item (`- **a** *b*`, a task item's after its checkbox), a centred badge row, an html blockquote
-//    or a section was never painted and the highlight ring broke at it: two ringed boxes with a 4.75 px bare gap, on main too.
-//    The neighbour and edge readings cover every block-child case the list covered, so the list is gone; what stays is a guard
-//    for the render root alone (its white space is the block pairing's, never the passage's: a mark there would be a top-level
+//    BLOCKQUOTE, DIV, TABLE, THEAD, TBODY, TR, SECTION, ARTICLE, BODY; TD never among them, so the spacer cell of point 1
+//    painted on main), whatever its neighbours, so the rendered space between two inline children of a list item
+//    (`- **a** *b*`, a task item's after its checkbox), a centred badge row, an html blockquote or a section was never painted
+//    and the highlight ring broke at it: two ringed boxes with a 4.75 px bare gap under the viewer's sheet, on main too. The
+//    neighbour and edge readings cover every block-child case the list covered, so the list is gone; what stays is a guard for
+//    the render root alone (its white space is the block pairing's, never the passage's: a mark there would be a top-level
 //    node the next paint's pairing meets).
 // Every scene is driven through paintRendered from the paragraph before the block to the paragraph after, over marked with the
 // one configuration (md-config.ts) and a DOM stand-in that keeps `&nbsp;` as U+00A0 (the sibling files' stand-ins decode it to a

@@ -228,7 +228,13 @@ export const frontMatter: TokenizerAndRendererExtension = {
 // children of a div paints too; the paragraph stands on GitHub's shape; md-config-footnote-paint.test.ts and its browser
 // leg). The div keeps the footnote's own spacing and rail, so the sheets give the inner paragraph no margin of its own
 // (`.md .md-footnote p, .fileview-md .md-footnote p`, both sheets): the box is the one the div had, measured equal to the
-// pixel.
+// pixel. The literal space between the back link and the body stands in for the author's space after the colon, which
+// FOOTNOTE_DEF_HEAD_RE consumes, as marked's task item puts one between its checkbox and the item's text (`checkbox + ' ' +
+// text`); it stays: the note's copied and accessible text reads `1 alpha`, not `1alpha` (an inline-block adds no separator of
+// its own to a selection's text, measured in headless Chromium), and the sheets' margin-right alone halves the label's gap
+// (7.45 px to 3.86 at 15px). When a highlight crosses the note, that space is a rendered space at the head of the body and
+// paints as a mark of its own beside the back link, which no mark holds, as the task item's after its checkbox does (the
+// 2026-09-09 review, round 11: a ruling, not a slip; md-config-footnote-paint.test.ts and its browser leg pin the mark).
 export const FOOTNOTE_CLASS = "md-footnote";
 export const FOOTNOTE_REF_CLASS = "md-fnref";
 export const FOOTNOTE_BACK_CLASS = "md-fnback";
