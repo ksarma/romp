@@ -53116,7 +53116,7 @@ window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='logUn
 var KINDS=['conn','limit','judge','warn','stalled','nudge','retry','apierror','sdk','sync','locate','cleared','refused','undelivered'];
 var KINDLBL={conn:'offline',limit:'limit',judge:'judge',warn:'warning',stalled:'stalled',
 nudge:'follow-up failed',retry:'retrying',apierror:'api error',sdk:'sdk',sync:'fleet sync',
-locate:'jump failed',cleared:'cleared',refused:'not saved',undelivered:'not sent'};
+locate:'jump failed',cleared:'cleared',refused:'refused',undelivered:'not sent'};
 // what each kind MEANS (the user 2026-07-28: the tooltip should explain the badge, not just say
 // show/hide) — worn by the filter toggles AND every entry's chip
 var DESC={conn:"the dashboard lost its live connection to the kernel for a visible pane; it reconnects on its own",

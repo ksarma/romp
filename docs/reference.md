@@ -2745,7 +2745,7 @@ Three small files there hold settings you set by hand: `session-flags.json`
 (the saved tab and lane order) and `notify-cards.json` (the bell overrides). A
 change to one of them is refused, never written over an empty, when the file
 exists but cannot be read; the refusal reaches the dashboard's error center
-under the `not saved` kind, with the reason, and the same change can be tried
+under the `refused` kind, with the reason, and the same change can be tried
 again. A file whose bytes cannot be parsed (a torn write) is moved aside, never
 deleted, to `<file>.corrupt-<UTC stamp>` in the same directory (a `-1`, `-2`
 suffix when two land in the same second), the store starts over empty, and an

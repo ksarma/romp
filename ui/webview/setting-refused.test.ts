@@ -163,7 +163,10 @@ test("the shell's bell knows the `refused` kind: listed, labelled, explained, an
   // renders as an unlabelled entry with no way to mute it. Its own kind, so muting `warn` (the judge's
   // anomaly stamp) never mutes a change of yours that did not land
   assert.match(KERNEL, /var KINDS=\[[^\]]*'refused','undelivered'\]/);
-  assert.match(KERNEL, /refused:'not saved'/);
+  // the chip reads "refused" (review round 3, 2026-09-10): it read "not saved" beside a restart the manager refused
+  // and a state file that could not be read, two of the three things the kind holds
+  assert.match(KERNEL, /refused:'refused'/);
+  assert.doesNotMatch(KERNEL, /refused:'not saved'/);
   // the tooltip covers BOTH things filed under the kind (review find, 2026-09-08): a change that did not
   // save (a read OR a write fault), and a state file that could not be read or was moved aside
   assert.match(KERNEL, /refused:"a setting that could not be saved, a state file that could not be read, or a restart the manager refused\. A change you made \\u2014 a lane or tab setting, a card bell, a lane order \\u2014 was not saved because romp could not read or write the file that holds it/);
