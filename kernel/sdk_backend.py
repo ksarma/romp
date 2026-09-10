@@ -4778,7 +4778,8 @@ def _call_on_loop(loop, fn, *args) -> bool:
     loop: asyncio.run closes the loop when the session thread ends and SdkSession.loop is never nulled, and
     the crash heal keeps a dying session reachable through its scope reads (before the pop, round 4), so a
     kernel-thread call that reaches it in that window (SdkBackend.kill through shutdown, request_reconnect,
-    interrupt, the live model and mode switches, resolve_ask, refresh_usage, stop_task, rewind_files) must
+    interrupt, the live model and mode switches, a held pick's withdrawal, resolve_ask, refresh_usage, stop_task,
+    rewind_files) must
     not raise RuntimeError('Event loop is closed') out of the kernel's own call (round 5, correctness-3:
     kill raised it, so the end landed but the WS op's tail was skipped and a traceback logged). Returns
     whether the call was scheduled; a closed loop runs nothing, and the caller's outcome says so where one
@@ -6045,7 +6046,10 @@ class SdkSession:
         if how == "withdrawn" and not (present or rode):
             how = "repeat"
         if self.loop is not None and not self.ended:
-            self.loop.call_soon_threadsafe(self._settle_withdrawal, surface, how)
+            # through the guarded helper, as every kernel-thread call onto a session's loop is (_call_on_loop): a
+            # withdrawal that reaches a dying session in the crash heal's window (its loop closed, the session
+            # not yet popped) schedules nothing instead of raising RuntimeError out of the setter
+            _call_on_loop(self.loop, self._settle_withdrawal, surface, how)
 
     def _launched_shape(self) -> dict:
         """The shape the RUNNING process launched with, as _connect_landed stamped it, in _launch_shape's keys:
