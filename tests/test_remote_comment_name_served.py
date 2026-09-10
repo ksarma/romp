@@ -16,6 +16,7 @@ kernel has no SDK to fork the thread), so the refusal toast itself is pinned at 
 (tests/test_comment_name_refusal_log.py). Skips LOUDLY without the extension deps or a Playwright browser.
 SYNTHETIC fixtures only (host TESTHOST, session web, the notes-api demo world)."""
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -168,11 +169,7 @@ class ServedRemoteCommentName(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="remote-comment-name-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            shutil.rmtree(cls.lab, ignore_errors=True)
-            raise unittest.SkipTest("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
-        shutil.copytree(os.path.join(EXT, "dist"), os.path.join(cls.lab, "dist"))
+        lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.procs = []
         t0 = int(time.time()) - 900
         recs = [
