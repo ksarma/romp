@@ -117,8 +117,9 @@ class ServedLabsKeyTheSameInputs(unittest.TestCase):
     skipping, while the served labs themselves still skip there (the harness stays strict: nothing in
     tests/lab_dist.py knows the stand-in exists). A skip raised inside the stand-in's block is a FAILURE naming
     tests/lab_dist_stub.py: it means the preload did not take effect (a node wrapper or a policy dropping
-    NODE_OPTIONS) or the reader filed as the environment a request the preload declined. The one skip left is
-    node itself missing from PATH."""
+    NODE_OPTIONS), the reader filed as the environment a request the preload declined, or the config resolved the
+    package with require.resolve, which the stand-in does not cover (only Module._load is wrapped). The one skip
+    left is node itself missing from PATH."""
 
     def test_every_kernel_bundle_input_is_keyed_by_the_served_labs_build(self):
         cv = km.ROOT / "vscode-extension"
