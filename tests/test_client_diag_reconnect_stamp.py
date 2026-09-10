@@ -76,6 +76,10 @@ DECLARED = "open();ready();drop();"                                   # the bund
 GATED = "open();drop();"                                              # the socket died before the bundle said ready
 CLOSING = "open();sock().readyState=2;ready();sock().readyState=3;sock().onclose();redial();"   # the ready landed while the socket was closing
 
+# the wsclose row's data keys, all eight: a ninth under any spelling (readyQueued, rq) would keep a source-text pin
+# green, so every test that holds the executed row asserts the whole list
+ROW_KEYS = ["app", "bundleReady", "code", "everConnected", "quietMs", "reason", "sinceOpenMs", "wasClean"]
+
 
 def _shim_close(scenario, app="chat"):
     """Run the REAL shim core under node, built for `app`, through `scenario`, then open the redial socket (its
@@ -168,6 +172,7 @@ class TheShimRowCarriesBundleReady(unittest.TestCase):
         q, kinds, closes = _shim_close(DECLARED)
         self.assertTrue(q.endswith("&reconnect=1"), q)
         self.assertEqual(len(closes), 1)
+        self.assertEqual(sorted(closes[0]["data"]), ROW_KEYS)
         self.assertIs(closes[0]["data"]["bundleReady"], True)
         self.assertIs(closes[0]["data"]["everConnected"], True)
         self.assertEqual(kinds, ["wsclose", "ready"], "the queued row flushes ahead of the re-sent ready")
@@ -176,6 +181,7 @@ class TheShimRowCarriesBundleReady(unittest.TestCase):
         q, kinds, closes = _shim_close(GATED)
         self.assertNotIn("reconnect", q, q)
         self.assertEqual(len(closes), 1)
+        self.assertEqual(sorted(closes[0]["data"]), ROW_KEYS)
         self.assertIs(closes[0]["data"]["bundleReady"], False)
         self.assertIs(closes[0]["data"]["everConnected"], True, "everConnected alone could not tell this shape from the declared one")
         self.assertEqual(kinds, ["wsclose"], "no ready to re-send: the bundle has not sent its own")
@@ -184,6 +190,7 @@ class TheShimRowCarriesBundleReady(unittest.TestCase):
         q, kinds, closes = _shim_close(CLOSING)
         self.assertNotIn("reconnect", q, "the ready is still queued for this open, so the redial carries no term")
         self.assertEqual(len(closes), 1)
+        self.assertEqual(sorted(closes[0]["data"]), ROW_KEYS)
         self.assertIs(closes[0]["data"]["bundleReady"], True)
         self.assertEqual(kinds, ["ready", "wsclose"], "the bundle's own ready queued first (during the close), once, then the row")
 
@@ -235,6 +242,7 @@ class ThePairInTheLog(_State):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["what"], "wsclose")
         self.assertEqual(rows[0]["wid"], WID)
+        self.assertEqual(sorted(rows[0]["data"]), ROW_KEYS)
         return rows[0]["reconnect"], rows[0]["data"]["bundleReady"]
 
     def test_declared(self):
