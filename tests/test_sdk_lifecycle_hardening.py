@@ -2692,6 +2692,47 @@ class CrashHeal(unittest.TestCase):
         self.assertEqual(sb.last_state_value(Path(d), self.SID), "working", "still cut for the next kernel restart")
         self.assertTrue(s._queue_closed, "the refusal's write closes the queue like the resume's")
 
+    def test_a_send_in_the_crash_loop_refusals_pop_to_write_gap_lands_behind_the_parked_text(self):
+        # round 7 (tests-2): the crash-loop refusal writes the sealed queue and pops the session in one hold of be._lock,
+        # like the resume (round 6, tests-1), but only the resume's hold was pinned: with the refusal's write dedented
+        # out of its hold every named module stayed green while a send whose _ensure ran in the gap spawned the next
+        # session from the pre-write reg and its persist put [B] over the parked [A]. The heal thread's first write is
+        # slowed to hold the gap open (the refusal writes no nudge, so no nudge condition); the send in the gap must
+        # block on the hold and spawn from the written reg, so the parked text and the new one are queued in order.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        be._heal_attempts[self.SID] = 1
+        logs = []
+        be._log_cb = logs.append
+        with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
+            self.assertTrue(be.send(self.SID, "A"), "the send during the reads is accepted")
+            self.assertEqual(s.pending(), ["A"])
+            orig_write, slowed = sb.write_reg, []
+
+            def slow_write(state_dir, sid, reg):
+                if threading.current_thread() is s.thread and not slowed:
+                    slowed.append(True)
+                    time.sleep(0.5)
+                return orig_write(state_dir, sid, reg)
+            with mock.patch.object(sb, "write_reg", slow_write):
+                sent.set()
+                deadline = time.time() + 10
+                while not s._queue_closed and time.time() < deadline:
+                    time.sleep(0.001)
+                self.assertTrue(s._queue_closed, "the refusal folded the queue")
+                self.assertTrue(be.send(self.SID, "B"), "the send in the gap is accepted")
+                s.thread.join(10)
+            self.assertFalse(s.thread.is_alive())
+            self.assertEqual(slowed, [True], "the refusal's write was held open once")
+            self.assertTrue(any("crash loop" in m for m in logs), logs)
+            rep = be.sessions.get(self.SID)
+            self.assertIsNotNone(rep, "the send in the gap made the next start (the refusal itself spawns nothing)")
+            self.assertIsNot(rep, s)
+            self.assertEqual(rep.pending(), ["A", "B"], "spawned from the written reg: the parked text, then the send in the gap")
+            rep._persist_queue()
+            self.assertEqual([sb._queue_text(e) for e in sb.read_reg(Path(d), self.SID).get("queue") or []], ["A", "B"])
+
     def test_a_user_end_during_the_heals_scope_read_ends_the_session_without_a_raise(self):
         # round 5 (D3: correctness-3, regression-1, kernel-2): be.kill (the endSession op, the /kill route, end-on-idle)
         # reaches the dying session during the read; its shutdown scheduled on the closed loop and raised
@@ -2740,6 +2781,46 @@ class CrashHeal(unittest.TestCase):
         self.assertEqual([sb._queue_text(e) for e in reg.get("queue") or []], ["peer text"],
                          "the sealed text reached the reg, with no nudge (no heal ran)")
         self.assertTrue(s._queue_closed, "the write closed the queue")
+
+    def test_a_send_in_the_ended_paths_pop_to_write_gap_lands_behind_the_sealed_text(self):
+        # round 7 (tests-2): the ended-during-the-reads path of _on_session_gone (a shutdown after the cut was detected
+        # and the mirror sealed: no heal, but the sealed queue still owes the reg its texts) writes the sealed queue in
+        # the pop's own hold of be._lock, and that hold had no test either: with the write dedented out of it a send
+        # whose _ensure ran in the gap started the next session from the pre-write reg and its persist put [B] over
+        # the sealed [A]. The end is s.shutdown(), not be.kill: kill flips alive off, so a send in the gap finds no
+        # session to start and the mutant passes; a shutdown leaves the reg alive and the next send starts a session.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
+            self.assertTrue(be.send(self.SID, "A"), "the send during the reads is accepted")
+            self.assertEqual(s.pending(), ["A"])
+            s.shutdown()
+            self.assertTrue(s.ended)
+            orig_write, slowed = sb.write_reg, []
+
+            def slow_write(state_dir, sid, reg):
+                if threading.current_thread() is s.thread and not slowed:
+                    slowed.append(True)
+                    time.sleep(0.5)
+                return orig_write(state_dir, sid, reg)
+            with mock.patch.object(sb, "write_reg", slow_write):
+                sent.set()
+                deadline = time.time() + 10
+                while not s._queue_closed and time.time() < deadline:
+                    time.sleep(0.001)
+                self.assertTrue(s._queue_closed, "the ended path folded the queue")
+                self.assertTrue(be.send(self.SID, "B"), "the send in the gap is accepted")
+                s.thread.join(10)
+            self.assertFalse(s.thread.is_alive())
+            self.assertEqual(slowed, [True], "the ended path's write was held open once")
+            rep = be.sessions.get(self.SID)
+            self.assertIsNotNone(rep, "the send in the gap started the next session")
+            self.assertIsNot(rep, s)
+            self.assertEqual(rep.pending(), ["A", "B"], "started from the written reg: the sealed text, then the send in the gap")
+            self.assertFalse(any(sb.is_crash_resume_nudge(t) for t in rep.pending()), "no nudge: no heal ran")
+            rep._persist_queue()
+            self.assertEqual([sb._queue_text(e) for e in sb.read_reg(Path(d), self.SID).get("queue") or []], ["A", "B"])
 
     def test_every_kernel_thread_entry_point_tolerates_a_closed_loop(self):
         # round 5 (D3): every call the kernel thread can make on a session whose loop asyncio.run has closed returns
