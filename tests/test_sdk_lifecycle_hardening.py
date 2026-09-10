@@ -2520,6 +2520,49 @@ class CrashHeal(unittest.TestCase):
             self.assertTrue(any("queue closed under the send" in m for m in logs), logs)
             self.assertEqual(be.problems(), [], "the re-resolve is the designed path, not a problem")
 
+    def test_a_rewind_during_the_heals_scope_read_is_refused_and_the_replacement_takes_the_nudge_alone(self):
+        # round 7 (kernel-3): the rewind arm queued its edit through _enqueue_resolving, so an edit that reached the
+        # dying session's queue (during the reads, or re-resolved after the fold) was folded behind the crash nudge,
+        # and the replacement, seeded from a reg carrying the rewind fields, fed the nudge as the rewound branch's
+        # first turn; a refused --resume-session-at then popped the nudge as the held edit (_rewind_failed) and
+        # delivered the edit on the plain reconnect. The arm refuses a sealed or closed queue now, with the rewind
+        # fields cleared and no reconnect asked of the dying session, and never re-resolves. The busy gate stands
+        # down here: the dying session's inflight is the cut marker and refuses the arm for busyness first, so the
+        # sealed refusal is reached on its own.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        cwd = os.path.join(d, "proj")
+        os.makedirs(cwd)
+        _reg(d, self.SID, cwd=cwd)
+        with mock.patch.dict(os.environ, {"HOME": d}):
+            tp = sb.transcript_path(cwd, self.SID)
+            os.makedirs(os.path.dirname(tp), exist_ok=True)
+            with open(tp, "w") as f:
+                f.write(json.dumps({"type": "user", "uuid": "t1"}) + "\n")
+            with self._heal_blocked_in_the_show(d, be) as (s, sent, calls), \
+                    mock.patch.object(be, "busy", return_value=False):
+                reconnects = []
+                s.request_reconnect = lambda *a, **k: reconnects.append(True)
+                ok, err = be.rewind(self.SID, "t1", "the edited text")
+                self.assertFalse(ok, "the arm is refused on the sealed session")
+                self.assertIn("not queued", err)
+                self.assertEqual(s.pending(), [], "the edit reached no queue")
+                reg = sb.read_reg(Path(d), self.SID)
+                self.assertEqual((reg.get("rewindTo"), reg.get("rewindLeaf"), reg.get("rewindBare"), reg.get("rewindWait")),
+                                 ("", "", False, False), "the rewind fields are cleared")
+                self.assertEqual(reconnects, [], "no reconnect is asked of the dying session")
+                sent.set()
+                s.thread.join(10)
+                rep = be.sessions.get(self.SID)
+                self.assertIsNotNone(rep)
+                self.assertIsNot(rep, s, "the heal spawned the replacement")
+                self.assertEqual(rep.pending(), [sb.CRASH_RESUME_NUDGE_OOM], "the replacement's queue is the nudge alone")
+                self.assertEqual((rep._rewind_to, rep._rewind_leaf, rep._rewind_bare), ("", "", False),
+                                 "no rewind rides with the replacement")
+                rep._persist_queue()
+                self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
+
     def test_an_unreadable_reg_skips_the_sealed_queue_write_and_the_heal_says_so(self):
         # round 6 (correctness-2): _write_sealed_queue rebuilt the reg from `read_reg(...) or {"sid": ...}`, so a
         # transient read failure of an EXISTING reg wrote a gutted {sid, queue} reg with no alive, name, cwd or

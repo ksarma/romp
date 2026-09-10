@@ -11395,12 +11395,16 @@ class SdkBackend:
             return False, "the session could not start"
         s._rewind_leaf, s._rewind_to = leaf, target_uuid   # already-running thread: the reg seed didn't apply
         s._rewind_bare = bare
-        # a queue the crash heal closed under the enqueue re-resolves to the replacement, which takes the edit
-        # text (round 6, regression-1); the replacement is seeded from the reg the rewind fields were written
-        # to above, so the rewind rides with it. Nothing is enqueued for a bare rollback.
+        # The edit is queued on this session itself, never through _enqueue_resolving (round 7, kernel-3): a
+        # queue the crash heal has sealed (SdkSession._queue_sealed, set at the cut) or closed (enqueue's
+        # False, the fold) belongs to a dying session whose replacement is seeded with the crash nudge, so an
+        # edit re-resolved to it would ride the rewound branch behind the nudge, and a refused
+        # --resume-session-at would pop the nudge as the held edit (_rewind_failed) and deliver the edit on
+        # the plain reconnect. The arm refuses instead, its fields cleared, and asks no reconnect of the dying
+        # session. The sealed flag is read with getattr, as SdkBackend.interrupt reads it: the delete-while-busy
+        # doubles skip __init__. Nothing is enqueued for a bare rollback.
         if not bare:
-            s = self._enqueue_resolving(sid, s, lambda s: s.enqueue(text))
-            if not s:
+            if getattr(s, "_queue_sealed", False) or s.enqueue(text) is False:
                 self._update_reg(sid, rewindTo="", rewindLeaf="", rewindBare=False, rewindWait=False)
                 return False, "the session could not take the edit; it was not queued"
         s.request_reconnect()   # idle → reconnects now; a fresh thread's FIRST connect applies the flag
@@ -11562,16 +11566,18 @@ class SdkBackend:
 
     def _enqueue_resolving(self, sid: str, s: SdkSession, attempt) -> "SdkSession | None":
         """Queue a text on the session `sid` resolves to, re-resolving the sid when the session's queue CLOSED
-        under the attempt (round 5, kernel-3; one helper for send, deliver and the rewind's edit text since
-        round 6, regression-1, when deliver ignored the refusal and reported a text it had dropped as
-        delivered). `attempt(s)` runs the enqueue on `s` and returns what it returned: False, the closed
-        queue's answer (SdkSession.enqueue), means the session's crash heal folded its pending into the reg
-        and popped it between the caller's _ensure and the enqueue (SdkSession._queue_closed), so the text
-        reached no queue; any other value (a double's None too) is a queued text. The sid resolves to the
-        replacement now (or spawns it from the reg the heal wrote, nudge first), which takes the text in
-        order. Bounded to three attempts: a replacement that dies inside the same window is a crash loop,
-        which the heal refuses to respawn. Returns the session the text was queued on; None when the sid
-        stopped resolving (the caller's own False) or the bound was hit (logged as a problem)."""
+        under the attempt (round 5, kernel-3; one helper for send and deliver since round 6, regression-1,
+        when deliver ignored the refusal and reported a text it had dropped as delivered; the rewind arm
+        used it too until round 7, kernel-3, and refuses a sealed or closed queue instead, since its edit
+        must not ride the replacement behind the crash nudge). `attempt(s)` runs the enqueue on `s` and
+        returns what it returned: False, the closed queue's answer (SdkSession.enqueue), means the session's
+        crash heal folded its pending into the reg and popped it between the caller's _ensure and the
+        enqueue (SdkSession._queue_closed), so the text reached no queue; any other value (a double's None
+        too) is a queued text. The sid resolves to the replacement now (or spawns it from the reg the heal
+        wrote, nudge first), which takes the text in order. Bounded to three attempts: a replacement that
+        dies inside the same window is a crash loop, which the heal refuses to respawn. Returns the session
+        the text was queued on; None when the sid stopped resolving (the caller's own False) or the bound
+        was hit (logged as a problem)."""
         for _attempt in range(3):
             if attempt(s) is not False:
                 return s
@@ -13445,7 +13451,7 @@ class SdkBackend:
         # would have landed after the heal's write (the send's _ensure-to-persist gap, milliseconds under
         # load) cannot put a nudge-less list over the nudge or lose its text; the fold also closes the
         # queue, so a send that reaches this session after the fold is refused and re-resolves to the
-        # replacement (_enqueue_resolving: send, deliver and the rewind's edit text). The pop and the heal's
+        # replacement (_enqueue_resolving: send and deliver; the rewind arm refuses instead). The pop and the heal's
         # write share ONE hold of self._lock (round 6, tests-1; the heal's verdict, attempt count and nudge
         # are decided before it): _ensure reads the reg under that lock, so a send either resolves the
         # still-registered dying session (its enqueue folded, or refused after the fold and re-resolved) or
