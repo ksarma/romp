@@ -367,7 +367,9 @@ export interface FileViewActionCtx {
    *  file blocked the page for seconds a frame). A media body's own observers (the figure layer's, the PDF chunk's)
    *  already cover theirs, and the editor lays out its own text, so neither reflow fires for those */
   onRendered(cb: (why?: FileViewRenderWhy) => void): void;
-  /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
+  /** runs on mouseup/touchend with a non-collapsed selection inside the body, BEFORE the quote-chip gate, so it works with no chat pane.
+   *  A selection made or changed from the keyboard reaches no mouseup and runs no hook here: the comments panel listens to the
+   *  document's selectionchange itself for those (file-comments.ts onSelectionChange), so the chip's per-gesture fetch never runs per keystroke */
   onSelection(cb: (sel: Selection) => void): void;
   /** runs when a direct edit's save is acknowledged (fileSaved carries `logged` since Slice 1) */
   onSaved(cb: (info: { mtimeNs: string; logged: boolean }) => void): void;

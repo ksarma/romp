@@ -1070,6 +1070,39 @@ class Panel {
    *  subject is a picture, the picture itself; a passage is re-read from the live selection. hideFloatOnScroll compares the
    *  subject's rect now against it; cleared with the float (hideFloat), so no element of a swapped-out render is held. */
   floatAt: { top: number; right: number; img: HTMLElement | null } | null = null;
+  /** The selection the float was last offered beside (onSelection): its text and its two ends. The document's selectionchange
+   *  re-offers for a DIFFERENT selection only (onSelectionChange), so the seam's re-seat of the same selection after a paint
+   *  makes no second offer, and an offer a scroll hid stays hidden until the selection changes. */
+  offeredFor: { text: string; anchorNode: Node | null; anchorOffset: number; focusNode: Node | null; focusOffset: number } | null = null;
+  /** A pointer is down (the document's capture mousedown or touchstart; cleared at mouseup, touchend, touchcancel, or the dragend
+   *  of a press that became a drag of the selected text, which ends in no mouseup): a drag's every selectionchange is ignored, so
+   *  the drag keeps its one offer at mouseup (the seam's onSelect) and the float does not flicker mid-drag. */
+  pointerHeld = false;
+  pressBegan = (): void => { this.pointerHeld = true; };
+  pressEnded = (): void => { this.pointerHeld = false; };
+  /** The document's selection changed (plans/markdown-viewer.md Slice 5, item 9): a selection made or changed from the KEYBOARD
+   *  (Shift+Arrow over a selection a drag began, caret browsing, assistive technology) reaches no mouseup, so the seam's onSelect
+   *  never ran for it, the float stayed where a drag had left it while the selection shrank under it, and a keyboard selection
+   *  never offered Comment. Four guards, then the seam's own path (onSelection): nothing while a pointer is down (pointerHeld: the
+   *  drag's offer comes at mouseup); a collapsed selection, or one with an end outside the body (Ctrl+A puts one at the page's
+   *  start; a selection in the aside), hides a passage's float, since the passage it was offered for is no longer the selection
+   *  (a picture's float has no selection to answer to and stands); the selection the float is already offered beside changes
+   *  nothing (offeredFor: the seam's re-seat of the same ends after a paint fires this event too). A scroll fires no
+   *  selectionchange, so a float hidden by one stays hidden (hideFloatOnScroll); onRendered hides it on every paint and reflow.
+   *  Nothing while the editor holds the body: its selections are edits (the seam gates its own path the same way). */
+  onSelectionChange = (): void => {
+    if (this.pointerHeld || this.ctx.editing()) return;
+    const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    const body = this.ctx.body();
+    if (!sel || !sel.rangeCount || sel.isCollapsed || !body.contains(sel.anchorNode) || !body.contains(sel.focusNode)) {
+      if (this.floatAt && !this.floatAt.img) this.hideFloat();
+      return;
+    }
+    const was = this.offeredFor;
+    if (was && was.text === sel.toString() && was.anchorNode === sel.anchorNode && was.anchorOffset === sel.anchorOffset
+      && was.focusNode === sel.focusNode && was.focusOffset === sel.focusOffset) return;
+    this.onSelection(sel);
+  };
   regionLayers = new Map<Pictured, RegionLayer>();            // the overlays, one per picture in view — an <img>, or a PDF page's canvas (Slice 3/4; paintRegions)
   regionMarks = new Map<Pictured, RegionMark[]>();            // the rectangles the last region pass filed per picture: what a layer made late (onPageNear) paints
   pageWatch: IntersectionObserver | null = null;              // the panel's watch on PDF page shells with no overlay yet (watchPages → onPageNear)
@@ -1389,6 +1422,14 @@ class Panel {
     ctx.body().addEventListener("load", this.hideFloatOnScroll, true);
     ctx.body().addEventListener("scroll", this.hideFloatOnScroll, { passive: true });
     ctx.onSelection((sel) => this.onSelection(sel));
+    // ...and the keyboard's selections, which the seam's mouseup and touchend never see (onSelectionChange): the document's
+    // selectionchange, heard here and not in the seam, whose onSelect also seeds the quote chip with a fetch of the file per
+    // gesture, which must not run per keystroke (Slice 5, item 9). The press flag it reads rides the same document-capture
+    // mousedown and touchstart hideFloatOnDown hears, cleared when the press ends. Installed after the seam's hook, whose line
+    // file-view-place.test.ts reads beside the scroll listener's; removed at dispose with the float's other listeners.
+    for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.pressBegan, true);
+    for (const ev of ["mouseup", "touchend", "touchcancel", "dragend"]) document.addEventListener(ev, this.pressEnded, true);
+    document.addEventListener("selectionchange", this.onSelectionChange);
     // the layout changes that re-wrap the lines with no width report, so the seam fires no reflow (the width observer's report
     // is its only source): a figure's bytes landing (the same captured `load`; a gated figure's restored media loads through it
     // too) and a font face arriving (the document's FontFaceSet `loadingdone`: the sheet's faces load with `font-display: swap`,
@@ -1932,6 +1973,9 @@ class Panel {
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     this.ctx.body().removeEventListener("load", this.hideFloatOnScroll, true);
     this.ctx.body().removeEventListener("scroll", this.hideFloatOnScroll);
+    for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.pressBegan, true);
+    for (const ev of ["mouseup", "touchend", "touchcancel", "dragend"]) document.removeEventListener(ev, this.pressEnded, true);
+    document.removeEventListener("selectionchange", this.onSelectionChange);   // the keyboard's offer goes with the float (onSelectionChange)
     this.ctx.body().removeEventListener("load", this.scheduleRetrim, true);
     const fonts = typeof document !== "undefined" ? (document as any).fonts : null;
     if (fonts && typeof fonts.removeEventListener === "function") fonts.removeEventListener("loadingdone", this.scheduleRetrim);   // the document outlives the viewer
@@ -2402,6 +2446,7 @@ class Panel {
     const rect = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect();
     if (!rect.width && !rect.height) return;
     this.imageTarget = null;                           // a text selection replaces a picture as the float's subject
+    this.offeredFor = { text: sel.toString(), anchorNode: sel.anchorNode, anchorOffset: sel.anchorOffset, focusNode: sel.focusNode, focusOffset: sel.focusOffset };   // what a selectionchange compares with (onSelectionChange)
     this.showFloat(rect);
   }
   private showFloat(rect: { right: number; top: number }, img: HTMLElement | null = null): void {
