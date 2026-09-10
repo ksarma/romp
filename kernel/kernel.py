@@ -54423,15 +54423,27 @@ back.appendChild(panel);back.addEventListener('click',function(e){if(e.target===
 document.body.appendChild(back);}).catch(function(){});}catch(e){}}
 _fleetReport();
 // Factored to window.__rompRestart so the mobile bottom bar (no rail there) can trigger the same thing.
+// The kernel answers the POST with what its manager said (review round 2, 2026-09-10): on a 2xx the manager
+// took the restart, and this page polls /healthz for the new boot id as below; on a 4xx or 5xx (502: the
+// manager refused it) nothing is restarting, so there is no poll, the splash comes down, the rail button
+// comes back, and the kernel's error text (it carries the way out) lands in the bell under the refused kind.
+// The splash used to stay up for the full two-minute backstop and then reload onto the same kernel, hiding
+// the dashboard and the bell the whole time. A fetch that fails outright (the old kernel already gone) polls
+// as before: that is a restart under way, not an answer.
 window.__rompRestart=function(){
 var boot=document.getElementById('romp-boot');
 if(!boot){boot=document.createElement('div');boot.id='romp-boot';boot.innerHTML=__ROMP_LOADER__;document.body.appendChild(boot);}
 boot.classList.remove('gone');
-try{fetch('/restart',{method:'POST'}).catch(function(){});}catch(e){}
-var n=0;(function again(){setTimeout(function(){n++;
+var rf=document.getElementById('rail-refresh');
+function poll(){var n=0;(function again(){setTimeout(function(){n++;
 fetch('/healthz',{cache:'no-store'}).then(function(r){var b=(r&&r.ok)?r.headers.get('X-Romp-Boot'):null;
 if(b&&b!==__ROMP_BOOT__)location.reload();else if(n<240)again();else location.reload();})
-.catch(function(){if(n<240)again();else location.reload();});},500);})();};
+.catch(function(){if(n<240)again();else location.reload();});},500);})();}
+function refused(r){return r.json().catch(function(){return null;}).then(function(b){
+boot.classList.add('gone');if(rf){rf.style.pointerEvents='';rf.style.opacity='';}
+var why=(b&&b.error)||('The restart did not happen: the kernel answered HTTP '+r.status);
+try{window.__rompNotify&&window.__rompNotify('refused',why);}catch(e){}});}
+try{fetch('/restart',{method:'POST'}).then(function(r){if(r&&r.ok===false)return refused(r);poll();}).catch(function(){poll();});}catch(e){poll();}};
 var rf=document.getElementById('rail-refresh');
 if(rf)rf.onclick=function(){rf.style.pointerEvents='none';rf.style.opacity='0.5';window.__rompRestart();};
 })();

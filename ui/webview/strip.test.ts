@@ -7,7 +7,7 @@ import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { usageColor, fmtAgo, fmtReset, fmtUsd, fmtTok, usageWindows, apiCell, STRIP_PANES, fillHostSelect, droppedRowsNote } from "./strip";
+import { usageColor, fmtAgo, fmtReset, fmtUsd, fmtTok, usageWindows, apiCell, STRIP_PANES, fillHostSelect, droppedRowsNote, restartFromStrip } from "./strip";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 test("fmtTok: 3 significant figures at every magnitude (the user 2026-08-13)", () => {
@@ -80,6 +80,57 @@ test("the strip carries the rail's controls: refresh, network popover, pane quic
   for (const ep of ["/ssh-hosts", "/tunnels", "/tunnels/detach", "/tunnels/update", "/tunnels/start"])
     assert.ok(src.includes(ep), `the network popover must drive ${ep} (the rail twin)`);
   assert.ok(src.includes('{ type: "openPane", pane: p.key }'), "quick-opens post openPane to the host");
+});
+
+// The kernel answers POST /restart with what its manager said (its write gate, 2026-09-10): a 502 carries the
+// refusal. The strip discarded the response (review round 2, 2026-09-10): the button sat disabled for the
+// eight-second failsafe and nothing was said. Both branches executed against a stub button and a stub fetch.
+class StubButton {
+  disabled = false;
+  title = "";
+  classes = new Set<string>();
+  classList = { add: (c: string) => { this.classes.add(c); }, remove: (c: string) => { this.classes.delete(c); } };
+}
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test("the strip's Restart reads the kernel's answer: a refusal re-enables the button at once and wears the kernel's words", async () => {
+  const btn = new StubButton();
+  const error = "The restart did not happen: the manager refused (HTTP 401): it does not hold the serve token this kernel sent. Run romp refresh from a shell whose state root (ROMP_STATE_DIR or XDG_STATE_HOME) is the manager's.";
+  let posts = 0;
+  const p = restartFromStrip(btn, () => { posts++; return Promise.resolve({ ok: false, status: 502, json: () => Promise.resolve({ ok: false, restarting: false, error }) }); }, 60_000);
+  assert.equal(btn.disabled, true, "disabled while the answer is pending");
+  assert.equal(btn.title, "Restart the romp kernel");
+  await p;
+  assert.equal(posts, 1);
+  assert.equal(btn.disabled, false, "nothing is restarting: the button is back at once, not after the failsafe");
+  assert.equal(btn.title, error, "the kernel's words, with the way out, as the title (the failure-title pattern)");
+  assert.ok(btn.classes.has("sn-actfail"), "and the failure chrome");
+  // a refusal whose body is not the kernel's JSON still names the status
+  const bare = new StubButton();
+  await restartFromStrip(bare, () => Promise.resolve({ ok: false, status: 503, json: () => Promise.reject(new Error("not json")) }), 60_000);
+  assert.equal(bare.disabled, false);
+  assert.equal(bare.title, "The restart did not happen: the kernel answered HTTP 503");
+});
+
+test("the strip's Restart on a 2xx leaves the failsafe re-arm in charge (the reload normally lands first), and clears the failure chrome of an earlier refusal", async () => {
+  const btn = new StubButton();
+  btn.classes.add("sn-actfail");
+  btn.title = "an earlier refusal";
+  await restartFromStrip(btn, () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, restarting: true }) }), 20);
+  assert.equal(btn.disabled, true, "the restart is under way: the button stays disabled");
+  assert.equal(btn.title, "Restart the romp kernel");
+  assert.ok(!btn.classes.has("sn-actfail"));
+  await wait(60);
+  assert.equal(btn.disabled, false, "the failsafe re-arm");
+  // a fetch that fails outright is the reconnect machinery's to report: no throw, the failsafe stands
+  const dead = new StubButton();
+  await restartFromStrip(dead, () => Promise.reject(new Error("connection reset")), 20);
+  assert.equal(dead.disabled, true);
+  await wait(60);
+  assert.equal(dead.disabled, false);
+  const src = fs.readFileSync(path.join(path.resolve(process.cwd(), ".."), "ui", "webview", "strip.ts"), "utf8");
+  assert.match(src, /void restartFromStrip\(refresh, \(\) => fetch\(kernelUrl\("\/restart"\), \{ method: "POST" \}\)\);/, "the click routes through the tested function");
+  assert.doesNotMatch(src, /#rrefresh/, "the rail's button is #rail-refresh; the stale twin name is gone");
 });
 
 test("the strip quick-opens cover chat/outline/feed only (timeline is a native panel)", () => {
