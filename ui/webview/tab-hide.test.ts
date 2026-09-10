@@ -2301,7 +2301,7 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
   });
 });
 
-test("executed: THE MENU'S OWN SCROLL LEAVES IT STANDING (menu review rounds 8 and 9). The window's capture scroll listener, lifted from render.ts onto the harness window, dismisses the menu when the page moves under it and not when the Tags flyout scrolls within itself: a scroll whose target is the flyout, a row in it or the menu is left alone; a scroll in another box dismisses, and so does one whose target is no element or missing", () => {
+test("executed: THE MENU'S OWN SCROLL LEAVES IT STANDING (menu review rounds 8 and 9). The window's capture scroll listener, lifted from render.ts onto the harness window, dismisses the menu when the page moves under it and not when the Tags flyout scrolls within itself: a scroll whose target is the flyout, a row in it or the menu is left alone; a scroll in another box dismisses, and so do the page's own (its target the document, an ancestor the menu does not contain), one whose target is no node at all and one with no target", () => {
   // Round 7 capped the flyout and made it a scroll container; the listener then saw the flyout's own scroll and closed the menu on the
   // first wheel tick (and on the click that opened it, while the New tag input's focus scrolled the box; round 9 focuses without a
   // scroll). Round 8's exemption was executed by the browser leg alone, which skips where no browser is installed (CI): this drives
@@ -2320,12 +2320,22 @@ test("executed: THE MENU'S OWN SCROLL LEAVES IT STANDING (menu review rounds 8 a
     assert.deepEqual([hooks.dismissed, menu.isConnected], [d0, true], "a scroll whose target is a row inside the flyout (a click's scroll into view): the menu stands");
     win.fire("scroll", { target: menu });
     assert.deepEqual([hooks.dismissed, menu.isConnected], [d0, true], "the menu node itself as the target: contained");
+    // THE PAGE'S OWN SCROLL (round 10): in Chromium and Firefox a viewport scroll's target is the document, a Node the menu does not contain
+    // (an ancestor of it: render.ts appends the menu to document.body), so the listener takes its contains() branch and dismisses. The
+    // harness's document is a plain literal, so the menu's parent, the prelude's body FakeEl, stands for it; captured before the fire,
+    // since the dismissal takes the menu off the page. Round 9 labelled the no-node case below as the document's
+    const page = menu.parentNode!;
+    assert.ok(page.tag === "body" && page.contains(menu) && !menu.contains(page), "the page holds the menu and is not inside it");
+    win.fire("scroll", { target: page });
+    assert.deepEqual([hooks.dismissed, menu.isConnected], [d0 + 1, false], "the page's own scroll, its target an ancestor outside the menu's subtree, dismisses");
+    const menuE = api.open("api", "infra");
+    const dE = hooks.dismissed;
     win.fire("scroll", { target: new FakeEl("div", "elsewhere") });
-    assert.deepEqual([hooks.dismissed, menu.isConnected], [d0 + 1, false], "a scroll in a box outside the menu dismisses, as before the exemption");
+    assert.deepEqual([hooks.dismissed, menuE.isConnected], [dE + 1, false], "a scroll in a box outside the menu dismisses, as before the exemption");
     const menu2 = api.open("api", "infra");
     const d1 = hooks.dismissed;
     win.fire("scroll", { target: {} });
-    assert.deepEqual([hooks.dismissed, menu2.isConnected], [d1 + 1, false], "the document's scroll (a target that is no element) dismisses");
+    assert.deepEqual([hooks.dismissed, menu2.isConnected], [d1 + 1, false], "a target that is no node at all (a scroll dispatched at the window itself; no browser scroll event carries one, and the DOM's contains would throw on it) takes the listener's instanceof guard and dismisses");
     const menu3 = api.open("api", "infra");
     const d2 = hooks.dismissed;
     win.fire("scroll", {});
@@ -2451,15 +2461,17 @@ test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review rounds 5 and 6).
     let fly = flyOf(menu);
     let row = rowOf(menu)!;
     let kids = row.children.slice(), flyRows = fly.children.slice();
+    const blur0 = win.count("blur");   // the module's own blur listener (the window block lifted in round 9) is the baseline: a bare count held before any press
     press(menu);
     api.push(renamed(V_API_BOTH_QA, 0, "platform", 7));
     assert.ok(sameNodes(row.children, kids), "under the press the row is not re-dressed: the same child nodes (round 4 replaced them on every run)");
-    assert.ok(win.count("pointerup") > 0 && win.count("blur") > 0, "a press installs the release listeners on the window");
+    assert.ok(win.count("pointerup") > 0 && win.count("blur") === blur0 + 1, "a press installs the release listeners on the window (round 10: the blur one counted against the module's own)");
     assert.equal(row.sub(), HIDE_SUB("infra"), "and still reads infra");
     assert.ok(sameNodes(fly.children, flyRows), "the flyout's rows are not rebuilt under the press either");
     assert.equal(tagsSub(menu), "infra · archived", "the Tags row's sub-line waits too: the hook's run is parked whole");
     win.fire("pointerup");
     assert.equal(win.count("pointerup"), 0, "the release listeners leave with the release");
+    assert.equal(win.count("blur"), blur0, "the blur one too; the module's own stays");
     assert.ok(sameNodes(row.children, kids), "the re-dress waits for the tick after the release (the click comes first)");
     const d0 = hooks.dismissed;
     row.click();
