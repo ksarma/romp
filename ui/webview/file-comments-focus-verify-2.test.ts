@@ -611,11 +611,11 @@ test("a whole-file comment saved while a card is the focus: the new card joins t
   assert.ok(!inBox(cardBox(w, fresh.id), TRACK_BOX), "the fixture: the card stands out of the track's box, past its end: " + JSON.stringify(cardBox(w, fresh.id)));
   assert.deepEqual(scrolledInto, [], "no scrollIntoView in the margin layout");
   assert.equal(composer.hidden, true, "the composer closed");
-  // the line at the panel's foot says where the card is, in the sent note's position
+  // the line at the panel's foot says where the card is, in the acknowledgment's position
   const line = actIn(w.aside(), "fcsavedgo");
   assert.ok(line, "the line is in the panel: a comment's save renders it itself (the composer's close re-renders the composer alone)");
   assert.equal(line!.textContent, "Saved · the card is below", "the side the card stands on: past the box's end");
-  assert.ok(w.aside().querySelector(".fc-sec-send")!.contains(line!), "in the Send section, where the sent note stands");
+  assert.ok(w.aside().querySelector(".fc-sec-send")!.contains(line!), "in the Send section, where the acknowledgment stands");
   // its click: the card into the track's box where it stands, on both scrollers at once, the layout untouched, and the line is over
   line!.click(); await tick();
   assert.equal(body.scrollTop, want, "the body: the least scroll that shows the card's end (showLoose)");

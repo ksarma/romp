@@ -5,7 +5,7 @@
 // on their marks in the text; a real wheel over the body marks the arrival whose card is in the track's box seen — its dot
 // off, the line's count down — and leaves the one below the box. THE SAVE: a whole-file comment saved while the text is
 // scrolled down moves nothing (decision 43; before it, the text was brought to the card, and then not after a wheel), and
-// the line at the panel's foot says the card is above, a button in the sent note's green; a real wheel ends the line, and
+// the line at the panel's foot says the card is above, a button in the acknowledgment's green; a real wheel ends the line, and
 // its click brings the text to the card. Skips LOUDLY without a playwright browser (CI installs none), as the other browser
 // legs do. Synthetic values only: invented prose, placeholder ids, the session name "api".
 import { test } from "node:test";
@@ -165,7 +165,7 @@ async function wheel(page: any, dy: number): Promise<void> {
 }
 const KEYS = { c: COMMENT.id, chg: "chg:h2" };
 const ACCENT = "rgb(156, 210, 255)";
-const GREEN = "rgb(119, 204, 119)";                              // the page's --green (#7c7), the sent note's colour
+const GREEN = "rgb(119, 204, 119)";                              // the page's --green (#7c7), the acknowledgment's colour
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
@@ -231,7 +231,7 @@ for (const name of ["chromium", "firefox"]) {
     });
   });
 
-  test(`in ${name}: a whole-file comment saved while the text is scrolled down moves nothing, and the line at the panel's foot says the card is above — a button in the Send section, in the sent note's green; a real wheel ends the line; saved again, the line's click brings the text to the card and the line is over`, async (t) => {
+  test(`in ${name}: a whole-file comment saved while the text is scrolled down moves nothing, and the line at the panel's foot says the card is above — a button in the Send section, in the acknowledgment's green; a real wheel ends the line; saved again, the line's click brings the text to the card and the line is over`, async (t) => {
     await inBrowser(t, name, async (page) => {
       await mount(page);
       // scrolled down: the loose card at the top of the track is out of view, the 2026-09-07 case
@@ -259,8 +259,8 @@ for (const name of ["chromium", "firefox"]) {
       assert.ok(s.saved, "the line is in the panel");
       assert.equal(s.saved!.text, "Saved · the card is above");
       assert.equal(s.saved!.tag, "BUTTON", "a button");
-      assert.equal(s.saved!.inSend, true, "in the Send section, at the sent note's place");
-      assert.equal(s.saved!.color, GREEN, "in the sent note's green");
+      assert.equal(s.saved!.inSend, true, "in the Send section, at the acknowledgment's place");
+      assert.equal(s.saved!.color, GREEN, "in the acknowledgment's green");
       assert.equal(s.saved!.display, "block", "a line of its own");
       // the person's next gesture: a real wheel ends the line, in place
       await wheel(page, -60);

@@ -10,7 +10,7 @@
 // counts the arrived ones as unseen, left pending (the seen follow-on's words, decision 41). THE SAVE: the save used to
 // scroll the text to the saved card whatever the person had done meanwhile, then stood down when a gesture of theirs came
 // between Save and the reply; since decision 43 (the seen follow-on) it never scrolls — the saved card is the focus for the
-// layout, and when it lands out of view the sent note's position at the panel's foot says which side it is on, a button
+// layout, and when it lands out of view the acknowledgment's position at the panel's foot says which side it is on, a button
 // whose click brings the card into view; the line ends at the person's next gesture or when the card comes into view.
 // The numbers a real engine measures are file-comments-arrivals-browser.test.ts.
 // Synthetic fixtures only: the notes-api world, placeholder ids, the session names "api" and "web".
@@ -682,7 +682,7 @@ const savedOf = (w: World): El | null => actIn(w.aside(), "fcsavedgo");
 /** The press released: the window's pointerup, then the hold's zero timer (pressHold runs the parked change after the click). */
 const release = async (): Promise<void> => { win.dispatchEvent(new Event("pointerup")); await new Promise<void>((r) => setTimeout(r, 0)); await tick(); };
 
-test("nothing happened between Save and the reply, and the saved card is out of view below the track's box: the save scrolls nothing (before decision 43: to the card), the card is the focus, level with its mark where it is, and the sent note's position says the card is below — a button in the Send section, in the sent note's dress", async (t) => {
+test("nothing happened between Save and the reply, and the saved card is out of view below the track's box: the save scrolls nothing (before decision 43: to the card), the card is the focus, level with its mark where it is, and the acknowledgment's position says the card is below — a button in the Send section, in the acknowledgment's dress", async (t) => {
   const { w, body, track } = await saveReply(t, () => { /* the person waited */ });
   assert.equal(body.scrollTop, 0, "the text stayed at its top (before: " + SHOW_CARD + ")");
   assert.equal(track.scrollTop, 0);
@@ -693,9 +693,9 @@ test("nothing happened between Save and the reply, and the saved card is out of 
   assert.ok(line, "the line is in the panel");
   assert.equal(line!.textContent, "Saved · the card is below");
   assert.equal(line!.tagName, "BUTTON", "a button, through the delegate");
-  assert.deepEqual(line!.classes, ["fc-note", "fc-sent", "fc-saved"], "in the sent note's dress, .fc-note on it as on the note (the Send section's tiers count it as the note, not as growth)");
+  assert.deepEqual(line!.classes, ["fc-note", "fc-sent", "fc-saved"], "in the acknowledgment's dress, .fc-note on it as on the acknowledgment (the Send section's tiers count it as the acknowledgment, not as growth)");
   assert.equal(line!.title, "Show the card");
-  assert.ok(w.aside().querySelector(".fc-sec-send")!.contains(line!), "in the Send section, where the sent note stands");
+  assert.ok(w.aside().querySelector(".fc-sec-send")!.contains(line!), "in the Send section, where the acknowledgment stands");
   assert.equal(w.aside().querySelectorAll(".fc-sent").length, 1, "the one line in that position");
   assert.equal(w.aside().querySelector(".fc-composer")!.hidden, true, "the composer closed as before");
   w.close();

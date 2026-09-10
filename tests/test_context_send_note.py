@@ -214,13 +214,17 @@ class TheCodeMakesTheEntryTrue(unittest.TestCase):
                       "words alone send too.", send)
 
     def test_nothing_calls_the_acknowledgment_a_sent_note(self):
-        # the entry says the panel's acknowledgment after a send is not a note; the plan, the model, the panel and their
-        # tests call it the acknowledgment (line), never "the sent note" in prose -- the field `sentNote` is an
+        # the entry says the panel's acknowledgment after a send is not a note; the plan, the model, the panel, the sheets and
+        # their tests call it the acknowledgment (line), never "the sent note" in prose -- the field `sentNote` is an
         # identifier older than the entry and stays (the review's consolidation, 2026-09-09: the round wrote "the sent
-        # note" in seven places across these files)
+        # note" in seven places across these files; the seen follow-on's rounds wrote it again in both sheets' comments on
+        # the saved line and in the prose of four test modules, which this scan then took in)
         for parts in (("plans", "file-review.md"), ("ui", "webview", "file-comments-model.ts"), ("ui", "webview", "file-comments.ts"),
                       ("ui", "webview", "file-comments-send-note.test.ts"), ("ui", "webview", "file-comments-send-resolves.test.ts"),
-                      ("docs", "guide.md")):
+                      ("docs", "guide.md"), ("ui", "webview", "styles.css"), ("ui", "webview", "feed.css"),
+                      ("ui", "webview", "file-comments.test.ts"), ("ui", "webview", "file-comments-arrivals.test.ts"),
+                      ("ui", "webview", "file-comments-arrivals-browser.test.ts"), ("ui", "webview", "file-comments-focus-verify-2.test.ts"),
+                      ("ui", "webview", "feed-css-saved-line-head-dress.test.ts")):
             text = _read(*parts)
             hit = re.search(r"\bsent[ -]note\b", text, re.I)
             self.assertIsNone(hit, "%s calls the acknowledgment a note: %r"

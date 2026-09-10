@@ -1,11 +1,11 @@
 // The list layout's saved line under the header wears the arrivals line's dress (plans/file-review.md decision 43 and "The
 // seen follow-on (2026-09-09)" under Slice 2; the review of 2026-09-09, round 2). In the list under a narrow column the panel
 // stands the saved line under the header (file-comments.ts savedLineHead), right after the arrivals line when one stands: two
-// one-line notices under the header, each a button pointing at a card. The first round carried the sent note's dress (.fc-note,
+// one-line notices under the header, each a button pointing at a card. The first round carried the acknowledgment's dress (.fc-note,
 // 0.86em, the inherited weight) into the head unchanged, where the arrivals line wears the fold toggles' (.fc-sec, 0.82em, 600),
 // so the two rows stacked at different sizes and weights, against ui/CLAUDE.md's font rule (similar kinds of information wear
 // the same size). The sheets now dress the head's copy as its neighbour (.fc-head > .fc-saved) and leave the margin layout's
-// copy, beside the sent note at the panel's foot, in the note's dress. Two legs: the declared rules in both sheets (the feed page
+// copy, beside the acknowledgment at the panel's foot, in its dress. Two legs: the declared rules in both sheets (the feed page
 // loads only feed.css), and the rendered rows in a real engine, Chromium and Firefox, at a 600px viewer: an arrival standing
 // behind the changes' fold through the save's clicks, and a whole-file comment saved whose card lands below the aside's box.
 // Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values only: invented
@@ -44,7 +44,7 @@ function rule(css: string, head: string): Map<string, string> {
 }
 
 for (const [name, css] of SHEETS) {
-  test(name + ": under the header the saved line wears the arrivals row's size, weight and padding, .fc-sec's — and the base rule keeps the sent note's size for the margin layout's foot", () => {
+  test(name + ": under the header the saved line wears the arrivals row's size, weight and padding, .fc-sec's — and the base rule keeps the acknowledgment's size for the margin layout's foot", () => {
     const b = block(css);
     const sec = rule(b, ".fc-sec"), saved = rule(b, ".fc-saved"), head = rule(b, ".fc-head > .fc-saved"), note = rule(b, ".fc-note");
     assert.equal(sec.get("font-size"), "0.82em", "the fixture: the arrivals line's dress is .fc-sec's");
@@ -53,7 +53,7 @@ for (const [name, css] of SHEETS) {
     assert.equal(head.get("font-weight"), sec.get("font-weight"), "…and its weight");
     assert.equal(head.get("padding"), sec.get("padding"), "…and its padding, so the two rows stand the same height");
     assert.deepEqual(Array.from(head.keys()).sort(), ["font-size", "font-weight", "padding"], "the dress alone: the colour (--green through .fc-sent) and the button's shape stay the base rule's");
-    assert.equal(saved.get("font-size"), note.get("font-size"), "the base rule is the sent note's size, kept beside the note at the margin layout's foot");
+    assert.equal(saved.get("font-size"), note.get("font-size"), "the base rule is the acknowledgment's size, kept beside it at the margin layout's foot");
     assert.equal(saved.get("font-size"), "0.86em");
     assert.equal(saved.get("font-weight"), undefined, "…at the note's weight, inherited");
     assert.ok(b.indexOf("\n.fc-head > .fc-saved {") > b.indexOf("\n.fc-saved {"), "the head's rule follows the base rule it refines");
@@ -263,7 +263,7 @@ for (const name of ["chromium", "firefox"]) {
       assert.equal(s.saved!.fontWeight, s.arrivals!.fontWeight, "one weight");
       assert.equal(s.saved!.fontWeight, "600", "the arrivals row's (before: the inherited 400)");
       assert.ok(Math.abs(s.saved!.height - s.arrivals!.height) <= 0.5, "one row height: " + s.saved!.height + " vs " + s.arrivals!.height);
-      // the colours are meanings, not dress: the accent for what arrived, the sent note's green for what was saved
+      // the colours are meanings, not dress: the accent for what arrived, the acknowledgment's green for what was saved
       assert.equal(s.arrivals!.color, "rgb(156, 210, 255)");
       assert.equal(s.saved!.color, "rgb(119, 204, 119)");
     });
