@@ -175,9 +175,9 @@ test("executed: metaRowMarks checks the picked row and tags the running row whil
 
 // A minimal element for the executed statusline slice below: the reads and writes syncMetaControls and metaButton
 // make (single-class selectors, dataset, the label's text and dots, the held mark's insertBefore); nothing more.
-// hideEdges (ui/test-dom-shim.ts) runs at the end of the constructor, so a node inspects as its primitives alone
-// and a failing assertion over a tree never walks it (the fake-DOM ratchet in ui/test-dom-shim.test.ts; review
-// round 11, rules-1). The projection is pinned below the class.
+// hideEdges (ui/test-dom-shim.ts) runs at the end of the constructor, so a node inspects as its primitives and the
+// serial the shim stamps (_nid), and a failing assertion over a tree never walks it (the fake-DOM ratchet in
+// ui/test-dom-shim.test.ts; review round 11, rules-1). The projection is pinned below the class.
 class FakeEl {
   tagName: string; className = ""; dataset: Record<string, string> = {}; style: Record<string, string> = {};
   children: FakeEl[] = []; parent: FakeEl | null = null; text = ""; html = ""; attrs: Record<string, string> = {};
@@ -222,7 +222,7 @@ test("executed: a FakeEl inspects as its own projection: the edges (children, pa
   for (const n of [root, kid]) {
     const keys = Object.keys(n);
     for (const k of ["children", "parent", "dataset", "style", "attrs"]) assert.ok(!keys.includes(k), n.className + ": " + k + " is hidden");
-    assert.deepEqual(keys.sort(), ["className", "html", "tagName", "text"], n.className + " enumerates its primitives alone");
+    assert.deepEqual(keys.sort(), ["_nid", "className", "html", "tagName", "text"], n.className + " enumerates its primitives and the serial hideEdges stamps");
   }
   assert.equal(kid.parent, root); assert.equal(root.children.length, 1);   // hidden, not gone
   assert.equal(root.dataset.k, "v"); assert.equal(root.style.color, "red"); assert.equal(root.attrs.title, "t");
