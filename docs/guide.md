@@ -143,11 +143,13 @@ a tab into another group, right-click it and pick **Move to <tag>** under **Tags
 adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. A
 change from another pane or another dashboard can take the tab out of that group just before you click,
 or remove the group's tag and make it again under the same name: the click then moves nothing, the row
-flashes, and its tooltip says to click again. If the change put the tab into the group you picked, that
-row is gone instead: the tag is one of the tab's own now, with a **✕** beside it. **Show when
-folded** refuses the same way while the tab is still in that group or has left it for exactly one other
-group. When the tab has left for no group, or for two or more (the menu cannot tell which copy you
-mean), there is nothing to pin: its row leaves the flyout and the menu stays open. **Hide tab** refuses
+flashes, and its tooltip says to click again. If the change moved the tab into the group you picked, that
+row is gone instead (the tag is one of the tab's own now, with a **✕** beside it); if it only added that
+group, the row is still there and the click drops the group you right-clicked it in, the move you asked
+for. **Show when folded** refuses the same way while the tab is still in that group or has left it for
+exactly one other group whose tag already exists. When the tab has left for no group, for two or more (the
+menu cannot tell which copy you mean), or for a tag that is still being created, there is nothing to pin:
+its row leaves the flyout and the menu stays open. **Hide tab** refuses
 the same way on a re-created tag, while the **✕** beside a tag and the row's **+** act on the re-created
 tag at once. The row's **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser. The groups follow one another across the
