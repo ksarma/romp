@@ -7,9 +7,9 @@ dissolution (T101) re-parented such a child to top level without dropping the ma
 kept a done flag nothing ever re-derived: is_complete read it, the settle branch never found settledDone
 (the settle row it appended never materialized), and every rollup appended one more settle row plus one
 more seam. One live node reached LOG_CAP (64 settle rows, logTrunc) with its store's seams at cap,
-republishing about 1 MB per pass. The first form of the fix unrolled the promoted child only, so the
-child's own rolled-up descendants stayed done under a now-open top; and a healed top whose diary holds the
-bug's settle rows folded to settledDone on an open node, which reads Working but is sealed for every judge.
+republishing about 1 MB per pass. An unroll that stopped at the promoted child would leave the child's own
+rolled-up descendants done under a now-open top; and a healed top whose diary holds the bug's settle rows
+would fold to settledDone on an open node, which reads Working but is sealed for every judge.
 
 Pins: (1) the dissolving rollup drops the marker on the child AND its rolled-up descendants, and each
 node's own diary decides (no row: open; a rolled-away block: blocked), with no settle row, no seam and no
@@ -134,7 +134,7 @@ class DissolutionDropsTheMarker(_Base):
 
     def test_the_promoted_childs_rolled_up_descendants_are_unrolled_with_it(self):
         # the live shape one level deeper: the container's roll-down marked the child AND the child's own
-        # sub. The first form of the fix unrolled the child only, so the sub stayed done under an open top
+        # sub. An unroll that stopped at the child would leave the sub done under an open top
         st = self._umbrella_world(grand=True)
         jd.rollup_status(st, True)
         g = st["nodes"][GRAND]
@@ -204,6 +204,22 @@ class DissolutionDropsTheMarker(_Base):
                         "a resolved ancestor is still above it: the roll-down re-folds it")
         self.assertEqual(_settles(c), [], "a sub never settles")
         self.assertEqual(len(_settles(st["nodes"][TOP])), 1, "the top settles once")
+
+    def test_a_rolled_child_with_no_diary_key_unrolls_to_open(self):
+        # a pre-migration straggler: the roll-down marked a child that has no diary key at all. The unroll
+        # resets the three flags BEFORE the fold asks, so the node reads open; without the reset, the
+        # unmigrated-node guard meets a done flag with no history, freezes it (an unroll no later pass
+        # repairs, the marker being gone) and files a row
+        st = self._umbrella_world()
+        with jd._authority():
+            del st["nodes"][CHILD]["log"]
+        jd.rollup_status(st, True)
+        c = st["nodes"][CHILD]
+        self.assertIsNone(c.get("parentId"), "premise: promoted")
+        self.assertNotIn("rolledUp", c)
+        self.assertFalse(c.get("nodeComplete"), "no diary, no marker: open, not frozen done")
+        self.assertEqual(st["status"][CHILD], "working")
+        self.assertEqual(self._error_rows(), [], "no unmigrated-node row: the flags were reset before the fold")
 
 
 class StaleMarkerHeals(_Base):
@@ -327,6 +343,62 @@ class StaleMarkerHeals(_Base):
         self.assertEqual(_reopens(st["nodes"][CHILD]), [])
         self.assertEqual(_reopens(st["nodes"][GRAND]), [])
         self.assertEqual(self._error_rows(), [])
+
+    def test_the_heal_reopen_is_at_least_as_new_as_the_settle_it_ends(self):
+        # the store's newest mt belonged to the dissolved container, now gone: every remaining node is
+        # older than the settle rows. The reopen's ev_t has the settle's own moment as its floor, so the
+        # row folds AFTER the settles it ends; a reopen dated by the store's latest node alone would sort
+        # before them and the node would stay sealed
+        spam = [_row("settle", T + 500, src="romp") for _ in range(2)]
+        st = self._store([_rolled(CHILD, "add the web pane", None, spam)])
+        self.assertLessEqual(max(max(n["t"], n["mt"]) for n in st["nodes"].values()), T + 10, "premise")
+        jd.rollup_status(st, True)
+        c = st["nodes"][CHILD]
+        self.assertEqual(len(_reopens(c)), 1)
+        self.assertGreaterEqual(_reopens(c)[0]["ev_t"], T + 500, "the reopen is at least as new as the settle")
+        self.assertNotIn("settledDone", c)
+        self.assertEqual(st["status"][CHILD], "working")
+        self.assertIn(CHILD, _menu_ids(st))
+
+    def test_the_heal_reopen_carries_the_stores_latest_evidence_moment(self):
+        # when the store holds newer evidence than the settle, the reopen is dated by it: the row lands
+        # where the store's history has reached, not back at the settle's moment
+        spam = [_row("settle", T + 10, src="romp") for _ in range(2)]
+        st = self._store([_rolled(CHILD, "add the web pane", None, spam)])
+        st["nodes"][OTHER]["t"] = st["nodes"][OTHER]["mt"] = T + 200
+        jd.rollup_status(st, True)
+        c = st["nodes"][CHILD]
+        self.assertEqual(len(_reopens(c)), 1)
+        self.assertEqual(_reopens(c)[0]["ev_t"], T + 200, "the store's latest evidence moment")
+
+    def test_a_view_cleared_stale_top_stays_sealed_and_reports_nothing(self):
+        # the user crossed the card off the feed: may_apply refuses a reopen from any source, so the heal
+        # drops the marker and leaves the node as the user left it, with nothing to report
+        (jd.STATE / "cleared.jsonl").parent.mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "cleared.jsonl").write_text(json.dumps({"id": CHILD, "op": "clear"}) + "\n")
+        spam = [_row("settle", T + 10, src="romp") for _ in range(2)]
+        st = self._store([_rolled(CHILD, "add the web pane", None, spam)])
+        jd.rollup_status(st, True)
+        c = st["nodes"][CHILD]
+        self.assertNotIn("rolledUp", c, "the marker is still dropped")
+        self.assertEqual(_reopens(c), [], "no reopen: the seal the user set holds")
+        self.assertTrue(c.get("settledDone"), "sealed as the user left it")
+        self.assertNotIn(CHILD, _menu_ids(st))
+        self.assertEqual(self._error_rows(), [], "a refused heal reports nothing")
+
+    def test_a_solid_ancestors_stale_done_flag_is_rewritten_before_the_ancestor_check(self):
+        # the sub is inserted BEFORE its solid parent, whose done flag has no history behind it (the fold
+        # demotes it to open on every rollup). The repair materializes the solid nodes first, so the
+        # ancestor check reads the parent's fold-derived state, not the stale flag: the sub is unrolled in
+        # this pass, not left done under an open top
+        st = self._store([_rolled(GRAND, "wire the pane's route", TOP),
+                          _node(TOP, "ship the notes-api release", None, nodeComplete=True, log=[])])
+        jd.rollup_status(st, True)
+        self.assertFalse(st["nodes"][TOP].get("nodeComplete"), "premise: the fold demoted the flag")
+        g = st["nodes"][GRAND]
+        self.assertNotIn("rolledUp", g, "checked against the rewritten ancestor, not its stale flag")
+        self.assertFalse(g.get("nodeComplete"))
+        self.assertIn(GRAND, _menu_ids(st))
 
 
 if __name__ == "__main__":

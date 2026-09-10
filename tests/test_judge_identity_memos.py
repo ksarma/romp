@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Three identity memos on the distiller's and grouper's read paths (P2 of the judge perf plan, first
-commit, 2026-09-07), each pinned against the function it memoizes:
+"""Three identity memos on the distiller's and grouper's read paths (2026-09), each pinned against the
+function it memoizes:
 
 - _distill_due_t builds a parent -> children map per call; _distill_session now builds one per store
   (_kids_map) and hands it through _done_owed. Pure over the nodes, so the answer must not depend on
@@ -21,6 +21,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from romp_load import load_source
 from pathlib import Path
 
@@ -34,6 +35,20 @@ jd = load_source("romp_judge_identity_memos", os.path.join(BIN, "romp-judge"))
 
 SID = "cccccccc-1111-2222-3333-444444444444"      # a private synthetic sid, never the shared placeholder
 T0 = 1781100000
+
+
+def _iso(t):
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _uline(t, text, uuid, parent=None):
+    return {"type": "user", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent,
+            "promptSource": "typed", "message": {"role": "user", "content": text}}
+
+
+def _aline(t, text, uuid, parent):
+    return {"type": "assistant", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}], "stop_reason": "end_turn"}}
 
 
 def _rewrite_same_size_later_tick(path, text):
@@ -119,6 +134,49 @@ class KidsMap(_Memos):
         self.assertFalse(jd._done_owed(store, g(7), kids), "the stamp matches a settle event and no newer done exists")
 
 
+class KidsMapOncePerStore(_Memos):
+    """_distill_session builds ONE parent -> children map per store and hands it to every _distill_due_t
+    of the pass, through _done_owed too: the saving this commit claims, pinned on the call shape (the
+    KidsMap class pins that the answer does not depend on who built the map)."""
+
+    def test_one_kids_map_per_store_and_no_bare_due_t_call(self):
+        path = self.td / (SID + ".jsonl")
+        path.write_text("\n".join(json.dumps(r) for r in [
+            _uline(T0, "wire the picker", "u1"), _aline(T0 + 30, "Wired and checked in.", "a1", "u1")]) + "\n")
+        (jd.STATESDIR / (SID + ".jsonl")).write_text(json.dumps({"t": T0 + 40, "state": "working"}) + "\n")
+        seg = jd.em.segments(jd.parsed_session(SID, [str(path)], T0 + 5000)["turns"][0])[0]["id"]
+        g = lambda n: "%s:g%d" % (SID, n)
+
+        def nd(nid, parent, text):
+            return {"id": nid, "text": text, "parentId": parent, "nodeComplete": True, "blocked": False,
+                    "cleared": False, "trail": [seg], "t": T0, "mt": T0 + 30, "summary": None,
+                    "log": [{"kind": "done", "src": "closer", "ev_t": T0 + 30, "at": T0 + 31}]}
+        jd.save_goals(SID, {"rompUuid": SID, "seq": 3, "placementsV": jd.PLACEMENTS_V, "lastNode": g(2),
+                            "nodes": {g(1): nd(g(1), None, "Wire the picker"), g(2): nd(g(2), None, "Ship the search"),
+                                      g(3): nd(g(3), g(1), "Wire the picker's route")},
+                            "placements": {}, "status": {g(1): "completed", g(2): "completed"}})
+        saved = (jd.distill_llm, jd.brief_llm, jd._kids_map, jd._distill_due_t)
+        self.addCleanup(lambda: setattr(jd, "distill_llm", saved[0]) or setattr(jd, "brief_llm", saved[1])
+                        or setattr(jd, "_kids_map", saved[2]) or setattr(jd, "_distill_due_t", saved[3]))
+        jd.distill_llm = lambda text, work, why, **kw: "Shipped the picker wiring."
+        jd.brief_llm = lambda *a, **k: self.fail("a completed top must not take the brief path")
+        kids_calls, bare = [], []
+
+        def counting_kids(nodes):
+            kids_calls.append(len(nodes))
+            return saved[2](nodes)
+
+        def recording_due(store, nid, blocked, kids=None):
+            if kids is None:
+                bare.append(nid)
+            return saved[3](store, nid, blocked, kids)
+        jd._kids_map, jd._distill_due_t = counting_kids, recording_due
+        n = jd._distill_session(SID, str(path), T0 + 5000)
+        self.assertGreaterEqual(n, 1, "fixture: the completed tops were distilled")
+        self.assertEqual(len(kids_calls), 1, "one parent -> children map per store")
+        self.assertEqual(bare, [], "every _distill_due_t call of the pass was handed that map")
+
+
 class LivePromptSince(_Memos):
     def _rows(self, *rows):
         return "\n".join(json.dumps(r) for r in rows) + "\n"
@@ -166,6 +224,42 @@ class LivePromptSince(_Memos):
             os.chmod(p, 0o644)
         self.assertEqual(jd._live_prompt_since(SID), T0 + 50, "readable again: the real answer, no stale None")
 
+    def test_a_same_tick_append_is_seen(self):
+        # the key is (ino, mtime_ns, size), exact for an append-only log: a row that lands in the SAME mtime
+        # tick as the memoized read moved the size, so it is seen (an (ino, mtime) key would serve the old
+        # answer until the next tick)
+        p = jd.STATESDIR / (SID + ".jsonl")
+        p.write_text(self._rows({"t": T0 + 50, "state": "picker"}))
+        self.assertEqual(jd._live_prompt_since(SID), T0 + 50)
+        st = os.stat(p)
+        with open(p, "a") as f:
+            f.write(json.dumps({"t": T0 + 90, "state": "idle"}) + "\n")
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))               # back on the memoized tick
+        self.assertEqual(os.stat(p).st_mtime_ns, st.st_mtime_ns, "fixture: the mtime did not move")
+        self.assertEqual(jd._live_prompt_since(SID), jd._live_prompt_since_scan(p))
+        self.assertIsNone(jd._live_prompt_since(SID), "the size moved: the appended idle row is seen")
+
+    def test_a_row_landing_after_the_read_is_seen_next_call(self):
+        # stat BEFORE read: a row landing between the read and the memo fill pairs the pre-row identity with
+        # the pre-row answer (honest: the read predates the row), and the next call sees the row because the
+        # live identity has moved past the memoized one. A key stat'd after the read would pair the
+        # post-row identity with the pre-row answer and serve it stale.
+        p = jd.STATESDIR / (SID + ".jsonl")
+        p.write_text(self._rows({"t": T0 + 50, "state": "picker"}))
+        real, n = jd._live_prompt_since_scan, []
+
+        def landing(path):
+            out = real(path)
+            n.append(1)
+            if len(n) == 1:
+                with open(path, "a") as f:                                # the row lands after the read
+                    f.write(json.dumps({"t": T0 + 90, "state": "idle"}) + "\n")
+            return out
+        jd._live_prompt_since_scan = landing
+        self.addCleanup(setattr, jd, "_live_prompt_since_scan", real)
+        self.assertEqual(jd._live_prompt_since(SID), T0 + 50, "the read predates the row: its answer is honest")
+        self.assertIsNone(jd._live_prompt_since(SID), "the next call sees the row (the identity moved past the memo's)")
+
 
 class ViewCleared(_Memos):
     def test_changed_unchanged_absent_and_the_later_tick_rewrite_agree_with_the_scan(self):
@@ -192,6 +286,57 @@ class ViewCleared(_Memos):
         self.assertEqual(jd._view_cleared(), frozenset())
         self.assertNotIn(str(p), jd._VIEW_CLEARED_MEMO)
 
+    def test_a_same_tick_append_is_seen(self):
+        # (ino, mtime_ns, size): a clear row landing in the same mtime tick as the memoized read is seen
+        # because the size moved
+        p = jd.STATE / "cleared.jsonl"
+        a, b = SID + ":g1", SID + ":g2"
+        p.write_text(json.dumps({"id": a, "t": T0, "op": "clear"}) + "\n")
+        self.assertEqual(jd._view_cleared(), {a})
+        st = os.stat(p)
+        with open(p, "a") as f:
+            f.write(json.dumps({"id": b, "t": T0 + 1, "op": "clear"}) + "\n")
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))               # back on the memoized tick
+        self.assertEqual(os.stat(p).st_mtime_ns, st.st_mtime_ns, "fixture: the mtime did not move")
+        self.assertEqual(jd._view_cleared(), jd._view_cleared_scan(p))
+        self.assertEqual(jd._view_cleared(), {a, b}, "the size moved: the appended row is seen")
+
+    def test_a_row_landing_after_the_read_is_seen_next_call(self):
+        # stat before read (see LivePromptSince's twin): the pre-row answer is served once, honestly, and
+        # the next call sees the row
+        p = jd.STATE / "cleared.jsonl"
+        a, b = SID + ":g1", SID + ":g2"
+        p.write_text(json.dumps({"id": a, "t": T0, "op": "clear"}) + "\n")
+        real, n = jd._view_cleared_scan, []
+
+        def landing(path):
+            out = real(path)
+            n.append(1)
+            if len(n) == 1:
+                with open(path, "a") as f:
+                    f.write(json.dumps({"id": b, "t": T0 + 1, "op": "clear"}) + "\n")
+            return out
+        jd._view_cleared_scan = landing
+        self.addCleanup(setattr, jd, "_view_cleared_scan", real)
+        self.assertEqual(jd._view_cleared(), {a}, "the read predates the row")
+        self.assertEqual(jd._view_cleared(), {a, b}, "the next call sees it")
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_an_unreadable_file_answers_empty_and_is_not_memoized(self):
+        # the twin of LivePromptSince's: an unreadable log answers empty and leaves no entry, so the real
+        # answer comes back the moment the file reads again (chmod moves ctime, not mtime: a memoized empty
+        # would be served after the restore too)
+        p = jd.STATE / "cleared.jsonl"
+        a = SID + ":g1"
+        p.write_text(json.dumps({"id": a, "t": T0, "op": "clear"}) + "\n")
+        os.chmod(p, 0)
+        try:
+            self.assertEqual(jd._view_cleared(), frozenset())
+            self.assertNotIn(str(p), jd._VIEW_CLEARED_MEMO)
+        finally:
+            os.chmod(p, 0o644)
+        self.assertEqual(jd._view_cleared(), {a}, "readable again: the real answer, no stale empty")
+
     def test_the_answer_is_immutable_and_a_rebind_starts_empty(self):
         p = jd.STATE / "cleared.jsonl"
         p.write_text(json.dumps({"id": SID + ":g1", "t": T0, "op": "clear"}) + "\n")
@@ -199,11 +344,15 @@ class ViewCleared(_Memos):
         with self.assertRaises(AttributeError):
             vc.add("x")                                                  # a caller mutating the shared memo fails loudly
         self.assertIn(str(p), jd._VIEW_CLEARED_MEMO)
+        sp = jd.STATESDIR / (SID + ".jsonl")
+        sp.write_text(json.dumps({"t": T0 + 50, "state": "picker"}) + "\n")
+        self.assertEqual(jd._live_prompt_since(SID), T0 + 50)
+        self.assertIn(str(sp), jd._LIVE_PROMPT_MEMO, "premise: both memos hold an entry before the rebind")
         other = Path(tempfile.mkdtemp())
         try:
             jd._rebind_state(other)
             self.assertEqual(jd._VIEW_CLEARED_MEMO, {})
-            self.assertEqual(jd._LIVE_PROMPT_MEMO, {})
+            self.assertEqual(jd._LIVE_PROMPT_MEMO, {}, "the rebind clears the live-prompt memo too")
             self.assertEqual(jd._view_cleared(), frozenset(), "the new root has no cleared.jsonl")
         finally:
             jd._rebind_state(self.td)

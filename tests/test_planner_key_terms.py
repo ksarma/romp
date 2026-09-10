@@ -17,7 +17,14 @@ every pass rather than skipped over a slice the pass could not see. An offer can
 
 Private synthetic sids (a goal-minting fixture never uses the shared placeholder sid: its override journal is replayed
 on every load), invented prompts, a temp state root and a temp Claude config root; the sids' journals are removed in
-tearDown. The harness is upstream's tests/test_planner_skip.py's, with the planner's model calls stubbed."""
+tearDown. The harness is upstream's tests/test_planner_skip.py's, with the planner's model calls stubbed.
+
+Since the 2026-09-10 fold (ruling J2, bound to J1) the planner runs behind two gates under a pass frame: the evidence gate
+in run_plan (_gate_check and _gated, whose signature carries these three inputs too) around the change gate inside
+_plan_session. run_plan never pops _PLANNER_SEEN when the outer gate lets a session through and _plan_session answers 0
+on a key match, so an input keyed by the outer signature alone would re-arm the outer gate and be swallowed by the inner
+one: a pass stamped complete over a change the planner never looked at. The framed class below pins that hole shut for
+each term; the unframed class above is the romp-judge --plan shape, where the outer gate stamps nothing."""
 import json
 import os
 import re
@@ -198,6 +205,87 @@ class PlannerKeyTerms(_World):
                                                             "cannot be read" % i)
         an.write_text(json.dumps({"enabled": False, "deferred": {}}))  # readable again: the world settles as before
         self.settle()
+
+
+class PlannerKeyTermsUnderTheEvidenceGate(_World):
+    """The framed-pass hole (ruling J2 of the 2026-09-10 fold): under a pass frame the outer evidence gate in run_plan
+    re-arms on cleared.jsonl, the death marker and the stall slice (they are in the planner's signature, _sig_inputs and
+    _stage_sig), and the inner change gate inside _plan_session must then PLAN the session, never skip it: each term moved
+    alone, _PLANNER_STATS planned +1 for the session it re-arms and skipped unchanged, while the sessions the input does
+    not touch stop at the outer gate (the tier's own skipped counter), so the inner gate is never consulted for them."""
+
+    def setUp(self):
+        super().setUp()
+        jd.end_pass_frame(True)                  # belt: never inherit a frame a crashed test left open
+
+    def framed_pass(self, now=NOW):
+        """One planner pass under a pass frame, as the kernel's producer runs it: the inner gate's (planned, skipped,
+        recorded) deltas and the outer gate's (skipped, stamped) deltas."""
+        before, tb = jd.planner_skip_stats(), jd.tier_stats()["plan"]
+        jd._discover_cache.clear()
+        owned = jd.begin_pass_frame()
+        try:
+            jd.run_plan(now=now)
+        finally:
+            jd.end_pass_frame(owned)
+        after, ta = jd.planner_skip_stats(), jd.tier_stats()["plan"]
+        return (tuple(after[k] - before[k] for k in ("planned", "skipped", "recorded")),
+                tuple(ta[k] - tb[k] for k in ("skipped", "stamped")))
+
+    def converge(self):
+        """Framed passes until the outer stamp and the inner record both stand for every session; then one more framed
+        pass skips all three at the OUTER gate and the inner gate is never consulted."""
+        for _ in range(6):
+            self.framed_pass()
+            if all(("plan", sid) in jd._STAGE_STAMP and sid in jd._PLANNER_SEEN for sid in self.SIDS):
+                break
+        for sid in self.SIDS:
+            self.assertIn(("plan", sid), jd._STAGE_STAMP, "premise: the outer stamp stands")
+            self.assertIn(sid, jd._PLANNER_SEEN, "premise: the inner record stands")
+        self.assertEqual(self.framed_pass(), ((0, 0, 0), (3, 0)),
+                         "converged: all three skipped at the outer gate, the inner gate never consulted")
+
+    def test_a_cleared_row_re_arms_the_outer_gate_and_the_inner_gate_plans_every_session(self):
+        # cleared.jsonl is in every planner signature and in every inner key: a row lets all three through the outer
+        # gate, and the inner gate plans all three (a key without the term would answer 0 for each: the hole)
+        self.converge()
+        with (jd.STATE / "cleared.jsonl").open("a") as f:
+            f.write(json.dumps({"id": OTHER + ":g1", "op": "clear", "t": NOW}) + "\n")
+        inner, outer = self.framed_pass()
+        self.assertEqual(outer, (0, 3), "no session stops at the outer gate; all three run to completion and are stamped again")
+        self.assertEqual(inner, (3, 0, 3), "every session planned by the inner gate, none skipped there; nothing to do, so recorded")
+        self.assertEqual(self.framed_pass(), ((0, 0, 0), (3, 0)), "then skipped at the outer gate under the new stamps")
+
+    def test_a_death_marker_re_arms_the_outer_gate_and_the_inner_gate_plans_that_session(self):
+        # the marker is A's input alone (GONEDIR/<fsid>.json in the signature, _file_key of it in the key): B and C stop
+        # at the outer gate, A runs and the inner gate plans it
+        self.converge()
+        jd._write_death_marker(A, {"t": NOW - 10, "by": "probe", "endedAt": NOW - 10})
+        inner, outer = self.framed_pass()
+        self.assertEqual(outer[0], 2, "B and C stop at the outer gate: the marker moved no signature of theirs")
+        self.assertEqual(inner[0:2], (1, 0), "A planned by the inner gate, never skipped there: the marker is a term of its key too")
+
+    def test_a_stall_record_re_arms_the_outer_gate_and_the_inner_gate_plans_that_session_and_an_unreadable_file_never_skips(self):
+        # the slice is read by sid, by value, at both gates (_stall_slice in the signature, _stall_term in the key): a record
+        # on A's goal lets A through and plans it while B and C stop at the outer gate. A file that exists and does not
+        # read is an OSError to the outer gate (run, stamp nothing) and a fresh sentinel to the inner one (never equal),
+        # so every framed pass plans every session until the file reads again
+        self.converge()
+        an = jd.STATE / "auto-nudge.json"
+        an.write_text(json.dumps({"enabled": False, "deferred": {self.top(A): {"at": NOW, "why": "waiting on the closer", "sid": A}}}))
+        inner, outer = self.framed_pass()
+        self.assertEqual(outer[0], 2, "B and C stop at the outer gate: the slice is read by sid")
+        self.assertEqual(inner[0:2], (1, 0), "A planned by the inner gate, never skipped there")
+        self.converge()
+        an.write_text("{ not a document")                              # exists and does not parse: the strict reads raise
+        for i in range(2):
+            inner, outer = self.framed_pass()
+            self.assertEqual(outer, (0, 0), "pass %d: no signature over a file that does not read: every session runs, "
+                                            "nothing is stamped" % i)
+            self.assertEqual(inner[0:2], (3, 0), "pass %d: the inner term is a fresh sentinel per read: every session "
+                                                 "planned, none skipped" % i)
+        an.write_text(json.dumps({"enabled": False, "deferred": {}}))  # readable again: the world settles as before
+        self.converge()
 
 
 if __name__ == "__main__":
