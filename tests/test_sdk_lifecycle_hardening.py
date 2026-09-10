@@ -19,6 +19,8 @@ Covers the backend half:
 All deterministic: no SDK import, no real claude processes (ps/os.kill are patched) — except PsArgv's
 two real-ps tests, Linux-only, which run the machine's ps against a sleeper child they spawn and kill.
 """
+import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -730,26 +732,42 @@ class CrashHeal(unittest.TestCase):
             be._on_session_gone(self._dead_session(be, d))
         self.assertEqual(ens.call_count, 2, "a completed turn re-arms one resume for the next cut")
 
-    # ── the cause, when the dead CLI's own scope still says (2026-09-10, round 2) ─────────────────────
+    # ── the cause, when the dead CLI's own scope still says (2026-09-10, rounds 2 and 3) ──────────────
     # Under OOMPolicy=continue systemd records NO Result on an OOM kill (one process dies, the scope
     # stands) and the whole-life memory.events `oom_kill` count cannot say WHICH death this was, so the
     # PRIMARY signal is the CLI's own exit (SdkSession._cli_exit_code): a SIGKILL (-9) is the OOM killer's
-    # signature under `continue` (the cgroup killer and the box-wide killer alike), and it survives the
-    # scope's collection: a lone CLI IS the scope's last process, so the scope is gone the instant it
+    # signature under `continue` (the cgroup killer and the kernel's global killer alike), and it survives
+    # the scope's collection: a lone CLI IS the scope's last process, so the scope is gone the instant it
     # dies, taking the counter with it, but the exit is always read. The counter, when readable, is read
-    # against the turn-start baseline (SdkSession._oom_baseline): an increase WITHOUT a SIGKILL exit is a
-    # contained tool-child kill the CLI outlived, named as a child and never as the CLI's cause.
-    # Result=oom-kill is the second signal, for a scope WITHOUT the property, which systemd stops whole.
+    # against the turn-start baseline (SdkSession._oom_baseline) and DECIDES what a SIGKILL was: risen,
+    # the CLI's death out of memory; flat (on cgroup v2 the counter counts memcg and global kills alike),
+    # a kill the kernel's killers did not make, named as a SIGKILL with no OOM kill counted (a kill by
+    # hand, or earlyoom, which the counter cannot see) and never as out of memory (round 3); unreadable,
+    # the SIGKILL stands alone. An increase WITHOUT a SIGKILL exit is a contained tool-child kill the CLI
+    # outlived, named as a child and never as the CLI's cause, and only against a READ baseline.
+    # Result=oom-kill is the second signal, for a scope WITHOUT the property, which systemd stops whole;
+    # the Result leaves with the unit when every member dies on the SIGTERM, so for a collected unit with
+    # a non-SIGKILL exit the heal reads the unit's journal tail for the `Failed with result 'oom-kill'`
+    # line (round 3). The exit -1 is the SDK's own sentinel (a wait that failed, or SIGHUP) and reads as
+    # unreported; 137 is a non-exec wrapper's report of a child's SIGKILL and reads as a plain exit.
     # The heal asks about the EXACT unit the CLI ran in (recorded from its /proc/<pid>/cgroup at connect,
     # SdkSession.cli_scope_unit), never a glob over the session's scopes: an older scope of the same
     # session, kept up by a tmux server and still draining an OOM kill of its own, would answer a glob.
-    # Every read path logs one plain 'session scope result' line saying what was read and what was not.
+    # Every read path logs one plain 'session scope result' line saying what was read and what was not,
+    # and the reason a counter could not be read is the heal's to state (oom_verdict's counter_note).
     # The fake systemctl is table-driven (returncode, stdout, stderr) and records argv AND kwargs; it
     # answers BYTES when `text` is not asked for, as the real one would, so dropping text=True reproduces
-    # the real failure.
+    # the real failure. The fake journalctl answers `journal` (text, a returncode or a raise) the same way.
     UNIT = "romp-session-11111111-4242-1700000000000000000.scope"
     OLDER = "romp-session-11111111-4100-1600000000000000000.scope"   # an earlier CLI's scope, still up
     SHOW_ARGV = ["systemctl", "--user", "show", "--no-pager", "-p", "Id,LoadState,Result,ControlGroup", "--", UNIT]
+    JOURNAL_ARGV = ["journalctl", "--user", "-n", "5", "-o", "cat", "-u", UNIT]
+    # the user journal's last lines for a scope systemd stopped whole over an OOM kill (systemd 255, verified
+    # on a scratch scope under OOMPolicy=stop), and for a contained kill under `continue` (the first two lines
+    # only: the "killed by the OOM killer" line is whole-life, the stop line is what names the whole-scope stop)
+    JOURNAL_OOM = ("Started %s - /usr/bin/claude.\n%s: A process of this unit has been killed by the OOM killer.\n"
+                   "%s: Failed with result 'oom-kill'.\n" % (UNIT, UNIT, UNIT))
+    JOURNAL_CONTAINED = "Started %s - /usr/bin/claude.\n%s: A process of this unit has been killed by the OOM killer.\n" % (UNIT, UNIT)
     EVENTS = staticmethod(lambda n: "low 0\nhigh 0\nmax 37\noom %d\noom_kill %d\noom_group_kill 0\n" % (min(n, 1), n))
     KILL = -9   # SIGKILL_EXIT: the OOM killer's signature, the primary signal
 
@@ -761,12 +779,15 @@ class CrashHeal(unittest.TestCase):
         return "Result=%s\nControlGroup=%s\nId=%s\nLoadState=%s\n" % (result, cg, unit, load)
 
     def _heal_with_show(self, d, be, stdout=None, raise_=None, returncode=0, stderr="", events=None, unit="default",
-                        exit_code=-9, baseline=None):
-        """Run the heal with the scopes on, a fake systemctl and a fake cgroup root: the fake records every
-        (argv, kwargs) and answers (returncode, stdout, stderr), or raises; `events` maps a unit to the
-        memory.events text under its /fx.slice/<unit> cgroup (no entry: no file). `exit_code`/`baseline`
+                        exit_code=-9, baseline=None, journal=None, journal_raise=None, journal_returncode=0,
+                        journal_stderr=""):
+        """Run the heal with the scopes on, a fake systemctl, a fake journalctl and a fake cgroup root: the fake
+        records every (argv, kwargs) and answers (returncode, stdout, stderr), or raises; `events` maps a unit
+        to the memory.events text under its /fx.slice/<unit> cgroup (no entry: no file). `exit_code`/`baseline`
         are what the SDK reported and the turn-start counter (a SIGKILL exit -9 by default, since these
-        cases are testing what the SCOPE read adds on top of the primary signal). Returns (calls, log)."""
+        cases are testing what the SCOPE read adds on top of the primary signal). A journalctl argv answers
+        `journal` (its stdout; empty by default), or raises `journal_raise`, or exits `journal_returncode` with
+        `journal_stderr`. Returns (calls, log)."""
         be.cli_scope = True
         logs = []
         be._log_cb = logs.append
@@ -778,6 +799,13 @@ class CrashHeal(unittest.TestCase):
 
         def fake_run(argv, **kw):
             calls.append((list(argv), dict(kw)))
+            if list(argv[:1]) == ["journalctl"]:
+                if journal_raise is not None:
+                    raise journal_raise
+                out, err = journal or "", journal_stderr or ""
+                if "text" not in kw:
+                    out, err = out.encode(), err.encode()
+                return mock.Mock(returncode=journal_returncode, stdout=out, stderr=err)
             if raise_ is not None:
                 raise raise_
             out, err = stdout or "", stderr or ""
@@ -831,9 +859,10 @@ class CrashHeal(unittest.TestCase):
         calls, logs = self._heal_with_show(d, be, self._show(load="not-found", cgroup=""), exit_code=self.KILL, baseline=0)
         self.assertEqual(len(calls), 1)
         line = self._died_line(logs)
-        self.assertIn("the OOM killer took a process in its scope %s (the CLI was killed by signal 9, most likely the "
-                      "memory limit; the scope was already collected, so its counter could not be read "
-                      "(oom_kill was 0 at the turn's start))" % self.UNIT, line)
+        self.assertIn("the OOM killer took a process in its scope %s (the CLI was killed by signal 9; the scope was "
+                      "already collected, so its counter could not be read (oom_kill was 0 at the turn's start))" % self.UNIT, line)
+        self.assertNotIn("memory limit", line, "no limit is in force on this backend, so none is named (round 3: the "
+                                              "'most likely the memory limit' guess is gone)")
         self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
         scope_line = [m for m in logs if "session scope result" in m]
         self.assertEqual(len(scope_line), 1, logs)
@@ -953,14 +982,22 @@ class CrashHeal(unittest.TestCase):
         d = tempfile.mkdtemp()
         be = _backend(d)
         calls, logs = self._heal_with_show(d, be, self._show(load="not-found", cgroup=""), exit_code=1)
-        self.assertEqual(len(calls), 1)
+        # round 3: the unit gone and the exit not SIGKILL, so the journal tail is read for a whole-scope stop the
+        # unit no longer carries (bounded and in text mode like the show); empty here, so a plain clause
+        self.assertEqual([argv for argv, _kw in calls], [self.SHOW_ARGV, self.JOURNAL_ARGV])
+        self.assertEqual(calls[1][1].get("timeout"), sb.SCOPE_SHOW_TIMEOUT)
+        self.assertIs(calls[1][1].get("text"), True)
         self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
         self.assertFalse(any("OOM killer took" in m for m in logs), logs)
-        self.assertTrue(any("session scope result" in m and "already collected" in m for m in logs), logs)
+        scope_line = [m for m in logs if "session scope result" in m]
+        self.assertEqual(len(scope_line), 1, logs)
+        self.assertIn("already collected", scope_line[0])
+        self.assertIn("the journal has no line for the scope", scope_line[0])
         # an empty answer (nothing printed at all) is the same, with a clean exit: no verdict
         d = tempfile.mkdtemp()
         be = _backend(d)
         calls, logs = self._heal_with_show(d, be, "", exit_code=1)
+        self.assertEqual([argv for argv, _kw in calls], [self.SHOW_ARGV, self.JOURNAL_ARGV])
         self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
         self.assertFalse(any("OOM killer took" in m for m in logs), logs)
 
@@ -1053,6 +1090,47 @@ class CrashHeal(unittest.TestCase):
         calls, logs = self._heal_with_show(d, be, self._show(), events={self.UNIT: "low 0\nhigh 0\n"}, exit_code=1)
         self.assertTrue(any("no oom_kill line" in m for m in logs), logs)
         self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
+        # round 3 (correctness-1, regression-2): with a SIGKILL exit the same three shapes still name the death
+        # by the exit, but the died line says the counter could not be read on a LOADED unit, with the reason,
+        # never that the scope was collected (that wording is the not-found show's alone); no journal read
+        for shape, show, events, reason in (("no file", self._show(), {}, "No such file or directory"),
+                                            ("no ControlGroup", self._show(cgroup=""), {self.UNIT: self.EVENTS(1)},
+                                             "the unit shows no ControlGroup"),
+                                            ("no oom_kill line", self._show(), {self.UNIT: "low 0\nhigh 0\n"}, "no oom_kill line in")):
+            with self.subTest(shape=shape):
+                d = tempfile.mkdtemp()
+                be = _backend(d)
+                calls, logs = self._heal_with_show(d, be, show, events=events, exit_code=self.KILL, baseline=0)
+                self.assertEqual([argv for argv, _kw in calls], [self.SHOW_ARGV], "a loaded unit: no journal read")
+                line = self._died_line(logs)
+                self.assertIn("the OOM killer took a process in its scope %s (the CLI was killed by signal 9; its scope's "
+                              "counter could not be read (" % self.UNIT, line)
+                self.assertIn(reason, line)
+                self.assertIn(") (oom_kill was 0 at the turn's start))", line)
+                self.assertNotIn("already collected", line)
+                self.assertNotIn("memory limit", line)
+                self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
+                self.assertEqual(be.problems(), [])
+
+    def test_a_show_that_fails_with_a_sigkill_exit_says_so_never_that_the_scope_was_collected(self):
+        # round 3 (correctness-1, regression-2): systemctl exiting non-zero or raising leaves props {} exactly as
+        # a not-found show does, and the died line used to say the scope was collected beside a scope line that
+        # named the real failure; it now says the show did not answer, the SIGKILL still names the death, and
+        # no journal is read (the show itself failed, so the unit's state is unknown)
+        for label, kw in (("exits 1", dict(stdout="", returncode=1, stderr="Failed to connect to bus: No such file or directory\n")),
+                          ("raises", dict(raise_=OSError("no systemctl")))):
+            with self.subTest(show=label):
+                d = tempfile.mkdtemp()
+                be = _backend(d)
+                calls, logs = self._heal_with_show(d, be, events={self.UNIT: self.EVENTS(1)}, exit_code=self.KILL, baseline=0, **kw)
+                self.assertEqual([argv for argv, _kw in calls], [self.SHOW_ARGV])
+                line = self._died_line(logs)
+                self.assertIn("the OOM killer took a process in its scope %s (the CLI was killed by signal 9; systemctl show did "
+                              "not answer (" % self.UNIT, line)
+                self.assertNotIn("already collected", line)
+                self.assertIn("Failed to connect to bus" if label == "exits 1" else "no systemctl", line)
+                self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
+                self.assertEqual(be.problems(), [])
 
     def test_the_crash_loop_refusal_reads_the_evidence_first_and_names_the_cause(self):
         # kernel-1: a session OOM-killed twice in a row must still have its cause named in the log, so the
@@ -1099,13 +1177,74 @@ class CrashHeal(unittest.TestCase):
         self.assertIn("killed by signal 9", ev)
         self.assertIn("memory.events oom_kill=2 (was 0 at the turn's start), Result=success", ev)
         self.assertEqual(sb.oom_verdict({"Result": "success"}, None, K)[0], "oom", "SIGKILL alone, scope collected")
-        self.assertIn("most likely the memory limit", sb.oom_verdict({"Result": "success"}, None, K)[1])
+        self.assertEqual(sb.oom_verdict({"Result": "success"}, None, K)[1], "the CLI was killed by signal 9; its counter could not be read",
+                         "pure and limits-blind (round 3): no guess about a memory limit, a plain note when the caller gave none")
+        self.assertEqual(sb.oom_verdict({}, None, K, 0, counter_note="the scope was already collected, so its counter could not be read"),
+                         ("oom", "the CLI was killed by signal 9; the scope was already collected, so its counter could not be read "
+                                 "(oom_kill was 0 at the turn's start)"), "the caller's reason rides the evidence")
+        # a SIGKILL with a READABLE counter that did not rise over the baseline is a kill the kernel's killers did
+        # not make (round 3): a kill by hand or a userspace killer, named as such and never as out of memory
+        kind, ev = sb.oom_verdict({"Result": "success"}, 0, K, 0)
+        self.assertEqual(kind, "sigkill")
+        self.assertEqual(ev, "the CLI was killed by signal 9 with no OOM kill counted in its scope this turn (a kill by hand, or a "
+                             "userspace killer the cgroup counter cannot see); memory.events oom_kill=0 (was 0 at the turn's start), "
+                             "Result=success")
+        self.assertEqual(sb.oom_verdict({"Result": "success"}, 0, K, None)[0], "sigkill", "a whole-life 0 with no baseline: nothing counted")
+        self.assertIn("memory.events oom_kill=0, Result=success", sb.oom_verdict({"Result": "success"}, 0, K, None)[1])
+        self.assertEqual(sb.oom_verdict({"Result": "success"}, 1, K, 1)[0], "sigkill", "an earlier turn's kill, none this turn")
+        self.assertEqual(sb.oom_verdict({"Result": "success"}, 3, K, None)[0], "oom",
+                         "a whole-life count above 0 with no baseline keeps oom: nothing says the counted kill was not this one")
+        self.assertEqual(sb.oom_verdict({"Result": "oom-kill"}, 0, K, 0)[0], "oom",
+                         "systemd's own Result=oom-kill outranks a flat counter beside a SIGKILL")
+        self.assertIn("(Result=oom-kill); the CLI was killed by signal 9; memory.events oom_kill=0 (was 0 at the turn's start)",
+                      sb.oom_verdict({"Result": "oom-kill"}, 0, K, 0)[1])
+        # Result=oom-kill, and the journal's record of the same whole-scope stop once the unit is gone (round 3)
         self.assertEqual(sb.oom_verdict({"Result": "oom-kill"}, 1, -15)[0], "oom", "Result=oom-kill stands alone")
         self.assertEqual(sb.oom_verdict({"Result": "oom-kill"}, None, -15)[0], "oom")
+        self.assertIn("(Result=oom-kill); the CLI was killed by signal 15", sb.oom_verdict({"Result": "oom-kill"}, None, -15)[1])
+        self.assertEqual(sb.oom_verdict({}, None, 143, 0, journal=self.JOURNAL_OOM),
+                         ("oom", "systemd stopped the whole scope over an OOM kill (journal: Failed with result 'oom-kill'); "
+                                 "the CLI exited 143"))
+        self.assertEqual(sb.oom_verdict({}, None, -15, 0, journal=self.JOURNAL_OOM)[0], "oom")
+        self.assertEqual(sb.oom_verdict({}, None, None, None, journal=self.JOURNAL_OOM)[0], "oom", "the stop names it whatever the exit")
+        self.assertIsNone(sb.oom_verdict({}, None, 143, 0, journal=self.JOURNAL_CONTAINED),
+                          "the whole-life 'killed by the OOM killer' line is no verdict (a contained kill logs it too)")
+        self.assertIsNone(sb.oom_verdict({}, None, 143, 0, journal=""), "an empty journal")
+        self.assertIsNone(sb.oom_verdict({}, None, 143, 0), "no journal read")
+        self.assertTrue(sb.journal_oom_stop(self.JOURNAL_OOM))
+        self.assertFalse(sb.journal_oom_stop(self.JOURNAL_CONTAINED))
+        self.assertFalse(sb.journal_oom_stop(""))
+        self.assertEqual(sb.SCOPE_JOURNAL_OOM_LINE, "Failed with result 'oom-kill'")
+        # a contained child kill: a counter increase over a READ baseline with a known non-SIGKILL exit
         self.assertEqual(sb.oom_verdict({"Result": "success"}, 2, 1, 1)[0], "contained", "a new kill, a non-SIGKILL exit: a child")
         self.assertIn("a tool child, not the CLI", sb.oom_verdict({"Result": "success"}, 2, 1, 1)[1])
+        self.assertIn("while the CLI itself exited 1, so", sb.oom_verdict({"Result": "success"}, 2, 1, 1)[1])
+        self.assertIn("while the CLI itself was killed by signal 6, so", sb.oom_verdict({"Result": "success"}, 2, -6, 1)[1])
         self.assertIsNone(sb.oom_verdict({"Result": "success"}, 1, 1, 1), "no increase over the baseline")
+        self.assertIsNone(sb.oom_verdict({"Result": "success"}, 2, 1, None),
+                          "no baseline: the whole-life count is context, not a child verdict (round 3)")
         self.assertIsNone(sb.oom_verdict({"Result": "success"}, 1, None, 0), "no exit reported: the count is context")
+        # -1 is the SDK's sentinel for an exit it could not read (or a SIGHUP): unreported, never a kill by
+        # signal 1, and no child verdict from it, as for None (round 3)
+        self.assertEqual(sb.SDK_EXIT_UNREPORTED, -1)
+        self.assertIsNone(sb.oom_verdict({"Result": "success"}, 1, -1, 0), "an unread exit files no child verdict")
+        self.assertEqual(sb.oom_verdict({"Result": "oom-kill"}, 1, -1, 0)[0], "oom", "Result=oom-kill stands alone still")
+        self.assertIn("(Result=oom-kill); the CLI ended on signal 1 (SIGHUP) or the SDK could not read its exit (it reports -1 for both)",
+                      sb.oom_verdict({"Result": "oom-kill"}, 1, -1, 0)[1])
+        self.assertEqual(sb.exit_said(-1), "the CLI ended on signal 1 (SIGHUP) or the SDK could not read its exit (it reports -1 for both)")
+        self.assertEqual(sb.exit_said(-9), "the CLI was killed by signal 9")
+        self.assertEqual(sb.exit_said(-15), "the CLI was killed by signal 15")
+        self.assertEqual(sb.exit_said(137), "the CLI exited 137")
+        self.assertEqual(sb.exit_said(0), "the CLI exited 0")
+        self.assertEqual(sb.exit_said(None), "the CLI's exit was not reported")
+        self.assertEqual(sb.exit_said(1, "the CLI itself"), "the CLI itself exited 1")
+        self.assertEqual([sb.exit_known(c) for c in (None, -1, -9, 0, 1, 137)], [False, False, True, True, True, True])
+        # 137 is a non-exec wrapper's report of a CHILD's SIGKILL, never the CLI's own (round 3): a plain exit,
+        # a child kill with a counter increase, nothing with the scope collected
+        self.assertEqual(sb.oom_verdict({"Result": "success"}, 1, 137, 0)[0], "contained")
+        self.assertIn("while the CLI itself exited 137, so a tool child", sb.oom_verdict({"Result": "success"}, 1, 137, 0)[1])
+        self.assertIsNone(sb.oom_verdict({}, None, 137, 0), "137 with the scope collected: no SIGKILL verdict")
+        self.assertIsNone(sb.oom_verdict({"Result": "success"}, 0, 137, 0))
         self.assertIsNone(sb.oom_verdict({"Result": "success"}, None, 1), "a clean exit, no counter")
         self.assertIsNone(sb.oom_verdict({}, None, None))
         cg = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/%s\n"
@@ -1254,6 +1393,243 @@ class CrashHeal(unittest.TestCase):
             else:
                 sys.modules["claude_agent_sdk"] = saved
             shutil.rmtree(d, ignore_errors=True)
+
+    def test_a_sigkill_exit_with_a_flat_readable_counter_is_a_kill_the_counter_did_not_see(self):
+        # round 3 (regression-1, tests-3, correctness-2): the counter was READ and did not rise over the turn's
+        # baseline, which on cgroup v2 excludes the memcg killer and the kernel's global one alike, leaving a
+        # kill by hand or a userspace killer (earlyoom) the counter cannot see. Naming that out of memory was
+        # a quietly wrong notice: the kind is "sigkill", the log says what the evidence supports, and the
+        # session reads a notice of its own that names the signal and asks for modest memory use, never the
+        # out-of-memory form (verified on a scratch scope: kill -9 in a bystander-held scope left oom_kill 0,
+        # Result=success; a memcg kill of the same shape left oom_kill 1)
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(), events={self.UNIT: self.EVENTS(0)}, exit_code=self.KILL, baseline=0)
+        self.assertEqual([argv for argv, _kw in calls], [self.SHOW_ARGV])
+        line = self._died_line(logs)
+        self.assertIn("claude process died mid-turn; the CLI was killed by signal 9 with no OOM kill counted in its scope this "
+                      "turn (a kill by hand, or a userspace killer the cgroup counter cannot see); memory.events oom_kill=0 "
+                      "(was 0 at the turn's start), Result=success (scope %s); resuming with history intact" % self.UNIT, line)
+        self.assertNotIn("OOM killer took", line)
+        self.assertNotIn("out of memory", line.lower())
+        q = sb.read_reg(Path(d), self.SID).get("queue")
+        self.assertEqual(q, [sb.CRASH_RESUME_NUDGE_KILLED], "the third form of the notice: killed, no OOM kill counted")
+        self.assertIn("killed by signal 9 part-way through the last turn", q[0])
+        self.assertIn("counted no out-of-memory kill", q[0])
+        self.assertIn("keep memory use modest for now", q[0])
+        self.assertNotIn("out of memory:", q[0], "never the out-of-memory form's claim")
+        self.assertTrue(sb.is_crash_resume_nudge(q[0]), "the readers that re-head or hide the crash notice match it")
+        self.assertTrue(sb.is_resume_nudge(q[0]))
+        self.assertEqual(sb.last_state_value(Path(d), self.SID), "working")
+        self.assertEqual(be.problems(), [])
+        scope_line = [m for m in logs if "session scope result" in m]
+        self.assertEqual(len(scope_line), 1, logs)
+        self.assertIn("the CLI was killed by signal 9; oom_kill was 0 at the turn's start; memory.events oom_kill=0, Result=success",
+                      scope_line[0])
+        # an earlier turn's kill the session survived (baseline 1, count still 1) is the same cell
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(), events={self.UNIT: self.EVENTS(1)}, exit_code=self.KILL, baseline=1)
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_KILLED])
+        self.assertIn("memory.events oom_kill=1 (was 1 at the turn's start)", self._died_line(logs))
+        # and a whole-life 0 with no baseline (the connect-time read failed): still nothing counted
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(), events={self.UNIT: self.EVENTS(0)}, exit_code=self.KILL, baseline=None)
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_KILLED])
+        self.assertIn("no OOM kill counted in its scope this turn", self._died_line(logs))
+
+    def test_the_crash_loop_refusal_names_a_kill_the_counter_did_not_see_too(self):
+        # the refused second heal logs the same evidence for the "sigkill" kind (round 3), as it does for oom
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be._heal_attempts[self.SID] = 1
+        logs = []
+        be._log_cb = logs.append
+        be.cli_scope = True
+        root = tempfile.mkdtemp()
+        Path(root, "fx.slice", self.UNIT).mkdir(parents=True)
+        Path(root, "fx.slice", self.UNIT, "memory.events").write_text(self.EVENTS(0))
+        with mock.patch.object(sb.subprocess, "run", lambda argv, **kw: mock.Mock(returncode=0, stdout=self._show(), stderr="")), \
+             mock.patch.object(sb, "CGROUP_ROOT", root), mock.patch.object(be, "_ensure") as ens:
+            be._on_session_gone(self._dead_session(be, d, exit_code=self.KILL, baseline=0))
+        self.assertEqual(ens.call_count, 0, "no resume: the crash loop stands")
+        loop_line = [m for m in logs if "crash loop" in m]
+        self.assertEqual(len(loop_line), 1, logs)
+        self.assertIn("; the CLI was killed by signal 9 with no OOM kill counted in its scope this turn (a kill by hand, or a "
+                      "userspace killer the cgroup counter cannot see); memory.events oom_kill=0 (was 0 at the turn's start), "
+                      "Result=success (scope %s)" % self.UNIT, loop_line[0])
+        self.assertNotIn("OOM killer took", loop_line[0])
+        self.assertNotIn("\u2014", loop_line[0])
+
+    def test_a_collected_scope_with_a_non_sigkill_exit_reads_the_journal_for_the_whole_scope_stop(self):
+        # round 3 (fresh-1): the incident's own shape. Under OOMPolicy=stop systemd SIGTERMs the whole scope;
+        # when every member dies on it the unit is collected within milliseconds of the CLI's exit, before the
+        # SDK reports that exit, so the show reads not-found and Result=oom-kill went with the unit. The
+        # journal keeps it (`<unit>: Failed with result 'oom-kill'`), so it is read for a not-found unit
+        # whenever the exit is not SIGKILL (143 from the CLI's SIGTERM handler, -15 raw, 1 and None alike),
+        # bounded like the show, in text mode, and the whole-scope stop is named with the journal as its source
+        for exit_code, said in ((143, "the CLI exited 143"), (-15, "the CLI was killed by signal 15"), (1, "the CLI exited 1"),
+                                (None, "the CLI's exit was not reported")):
+            with self.subTest(exit_code=exit_code):
+                d = tempfile.mkdtemp()
+                be = _backend(d)
+                calls, logs = self._heal_with_show(d, be, self._show(load="not-found", cgroup=""), exit_code=exit_code, baseline=0,
+                                                   journal=self.JOURNAL_OOM)
+                self.assertEqual([argv for argv, _kw in calls], [self.SHOW_ARGV, self.JOURNAL_ARGV])
+                jkw = calls[1][1]
+                self.assertEqual(jkw.get("timeout"), sb.SCOPE_SHOW_TIMEOUT)
+                self.assertIs(jkw.get("text"), True)
+                self.assertIs(jkw.get("capture_output"), True)
+                line = self._died_line(logs)
+                self.assertIn("the OOM killer took a process in its scope %s (systemd stopped the whole scope over an OOM kill "
+                              "(journal: Failed with result 'oom-kill'); %s)" % (self.UNIT, said), line)
+                self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
+                scope_line = [m for m in logs if "session scope result" in m]
+                self.assertEqual(len(scope_line), 1, logs)
+                self.assertIn("the scope was already collected (LoadState=not-found)", scope_line[0])
+                self.assertIn("; the journal says systemd stopped the scope over an OOM kill (Failed with result 'oom-kill')",
+                              scope_line[0])
+                self.assertEqual(be.problems(), [])
+        self.assertEqual(self.JOURNAL_ARGV, sb.SCOPE_JOURNAL_ARGV + [self.UNIT])
+        self.assertEqual(sb.SCOPE_JOURNAL_ARGV, ["journalctl", "--user", "-n", "5", "-o", "cat", "-u"])
+
+    def test_a_journal_without_the_stop_line_is_a_plain_clause_never_silence(self):
+        # the whole-life "killed by the OOM killer" line appears under `continue` for a contained kill too, so
+        # it is no verdict; an empty journal, journalctl raising and journalctl exiting non-zero each become
+        # a clause in the plain line (the first stderr line only), never silence and never a verdict
+        cases = (("contained line only", dict(journal=self.JOURNAL_CONTAINED), "the journal's last lines name no whole-scope OOM stop"),
+                 ("empty", dict(journal=""), "the journal has no line for the scope"),
+                 ("raises", dict(journal_raise=subprocess.TimeoutExpired(["journalctl"], 10)), "journalctl did not answer ("),
+                 ("exits 1", dict(journal_returncode=1, journal_stderr="No journal files were found.\nmore\n"),
+                  "journalctl exited 1 (No journal files were found.)"))
+        for label, kw, said in cases:
+            with self.subTest(journal=label):
+                d = tempfile.mkdtemp()
+                be = _backend(d)
+                calls, logs = self._heal_with_show(d, be, self._show(load="not-found", cgroup=""), exit_code=143, baseline=0, **kw)
+                self.assertEqual([argv for argv, _kw in calls], [self.SHOW_ARGV, self.JOURNAL_ARGV])
+                self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
+                self.assertFalse(any("OOM killer took" in m for m in logs), logs)
+                scope_line = [m for m in logs if "session scope result" in m]
+                self.assertEqual(len(scope_line), 1, logs)
+                self.assertIn("the CLI exited 143; oom_kill was 0 at the turn's start; the scope was already collected "
+                              "(LoadState=not-found), so the live counter could not be read; " + said, scope_line[0])
+                if label == "exits 1":
+                    self.assertNotIn("more", scope_line[0])
+                self.assertEqual(be.problems(), [])
+        # a LOADED unit never reads the journal, whatever the exit: its Result and counter are readable
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(), events={self.UNIT: self.EVENTS(0)}, exit_code=143, baseline=0,
+                                           journal=self.JOURNAL_OOM)
+        self.assertEqual([argv for argv, _kw in calls], [self.SHOW_ARGV])
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
+        # nor does a collected unit with a SIGKILL exit: the exit names the death already
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(load="not-found", cgroup=""), exit_code=self.KILL, baseline=0,
+                                           journal=self.JOURNAL_OOM)
+        self.assertEqual([argv for argv, _kw in calls], [self.SHOW_ARGV])
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
+
+    def test_an_exit_137_is_a_plain_exit_never_the_clis_own_sigkill(self):
+        # round 3 (fresh-2): a claude_bin wrapper that runs the CLI as a child WITHOUT exec reports the child's
+        # SIGKILL as its own exit 137; every layer romp launches through execs in place, so the CLI's own kill
+        # is -9 and 137 is read as the plain exit it is (such a wrapper also defeats the interrupt escalation
+        # and the orphan finder, so it is outside what romp supports). With a counter increase it is a child
+        # kill the wrapper outlived; with the scope collected it is no verdict
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(), events={self.UNIT: self.EVENTS(1)}, exit_code=137, baseline=0)
+        line = self._died_line(logs)
+        self.assertNotIn("killed by signal 9", line)
+        self.assertNotIn("OOM killer took", line)
+        self.assertIn("while the CLI itself exited 137, so a tool child, not the CLI", line)
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
+        scope_line = [m for m in logs if "session scope result" in m]
+        self.assertEqual(len(scope_line), 1, logs)
+        self.assertIn("the CLI exited 137;", scope_line[0])
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(load="not-found", cgroup=""), exit_code=137, baseline=0)
+        self.assertFalse(any("OOM killer took" in m or "killed by signal 9" in m for m in logs), logs)
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
+        self.assertTrue(any("session scope result" in m and "the CLI exited 137;" in m for m in logs), logs)
+        self.assertEqual(sb.SIGKILL_EXIT, -9, "the match stays at -9")
+
+    def test_the_sdks_minus_one_exit_reads_as_unreported_never_as_a_kill_by_signal_1(self):
+        # round 3 (rules-3): the SDK's transport falls to -1 when its process wait raises (and anyio reports a
+        # SIGHUP death the same), so -1 says the exit was not read: the plain line says so in those words, and
+        # the contained shape (a counter increase, a non-SIGKILL exit) files no child verdict from it, as for None
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(), events={self.UNIT: self.EVENTS(1)}, exit_code=-1, baseline=0)
+        scope_line = [m for m in logs if "session scope result" in m]
+        self.assertEqual(len(scope_line), 1, logs)
+        self.assertIn("the CLI ended on signal 1 (SIGHUP) or the SDK could not read its exit (it reports -1 for both); "
+                      "oom_kill was 0 at the turn's start; memory.events oom_kill=1, Result=success", scope_line[0])
+        self.assertNotIn("killed by signal 1", scope_line[0])
+        line = self._died_line(logs)
+        self.assertNotIn("a tool child", line)
+        self.assertNotIn("OOM killer took", line)
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
+        self.assertEqual(be.problems(), [])
+        # with the scope collected the journal is read (not a SIGKILL) and an empty one leaves the bare notice
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(load="not-found", cgroup=""), exit_code=-1, baseline=0)
+        self.assertEqual([argv for argv, _kw in calls], [self.SHOW_ARGV, self.JOURNAL_ARGV])
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
+
+    def test_a_memory_limit_is_named_only_when_one_is_in_force_and_applied(self):
+        # round 3 (tests-4, rules-2): oom_verdict is pure and limits-blind, so the old "most likely the memory
+        # limit" guess is gone (the collected-scope test above pins its absence on a limit-free backend); the
+        # heal appends the limit as CONTEXT to an oom verdict by SIGKILL when a MemoryMax is set and the
+        # controller is delegated, never otherwise (MemoryHigh throttles, MemorySwapMax alone kills nothing,
+        # an undelegated controller applies none), and never on the "sigkill" cell, whose flat counter
+        # excludes the memcg killer
+        def heal(limits, delegated, events=None):
+            d = tempfile.mkdtemp()
+            be = _backend(d)
+            be.cli_scope_limits = dict(limits)
+            be.cli_scope_memory_delegated = delegated
+            show = self._show() if events else self._show(load="not-found", cgroup="")
+            calls, logs = self._heal_with_show(d, be, show, events=events, exit_code=self.KILL, baseline=0)
+            return self._died_line(logs), sb.read_reg(Path(d), self.SID).get("queue")
+        line, q = heal({"memoryMax": "1G", "memorySwapMax": "0"}, True)
+        self.assertIn("so its counter could not be read (oom_kill was 0 at the turn's start); a memory limit (MemoryMax=1G) "
+                      "is in force on its scope); resuming", line)
+        self.assertEqual(q, [sb.CRASH_RESUME_NUDGE_OOM])
+        line, q = heal({"memoryMax": "1G"}, None)   # the delegation check unsettled: not known to be off, so named
+        self.assertIn("a memory limit (MemoryMax=1G) is in force on its scope", line)
+        line, q = heal({"memoryMax": "1G"}, True, events={self.UNIT: self.EVENTS(1)})   # the counter rose: the limit as context
+        self.assertIn("(was 0 at the turn's start), Result=success; a memory limit (MemoryMax=1G) is in force on its scope)", line)
+        for limits, delegated, why in (({}, True, "no limit set"),
+                                       ({"memoryHigh": "1G", "memorySwapMax": "0"}, True, "no MemoryMax: nothing here kills"),
+                                       ({"memoryMax": "1G"}, False, "the controller undelegated: systemd applies nothing")):
+            with self.subTest(why=why):
+                line, q = heal(limits, delegated)
+                self.assertNotIn("memory limit", line, why)
+                self.assertEqual(q, [sb.CRASH_RESUME_NUDGE_OOM])
+        line, q = heal({"memoryMax": "1G"}, True, events={self.UNIT: self.EVENTS(0)})
+        self.assertNotIn("memory limit", line, "a flat counter excludes the memcg killer: no limit named")
+        self.assertEqual(q, [sb.CRASH_RESUME_NUDGE_KILLED])
+
+    def test_a_whole_life_count_with_no_baseline_names_no_child_kill(self):
+        # round 3 (tests-5): with no turn-start baseline (the connect-time read failed) a whole-life count above
+        # zero and a non-SIGKILL exit is context in the plain line, not a "contained" verdict: nothing says the
+        # counted kill was this turn's
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        calls, logs = self._heal_with_show(d, be, self._show(), events={self.UNIT: self.EVENTS(2)}, exit_code=1, baseline=None)
+        line = self._died_line(logs)
+        self.assertNotIn("a tool child", line)
+        self.assertNotIn("OOM killer took", line)
+        self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
+        scope_line = [m for m in logs if "session scope result" in m]
+        self.assertEqual(len(scope_line), 1, logs)
+        self.assertIn("the CLI exited 1; no turn-start baseline; memory.events oom_kill=2, Result=success", scope_line[0])
 
     def test_with_the_scopes_off_nothing_is_asked(self):
         # no scope was started for the CLI (the test floor, macOS, ROMP_CLI_SCOPE=0): no systemctl at all, even

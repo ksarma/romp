@@ -792,6 +792,28 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         self.assertIn("ended (a settings switch or a rewind restarted it): a",
                       sb.task_death_notice([{"desc": "a"}], cause=sb.SdkSession._RECONNECT_CAUSE))
 
+    def test_the_crash_resume_notices_speak_plainly_past_their_prefix(self):
+        # the three crash resume forms (bare; out of memory; killed by signal 9 with no out-of-memory kill counted,
+        # the round-3 form of 2026-09-10) are the same [romp]-prefixed mechanics family as the restart notices:
+        # past the markers and the prefix each speaks plainly, to "you", with none of the vocabulary above
+        import os as _os
+        sb = load_source("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py"))
+        forms = {"bare": sb.CRASH_RESUME_NUDGE, "out of memory": sb.CRASH_RESUME_NUDGE_OOM,
+                 "killed": sb.CRASH_RESUME_NUDGE_KILLED}
+        for name, text in forms.items():
+            with self.subTest(form=name):
+                prose = text[text.index("[romp]"):]
+                self.assertNotIn("<!--", prose, "markers lead, prose follows")
+                body = prose.split("]", 1)[1].lower()
+                for word, why in ROMP_WORDS:
+                    self.assertNotIn(word, body, "the notice speaks plainly past its prefix (%r: %s)" % (word, why))
+                self.assertTrue(sb.is_crash_resume_nudge(text), "one lead sentence for the three forms")
+        killed = forms["killed"].split("]", 1)[1]
+        self.assertIn("(killed by signal 9 part-way through the last turn; its own memory accounting counted no out-of-memory "
+                      "kill, so the machine's memory watchdog or a kill by hand ended it; keep memory use modest for now)", killed)
+        self.assertNotIn("out of memory:", killed, "the killed form never claims the death was out of memory")
+        self.assertNotIn("\u2014", killed)
+
     def test_the_untitled_fallback_names_no_romp_object(self):
         # a node with no text still renders SOMETHING; that placeholder must not smuggle in "goal"
         nodes = _nodes()
