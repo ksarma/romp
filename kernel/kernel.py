@@ -44260,7 +44260,8 @@ def _client_reset_chat_base(client):
 # a laptop sleep, a network change) redials, and the kernel used to serve the new socket as a client that
 # holds nothing: a full session frame for EVERY tab — 17 frames, ~9 MB on the measured board — for ONE tab on
 # screen. The page still holds every session it had; it only needs the one it shows. So the shim declares the
-# redial (?reconnect=1: this page has opened a socket before), and the kernel sends that client the tab strip
+# redial (?reconnect=1: this page has opened a socket before and its bundle has said ready (and no ready is
+# waiting in its queue)), and the kernel sends that client the tab strip
 # with a `skeleton` list — every listed tab except the active one, cheapest transcript first — the active
 # tab's full session, and a small status frame per skeleton tab so its chip stays honest. A skeleton tab
 # loads on the user's click (activeTab / needFull) or on the client's idle prefetch (needFull), and any full
@@ -50806,7 +50807,7 @@ def _shim(app, v=0, caps=""):
     return """
 %s
 (function(){/*shim-core*/var queue=[],ws=null,everConnected=false;
-var bundleReady=false,readyQueued=false;   // the BUNDLE's own {type:"ready"} has passed through send() on this page / is waiting in `queue` for an open — the reconnect re-send below keys on both
+var bundleReady=false,readyQueued=false;   // the BUNDLE's own {type:"ready"} has passed through send() on this page / is waiting in `queue` for an open; the reconnect re-send (onopen) and the dial's reconnect term (connect) key on both
 var queuedDiag=0,DIAG_QUEUE_MAX=20;   // clientDiag rows waiting in `queue` for a reconnect, capped (an outage must not pile up breadcrumbs); other queued messages are untouched
 var failedConnects=0,firstFailT=0;   // handshakes that never OPENED since the last open: reported as ONE wsconnfail row on the next open, never one wsclose per redial
 // This pane's DASHBOARD id. ?wid= when the host supplies one (the VS Code extension builds its own pane
@@ -50966,7 +50967,7 @@ function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // on
 if(returnAt)returnRedialed=true;   // a dial inside a return window (whatever path led here) → the return-fresh row says so
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
 var active="";try{var st0=JSON.parse(localStorage.getItem(SK)||"null");active=(st0&&st0.activeId)||"";}catch(e){}
-ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):"")+((everConnected&&bundleReady)?"&reconnect=1":""));   // reconnect=1: this page has held a socket before AND its bundle has said ready, so it may already hold sessions; the kernel skeletons the tabs it is not looking at (2026-09-07). A socket that opened and died before the bundle said ready held nothing for the page: that redial carries no term, and the bundle's own ready is served everything whole (2026-09-10; upstream keys on everConnected alone, harmless there because its kernel pops the state on every ready)
+ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):"")+((everConnected&&bundleReady&&!readyQueued)?"&reconnect=1":""));   // reconnect=1: this page has held a socket before AND its bundle has said ready AND that ready is not still waiting in the queue for this open, so it may already hold sessions; the kernel skeletons the tabs it is not looking at (2026-09-07). A socket that opened and died before the bundle said ready held nothing for the page, and neither did one whose bundle said ready only after it died (the ready queued, and flushes onto this socket as the bundle's own): both redials carry no term, and the bundle's ready is served everything whole (2026-09-10; upstream keys on everConnected alone, harmless there because its kernel pops the state on every ready)
 // onopen: flush the queue; a RECONNECT (after a drop) also PROMPTS a reload — the fresh socket resyncs live via
 // the kernel's next push, and the banner offers a full reload for anything a live push doesn't cover. This
 // replaced the old silent location.reload() (the user 2026-07-05: don't foist a reload; let me click). Narrowed by
@@ -60183,7 +60184,7 @@ class Handler(BaseHTTPRequestHandler):
         # among them), federation's remote sockets, an older bundle — keeps receiving the full {type:"feed"}
         # frame it always did.
         caps = (q.get("caps") or [""])[0]
-        reconnect = (q.get("reconnect") or [""])[0] == "1"   # the shim's own statement: this page opened a socket before
+        reconnect = (q.get("reconnect") or [""])[0] == "1"   # the shim's own statement: this page has opened a socket before and its bundle has said ready (and no ready is waiting in its queue)
         self.send_response(101)
         self.send_header("Upgrade", "websocket")
         self.send_header("Connection", "Upgrade")
@@ -60235,13 +60236,17 @@ class Handler(BaseHTTPRequestHandler):
             # once the bundle has sent its own, and that re-sent `ready` is NOT a fresh evaluation: the page
             # still holds every session it had. So the reset keeps a declared redial's state, and the
             # pusher's first strip after the re-sent `ready` is the skeleton-marked frame, filled by
-            # _resolve_reconnect. A fresh renderer declares no redial: a reloaded page's shim has `everConnected`
-            # false on its first dial, and a redial before the bundle has said `ready` carries no term either
-            # (the dial gates on `bundleReady` too, so a first socket that opened and died before the bundle
-            # evaluated does not mark a page that holds nothing; 2026-09-10). So the bundle's own `ready` arrives
-            # on a socket without the flag and pops everything: a full strip and full pushes, as before. The one
-            # residual: a bundle whose `ready` queued while the socket was down set `bundleReady` before the
-            # redial, so that socket carries the term and its flushed `ready` keeps the state; the page is served
+            # _resolve_reconnect. A fresh renderer declares no redial. The shim dials the term only when all of
+            # `everConnected && bundleReady && !readyQueued` hold: a reloaded page's first dial has `everConnected`
+            # false; a redial before the bundle has said `ready` has `bundleReady` false (a first socket that opened
+            # and died before the bundle evaluated does not mark a page that holds nothing; 2026-09-10); and a redial
+            # whose bundle said `ready` while the socket was down has `readyQueued` true (that `ready` is still in
+            # the shim's queue and flushes onto the redial socket as the bundle's own; round 6, 2026-09-10). On each
+            # of those the bundle's own `ready` arrives on a socket without the flag and pops everything: a full
+            # strip and full pushes, as before. The residual that remains, and that no shim bit sees: a `ready` that
+            # left on an OPEN socket which then died before any frame came back (the kernel never processed it, or
+            # its frames never landed) reads as a designed redial (`readyQueued` is false because the `ready` went
+            # out), so that redial carries the term, its re-sent `ready` keeps the state, and the page is served
             # skeleton tabs that fill on click or the idle prefetch, never less than it asks for.
             client["redial"] = True
         _register_ws_client(client)

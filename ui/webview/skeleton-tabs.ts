@@ -1,7 +1,7 @@
-// Skeleton tabs (2026-09-07): the client half of the reconnect diet. When a pane redials after its socket
-// died (a laptop lid, a long freeze, a network change), the kernel used to serve the fresh socket as a client
-// that holds nothing — seventeen full `session` frames, ~9 MB, for ONE tab on screen. Now the shim declares
-// the redial (`reconnect=1`), the kernel sends the tab strip with a `skeleton` list (every background tab it
+// Skeleton tabs (2026-09-07): the client half of the reconnect diet. When a pane redials after its socket died
+// (a laptop lid, a long freeze, a network change), the kernel used to serve the fresh socket as a client that
+// holds nothing: 17 full `session` frames, ~9 MB, for ONE tab on screen. Now a redial after the bundle's ready
+// declares itself (`reconnect=1`), the kernel sends the tab strip with a `skeleton` list (every background tab it
 // is withholding, cheapest first), the ACTIVE tab in full, and a ~400 B `status` frame per withheld tab. This
 // module owns the client's copy of that set — which tabs are resting, what the kernel last said about each,
 // and which one to fetch next in idle — as a pure, DOM-free state machine (the prebuild.ts / tab-meta.ts

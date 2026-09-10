@@ -5,7 +5,7 @@ pulled every session whole for the one tab on screen).
 When a pane's socket died while its browser tab was away (a long freeze, a laptop sleep, a network change),
 the redial used to be served as a client that holds nothing: a full {type:"session"} for EVERY tab — 17 frames,
 ~9 MB on the measured board — for one tab on screen. The page still holds every session it had; it only needs
-the one it shows. Now the shim's redial declares itself (?reconnect=1, tested in test_pane_shim_return.py) and
+the one it shows. Now a redial after the bundle's ready declares itself (?reconnect=1, tested in test_pane_shim_return.py) and
 the kernel sends THAT client the tab strip with a `skeleton` list (every listed tab but the active one, cheapest
 transcript first), the active tab's full session, and a small status frame per skeleton tab so its chip stays
 honest. A skeleton tab loads on the user's click (activeTab / needFull), on the client's idle prefetch
@@ -420,9 +420,10 @@ class SkeletonReconnect(unittest.TestCase):
         self.assertIn("_send_chat_or_status(c, m, ms, change_from, led_changed)", s)
         self.assertNotIn("= _send_chat(c, m, ms, change_from, led_changed)", s,
                          "the pusher's per-client send goes through the skeleton-aware twin")
-        self.assertIn('+((everConnected&&bundleReady)?"&reconnect=1":"")', km._shim("chat", 1),
-                      "the shim declares the redial once the page has held a socket AND its bundle has said ready "
-                      "(a first socket that died before the bundle evaluated held nothing; tests/test_chat_skeleton_reconnect_gate.py)")
+        self.assertIn('+((everConnected&&bundleReady&&!readyQueued)?"&reconnect=1":"")', km._shim("chat", 1),
+                      "the shim declares the redial once the page has held a socket AND its bundle has said ready AND that "
+                      "ready is not still queued for the open (a first socket that died before the bundle evaluated held "
+                      "nothing, and so did one whose bundle said ready only after it died; tests/test_chat_skeleton_reconnect_gate.py)")
         s = inspect.getsource(km.Handler._ws)
         self.assertIn('reconnect = (q.get("reconnect") or [""])[0] == "1"', s)
         self.assertIn('client["reconnect"] = True', s)

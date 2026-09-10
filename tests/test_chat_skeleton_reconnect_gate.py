@@ -10,9 +10,11 @@ accept), and its shim re-sends `ready` on a redial once the bundle has sent its 
 `ready` is NOT a fresh evaluation. The fork keeps upstream's behaviour on both paths with a second flag: `redial`,
 set at accept beside `reconnect` and never consumed, and a reset that keeps a declared redial's skeleton state.
 That flag made the shim's URL term load-bearing, so the shim declares the redial only once the page has held a
-socket AND its bundle has said `ready` (`everConnected&&bundleReady`, 2026-09-10): a first socket that opened and
-died before the bundle evaluated (the documented mid-load drop) held nothing for the page, and its redial dials as
-a fresh page. Path by path, what this module pins:
+socket AND its bundle has said `ready` AND that `ready` is not still waiting in the shim's queue for the open
+(`everConnected&&bundleReady&&!readyQueued`, 2026-09-10): a first socket that opened and died before the bundle
+evaluated (the documented mid-load drop) held nothing for the page, and its redial dials as a fresh page; so does
+a redial whose bundle said `ready` only while the socket was down (the `ready` queued, and flushes onto the redial
+socket, where the kernel reads it as a fresh page's). Path by path, what this module pins:
 - a redial socket (?caps=readyGate&reconnect=1) is sent NOTHING before its re-sent `ready`: not by the pusher, not by
   the off-cycle push, not by a close confirmation;
 - its first strip after `ready` carries `skeleton`: the reset kept the flag, and the pusher's _resolve_reconnect
@@ -23,7 +25,9 @@ a fresh page. Path by path, what this module pins:
 - neither path gets a tabOrder frame from the `ready` handler itself: the guarded push is the only source;
 - the two halves joined, with the URL the REAL shim builds under node: a page whose first socket opened and died
   before its bundle's `ready` redials without the reconnect term and its bundle's own `ready` is served everything
-  whole; only a page whose bundle had said `ready` before the drop declares the redial and is served skeletons.
+  whole, as does a page whose bundle said `ready` while its socket was down (the queued `ready` goes out exactly
+  once, on the redial socket); only a page whose bundle had said `ready` before the drop declares the redial and
+  is served skeletons.
 Synthetic only: the notes-api demo world (web/api/tests/docs), placeholder UUIDs, TESTHOST. Never run raw: the
 loads below set no ROMP_MANAGER_PORT; pytest's conftest poisons the live ports.
 """
@@ -84,15 +88,19 @@ WebSocket.prototype.send=function(s){this.sent.push(s);};WebSocket.prototype.clo
 function MessageChannel(){this.port1={onmessage:null};this.port2={postMessage:function(d){}};}
 function sock(){return sockets[sockets.length-1];}
 function open(){var s=sock();s.readyState=1;s.onopen();return s;}
-function drop(){sock().readyState=3;sock().onclose();var live=timers.filter(function(t){return t.live&&t.fn.name==="connect";});live[live.length-1].fn();}
+function redial(){var live=timers.filter(function(t){return t.live&&t.fn.name==="connect";});live[live.length-1].fn();}
+function drop(){sock().readyState=3;sock().onclose();redial();}
+function readys(s){return s.sent.filter(function(x){return JSON.parse(x).type==="ready";}).length;}
 """ % S1
 
 
-def _shim_redial_query(scenario):
+def _shim_redial(scenario):
     """Run the REAL shim core under node (km._shim_core_js with READY_GATE_CAP announced, as every pane's page
-    announces it) through `scenario`, which drives the first socket to its drop and the redial, and return the
-    query the redial was dialed with minus the page identity (app, delta, iid): the terms the kernel's accept
-    reads (active, caps, reconnect), in the shim's order, ready for _dial."""
+    announces it) through `scenario`, which drives the first socket to its drop and leaves the redial dialed but
+    not yet open; then OPEN that redial socket (the shim's onopen flushes its queue and decides the re-send).
+    Returns the query the redial was dialed with minus the page identity (app, delta, iid), i.e. the terms the
+    kernel's accept reads (active, caps, reconnect) in the shim's order, ready for _dial, and the number of `ready`
+    frames the redial socket carried once open: the bundle's queued one, the shim's re-sent one, or none."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
@@ -100,12 +108,18 @@ def _shim_redial_query(scenario):
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
         f.write(_SHIM_HARNESS + km._shim_core_js(app="chat", caps=km.READY_GATE_CAP) + "\n" + scenario
-                + "\nprocess.stdout.write(sock().url);")
+                + "\nvar url=sock().url;open();process.stdout.write(JSON.stringify({url:url,readys:readys(sock())}));")
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)
-    pairs = urllib.parse.parse_qsl(r.stdout.split("?", 1)[1], keep_blank_values=True)
-    return "&".join("%s=%s" % (k, v) for k, v in pairs if k not in ("app", "delta", "iid"))
+    out = json.loads(r.stdout)
+    pairs = urllib.parse.parse_qsl(out["url"].split("?", 1)[1], keep_blank_values=True)
+    return "&".join("%s=%s" % (k, v) for k, v in pairs if k not in ("app", "delta", "iid")), out["readys"]
+
+
+def _shim_redial_query(scenario):
+    """The redial's query alone (see _shim_redial)."""
+    return _shim_redial(scenario)[0]
 
 
 def _sess(sid, n, state):
@@ -386,6 +400,49 @@ class GateDifferential(unittest.TestCase):
         self.assertEqual(to[0]["skeleton"], [S3, S2])
         self.assertEqual(self._sessions(c), [S1, S4])
         self.assertEqual(c["skeleton"], {S2, S3})
+
+    def test_10_a_ready_that_queued_while_the_socket_was_down_redials_as_a_fresh_page_and_goes_out_once(self):
+        # The queued-ready shape (round 5's documented residual, closed in round 6): the first socket opened and died
+        # before the bundle evaluated; the bundle then says ready WHILE the socket is down, so send() sets bundleReady
+        # and queues the frame (readyQueued). Keyed on everConnected&&bundleReady alone the redial declared itself,
+        # the kernel flagged it `redial`, and the flushed ready (the bundle's OWN, its first) kept `reconnect` and was
+        # served skeletons for tabs the page never had. The term gates on !readyQueued too: this redial dials as a
+        # fresh page, the queued ready flushes onto it exactly once (onopen's re-send stands down: flushedReady), and
+        # the kernel pops the state for a full strip.
+        q, readys = _shim_redial('open();sock().readyState=3;sock().onclose();window.__rompLocalSend({type:"ready"});redial();')
+        self.assertEqual(q, FRESH, "no reconnect term: the bundle's ready is still in the shim's queue, so the page has held no session")
+        self.assertEqual(readys, 1, "the queued ready goes out on the redial socket, once: the flush carries it and onopen adds no second")
+        c = self._dial(q)
+        self.assertIsNone(c.get("reconnect"))
+        self.assertIsNone(c.get("redial"), "not flagged at accept")
+        self.assertFalse(c["ready"], "held all the same")
+        km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready"}, c)   # the flushed ready
+        to = self._tab_orders(c)
+        self.assertEqual(len(to), 1)
+        self.assertNotIn("skeleton", to[0], "the full strip")
+        self.assertEqual(sorted(self._sessions(c)), sorted(TAB_ORDER), "every session whole")
+        self.assertEqual(self._statuses(c), [], "no status stand-ins")
+        self.assertNotIn("skeleton", c)
+
+    def test_11_a_ready_sent_while_a_redial_was_still_connecting_dials_the_next_redial_as_a_fresh_page_when_that_one_fails(self):
+        # The CONNECTING-then-fail shape: the first socket opened and died; the redial is dialed and sits CONNECTING
+        # (readyState 0) when the bundle says ready, so the ready queues (send() writes only to an OPEN socket); that
+        # redial never opens (onclose without onopen: counted as a failed connect) and the next dial follows. The bits
+        # at that dial read as in test_10 (everConnected, bundleReady, readyQueued all true): FRESH, one ready on the
+        # socket that finally opens, a full strip.
+        q, readys = _shim_redial('open();drop();window.__rompLocalSend({type:"ready"});sock().readyState=3;sock().onclose();redial();')
+        self.assertEqual(q, FRESH, "no reconnect term through a failed redial either")
+        self.assertEqual(readys, 1, "the queued ready rides the socket that opens, once")
+        c = self._dial(q)
+        self.assertIsNone(c.get("reconnect"))
+        self.assertIsNone(c.get("redial"))
+        km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready"}, c)
+        to = self._tab_orders(c)
+        self.assertEqual(len(to), 1)
+        self.assertNotIn("skeleton", to[0])
+        self.assertEqual(sorted(self._sessions(c)), sorted(TAB_ORDER))
+        self.assertEqual(self._statuses(c), [])
+        self.assertNotIn("skeleton", c)
 
     # ── the reset, in isolation ──
     def test_06_the_reset_pops_the_state_for_a_fresh_evaluation_and_keeps_it_for_a_declared_redial(self):
