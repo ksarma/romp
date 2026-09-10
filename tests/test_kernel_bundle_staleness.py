@@ -23,7 +23,7 @@ from pathlib import Path
 from romp_load import load_source
 
 import lab_dist   # the served labs' build harness (tests/lab_dist.py); the parity and token pins at the end read it
-import lab_dist_stub   # the NODE_PATH stand-in for the esbuild package, so the parity pin runs without node_modules
+import lab_dist_stub   # the node preload standing in for missing bare packages, so the parity pin runs without node_modules
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -104,15 +104,20 @@ class ServedLabsKeyTheSameInputs(unittest.TestCase):
     dependency of the BUILD and not of the exported data (nothing the config exports comes from that module,
     and nothing reads it at require time). CI's Python job runs no `npm ci`, so the pin ran only where a
     developer had installed the extension's dependencies until round 7 of the harness review; it now runs on
-    both kinds of checkout through tests/lab_dist_stub.py, a NODE_PATH stand-in that node consults only where
-    the real package does not resolve, so the run with node_modules present reads the real package. A config
-    that read esbuild at load would fail loudly under the stub (its property reads throw), and the failure
-    names the stub. The harness itself stays strict: a served lab on a checkout without node_modules skips
-    there, as before. The one skip left is node itself missing from PATH."""
+    both kinds of checkout through tests/lab_dist_stub.py, a node preload that stands in for every bare
+    package node cannot resolve and loads the real module wherever one resolves, so the run with node_modules
+    present reads the real package (round 7 stood in for the one name esbuild, and a second bare require in
+    esbuild.js would have put this pin back to skipping on CI in silence). A config that read a stood-in
+    package at load fails loudly (every read of the stand-in throws), and the failure names the stand-in. A
+    skip raised inside the stand-in's block is a FAILURE naming tests/lab_dist_stub.py as the file to extend:
+    it means a bare package went uncovered, so on a checkout whose node_modules predate a newly added
+    dependency this pin goes red instead of skipping, while the served labs themselves still skip there (the
+    harness stays strict: nothing in tests/lab_dist.py knows the stand-in exists). The one skip left is node
+    itself missing from PATH."""
 
     def test_every_kernel_bundle_input_is_keyed_by_the_served_labs_build(self):
         cv = km.ROOT / "vscode-extension"
-        with lab_dist_stub.esbuild_stub():
+        with lab_dist_stub.bare_package_stub():
             keyed = {os.path.realpath(p) for p in lab_dist.default()._input_files()}
         self.assertGreater(len(keyed), 100, "the harness keyed a real tree")
         missing = sorted(str(p) for p in km._bundle_inputs(cv) if os.path.realpath(str(p)) not in keyed)

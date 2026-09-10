@@ -92,7 +92,7 @@ sys.modules.setdefault("romp_load", _romp_load)
 from . import lab_dist as _lab_dist  # noqa: E402
 sys.modules.setdefault("lab_dist", _lab_dist)
 
-# `import lab_dist_stub` in the two real-tree pins (tests/lab_dist_stub.py, the NODE_PATH stand-in for the esbuild
-# package on a checkout without the extension's node_modules) resolves the same way.
+# `import lab_dist_stub` in the two real-tree pins (tests/lab_dist_stub.py, the node preload standing in for the bare
+# packages a checkout without the extension's node_modules lacks) resolves the same way.
 from . import lab_dist_stub as _lab_dist_stub  # noqa: E402
 sys.modules.setdefault("lab_dist_stub", _lab_dist_stub)

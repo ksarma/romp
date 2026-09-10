@@ -25,8 +25,8 @@ does (holding the staging window open long enough to matter):
      with no exported value inside it; then the trees their relative imports reach, one executed test per import
      shape the scan follows), the dist being built is left out at the top level only, and on the real config the
      derivation yields the kernel's trees, on a checkout without the extension's node_modules too, through a
-     NODE_PATH stand-in for the esbuild package (tests/lab_dist_stub.py; tests/test_kernel_bundle_staleness.py
-     pins file-level parity the same way);
+     node preload that stands in for every bare package node cannot resolve (tests/lab_dist_stub.py;
+     tests/test_kernel_bundle_staleness.py pins file-level parity the same way);
   5. the two environment failures skip the caller, with the reason, and every other failure raises: a build that
      fails skips and leaves no marker, and a bare package the config requires that node cannot find skips from
      the served modules' own call (review round 7, decision 2), while a config that does not load (a syntax
@@ -419,8 +419,10 @@ class InputsDeriveFromEsbuild(unittest.TestCase):
     checkout can exist inside the cleaned temp dir; the base is a realpath, because node's __dirname is one and
     the absolute-value tests compare the two textually. Round 7 added the served-shaped caller (`served_call`:
     the served modules' own `copy_dist`, with the harness's DistBuild bound to this checkout), over which the
-    environment skips and the config errors, and the NODE_PATH stand-in for the esbuild package the two
-    real-tree pins run under (tests/lab_dist_stub.py)."""
+    environment skips and the config errors, and the stand-in for the esbuild package the two real-tree pins
+    run under (tests/lab_dist_stub.py); round 8 made the stand-in a node preload covering every bare package
+    node cannot resolve, and isolated the served caller from node's global folders (NODE_PATH dropped, HOME
+    bound to this test's temp base) so its premise, that no esbuild resolves, holds on a developer's box too."""
 
     def setUp(self):
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="lab-dist-inputs-"))
@@ -478,9 +480,15 @@ module.exports = { extension, webview, testBuild };
     def served_call(self):
         """The served modules' own call, lab_dist.copy_dist, over this synthetic checkout: default() builds its
         DistBuild on first use, so the derivation runs inside the call, where a served class's setUpClass meets
-        it. DistBuild is bound to this checkout for the call; _DEFAULT is cleared and restored around it."""
+        it. DistBuild is bound to this checkout for the call; _DEFAULT is cleared and restored around it. The
+        environment is isolated from node's global folders for the call, test-side only (the harness passes its
+        environment through, and the real-tree pins rely on that): NODE_PATH is dropped and HOME is bound to this
+        test's temp base, which holds no .node_modules, so a developer's global esbuild cannot resolve the bare
+        require the skip tests plant. $PREFIX/lib/node cannot be scrubbed and stays the premise."""
         bound = functools.partial(lab_dist.DistBuild, ext=self.ext, root=self.root, cmd=[sys.executable, "x"])
-        with patch.object(lab_dist, "_DEFAULT", None), patch.object(lab_dist, "DistBuild", bound):
+        with patch.dict(os.environ, {"HOME": self.base}), \
+                patch.object(lab_dist, "_DEFAULT", None), patch.object(lab_dist, "DistBuild", bound):
+            os.environ.pop("NODE_PATH", None)
             lab_dist.copy_dist(os.path.join(self.base, "lab", "dist"))
 
     def test_the_exported_configs_name_two_trees_and_both_are_keyed(self):
@@ -840,6 +848,31 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
             self.served_call()
         self.assertIn("no package '@scope/pkg'", str(cm.exception))
 
+    def test_the_served_callers_premise_holds_against_nodes_global_folders(self):
+        """The test above assumes no esbuild resolves. Node consults its global folders after the node_modules
+        walk fails: NODE_PATH, then $HOME/.node_modules and $HOME/.node_libraries, then $PREFIX/lib/node. A
+        developer with an esbuild in any of the first three would have seen the derivation succeed, the fake
+        builder fail, and the test fail on the builder's message instead of the premise (round 8). served_call
+        drops NODE_PATH and binds HOME to this test's base for the call, so an esbuild planted on NODE_PATH, and one
+        under $HOME/.node_modules, both leave the served skip naming the package. $PREFIX/lib/node cannot be
+        scrubbed and stays the premise."""
+        _write(self.config, 'const esbuild = require("esbuild");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        planted = os.path.join(self.base, "global")
+        _write(os.path.join(planted, "esbuild", "index.js"), "module.exports = { version: '0.0.0' };\n")
+        with patch.dict(os.environ, {"NODE_PATH": planted}):
+            with self.assertRaises(unittest.SkipTest) as cm:
+                self.served_call()
+        self.assertIn("no package 'esbuild'", str(cm.exception))
+        home = os.path.join(self.base, "home")
+        _write(os.path.join(home, ".node_modules", "esbuild", "index.js"), "module.exports = { version: '0.0.0' };\n")
+        with patch.dict(os.environ, {"HOME": home}):
+            with self.assertRaises(unittest.SkipTest) as cm:
+                self.served_call()
+        self.assertIn("no package 'esbuild'", str(cm.exception))
+        # the control: the planted packages DO resolve when the environment reaches node unscrubbed
+        with patch.dict(os.environ, {"NODE_PATH": planted}):
+            self.assertEqual(self.roots(), ["ext"], "NODE_PATH resolves the planted esbuild for a plain derivation")
+
     def test_a_served_caller_errors_when_the_config_itself_does_not_load(self):
         """Everything but the missing bare package stays loud from the served call: a syntax error, and a missing
         relative module (MODULE_NOT_FOUND for a file of this checkout). SkipTest is caught first and fails, so a
@@ -857,23 +890,88 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
             else:
                 self.fail("a config that does not load raised nothing")
 
-    def test_the_esbuild_stub_stands_in_for_the_build_dependency_and_refuses_a_read_at_load(self):
-        """tests/lab_dist_stub.py, the NODE_PATH stand-in the two real-tree pins run under where the extension's
-        node_modules are absent (this synthetic ext has a node_modules dir without esbuild in it, so node's walk
-        fails and NODE_PATH is consulted). Under it, a config that requires esbuild and reads nothing from it
-        derives its trees, where without the stub the same config skips (the test above); a config that reads
-        esbuild at require time fails loudly, the error naming the stub and the property: the stub stands in for a
-        dependency of the BUILD, not of the exported data, and a plain empty object would have let the read
-        through as undefined."""
-        _write(self.config, 'const esbuild = require("esbuild");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
-        with lab_dist_stub.esbuild_stub():
-            self.assertEqual(self.roots(), ["ext"])
-            _write(self.config, 'const esbuild = require("esbuild");\nconst v = esbuild.version;\n'
-                                'module.exports = { x: { entryPoints: ["src/extension.ts"], banner: { js: "// " + v } } };\n')
-            with self.assertRaises(ValueError) as cm:
+    # tests/lab_dist_stub.py, the node preload the two real-tree pins run under where the extension's node_modules are
+    # absent (this synthetic ext has a node_modules dir without the packages in it, so every bare require misses).
+    def test_the_package_stand_in_covers_every_bare_package_node_cannot_resolve(self):
+        """Under the preload, a config that requires bare packages node cannot find, and reads nothing from them,
+        derives its trees, where without it the same config skips (the served-caller test above). Three misses at
+        once, one scoped, one a subpath: round 7 stood in for the one name esbuild, so the day esbuild.js required
+        a second package both real-tree pins went back to skipping on CI in silence; SkipTest is caught first and
+        fails, so that shape is red here, never a skip."""
+        _write(self.config, 'const esbuild = require("esbuild");\nconst other = require("other");\nconst s = require("@scope/pkg/sub");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        with lab_dist_stub.bare_package_stub():
+            try:
+                roots = self.roots()
+            except unittest.SkipTest as e:
+                self.fail("a bare package the stand-in did not cover skipped the derivation: %r" % e)
+        self.assertEqual(roots, ["ext"])
+
+    def test_the_package_stand_in_is_inert_where_the_real_package_resolves(self):
+        """The other half of the preload's rule: a specifier that resolves loads the REAL module, untouched. An
+        esbuild installed under this ext's node_modules exports a version the config folds into an entry path
+        (`../tools/<version>.ts`, on disk), so the derived roots prove the real package's data flowed through; a
+        stand-in that shadowed every bare name would throw on `esbuild.version` here, and a softened one answering
+        undefined would resolve nothing under tools/."""
+        _write(os.path.join(self.ext, "node_modules", "esbuild", "index.js"), 'module.exports = { version: "9.9.9" };\n')
+        _write(os.path.join(self.root, "tools", "9.9.9.ts"), "export const v = 9;\n")
+        _write(self.config, 'const esbuild = require("esbuild");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts", "../tools/" + esbuild.version + ".ts"] } };\n')
+        with lab_dist_stub.bare_package_stub():
+            self.assertEqual(self.roots(), ["ext", "tools"])
+            _, exports = lab_dist.esbuild_exports(self.ext)
+        self.assertIn("../tools/9.9.9.ts", exports["x"]["entryPoints"], "the real package's version, not a stand-in's")
+
+    def test_the_package_stand_in_refuses_every_read_at_load_naming_the_read(self):
+        """A stand-in is a dependency of the BUILD, not of the exported data, so every read of it at require time
+        fails loudly, the error naming tests/lab_dist_stub.py, the package and the read: a property (a plain empty
+        object would have answered undefined and let "undefined" flow into the exported data), the `in` operator
+        and enumeration (Object.keys, a spread: an empty object would answer false and [] and let the config take
+        a branch the real package never takes), an own-property lookup, and the module exported whole, which the
+        READER's JSON.stringify reads (toJSON first), named as the reader's read, not the config's."""
+        cases = (
+            ('const v = esbuild.version;\nmodule.exports = { x: { entryPoints: ["src/extension.ts"], banner: { js: "// " + v } } };\n',
+             "read esbuild.version"),
+            ('const e = "context" in esbuild ? ["src/extension.ts"] : ["../tools/extra/thing.ts"];\n'
+             'module.exports = { x: { entryPoints: e } };\n', "tested 'context' in esbuild"),
+            ('const k = Object.keys(esbuild);\nmodule.exports = { x: { entryPoints: ["src/extension.ts"], keys: k } };\n',
+             "enumerated esbuild"),
+            ('const copy = { ...esbuild };\nmodule.exports = { x: { entryPoints: ["src/extension.ts"], copy } };\n',
+             "enumerated esbuild"),
+            ('const own = Object.prototype.hasOwnProperty.call(esbuild, "build");\n'
+             'module.exports = { x: { entryPoints: ["src/extension.ts"], own } };\n', "looked up esbuild's own property 'build'"),
+            ('module.exports = { x: { entryPoints: ["src/extension.ts"] }, esbuild };\n',
+             "the reader's JSON.stringify read esbuild.toJSON"),
+        )
+        with lab_dist_stub.bare_package_stub():
+            for body, expect in cases:
+                _write(self.config, 'const esbuild = require("esbuild");\n' + body)
+                with self.assertRaises(ValueError, msg=body) as cm:
+                    lab_dist.esbuild_roots(self.root, self.ext)
+                self.assertIn("tests/lab_dist_stub.py", str(cm.exception), body)
+                self.assertIn("for 'esbuild'", str(cm.exception), body)
+                self.assertIn(expect, str(cm.exception), body)
+
+    def test_a_skip_inside_the_stand_ins_block_is_a_failure_naming_the_package(self):
+        """The one skip the derivation raises is the missing-bare-package one, and inside the stand-in's block it
+        means the preload did not take effect (NODE_OPTIONS dropped by a node wrapper) or its rule missed the
+        request: the block re-raises it as AssertionError naming tests/lab_dist_stub.py and the package, so the
+        real-tree pins go red there instead of skipping. Driven with a config that throws the reader's own
+        classification shape by hand (a MODULE_NOT_FOUND naming a bare package the preload never saw), since under
+        the preload no real bare miss reaches the reader. SkipTest is caught first and fails: before the conversion
+        this test reported as skipped, not red."""
+        _write(self.config, 'const e = new Error("Cannot find module \'ghost\'");\ne.code = "MODULE_NOT_FOUND";\nthrow e;\n')
+        try:
+            with lab_dist_stub.bare_package_stub():
                 lab_dist.esbuild_roots(self.root, self.ext)
-            self.assertIn("esbuild stub", str(cm.exception))
-            self.assertIn("esbuild.version", str(cm.exception))
+        except unittest.SkipTest as e:
+            self.fail("a skip escaped the stand-in's block: %r" % e)
+        except AssertionError as e:
+            self.assertIn("tests/lab_dist_stub.py", str(e))
+            self.assertIn("'ghost'", str(e))
+            self.assertIsInstance(e.__cause__, unittest.SkipTest)
+        else:
+            self.fail("the skip inside the block raised nothing")
 
     def test_a_missing_node_is_an_error(self):
         """Without node on PATH nothing is derived: the error names node and the config."""
@@ -898,10 +996,12 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         tests/test_kernel_bundle_staleness.py, where the kernel is already loaded); the config and package files
         are keyed, the lock file is content-keyed instead, and nothing under the extension's dist, node_modules
         or out-tests is. esbuild.js requires esbuild at its top, a dependency of the build and not of the
-        exported data, so the read runs under tests/lab_dist_stub.py's NODE_PATH stand-in and this pin runs on a
-        checkout without the extension's node_modules too (CI's Python job; round 6 skipped there). Where the
-        package is installed node never reaches NODE_PATH and the real package is read."""
-        with lab_dist_stub.esbuild_stub():
+        exported data, so the read runs under tests/lab_dist_stub.py's preload, which stands in for every bare
+        package node cannot resolve, and this pin runs on a checkout without the extension's node_modules too
+        (CI's Python job; round 6 skipped there, and round 7's stand-in for the one name esbuild would have
+        skipped again on the first added dependency). Where a package is installed the real one is read. A skip
+        inside the block is a failure (the block converts it), so the only skip left is node missing from PATH."""
+        with lab_dist_stub.bare_package_stub():
             self.assertEqual([os.path.relpath(p, lab_dist.ROOT) for p in lab_dist.esbuild_roots()], ["ui", "vscode-extension"])
             self.assertEqual([(os.path.relpath(p, lab_dist.ROOT), r) for p, r in lab_dist.default_inputs()],
                              [("ui", True), ("vendor", True), ("vscode-extension", True)])
@@ -1109,7 +1209,9 @@ class ServedModulesUseTheHelper(unittest.TestCase):
         offenders = []
         for path in sorted(glob.glob(os.path.join(HERE, "*.py"))):
             name = os.path.basename(path)
-            if name == "lab_dist.py" or os.path.realpath(path) == os.path.realpath(__file__):
+            # the harness and its package stand-in are what the ratchet points test modules at: neither is a test
+            # module, and neither builds or copies dist (the stand-in's docstring names the config it covers)
+            if name in ("lab_dist.py", "lab_dist_stub.py") or os.path.realpath(path) == os.path.realpath(__file__):
                 continue
             found = offences(name, _read(path))
             if found:

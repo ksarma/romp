@@ -60,8 +60,9 @@ This module owns the build. The rules:
   an error (review round 7): a bare package the config requires that node cannot find (`require("esbuild")`
   on a checkout without the extension's node_modules) is the environment, the precondition the build half
   already skips on, so the served labs skip with the reason. The two real-tree pins run there all the
-  same, through a NODE_PATH stub of the esbuild package (tests/lab_dist_stub.py): the require is a
-  dependency of the build, not of the exported data. node_modules and out-tests (the test build's output)
+  same, through a node preload that stands in for every bare package node cannot resolve
+  (tests/lab_dist_stub.py; the stand-in throws on any read at require time): the require is a dependency
+  of the build, not of the exported data. node_modules and out-tests (the test build's output)
   are pruned at any depth, and the dist being built is pruned at the top level only: a source directory
   named dist at depth is keyed like any other.
 - Every build and every copy holds the same file lock (fcntl.flock: xdist workers are separate
