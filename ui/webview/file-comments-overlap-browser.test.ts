@@ -7,9 +7,9 @@
 // draws no inset ring (one wash and one ring over the overlap; the outer mark keeps both); a real mouse click on the overlap
 // opens both cards, the clicked comment's the focus (in the margin layout, level with its mark; the covering comment's card
 // laid off it), in the margin layout (900 px, the aside beside the body) and the list layout (600 px, under the sheet's 680 px
-// fold, the aside stacked under the body); and the same holds after a composer opened on a target in the same paragraph and was
-// cancelled, since the repaint over the line boxes the target touched paints the highlights again in cards() order and the nest
-// reads the same (md-config-paint-presel-scope-browser.test.ts pins that order). Legs await the DOM's own states and frames,
+// fold, the aside stacked under the body); and the same holds while a composer stands on a target in the same paragraph and after
+// it is cancelled, since the repaint over the line boxes the target touched paints the highlights again in cards() order and the
+// nest reads the same (md-config-paint-presel-scope-browser.test.ts pins that order). Legs await the DOM's own states and frames,
 // never a timer. Skips LOUDLY without a playwright browser (CI installs none). Synthetic values only: an invented report,
 // /repo/notes-api paths, the placeholder sid, placeholder comment ids.
 import { test } from "node:test";
@@ -159,15 +159,27 @@ test("in a browser, the real panel: two overlapping comments nest their marks, t
         near(c1.topB!, c1.markTop, at + "the clicked comment is the focus: its card is level with the overlap mark");
         assert.ok(Math.abs(c1.topA! - c1.markTop) > 8, at + "the covering comment's card is laid off the mark, above or below the focus: " + c1.topA + " against " + c1.markTop);
       }
-      // a composer opened on a target in the same paragraph and cancelled: the repaint over the paragraph's line boxes paints the
-      // two highlights again in cards() order, and the click reads the same nest
+      // a composer opened on a target in the same paragraph: the repaint over the paragraph's line boxes paints the two highlights
+      // again in cards() order with the pending target among them, and the click on the overlap reads the same nest while the
+      // composer stands, and again after Cancel
       await foldBoth(page);
       const selected = await select(page, PARA, "words in it", "words in it".length);
       assert.equal(selected, "words in it", at + "the target selected after both highlights in the paragraph");
       await openComposer(page);
+      const pp = await readPaint(page);
+      assert.deepEqual([pp.nested, pp.inverse], [1, 0], at + "with the target pending B's first mark stands inside A's (the repaint keeps cards() order)");
+      assert.equal(pp.inner.bg, "rgba(0, 0, 0, 0)", at + "and the nested mark is transparent with the target pending");
+      await clickOverlap(page);
+      const cp = await readCards(page);
+      assert.deepEqual([cp.openA, cp.openB], [true, true], at + "with the composer pending the click opens both cards");
+      // the pending composer's box holds the slot level with its target (the same line as the marks here), so the cards stack under
+      // it: the clicked comment's first, as the focus, the covering comment's under that
+      if (margin) assert.ok(cp.topB! > cp.markTop && cp.topB! < cp.topA!, at + "with the target pending the clicked comment's card sits first under the composer's box and the covering comment's under it: " + JSON.stringify({ topA: cp.topA, topB: cp.topB, markTop: cp.markTop }));
+      assert.equal(await page.evaluate(() => document.querySelectorAll(".fileview-body mark.fc-presel").length > 0), true, at + "the pending target stands through the click");
+      await foldBoth(page);
       await cancel(page);
       const p1 = await readPaint(page);
-      assert.deepEqual([p1.nested, p1.inverse], [1, 0], at + "after Cancel B's first mark stands inside A's again (the repaint keeps cards() order)");
+      assert.deepEqual([p1.nested, p1.inverse], [1, 0], at + "after Cancel B's first mark stands inside A's again");
       assert.equal(p1.inner.bg, "rgba(0, 0, 0, 0)", at + "and the nested mark is transparent again");
       await clickOverlap(page);
       const c2 = await readCards(page);
