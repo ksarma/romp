@@ -148,8 +148,8 @@ const testFiles = (): string[] => {
 const src = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
 /** A file INITIALISES AN EDGE when it makes one of the eleven edge names (parentNode, parentElement, parent, childNodes,
  *  children, firstChild, lastChild, nextSibling, previousSibling, ownerDocument or host) an own enumerable property in
- *  any of these shapes, with null, undefined, [], this, a this.-rooted member or call, or a bare identifier as the
- *  value. What the property belongs to does not matter: a fake node, a window stand-in, a goal tree's fixture or a list
+ *  any of these shapes, with null, undefined, [], this, a this.-rooted member or call, a bare identifier, or a
+ *  conditional whose final operand is one of those, as the value. What the property belongs to does not matter: a fake node, a window stand-in, a goal tree's fixture or a list
  *  model, since a failing dump walks each of them and the cure for each is the same call on that object. The detector
  *  reads CODE: line and block comments and the contents of string, template and regex literals are blanked first
  *  (`blank` below), so a source pin quoting a shape, a shape in a comment and a call token in a comment or a string
@@ -162,9 +162,12 @@ const src = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
  *    body reads as this shape (INDISTINGUISHABLE below);
  *  - a class field, with any modifier or none (public, private, protected, readonly, declare, override), plain,
  *    definite (`EDGE!: N | null;`) or optional (`EDGE?: N[]`), typed or not, with an initializer or without one (a
- *    declared field is an own enumerable property once the constructor assigns it), anywhere on a line (`tag = "x";
- *    private EDGE: N | null = null;`). A field typed as a primitive (string, number, boolean) is no edge and is
- *    skipped. In the declared-only form the key host is left out too, and a value that starts with a quote, a digit
+ *    declared field is an own enumerable property once the constructor assigns it), after a line start, a member
+ *    semicolon or the class brace (`tag = "x"; private EDGE: N | null = null;`). In the declared-only form a field
+ *    whose type STARTS with a primitive (string, number, boolean, bigint, symbol, undefined, void, never) is no edge
+ *    and is skipped, whatever follows (`EDGE: string | null;` is skipped; `EDGE: null | string;` is read, and so is
+ *    a primitive-typed field with an initializer, `EDGE: string | null = null`). In the declared-only form the key
+ *    host is left out too, and a value that starts with a quote, a digit
  *    or a boolean, or that contains a parenthesis other than a parenthesised type right after the colon
  *    (`EDGE!: (N | Txt | string)[];` is read; `host: hostOf(sid)` is not), is skipped: the last line of a multi-line
  *    object literal without a trailing comma (`host: "x"`, `EDGE: 3`, `EDGE: count(kids)`) reads as a declared
@@ -172,18 +175,27 @@ const src = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
  *  - a constructor parameter property (`constructor(public EDGE: N[] = [])`, with or without a default);
  *  - an assignment through any name (`this.EDGE = null`, `n.EDGE = []`, `c.EDGE = p`, `c.EDGE = this.host`).
  *  Out of scope, by design: an edge under another name (a `kids` list), a shorthand key (`{ EDGE }`, or `EDGE,` alone
- *  on a line), a value that is a member expression, a call or a `new` not rooted at this (`up.EDGE = g.document`,
- *  `EDGE = new Doc()`), an object literal or a non-empty array literal as the value (`win.EDGE = {}`,
- *  `EDGE: [kidA, kidB]`, `n.EDGE = [a, b]`), an Object.defineProperty of an edge whatever its enumerable flag (a
- *  descriptor holding a getter defeats a regex), and a declared field whose type carries a comma (`EDGE:
- *  Record<string, N>;`). A regex reads shape, not meaning, and some code that initialises no edge reads as a shape:
+ *  on a line), a spread of a base built elsewhere (`{ tag, ...base }`), a value that is a member expression, a call
+ *  or a `new` not rooted at this (`up.EDGE = g.document`, `EDGE = new Doc()`), a logical value (`n.EDGE = p || null`),
+ *  an object literal or a non-empty array literal as the value (`win.EDGE = {}`, `EDGE: [kidA, kidB]`, `n.EDGE = [a,
+ *  b]`), an Object.defineProperty of an edge whatever its enumerable flag (a descriptor holding a getter defeats a
+ *  regex), a declared field whose type carries a comma (`EDGE: Record<string, N>;`), and a class field right after a
+ *  `}` on the same line (a one-line method's body, a `{}` constructor, a static block: `constructor(public t: string)
+ *  {} EDGE: N | null = null;`). A value is read by its first operand, a bare name whatever follows it other than a
+ *  type continuation, a member or a call (`framed ? win : {}` is read through `framed`), or, for a conditional, by its
+ *  final operand after the last colon (`win.EDGE = opts.framed ? {} : win`), the head and the middle operand free of
+ *  parentheses; a conditional with a member-expression head whose final operand is an object literal, a member or a
+ *  call (`win.EDGE = opts.framed ? win : {}`) is not read. A regex reads shape, not meaning, and some code that
+ *  initialises no edge reads as a shape:
  *  a destructuring default at line start (`function mk({\n  EDGE = [],\n})`) reads as a class field, where the
  *  one-line forms do not (a brace after `(`, `=`, `,`, let, const or var opens no class body, and a `;` inside such a
  *  one-line brace group separates type members, not class members, so `type N = { tag: string; EDGE: N | null }` is
  *  told apart; a brace after a name or a colon is a class brace to the regex, so a one-line `interface N { tag:
  *  string; EDGE: N | null; }` or `o: { tag: string; EDGE: N | null; }` reads as a class field); a type literal's
  *  member on its own line (`type N = {\n  EDGE: N | null;\n}`), or comma-separated on one line (`type N = { EDGE: N,
- *  tag: string }`), reads as a class field or an object-literal key; a type literal's readonly member after a comma
+ *  tag: string }`), reads as a class field or an object-literal key, and its FIRST member with a bare-name type reads
+ *  as an object-literal key whichever separator follows (`type N = { EDGE: El; tag: string }`; the `;` rule above
+ *  tells the class-field reading apart, not this one); a type literal's readonly member after a comma
  *  reads as a parameter property; a typed parameter after a comma whose type is a bare name (not a union, an array
  *  or a generic), in code (`function mk(a: El, EDGE: El)`), reads as an object-literal key; a statement reassigning a
  *  local of an edge name at line start or after `;` or `{` (`EDGE = el;`, with null, undefined, [], this or a bare
@@ -235,13 +247,16 @@ const EDGE_INIT: Record<string, RegExp> = {
  *  never the source, so a comment between the operand and the slash is skipped like whitespace (a regex pin on the
  *  line after a trailing comment is a regex; a division after a block comment is a division). The previous
  *  significant character decides: an operator, an opener, a separator or nothing opens a regex; a closing paren or
- *  bracket, the second character of a postfix `++` or `--` (`x++ / 2`), or a name is a division, a name excepted
- *  after return, typeof, case and the like. A regex that does not close on its line is read as a division, since a
- *  regex literal cannot span lines. One paren the lexer cannot tell apart: a regex right after a condition's closing
- *  paren (`if (x) /re/.test(y)`) is read as a division, so its text stays code (INDISTINGUISHABLE below pins the
- *  shape it trips as), and a quote or a backtick inside it opens a string to the line end or a template to the next
- *  backtick in the file, hiding an edge init there: a false negative the ratchet accepts (ACCEPTED_MISREADS below
- *  pins it; the tree holds none, measured against a TypeScript-AST blanking of every UI test file). A light lexer,
+ *  bracket, a closing quote, double quote or backtick (a string or template literal is an operand: `'10' / 2`), the
+ *  second character of a postfix `++` or `--` (`x++ / 2`), or a name is a division, a name excepted after return,
+ *  typeof, case and the like. A regex that does not close on its line is read as a division, since a regex literal
+ *  cannot span lines. Two shapes the lexer cannot tell apart: a regex right after a condition's closing paren (`if
+ *  (x) /re/.test(y)`) is read as a division, so its text stays code (INDISTINGUISHABLE below pins the shape it trips
+ *  as), and a quote or a backtick inside it opens a string to the line end or a template to the next backtick in the
+ *  file, hiding an edge init there; and a closing brace before a slash opens a regex (`{} / 2`, a block or an object
+ *  literal followed by a division), so the code up to the next slash on the line is blanked, hiding an edge init
+ *  there. Both are false negatives the ratchet accepts (ACCEPTED_MISREADS below pins them; the tree holds neither,
+ *  measured against a TypeScript-AST blanking of every UI test file). A light lexer,
  *  not a parser: it knows the token kinds that hide shapes, not the grammar around them. */
 const REGEX_AFTER = new Set(["return", "typeof", "case", "do", "else", "in", "instanceof", "new", "throw", "void", "delete", "yield", "await", "of"]);
 function blank(s: string, literals: boolean): string {
@@ -312,9 +327,11 @@ const initsEdge = (s: string) => edgeShapes(s).length > 0;
  *  The import is a statement in code at line start (its text up to the specifier reads the same once every literal
  *  is blanked: an import line quoted inside a template or a backslash-continued string is not one), either quote
  *  style on the specifier, with or without a .js suffix, as a named import (`import { hideEdges } from
- *  "./test-dom-shim"`) or a namespace import (`import * as shim from "../test-dom-shim"`, the alias any identifier,
- *  dollar signs included); the call is `hideEdges(` or `nodeFactory(` for a named import and `shim.hideEdges(` or
- *  `shim.nodeFactory(` under the namespace's own alias, not under a longer name that ends in it. An import alone
+ *  "./test-dom-shim"`) or a namespace import (`import * as shim from "../test-dom-shim"`, the alias any ASCII
+ *  identifier: letters, digits, underscore, dollar); the call is any `hideEdges(` or `nodeFactory(` token in code at a
+ *  word boundary for a named import (a preceding `.` or `$` included, so `other.hideEdges(` counts) and
+ *  `shim.hideEdges(` or `shim.nodeFactory(` under the namespace's alias or a member path ending in it
+ *  (`helpers.shim.hideEdges(`), not under a longer identifier that ends in it (`myshim.`, `$shim.`). An import alone
  *  hides nothing; a call under an alias (`import { hideEdges as hide }`), a reference passed as a callback
  *  (`nodes.forEach(hideEdges)`), a local helper of the same name without the import, or a call token in a comment or
  *  a string is not read: import it and write the call. What
@@ -671,7 +688,7 @@ const NEGATIVE: Array<[string, string, string]> = [   // [what it is, scratch so
   ["a destructuring declaration with a default", "let { EDGE = null } = o;", "parent"],
   ["a destructuring declaration with a default, const", "const { EDGE = null, tag } = o;", "parent"],
   ["a destructuring default after a comma", "function mk(a, { EDGE = [] }) { return a; }", "children"],
-  ["a type literal's member, semicolon-separated on one line, as the first member", "type N = { EDGE: N | null; tagName: string };", "parent"],
+  ["a type literal's member, semicolon-separated on one line, as the first member, with a union type (a bare-name type there reads as an object-literal key, INDISTINGUISHABLE below)", "type N = { EDGE: N | null; tagName: string };", "parent"],
   ["a type literal's member, semicolon-separated on one line, after another member", "type N = { tag: string; EDGE: N | null; id: string };", "parent"],
   // literals and comments are blanked before the shapes are read: each kind, holding a shape
   ["a line comment holding a shape", "// the fake keeps EDGE: null until attached\nconst n = { tag: 'div' };", "parentNode"],
@@ -703,6 +720,7 @@ const INDISTINGUISHABLE: Array<[string, string, string, string]> = [   // [what 
   ["a destructuring pattern with a default, wrapped over lines", "class field", "function mk({\n  EDGE = [],\n  tag,\n}) { return tag; }", "children"],
   ["a type literal's member, semicolon-separated, on its own line", "class field", "type N = {\n  EDGE: N | null;\n  tagName: string;\n};", "parent"],
   ["a type literal's member, comma-separated (an object-literal key to the regex)", "object-literal key, identifier value", "type N = { EDGE: N, tagName: string };", "parent"],
+  ["a type literal's first member with a bare-name type, semicolon-separated on one line", "object-literal key, identifier value", "type N = { EDGE: El; tagName: string };", "parent"],
   ["a type literal's readonly member after a comma", "parameter property", "type N = { a: 1, readonly EDGE: N[] };", "children"],
   ["a typed parameter after a comma, in code", "object-literal key, identifier value", "function mk(a: El, EDGE: El) {}", "parent"],
   // a class body and a function body are the same brace to a regex
