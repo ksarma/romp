@@ -56354,10 +56354,14 @@ _UPD_JS = (
     # would otherwise stop covering Update's footprint: review round 4, 2026-09-10), and on every window
     # resize while armed (the listener is added here and removed by disarm; the plain row is then
     # re-measured, plainRects below). The re-read of an arm that has since ended is ignored (`arms`, a
-    # sequence number): its answer would fit a label against a row that is no longer on screen
+    # sequence number): its answer would fit a label against a row that is no longer on screen. So is a
+    # running answer (review round 6, 2026-09-10: an update started elsewhere between the click and the
+    # re-read), as the load path ignores one: its counts are null because the kernel read none while no
+    # label could be worded, not because it does not know them, and note() would have turned that into
+    # "the manager did not answer"; the running push is what flips this window into the wait
     "function arm(){var t=label(),seq=++arms;plain=plainRects();armed=true;lbl.textContent=t;face();lbl.hidden=false;cf.hidden=false;cx.hidden=false;dm.hidden=true;"
     "try{lbl.focus({preventScroll:true});}catch(e){}box.classList.add('rup-arm');fit();wireFrames();window.addEventListener('resize',refit);"
-    "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){if(seq!==arms)return;note(d);if(armed){lbl.textContent=label();face();fit();}})"
+    "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){if(seq!==arms||(d&&d.state==='running'))return;note(d);if(armed){lbl.textContent=label();face();fit();}})"
     "['catch'](function(e){});}"
     # The armed row is laid over the plain row it replaced, measured, never assumed (fit, review round
     # 4 of the confirm step, 2026-09-10; rounds 2 and 3 widened the label until its right edge reached

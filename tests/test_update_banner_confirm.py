@@ -369,7 +369,7 @@ GO.onclick(); await tick(); await tick(); out(state());""")
         # the offer comes back the arm shows the count-less label until its own re-read lands, never a
         # count that arrived with the wait
         s = run_banner("""
-var waited = state(); GO.onclick(); var atOnce = state(); await tick(); await tick();
+var waited = state(); CHECK.state = ''; GO.onclick(); var atOnce = state(); await tick(); await tick();
 out({ waited: waited, atOnce: atOnce, after: state() });""", check={"state": "running", "failed": "the install failed", "sessions": 3, "midTurn": 1, "otherKernels": 1})
         self.assertTrue(s["waited"]["msg"].startswith("The update did not finish: the install failed"), s["waited"]["msg"])
         self.assertEqual((s["waited"]["goHidden"], s["waited"]["armed"]), (False, False), "the offer is back")
@@ -398,6 +398,20 @@ out({ waited: waited, atOnce: atOnce, after: state() });""", check={"state": "ru
                            check={"tag": ""})
             self.assertTrue(s["msg"].startswith("The update did not finish: "), (name, s["msg"]))
             self.assertEqual((s["goHidden"], s["posts"]), (not again, []), name + ": a pushed window")
+
+    def test_a_re_read_that_answers_running_changes_neither_the_label_nor_the_held_counts(self):
+        # review round 6 (2026-09-10): an update started elsewhere between the click and the arm's re-read (another
+        # window's confirm, the auto converge) answers state running with every count null, since the kernel
+        # reads none while no label can be worded. The load path skipped note() for that answer; the arm's
+        # re-read did not, so the armed label flipped to "the manager did not answer" though the manager was
+        # never asked. The re-read now ignores a running answer as the load path does; the running push
+        # (offer with state running) is what flips this window into the wait
+        s = run_banner("""
+CHECK.state = 'running'; CHECK.sessions = null; CHECK.midTurn = null; CHECK.otherKernels = null;
+GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: atOnce, after: state() });""")
+        self.assertEqual(s["atOnce"]["label"], "Restart 3 sessions now, interrupting 1", "the held counts, at once")
+        self.assertEqual((s["after"]["label"], s["after"]["armed"], s["after"]["checks"]),
+                         ("Restart 3 sessions now, interrupting 1", True, 2), "the running answer changed nothing")
 
     def test_a_re_read_of_an_arm_that_ended_is_ignored_and_the_resize_listener_lives_with_the_armed_state(self):
         # the arm's re-read fits the label against the row it measured; an answer to a previous arm's
@@ -870,8 +884,8 @@ class Wiring(unittest.TestCase):
         js = km._UPD_JS
         self.assertIn("function arm(){var t=label(),seq=++arms;plain=plainRects();armed=true;", js, "the plain row is measured before it hides")
         self.assertIn("box.classList.add('rup-arm');fit();wireFrames();window.addEventListener('resize',refit);", js)
-        self.assertIn("if(seq!==arms)return;note(d);if(armed){lbl.textContent=label();face();fit();}", js,
-                      "the re-read re-fits (and re-faces the confirm), unless its arm has ended")
+        self.assertIn("if(seq!==arms||(d&&d.state==='running'))return;note(d);if(armed){lbl.textContent=label();face();fit();}", js,
+                      "the re-read re-fits (and re-faces the confirm), unless its arm has ended or the answer is the wait's")
         self.assertIn("function face(){var disk=!!(impact&&impact.manager===false);cf.textContent=disk?'Update':'Restart';", js,
                       "the confirm reads Update when the click restarts nothing")
         self.assertIn("if(impact.manager===false)return 'Update romp on disk now; restart it yourself to run it';", js)
