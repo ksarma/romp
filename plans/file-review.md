@@ -2607,7 +2607,8 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   perl -i, python and node inline scripts and a script on stdin, cd and ~/ and an absolute path, the opaque forms
   allowed, a tracked image passing by name and a new file under a tracked folder refused, the refusal's voice) and
   the hook as a process (exit 0 at once without ROMP_SID with stdin held open; exit 2 with the reason on stderr
-  with it); from the review's first round (2026-09-10), `tools/romp-track-bash-guard-shapes.test.mjs` pins the
+  with it, by its real path and through the `~/.claude/hooks/` symlink install.sh registers); from the review's
+  first round (2026-09-10), `tools/romp-track-bash-guard-shapes.test.mjs` pins the
   shapes the round found misread, each in both directions where it has two, the write the hook missed and the
   ordinary command it refused for a file the command never touches: a cd inside `( ... )` ending at the `)`, and
   in an if, loop or case body leaving the cwd unknown once the body closes; a heredoc body kept by the command
@@ -2617,9 +2618,13 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `timeout -s`, `exec -a`); pushd moving the cwd and popd leaving it unknown; `[[ a > b ]]` and `(( a > b ))`
   comparing while `[ a > b ]` redirects; a function body moving nothing after it; `Path(x).open('w')`, `open()`
   with keyword arguments and `fs.openSync` with a write flag; node `-p` and `--print`; the refusal's word (a
-  change, never a suggestion); the NUL-byte rule; the 500-file cap on a directory source; one link closure per
+  change, never a suggestion); the NUL-byte rule; the full walk of a directory source, past 500 entries and into
+  a subfolder behind them, skipped for a landing folder that does not exist under any project that tracks
+  anything; `&&` inside `[[ ... ]]` and a quoted `[[`; a brace list; a wrapped `open(`; a here-string; a process
+  substitution; a glob source and a glob that names no write; a symlink to a tracked file; one link closure per
   call over a directory copy and over five redirect targets, agreeing with store-io's `isTrackedFile` on every
-  kind of path; and the hook process on a subshell cd, a chained heredoc and a heredoc-fed shell;
+  kind of path and pinning its three steps; and the hook process on a subshell cd, a chained heredoc and a
+  heredoc-fed shell;
   `tests/install-sh.bats` the Bash-side guard's registration on its own `Bash` group, once, with the
   vendored guard's group beside it and a user's own Bash group kept; `tests/romp-uninstall.bats` its removal;
   `tools/file-review-plan-bash-guard.test.mjs` holds decision 47, the Vendoring paragraph and this bullet to the
@@ -2629,7 +2634,8 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   closure built after the veto and the explicit list, never with an empty list, once per call and shared by the
   command's targets) and the inventory to the tree: every `romp-track-bash-guard…` module under `tools/` is
   named in decision 47 and in this bullet, and every `file-review-plan-bash-guard…` module in this bullet, so a
-  later round's module cannot land unrecorded. Sessions commit the folder (decision 48):
+  later round's module cannot land unrecorded, and the hook's row in `hooks/README.md` names every
+  `romp-track-bash-guard…` module too. Sessions commit the folder (decision 48):
   `tests/test_session_prompt.py`
   pins the prompt's sentence; `tools/vendor-patches.test.mjs` (P7) pins patch 0007's two rules in the skill;
   `tests/test_guide_files_commit_folder.py` holds the prompt, the skill, the guide's Files sentence and decision 25
@@ -2916,19 +2922,25 @@ document stands on its own, each with the reasoning it was given.
     removed by the uninstaller with romp's hooks), reads the command and refuses one that would write a tracked
     file. What it reads: the command lexed as a shell would (quotes, escapes, comments, line continuations, heredoc
     bodies kept as data, pipes and lists cut into simple commands, `cd` moving the working directory for what
-    follows), and from each simple command the paths it would write: the destination of cp, mv, install and ln (a
-    directory destination or `-t` resolved to the files that land in it, a directory source walked to the files it
-    carries), the operands of tee, sponge and truncate, dd's `of=`, sort's `-o`, every `>`, `>>`, `>|`, `&>` and
-    descriptor-prefixed redirection target, the files of sed -i and perl -i in their spellings, and a literal path
-    a python or node inline script opens with a write mode (`-c` or `-e`, or a heredoc on stdin), the same inside
-    `$(...)`, a literal `sh -c`, a loop body or after sudo, env or nice. Each is resolved against the payload's cwd
-    and judged by the project's `.trackchanges/config.json` through store-io's `findVaultRoot` and
-    `isTrackedFile`, the readers the CLIs use. The refusal is exit 2 with one line naming the file and the
-    track-edit command, in the person's voice. What it lets through: a read (cat, grep, diff, git, sed without -i)
-    names no target; a path built from a variable or a glob, and a command behind eval, xargs or a shell -c it
-    cannot read, is unresolvable and passes, since a silent block of ordinary work would cost more than a missed
-    write; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked file
-    is a read. Not read: rm, a mv of the tracked file elsewhere (a rename the store heals by content hash),
+    follows, inside `( ... )` only up to the `)`), and from each simple command the paths it would write: the
+    destination of cp, mv, install and ln (a directory destination or `-t` resolved to the files that land in it,
+    a directory source walked to the files it carries, a link one entry whatever it points at), the operands of
+    tee, sponge and truncate, dd's `of=`, sort's `-o`, every `>`, `>>`, `>|`, `&>` and descriptor-prefixed
+    redirection target, the files of sed -i and perl -i in their spellings, and a literal path a python or node
+    inline script opens with a write mode (`-c` or `-e`, or a heredoc on stdin), the same inside `$(...)`, a
+    literal `sh -c`, a loop body or after sudo, env or nice. Each is resolved against the payload's cwd and judged
+    by the project's `.trackchanges/config.json` through store-io's `findVaultRoot` and the three steps of its
+    `isTrackedFile` (the veto list, the explicit list by name, then the link closure), which the hook runs itself
+    as `trackedIn` so the closure is built once per call; a path is judged under the name given and under the real
+    path the kernel opens, so a symlink to a tracked file carries no write past it. The refusal is exit 2 with one
+    line naming the file and the track-edit command, in the person's voice. What it lets through: a read (cat,
+    grep, diff, git, sed without -i) names no target; a path built from a variable, and a command behind eval,
+    xargs or a shell -c it cannot read, is unresolvable and passes, since a silent block of ordinary work would
+    cost more than a missed write; a glob is expanded against the filesystem as the shell expands it and passes
+    only when it matches nothing or names more than the hook will list, a brace list is expanded before the
+    operands are read, a here-string is scanned like a heredoc and a process substitution's command is read like
+    a `$(...)`; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked
+    file is a read. Not read: rm, a mv of the tracked file elsewhere (a rename the store heals by content hash),
     find -exec, rsync and patch. Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a target outside any project, an explicit hit on
     the project's tracked list, an empty list); a write to a file inside a tracking project that the list does not
@@ -2941,11 +2953,12 @@ document stands on its own, each with the reasoning it was given.
     `tools/romp-track-bash-guard-shapes.test.mjs`, from the review's first round (2026-09-10), the shapes that
     round found misread, each in both directions where it has two (a cd inside a subshell or a body, a heredoc
     followed by `&&`, a heredoc-fed shell, `bash -lc`, a prefix with options, pushd and popd, `[[ a > b ]]`, a
-    function body, keyword and `Path(x).open()`, node `-p`, the NUL-byte rule, the walk cap, the one closure per
-    call); `tests/install-sh.bats` the registration; `tools/file-review-plan-bash-guard.test.mjs` holds this
-    decision to the hook and the installer, and `tools/file-review-plan-bash-guard-review.test.mjs` its cost
-    sentence to the hook's closure and every `romp-track-bash-guard…` module under `tools/` to this decision and
-    the Tests bullet.
+    function body, keyword and `Path(x).open()`, node `-p`, the NUL-byte rule, the full walk of a directory source
+    and the landing folder that skips it, a brace list, a glob, a here-string, a process substitution, a symlink
+    to a tracked file, the one closure per call); `tests/install-sh.bats` the registration;
+    `tools/file-review-plan-bash-guard.test.mjs` holds this decision to the hook and the installer, and
+    `tools/file-review-plan-bash-guard-review.test.mjs` its cost sentence to the hook's closure and every
+    `romp-track-bash-guard…` module under `tools/` to this decision and the Tests bullet.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

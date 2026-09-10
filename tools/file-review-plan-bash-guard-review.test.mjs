@@ -9,16 +9,16 @@
 // 55 to 65 ms for the no-walk path). And the decision, the Tests bullet and hooks/README.md named
 // tools/romp-track-bash-guard.test.mjs alone for the grammar, while the first round's module,
 // tools/romp-track-bash-guard-shapes.test.mjs, which holds the subshell-cd, heredoc, bash -lc, [[ ]], prefix,
-// keyword-open, NUL-byte, walk-cap and one-closure pins, was named nowhere; the existing pin
+// keyword-open, NUL-byte, directory-walk and one-closure pins, was named nowhere; the existing pin
 // (tools/file-review-plan-bash-guard.test.mjs) checks that the modules the plan names exist, never that the
 // tree's modules are named, so the omission failed nothing. This module holds the cost sentence to the code it
 // describes (the closure's place in the verdict's order, the empty-list return before it, the once-per-call Map
 // the targets share) and to the hook's behavior on a scratch project (a read, an explicit hit and an empty list
 // walk nothing; a write the list does not name walks the root once, however many targets); the shapes module to
 // the pins the plan credits it with; and the inventory to the tree: every romp-track-bash-guard*.test.mjs under
-// tools/ is named in decision 47 and in the Tests bullet, and every file-review-plan-bash-guard*.test.mjs in the
-// bullet, so a later round's module fails here by name. Synthetic: a project under os.tmpdir() with invented
-// paths, and the repo's own text.
+// tools/ is named in decision 47, in the Tests bullet and in the hook's row of hooks/README.md, and every
+// file-review-plan-bash-guard*.test.mjs in the bullet, so a later round's module fails here by name. Synthetic:
+// a project under os.tmpdir() with invented paths, and the repo's own text.
 // Run: node --test tools/file-review-plan-bash-guard-review.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,6 +35,7 @@ const read = (...parts) => fs.readFileSync(path.join(REPO, ...parts), 'utf8');
 
 const plan = read('plans', 'file-review.md');
 const hook = read('hooks', 'romp-track-bash-guard.mjs');
+const hooksReadme = read('hooks', 'README.md');
 const storeIo = read('vendor', 'track-changents', 'store-io.mjs');
 const vendoredGuard = read('vendor', 'track-changents', 'hooks', 'track-guard.mjs');
 
@@ -166,13 +167,39 @@ test('decision 47 and the Tests bullet name the shapes module, credit it to the 
     "test('node inline scripts in each spelling: -e, --eval, -p, --print'",
     "test('the refusal speaks of a change, the person\\'s word, never a suggestion'",
     "test('a tracked file that is binary under a text-looking name passes: the NUL-byte rule'",
-    "test('a directory source is walked to 500 files and no further'",
+    // the second round uncapped the walk (a subfolder listed after 500 files was never descended) and added the
+    // skip for a landing folder that does not exist under any project that tracks anything
+    "test('a directory source is walked to every file it carries: past 500 entries, and into a subfolder behind them'",
+    "test('a directory copied into a folder that does not exist yet, under no project that tracks anything, is not walked'",
     "test('a directory copy to an untracked destination walks the project once, not once per landing file'",
     "test('the per-call closure agrees with store-io\\'s isTrackedFile on every kind of path'",
+    // the second round's shapes, each named in the bullet
+    "test('&& and || inside [[ ... ]] stay in the test: a > after them compares; after ]] they end it and a > redirects'",
+    "test('a quoted or escaped [[ is data, as is [[ in operand position: a > after it redirects'",
+    "test('a brace list is expanded before the operands are read: mv x{.new,}, cp {a,b}/x, tee and sed -i lists, nested lists and sequences'",
+    "test('a python open( call whose arguments span lines is read: a formatter wraps a heredoc script that way'",
+    "test('a here-string is a script on stdin like a heredoc: python3 - <<< \"...\", node <<< \"...\", bash <<< \"...\"'",
+    "test('a process substitution is a word, not a segment break: tee >(cat) file names file, and the command inside is read'",
+    "test('a glob operand is expanded against the filesystem as the shell expands it: a glob source into a tracked folder is refused'",
+    "test('what a glob does not write: several destination matches, no match, a quoted glob, a glob after a cd the lexer cannot read, dotfiles'",
+    "test('a symlink to a tracked file is the tracked file: a write through it, inside or outside the project, is refused; a tracked name that is itself a link stays refused'",
+    "test('store-io\\'s isTrackedFile has the three steps trackedIn copies, in that order, so a vendored change to them fails here by name'",
     "test('the hook process rules the same way on a subshell cd, a chained heredoc and a heredoc-fed shell'",
   ]) assert.ok(shapes.includes(title), `the shapes module holds ${title}`);
   assert.ok(shapes.includes("'five literal targets, one walk'"), 'the one-closure pin covers the five redirect targets the bullet names');
-  assert.ok(shapes.includes("assert.equal(t.length, 500, 'the cap');"), 'the walk cap the bullet names is 500');
+  assert.ok(shapes.includes("assert.equal(t.length, 600, 'every file, not the first 500');"), 'the full walk the bullet names: past 500 entries');
+  assert.ok(!shapes.includes("'the cap'") && !/\bcap\b.*assert\.equal\(t\.length, 500/.test(shapes), 'no cap pin survives: the walk is uncapped');
+  for (const claim of ['the full walk of a directory source, past 500 entries and into a subfolder behind them, skipped for a landing folder that does not exist under any project that tracks anything',
+    '`&&` inside `[[ ... ]]` and a quoted `[[`; a brace list; a wrapped `open(`; a here-string; a process substitution; a glob source and a glob that names no write; a symlink to a tracked file']) {
+    assert.ok(bullet.includes(claim), `the bullet credits the module with: ${claim}`);
+  }
+  assert.ok(!bullet.includes('500-file cap') && !d47.includes('the walk cap'), 'neither record speaks of a cap the hook no longer has');
+  assert.ok(d47.includes('the full walk of a directory source and the landing folder that skips it, a brace list, a glob, a here-string, a process substitution, a symlink to a tracked file'));
+  // and the hook has no cap on the walk: the landing walk reads every entry of every directory it reaches
+  const landing = hook.slice(hook.indexOf('function landing(src, dst, cwd)'), hook.indexOf('function copyTargets('));
+  assert.ok(landing.includes('while (stack.length) {') && landing.includes('if (e.isDirectory()) stack.push(r);'), 'the walk descends every subfolder');
+  assert.ok(!/\b(CAP|cap)\b/.test(landing) && !/out\.length\s*>/.test(landing), 'and stops at no count');
+  assert.ok(landing.includes('if (!mayHoldTracked(dstAbs)) return [];'), 'the skip the bullet names');
 });
 
 // ── the inventory, held to the tree ─────────────────────────────────────────────────────────────────────────────
@@ -191,4 +218,14 @@ test('every romp-track-bash-guard module under tools/ is named in decision 47 an
   assert.ok(inD47.has(SELF) && inBullet.has(SELF), 'this pin is named in both places');
   for (const f of new Set([...inD47, ...inBullet])) assert.ok(fs.existsSync(path.join(REPO, f)), `${f} is named but not in the tree`);
   assert.ok(bullet.includes('every `romp-track-bash-guard…` module under `tools/` is named in decision 47 and in this bullet, and every `file-review-plan-bash-guard…` module in this bullet'), 'the bullet says this pin holds the inventory to the tree');
+  // the hook's row in hooks/README.md names the hook's test modules too (the review's consolidation, 2026-09-10:
+  // the row named the grammar module alone; tools/file-review-plan-bash-guard.test.mjs checks the row's leading
+  // cells only)
+  const rowAt = hooksReadme.indexOf('| `romp-track-bash-guard.mjs` | PreToolUse on `Bash` |');
+  assert.ok(rowAt >= 0, 'the README table has the hook\'s row');
+  const row = hooksReadme.slice(rowAt, hooksReadme.indexOf('\n', rowAt));
+  const inRow = new Set(testFiles(row));
+  for (const f of driven) assert.ok(inRow.has(f), `${f} is in the tree but the hook's README row names it nowhere`);
+  for (const f of inRow) assert.ok(fs.existsSync(path.join(REPO, f)), `${f} is named in the README row but not in the tree`);
+  assert.ok(bullet.includes('the hook\'s row in `hooks/README.md` names every `romp-track-bash-guard…` module too'), 'the bullet says the row is held to the tree');
 });

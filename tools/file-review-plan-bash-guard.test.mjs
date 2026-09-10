@@ -64,13 +64,32 @@ test('decision 47 names the hook, and the hook reads every verb, redirection and
   assert.ok(/\/\^\[0-9\]\+\$\/\.test\(buf\)/.test(hook), 'the lexer drops a digits-only word glued to < or > as the descriptor');
   assert.ok(d47.includes('a literal path a python or node inline script opens with a write mode'));
   assert.ok(hook.includes('export function scriptWriteTargets(kind, text)'));
-  assert.ok(d47.includes('`findVaultRoot` and `isTrackedFile`'));
+  // the verdict: store-io's findVaultRoot, then isTrackedFile's three steps run by the hook's own trackedIn so the
+  // closure is built once per call (the review's consolidation, 2026-09-10: the decision had said the hook called
+  // isTrackedFile itself), and the real path judged beside the name given
+  assert.ok(d47.includes('store-io\'s `findVaultRoot` and the three steps of its `isTrackedFile` (the veto list, the explicit list by name, then the link closure), which the hook runs itself as `trackedIn`'));
   assert.ok(hook.includes("import { findVaultRoot, isTrackedFile, isNonTextPath, hasNulBytes } from '../vendor/track-changents/store-io.mjs'"));
+  assert.ok(hook.includes('function trackedIn(root, file, closures)') && hook.includes('const root = rootOf(file);') && hook.includes('const root = findVaultRoot(file);'));
+  assert.ok(d47.includes('judged under the name given and under the real path the kernel opens, so a symlink to a tracked file carries no write past it'));
+  assert.ok(hook.includes('function realPathOf(file') && hook.includes('return real != null && real !== file && guardedByName(real, closures);'));
+  // a link is one entry: ln names its link and walks no source
+  assert.ok(d47.includes('a directory source walked to the files it carries, a link one entry whatever it points at'));
+  assert.ok(hook.includes("const land = (s, d) => (verb === 'ln' ? [d] : landing(s, d, cwd));"));
 });
 
 test('decision 47 states what passes, and the hook agrees: reads, opaque commands, non-text files, no ROMP_SID', () => {
   assert.ok(d47.includes('a read (cat, grep, diff, git, sed without -i) names no target'));
-  assert.ok(d47.includes('eval, xargs or a shell -c it cannot read'));
+  assert.ok(d47.includes('a path built from a variable, and a command behind eval, xargs or a shell -c it cannot read, is unresolvable and passes'));
+  // a glob is no longer unresolvable: it is expanded as the shell expands it (the review's second round), as are a
+  // brace list, a here-string and a process substitution, and the decision says so of each
+  assert.ok(!d47.includes('a path built from a variable or a glob'), 'a glob is not listed among the unresolvable');
+  assert.ok(d47.includes('a glob is expanded against the filesystem as the shell expands it and passes only when it matches nothing or names more than the hook will list'));
+  assert.ok(hook.includes('function expandGlob(w, cwd)') && hook.includes('const GLOB_MATCH_CAP = ') && hook.includes('const GLOB_READ_CAP = '));
+  assert.ok(d47.includes('a brace list is expanded before the operands are read') && hook.includes('function braceExpand(text, marks)'));
+  assert.ok(d47.includes('a here-string is scanned like a heredoc') && hook.includes("expect = { kind: 'herestring' }"));
+  assert.ok(d47.includes('a process substitution\'s command is read like a `$(...)`') && hook.includes("if ((c === '>' || c === '<') && src[i + 1] === '(') {"));
+  assert.ok(d47.includes('`cd` moving the working directory for what follows, inside `( ... )` only up to the `)`'));
+  assert.ok(hook.includes("frames.push({ kind: 'subshell', dir, unknownDir });"));
   assert.ok(hook.includes("case 'eval': case 'xargs': sawOpaqueCommand = true; break;"));
   assert.ok(d47.includes('a tracked image or PDF passes by name'));
   assert.ok(hook.includes('if (isNonTextPath(file)) return false;'));
