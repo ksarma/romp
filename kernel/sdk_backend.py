@@ -13536,7 +13536,19 @@ class SdkBackend:
             try:
                 note = task_death_notice(died)
                 with self._reg_lock:
-                    reg = read_reg(self.state_dir, sess.sid) or {"sid": sess.sid}
+                    reg = read_reg(self.state_dir, sess.sid)
+                    if reg is None:
+                        if _reg_path(self.state_dir, sess.sid).exists():
+                            # the reg EXISTS but would not read (a transient failure): rebuilding it as {sid, queue,
+                            # bgTasks} guts it (no alive, no name, no cwd; _update_reg's guard, the 2026-08-31 blink
+                            # class) and the _ensure below would spawn from the gutted reg, the outcome the heal's own
+                            # write refuses (_write_sealed_queue, round 6). The same OSError here, logged by the except
+                            # below, and no _ensure (round 7, kernel-1): the notice does not reach the session now (the
+                            # one-lost-update trade _update_reg makes) and the reg keeps its bgTasks mirror for the
+                            # boot reconcile, which delivers the same notice.
+                            raise OSError("reg %s unreadable: skipping the background task death notice rather than "
+                                          "gutting the reg" % sess.sid[:8])
+                        reg = {"sid": sess.sid}
                     reg["queue"] = [e for e in (reg.get("queue") or [])          # keep id-carrying
                                     if (qt := _queue_text(e)) and qt != note] + [note]   # dicts intact
                     reg["bgTasks"] = []           # reported — never re-notify for the same deaths

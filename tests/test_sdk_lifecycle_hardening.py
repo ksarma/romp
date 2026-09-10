@@ -2594,6 +2594,35 @@ class CrashHeal(unittest.TestCase):
         self.assertIn("reg %s unreadable: skipping the sealed queue write rather than gutting the reg (2 pending text(s) "
                       "did not reach it)" % self.SID[:8], failed[0])
 
+    def test_an_unreadable_reg_with_a_live_bg_task_is_left_intact_and_the_death_notice_says_so(self):
+        # round 7 (kernel-1): forty lines after the heal's raise, _on_session_gone's bg-task death-notice block rebuilt
+        # the reg from `read_reg(...) or {"sid": ...}` under the same transient read failure, so a dying session with a
+        # live background task still had its intact reg overwritten with {sid, queue, bgTasks} (no alive, name, cwd
+        # or lastSid) and _ensure called on the gutted reg, the outcome the round-6 raise stopped for the heal's own
+        # write. The block raises the same OSError now: nothing is written, _ensure is not called, and the line the
+        # block logs names the unreadable reg.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        logs = []
+        be._log_cb = logs.append
+        _reg(d, self.SID, queue=["old text"])
+        s = self._dead_session(be, d, exit_code=self.KILL, baseline=0)
+        with s._sub_lock:
+            s._bg_tasks["t1"] = {"toolUseId": "t1", "desc": "a watcher"}
+        before = sb.read_reg(Path(d), self.SID)
+        with mock.patch.object(sb, "read_reg", return_value=None), mock.patch.object(be, "_ensure") as ens:
+            be._on_session_gone(s)
+        after = sb.read_reg(Path(d), self.SID)
+        self.assertEqual(after, before, "the reg is untouched: alive, name, cwd, lastSid and its prior queue")
+        for key in ("alive", "name", "cwd", "lastSid"):
+            self.assertIn(key, after)
+        self.assertNotIn("bgTasks", after, "no gutted {sid, queue, bgTasks} rewrite")
+        ens.assert_not_called()
+        notice = [m for m in logs if "bg-task death notice" in m]
+        self.assertEqual(len(notice), 1, logs)
+        self.assertIn("reg %s unreadable: skipping the background task death notice rather than gutting the reg"
+                      % self.SID[:8], notice[0])
+
     def test_a_stop_click_during_the_heals_scope_read_is_refused_and_writes_no_idle_record(self):
         # round 6 (fresh-1): during the heal's pre-pop reads SdkBackend.interrupt still found the dying session in
         # be.sessions, so a stop click in that window returned True and appended an 'idle' state record (by
