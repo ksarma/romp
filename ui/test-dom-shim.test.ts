@@ -7,8 +7,8 @@
 // source pin or a comment is not code), either CALLS hideEdges( or nodeFactory( imported from the shared shim (a named
 // or a namespace import, either quote style on the specifier, with or without .js; an import without a call in code
 // is not switched), or is named on one of the two lists below, each pinned to its exact length by a constant:
-// ALLOWLIST, the unmigrated fakes that predate the rule, never to grow (a renamed file replaces its entry, a file that
-// comes off lowers the constant in the same commit, a new file may not join), and NON_DOM_EDGES, the files whose
+// ALLOWLIST, the unmigrated fakes, empty since 2026-09-10 and never to grow (a file that comes off lowers the constant
+// in the same commit, a new file may not join), and NON_DOM_EDGES, the files whose
 // edge-named key is a documented non-DOM use (a data fixture, a list model), each with its reason. There is no
 // vocabulary gate: a window stand-in's parent, a goal fixture's children and a class's parentNode are the same kind
 // of property to a regex, a failing dump walks each, and the cure for a fake is the same one-line call. The rule hides
@@ -433,37 +433,29 @@ const needsListing = (s: string) => initsEdge(s) && !switched(s);
 // whose quoted product text the fourth round's lexer blanks, so they read as nothing now. The same day every fake hid
 // its edges (a non-enumerable define of the edge fields in the constructors, hideEdges from the shared module at the
 // end of each or on the literal, plus a projection test; the file-comments Ev classes end in hideEdges too, so an
-// event's target and currentTarget hide with the nodes). What the list holds at this commit is the eight class fakes
-// main added between this branch's base and its landing, which predate the rule, and the eleven PR 523 listed at its
-// final rebase: the seven file-comments-about and file-comments-resolve-answered class fakes, the tab-hide and
-// preview-retry-pace class fakes, federation-hidden-hold's conditional-valued window parent and the fold's
-// timeline-tag-chips node literal.
+// event's target and currentTarget hide with the nodes). The eight class fakes main added between this branch's base
+// and its landing (actions, file-comments-markclick, file-comments-markclick-controls, file-comments-seen-fixes,
+// -seen-review2, -seen-review3, file-comments-send-seen, file-view-notice) were migrated the same way. What the list
+// holds at this commit is the eleven PR 523 listed at its final rebase: the seven file-comments-about and
+// file-comments-resolve-answered class fakes, the tab-hide and preview-retry-pace class fakes, federation-hidden-hold's
+// conditional-valued window parent and the fold's timeline-tag-chips node literal.
 const ALLOWLIST = [
   "timeline-tag-chips.test.ts",   // an object-literal fake the upstream fold added after this branch's base, listed at the final rebase
-  "webview/actions.test.ts",
   "webview/federation-hidden-hold.test.ts",   // a conditional-valued window parent, read since the sixth review round
   "webview/file-comments-about-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-about-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-arrivals-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-markclick-controls.test.ts",
-  "webview/file-comments-markclick.test.ts",
   "webview/file-comments-resolve-answered-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-resolve-answered-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-resolve-answered.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-seen-fixes.test.ts",
-  "webview/file-comments-seen-review2.test.ts",
-  "webview/file-comments-seen-review3.test.ts",
-  "webview/file-comments-send-seen.test.ts",
-  "webview/file-view-notice.test.ts",
   "webview/preview-retry-pace.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/tab-hide.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
 ];
-// The list's exact length. The ratchet pins it by equality, so a file that comes off lowers this in the same commit,
-// a renamed file leaves it alone, and a new file may not join: neither the list nor this number goes up. A same-commit
-// swap (one off, one on) is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is
-// what names the newcomer.
-const ALLOWLIST_MAX = 19;
+// The list's exact length: 11 at this commit, the eleven PR 523 listed at its final rebase, for the rebase's migration
+// to take off. The ratchet pins it by equality, so a file that comes off lowers this in the same commit, and neither
+// the list nor this number goes up.
+const ALLOWLIST_MAX = 11;
 // NON_DOM_EDGES: the test files whose edge-named key the detector reads but which fake no DOM, each with its reason. A
 // listed file is a DOCUMENTED NON-DOM USE of an edge-named key, never an unmigrated fake: the detector reads shape, not
 // meaning, and a goal fixture's children or a list model's children initialise no edge a failing dump could walk (a
