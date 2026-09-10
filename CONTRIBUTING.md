@@ -22,10 +22,12 @@ one worker per core minus one, so a 32-core machine would start 31 test processe
 once, some driving a headless Chromium, and overlapping runs there ran the machine out
 of memory. V8's default heap limit is set from memory: node hands V8 the smaller of the
 machine's RAM and the process's cgroup memory limit (`process.constrainedMemory()`), and
-on 64-bit V8 sets the old generation to half of that below 4 GB, 2 GB from 4 GB up to
-15 GB, and 4 GB from 15 GB up (node 22; the `heap_size_limit` it reports adds the young
+on 64-bit V8 sets the old generation to half of that below 4 GB, with a floor of 256 MB
+(so a machine or cgroup under 512 MB still gets 256 MB), 2 GB from 4 GB up to 15 GB, and
+4 GB from 15 GB up, a step taken only while V8's `huge_max_old_generation_size` flag is
+on, as it is by default (node 22; the `heap_size_limit` it reports adds the young
 generation: 4144 MB measured under node 22 on the machine that ran the suite, 2096 MB
-under a 4 to 14 GB cgroup, about 2 GB on an 8 GB laptop). So the flag halves the default
+under a 4 to 14 GB cgroup, about 2 GB on an 8 GB laptop). So the cap halves the default
 only on hosts or cgroups of 15 GB or more; below that V8 already defaults to 2 GB or
 less, and eight workers are bounded to 16 GB either way. The cap is sized at about 8x the
 largest DOM fixture measured, `ui/timeline-tags-scale.test.ts` at
