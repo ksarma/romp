@@ -173,6 +173,25 @@ class EffortReconnect(unittest.TestCase):
                 m = km.build_session(SID, now)
                 self.assertEqual([e for e in m["events"] if e.get("kind") == "reconnecting"], [], flag)
                 self.assertFalse(m["status"][flag])
+            # the landing's live mode switch (review round 10, D3): the backend's modeSwitching rides the live merge
+            # and becomes the event's `switching`, the flag that makes the chat say the mode change is being applied
+            # instead of a reload. Executed here because the merge line alone had no test (review round 11, tests-1:
+            # deleting it left every kernel-side module green). The status dict carries no modeSwitching key; only
+            # the event's `switching` does
+            row.update(modePending=True, modeSwitching=True)
+            live = km.Sessions.live()
+            self.assertIs(live[SID]["modeSwitching"], True, "the live merge carries modeSwitching")
+            m = km.build_session(SID, now)
+            recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
+            self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": None, "picks": ["mode"], "switching": True}],
+                             "the event says the mode change is being applied, the pending mode pick riding it")
+            # the switch over, the pick still pending: the same element reads as a reload again
+            row.update(modeSwitching=False)
+            m = km.build_session(SID, now)
+            recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
+            self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": None, "picks": ["mode"], "switching": False}])
+            self.assertTrue(m["status"]["modePending"])
+            row.update(modePending=False)
         finally:
             for mod, k, v in saved:
                 setattr(mod, k, v)
