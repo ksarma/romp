@@ -9301,6 +9301,19 @@ def _manager_port_fault(value):
     sys.stderr.write("ROMP_MANAGER_PORT is %r, not a port; read as no manager\n" % (value,))
 
 
+def _running_push(port_value):
+    """The `running` push both doors of /update send to every shell once an update is under way, which flips
+    each window's banner into the wait. `manager: false` rides it exactly when no manager started this
+    kernel (`port_value` is the ROMP_MANAGER_PORT the route read; the shape of /update-check's field:
+    present only then, absent with a port set), so the banner words the wait as the update on disk it is
+    and promises no restart and no reload (review round 6 of the confirm step, 2026-09-10; the shell relays
+    the field to the banner's offer as its sixth argument)."""
+    m = {"type": "updateAvail", "state": "running", "boot": _BOOT_ID}
+    if _manager_port(port_value) is None:
+        m["manager"] = False
+    return m
+
+
 def _restart_impact():
     """(sessions, midTurn), or None: how many sessions THIS kernel's restart would stop right now, summed
     over every backend this kernel runs (the SDK backend and the Codex backend, each through a
@@ -55626,8 +55639,9 @@ else if(m&&m.type==='notifyAll'&&window.__rompNotifyAllPaint)window.__rompNotify
 // the bottom bar's API health cell: one frame, painted by _LANDING_APIH_JS (sent on change + on ready)
 else if(m&&m.type==='apiHealth'&&window.__rompApiHealth)window.__rompApiHealth(m);
 else if(m&&m.type==='notifyTurns'&&window.__rompNotifyTurnsPaint)window.__rompNotifyTurnsPaint(!!m.on);
-// the boot check found a newer romp release — raise the update banner on every open dashboard
-else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'');};
+// the boot check found a newer romp release — raise the update banner on every open dashboard (the running
+// push's manager field rides along: false when no manager started the kernel, so the wait names no restart)
+else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'',m.manager);};
 // the API health detail's pause acknowledgment rides this socket: a press it carried cannot be answered now (the
 // redial's ready re-sends the last frame verbatim), so the detail is told before the redial (_LANDING_APIH_JS)
 ws.onclose=function(){if(shellSock===ws)shellSock=null;try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}setTimeout(shellWS,2000);};}catch(e){}}
@@ -56443,10 +56457,14 @@ _UPD_JS = (
     # error banner): offers carry the pushing kernel's boot id and are refused/retired when the boot
     # moves on — the restarted kernel re-pushes if drift genuinely persists. A pushed state:'running'
     # (an update started ANYWHERE — another window's click, a converge) flips this window to the
-    # in-flight wait instead of leaving a second Update click to race the first.
-    "function offer(cur,tag,drift,boot,state){"
+    # in-flight wait instead of leaving a second Update click to race the first. The wait's words key on
+    # the push's `manager` (false when no manager started the kernel: the update lands on disk and nothing
+    # restarts, so no restart and no reload is promised; absent, an older kernel's push, the restart
+    # wording stands), as the click keys on the held impact and the load on the answer's own field
+    # (review round 6, 2026-09-10)
+    "function offer(cur,tag,drift,boot,state,manager){"
     "if(state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
-    "show('romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
+    "show(manager===false?'romp is updating on disk; restart it yourself when it finishes':'romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
     "if(boot&&bootNow&&boot!==bootNow)return;"
     "if(waiting||!tag||tag===dismissedTag)return;curTag=tag;go.hidden=false;go.disabled=false;dm.hidden=false;"
     "if(drift==='pull')show('new romp commits are on main ('+tag+') \\u2014 Update pulls them and restarts romp.');"
@@ -56490,7 +56508,7 @@ _UPD_JS = (
     # click count), which the layout already keeps off this button
     "cf.onclick=function(e){if(!armed)return;if(e&&e.detail>1)return;"
     "waiting=true;disarm();go.disabled=true;dm.hidden=true;"
-    "show('Updating romp \\u2014 this can take a minute; the dashboard reloads when it restarts\\u2026');"
+    "show((impact&&impact.manager===false)?'Updating romp on disk, this can take a minute; restart it yourself when it finishes':'Updating romp \\u2014 this can take a minute; the dashboard reloads when it restarts\\u2026');"
     "fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true})}).then(function(r){"
     "if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});poll();})"
     "['catch'](function(e){waiting=false;var em=String((e&&e.message)||e);"
@@ -56557,7 +56575,7 @@ _UPD_JS = (
     "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){"
     "bootNow=(d&&d.boot)||'';"
     "if(d&&d.state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
-    "show('romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
+    "show(d.manager===false?'romp is updating on disk; restart it yourself when it finishes':'romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
     "note(d);"
     # a page loaded AFTER the push re-derives the pending offer — release or main drift alike
     "if(d&&d.mode==='ask'){if(d.tag)offer(d.cur||'',d.tag);"
@@ -59235,7 +59253,7 @@ class Handler(BaseHTTPRequestHandler):
                             # started it is the "running" answer below, truthfully.)
                             return self._send(500, "romp could not start the update to %s; the Log has the reason"
                                               % tag, "text/plain")
-                        _send_to_app("shell", {"type": "updateAvail", "state": "running", "boot": _BOOT_ID})
+                        _send_to_app("shell", _running_push(os.environ.get("ROMP_MANAGER_PORT")))
                     return self._send(200, json.dumps({"ok": True, "state": _UPDATE_STATE[0]}), "application/json")
                 # ONE snapshot of what the kernel found: the kind and the commit it advertised come
                 # from the same read, so a slot emptied meanwhile (a refusal re-arming, a sync
@@ -59254,16 +59272,17 @@ class Handler(BaseHTTPRequestHandler):
                     _audit_restart_request("main-converge", tag=d0 or d1,
                                            addr=str(self.client_address[0]), via="update-confirmed")
                     # same ack-time port resolution as /restart: the daemon thread's env read could
-                    # otherwise land after this response, on a value the caller has already restored
+                    # otherwise land after this response, on a value the caller has already restored;
+                    # the running push reads the same value (no manager: the banner words the wait so)
+                    mp = os.environ.get("ROMP_MANAGER_PORT")
                     try:
                         threading.Thread(target=_run_main_update, args=(kind, True),
-                                         kwargs={"manager_port": os.environ.get("ROMP_MANAGER_PORT"),
-                                                 "target": d0 or d1},
+                                         kwargs={"manager_port": mp, "target": d0 or d1},
                                          daemon=True).start()
                     except Exception as e:
                         _main_converge_end()
                         return self._send(500, "romp could not start the converge: %s" % e, "text/plain")
-                    _send_to_app("shell", {"type": "updateAvail", "state": "running", "boot": _BOOT_ID})
+                    _send_to_app("shell", _running_push(mp))
                     return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
                 return self._send(409, "no newer release or main commit known to this kernel", "text/plain")
             if u.path == "/notify-all":

@@ -1475,6 +1475,52 @@ class Routes(Fresh):
             km._MANAGER_READ_FAULT[0] = ""
             mgr.shutdown()
 
+    def test_both_running_pushes_say_when_no_manager_started_the_kernel(self):
+        # review round 6 of the confirm step (2026-09-10): the running push flips every window into the wait, and
+        # the wait's words promised a restart and a reload on a kernel no manager started, where nothing restarts.
+        # Both doors' pushes carry `manager: false` when no manager started the kernel (the shape of
+        # /update-check's field: present only then, absent with a port set), and the shell relays it to the
+        # banner, which words the wait as the update on disk. The tag door's child is Popen-mocked; the drift
+        # door's converge is the real one, with its rebuild stubbed: it dials nothing with the variable absent
+        # and dials the set port once, which the rail refuses (a failed outcome, nothing reached)
+        pushed, dials = [], []
+        saved_port, saved_tried = os.environ.get("ROMP_MANAGER_PORT"), km._INPLACE_TRIED[0]
+        try:
+            km._INPLACE_TRIED[0] = ""
+            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(-1, dials, allow={self.port})), \
+                 mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: None), \
+                 mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
+                 mock.patch.object(km, "_checkout_sha", return_value="abcdef01"), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: pushed.append(m)):
+                for value, expect in ((None, False), ("7777", None)):
+                    if value is None:
+                        os.environ.pop("ROMP_MANAGER_PORT", None)
+                    else:
+                        os.environ["ROMP_MANAGER_PORT"] = value
+                    del pushed[:]
+                    km._UPDATE_AVAIL[0] = "v0.7.0"
+                    km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+                    code, _ = self._post("/update")
+                    self.assertEqual(code, 200)
+                    km._UPDATE_STATE[0] = ""
+                    code, _ = self._drift_click_and_wait()
+                    self.assertEqual(code, 200)
+                    self.assertEqual([m.get("state") for m in pushed], ["running", "running"], "one running push per door (%r)" % (value,))
+                    self.assertEqual([m.get("manager") for m in pushed], [expect, expect],
+                                     "the field rides the push exactly when no manager started this kernel (%r)" % (value,))
+                    self.assertEqual([("manager" in m) for m in pushed], [expect is not None] * 2, "absent, not null, with a port set (%r)" % (value,))
+                self.assertEqual([x for x in dials if x[1] != self.port], [("127.0.0.1", 7777)],
+                                 "no dial with the variable absent; one to the set port, refused by the rail")
+        finally:
+            km._INPLACE_TRIED[0] = saved_tried
+            km._UPDATE_STATE[0] = ""
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            km._MANAGER_READ_FAULT[0] = ""
+
     def test_the_drift_doors_outcome_reaches_every_poll_when_the_banner_cannot_see_it_end(self):
         # review round 5 of the confirm step (2026-09-10): the no-manager branch of _run_main_update said its
         # outcome on the sync surface alone; the banner that started the converge stayed in its wait, polling
@@ -2065,6 +2111,8 @@ class Wiring(unittest.TestCase):
         self.assertIn("_stale_block(v) + _update_block() + _rdrift_block()", self.src)
         self.assertIn("window.__rompUpdateOffer=offer", self.src)
         self.assertIn("m.type==='updateAvail'&&window.__rompUpdateOffer", self.src)
+        self.assertIn("window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'',m.manager)", self.src,
+                      "the relay hands the push's manager field to the banner, which words the wait by it (review round 6)")
 
     def test_offers_retire_on_the_truth_not_in_an_error_banner(self):
         # the user 2026-08-15: a stale offer survived the restart it asked for; its Update click hit a

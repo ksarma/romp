@@ -439,6 +439,32 @@ GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: at
         self.assertTrue(s["msg"].startswith("The update did not finish: the fetch failed"), s["msg"])
         self.assertEqual((s["goHidden"], s["notNowHidden"]), (True, False), "a failure with no offer standing: the text alone, with Not now")
 
+    def test_the_wait_text_promises_no_restart_and_no_reload_when_no_manager_started_the_kernel(self):
+        # review round 6 (2026-09-10): on a kernel no manager started, the wait copy promised a restart and a
+        # reload ("the dashboard reloads when it restarts") for the whole converge, though the banner knew
+        # impact.manager === false at the click and the kernel knew it at the running push. Three sites word
+        # the wait: the click, the running push (offer, now handed the push's `manager`), and a page loaded
+        # while the update runs (the answer's own field). Each keys on manager === false; absent, the restart
+        # wording stands, as an older kernel's answer has no field
+        click_disk = "Updating romp on disk, this can take a minute; restart it yourself when it finishes"
+        pushed_disk = "romp is updating on disk; restart it yourself when it finishes"
+        for text in (click_disk, pushed_disk):
+            self.assertNotIn("\u2014", text)
+        # the click
+        for name, check, expect in (("no manager", {"manager": False, "otherKernels": 0}, click_disk),
+                                    ("a manager", {}, "Updating romp \u2014 this can take a minute; the dashboard reloads when it restarts\u2026")):
+            s = run_banner("GO.onclick(); await tick(); await tick(); CF.onclick(); out(state());", check=check)
+            self.assertEqual(s["msg"], expect, name + ": the click")
+        # the running push, with the push's manager field relayed as the sixth argument
+        for name, arg, expect in (("no manager", "false", pushed_disk), ("absent", "undefined", "romp is updating \u2014 the dashboard reloads when it restarts\u2026")):
+            s = run_banner("window.__rompUpdateOffer('', '', '', 'b1', 'running', %s); out(state());" % arg, check={"tag": ""})
+            self.assertEqual(s["msg"], expect, name + ": the running push")
+        # a page loaded while the update runs
+        for name, check, expect in (("no manager", {"state": "running", "tag": "", "manager": False}, pushed_disk),
+                                    ("absent", {"state": "running", "tag": ""}, "romp is updating \u2014 the dashboard reloads when it restarts\u2026")):
+            s = run_banner("out(state());", check=check)
+            self.assertEqual(s["msg"], expect, name + ": the load")
+
     def test_a_re_read_that_answers_running_changes_neither_the_label_nor_the_held_counts(self):
         # review round 6 (2026-09-10): an update started elsewhere between the click and the arm's re-read (another
         # window's confirm, the auto converge) answers state running with every count null, since the kernel
