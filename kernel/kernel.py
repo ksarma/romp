@@ -9996,8 +9996,11 @@ _MANAGER_REFUSED_ACTION = "manager-refused-restart-all"   # the manager answered
 _NO_RESTART_ACTIONS = {"main-converge-skip", "bus-converge", "end-on-idle", _MANAGER_REFUSED_ACTION}
 # The request rows a refused hop was written for, which the refusal consumes in _recent_restart_audit's walk
 # (review round 2, 2026-09-10): the dashboard's Restart writes http-restart and then, through
-# _restart_this_kernel, kernel-asks-manager-restart-all; the converge writes main-converge and hops itself.
-_MANAGER_REFUSED_REQUESTS = ("kernel-asks-manager-restart-all", "http-restart", "main-converge")
+# _restart_this_kernel, kernel-asks-manager-restart-all; the converge writes main-converge and hops itself;
+# the far-host apply script (_update_remote) writes p2p-update on the peer and hops to the peer's manager
+# through the control client, and its REFUSED branch writes the refusal over it (review round 3, 2026-09-10:
+# the third writer was missing here, so the far kernel kept the refused deploy as its live request).
+_MANAGER_REFUSED_REQUESTS = ("kernel-asks-manager-restart-all", "http-restart", "main-converge", "p2p-update")
 #                                                        # audit rows that restart no kernel (in-place converges;
 #                                                        # a session's own self-close ask; a refused manager hop)
 

@@ -12,6 +12,7 @@ restart itself is a no-op), invented tokens.
 """
 import json
 import os
+import re
 import time
 import threading
 import unittest
@@ -36,6 +37,7 @@ os.environ["ROMP_MANAGER_PORT"] = "1"   # dead port → _restart_this_kernel aud
 #   would erase conftest's suite-wide floor before any test runs — and an ABSENT var is the one
 #   unsafe state (_run_main_update maps absent to the DEFAULT port: the live manager).
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+KERNEL_SRC = open(os.path.join(os.path.dirname(BIN), "kernel", "kernel.py")).read()
 
 def _audit_path():
     return jd.STATE / "restart-audit.jsonl"   # at CALL time — peer test modules rebind jd.STATE
@@ -153,6 +155,32 @@ class ARefusalConsumesItsRequest(unittest.TestCase):
         first = {"t": self.T - 30, "action": "kernel-asks-manager-restart-all", "reason": "self-update", "pid": os.getpid()}
         self._write([first] + self._http_restart_refused(self.T - 20) + self._http_restart_refused(self.T - 1))
         self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), first)
+
+    # The far-host apply script's REFUSED branch (review round 3, 2026-09-10): on a peer the apply writes a
+    # p2p-update row, hops to that host's manager through the control client, and on the client's exit 3
+    # writes a manager-refused-restart-all row over it. The p2p-update action was not among the request
+    # rows a refusal consumes, so the far kernel kept the refused request as the live one for the 90 s
+    # window, and a SIGTERM from another source there was attributed to a deploy the manager refused.
+    def _far_host_refused(self, t):
+        return [{"t": t, "action": "p2p-update", "reason": "from abcdef12 to 12abcdef"},
+                {"t": t, "action": km._MANAGER_REFUSED_ACTION, "door": "/restart-all", "status": 401,
+                 "reason": "p2p-update from abcdef12 to 12abcdef"}]
+
+    def test_a_refused_far_host_apply_names_no_request(self):
+        self._write(self._far_host_refused(self.T - 1))
+        self.assertIsNone(km._recent_restart_audit(now=self.T, started=self.T - 1000),
+                          "the manager on this host refused the deploy's hop: a signal now is anonymous")
+
+    def test_a_parked_quiet_converge_under_a_refused_far_host_apply_stays_visible(self):
+        parked = {"t": self.T - 100, "action": "main-converge", "tag": "pull", "when": "quiet", "sha": "abcdef12"}
+        self._write([parked] + self._far_host_refused(self.T - 1))
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), parked)
+
+    def test_a_managers_note_above_a_refused_far_host_apply_still_answers(self):
+        note = {"t": self.T, "action": "manager-sigterm", "trigger": "restart-all", "pid": os.getpid()}
+        self._write(self._far_host_refused(self.T - 1) + [note])
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), note)
+
 
 if __name__ == "__main__":
     unittest.main()
