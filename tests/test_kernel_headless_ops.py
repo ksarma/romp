@@ -3342,9 +3342,18 @@ class UnknownSessionRefused(_RouteServer):
         # unknown refusal at both doors, decided before any path is built from it. The fake open raises a
         # BaseException on every read-mode open while the requests run (no read-swallowing `except Exception` can
         # hide it); the WS door's append to undelivered.jsonl is a write and passes. The probe file is this
-        # test's own, so no live state file is written (review round 10, 2026-09-09).
+        # test's own, so no live state file is written (review round 10, 2026-09-09). The fake stands in for
+        # builtins.open, io.open and, where the interpreter has one, pathlib's accessor open: Python 3.10 binds
+        # io.open into `pathlib._NormalAccessor.open` at import, so a Path.read_text there reaches the ORIGINAL
+        # io.open whatever io.open is patched to (3.11 and later call io.open directly), and the names registry
+        # is read through pathlib (_names_parts, _names_snapshot). Without that patch the guard saw none of those
+        # reads on 3.10, and the control at the end found its open only in a process whose SDK backend was not
+        # yet built (the backend's first build reads a settings file through builtins.open): CI's 3.10 job failed
+        # the control at 61ee8e50 in an xdist worker where an earlier test had built the backend, while it passed
+        # alone and on 3.12, where _name_of's read is the first open (round 12).
         import builtins
         import io as iolib
+        import pathlib
 
         class _Opened(BaseException):
             pass
@@ -3356,6 +3365,9 @@ class UnknownSessionRefused(_RouteServer):
                 opened.append(str(file))
                 raise _Opened("a read-mode open of %s" % (file,))
             return real_open(file, mode, *a, **k)
+        accessor = getattr(pathlib, "_NormalAccessor", None)   # 3.10; None from 3.11 on, where io.open is called
+        path_open = (mock.patch.object(accessor, "open", staticmethod(guard)) if accessor is not None
+                     else contextlib.nullcontext())
 
         def rows_now():
             # the test's own read of the records, through the real open: the fake watches the kernel, not this
@@ -3417,13 +3429,20 @@ class UnknownSessionRefused(_RouteServer):
                 # names the probe file here); then with the fake, so the answer is shown to cost no read
                 for who in spellings:
                     refused(who, "plain")
-                with mock.patch("builtins.open", guard), mock.patch.object(iolib, "open", guard):
+                # the SDK backend is built before the guard goes up: its first build reads a settings file, an open
+                # of its own that would stand in for the names read the control below expects (in a fresh process
+                # on 3.10 at 61ee8e50 it was the only open the control caught)
+                km._sdk()
+                with mock.patch("builtins.open", guard), mock.patch.object(iolib, "open", guard), path_open:
                     for who in spellings:
                         refused(who, "guarded")
                     self.assertEqual(opened, [], "no file was opened for reading while the spellings were refused")
-                    # the fake bites: a spelling inside the alphabet reads the names registry at once
+                    # the fake bites: a spelling inside the alphabet reads the names registry at once (_name_of,
+                    # through pathlib)
                     with self.assertRaises(_Opened):
                         km._resolve_sid(self.GHOST, door=True)
+                    self.assertEqual([os.path.basename(f) for f in opened], [self.GHOST],
+                                     "the open the control caught is the names registry's read of the spelling")
             self.assertEqual(ended, [], "the end routine never ran on a spelling")
             self.assertEqual(fake.method_calls, [], "nothing reached a backend at either door")
             for who in spellings:
@@ -3572,7 +3591,9 @@ class NamesSnapshotMemoRace(unittest.TestCase):
     the function keeps its never-raise contract, and the lookup says when it failed (review round 11,
     2026-09-10; the shape was the base's, reached from handler threads before this PR widened it). The race is
     made deterministic: a dict subclass whose iteration inserts a key mid-walk, the exact exception a
-    concurrent insert raises."""
+    concurrent insert raises. The try owns never-raise and the copy owns the eviction completing, and one
+    fixture tells them apart (round 12; round 11's fixture raised inside list() itself, so the try swallowed
+    it, the eviction was skipped, and the test pinned never-raise alone while its name claimed the copy)."""
 
     SID = "abab1111-cccc-dddd-eeee-ffffffffffff"
 
@@ -3581,21 +3602,46 @@ class NamesSnapshotMemoRace(unittest.TestCase):
         (km.NAMES / self.SID).write_text("race-web\t/work/race-web\n")
         self.addCleanup(_unregister, self.SID)
 
-    def test_the_eviction_survives_a_size_change_mid_walk(self):
+    def test_the_eviction_completes_under_a_size_change_mid_walk_and_nothing_raises(self):
+        # the size change lands DURING the eviction's own iteration over the memo: this dict's iterator inserts
+        # a key after yielding the first, into the dict a live dict iterator is walking, so the next step raises
+        # exactly what a concurrent insert raises (RuntimeError, dictionary changed size during iteration) for
+        # any walk over the LIVE dict, and never for list(memo): CPython's list() asks the iterable for a
+        # length hint (PEP 424; __len__ here) after taking its iterator and before the first step, a
+        # comprehension never does, so the insert is skipped once __len__ was asked. Green with the list copy
+        # (the eviction completes and the stale entry goes); red with a live-dict comprehension inside the try
+        # (the RuntimeError is swallowed, the eviction skipped, the stale entry stays); red on the base (the
+        # comprehension outside the try raises out of the function). The fixture relies on the length hint, an
+        # interpreter detail, so the premise is asserted first.
         class Racing(dict):
-            # the built-in iterator, so the insert raises exactly what a concurrent insert raises
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                self.len_asked = False
+
+            def __len__(self):
+                self.len_asked = True
+                return dict.__len__(self)
+
             def __iter__(self):
+                it = dict.__iter__(self)
                 first = True
-                for k in dict.__iter__(self):
-                    if first:
-                        self["intruder-" + k] = (((0, 0, 0), ["x"]))
+                for k in it:
+                    if first and not self.len_asked:
+                        self["intruder-" + k] = ((0, 0, 0), ["x"])
                         first = False
                     yield k
+        probe = Racing({"a": 1})
+        self.assertEqual(list(probe), ["a"])
+        self.assertTrue(probe.len_asked, "the premise: list() asks the length hint before its first step")
+        with self.assertRaises(RuntimeError):
+            [k for k in Racing({"a": 1})]                 # the premise: a live walk raises what a concurrent insert raises
         memo = Racing({"stale-entry": ((0, 0, 0), ["gone"])})
         with mock.patch.object(km, "_names_entry_memo", memo):
             snap = km._names_snapshot()
         self.assertEqual(snap.get(self.SID), ["race-web", "/work/race-web"], "the snapshot is read whole")
         self.assertIn(self.SID, memo, "the fresh entry was memoized")
+        self.assertNotIn("stale-entry", memo, "the eviction completed: the stale entry is gone")
+        self.assertEqual([k for k in memo if k.startswith("intruder-")], [], "list() asked the length hint, so nothing intruded")
 
     def test_a_failed_registry_lookup_is_said_before_the_live_map_decides(self):
         err = io.StringIO()
