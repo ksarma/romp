@@ -1232,10 +1232,12 @@ under the track's clipped cards and drew its one rule under the fold, above Send
 the top of the text, and the reload's loader and the fold that says why a painted change has no card were among them.
 Every card is absolutely positioned at its mark's top in the body's content, less the header's height the track begins
 under: a comment highlight, a framed figure, a region rectangle on a picture or a PDF page, a change mark. Cards are
-laid by that top (ties by key since 2026-09-10; as first built, by the list's order, which is the model's after a
-render and the last placement's after any other pass, so under a focus each pass reversed a comment card and a change
-card whose marks shared a line, and every card below moved by their height difference: the Slice 4 review of
-`plans/markdown-viewer.md`, round 16) and each takes the larger of it and the previous card's bottom plus the
+laid by that top (a tie in the list's order by the cards' own fields since 2026-09-10: a change card before a comment
+card, two changes by position then time, two comments by time, the key last, and never by the order the pass was given
+the cards in, so a comment about a change lays after the change at every pass; as first built, by that order, which is
+the model's after a render and the last placement's after any other pass, so under a focus each pass reversed a comment
+card and a change card whose marks shared a line, and every card below moved by their height difference: the Slice 4
+review of `plans/markdown-viewer.md`, round 16) and each takes the larger of it and the previous card's bottom plus the
 gap, so cards never overlap and, without a focus, only ever move down from their marks (with one — the card the person
 last acted on, which holds its mark — the cards above it move up, past their own marks where they must: the focus
 follow-on, 2026-09-08, below); a pushed card draws a dashed leader up the gutter to its mark's height, and a card the
@@ -1888,7 +1890,8 @@ the panel's slot anchored over the change's span in the current text, the presel
 (`aboutOption`, `input[data-opt="about"]`, "about this change"), and Save posts `changeIds: [id]` beside the anchor; a
 deletion, whose text is not in the file, takes the comment by id alone, the reference row saying "About the change …"
 and, in one line, that the comment is laid at the change's point (`markTop`'s fallback lays an anchorless comment's card
-level with the first pending change it names) or, in the list layout, where no card is laid at any point, that the comment
+level with the first pending change it names, and after that change's card, since a tie on the top lays in the list's
+order: the margin-layout record above) or, in the list layout, where no card is laid at any point, that the comment
 names the change instead of a passage (the review's second round, 2026-09-10). For a spanned change, an insertion or a
 substitution, the card offers
 Comment on this change only while the view carries the change's text (`spanCarried`: the view's bytes are the status's,

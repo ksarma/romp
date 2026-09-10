@@ -5,7 +5,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { layoutCards, CARD_GAP } from "./card-layout";
+import { layoutCards, CARD_GAP, type LayoutItem } from "./card-layout";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 
@@ -25,42 +25,78 @@ test("push-down: a card whose mark is under the previous card is placed at that 
   assert.equal(r.placed[2].pushed, 0, "c is clear of the pushed card and sits level again");
 });
 
-test("the list's order is not the placement order: cards are laid by desired top, ties by key, never by the list's order", () => {
+test("the input's order is not the placement order: cards are laid by desired top, a tie by the cards' fields and then the key, never by the input's order", () => {
   const r = layoutCards([{ key: "late", desired: 500, height: 30 }, { key: "early", desired: 50, height: 30 }, { key: "tie2", desired: 200, height: 30 }, { key: "tie1", desired: 200, height: 30 }], 8);
-  assert.deepEqual(r.placed.map((p) => p.key), ["early", "tie1", "tie2", "late"], "desired order; the two at 200 by key, though the list gives tie2 first");
+  assert.deepEqual(r.placed.map((p) => p.key), ["early", "tie1", "tie2", "late"], "desired order; the two bare items at 200 by key, though the input gives tie2 first");
   assert.deepEqual(tops(r), { early: 50, tie1: 200, tie2: 238, late: 500 });
 });
 
 // the tie rule (the Slice 4 review's round 16, 2026-09-10): the panel feeds the pass the model's order after a render and
 // the last placement's order after any other pass, so a tie broken by the input's order laid the same cards differently
-// from one pass to the next. The placement must be a function of the cards alone.
-test("the same cards in any input order place the same: a tie on the desired top is broken by key, and the placement order fed back gives the placement again", () => {
-  const a = { key: "1757145570000-2", desired: 200, height: 30 }, b = { key: "chg:h1", desired: 200, height: 50 }, c = { key: "1757145600000-118", desired: 400, height: 30 };
+// from one pass to the next. The placement must be a function of the cards alone, and a tie lays in the list's order
+// (the module comment; the review's round 1 ruling: a comment about a change lays after the change it is about).
+const comment = (key: string, desired: number, height: number, ts: number): LayoutItem => ({ key, desired, height, kind: "comment", ts });
+const change = (key: string, desired: number, height: number, from: number, ts: number): LayoutItem => ({ key, desired, height, kind: "change", from, ts });
+
+test("the same cards in any input order place the same: a tie on the desired top lays the change card before the comment card, and the placement order fed back gives the placement again", () => {
+  const a = comment("1757145570000-2", 200, 30, 1757145570000), b = change("chg:h1", 200, 50, 40, 1757145540000), c = comment("1757145600000-118", 400, 30, 1757145600000);
   const model = layoutCards([b, a, c], 8);           // the list's order: the change card first, then the comments by time
   const fed = layoutCards(model.placed.map((p) => [a, b, c].find((it) => it.key === p.key)!), 8);   // the placement order, as the next pass reads the DOM
   const other = layoutCards([a, b, c], 8);         // the comment before the change, as no list of the panel's gives them
-  assert.deepEqual(fed, model, "the placement order read back places the same (as first built, the tie followed the input: the pair swapped)");
-  assert.deepEqual(other, model, "and so does any other order");
-  assert.deepEqual(model.placed.map((p) => p.key), ["1757145570000-2", "chg:h1", "1757145600000-118"], "the tie by key: the comment (its id begins with its time) before the change (`chg:`)");
-  assert.deepEqual(tops(model), { "1757145570000-2": 200, "chg:h1": 238, "1757145600000-118": 400 });
+  // without a focus the input's order was the placement's as first built too, so the read-back is a fixed point on the base
+  // as well; the third order is the assertion that goes red there (the pair swapped)
+  assert.deepEqual(fed, model, "the placement order read back places the same");
+  assert.deepEqual(other, model, "and so does any other order (as first built, the tie followed the input: the pair swapped)");
+  assert.deepEqual(model.placed.map((p) => p.key), ["chg:h1", "1757145570000-2", "1757145600000-118"], "the tie in the list's order: the change card before the comment card");
+  assert.deepEqual(tops(model), { "chg:h1": 200, "1757145570000-2": 258, "1757145600000-118": 400 });
 });
 
 test("under a focus, the tied pair straddling the spill is laid the same by the model's order and by the placement order read back: no pass reverses it", () => {
   // the review's scene: a comment card (60) and a change card (67) whose marks share a line under the header, the focus a
   // little below with room above it for one of the two; as first built, each pass reversed the pair (the one at the start
   // spilled below the focus, the spilled one took the start) and the cards below moved by 7px every time
-  const comment = { key: "1757145570000-2", desired: -60, height: 60 }, change = { key: "chg:s1", desired: -60, height: 67 };
-  const focus = { key: "1757145600000-118", desired: 100, height: 40 }, below = { key: "1757145630000-9", desired: 900, height: 30 };
-  const items = [comment, change, focus, below];
+  const cmt = comment("1757145570000-2", -60, 60, 1757145570000), chg = change("chg:s1", -60, 67, 2, 1757145540000);
+  const focus = comment("1757145600000-118", 100, 40, 1757145600000), below = comment("1757145630000-9", 900, 30, 1757145630000);
+  const items = [cmt, chg, focus, below];
   const byKey = (r: ReturnType<typeof layoutCards>) => r.placed.map((p) => items.find((it) => it.key === p.key)!);
-  const render = layoutCards([change, comment, focus, below], 8, focus.key);   // the render: the model's order, changes first
-  const pass1 = layoutCards(byKey(render), 8, focus.key);                      // the next pass: the DOM as the render's pass left it
+  const render = layoutCards([chg, cmt, focus, below], 8, focus.key);   // the render: the model's order, changes first
+  const pass1 = layoutCards(byKey(render), 8, focus.key);              // the next pass: the DOM as the render's pass left it
   const pass2 = layoutCards(byKey(pass1), 8, focus.key);
   assert.deepEqual(pass1, render, "the pass over the placement order lays the same (as first built, the pair reversed at every pass)");
   assert.deepEqual(pass2, render, "and stays so");
-  assert.deepEqual(layoutCards([below, focus, comment, change], 8, focus.key), render, "whatever order the cards come in");
-  assert.deepEqual(tops(render), { "chg:s1": 8, "1757145600000-118": 100, "1757145570000-2": 148, "1757145630000-9": 900 }, "by key the comment is first of the pair, so it is the one the chain has no room for: below the focus");
-  assert.deepEqual(render.placed.map((p) => p.key), ["chg:s1", "1757145600000-118", "1757145570000-2", "1757145630000-9"]);
+  assert.deepEqual(layoutCards([below, focus, cmt, chg], 8, focus.key), render, "whatever order the cards come in");
+  assert.deepEqual(tops(render), { "1757145570000-2": 8, "1757145600000-118": 100, "chg:s1": 148, "1757145630000-9": 900 }, "the change is first of the pair, so it is the one the chain has no room for: below the focus; the comment holds the start");
+  assert.deepEqual(render.placed.map((p) => p.key), ["1757145570000-2", "1757145600000-118", "chg:s1", "1757145630000-9"]);
+});
+
+test("the focus on one of a tied pair: a same-line comment card keeps the list's side of a focused change card, below it, and a same-line change card lays above a focused comment card", () => {
+  // the about follow-on lays a comment about a deletion at the change's own mark, so this tie is the ordinary case for such
+  // a comment: the list shows the change first, and so does the margin, whichever of the two the person acted on
+  const chg = change("chg:d1", 200, 50, 30, 1757145540000), cmt = comment("1757145570000-3", 200, 30, 1757145570000);
+  const onChange = layoutCards([chg, cmt], 8, chg.key);
+  assert.deepEqual(tops(onChange), { "chg:d1": 200, "1757145570000-3": 258 }, "the focused change at its mark, the comment below it (as first built, by key, the comment was pulled above it)");
+  assert.deepEqual(layoutCards([cmt, chg], 8, chg.key), onChange, "whatever order the cards come in");
+  const onComment = layoutCards([chg, cmt], 8, cmt.key);
+  assert.deepEqual(tops(onComment), { "chg:d1": 142, "1757145570000-3": 200 }, "the focused comment at its mark, the change pulled up above it");
+  assert.equal(onComment.placed.find((p) => p.key === "chg:d1")!.pushed, -58, "the change's leader down to the mark it left");
+  assert.deepEqual(layoutCards([cmt, chg], 8, cmt.key), onComment, "whatever order the cards come in");
+});
+
+test("two change cards on one line lay by position then time, the list's order, and two comment cards by time: the key decides only what those leave tied", () => {
+  // a later edit to the left of an earlier one: by key or by time the right-hand edit would come first, against the text's order
+  const left = change("chg:b", 300, 30, 10, 1757145600000), right = change("chg:a", 300, 30, 40, 1757145500000);
+  const r = layoutCards([right, left], 8);
+  assert.deepEqual(r.placed.map((p) => p.key), ["chg:b", "chg:a"], "the left-hand edit first, though its key and its time come second (as first built, the input's order: chg:a first)");
+  assert.deepEqual(layoutCards([left, right], 8), r, "whatever order the cards come in");
+  // the same position (one insertion made twice at a point): by time
+  const first = change("chg:z", 300, 30, 10, 1757145500000), second = change("chg:y", 300, 30, 10, 1757145600000);
+  assert.deepEqual(layoutCards([second, first], 8).placed.map((p) => p.key), ["chg:z", "chg:y"], "the earlier edit first, though its key comes second");
+  // two comments whose marks share a line: by time, whatever their ids
+  const older = comment("1757145600000-9", 300, 30, 1757145500000), newer = comment("1757145500000-2", 300, 30, 1757145600000);
+  assert.deepEqual(layoutCards([newer, older], 8).placed.map((p) => p.key), ["1757145600000-9", "1757145500000-2"], "the older comment first, though its key comes second");
+  // the key last: two comments at one time
+  const twin1 = comment("1757145600000-11", 300, 30, 1757145600000), twin2 = comment("1757145600000-2", 300, 30, 1757145600000);
+  assert.deepEqual(layoutCards([twin2, twin1], 8).placed.map((p) => p.key), ["1757145600000-11", "1757145600000-2"]);
 });
 
 test("the gap is the caller's, and the sheet's card gap is the module's default", () => {

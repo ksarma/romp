@@ -2006,14 +2006,17 @@ as built departs from the text above, why, and which test holds each rule:
    paragraph was repainted; item 2). Closed after the review round 17: the repaint re-filing a change whose marks it
    painted again (one whose every mark the trim removed as not shown, one whose mark stands again as shown) and
    rendering no card, so the change card said the opposite of the body until the next render (a session's insertion of
-   one soft hyphen, rendered at a line break alone; item 2). Pre-existing on main, found by round 16's review and left
-   to the focus follow-on of plans/file-review.md (card-layout.ts and placeCards are byte-identical to 5917393e): the
-   margin layout's pass is not a fixed point under a focus when two cards' marks share a line, since card-layout.ts
-   breaks the tie on `desired` by the list's order and placeCards feeds a non-render pass the DOM order it wrote in
-   placement order, so when the tied pair straddles the focus's spill boundary each observer pass (a resize, a card's
-   growth, a composer's open or Cancel) swaps the pair and moves the cards below by their height difference, and a
-   render pass, the model's order, swaps them back; the fix is the pass fed the render's order, or an
-   input-independent tie-break, with a card-layout test that feeds the placement order back under a focus. Recorded
+   one soft hyphen, rendered at a line break alone; item 2). Pre-existing on main, found by round 16's review and fixed
+   on 2026-09-10 (fork PR #712; until it, card-layout.ts and placeCards were byte-identical to 5917393e): the margin
+   layout's pass was not a fixed point under a focus when two cards' marks shared a line, since card-layout.ts broke
+   the tie on `desired` by the order the pass was given the cards in and placeCards feeds a non-render pass the DOM
+   order it wrote in placement order, so when the tied pair straddled the focus's spill boundary each observer pass (a
+   resize, a card's growth, a composer's open or Cancel) swapped the pair and moved the cards below by their height
+   difference, and a render pass, the model's order, swapped them back. Of the two shapes named then (the pass fed the
+   render's order, or an input-independent tie-break) the fix is the second: card-layout.ts breaks the tie by the
+   cards' own fields in the list's order (a change card before a comment card, two changes by position then time, two
+   comments by time, the key last), with card-layout tests that feed the placement order back under a focus; the
+   margin-layout record in plans/file-review.md carries the rule. Recorded
    and not changed after rounds 13 to 16: the re-trim's price per reflow on the 5,000-link paragraph (item 2,
    re-measured under the convergence loop in round 14), the pending target's repaint on it (item 2, round 15's
    measurement), the change marks' whole-document repaint when one stands in a box (item 2, round 16's measurement)
