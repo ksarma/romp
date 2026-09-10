@@ -24,8 +24,19 @@
 //                                  (under the login service bin/romp stops the service instead, or
 //                                  Restart=always / KeepAlive would respawn us within seconds)
 // (`restart [kernel]` (single) also exists for front ends — no romp verb.)
+//
+// The control port is loopback-only, and every state-changing door on it (POST /restart-all, /restart,
+// /stop, /ensure) requires the kernel's serve token in an `X-Romp-Token` header: the same 0600 file the
+// kernel gates its own writes with (STATE_ROOT/serve-token, or ROMP_SERVE_TOKEN), read fresh per request
+// so a reminted token is honoured without a manager restart. A request without it, or with a wrong one,
+// is answered 401 with a one-line body and logged with its address and door, never the token; while the
+// manager itself cannot read the token, writes are refused with 503 until the file is back, never let
+// through. GET /status needs none. The `romp` verbs above go through the control client at the bottom,
+// which reads the same file; the kernel and the VS Code extension send the header themselves. Before
+// this gate (2026-09-10) a local process restarted every session by posting to the port.
 
 const http = require('http');
+const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 const os = require('os');
 const path = require('path');
@@ -463,18 +474,50 @@ let tokenNoticed = false;   // the serve-token read failed → said once
 let drainNoticed = false;   // the kernel answered a drain=1 poll with draining:false → said once per episode
 function resetDrainNotices() { tokenNoticed = false; drainNoticed = false; }
 
-function kernelToken() {
+// The serve token, read the way the kernel and bin/romp read it: ROMP_SERVE_TOKEN, else the 0600 file
+// under the state root. Fresh per call (a tiny local file), so a reminted token is honoured on the next
+// request with no manager restart. Answers {token}, or {token: '', why} naming the read failure; each
+// caller decides what a missing token means for it: kernelToken polls token-less and says so once, the
+// write gate (writeGate) refuses with 503.
+function serveToken() {
   const t = (process.env.ROMP_SERVE_TOKEN || '').trim();
-  if (t) return t;
+  if (t) return { token: t };
   const file = path.join(STATE_ROOT, 'serve-token');
-  try { return fs.readFileSync(file, 'utf8').trim(); }
-  catch (e) {
-    if (!tokenNoticed) {
-      tokenNoticed = true;
-      log(`kernel serve token unreadable (${file}: ${e && e.message}) — polling token-less: the busy count still reads, but the kernel will refuse to arm the drain hold`);
-    }
-    return '';
+  try {
+    const f = fs.readFileSync(file, 'utf8').trim();
+    return f ? { token: f } : { token: '', why: `${file}: empty` };
+  } catch (e) { return { token: '', why: `${file}: ${e && e.message}` }; }
+}
+
+function kernelToken() {
+  const r = serveToken();
+  if (r.token) return r.token;
+  if (!tokenNoticed) {
+    tokenNoticed = true;
+    log(`kernel serve token unreadable (${r.why}); polling token-less: the busy count still reads, but the kernel will refuse to arm the drain hold`);
   }
+  return '';
+}
+
+// The write gate (2026-09-10): every state-changing door requires the serve token in X-Romp-Token, the
+// header form the kernel takes from local daemons, and answers without it the way the kernel does. Pure
+// and exported: `presented` is the header's value (undefined when absent), `have` is serveToken()'s
+// answer. 503 when the manager holds no token to compare against (the file missing, unreadable or empty):
+// the doors stay shut, never open, and the body says what to repair. 401 for a missing or wrong header,
+// one body for both; which of the two it was goes on the manager's log (`why`), not to the caller. The
+// comparison is constant-time, so the answer's timing says nothing about the token.
+const TOKEN_FILE_HINT = () => path.join(STATE_ROOT, 'serve-token');
+function writeGate(presented, have) {
+  if (!have || !have.token) {
+    return { ok: false, code: 503, why: 'the serve token is unavailable',
+             error: `the manager cannot read the serve token (${(have && have.why) || 'no token'}); state-changing requests are refused until it can` };
+  }
+  const p = typeof presented === 'string' ? presented.trim() : '';
+  const error = `serve token required: send it in X-Romp-Token (the kernel's token file, ${TOKEN_FILE_HINT()})`;
+  if (!p) return { ok: false, code: 401, why: 'no serve token presented', error };
+  const a = Buffer.from(p), b = Buffer.from(have.token);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return { ok: false, code: 401, why: 'the serve token did not match', error };
+  return { ok: true, code: 200 };
 }
 
 function fetchBusy(port, cb, path) {
@@ -932,6 +975,18 @@ function startManager() {
       try { const ou = new URL(origin); okOrigin = ['127.0.0.1', 'localhost', '::1'].includes(ou.hostname); } catch { okOrigin = false; }
       if (!okOrigin) return json(403, { ok: false, error: 'cross-site origin' });
     }
+    // The write gate (writeGate above): every request that is not a read needs the serve token, so the
+    // doors below (/ensure, /restart-all, /restart, /stop) are all behind it and a new one cannot be
+    // added in front of it. GET /status stays open (`romp status`, the probes). It runs before the
+    // doors' own logging, so a refused request leaves exactly one line: the address and the door,
+    // never the token.
+    if (req.method !== 'GET') {
+      const g = writeGate(req.headers['x-romp-token'], serveToken());
+      if (!g.ok) {
+        log(`refused ${req.method} ${url.pathname} from ${req.socket.remoteAddress || '?'}: ${g.why}`);
+        return json(g.code, { ok: false, error: g.error });
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/status') {
       return json(200, {
         ok: true,
@@ -997,7 +1052,19 @@ function control(method, pathname, kernel, params) {
   const u = new URL(`http://${HOST}:${CONTROL_PORT}${pathname}`);
   if (kernel) u.searchParams.set('kernel', kernel);
   for (const [k, v] of Object.entries(params || {})) u.searchParams.set(k, v);
-  const req = http.request(u, { method, timeout: 4000 }, (res) => {
+  // Every write door needs the serve token (writeGate); the read (`status`) does not and carries none.
+  // Read the way the server reads it (serveToken), so this client and the manager it addresses agree on
+  // the file: bin/romp's refresh and down verbs get their header here. In the header, never in argv: a
+  // command line is readable by every account on the machine (bin/romp's curls use --config for the same
+  // reason). A token this client cannot read is said once here; the request still goes out, and the
+  // manager's own refusal, printed below, names the file.
+  const headers = {};
+  if (method !== 'GET') {
+    const t = serveToken();
+    if (t.token) headers['X-Romp-Token'] = t.token;
+    else console.error(`romp-manager: the serve token could not be read (${t.why}); the manager refuses ${pathname} without it`);
+  }
+  const req = http.request(u, { method, timeout: 4000, headers }, (res) => {
     let b = ''; res.on('data', (d) => (b += d));
     res.on('end', () => { try { process.stdout.write(JSON.stringify(JSON.parse(b), null, 2) + '\n'); } catch (e) { process.stdout.write(b + '\n'); } process.exit(res.statusCode < 400 ? 0 : 1); });
   });
@@ -1035,7 +1102,7 @@ function ensureUp() {
 // Exported for unit tests (restartGate = the pure storm-cap decision). The CLI dispatch runs only when this
 // file is executed directly, so require()-ing it from a test has no side effects.
 module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp,
-                   kernelToken, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet,
+                   kernelToken, serveToken, writeGate, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet,
                    tmuxStartArgv, scopedStartFailure, commandOnPath, TMUX_START_ARGV,
                    placementFromCgroup, tmuxServerPlacement, bareEnsuredLine, TMUX_SERVER_PID_ARGV,
                    withoutOpCredentials, retiredCredentialNames, retiredCredentialMessage, exitLine, auditSigterm,

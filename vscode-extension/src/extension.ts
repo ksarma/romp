@@ -449,11 +449,14 @@ function ensureKernel(): Promise<boolean> {
 }
 
 // POST the manager's /ensure?port=N so it spawns+owns a kernel there. Resolves true iff a manager
-// answered (i.e. one is running) — we never spawn the kernel ourselves.
+// answered (i.e. one is running); we never spawn the kernel ourselves. /ensure is a state-changing
+// door, so it carries the serve token the way every kernel request does (the manager gates its
+// writes on X-Romp-Token, bin/romp-manager writeGate); a 401 resolves false like any refusal.
 function askManagerEnsure(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.request(
-      { host: HOST, port: managerPort(), path: `/ensure?port=${port}`, method: "POST", timeout: 4000 },
+      { host: HOST, port: managerPort(), path: `/ensure?port=${port}`, method: "POST", timeout: 4000,
+        headers: { "X-Romp-Token": serveToken() } },
       (res) => { res.resume(); resolve((res.statusCode ?? 500) < 400); });
     req.on("timeout", () => { req.destroy(); resolve(false); });
     req.on("error", () => resolve(false));

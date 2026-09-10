@@ -857,6 +857,39 @@ service unit bakes in whatever is set at install time, so a renumbered port
 that only lives in your shell leaves the supervised manager on the old one, and
 the two collide.
 
+### The manager's control port
+
+The manager (`romp up`, or the login service) listens on loopback at `:7432`
+(`ROMP_MANAGER_PORT`). `GET /status` is open: `romp status` and the probes read
+it. Every request that changes state, `POST /restart-all` (`romp refresh`),
+`POST /restart` (the dashboard's Restart), `POST /stop` (`romp down`) and
+`POST /ensure` (a front end asking for a kernel), needs the kernel's serve token
+in an `X-Romp-Token` header: the same 0600 file the kernel gates its own writes
+with (`~/.local/state/romp/serve-token`, or `ROMP_SERVE_TOKEN`), which the
+manager reads fresh on every request, so a reminted token is honoured without a
+manager restart. A request with no token, or the wrong one, is answered 401
+with a one-line body, and the manager logs one line naming the address and the
+door, never the token. While the manager itself cannot read the token file,
+every state-changing request is answered 503, saying so, until the file is
+back: the doors never open on a missing token. Before this gate (2026-09-10) a
+local process restarted every session by posting to the port.
+
+`romp refresh`, `romp down`, the dashboard's Restart, the release self-update,
+the automatic converge and the VS Code extension all send the header, so
+nothing changes for them. A script of your own that posts to the port needs the
+header too. Read the file and hand it to curl on stdin rather than in argv,
+which every account on the machine can read:
+
+    printf 'header = "X-Romp-Token: %s"\n' "$(cat ~/.local/state/romp/serve-token)" \
+      | curl -fsS -X POST --config - http://127.0.0.1:7432/restart-all
+
+The manager and the pieces that call it ship in one checkout, so a `romp
+refresh` after an update moves them together. A caller on older code than the
+manager (another checkout's `romp` on PATH, or a script of your own without the
+header) is refused with 401, and the manager's log names it; `romp refresh`
+from the checkout the manager runs from recovers, and the script needs the
+header above.
+
 ### The kernel's Python
 
 The kernel and its Agent SDK venv (`sdkvenv` under the state directory) must
@@ -1170,7 +1203,9 @@ it run every time:
   `romp down: the login service did not stop` and exits 1.
 - The manager probe: `romp-manager status` on the control port (`:7432` by
   default). A manager that answers is stopped through its own control endpoint
-  (`romp-manager down`, a `POST /stop`) and given up to seven seconds to leave
+  (`romp-manager down`, a `POST /stop` carrying the serve token; see [The
+  manager's control port](#the-managers-control-port)) and given up to seven
+  seconds to leave
   (the manager itself waits five for its kernels, then sends SIGKILL). One
   still answering after that: `romp down` releases the hold, removes the
   marker, prints `romp down: a manager is still running on :<port> (pid <pid>)`,

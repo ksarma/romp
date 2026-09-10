@@ -9332,6 +9332,7 @@ def _run_update(tag):
     # detached script outlives this kernel, so the dying kernel's cut row can only join to a reason
     # written at curl time (auto deploys used to leave the row anonymous).
     aud = q(str(jd.STATE / "restart-audit.jsonl"))
+    tokf = q(str(jd.STATE / "serve-token"))
     # The report is written AFTER the restart request, saying what the request actually did. It
     # used to be written first, claiming restarted:true whenever a manager port was known — so a
     # manager that never took the request (gone, or a stale port) left an "updated and restarted"
@@ -9350,10 +9351,18 @@ def _run_update(tag):
         # that timeout, read as not restarted with a why of its own; any other non-zero exit is a
         # request the manager did not take. `rc` is read once, off the curl itself, never off a
         # test in an `elif` (whose `$?` is the previous test's).
+        # The manager's write doors take the serve token in X-Romp-Token (bin/romp-manager writeGate).
+        # The script reads it at RUN time, the way bin/romp does (the env override, else the kernel's
+        # token file), and hands it to curl on stdin as a --config line: this script travels to bash as
+        # an argument, so a token written into it would sit in argv for the update's whole run, and a
+        # `-H` would put it there for curl's; a command line is readable by every account on the machine
+        # (bin/romp's _romp_token_cfg, the same shape). The escaping is curl's config syntax, for a token
+        # carrying " or \ (only possible through ROMP_SERVE_TOKEN; the minted one is base64url).
         restart = (("  printf '{\"t\": %%s, \"action\": \"self-update\", \"tag\": \"%s\"}\\n' \"$(date +%%s)\" >> %s\n"
                     % (tag, aud))
-                   + "  curl -fsS --max-time %d -X POST 'http://127.0.0.1:%d/restart-all' >/dev/null 2>>%s; rc=$?\n"
-                   % (_RESTART_REQUEST_MAX_S, int(mport), log)
+                   + (r'''  tok="${ROMP_SERVE_TOKEN:-$(cat %s 2>/dev/null)}"; tok="${tok//\\/\\\\}"; tok="${tok//\"/\\\"}"''' % tokf) + "\n"
+                   + (r'''  printf 'header = "X-Romp-Token: %%s"\n' "$tok" | curl -fsS --max-time %d -X POST 'http://127.0.0.1:%d/restart-all' --config - >/dev/null 2>>%s; rc=$?'''
+                      % (_RESTART_REQUEST_MAX_S, int(mport), log)) + "\n"
                    + "  if [ \"$rc\" -eq 0 ]; then\n"
                    + "    " + report({"ok": True, "tag": tag, "restarted": True})
                    + "  elif [ \"$rc\" -eq 28 ]; then\n"
@@ -10315,7 +10324,7 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
         # HTTP_PROXY / http_proxy, so under a proxy environment this loopback POST went to the
         # proxy and the code on disk never restarted — reported only as "restart request failed"
         c = http.client.HTTPConnection("127.0.0.1", int(manager_port or 7432), timeout=5)
-        c.request("POST", "/restart-all%s" % ("" if immediate else "?when=quiet"))
+        c.request("POST", "/restart-all%s" % ("" if immediate else "?when=quiet"), headers=_manager_headers())
         resp = c.getresponse()
         resp.read()
         c.close()
@@ -25583,6 +25592,30 @@ def _local_machine_label():
     return clean or "this-machine"
 
 
+def _manager_token():
+    """The serve token the manager's write doors require (X-Romp-Token; bin/romp-manager writeGate),
+    read the way bin/romp and the manager itself read it: ROMP_SERVE_TOKEN, else the token file under
+    this kernel's state root, fresh per call so a reminted file is honoured; this kernel's own TOKEN
+    when the file cannot be read (the manager then answers 503 or 401, and the caller reports that
+    rather than guessing)."""
+    t = (os.environ.get("ROMP_SERVE_TOKEN") or "").strip()
+    if t:
+        return t
+    try:
+        return (jd.STATE / "serve-token").read_text().strip() or TOKEN
+    except OSError:
+        return TOKEN
+
+
+def _manager_headers():
+    """The header every request to a manager write door carries (2026-09-10: a local process restarted
+    every session by posting to the port, and the manager now gates its doors the way this kernel gates
+    its own). Both loopback hops here (_run_main_update, _restart_this_kernel) and the self-update
+    script's curl (_run_update) present it; the `romp` verbs get theirs from the manager's control
+    client."""
+    return {"X-Romp-Token": _manager_token()}
+
+
 def _restart_this_kernel(reason="", manager_port=_PORT_FROM_ENV):
     """Ask the manager to restart-all (it SIGTERMs this kernel; its exit handler spawns a fresh one).
     Standalone (no manager) → nothing to restart, which is not an error. `reason` lands in
@@ -25595,7 +25628,7 @@ def _restart_this_kernel(reason="", manager_port=_PORT_FROM_ENV):
         return
     try:
         c = http.client.HTTPConnection("127.0.0.1", int(mport), timeout=4)
-        c.request("POST", "/restart-all"); c.getresponse(); c.close()
+        c.request("POST", "/restart-all", headers=_manager_headers()); c.getresponse(); c.close()
     except Exception:
         pass                                       # no manager reachable → nothing to restart
 

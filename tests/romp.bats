@@ -2608,6 +2608,9 @@ STUB
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fake"
     chmod +x "$fake"
     export ROMP_MANAGER_PORT=7603 ROMP_SERVE_PORT=7604 ROMP_KERNEL_PORT=7604   # the kernel probe goes where the fake serve would listen
+    # the manager's /stop takes the serve token; the CLI's `romp-manager down` reads the same file under
+    # the hermetic state root (no ROMP_SERVE_TOKEN in this test's environment: the file is the token)
+    unset ROMP_SERVE_TOKEN; mkdir -p "$XDG_STATE_HOME/romp"; printf 'e2e-down-token\n' > "$XDG_STATE_HOME/romp/serve-token"
     ROMP_SERVE_BIN="$fake" node "$bin/romp-manager" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
@@ -2859,6 +2862,8 @@ STUB
     chmod +x "$fake"
 
     local cport mport kport; free_port cport mport kport
+    # the manager's write doors (/ensure, /stop) take the serve token: mint one under the hermetic state root
+    local tok=ensure-test-token; unset ROMP_SERVE_TOKEN; mkdir -p "$XDG_STATE_HOME/romp"; printf '%s\n' "$tok" > "$XDG_STATE_HOME/romp/serve-token"
     # Launch the manager in the background; it auto-spawns 'main' on mport via the fake launcher.
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
         node "$mgr" up >/dev/null 2>&1 &
@@ -2872,14 +2877,14 @@ STUB
     done
 
     # Ensure a second kernel on kport → freshly spawned
-    run curl -fsS -X POST "http://127.0.0.1:$cport/ensure?port=$kport"
+    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"spawned":true'* ]]
     [[ "$output" == *"\"port\":$kport"* ]]
     [[ "$output" == *"\"id\":\"k$kport\""* ]]
 
     # Ensuring the same port again is idempotent — no second spawn
-    run curl -fsS -X POST "http://127.0.0.1:$cport/ensure?port=$kport"
+    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"spawned":false'* ]]
 
@@ -2890,7 +2895,7 @@ STUB
     [[ "$output" == *"\"id\":\"k$kport\""* ]]
 
     # Graceful shutdown (teardown also reaps via MGR_PID as a backstop)
-    curl -fsS -X POST "http://127.0.0.1:$cport/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/stop" >/dev/null 2>&1 || true
 }
 
 @test "romp-manager: /restart-all kicks every kernel in the registry (romp refresh)" {
@@ -2902,21 +2907,75 @@ STUB
     chmod +x "$fake"
 
     local cport mport kport; free_port cport mport kport
+    local tok=restart-all-test-token; unset ROMP_SERVE_TOKEN; mkdir -p "$XDG_STATE_HOME/romp"; printf '%s\n' "$tok" > "$XDG_STATE_HOME/romp/serve-token"
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
         node "$mgr" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
     for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:$cport/status" >/dev/null 2>&1 && break; sleep 0.1; done
-    curl -fsS -X POST "http://127.0.0.1:$cport/ensure?port=$kport" >/dev/null   # a 2nd kernel in the registry
+    curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport" >/dev/null   # a 2nd kernel in the registry
 
-    run curl -fsS -X POST "http://127.0.0.1:$cport/restart-all"
+    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/restart-all"
     [ "$status" -eq 0 ]
     # the response lists EVERY kernel it kicked — the default 'main' AND the on-demand one (not just main)
     [[ "$output" == *'"restarted"'* ]]
     [[ "$output" == *'main'* ]]
     [[ "$output" == *"k$kport"* ]]
 
-    curl -fsS -X POST "http://127.0.0.1:$cport/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/stop" >/dev/null 2>&1 || true
+}
+
+@test "romp refresh and romp down present the serve token to the manager, through the real romp-manager client" {
+    command -v node >/dev/null 2>&1 || skip "node not available"
+    # The manager gates its write doors on X-Romp-Token (2026-09-10: a local process restarted every session
+    # by posting to the port). bin/romp never dials the port itself: refresh and down run the REAL
+    # bin/romp-manager client, which reads the token file under the state root and sends the header. The
+    # stand-in here is the control port: it answers /status like a running manager, records every request's
+    # method, path and header, and leaves after /stop (a real manager exits once its kernels are stopped).
+    local bin; bin="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)"
+    local mport; free_port mport
+    unset ROMP_SERVE_TOKEN                                   # the file is the token, for the client as for the manager
+    mkdir -p "$XDG_STATE_HOME/romp"; printf 'cli-header-token\n' > "$XDG_STATE_HOME/romp/serve-token"
+    python3 - "$mport" "$TEST_DIR/mgr-seen" <<'PY' &
+import http.server, json, os, sys, threading
+port, seen = int(sys.argv[1]), sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def _note(self):
+        with open(seen, "a") as f:
+            f.write("%s %s token=%s\n" % (self.command, self.path.split("?")[0], self.headers.get("X-Romp-Token") or "-"))
+    def _json(self, body):
+        data = json.dumps(body).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(data)
+    def do_GET(self):
+        self._note()
+        if self.path.startswith("/status"):
+            return self._json({"ok": True, "manager": {"pid": os.getpid(), "controlPort": port}, "kernels": [{"id": "main"}]})
+        self.send_response(404); self.end_headers()
+    def do_POST(self):
+        self._note()
+        self._json({"ok": True})
+        if self.path.startswith("/stop"):
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+PY
+    MGR_PID=$!
+    local i; for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
+    export ROMP_MANAGER_PORT=$mport ROMP_MANAGER_BIN="$bin/romp-manager"
+    run run_romp refresh
+    [ "$status" -eq 0 ]
+    grep -qx 'POST /restart-all token=cli-header-token' "$TEST_DIR/mgr-seen"
+    mock_service 3                                           # no login service: down goes to the manager's own /stop
+    run run_romp down --now
+    [ "$status" -eq 0 ]
+    grep -qx 'POST /stop token=cli-header-token' "$TEST_DIR/mgr-seen"
+    for i in $(seq 1 30); do kill -0 "$MGR_PID" 2>/dev/null || break; sleep 0.1; done   # it left after /stop
+    MGR_PID=""
+    run grep -c 'token=cli-header-token' "$TEST_DIR/mgr-seen"   # the two writes, and only them
+    [ "$output" = "2" ]
+    grep -q '^GET /status token=-$' "$TEST_DIR/mgr-seen"     # the reads carried none
+    run grep -q '^GET /status token=cli-header-token' "$TEST_DIR/mgr-seen"
+    [ "$status" -ne 0 ]
 }
 
 # ─── Help (-h / --help) ──────────────────────────────────────────────
