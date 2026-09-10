@@ -218,6 +218,12 @@ class OneFedTextAtATime(unittest.TestCase):
         self.n = 0
 
     def tearDown(self):
+        for c in self._Client.instances:
+            q = getattr(c, "_query", None)
+            if isinstance(q, _ControlChannel):
+                q.gate.set()     # a gate still shut (a move whose CLI never answered) parks the loop's executor
+                #                  thread in gate.wait, and the join below sat out its whole 10 s on it: open every
+                #                  gate first, here rather than in a cleanup, which unittest runs AFTER tearDown
         sessions = {id(x): x for x in [self.s] + list(self.be.sessions.values())}.values()   # respawns too
         for x in sessions:
             if x.thread.is_alive():          # a session whose CLI exited already closed its loop
@@ -313,7 +319,14 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertIsNotNone(s._untaken, "fed from idle: held until the CLI shows the turn started")
         self._init(c)
         self._assistant(c)
-        self._wait(lambda: s._untaken is None and s.resume_sid == FSID, "the first turn's start releases its hold")
+        # The init handler flips resume_sid in memory and persists it as the reg's lastSid one statement
+        # later, on the loop thread. _transcript() keys the path on the REG, so wait for the write, not the
+        # flip: a poll that landed between the two filed the record below under the module's own sid, and
+        # every later reader of the CLI's transcript (the take check's scan, a move's heal, the fault
+        # helper's os.remove) missed it (a CI flake, 2026-09-10; reproduced by delaying the reg write 10 ms).
+        self._wait(lambda: s._untaken is None and s.resume_sid == FSID
+                   and (sb.read_reg(self.state, SID) or {}).get("lastSid") == FSID,
+                   "the first turn's start releases its hold and the init's lastSid is in the reg")
         self.assertEqual(s.inflight, 1)
         # the CLI writes the turn's user record as it starts the turn, so by the time anything can be fed
         # mid-turn the transcript exists: the landing scans below read a real file (a file the scan
@@ -332,6 +345,23 @@ class OneFedTextAtATime(unittest.TestCase):
             f.write(json.dumps(rec) + "\n")
 
     # -- the tests --
+    def test_the_first_turns_record_lands_under_the_clis_sid_however_late_the_reg_write(self):
+        """The helper's own race, pinned (2026-09-10): the init handler flips resume_sid in memory and
+        persists it as the reg's lastSid one statement later, and _first_turn once returned on the flip,
+        so a poll in that gap filed the record under the module's own sid, where the take check's scan,
+        the fault helper and the move test's relocation never found it. A reg write that lands 50 ms
+        late (five poll periods: a descheduled loop thread on a loaded runner) stands in for the gap."""
+        from unittest import mock
+        orig = sb.SdkBackend._update_reg
+        def late(be, sid, **fields):
+            if "lastSid" in fields:
+                time.sleep(0.05)
+            return orig(be, sid, **fields)
+        with mock.patch.object(sb.SdkBackend, "_update_reg", late):
+            self._first_turn()
+        self.assertTrue(os.path.exists(sb.transcript_path(self.cwd, FSID)), "the record is under the CLI's sid")
+        self.assertFalse(os.path.exists(sb.transcript_path(self.cwd, SID)), "…and not under the module's")
+
     def test_two_texts_sent_mid_turn_reach_the_client_one_at_a_time_and_in_order(self):
         """The incident's shape: two texts queued while a turn is open. The first forwards at once (the
         designed mid-turn forward); the second is HELD — through the rest of the turn and through its
@@ -1159,8 +1189,7 @@ class OneFedTextAtATime(unittest.TestCase):
         new = os.path.join(self.state, "moved")
         os.makedirs(new, exist_ok=True)
         c._query = _ControlChannel(answer(new) if callable(answer) else answer, on_request=on_request)
-        self.addCleanup(c._query.gate.set)   # a failed assertion before the gate must not wedge the teardown
-        out = {}
+        out = {}                              # a gate a failed assertion leaves shut is opened by tearDown
         t = threading.Thread(target=lambda: out.__setitem__("r", self.be.move(SID, new)), daemon=True)
         t.start()
         self._wait(lambda: c._query.requests, "the set_cwd request went out")
