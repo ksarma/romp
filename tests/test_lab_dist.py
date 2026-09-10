@@ -467,7 +467,11 @@ class InputsDeriveFromEsbuild(unittest.TestCase):
     its own chain was told to install it) and took a one-segment scoped name (`@scope` alone, which npm installs
     nothing under) out of the bare shapes in both rules; round 14 reads the bare shape and the package's name from one
     split of the request in both rules, so an empty scope (`@/x`) and an empty, `.` or `..` segment (`@scope//pkg`,
-    `pkg/../x`, `@scope/./x`) are node's error alone, never a root, an install or the environment."""
+    `pkg/../x`, `@scope/./x`) are node's error alone, never a root, an install or the environment; round 15 judges the
+    NAME segments alone (the first, two for a scoped request) and not the subpath after them, so `pkg/`, `pkg/./index`,
+    `pkg/../pkg` and `@scope/q/`, which node resolves to the installed package, are that package's requests, judged
+    by its root and its name as the bare name is (the environment where none resolves, where round 14 was node's
+    error alone), while `@/x`, `@scope//pkg`, `@scope/./x` and `@scope/../x` stay node's error alone."""
 
     def setUp(self):
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="lab-dist-inputs-"))
@@ -1630,8 +1634,16 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         first evidence: the config gets the installed-subpath wording naming the root, and an installed requirer keeps
         the install wording, plain and under the stand-in, with the core module named nowhere and nothing skipped or
         stood in. The control: `fs/nope` with no `fs` package on the chain keeps the core-module wording. The judgment
-        call, stated: `require("punycode/")` with nothing installed is a core-module typo (no root, a core module's
-        name), in the reader and the preload alike, so no skip is hidden."""
+        call for `require("punycode/")`, by round: round 12 judged it, with nothing installed, a core-module typo (no
+        root, a core module's name) in the reader and the preload alike; round 14 read a trailing slash as an empty
+        segment naming no package, so it was node's error alone, no reader line and no stand-in; round 15 judges the
+        name segments alone, so `punycode/` is the package punycode's request and judged as `punycode` is: with the
+        package installed node resolves it to the package and the derivation loads, with nothing installed the
+        core-module line, plain and under the stand-in (both pinned here; no skip is hidden either way). The shapes
+        whose NAME segments name no package are
+        test_an_empty_scope_or_an_empty_or_dot_name_segment_names_no_package_never_a_root_an_install_or_the_environment;
+        the subpath spellings node resolves are
+        test_a_subpath_spelling_node_resolves_is_judged_by_its_package_never_by_the_subpath."""
         root = os.path.join(self.ext, "node_modules", "punycode")
         _write(os.path.join(root, "package.json"), '{"name": "punycode", "main": "index.js"}\n')
         _write(os.path.join(root, "index.js"), "module.exports = { v: 1 };\n")
@@ -1645,6 +1657,10 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
             self.assertNotIn("core module", msg, under_stub)
             self.assertNotIn("npm ci", msg, under_stub)
             self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+        _write(self.config, 'const p = require("punycode/");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"], v: p.v } };\n')
+        for under_stub in (False, True):
+            with lab_dist_stub.bare_package_stub() if under_stub else contextlib.nullcontext():
+                self.assertEqual(self.roots(), ["ext"], (under_stub, "`punycode/` with punycode installed is the package, and loads"))
         a = os.path.join(self.ext, "node_modules", "a", "index.js")
         _write(a, 'const n = require("punycode/nope");\nmodule.exports = {};\n')
         _write(self.config, 'const a = require("a");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
@@ -1659,6 +1675,14 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         for under_stub in (False, True):
             msg = self.derivation_error(under_stub)
             self.assertIn(self.config + " requires 'fs/nope', a subpath that node's core module fs does not have", msg, under_stub)
+            self.assertNotIn("IS installed", msg, under_stub)
+            self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+        self.no_install()
+        _write(self.config, 'const p = require("punycode/");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        for under_stub in (False, True):
+            msg = self.derivation_error(under_stub)
+            self.assertIn("Cannot find module 'punycode/'", msg, under_stub)
+            self.assertIn(self.config + " requires 'punycode/', a subpath that node's core module punycode does not have", msg, under_stub)
             self.assertNotIn("IS installed", msg, under_stub)
             self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
 
@@ -1835,7 +1859,7 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         the real-tree pins. Now a scoped request with fewer than two non-empty segments is bare in neither file, like
         `./x` and `#x`: node's error stands, with no reader line and no stand-in, plain and under the stand-in, with
         and without node_modules. The control: the two-segment sibling `@scope/q` loads. The empty scope and the
-        empty and dot segments are the round-14 test below."""
+        empty and dot name segments are the round-14 test below."""
         _write(os.path.join(self.ext, "node_modules", "@scope", "q", "index.js"), "module.exports = { q: 1 };\n")
         _write(self.config, 'const q = require("@scope/q");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"], q: q.q } };\n')
         self.assertEqual(self.roots(), ["ext"], "the control: the two-segment sibling resolves")
@@ -1853,7 +1877,7 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
                     self.assertNotIn("npm ci", msg, (with_install, request, under_stub))
                     self.assertNotIn("tests/lab_dist_stub.py", msg, (with_install, request, under_stub))
 
-    def test_an_empty_scope_or_an_empty_or_dot_segment_names_no_package_never_a_root_an_install_or_the_environment(self):
+    def test_an_empty_scope_or_an_empty_or_dot_name_segment_names_no_package_never_a_root_an_install_or_the_environment(self):
         """Round 13 read the request's segments twice: the bare test counted the NON-EMPTY ones and packageName sliced
         the raw split, so `@scope//pkg` passed as bare and packageName answered `@scope/`, which path.join made the
         scope directory, answered as the package's root (the reader's "IS installed (.../node_modules/@scope/)" line
@@ -1861,22 +1885,24 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         cannot install, passed both tests and was filed as the environment (a skip plain, a stand-in under the
         preload); and a `.` or `..` segment reached path.join, which folded it away, so `pkg/../x` named `pkg` and
         `@scope/./x` named the scope directory as the installed root, and with no node_modules every one was the
-        environment. Now both rules read the bare shape and the package's name from ONE split (packageOf), and a
-        request with an empty scope or with any empty, `.` or `..` segment names no package: node's error alone, no
-        reader line, no root, no npm ci, no stand-in, plain and under the stand-in, with `@scope/q` and setUp's `pkg`
-        installed and with no node_modules. Each shape is a subtest, so a fails-before names every red one. The trade
-        the rule makes, stated: node folds a doubled slash or a dot segment away once the target exists (`@scope//q`
-        loads with `@scope/q` installed, the control here), so a miss spelled that way is judged a typo to fix in the
-        requirer rather than a package to install; and a trailing slash (`pkg/`, `punycode/`) is an empty segment too,
-        so the round-12 judgment call for `punycode/` with nothing installed (the core-module line) gives way to node's
-        error alone."""
+        environment. Round 14 read the bare shape and the package's name from ONE split (packageOf) and refused any
+        empty, `.` or `..` segment; round 15 narrowed the refusal to the NAME segments, the first, two for a scoped
+        request: a request with an empty scope or with a name segment that is empty, `.` or `..` names no package, so
+        node's error stands alone, no reader line, no root, no npm ci, no stand-in, plain and under the stand-in, with
+        `@scope/q` and setUp's `pkg` installed and with no node_modules. Each shape is a subtest, so a fails-before
+        names every red one. The trade the rule makes, stated: node folds a doubled slash or a dot segment away once
+        the target exists (`@scope//q` loads with `@scope/q` installed, the control here), so a miss spelled that way
+        in the NAME is judged a typo to fix in the requirer rather than a package to install; the same spellings AFTER
+        the name (`pkg/`, `pkg/./index`, `pkg/../x`) are the package's subpath, which the rule does not judge, so they
+        are judged by the package as `pkg` is (the next test; round 14 refused them too, and a `pkg/` the config
+        required where no pkg resolves was node's error, an ERROR from the served modules' call, where `pkg` skips)."""
         _write(os.path.join(self.ext, "node_modules", "@scope", "q", "index.js"), "module.exports = { q: 1 };\n")
         _write(self.config, 'const q = require("@scope//q");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"], q: q.q } };\n')
         self.assertEqual(self.roots(), ["ext"], "the control: node folds the doubled slash and the installed sibling loads")
         for with_install in (True, False):
             if not with_install:
                 self.no_install()
-            for request in ("@/x", "@scope//pkg", "@scope/./x", "pkg/../x"):
+            for request in ("@/x", "@scope//pkg", "@scope/./x", "@scope/../x"):
                 _write(self.config, 'const s = require(%s);\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n'
                                     % json.dumps(request))
                 for under_stub in (False, True):
@@ -1888,6 +1914,92 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
                         self.assertNotIn("node_modules/@scope", msg, "the scope directory is named nowhere")
                         self.assertNotIn("npm ci", msg)
                         self.assertNotIn("tests/lab_dist_stub.py", msg)
+
+    def test_a_subpath_spelling_node_resolves_is_judged_by_its_package_never_by_the_subpath(self):
+        """Round 14 refused any empty, `.` or `..` segment, the subpath's included, so `pkg/`, `pkg/./index`,
+        `pkg/../pkg` and `@scope/q/` named no package and a config requiring one of them where no such package
+        resolves was node's error alone: a ValueError from the served modules' call, an ERROR at setUpClass, where the
+        same config spelled `pkg` skips as the environment, and no stand-in under the preload where `pkg` is stood in.
+        node resolves every one of the four to the installed package (the CJS resolver folds the trailing slash and
+        the dot segments once the target exists; an exports map or an ESM import would refuse `pkg/`, and the real
+        config's `require("esbuild")` spells none of them), so round 15 judges the NAME segments alone and leaves the
+        subpath unjudged: each is the package's request, judged by its root and then its name as `pkg` is. Pinned in
+        both install states, plain and under the stand-in: installed, every shape loads (roots `['ext']`) with the
+        stand-in inert; with no node_modules, plain is the skip naming the request (and `pkg/` through the served
+        modules' own call is that skip too) and under the stand-in the derivation goes through, stood in. The
+        subpath stays unjudged the other way too: `pkg/../x`, which node resolves to node_modules/x and does not find,
+        is with pkg installed a subpath of a package that IS installed (the reader's line naming pkg's root, plain and
+        under the stand-in) and with no node_modules the environment, as any subpath of an absent package is."""
+        _write(os.path.join(self.ext, "node_modules", "pkg", "index.js"), "module.exports = { p: 1 };\n")
+        _write(os.path.join(self.ext, "node_modules", "@scope", "q", "index.js"), "module.exports = { q: 1 };\n")
+        shapes = ("pkg/", "pkg/./index", "pkg/../pkg", "@scope/q/")
+        for request in shapes:
+            _write(self.config, 'const s = require(%s);\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n'
+                                % json.dumps(request))
+            for under_stub in (False, True):
+                with self.subTest(request=request, with_install=True, under_stub=under_stub):
+                    with lab_dist_stub.bare_package_stub() if under_stub else contextlib.nullcontext():
+                        self.assertEqual(self.roots(), ["ext"], "node resolves the spelling to the installed package")
+        _write(self.config, 'const s = require("pkg/../x");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        root = os.path.join(self.ext, "node_modules", "pkg")
+        for under_stub in (False, True):
+            with self.subTest(request="pkg/../x", with_install=True, under_stub=under_stub):
+                msg = self.derivation_error(under_stub)
+                self.assertIn("Cannot find module 'pkg/../x'", msg)
+                self.assertIn(self.config + " requires 'pkg/../x', a subpath of a package that IS installed (%s)" % root, msg)
+                self.assertNotIn("tests/lab_dist_stub.py", msg)
+        self.no_install()
+        for request in shapes + ("pkg/../x",):
+            _write(self.config, 'const s = require(%s);\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n'
+                                % json.dumps(request))
+            with self.subTest(request=request, with_install=False, under_stub=False):
+                with self.assertRaises(unittest.SkipTest) as cm:
+                    self.roots()
+                self.assertIn("no package %r" % request, str(cm.exception))
+            with self.subTest(request=request, with_install=False, under_stub=True):
+                with lab_dist_stub.bare_package_stub():
+                    try:
+                        roots = self.roots()
+                    except unittest.SkipTest as e:
+                        self.fail("the stand-in did not cover %r: %r" % (request, e))
+                self.assertEqual(roots, ["ext"], "stood in, as `pkg` is")
+        _write(self.config, 'const s = require("pkg/");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        with self.assertRaises(unittest.SkipTest) as cm:
+            self.served_call()
+        self.assertIn("no package 'pkg/'", str(cm.exception))
+
+    def test_the_reader_and_the_preload_name_the_same_package_for_every_request_shape(self):
+        """packageOf is spelled twice, in the reader's JS (tests/lab_dist.py) and in the preload's (tests/lab_dist_stub.py),
+        and a miss the reader files as the environment must be one the preload stands in for, or the real-tree pins
+        fail with the block's AssertionError. Both functions are cut from their source text and run under one node over
+        the same requests, and their answers are compared with each other and with the rule (round 15): null for a
+        relative or absolute request, a hash request, the empty request, and a scoped request with a bare `@` for its
+        scope, fewer than two segments, or a name segment that is empty, `.` or `..`; otherwise the first segment, two
+        for a scoped request, the subpath after them unjudged and a name's characters unread (a space, a backslash, a
+        drive letter on this posix node, a non-ASCII name, an underscore-led name and `node_modules` itself are
+        packages here, names npm refuses that the rule does not read). Each request is a subtest."""
+        expected = {
+            "pkg": "pkg", "pkg/": "pkg", "pkg/./index": "pkg", "pkg/../pkg": "pkg", "pkg/../x": "pkg", "pkg/sub/deep": "pkg",
+            "@scope/q": "@scope/q", "@scope/q/": "@scope/q", "@scope/q/sub": "@scope/q", "punycode/": "punycode",
+            "@scope": None, "@scope/": None, "@": None, "@/x": None, "@scope//q": None, "@scope/./x": None, "@scope/../x": None,
+            "./x": None, "../x": None, ".": None, "/abs": None, "#hash": None, "": None,
+            "pkg name": "pkg name", "C:\\x": "C:\\x", "pkg\u00e9": "pkg\u00e9", "_pkg": "_pkg", "node_modules": "node_modules",
+        }
+        reader = re.search(r"const packageOf = \(r\) => \{\n.*?\n\};", lab_dist._EXPORTS_READER, re.S)
+        preload = re.search(r"function packageOf\(r\) \{\n.*?\n\}", lab_dist_stub.PRELOAD, re.S)
+        self.assertTrue(reader and preload, "both sources spell packageOf")
+        requests = sorted(expected)
+        answers = []
+        for source in (reader.group(0), preload.group(0)):
+            script = ('const path = require("path");\n%s\nconst requests = JSON.parse(process.argv[1]);\n'
+                      'process.stdout.write(JSON.stringify(requests.map((r) => packageOf(r))));\n' % source)
+            r = subprocess.run(["node", "-e", script, json.dumps(requests)], capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            answers.append(json.loads(r.stdout))
+        for i, request in enumerate(requests):
+            with self.subTest(request=request):
+                self.assertEqual(answers[0][i], answers[1][i], "the reader and the preload disagree")
+                self.assertEqual(answers[0][i], expected[request])
 
     def test_a_missing_node_is_an_error(self):
         """Without node on PATH nothing is derived: the error names node and the config."""

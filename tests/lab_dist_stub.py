@@ -7,7 +7,8 @@ the depth of the load; round 11 made that test exact: the harness names the conf
 the requirer's filename before the compare, tests the package's root ahead of a core module's name and excludes
 package-imports specifiers; round 13 excludes a one-segment scoped name, `@scope` alone; round 14 reads the bare
 shape and the package's name from one split of the request, and excludes an empty scope and any empty, `.` or `..`
-segment).
+segment; round 15 judges the name segments alone, so a subpath spelling node resolves to the installed package,
+`pkg/`, `pkg/./index`, is that package's request and the miss of an absent one is the environment as `pkg` is).
 
 The harness (tests/lab_dist.py) derives the build's inputs by requiring the extension's build config under node
 and reading what it exports. The config's first line requires esbuild, a dependency of the BUILD and not of the
@@ -25,13 +26,18 @@ package the config requires at once.
 This module stands the packages in, test-side only: `bare_package_stub()` writes a preload script and puts it on
 NODE_OPTIONS (`--require <preload>`) for the duration of the block, so every node the block starts, the harness's
 `node -e` reader included, loads it first. The preload wraps `Module._load`, the door every `require()` takes, and a
-bare specifier (`esbuild`, `@scope/pkg`; never `./x`, never an absolute path, never `#x`, an imports-map specifier
-the nearest package.json resolves, which npm ci cannot install, and never a name npm cannot install: a scoped name
-with fewer than two non-empty segments or an empty scope, `@scope`, `@scope/`, `@/x`, and any request with an empty,
-`.` or `..` segment, `@scope//pkg`, `pkg/../x`, `@scope/./x`; npm installs packages under a scope directory and
-nothing at the directory itself, and a dot or an empty segment names no package, so the miss is a typo in the
-requirer and node's error stays, whatever is installed; the package's name is read from the same segments the shape
-test passed, so a scope directory is never a root) that fails to resolve returns the throwing stand-in
+specifier naming a package (`esbuild`, `@scope/pkg`, a subpath spelling of one, `pkg/sub`, `pkg/`; never `./x`, never
+an absolute path, never `#x`, an imports-map specifier the nearest package.json resolves, which npm ci cannot
+install, and never a request whose NAME segments, the first, two for a scoped request, name no package: a scoped
+request with fewer than two segments or an empty scope, `@scope`, `@/x`, and a name segment that is empty, `.` or
+`..`, `@scope/`, `@scope//pkg`, `@scope/./x`; npm installs packages under a scope directory and nothing at the
+directory itself, and a dot or an empty segment names no package, so the miss is a typo in the requirer and node's
+error stays, whatever is installed; the subpath after the name is not judged, since node resolves `pkg/`,
+`pkg/./index` and `pkg/../pkg` to the installed package, so each is judged as `pkg` is; and the rule reads segments,
+never a name's characters, so a name npm would refuse for its spelling, a space, a backslash, a drive letter, a
+non-ASCII character, passes as a package and its miss is stood in or refused like any other bare name's, a
+pre-existing bound; the name is read from the same split, so a scope directory is never a root) that fails to
+resolve returns the throwing stand-in
 in place of the MODULE_NOT_FOUND under three conditions, each of which tells the environment the
 stand-in exists for, a checkout without node_modules, from a real error:
 - the CONFIG itself made the require: the requirer's filename, realpathed, is the config's realpath, which the
@@ -123,10 +129,12 @@ PRELOAD = r'''
 // The served labs' test-side stand-in for the bare packages a checkout without node_modules lacks
 // (tests/lab_dist_stub.py), loaded through NODE_OPTIONS=--require ahead of the harness's reader. The rule (review
 // round 9; the requirer test corrected in round 10, made exact in round 11 and realpathed in round 12; a one-segment
-// scoped name excluded in round 13; the bare shape and the package's name read from one split in round 14): a bare
-// specifier (never `./x`, an absolute path or `#x`, a package-imports specifier the nearest package.json resolves,
-// which npm ci cannot install; never a name npm cannot install: a scoped name with fewer than two non-empty segments
-// or an empty scope, `@scope`, `@/x`, and any request with an empty, `.` or `..` segment, `@scope//pkg`, `pkg/../x`)
+// scoped name excluded in round 13; the bare shape and the package's name read from one split in round 14; the name
+// segments alone judged in round 15): a specifier naming a package (never `./x`, an absolute path or `#x`, a
+// package-imports specifier the nearest package.json resolves, which npm ci cannot install; never a request whose
+// NAME segments name no package: a scoped request with fewer than two segments or an empty scope, `@scope`, `@/x`,
+// or a name segment that is empty, `.` or `..`, `@scope/`, `@scope//pkg`, `@scope/./x`; the subpath after the name
+// is not judged, so `pkg/` and `pkg/./index` are the package pkg's requests, and a name's characters are not read)
 // node cannot resolve is stood in under three conditions, listed here by what each tells apart (the code below tests
 // the bare shape first, then the root and the core module's name, then that the variable is set, then the requirer,
 // then node_modules): only when the config itself required
@@ -192,22 +200,27 @@ function standIn(request, from) {
 // directory as its root, `@/x` passed with an empty scope and was stood in, and `pkg/../x` and `@scope/./x` reached
 // path.join, which folded the dot segment away and named the parent directory as the root). Null, so node's error
 // stays whatever the requirer and whatever is installed, for `./x`, an absolute path, `#x` (a package-imports
-// specifier the nearest package.json resolves, which npm ci cannot install) and every name npm cannot install: a
-// scoped request with fewer than two non-empty segments (`@scope`, `@scope/`, `@`) or an empty scope (`@/x`), and any
-// request with an empty, `.` or `..` segment (`@scope//pkg`, `pkg/`, `pkg/../x`, `@scope/./x`): npm installs packages
+// specifier the nearest package.json resolves, which npm ci cannot install) and a request whose NAME segments, the
+// first one, two for a scoped request, name no package: a scoped request with fewer than two segments or a bare `@`
+// for its scope (`@scope`, `@`, `@/x`), and a name segment that is empty, `.` or `..` (`@scope/`, `@scope//pkg`,
+// `@scope/./x`; an unscoped request's one name segment can only be empty, the empty request): npm installs packages
 // under a scope directory (`@scope/pkg`) and nothing at the directory itself, and no package is named through a dot or
 // an empty segment, so each is a typo in the requirer (node itself folds a doubled slash or a dot segment away once
 // the target exists, so `@scope//q` loads while `@scope/q` is installed; a miss spelled so is still the typo, never
 // the environment). Otherwise the name is the first segment, two for a scoped one (`@scope/pkg/sub` names @scope/pkg),
-// read from the same segments the shape test passed, so a scope directory is never a root and rootPresent joins no
-// segment path.join would fold.
+// and the segments after it, the subpath, are not judged (round 15; round 14 refused any empty, `.` or `..` segment,
+// so `pkg/` named no package and a config requiring it where no pkg resolves was node's error where `pkg` is stood
+// in): node resolves `pkg/`, `pkg/./index` and `pkg/../pkg` to the installed package, so each is judged as `pkg` is,
+// and rootPresent joins the name alone, never a segment path.join would fold. The rule reads segments, never a name's
+// characters: a name npm would refuse for its spelling (a space, a backslash, a drive letter, a non-ASCII character)
+// is a package here and its miss is stood in or refused like any other bare name's.
 function packageOf(r) {
   if (r.startsWith(".") || r.startsWith("#") || path.isAbsolute(r)) return null;
-  const parts = r.split("/");
-  if (parts.some((p) => p === "" || p === "." || p === "..")) return null;
-  const scoped = r.startsWith("@");
+  const parts = r.split("/"), scoped = r.startsWith("@");
   if (scoped && (parts[0] === "@" || parts.length < 2)) return null;
-  return parts.slice(0, scoped ? 2 : 1).join("/");
+  const name = parts.slice(0, scoped ? 2 : 1);
+  if (name.some((p) => p === "" || p === "." || p === "..")) return null;
+  return name.join("/");
 }
 
 // Is the package `name`, packageOf's answer for a bare request, present for a require from `from`: its root directory on a path node searched
@@ -236,10 +249,11 @@ Module._load = function (request, parent, isMain) {
     return realLoad.apply(this, arguments);
   } catch (e) {
     // name: the package the request names, null for a request that is not a package's (`./x`, an absolute path, `#x`,
-    // a scoped name with fewer than two non-empty segments or an empty scope, any empty, `.` or `..` segment; the rule
-    // above packageOf), where node's error stays whatever is installed (round 13 excluded `@scope` alone, before which
-    // rootPresent found the scope directory the sibling packages had created and rethrew, so the reader called the typo
-    // a package that does not load, and with no node_modules the miss was stood in; round 14 the rest)
+    // a scoped request with fewer than two segments or an empty scope, a name segment that is empty, `.` or `..`; the
+    // rule above packageOf), where node's error stays whatever is installed (round 13 excluded `@scope` alone, before
+    // which rootPresent found the scope directory the sibling packages had created and rethrew, so the reader called
+    // the typo a package that does not load, and with no node_modules the miss was stood in; round 14 the rest; round
+    // 15 stopped judging the subpath, so `pkg/` is pkg's request again)
     const name = typeof request === "string" ? packageOf(request) : null;
     const hit = e && e.code === "MODULE_NOT_FOUND" && /^Cannot find module '([^']+)'/.exec(String(e.message));
     const from = parent && typeof parent.filename === "string" ? parent.filename : null;
@@ -268,9 +282,10 @@ Module._load = function (request, parent, isMain) {
 
 @contextlib.contextmanager
 def bare_package_stub():
-    """A block in which `require()` of a bare package (never `./x`, an absolute path, a `#x` package-imports
-    specifier, or a name npm cannot install: a scoped name with fewer than two non-empty segments or an empty scope,
-    `@scope`, `@/x`, and any request with an empty, `.` or `..` segment, `@scope//pkg`, `pkg/../x`) that the config
+    """A block in which `require()` of a package (`esbuild`, `@scope/pkg`, a subpath spelling of one, `pkg/`; never
+    `./x`, an absolute path, a `#x` package-imports specifier, or a request whose name segments name no package: a
+    scoped request with fewer than two segments or an empty scope, `@scope`, `@/x`, and a name segment that is empty,
+    `.` or `..`, `@scope/`, `@scope//pkg`, `@scope/./x`) that the config
     itself requires (the requirer's filename,
     realpathed, is the config's realpath, which
     the harness publishes to every reader run in the environment variable lab_dist.CONFIG_ENV names), that node
@@ -282,7 +297,7 @@ def bare_package_stub():
     inside any other module (an installed package, in its top level, in a function the config calls at load or in a
     getter the reader triggers; a helper the config requires relatively; a module a pre-existing `--require` loaded),
     a subpath into an installed package (one named like a core module included) or into one of node's core modules,
-    a package-imports specifier, a name npm cannot install (the shapes above), and a node_modules that exists and lacks the package are
+    a package-imports specifier, a request whose name segments name no package (the shapes above), and a node_modules that exists and lacks the package are
     errors (the last one thrown
     by the preload, naming this file). A node started inside the block without the
     variable (the harness sets it on the reader's run only) gets no stand-in: the preload throws on the first bare
