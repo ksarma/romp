@@ -1091,8 +1091,9 @@ comment's card stands on its own again with the change's texts read from the log
 entry, which is also what `describeComment` falls back to, so a manual Accept before the send keeps
 the change's words in the message. Since the about follow-on (2026-09-10) every comment is its own card
 whatever it names, and Comment on this change writes `comment {anchor, hintOffset, changeIds: [id], note}`
-over the change's span (a deletion: `{changeIds: [id], note}`), the verb's `changeIds` argument the list
-above does not name; before it, Reply on a change card wrote `comment {suggestionId, note}`. The panel re-fetches the view's bytes itself whenever
+over the change's span (a deletion: `{changeIds: [id], note}`; for a spanned change the card offers it only while the
+view carries the change's text, `spanCarried` in the about follow-on's paragraph below), the verb's `changeIds` argument
+the list above does not name; before it, Reply on a change card wrote `comment {suggestionId, note}`. The panel re-fetches the view's bytes itself whenever
 a status lands whose file mtime is not the view's — a reject's reply, the fresh status a moved fence
 asked for, an accept's reply after a write the poll had not seen — one fetch per mtime, with the loader
 over the cards until the paint shows that text: every reply re-baselines the poll, so the poll never
@@ -1877,7 +1878,17 @@ the panel's slot anchored over the change's span in the current text, the presel
 (`aboutOption`, `input[data-opt="about"]`, "about this change"), and Save posts `changeIds: [id]` beside the anchor; a
 deletion, whose text is not in the file, takes the comment by id alone, the reference row saying "About the change …"
 and, in one line, that the comment is laid at the change's point (`markTop`'s fallback lays an anchorless comment's card
-level with the first pending change it names). A selection overlapping pending changes' marks (`overlapping`: an
+level with the first pending change it names). For a spanned change, an insertion or a substitution, the card offers
+Comment on this change only while the view carries the change's text (`spanCarried`: the view's bytes are the status's,
+whose offsets place the span (`textCurrent`); there is a text to cut it from (`indexedText`: the view's, or while the
+editor is up the file as the editor loaded it, never the buffer); and the view shows text at all, not the picture of a
+media file); in flux, a reject's reply landed and its reload not, or the poll's reload landed and its status not, the
+card shows Accept and Reject alone, no Comment on this change, and a click that reaches `startChangeComment` anyway
+writes nothing, since the composer over the span would quote other bytes and a comment by id alone would lose the
+passage the change has; the button comes back with the bytes, as an unpainted change's Reveal and its "not shown" tag
+do on the same ground (`inFlux`), while a deletion's, by id, stands whatever the view shows (the review of the slice,
+2026-09-10; before it a spanned change in flux took the deletion's by-id composer and Save wrote a comment with no
+passage though the change has one). A selection overlapping pending changes' marks (`overlapping`: an
 insertion's or a substitution's span sharing a character with the range, a deletion's point strictly inside it; nothing
 while the view shows other bytes) gets the same option, "about N changes" for several, checked; unchecked, Save writes a
 plain passage comment (`About.on`). A selection over a deletion's struck label alone holds no text of the file (the
@@ -1897,7 +1908,15 @@ inside an insertion and a substitution's new text, the option unchecked, the del
 with its mark, the ring's computed outline, the count tag's click), `file-comments-model-about.test.ts` (the pure half),
 `tools/file-comments-host-about.test.mjs` (the host), `tests/test_guide_files_about.py` (the guide's sentences held to
 the panel) and `tools/file-review-plan-about.test.mjs` (this note and decisions 45 and 46 held to the code and the
-modules they name).
+modules they name). From the about follow-on's review (2026-09-10): `file-comments-about-fixes.test.ts` (the stand-in
+with the editor's seam: the span cut from the file as the editor loaded it, Comment on this change withheld in flux and
+in media mode and standing on a deletion, a refused selection crossing a deletion's mark, a BOM file's offsets,
+`deletionUnder`'s one mark, the open card's line naming the changes), `file-comments-resolve-answered-fixes.test.ts`
+(the confirm's end when nothing answered remains and at the panel's close, the editing consent asked once, the Reopen
+all row's dress and place, a wheel ending the offer under focus), `tools/file-comments-host-about-scale.test.mjs` (the
+host's id walk in linear time: a hundred thousand ids refused `no-change` inside the kernel's deadline) and
+`tools/file-review-plan-about-flux.test.mjs` (the withholding as recorded here and in the Slice 2 build paragraph held to
+the panel and the stand-in).
 
 ### Slice 3: region comments on images
 
@@ -2692,7 +2711,16 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   modules they name; `tools/file-review-plan-about-records.test.mjs` holds the hosted-era sentences the follow-on
   superseded elsewhere in this document (the Show more row's order, the focus module's fold, the filter module's saved
   line) to the panel and the modules as history, decision 46 to the vocabulary, and the note's citation of the
-  assessment to the tree (the report is outside it).
+  assessment to the tree (the report is outside it). From the about follow-on's review (2026-09-10):
+  `file-comments-about-fixes.test.ts` (the stand-in with the editor's seam: the span cut from the file as the editor
+  loaded it, Comment on this change withheld in flux and in media mode and standing on a deletion, a refused selection
+  crossing a deletion's mark, a BOM file's offsets, `deletionUnder`'s one mark, the open card's line naming the
+  changes), `file-comments-resolve-answered-fixes.test.ts` (the confirm's end when nothing answered remains and at the
+  panel's close, the editing consent asked once, the Reopen all row's dress and place, a wheel ending the offer under
+  focus) and `tools/file-comments-host-about-scale.test.mjs` (the host's id walk in linear time: a hundred thousand ids
+  refused `no-change` inside the kernel's deadline); `tools/file-review-plan-about-flux.test.mjs` holds the paragraph's
+  account of Comment on this change withheld in flux and in media mode, and the Slice 2 build paragraph's clause, to the
+  panel and the stand-in.
 
 ## Docs
 

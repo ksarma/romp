@@ -480,13 +480,14 @@ cannot or because the marks are hidden, offers it too. **Comment on this change*
 card opens the comment box over the change's text with **about this change** checked, so the
 comment names the change and the message tells the session which change it is about; a deletion,
 whose text is no longer in the file, takes a comment about the change alone, laid beside its mark.
-A comment is never shown inside a change's card: every comment is its own card, and the two are
-linked by tags, **about a change** on the comment (hover it to ring the change's marks) and
-**N comments** on the change (click it to open the first). Selecting text inside a change and
-pressing Comment leaves an ordinary comment on those words, with the same **about** box checked
-for the change your selection touches (**about N changes** when it touches several); uncheck it for
-a plain comment on the passage. A click on a change mark or a comment highlight opens its card,
-and a selection made by dragging inside one leaves a comment on those words. A comment an older session's edit answered wears **answered by a change** instead. A session's
+A comment is never shown inside a change's card: every comment is its own card, and the comment
+and the change each carry a tag for the other, **about a change** on the comment (hover it to ring
+the change's marks) and **N comments** on the change (click it to open the first). Selecting text
+inside a change and pressing Comment leaves an ordinary comment on those words, with the same
+**about** box checked for the change your selection touches (**about N changes** when it touches
+several); uncheck it for a plain comment on the passage. A click on a change mark or a comment
+highlight opens its card, and a selection made by dragging inside one leaves a comment on those
+words. A comment an older session's edit answered wears **answered by a change** instead. A session's
 tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted

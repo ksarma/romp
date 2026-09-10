@@ -35,6 +35,11 @@ function between(doc, from, to) {
   assert.ok(b > a, `${JSON.stringify(to)} not found after ${JSON.stringify(from)}`);
   return doc.slice(a, b).replace(/\s+/g, ' ');
 }
+// The Decisions list's numbers, in document order. Compared to the whole run 1..N, never to a tail: a tail check
+// (the first form of this pin compared the last four) let a renumbered or duplicated entry anywhere before it pass.
+const DECISIONS_END = 46;
+const decisionNumbers = (doc) => Array.from(between(doc, '\n## Decisions', '\n## Open questions').matchAll(/(?:^| )(\d+)\. \*\*/g), (m) => Number(m[1]));
+const consecutive = (n) => Array.from({ length: n }, (_, i) => i + 1);
 const LABEL = 'The about follow-on (2026-09-10):';
 const note = between(plan, LABEL, '### Slice 3: region comments on images');
 const tests = between(plan, '\n## Tests', '\n## Docs');
@@ -54,10 +59,20 @@ test('the paragraph stands under Slice 2 after the arrivals note, and the two de
   for (const text of [note, d45, d46]) {
     assert.ok(!/"[^"]*\b(I|my|me)\b[^"]*"/.test(text.replace(/"about [^"]*"/g, '').replace(/"Resolve the N comments[^"]*"/g, '')), 'no quoted utterance of the user\'s');
   }
-  const decisions = between(plan, '\n## Decisions', '\n## Open questions');
-  const nums = Array.from(decisions.matchAll(/(?:^| )(\d+)\. \*\*/g), (m) => Number(m[1]));
-  assert.deepEqual(nums.slice(-4), [43, 44, 45, 46], 'the list stays consecutive and ends at 46');
+  assert.deepEqual(decisionNumbers(plan), consecutive(DECISIONS_END), 'the list stays consecutive and ends at 46');
   assert.ok(d45.includes('(2026-09-10)') && d46.includes('(2026-09-10)'));
+});
+
+test('the numbering pin reads the whole list: a renumbered or duplicated entry before the tail fails it, as a wrong tail does', () => {
+  // A mutated copy of the plan, never the file: the same collector over the same section, so what the pin above
+  // accepts is exactly what this rejects.
+  const dup = (n) => plan.replace(new RegExp('\\n' + n + '\\. \\*\\*'), '\n' + n + '. **A duplicate.** Text.\n' + n + '. **');
+  const renumber = (from, to) => plan.replace(new RegExp('\\n' + from + '\\. \\*\\*'), '\n' + to + '. **');
+  assert.deepEqual(decisionNumbers(plan), consecutive(DECISIONS_END), 'the plan as written passes');
+  for (const [name, doc] of [['12 renumbered as 11', renumber(12, 11)], ['a second 30', dup(30)], ['45 renumbered as 47', renumber(45, 47)]]) {
+    assert.notEqual(doc, plan, name + ': the mutation landed');
+    assert.notDeepEqual(decisionNumbers(doc), consecutive(DECISIONS_END), name + ': the pin fails');
+  }
 });
 
 test('every identifier the paragraph names in backticks is in the panel, the model, the kernel, the host, the sheets or the tree', () => {

@@ -547,8 +547,15 @@ function shrinkable(b: HTMLElement): void {
  *  selection overlaps (overlapping), or the change whose card's Comment on this change opened the box. `on` is the box's
  *  option, checked when the box opens; unchecked, the save is a plain passage comment. `only` when no passage can carry the
  *  comment (a deletion, whose text is not in the file; a detached change): the box offers the comment about the change
- *  alone, says so in one line, and the save carries the ids with no anchor. */
+ *  alone, says so in one line, and the save carries the ids with no anchor. The ids are re-read at every status
+ *  (pruneAbout): a change a later status no longer holds — accepted or rejected elsewhere, or folded into a new record by
+ *  the session's next edit — leaves the list, since the host refuses a dead id and a retry would post the same one (the
+ *  review, 2026-09-10). A passage composer left with no id loses the option; an ids-only box left with none (`ids` empty,
+ *  `only` set) says the change is gone and offers Comment on this file, which keeps the note. */
 type About = { ids: string[]; on: boolean; only: boolean };
+/** The ids-only composer's words once its change is gone (pruneAbout): the reference row's line, and Save's refusal. */
+const ABOUT_GONE = "The change this comment was about is no longer pending: it was accepted or rejected, or the session's next edit took it into a new one.";
+const ABOUT_GONE_SAVE = "Nothing saved: " + ABOUT_GONE.slice(0, -1) + ". Comment on this file keeps the note as a comment on the whole file; Cancel drops it.";
 type Composer =
   | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; tied?: boolean; elsewhere?: boolean; about?: About; refusal: (MapRefusal & { selText: string }) | null }
   // `resolved`: whether the comment was already resolved when the reply began — the slot's row tells a comment resolved
@@ -596,6 +603,42 @@ function unsureMarkTitle(c: Card): string {
       ? "the comment stores no position to tell the copies apart, so this is the first copy"
       : "this copy is the nearest to the comment's stored position")
     + ", not a confirmed one";
+}
+/** Whether a range's end stands against the mark `m` — at the position just before it, as its parent's child index or as
+ *  the last offset of the text before it — or its start stands just after it (deletionMarksIn, touching: the drag into a
+ *  struck label that Chromium draws back to the space before the mark). A boundary at a text node's edge and the parent's
+ *  own index for the same place are two positions to the DOM (compareBoundaryPoints tells them apart), so both are read as
+ *  the index; the text may stand inside another mark or a highlight beside the deletion (an insertion's tinted span, a
+ *  comment's highlight), so a boundary at the edge of a node is climbed while it is at the edge of each ancestor up to the
+ *  mark's parent; empty text nodes between the boundary and the mark are stepped over. A range whose boundary points are
+ *  not exposed (a stand-in's) touches nothing. */
+function touchesMark(r: Range, m: Element): boolean {
+  if (!("endContainer" in r) || !("startContainer" in r)) return false;
+  const p = m.parentNode;
+  if (!p) return false;
+  const kids = Array.from(p.childNodes);
+  const k = kids.indexOf(m as ChildNode);
+  if (k < 0) return false;
+  const blankRun = (list: ChildNode[], from: number, to: number): boolean => list.slice(from, to).every((n) => n.nodeType === 3 && !(n as Text).length);
+  // the boundary as an index among the mark's siblings, when it sits at the edge of one of them (or of the parent itself)
+  const edge = (node: Node, offset: number, end: boolean): number | null => {
+    if (node === p) return offset;
+    let n: Node = node;
+    const len = n.nodeType === 3 ? (n as Text).length : n.childNodes.length;
+    if (end ? offset !== len : offset !== 0) return null;
+    while (n.parentNode && n.parentNode !== p) {
+      const par: Node = n.parentNode, sibs = Array.from(par.childNodes), i = sibs.indexOf(n as ChildNode);
+      if (end ? !blankRun(sibs, i + 1, sibs.length) : !blankRun(sibs, 0, i)) return null;   // at the edge of its parent too
+      n = par;
+    }
+    if (n.parentNode !== p) return null;
+    const i = kids.indexOf(n as ChildNode);
+    return end ? i + 1 : i;
+  };
+  const e = edge(r.endContainer, r.endOffset, true);
+  if (e !== null && e <= k && blankRun(kids, e, k)) return true;
+  const s = edge(r.startContainer, r.startOffset, false);
+  return s !== null && s >= k + 1 && blankRun(kids, k + 1, s);
 }
 /** Where a passage composer's pair — `range` into `oldText` — stands once the view shows `newText` (retargetComposer).
  *  The two texts' common prefix and suffix bound the span the edit changed: a passage wholly before that span keeps its
@@ -1624,6 +1667,7 @@ class Panel {
     this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
     this.noteArrivals(s);                              // the entries this status brings that the person has not seen (the arrivals follow-on)
+    this.pruneAbout();                                 // the changes the composer's comment is about, as this status holds them (About)
     this.settleResolveAnsweredConfirm();               // a confirm whose count this status took to zero is over, not parked (the field's comment)
     this.releaseAnswered(s);                           // a todo this status lists, asked after a send stamped it, is open again (answeredTodos)
     this.statusRefusal = null;
@@ -1647,6 +1691,23 @@ class Panel {
    *  resolving with no gesture behind it (the field's comment). The status that takes the count to zero ends it. */
   private settleResolveAnsweredConfirm(): void {
     if (this.resolveAnsweredConfirm && !answeredComments(this.cards()).length) this.resolveAnsweredConfirm = false;
+  }
+  /** The composer's about ids against the status just applied (About's comment): an id the status holds no pending or
+   *  detached change for — the two the host accepts (`no-change` otherwise) — leaves the list. The ids were fixed as the
+   *  box opened, and a change decided elsewhere or coalesced by the session's next track-edit while the note was being
+   *  written left Save posting a dead id: the host refused with "reload and retry", and the retry posted the same id (the
+   *  review, 2026-09-10). The passage composer loses its option with its last id, and Save writes the plain passage
+   *  comment the option unchecked would have; the ids-only box keeps its About with no id, which renderComposer says in
+   *  one line, with Comment on this file (the note survives it) — Save refuses (saveComposer), since a comment on the
+   *  whole file is not what was written, and only Cancel drops the words. The status is the event; nothing here is timed. */
+  private pruneAbout(): void {
+    const c = this.composer;
+    if (!c || c.kind !== "comment" || !c.about) return;
+    const held = new Set(this.changeView().cards.map((x) => x.id));
+    const ids = c.about.ids.filter((id) => held.has(id));
+    if (ids.length === c.about.ids.length) return;
+    if (!ids.length && !c.about.only) delete c.about;
+    else c.about.ids = ids;
   }
   /** The page's memory of the todos its sends stamped (answeredTodos) ends for every todo `s` lists whose latch
    *  predates the ask: the status was issued after the send's reply landed, and the kernel stamps — or parks — before
@@ -2344,8 +2405,10 @@ class Panel {
     if (del !== null) this.composer = { kind: "comment", range: null, quote: null, refusal: null, about: { ids: [del], on: true, only: true } };
     else if (res.ok) {
       // a selection wholly or partly inside pending changes' marks (overlapping): an ordinary passage comment, with the
-      // option to name those changes checked; unchecked it is a passage comment like any other (the about follow-on)
+      // option to name those changes checked; unchecked it is a passage comment like any other (the about follow-on). The
+      // deletion marks the selection's own range crosses count with the text's verdict (addCrossed says why)
       const ids = this.overlapping(res.range);
+      this.addCrossed(ids, sel);
       this.composer = { kind: "comment", range: res.range, quote: res.quote, text: src, refusal: null, ...(ids.length ? { about: { ids, on: true, only: false } } : {}) };
     }
     else this.composer = { kind: "comment", range: null, quote: null, refusal: { ...res, selText } };
@@ -2450,38 +2513,72 @@ class Panel {
   }
   /** The pending changes whose marks a selection's range overlaps (the about follow-on): an insertion's or a
    *  substitution's span sharing any character with the range, a deletion's point strictly inside it (a selection that
-   *  ends at the point does not reach across the removed text). In text order. The hunks index the status's text, so
-   *  nothing while the view shows other bytes (textCurrent); on a BOM file the view's offsets run one behind the host's. */
+   *  ends at the point does not reach across the removed text; the deletions the selection's own range crosses are
+   *  addCrossed's). In text order. The hunks index the status's text, so nothing while the view shows other bytes
+   *  (textCurrent); on a BOM file the view's offsets run one behind the host's. */
   private overlapping(range: SourceRange): string[] {
     const s = this.status;
     if (!s || !this.textCurrent(s)) return [];
     const off = s.bom ? 1 : 0;
     const start = range.start + off, end = range.end + off;
     const out: string[] = [];
-    for (const h of [...(s.hunks || [])].sort((a, b) => a.curFrom - b.curFrom || (a.ts || 0) - (b.ts || 0))) {
+    for (const h of this.hunksInOrder(s)) {
       const hit = h.curFrom === h.curTo ? start < h.curFrom && h.curFrom < end : h.curFrom < end && h.curTo > start;
       if (hit) out.push(String(h.id));
     }
     return out;
   }
-  /** The one deletion mark of the panel's a selection intersects, by change id, or null: the struck label is generated
+  /** The pending deletions whose marks the selection's own range crosses (deletionMarksIn), added to overlapping's `ids` in
+   *  text order: the mapping trims the range to the file's text, and a drag across a struck label that took a letter either
+   *  side of it is trimmed to a range that starts or ends AT the point — by the text alone the selection never reached
+   *  across, though the pointer did, and the person was given a passage comment on one letter with no way to name the
+   *  change (the review, 2026-09-10, measured in Chromium and Firefox). The same silence as overlapping's while the view
+   *  shows other bytes. */
+  private addCrossed(ids: string[], sel: Selection): void {
+    const s = this.status;
+    if (!s || !this.textCurrent(s)) return;
+    const crossed = this.deletionMarksIn(sel, false);
+    if (!crossed.size) return;
+    const order = this.hunksInOrder(s).map((h) => String(h.id));
+    for (const id of order) if (crossed.has(id) && !ids.includes(id) && (s.hunks || []).some((h) => String(h.id) === id && h.curFrom === h.curTo)) ids.push(id);
+    ids.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  }
+  /** The status's hunks in text order (overlapping, addCrossed): by position, then by time for two at one point. */
+  private hunksInOrder(s: Status): Hunk[] {
+    return [...(s.hunks || [])].sort((a, b) => a.curFrom - b.curFrom || (a.ts || 0) - (b.ts || 0));
+  }
+  /** The one deletion mark of the panel's a selection lies over, by change id, or null: the struck label is generated
    *  text under user-select none, so a selection over it alone holds no text of the file (the mapping refuses or maps an
    *  empty range), and the change it marks is what the person selected. Several marks, or none, is nothing to claim.
    *  Nor is a selection that HOLDS text of the file (its string, which generated text never enters): the mapping refused
    *  it for a reason of its own — it reaches outside the file text, it touches a table in Rendered — and that refusal,
    *  with its Switch to Raw, is the answer; a deletion mark under such a selection is not what the person selected, and
-   *  a comment about it in the refusal's place answered a selected passage with a change (the review, 2026-09-10). */
+   *  a comment about it in the refusal's place answered a selected passage with a change (the review, 2026-09-10).
+   *  The mark the range crosses, or the one it ends against (deletionMarksIn, touching): a drag from the text before the
+   *  label into it leaves Chromium a range holding the one space before the mark and ending BEFORE the span — the label
+   *  takes no selection, and the end is drawn back to the last selectable position — so the mark is not inside the
+   *  range, and the refusal for a whitespace selection stood, with a Switch to Raw that could not help (the review,
+   *  2026-09-10, measured in Chromium; Firefox collapses the same drag to nothing and offers no float). A whitespace-only
+   *  selection ending against a deletion's mark is that drag: the label was the target. */
   private deletionUnder(sel: Selection): string | null {
     if (!sel.rangeCount) return null;
     if (sel.toString().trim() !== "") return null;
-    const marks = Array.from(this.ctx.body().querySelectorAll('.fc-del[data-act="fcchange"]')).filter((m) => this.marks.has(m)) as HTMLElement[];
+    const hit = this.deletionMarksIn(sel, true);
+    return hit.size === 1 ? Array.from(hit)[0] : null;
+  }
+  /** The panel's deletion marks a selection's ranges cross (intersectsNode), by change id — and with `touching`, the ones a
+   *  range's end stands against as well (touchesMark). A range without the boundary points (a stand-in's) is read by
+   *  intersectsNode alone; one without that is nothing. */
+  private deletionMarksIn(sel: Selection, touching: boolean): Set<string> {
     const hit = new Set<string>();
+    if (!sel.rangeCount) return hit;
+    const marks = Array.from(this.ctx.body().querySelectorAll('.fc-del[data-act="fcchange"]')).filter((m) => this.marks.has(m)) as HTMLElement[];
     for (let i = 0; i < sel.rangeCount; i++) {
       const r = sel.getRangeAt(i);
-      if (typeof r.intersectsNode !== "function") return null;
-      for (const m of marks) if (m.dataset.id && r.intersectsNode(m)) hit.add(m.dataset.id);
+      if (typeof r.intersectsNode !== "function") return hit;
+      for (const m of marks) if (m.dataset.id && (r.intersectsNode(m) || (touching && touchesMark(r, m)))) hit.add(m.dataset.id);
     }
-    return hit.size === 1 ? Array.from(hit)[0] : null;
+    return hit;
   }
   /** The change card's "N comments" tag (the about follow-on): the first open comment about the change into view as the
    *  focus, All chosen first when Changes hides the comment cards (the row that shows them). */
@@ -2582,6 +2679,13 @@ class Panel {
       // nothing to save TO: the selection could not be placed, and a save here would silently become a
       // whole-file comment — the passage the person selected lost, and the session told "on this file"
       this.errors.set("composer", { text: "Nothing saved: select the passage in the Raw view first (Switch to Raw), or Cancel and use Comment on this file for a note on the whole file.", reload: false });
+      this.renderComposer();
+      return;
+    }
+    if (c.kind === "comment" && c.about && c.about.only && !c.about.ids.length) {
+      // the change the ids-only box was about is gone (pruneAbout): nothing to save ABOUT, and a save here would silently
+      // become a whole-file comment — the reference row offers Comment on this file for that, with the note kept
+      this.errors.set("composer", { text: ABOUT_GONE_SAVE, reload: false });
       this.renderComposer();
       return;
     }
@@ -2877,7 +2981,9 @@ class Panel {
     // for comes back where it was (the render puts the same back)
     const offer = this.root?.querySelector(".fc-reopen") as HTMLElement | null;
     if (offer && this.reopenAll === null) {
-      if (this.sentNote) offer.parentNode?.insertBefore(el("div", "fc-note fc-sent", this.sentNote), offer);
+      // the acknowledgment comes back only where the offer displaced it: the Send section (the margin layout); the list
+      // layout's offer stood under the header and displaced nothing (reopenLineHead)
+      if (this.sentNote && this.sections.send.contains(offer)) offer.parentNode?.insertBefore(el("div", "fc-note fc-sent", this.sentNote), offer);
       // the offer's button may hold the keyboard (Tab reaches it, and a wheel is the one gesture that ends the offer while it
       // does): removed under it, the focus would fall to the body and the next Tab start the page over (removeLine's rule)
       const held = offer.contains(document.activeElement);
@@ -4195,6 +4301,7 @@ class Panel {
     const ids = answeredComments(this.cards()).map((c) => c.id);
     this.resolveAnsweredConfirm = false;
     if (!ids.length) { this.render(); return; }
+    const held = this.holdsFocus();                    // the keyboard on the confirm's Resolve: the run's end hands it on (focusAfterRun)
     this.resolvingAnswered = true; this.reopenAll = null; this.render();
     const done: string[] = [];
     try {
@@ -4208,18 +4315,39 @@ class Panel {
       this.resolvingAnswered = false;
       this.reopenAll = done.length ? done : null;
       this.render();
+      if (held) this.focusAfterRun();
     }
   }
   /** Reopen all: the same comments back, one request each, the offer taken; the consent once, as for the resolve. */
   async reopenAnswered(): Promise<void> {
     const ids = this.reopenAll;
+    const held = this.holdsFocus();                    // the keyboard on the offer's button, which the render below removes
     this.reopenAll = null;
     this.render();
     if (!ids || !ids.length) return;
     try {
       if (!(await this.consentForRun())) return;
       for (const id of ids) await this.mutate("resolve", { commentId: id, on: false }, "card:" + id);
-    } finally { this.consentHeld = false; }
+    } finally { this.consentHeld = false; if (held) this.focusAfterRun(); }
+  }
+  /** Whether the keyboard is on a control of the panel (resolveAnswered, reopenAnswered: read before their first render). */
+  private holdsFocus(): boolean {
+    return !!this.root && this.root.contains(document.activeElement);
+  }
+  /** The keyboard after a resolve or reopen run that began on a control of the panel (holdsFocus): the confirm's Resolve
+   *  is a head-row control, and the first render removed its row under the focus — a head-row confirm has no place of its
+   *  own for refocus to stand in for it (refocus's rule), so the focus fell to the body, and when the run ended the button
+   *  was gone with the count while the offer stood at the panel's foot, reached only by tabbing through the head and every
+   *  open card, any other key on the way the gesture that ends it (the review, 2026-09-10; measured in Chromium and
+   *  Firefox). The run's own outcome is where the keyboard goes: the Reopen all offer the resolve made (the one-click undo
+   *  of decision 46), or the header action a reopen brought back, else Comment on this file in the same head row (the
+   *  nearest place focusNear names last). Nothing when a control of the panel holds the keyboard already. */
+  private focusAfterRun(): void {
+    if (!this.root || this.holdsFocus()) return;
+    for (const act of ["fcreopenall", "fcresolveanswered", "fcfile"]) {
+      const n = this.root.querySelector('[data-act="' + act + '"]') as HTMLButtonElement | null;
+      if (n && !n.disabled) { n.focus({ preventScroll: true }); return; }
+    }
   }
   /** The file-editing consent for a run of writes (resolveAnswered, reopenAnswered): one ask, held for the run (consentHeld,
    *  which the caller clears when its run ends); declined, mutate's words in the answered slot, under the header action that
@@ -4723,6 +4851,13 @@ class Panel {
     }
     // the arrivals line (the arrivals follow-on, 2026-09-09): one line under the header while a session's changes, comments
     // or replies stand unseen, a button that shows the first of them (goToArrival); the words are the model's (arrivalWords)
+    // the Reopen all offer (decision 46) in the list layout: under the header, where the action that made it stood and the
+    // person is looking, above the arrivals line. The Send section is the scroller's foot there, below every card, so an
+    // offer in it was off screen after the click on a long list, and every wheel toward it was the gesture that ends it (the
+    // review, 2026-09-10; the saved line's own reason, below). The margin layout's Send section is pinned at the panel's
+    // foot, and the offer keeps the acknowledgment's position there (renderSend).
+    const offer = this.reopenLineHead();
+    if (offer) head.appendChild(offer);
     if (this.arrivals.size) head.appendChild(this.arrivalLine());
     // the saved line (savedLine; decision 43) in the list layout: under the header, where the person who just saved is looking
     // (the composer stands in the slot under it, placeComposer). The Send section is the scroller's foot there, below the very
@@ -4832,16 +4967,29 @@ class Panel {
         ref.appendChild(t);
       }
       if (c.about && !c.about.only) ref.appendChild(this.aboutOption(c.about));   // the changes the selection overlaps (the about follow-on)
+    } else if (c.about && c.about.only && !c.about.ids.length) {
+      // the change the box was about left the status while the note was being written (pruneAbout): the line says so, and
+      // Comment on this file (fcfile, startFileComment) keeps the words as a comment on the whole file; Save is refused
+      // (saveComposer), Cancel drops the words — the same pair a refused mapping's row names
+      ref.appendChild(el("span", "fc-note fc-refused", ABOUT_GONE));
+      const f = btn("Comment on this file", "fcfile");
+      f.title = "Keep the note as a comment on the file as a whole";
+      ref.appendChild(f);
     } else if (c.about && c.about.only) {
       // a comment about a change with no passage to carry it (the about follow-on): the change's words, and one line saying
-      // where the card is laid and why (a deletion's text is not in the file; a detached change's no longer is)
+      // why (a deletion's text is not in the file; a detached change's no longer is) and where the card goes. The margin
+      // layout lays an anchorless comment's card level with the first pending change it names (markTop's fallback); the
+      // list layout lays nothing at a mark — its cards stand in the one list in time order — so the line there says what
+      // holds in both: the comment names the change in a passage's place (the review, 2026-09-10: the margin's words stood
+      // in the list layout, where no card is laid at any point). `margin` is the last pass's verdict, as savedLine reads it.
       const ch = this.changeView().cards.find((x) => x.id === c.about!.ids[0]);
       ref.appendChild(el("span", "fc-note", "About the change "));
       const q = el("span", "fc-quote", ch ? ch.ref : c.about.ids[0]);
       if (ch) q.title = ch.kind === "ins" ? "Added: " + ch.newText : ch.kind === "del" ? "Removed: " + ch.oldText : ch.oldText + " → " + ch.newText;
       ref.appendChild(q);
       ref.appendChild(el("span", "fc-note", ch && ch.detached ? "The file no longer holds the change's text, so the comment stands with the change's card."
-        : "The removed text is not in the file, so the comment is laid at the change's point."));
+        : this.margin ? "The removed text is not in the file, so the comment is laid at the change's point."
+        : "The removed text is not in the file, so the comment names the change instead of a passage."));
     } else ref.appendChild(el("span", "fc-note", "On this file"));
     const acts = this.composerActs;
     const saving = this.busy.has("composer");
@@ -4850,7 +4998,8 @@ class Panel {
     this.input.readOnly = saving;                      // what is typed during the round trip would be lost with the note that lands
     // a refused mapping has nothing to save to — Raw or Cancel; Save would silently write a whole-file comment; a
     // refused region likewise, and a re-place saves nothing (the drawn region is the action)
-    const noSave = c.kind === "replace" || ((c.kind === "comment" || c.kind === "region") && !!c.refusal);
+    const noSave = c.kind === "replace" || ((c.kind === "comment" || c.kind === "region") && !!c.refusal)
+      || (c.kind === "comment" && !!c.about && c.about.only && !c.about.ids.length);   // the change the box was about is gone (pruneAbout): Comment on this file or Cancel
     // the hint names the chord in the platform's words and sits at the row's left (fc-hint), the buttons at its right
     const hint = el("span", "fc-note fc-hint", composerHint(IS_MAC));
     acts.replaceChildren(...(noSave ? [] : [hint, save]), btn("Cancel", "fccancel"));
@@ -5043,9 +5192,15 @@ class Panel {
     head.tabIndex = 0; head.setAttribute("role", "button"); head.setAttribute("aria-expanded", isOpen ? "true" : "false");
     if (this.replyTo() === c.id) this.holdHead(head);
     // the kind cue (the filter follow-on, 2026-09-07): what the card is, in a word before the author's chip, so a comment
-    // and a change read apart at a glance in a long list; the title says what kind of comment
+    // and a change read apart at a glance in a long list; the title says what kind of comment. A comment with no passage
+    // that names changes is about them when the person picked them (source about), and one the session answered with a
+    // change when its only binding is the format's own field (source answered: an older sidecar, or one the session's
+    // edit tool wrote) — the tag's words (aboutTagWords) and CONTEXT.md's vocabulary, which the title contradicted by
+    // saying "about" for both (the review, 2026-09-10)
     const kind = el("span", "fc-kind", c.kind === "region" ? "Region" : "Comment");
-    kind.title = c.kind === "region" ? "A comment on a region of the picture" : c.kind === "file" && c.refs.length ? "A comment about a change"
+    kind.title = c.kind === "region" ? "A comment on a region of the picture"
+      : c.kind === "file" && c.refs.some((r) => r.source === "about") ? "A comment about a change"
+      : c.kind === "file" && c.refs.length ? "A comment the session answered with a change"
       : c.kind === "file" ? "A comment on the file as a whole" : "A comment on a passage";
     head.appendChild(kind);
     head.appendChild(this.chip(c.author, c.authorId));
@@ -5435,8 +5590,9 @@ class Panel {
     const saved = this.savedLine();                    // the card a save landed in, out of view: which side it is on (decision 43), in the acknowledgment's position — the margin layout's; the list layout's stands under the header (renderHead, savedLineHead)
     if (saved) box.appendChild(saved);
     // the Reopen all offer (decision 46) stands in the acknowledgment's position, in its dress, until the next gesture; the
-    // sent acknowledgment it stands in for comes back when it ends (reflectLines, or this render)
-    if (this.reopenAll !== null) box.appendChild(this.reopenLine(this.reopenAll.length));
+    // sent acknowledgment it stands in for comes back when it ends (reflectLines, or this render). The margin layout's; the
+    // list layout's stands under the header (renderHead, reopenLineHead), and displaces nothing here
+    if (this.reopenAll !== null && this.margin) box.appendChild(this.reopenLine(this.reopenAll.length));
     else if (this.sentNote) box.appendChild(el("div", "fc-note fc-sent", this.sentNote));
     for (const x of [this.loader("send"), this.errRow("send")]) if (x) box.appendChild(x);
     return box;
@@ -5451,8 +5607,9 @@ class Panel {
    *  the todo option's idiom; .fc-link gives it the panel's link hover. In the margin layout the Send section scrolls inside
    *  itself while its confirm is up, and a line after the confirm stood past the section's box (the saved line's case,
    *  savedButton, measured 2026-09-09; the offer's, 2026-09-10): it sticks to the section's bottom edge there, as that line
-   *  does. The list layout's Send section is the scroller's foot, below every card; the offer stands there all the same
-   *  (the plan: the acknowledgment's position). */
+   *  does. The list layout's Send section is the scroller's foot, below every card, and the offer stood there off screen
+   *  after the click on a long list (the review, 2026-09-10): the list layout's stands under the header instead
+   *  (reopenLineHead, renderHead), one line in the panel either way. */
   private reopenLine(n: number): HTMLElement {
     const line = el("div", "fc-note fc-sent fc-reopen");
     line.style.fontSize = "inherit";                   // the class is the tier's and the colour's; the size is the children's
@@ -5480,6 +5637,12 @@ class Panel {
    *  very card the line says is below, so a line in it was never on screen when it was needed (the review, 2026-09-09). */
   private savedLineHead(): HTMLElement | null {
     return this.margin ? null : this.savedButton();
+  }
+  /** The list layout's Reopen all offer, under the header (renderHead), for the saved line's reason: the Send section is the
+   *  scroller's foot there, and the offer in it stood off screen after the click on a long list, with every wheel toward it
+   *  the gesture that ends it (the review, 2026-09-10). The margin layout's stands in the Send section (renderSend). */
+  private reopenLineHead(): HTMLElement | null {
+    return this.margin || this.reopenAll === null ? null : this.reopenLine(this.reopenAll.length);
   }
   /** The line's button (savedLine, savedLineHead): the latched side's words, in the acknowledgment's dress. */
   private savedButton(): HTMLElement | null {
