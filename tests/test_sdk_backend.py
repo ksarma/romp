@@ -7877,8 +7877,8 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         # (review round 7, correctness-4). A lock-aware fake: the four names become properties whose setter records
         # whether the hold lock is held at the write, and the three writers run: the landing, a confirmed live switch,
         # and a turn's init report. Every write is locked, and each writer is reached. An AST walk over the module
-        # then enumerates every assignment to the four names outside __init__ and requires a _hold_write block around
-        # it, so a writer the fake does not reach cannot land bare either
+        # then enumerates every assignment statement to the four names outside __init__, setattr included, and requires
+        # a _hold_write block around it, so a writer the fake does not reach cannot land bare either
         STAMPS = ("_launched_effort", "_launched_mode", "_launched_auth", "_launched_env")
         writes = []
 
@@ -7922,28 +7922,92 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(by_name["_launched_mode"], ["default", "plan", "acceptEdits"], "the landing, the switch and the init")
         self.assertEqual(by_name["_launched_effort"], [sb.effort_launch_shape("high")])
         self.assertEqual(by_name["_launched_auth"], ["login"]); self.assertEqual(by_name["_launched_env"], [{}])
-        # the static enumeration: every assignment to the four names outside __init__ sits inside a _hold_write block
+        # the static enumeration: every assignment-shaped statement writing one of the four names outside __init__ sits
+        # inside a _hold_write block: a plain or chained Assign, tuple or list unpacking (Starred included), an AnnAssign
+        # with a value, an AugAssign, a for or with target, setattr(obj, "<name>", v) and obj.__dict__["<name>"]. Until
+        # review round 9 (correctness-3) the walk read ast.Assign with a direct Attribute target only, so a tuple-unpack,
+        # AugAssign, AnnAssign or setattr write in an undriven method passed it (a setattr outside a hold is red now);
+        # the walk is checked against a synthetic module below so a simplification cannot drop a shape silently
         import ast
-        tree = ast.parse(inspect.getsource(sb))
-        bare = []
+        import textwrap
+
+        def attr_names(t):
+            if isinstance(t, (ast.Tuple, ast.List)):
+                for e in t.elts:
+                    yield from attr_names(e)
+            elif isinstance(t, ast.Starred):
+                yield from attr_names(t.value)
+            elif isinstance(t, ast.Attribute):
+                yield t.attr
+            elif (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Attribute) and t.value.attr == "__dict__"
+                  and isinstance(t.slice, ast.Constant) and isinstance(t.slice.value, str)):
+                yield t.slice.value
+
+        def written(node):
+            if isinstance(node, ast.Assign):
+                for t in node.targets:
+                    yield from attr_names(t)
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                yield from attr_names(node.target)
+            elif isinstance(node, ast.AugAssign):
+                yield from attr_names(node.target)
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                yield from attr_names(node.target)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for i in node.items:
+                    if i.optional_vars is not None:
+                        yield from attr_names(i.optional_vars)
+            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "setattr"
+                  and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)):
+                yield node.args[1].value
 
         def hold_write(node):
             return isinstance(node, ast.With) and any(
                 isinstance(i.context_expr, ast.Call) and isinstance(i.context_expr.func, ast.Attribute)
                 and i.context_expr.func.attr == "_hold_write" for i in node.items)
 
-        def walk(node, held, fn):
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    walk(child, False, child.name)                       # a nested def runs later: no lock inherited
-                    continue
-                if isinstance(child, ast.Assign) and fn != "__init__" and not held:
-                    for t in child.targets:
-                        if isinstance(t, ast.Attribute) and t.attr in STAMPS:
-                            bare.append((fn, child.lineno, t.attr))
-                walk(child, held or hold_write(child), fn)
-        walk(tree, False, None)
-        self.assertEqual(bare, [], "assignments to the launched stamps outside a _hold_write block")
+        def bare_writes(tree):
+            bare = []
+
+            def walk(node, held, fn):
+                for child in ast.iter_child_nodes(node):
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        walk(child, False, child.name)                   # a nested def runs later: no lock inherited
+                        continue
+                    if fn != "__init__" and not held:
+                        bare.extend((fn, child.lineno, n) for n in written(child) if n in STAMPS)
+                    walk(child, held or hold_write(child), fn)
+            walk(tree, False, None)
+            return bare
+        self.assertEqual(bare_writes(ast.parse(inspect.getsource(sb))), [],
+                         "assignments to the launched stamps outside a _hold_write block")
+        # the walk itself: every bare shape reported, in order; a held write and __init__'s seed not
+        synthetic = textwrap.dedent('''
+            class S:
+                def __init__(self):
+                    self._launched_mode = None
+                def a(self): self._launched_mode = m
+                def b(self): self.x = self._launched_effort = m
+                def c(self): self._launched_mode, self._launched_auth = m, a
+                def d(self): [self._launched_env, other] = pair
+                def e(self): first, *self._launched_mode = seq
+                def f(self): self._launched_mode: str = m
+                def g(self): self._launched_env += extra
+                def h(self): setattr(self, "_launched_mode", m)
+                def i(self): self.__dict__["_launched_auth"] = a
+                def j(self):
+                    for self._launched_mode in modes: pass
+                def k(self):
+                    with lock as self._launched_effort: pass
+                def held(self):
+                    with self._hold_write():
+                        self._launched_mode, self._launched_auth = m, a
+                        setattr(self, "_launched_env", e)
+        ''')
+        self.assertEqual([(fn, n) for fn, _, n in bare_writes(ast.parse(synthetic))],
+                         [("a", "_launched_mode"), ("b", "_launched_effort"), ("c", "_launched_mode"), ("c", "_launched_auth"),
+                          ("d", "_launched_env"), ("e", "_launched_mode"), ("f", "_launched_mode"), ("g", "_launched_env"),
+                          ("h", "_launched_mode"), ("i", "_launched_auth"), ("j", "_launched_mode"), ("k", "_launched_effort")])
 
     def _spawning_bypass(self):
         """A session whose connect in progress launches bypass over a process that ran default, in the composed half of
@@ -9370,6 +9434,87 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertEqual(sb.read_reg(self.be.state_dir, self.SID).get("mode"), "bypassPermissions")
         self.assertFalse(any("is disarmed" in l for l in self.lines[n1:]), self.lines[n1:])
         self.assertEqual([l for l in self.lines if "contract says this cannot happen" in l], [])
+
+    def test_a_second_pick_riding_the_superseded_arm_keeps_it_standing_at_the_landings_live_re_pick(self):
+        # _retire_arm_for_live_pick's shape and flag compares are load-bearing, and no loop test reached them (review round
+        # 9, fresh-1): with either deleted the classes stayed green. A plan pick armed in the bypass spawn window, then an
+        # effort pick riding the same arm; acceptEdits picked live during the landing's plan switch; plan confirms. The
+        # running shape with the newer mode differs from what the session asks for in the effort alone, so the arm stands
+        # and relaunches low in acceptEdits: a third client, the effort applied at its landing, no disarm line, no revert
+        s, c1 = self.s, self._connect()
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        self._Client.spawn_gate[1] = gate
+        plan_gate, ae_gate = threading.Event(), threading.Event()
+        self.addCleanup(plan_gate.set); self.addCleanup(ae_gate.set)
+        self._Client.mode_gate[1] = [plan_gate, ae_gate]
+        self.assertTrue(self.be.set_mode(self.SID, "bypassPermissions"))
+        self._wait(lambda: len(self._Client.instances) == 2 and s.client is None, "the bypass connect is spawning")
+        self.assertTrue(self.be.set_mode(self.SID, "plan"))             # a connect-time pick: armed after the connect in progress
+        self._wait(lambda: s._reconnect and "mode" not in s._reconnect_surfaces, "the plan pick armed a reconnect")
+        self.assertTrue(self.be.set_effort(self.SID, "low"))           # a second pick riding the same arm
+        self._wait(lambda: "effort" not in s._reconnect_surfaces and s._effort_pending == "low", "the effort pick rode the arm")
+        gate.set()
+        c2 = self._Client.instances[1]
+        self._wait(lambda: c2 is s.client and s._launching is None and s._mode_switching == "plan",
+                   "the landing's switch to plan is in flight")
+        time.sleep(0.1)
+        self.assertTrue(self.be.set_mode(self.SID, "acceptEdits"))      # the third mode, live, during the round trip
+        plan_gate.set()                                                  # the plan switch confirms; the arm carries low
+        self._wait(lambda: len(self._Client.instances) == 3 and self._Client.instances[2] is s.client
+                   and s._launching is None and s._effort_pending == "", "the standing arm relaunched low in acceptEdits")
+        c3 = self._Client.instances[2]
+        self.assertEqual((c3.options.effort, c3.options.permission_mode), ("low", "acceptEdits"))
+        self.assertEqual(s._launched_effort, ("low", False))
+        self.assertTrue(c2.torn_down); self.assertEqual(c2.modes, ["plan"])
+        self.assertFalse(any("is disarmed" in l for l in self.lines), self.lines)
+        self.assertTrue(any("a newer acceptEdits pick made during the switch stands, and its own request applies it" in l
+                            for l in self.lines), self.lines)
+        ae_gate.set()                                                    # the stranded live request answers: a lost answer
+        self._wait(lambda: any("the CLI's answer was lost" in l for l in self.lines), "the stranded request settled as lost")
+        self.assertEqual([l for l in self.lines if "reverted to" in l], [])
+        self.assertEqual((s.mode, s.perm_mode, s._launched_mode), ("acceptEdits",) * 3)
+        self.assertEqual(sb.read_reg(self.be.state_dir, self.SID).get("mode"), "acceptEdits")
+        self.assertEqual([l for l in self.lines if "contract says this cannot happen" in l], [])
+
+    def test_a_fast_pick_riding_the_superseded_arm_keeps_it_standing_at_the_landings_live_re_pick(self):
+        # the flag compare's case (review round 9, fresh-1): a plan pick armed in a flagless bypass spawn, a fast opt-in riding
+        # the same arm, acceptEdits picked live during the landing's plan switch. The shapes agree once the mode is replaced,
+        # and the flag alone keeps the arm standing: the third client carries the flag
+        s, c1 = self.s, self._connect()
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        self._Client.spawn_gate[1] = gate
+        plan_gate, ae_gate = threading.Event(), threading.Event()
+        self.addCleanup(plan_gate.set); self.addCleanup(ae_gate.set)
+        self._Client.mode_gate[1] = [plan_gate, ae_gate]
+        self.assertTrue(self.be.set_mode(self.SID, "bypassPermissions"))
+        self._wait(lambda: len(self._Client.instances) == 2 and s.client is None, "the bypass connect is spawning")
+        self.assertTrue(self.be.set_mode(self.SID, "plan"))
+        self._wait(lambda: s._reconnect and "mode" not in s._reconnect_surfaces, "the plan pick armed a reconnect")
+        self.assertTrue(self.be.set_fast(self.SID, "on"))              # inside the flagless compose: the reconnect route
+        self._wait(lambda: "fast" not in s._reconnect_surfaces and s.fast_opt, "the fast pick rode the arm")
+        self.assertFalse(s._fast_unlocked, "the connect in progress carries no flag")
+        gate.set()
+        c2 = self._Client.instances[1]
+        self._wait(lambda: c2 is s.client and s._launching is None and s._mode_switching == "plan",
+                   "the landing's switch to plan is in flight")
+        time.sleep(0.1)
+        self.assertTrue(self.be.set_mode(self.SID, "acceptEdits"))
+        plan_gate.set()
+        self._wait(lambda: len(self._Client.instances) == 3 and self._Client.instances[2] is s.client
+                   and s._launching is None, "the standing arm relaunched with the flag")
+        c3 = self._Client.instances[2]
+        self.assertTrue(s._fast_unlocked, "the third connect carries the flag")
+        fs = getattr(c3.options, "settings", "") or ""
+        self.assertTrue(fs and '"fastMode": true' in Path(fs).read_text(), "the flag-settings file carries the opt-in: %r" % (fs,))
+        self.assertEqual(c3.options.permission_mode, "acceptEdits")
+        self.assertEqual(s.fast, "on")
+        self.assertFalse(any("is disarmed" in l for l in self.lines), self.lines)
+        ae_gate.set()
+        self._wait(lambda: any("the CLI's answer was lost" in l for l in self.lines), "the stranded request settled as lost")
+        self.assertEqual([l for l in self.lines if "reverted to" in l], [])
+        self.assertEqual((s.mode, s.perm_mode, s._launched_mode), ("acceptEdits",) * 3)
 
     def test_a_live_mode_pick_stranded_by_a_relaunch_teardown_is_a_lost_answer_not_a_refusal(self):
         # the real ordering (review round 7, kernel-2): a live mode pick's control request is out on the old client when
