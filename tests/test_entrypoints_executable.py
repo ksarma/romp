@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Every command under bin/ stays executable, in the checkout and in the mode git records (2026-09-10).
+"""Every command under bin/, hooks/ and .githooks/ stays executable, in the checkout and in the mode git
+records (2026-09-10).
 
 bin/romp-kernel is a symlink to kernel/kernel.py, and the served browser tests spawn bin/romp-kernel
 by path, so a kernel.py without its executable bit fails every one of those spawns with
@@ -10,13 +11,13 @@ kernel, and CI stayed green, because the served modules skip there without Playw
 CI read the mode. These two tests read it, one from the working tree and one from the index, so a
 checkout whose bits were restored by hand still fails on the recorded mode.
 
-Scope: the entries git tracks directly under bin/, enumerated from the index and never from the
-working tree's listing, so an untracked stray file in bin/ is not a shipped command and is ignored.
-The rule is content, not name shape:
+Scope: the entries git tracks directly under the three trees, enumerated from the index and never
+from the working tree's listing, so an untracked stray file in bin/ is not a shipped command and is
+ignored. The rule is content, not name shape:
   - a tracked regular file is a command when its first two bytes are "#!". It must be recorded as
     100755 and be executable in the checkout, whatever its name: a launcher committed as
-    bin/romp-<x>.sh without its bit is an offender. A regular file without a shebang (bin/README.md)
-    is documentation, not a command.
+    bin/romp-<x>.sh without its bit is an offender. A regular file without a shebang (bin/README.md,
+    hooks/README.md) is documentation, not a command.
   - a tracked symlink is a command unless its name carries an extension. The four bin/romp_*.py
     symlinks (romp_colormap.py, romp_palette.py, romp_sdk_backend.py, romp_session_backend.py) are
     import shims through which the kernel's modules are reached by name, never run (bin/README.md
@@ -24,11 +25,15 @@ The rule is content, not name shape:
     100644, the links as 120000). A command symlink is followed to its target, which must exist
     inside the repo, be recorded as 100755 and be executable in the checkout, so a dangling or
     escaping link is an offender too.
+hooks/* and .githooks/* fall under the same rules: install.sh links the hooks into the harness's hooks
+dir and .githooks/pre-push into git's hook dir, both of which run them by path, and git skips a
+pre-push hook that is not executable with a hint and pushes the commits unscanned.
 Both tests skip only when git is not installed or git says the tree is not a repository (the command
 list itself comes from the index); any other git failure, dubious ownership included, fails them with
 git's stderr, since a skip there would disarm the check while the run stays green. Loads nothing from
-the kernel; the repo root is derived from this file's location. The ScratchCheckout class pins the negative cases against a scratch repository of
-its own, so nothing here touches this repo's index or working tree.
+the kernel; the repo root is derived from this file's location. The ScratchCheckout class pins the
+negative cases against a scratch repository of its own, so nothing here touches this repo's index or
+working tree.
 """
 import os
 import shutil
@@ -40,10 +45,10 @@ from unittest.mock import patch
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 # The trees whose direct children are commands.
-TREES = ("bin",)
+TREES = ("bin", "hooks", ".githooks")
 # Entries the walk must reach for the scope rule to be doing its job: the CLI itself, a plain file,
-# and the symlink whose target lost its bit in the incident this module answers.
-MUST_REACH = ("bin/romp", "bin/romp-kernel")
+# the symlink whose target lost its bit in the incident this module answers, and the git hook.
+MUST_REACH = ("bin/romp", "bin/romp-kernel", ".githooks/pre-push")
 SYMLINK = "120000"
 # git's own wording for a tree with no repository above it; the one nonzero exit that is a skip
 NOT_A_REPOSITORY = "not a git repository"
@@ -142,33 +147,35 @@ class EntryPointsExecutable(unittest.TestCase):
     def setUp(self):
         self.recorded = _index()
         self.commands, unresolved = _commands(ROOT, self.recorded)
-        self.assertEqual(unresolved, [], "every bin/ command must resolve to a file inside the repo:\n"
+        self.assertEqual(unresolved, [], "every command must resolve to a file inside the repo:\n"
                          + "\n".join(unresolved))
         paths = [rel for rel, _ in self.commands]
         for must in MUST_REACH:
-            self.assertIn(must, paths, "the walk over bin/ no longer reaches %s; re-check the scope rule" % must)
+            self.assertIn(must, paths, "the walk no longer reaches %s; re-check the scope rule" % must)
 
     def test_every_command_and_its_target_is_executable_in_the_checkout(self):
         offenders = _checkout_offenders(self.commands, ROOT)
-        self.assertEqual(offenders, [], "bin/ commands (and the files their symlinks reach) must be "
-                         "executable; the served tests spawn bin/romp-kernel by path and fail with "
-                         "PermissionError otherwise, and bin/romp-serve refuses a kernel without the bit. "
-                         "Restore with chmod +x and commit the mode change:\n" + "\n".join(offenders))
+        self.assertEqual(offenders, [], "commands under bin/, hooks/ and .githooks/ (and the files their "
+                         "symlinks reach) must be executable; the served tests spawn bin/romp-kernel by path "
+                         "and fail with PermissionError otherwise, bin/romp-serve refuses a kernel without the "
+                         "bit, and git skips a non-executable pre-push hook and pushes unscanned. Restore with "
+                         "chmod +x and commit the mode change:\n" + "\n".join(offenders))
 
     def test_git_records_mode_100755_for_every_command_and_its_target(self):
         offenders = _index_offenders(self.commands, self.recorded, ROOT)
-        self.assertEqual(offenders, [], "git must record every bin/ command's target as 100755; a "
-                         "whole-file rewrite that drops the bit lands as 100644 and breaks every kernel "
-                         "launch from a fresh checkout. Fix with git update-index --chmod=+x <path> and "
-                         "commit:\n" + "\n".join(offenders))
+        self.assertEqual(offenders, [], "git must record every command and every symlink target as "
+                         "100755; a whole-file rewrite that drops the bit lands as 100644 and breaks every "
+                         "kernel launch (or hook run) from a fresh checkout. Fix with git update-index "
+                         "--chmod=+x <path> and commit:\n" + "\n".join(offenders))
 
 
 class ScratchCheckout(unittest.TestCase):
     """The rules against a scratch repository, so the negative cases are pinned without touching this
     repo's index or working tree: a shebang file recorded as 100644 is an offender in both layers
     whatever its name, a file without a shebang and a symlink with an extension are not commands, an
-    untracked file is not a command, a symlink target without its bit is named through its link, and
-    the index reader skips for a missing git or repository only."""
+    untracked file is not a command, a symlink target without its bit is named through its link, a
+    hook under hooks/ or .githooks/ is held to the same rules, and the index reader skips for a
+    missing git or repository only."""
 
     def setUp(self):
         try:
@@ -186,7 +193,10 @@ class ScratchCheckout(unittest.TestCase):
         os.symlink("../kernel/shim.py", self.path("bin/romp_shim.py"))
         # the launcher committed without its bit: a shebang file with an extension, recorded 100644
         self.write("bin/romp-x.sh", "#!/bin/sh\n", 0o644)
-        self.git("add", "--", "bin", "kernel")
+        self.write(".githooks/pre-push", "#!/bin/sh\n", 0o755)
+        self.write("hooks/romp-hook.sh", "#!/bin/sh\n", 0o755)
+        self.write("hooks/README.md", "# hooks\n", 0o644)
+        self.git("add", "--", "bin", "kernel", ".githooks", "hooks")
         # untracked, so not a shipped command whatever it looks like
         self.write("bin/stray", "#!/bin/sh\n", 0o644)
 
@@ -227,7 +237,8 @@ class ScratchCheckout(unittest.TestCase):
     def test_the_walk_is_the_index_and_the_rule_is_the_shebang(self):
         recorded, commands, unresolved = self.walk()
         self.assertEqual(unresolved, [])
-        self.assertEqual([rel for rel, _ in commands], ["bin/romp", "bin/romp-kernel", "bin/romp-x.sh"])
+        self.assertEqual([rel for rel, _ in commands],
+                         [".githooks/pre-push", "bin/romp", "bin/romp-kernel", "bin/romp-x.sh", "hooks/romp-hook.sh"])
         self.assertEqual(recorded["bin/romp-x.sh"], "100644")
         self.assertEqual(recorded["bin/romp_shim.py"], SYMLINK)
         self.assertNotIn("bin/stray", recorded)
@@ -268,7 +279,16 @@ class ScratchCheckout(unittest.TestCase):
         self.assertEqual(unresolved, ["bin/romp: tracked but missing from the working tree",
                                       "bin/romp-gone: dangling symlink (target kernel/gone.py does not exist)",
                                       "bin/romp-out: resolves outside the repo"])
-        self.assertEqual([rel for rel, _ in commands], ["bin/romp-kernel", "bin/romp-x.sh"])
+        self.assertEqual([rel for rel, _ in commands],
+                         [".githooks/pre-push", "bin/romp-kernel", "bin/romp-x.sh", "hooks/romp-hook.sh"])
+
+    def test_a_hook_without_its_bit_is_an_offender_in_both_layers(self):
+        os.chmod(self.path(".githooks/pre-push"), 0o644)
+        self.git("update-index", "--chmod=-x", "hooks/romp-hook.sh")
+        recorded, commands, _ = self.walk()
+        self.assertEqual(_checkout_offenders(commands, self.root), [".githooks/pre-push", "bin/romp-x.sh"])
+        self.assertEqual(_index_offenders(commands, recorded, self.root),
+                         ["bin/romp-x.sh: recorded as 100644", "hooks/romp-hook.sh: recorded as 100644"])
 
     def test_the_index_reader_skips_for_a_missing_git_or_repository_only(self):
         def completed(stderr):
