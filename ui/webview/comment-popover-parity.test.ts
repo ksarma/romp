@@ -47,7 +47,9 @@ test("the popover's bottom row IS a statusline: the chat's chip anatomy + counti
   assert.match(KERNEL, /effort = str\(meta\.get\("effort"\) or ""\) if "effort" in meta else \(\(reg\.get\("effort"\) or ""\) if reg else ""\)/);
   assert.match(KERNEL, /"effort": effort,/);
   assert.match(KERNEL, /"pickHeld": pick_held, "effortPending": effort_pending,/);
-  assert.match(KERNEL, /if effort_pending or pick_held:\n\s+events = events \+ \[_reconnecting_event\(meta\)\]/);
+  // ...and the fast and mode reloads' flags (review round 7), the same gate as the chat's (_reconnect_pending)
+  assert.match(KERNEL, /"fastPending": fast_pending, "modePending": mode_pending,/);
+  assert.match(KERNEL, /if _reconnect_pending\(meta\):\n\s+events = events \+ \[_reconnecting_event\(meta\)\]/);
   // the popover-local dress is GONE — no .cmt-meta chip skin to drift again; and the row restates
   // the page's base font inside the popover's 12px context (the adopted-context trap)
   const CSSs = CSS;
@@ -286,9 +288,13 @@ test("executed: threadMetaStatus carries a held pick and the armed reload into t
   assert.deepEqual(st.pickHeld, held, "the hold rides into the Status the shared builders read");
   assert.equal(st.effortPending, false);
   assert.equal(threadMetaStatus({ ...th, pickHeld: null, effortPending: true }).effortPending, true, "the armed reload too");
+  // the fast and mode reloads' flags ride the same way (review round 7): the popover's badge pulses as the chat's does
+  assert.equal(threadMetaStatus({ ...th, pickHeld: null, fastPending: true }).fastPending, true);
+  assert.equal(threadMetaStatus({ ...th, pickHeld: null, modePending: true }).modePending, true);
   const plain = threadMetaStatus({ ...th, pickHeld: undefined, effortPending: undefined });
   assert.equal(plain.pickHeld, null, "an older kernel's frame: no hold, never undefined");
   assert.equal(plain.effortPending, false);
+  assert.equal(plain.fastPending, false); assert.equal(plain.modePending, false);
   // and the menu marks read from that Status agree with the chat's: the pick checked, the running value tagged
   assert.deepEqual(heldMenuMarks("effort", st.pickHeld, st.effort), { current: "max", running: "high" });
 });

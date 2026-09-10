@@ -33,6 +33,8 @@ export type CommentThread = {
   model?: string;             // the thread's live/chosen model (the popover's switchable chip)
   effort?: string;            // the thread's effort level (ditto): the value the thread RUNS while a pick is held
   effortPending?: boolean;    // an effort reload is pending on the thread (the popover's effort badge shows the loader dots, as the chat's does)
+  fastPending?: boolean;      // a fast pick's reload is pending on the thread (the badge's dim pulse; review round 7, 2026-09-10)
+  modePending?: boolean;      // a mode pick's reload, or the landing's live switch, is pending on the thread (ditto)
   pickHeld?: PickHeld | null; // a settings pick held for the thread's live work (the badges' held mark and tip, the menus' marks; review round 6, 2026-09-10)
   msgs: CommentMsg[];
   events?: unknown[];         // the CHAT's own ChatEvents from the branch point on (render parity)

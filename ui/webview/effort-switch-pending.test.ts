@@ -16,6 +16,10 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 test("the effort badge shows switching-dots while a reconnect is pending, like the model badge", () => {
   assert.match(RENDER, /effortPending\?: boolean;/);   // status carries it
   assert.match(RENDER, /\(kind === "effort" && !!st\.effortPending\)/);          // effort feeds `pending`
+  // the mode and fast reloads carry the same flag since review round 7 (fastPending, modePending), read into `pending`
+  // beside the effort's; the executed slice below drives the pulse from them
+  assert.match(RENDER, /pickHeld\?: PickHeld \| null; fastPending\?: boolean; modePending\?: boolean;/);
+  assert.match(RENDER, /\(kind === "mode" && !!st\.modePending\) \|\| \(kind === "fast" && !!st\.fastPending\)/);
   assert.match(RENDER, /const showDots = pending && \(kind === "model" \|\| kind === "effort"\);/);   // dots for both reconnect-style badges (billing moved to the tab menu, 2026-08-09)
 });
 
@@ -295,6 +299,28 @@ test("executed: a click on the running row arms no loader, and the hold-cleared 
   // the server's own signal still drives the dots for an effort reload after the hold
   api.syncMetaControls(meta, { ...plainSt, effortPending: true });
   assert.equal(dots("effort"), true);
+  // ...and, since review round 7, the mode and fast reloads have a server signal of their own (modePending,
+  // fastPending): a held mode or fast pick that ARMED showed the picked value flat, no pulse, until the landing,
+  // because the hold's marker ends at the arm and only effort had a flag. The flag drives the dim pulse (never the
+  // dots, which are the model's and effort's), with no local click needed, and clears when the flag drops
+  api.metaPending.clear();
+  api.syncMetaControls(meta, { ...plainSt, mode: "bypassPermissions", modePending: true });
+  assert.ok(pulse("mode"), "the mode badge pulses on the server's flag alone");
+  assert.equal(dots("mode"), false, "never the dots");
+  assert.equal(label("mode").textContent, "bypassPermissions", "the label is what the kernel reports");
+  assert.equal(pulse("effort"), false, "the effort badge does not read the mode's flag");
+  api.syncMetaControls(meta, { ...plainSt, mode: "bypassPermissions" });
+  assert.equal(pulse("mode"), false, "the landing drops the flag and the pulse with it");
+  api.syncMetaControls(meta, { ...plainSt, fast: "on", fastPending: true });
+  assert.ok(pulse("fast"), "the fast badge pulses on the server's flag alone");
+  assert.equal(dots("fast"), false);
+  api.syncMetaControls(meta, { ...plainSt, fast: "on" });
+  assert.equal(pulse("fast"), false);
+  // a hold still outranks the flag: while held, a kind shows its mark and no pulse whatever the flag says
+  api.syncMetaControls(meta, { ...heldSt, pickHeld: { ...hold, surfaces: ["mode"], picked: { mode: "bypassPermissions" } }, modePending: true });
+  assert.equal(pulse("mode"), false, "held: no pulse");
+  assert.ok(btn("mode").classList.contains("meta-held"));
+  api.syncMetaControls(meta, plainSt);
   // the popover's badges are synced under their thread's sid; the hold-end retires that sid's loader, not the chat's
   const pop = new FakeEl("span", "spinner-meta");
   const TSID = "66666666-7777-8888-9999-aaaaaaaaaaaa";
