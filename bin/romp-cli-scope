@@ -45,12 +45,27 @@
 #     the log already has them.
 #   `romp-cli-scope: refused: …` — ROMP_CLI_REAL unset, exit 127, no CLI at all. The kernel counts no
 #     fallback for it: the launch fails, and the launch-error path reports the line on its own.
-#   `romp-cli-scope: ignored: …` — one of the per-session limits below was not applied: a value that
-#     does not parse, a property this systemd rejects, or an adjustment that parses but Linux will not
-#     let this process write. The CLI runs in its scope without it. The CLI starts, so the kernel logs
-#     this line the moment it arrives, as a problem naming the session; it is not a fallback (the scope
-#     is there). One launch can write more than one.
+#   `romp-cli-scope: ignored: …` — one of the scope's properties or per-session limits below was not
+#     applied: a value that does not parse, a property this systemd rejects (the OOM policy included), or
+#     an adjustment that parses but Linux will not let this process write. The CLI runs in its scope
+#     without it. The CLI starts, so the kernel logs this line the moment it arrives, as a problem naming
+#     the session; it is not a fallback (the scope is there). One launch can write more than one.
 # The rest of the CLI's stderr the kernel only buffers, for a launch that fails.
+#
+# OOMPolicy=continue, on EVERY scope (2026-09-10). A scope's default OOM policy is the user manager's
+# DefaultOOMPolicy, `stop` on a stock systemd (255): when the memory controller is delegated to the user
+# manager (stock too), systemd watches every scope's memory.events, and under `stop` ONE OOM-killed
+# process in the scope (a tool shell's child taken by the box-wide killer, no limit of ours involved)
+# makes systemd SIGTERM the whole cgroup: the CLI exits 143, the kernel resumes the session with its
+# history, and every background task the session had dies with it (41 of them at once, 2026-09-10).
+# `continue` leaves the kill where it landed, one process, and the session sees a failed tool call.
+# The property has to be set when the scope is created: `systemctl set-property` takes cgroup properties
+# only, so a limit added later cannot bring it (verified). It used to ride along only with a memory
+# limit below, so a scope started without one kept `stop`. The kernel's boot probe settles once whether
+# this systemd takes the property on a scope (OOMPolicy= on scopes needs 253) and, when it does not,
+# hands ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1 down, so the refusal is not repeated on every launch; a
+# scope on such a systemd takes no action on an OOM kill inside it anyway, which is the outcome
+# `continue` asks for. The variable is the kernel's, never a setting: without it the property goes on.
 #
 # Per-session limits (2026-09-06), every one opt-in and none set by default. A session's shell that
 # globbed a bloated /tmp grew past 30 GB, and the box's userspace OOM killer took the largest process
@@ -100,18 +115,17 @@
 # value that does not parse is skipped with one `ignored:` line naming the variable, and the scope
 # starts with the other limits. (The kernel validates the same variables once at its start and hands a
 # refused one down empty, so on a kernel-driven launch that line means the value reached the wrapper
-# some other way.) Whenever a memory property is set, OOMPolicy=continue goes with it: a scope's default
-# is `stop` (systemd 255), under which one OOM-killed process makes systemd stop the whole scope — the
-# CLI, its tmux servers and all — the opposite of what the limit is for. The pre-flight carries the
-# properties, so a systemd that rejects one of them (OOMPolicy= on scopes needs 253) fails there rather
-# than at the CLI's own launch; the wrapper then re-runs the pre-flight bare, and a scope that starts
-# without the properties gets the CLI without them, after one `ignored:` line quoting the rejection. The
-# kernel runs the same property probe once at its start and hands rejected properties down empty
-# (cli_scope_limits in sdk_backend.py), so on a kernel-driven launch that line too means something
-# changed since boot.
+# some other way.) The pre-flight carries the properties, OOMPolicy=continue included, so a systemd that
+# rejects one of them fails there rather than at the CLI's own launch; the wrapper then re-runs the
+# pre-flight bare, and a scope that starts without the properties gets the CLI without them (all of
+# them, the policy too) after one `ignored:` line quoting the rejection. The kernel runs the same
+# property probe once at its start and hands rejected properties down empty, or the policy's rejection
+# as the variable above (cli_scope_limits in sdk_backend.py), so on a kernel-driven launch that line
+# too means something changed since boot.
 #
 # Environment: ROMP_CLI_REAL (required) — the real CLI; ROMP_SID — the session id (kernel-set);
-# ROMP_CLI_SCOPE=0 — run the CLI directly, no scope; the limits above. Arguments pass through verbatim.
+# ROMP_CLI_SCOPE=0 — run the CLI directly, no scope; ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1, leave
+# OOMPolicy= off the scope (kernel-set, above); the limits above. Arguments pass through verbatim.
 set -u
 
 if [ -z "${ROMP_CLI_REAL:-}" ]; then
@@ -158,8 +172,9 @@ adj_ok() {    # an integer in -1000..1000: an optional minus, then digits with n
     [ "${#1}" -le 5 ] && [ "${1#-}" -le 1000 ]
 }
 
-# The memory properties, as `-p Name=value` words in one string: a validated value has no whitespace,
-# so the unquoted expansions below split into exactly those words.
+# The scope properties, as `-p Name=value` words in one string: a validated value has no whitespace,
+# so the unquoted expansions below split into exactly those words. The memory limits first, in variable
+# order, then the OOM policy.
 props=""
 for pair in ROMP_CLI_SCOPE_MEMORY_MAX=MemoryMax ROMP_CLI_SCOPE_MEMORY_HIGH=MemoryHigh \
             ROMP_CLI_SCOPE_MEMORY_SWAP_MAX=MemorySwapMax; do
@@ -172,7 +187,9 @@ for pair in ROMP_CLI_SCOPE_MEMORY_MAX=MemoryMax ROMP_CLI_SCOPE_MEMORY_HIGH=Memor
         ignored "$var is not a size (digits with an optional K, M, G or T suffix, or infinity)"
     fi
 done
-[ -n "$props" ] && props="$props -p OOMPolicy=continue"
+# The OOM policy, on every scope (the header says why), unless the kernel's boot probe found this systemd
+# refuses it on a scope; the pre-flight below still covers a refusal the kernel did not see.
+[ "${ROMP_CLI_SCOPE_OOM_POLICY_REJECTED:-}" = "1" ] || props="$props -p OOMPolicy=continue"
 
 # The OOM-score adjustment, on this process: exec-in-place carries it to the CLI and on to everything
 # the CLI spawns. `echo` is a builtin and a function runs in this shell, so the redirection is opened by
@@ -211,7 +228,7 @@ if ! preflight $props; then
         echo "romp-cli-scope: fallback: systemd-run cannot start a transient scope (${err:-no detail}) — running the CLI directly, outside a scope; a service restart will take its background work down" >&2
         exec "$ROMP_CLI_REAL" "$@"
     elif ! preflight $props; then
-        ignored "systemd-run rejected the per-session limits (${props# }: ${err:-no detail})"
+        ignored "systemd-run rejected the scope properties (${props# }: ${err:-no detail})"
         props=""
     fi
 fi

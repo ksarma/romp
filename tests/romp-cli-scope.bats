@@ -8,8 +8,9 @@
 # A FAKE systemd-run first on PATH records its argv (FAKE_LOG holds the LAST call's argv, one element
 # per line; FAKE_CALLS appends one line per call) and then execs the command after `--`, so the tests
 # see exactly what the wrapper asked for and the fake "real CLI" still runs. The wrapper calls it
-# twice per launch: a pre-flight `-- true`, then the scoped CLI. Nothing here touches the real
-# systemd-run.
+# twice per launch: a pre-flight `-- true`, then the scoped CLI, both carrying `-p OOMPolicy=continue`
+# (every scope does, since 2026-09-10; the per-session limits section below has the rest). A failed
+# pre-flight is retried bare, so a fallback costs two calls. Nothing here touches the real systemd-run.
 
 setup() {
     TEST_DIR="$(mktemp -d)"
@@ -45,6 +46,7 @@ SH
     # the per-session limits: a self-hosted suite inherits a real service.env setting through its tool
     # shell, and every exact argv pin below assumes none is set
     unset ROMP_CLI_SCOPE_MEMORY_MAX ROMP_CLI_SCOPE_MEMORY_HIGH ROMP_CLI_SCOPE_MEMORY_SWAP_MAX ROMP_CLI_SCOPE_OOM_SCORE_ADJ
+    unset ROMP_CLI_SCOPE_OOM_POLICY_REJECTED   # the kernel's marker for a systemd that refuses the policy: never inherited here
 }
 
 teardown() { rm -rf "$TEST_DIR"; }
@@ -114,7 +116,7 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ "$status" -eq 0 ]
     [ "$(wc -l < "$FAKE_CALLS")" -eq 2 ]
     first="$(sed -n 1p "$FAKE_CALLS")"
-    [[ "$first" == *"--user --scope --quiet --collect -- true" ]]
+    [[ "$first" == *"--user --scope --quiet --collect -p OOMPolicy=continue -- true" ]]
     [[ "$first" != *"--unit="* ]]
     second="$(sed -n 2p "$FAKE_CALLS")"
     [[ "$second" == *"--unit=romp-session-11111111-"* ]]
@@ -141,9 +143,10 @@ SH
     # the real CLI ran, directly, with its arguments intact
     [[ "$output" == *"REAL pid="* ]]
     [ "$(printf '%s\n' "$output" | grep '^ARG:')" = "$(printf 'ARG:%s\n' --input-format stream-json "two words")" ]
-    # systemd-run was tried exactly once (the pre-flight), never for the CLI itself
-    [ "$(wc -l < "$FAKE_CALLS")" -eq 1 ]
-    [[ "$(cat "$FAKE_CALLS")" == *"-- true" ]]
+    # systemd-run was tried for the pre-flight only (with the policy, then bare), never for the CLI itself
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 2 ]
+    [[ "$(sed -n 1p "$FAKE_CALLS")" == *"-p OOMPolicy=continue -- true" ]]
+    [ "$(sed -n 2p "$FAKE_CALLS")" = "--user --scope --quiet --collect -- true" ]
     # one stderr line: the fallback form, the reason's first line, and the direct run
     [ "$(wc -l < "$ERR")" -eq 1 ]
     grep -q '^romp-cli-scope: fallback: ' "$ERR"
@@ -200,10 +203,11 @@ SH
     ERR="$TEST_DIR/stderr"
     run sh -c '"$0" --input-format stream-json 2>"$1"' "$WRAPPER" "$ERR"
     [ "$status" -eq 0 ]
-    # the bound was asked for once, with the pre-flight behind it; systemd-run itself never ran — not for
-    # the pre-flight (the fake cut it) and not for the CLI (it ran directly)
-    [ "$(wc -l < "$TIMEOUT_LOG")" -eq 1 ]
-    [ "$(cat "$TIMEOUT_LOG")" = "10 systemd-run --user --scope --quiet --collect -- true" ]
+    # the bound was asked for twice, with the pre-flight behind it (with the policy, then bare); systemd-run
+    # itself never ran, not for the pre-flight (the fake cut it) and not for the CLI (it ran directly)
+    [ "$(wc -l < "$TIMEOUT_LOG")" -eq 2 ]
+    [ "$(sed -n 1p "$TIMEOUT_LOG")" = "10 systemd-run --user --scope --quiet --collect -p OOMPolicy=continue -- true" ]
+    [ "$(sed -n 2p "$TIMEOUT_LOG")" = "10 systemd-run --user --scope --quiet --collect -- true" ]
     [ ! -e "$FAKE_CALLS" ]
     [[ "$output" == *"REAL pid="* ]]
     [ "$(printf '%s\n' "$output" | grep '^ARG:')" = "$(printf 'ARG:%s\n' --input-format stream-json)" ]
@@ -220,7 +224,7 @@ SH
     [ "$status" -eq 0 ]
     [[ "$output" == *"REAL pid="* ]]
     [ "$(wc -l < "$TIMEOUT_LOG")" -eq 1 ]
-    [ "$(cat "$TIMEOUT_LOG")" = "10 systemd-run --user --scope --quiet --collect -- true" ]
+    [ "$(cat "$TIMEOUT_LOG")" = "10 systemd-run --user --scope --quiet --collect -p OOMPolicy=continue -- true" ]
     # both systemd-run calls still happened: the pre-flight (through timeout) and the scoped CLI
     [ "$(wc -l < "$FAKE_CALLS")" -eq 2 ]
     [[ "$(sed -n 2p "$FAKE_CALLS")" == *"--unit=romp-session-11111111-"* ]]
@@ -313,7 +317,7 @@ SH
     # the notice went to stderr, never stdout, in the fallback form
     [ "$(wc -l < "$ERR")" -eq 1 ]
     grep -q '^romp-cli-scope: fallback: ' "$ERR"
-    [ "$(wc -l < "$FAKE_CALLS")" -eq 1 ]
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 2 ]     # the pre-flight with the policy, then bare
 }
 
 @test "ROMP_CLI_SCOPE=0 runs the real CLI directly — systemd-run is not invoked" {
@@ -357,12 +361,15 @@ SH
     grep -q 'ROMP_CLI_REAL' "$ERR"
 }
 
-# ── the per-session limits (2026-09-06) ────────────────────────────────────────────────────────────
+# ── the per-session limits (2026-09-06) and the OOM policy (2026-09-10) ────────────────────────────
 # ROMP_CLI_SCOPE_MEMORY_MAX / _MEMORY_HIGH / _MEMORY_SWAP_MAX become `-p MemoryMax= / MemoryHigh= /
-# MemorySwapMax=` on the scope, with `-p OOMPolicy=continue` whenever one is set (a scope's default
-# `stop` ends the whole scope on one OOM kill); ROMP_CLI_SCOPE_OOM_SCORE_ADJ is written to the
-# wrapper's own /proc/self/oom_score_adj before the exec. Every one opt-in; the kernel validates the
-# same rules first (tests/test_cli_scope.py LimitRules runs size_ok/adj_ok over the same corpus).
+# MemorySwapMax=` on the scope; `-p OOMPolicy=continue` follows them on EVERY scope, limits or none (a
+# scope's default `stop` made systemd end a whole session's cgroup, background tasks and all, on one
+# OOM-killed tool child; the property is creation-time only, so it cannot wait for a limit), unless the
+# kernel's boot probe found this systemd refuses it (ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1, kernel-set);
+# ROMP_CLI_SCOPE_OOM_SCORE_ADJ is written to the wrapper's own /proc/self/oom_score_adj before the exec.
+# The limits are opt-in; the kernel validates the same rules first (tests/test_cli_scope.py LimitRules
+# runs size_ok/adj_ok over the same corpus).
 
 @test "the memory limits become -p properties on the pre-flight and on the CLI's scope, with OOMPolicy=continue" {
     ERR="$TEST_DIR/stderr"
@@ -383,24 +390,81 @@ SH
     grep -qx -- 'OOMPolicy=continue' "$FAKE_LOG"
 }
 
-@test "one limit alone still brings OOMPolicy=continue; none, or empty ones, bring no -p at all" {
+@test "one limit alone brings OOMPolicy=continue after it; none, or empty ones, bring OOMPolicy=continue alone" {
     ROMP_CLI_SCOPE_MEMORY_MAX=16G run "$WRAPPER" a
     [ "$status" -eq 0 ]
     [[ "$(sed -n 2p "$FAKE_CALLS")" == *" -p MemoryMax=16G -p OOMPolicy=continue -- $REAL a" ]]
     rm -f "$FAKE_CALLS" "$FAKE_LOG"
+    # no limit at all: the policy is the one property, on the pre-flight and on the CLI's scope (before
+    # 2026-09-10 it came only with a limit, and a scope started without one kept the default `stop`)
     run "$WRAPPER" a
     [ "$status" -eq 0 ]
-    run grep -q -- '-p' "$FAKE_CALLS"
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 2 ]
+    [ "$(sed -n 1p "$FAKE_CALLS")" = "--user --scope --quiet --collect -p OOMPolicy=continue -- true" ]
+    [[ "$(sed -n 2p "$FAKE_CALLS")" == *"--description=romp session $ROMP_SID -p OOMPolicy=continue -- $REAL a" ]]
+    grep -qx -- 'OOMPolicy=continue' "$FAKE_LOG"
+    run grep -q 'Memory' "$FAKE_CALLS"
     [ "$status" -ne 0 ]
     rm -f "$FAKE_CALLS" "$FAKE_LOG"
-    # empty is what the kernel sends down for an unset or refused variable
+    # empty is what the kernel sends down for an unset or refused variable: the same, with nothing on stderr
     ERR="$TEST_DIR/stderr"
     ROMP_CLI_SCOPE_MEMORY_MAX= ROMP_CLI_SCOPE_MEMORY_HIGH= ROMP_CLI_SCOPE_MEMORY_SWAP_MAX= ROMP_CLI_SCOPE_OOM_SCORE_ADJ= \
         run sh -c '"$0" a 2>"$1"' "$WRAPPER" "$ERR"
     [ "$status" -eq 0 ]
     [ ! -s "$ERR" ]
-    run grep -q -- '-p' "$FAKE_CALLS"
+    [ "$(sed -n 1p "$FAKE_CALLS")" = "--user --scope --quiet --collect -p OOMPolicy=continue -- true" ]
+    [[ "$(sed -n 2p "$FAKE_CALLS")" == *" -p OOMPolicy=continue -- $REAL a" ]]
+    run grep -q 'Memory' "$FAKE_CALLS"
     [ "$status" -ne 0 ]
+}
+
+@test "ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1 (the kernel's word that this systemd refuses the policy) leaves it off" {
+    # no limit: no -p at all, as before the policy went on every scope
+    ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1 run "$WRAPPER" a
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 2 ]
+    [ "$(sed -n 1p "$FAKE_CALLS")" = "--user --scope --quiet --collect -- true" ]
+    [[ "$(sed -n 2p "$FAKE_CALLS")" == *"--description=romp session $ROMP_SID -- $REAL a" ]]
+    rm -f "$FAKE_CALLS" "$FAKE_LOG"
+    # a limit: the limit alone
+    ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1 ROMP_CLI_SCOPE_MEMORY_MAX=16G run "$WRAPPER" a
+    [ "$status" -eq 0 ]
+    [ "$(sed -n 1p "$FAKE_CALLS")" = "--user --scope --quiet --collect -p MemoryMax=16G -- true" ]
+    [[ "$(sed -n 2p "$FAKE_CALLS")" == *" -p MemoryMax=16G -- $REAL a" ]]
+    rm -f "$FAKE_CALLS" "$FAKE_LOG"
+    # only the value 1 is the marker: anything else, and the policy goes on
+    ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=0 run "$WRAPPER" a
+    [ "$status" -eq 0 ]
+    [[ "$(sed -n 2p "$FAKE_CALLS")" == *" -p OOMPolicy=continue -- $REAL a" ]]
+    rm -f "$FAKE_CALLS" "$FAKE_LOG"
+    ROMP_CLI_SCOPE_OOM_POLICY_REJECTED= run "$WRAPPER" a
+    [ "$status" -eq 0 ]
+    [[ "$(sed -n 2p "$FAKE_CALLS")" == *" -p OOMPolicy=continue -- $REAL a" ]]
+}
+
+@test "a systemd-run that rejects OOMPolicy= with no limit set: the pre-flight re-runs bare and the CLI gets a bare scope, after one ignored: line" {
+    # an older systemd (OOMPolicy= on scopes needs 253) and no limit: the chain is the same as for the
+    # limits below, and the line names the one property it dropped
+    cat > "$BIN/systemd-run" <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_LOG"
+echo "$*" >> "$FAKE_CALLS"
+case " $* " in *" -p "*) echo "Failed to start transient scope unit: Unknown assignment: OOMPolicy=continue" >&2; exit 1 ;; esac
+while [ "$#" -gt 0 ]; do a="$1"; shift; [ "$a" = "--" ] && break; done
+exec "$@"
+SH
+    chmod +x "$BIN/systemd-run"
+    ERR="$TEST_DIR/stderr"
+    run sh -c '"$0" a 2>"$1"' "$WRAPPER" "$ERR"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"REAL pid="* ]]
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 4 ]
+    [ "$(sed -n 1p "$FAKE_CALLS")" = "--user --scope --quiet --collect -p OOMPolicy=continue -- true" ]
+    [ "$(sed -n 2p "$FAKE_CALLS")" = "--user --scope --quiet --collect -- true" ]
+    [ "$(sed -n 3p "$FAKE_CALLS")" = "--user --scope --quiet --collect -p OOMPolicy=continue -- true" ]
+    [[ "$(sed -n 4p "$FAKE_CALLS")" == *"--unit=romp-session-11111111-"*"--description=romp session $ROMP_SID -- $REAL a" ]]
+    [ "$(wc -l < "$ERR")" -eq 1 ]
+    [[ "$(cat "$ERR")" == "romp-cli-scope: ignored: systemd-run rejected the scope properties (-p OOMPolicy=continue: Failed to start transient scope unit: Unknown assignment: OOMPolicy=continue) — the CLI runs in its scope without it" ]]
 }
 
 @test "a value that is not a size is skipped with one ignored: line naming the variable; the others and the scope stand" {
@@ -472,7 +536,7 @@ SH
     [[ "$(sed -n 4p "$FAKE_CALLS")" == *"--description=romp session $ROMP_SID -- $REAL a" ]]
     # one stderr line: the ignored form, the properties it dropped, systemd-run's own first line
     [ "$(wc -l < "$ERR")" -eq 1 ]
-    grep -q '^romp-cli-scope: ignored: systemd-run rejected the per-session limits' "$ERR"
+    grep -q '^romp-cli-scope: ignored: systemd-run rejected the scope properties' "$ERR"
     grep -q -- '-p MemoryMax=16G -p OOMPolicy=continue' "$ERR"
     grep -q 'Unknown assignment' "$ERR"
     grep -q 'runs in its scope without it' "$ERR"
@@ -502,7 +566,7 @@ SH
     [ "$(wc -l < "$FAKE_CALLS")" -eq 4 ]
     [[ "$(sed -n 4p "$FAKE_CALLS")" == *"--description=romp session $ROMP_SID -- $REAL a" ]]
     [ "$(wc -l < "$ERR")" -eq 1 ]
-    grep -q '^romp-cli-scope: ignored: systemd-run rejected the per-session limits' "$ERR"
+    grep -q '^romp-cli-scope: ignored: systemd-run rejected the scope properties' "$ERR"
     grep -q 'Unknown assignment' "$ERR"
     run grep -q 'Connection timed out' "$ERR"
     [ "$status" -ne 0 ]
@@ -575,7 +639,7 @@ SH
     export ROMP_CLI_REAL="$REAL_ADJ"
 }
 
-@test "ROMP_CLI_SCOPE_OOM_SCORE_ADJ raises the CLI's own oom_score_adj; no -p for it" {
+@test "ROMP_CLI_SCOPE_OOM_SCORE_ADJ raises the CLI's own oom_score_adj; no -p for it (the policy alone is on the scope)" {
     [ -r /proc/self/oom_score_adj ] || skip "no /proc/self/oom_score_adj on this box"
     local cur; cur="$(cat /proc/self/oom_score_adj)"
     [ "$cur" -le 900 ] || skip "this process already sits near the top of the range"
@@ -585,7 +649,8 @@ SH
     [ "$status" -eq 0 ]
     [ "$output" = "ADJ:$((cur + 100))" ]
     [ ! -s "$ERR" ]
-    run grep -q -- '-p' "$FAKE_CALLS"
+    [[ "$(sed -n 2p "$FAKE_CALLS")" == *"--description=romp session $ROMP_SID -p OOMPolicy=continue -- $REAL_ADJ" ]]
+    run grep -q 'oom_score_adj\|OOM_SCORE_ADJ\|OOMScoreAdjust' "$FAKE_CALLS"   # no property for it, by any name
     [ "$status" -ne 0 ]
     # and the test's own process is untouched: the write was on the wrapper, which exec'd away
     [ "$(cat /proc/self/oom_score_adj)" = "$cur" ]
@@ -709,5 +774,5 @@ SH
     run grep -q -- '-p' <<< "$(sed -n 4p "$FAKE_CALLS")"
     [ "$status" -ne 0 ]
     [ "$(wc -l < "$ERR")" -eq 1 ]
-    grep -q '^romp-cli-scope: ignored: systemd-run rejected the per-session limits' "$ERR"
+    grep -q '^romp-cli-scope: ignored: systemd-run rejected the scope properties' "$ERR"
 }

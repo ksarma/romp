@@ -1415,13 +1415,33 @@ limits; the adjustment is still written. On a launch the kernel drove, an
 `ignored:` line quoting a systemd rejection means the machine changed under the
 running kernel.
 
-Whenever a memory limit is set, the wrapper also sets `OOMPolicy=continue` on
-the scope. A scope's default is `stop`: when Linux's OOM killer kills one
-process in it, systemd stops the whole scope, which ends the CLI and every tmux
-server and `setsid` job in it. With `continue`, only the killed process is gone.
+The wrapper sets `OOMPolicy=continue` on every scope, whether or not a memory
+limit is set. A scope's default is `stop` (the user manager's
+`DefaultOOMPolicy`): when Linux's OOM killer kills one process in the scope, any
+process, over a limit of the scope's or with none set, systemd stops the whole
+scope, which ends the CLI and every tmux server, `setsid` job and background
+task in it. That happened on 2026-09-10: the machine-wide OOM killer took one
+tool child in a session's scope that had no limits, the CLI exited 143, the
+kernel resumed the session, and 41 background tasks died with it. With
+`continue`, only the killed process is gone, and a kill contained in one process
+never becomes a cut turn. The property has to be set when the scope is created:
+`systemctl set-property` takes cgroup properties only, so a limit added to a
+running scope cannot add it. Until 2026-09-10 the wrapper set it only along
+with a memory limit, so a scope started without one kept `stop`. A systemd
+before 253 refuses `OOMPolicy=` on a scope; the kernel's probe at its start
+(below) settles that once, hands the wrapper `ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1`
+so that no launch finds it out again, and says so in a plain line rather than a
+problem, because a scope on such a systemd takes no action on an OOM kill inside
+it, which is the outcome the property asks for. The variable is the kernel's,
+not a setting. `/api-health` shows the policy as `cliScope.oomPolicy`. When a
+session's CLI dies mid-turn and its scope reads `Result=oom-kill` (a scope
+started before the property went on every one, or one `systemd-oomd` stopped),
+the kernel names the OOM kill in its log line for the resume and in the notice
+the session reads, instead of reporting a bare exit.
 systemd logs each kill to the user journal as `<unit>: A process of this unit
 has been killed by the OOM killer` (`journalctl --user --since today | grep
-'romp-session-'`).
+'romp-session-'`), and a scope it stopped over one as `<unit>: Failed with result
+'oom-kill'`.
 
 The limits need the memory controller delegated to the systemd user manager;
 stock systemd delegates it (`systemctl show user@$(id -u).service -p
@@ -2141,7 +2161,13 @@ label the account digest itself, so a bucket can be matched to the log.
   - `rejected`, the names of the variables whose values were refused, by their
     rule or by this machine at the kernel's start (memory properties systemd
     rejected; an adjustment the process could not write), each also a problem
-    line at the kernel's start.
+    line at the kernel's start; and `OOMPolicy` when this systemd refused the
+    policy on a scope (a plain line when the refusal named it, since nothing is
+    lost on such a systemd; a problem otherwise).
+  - `oomPolicy`, the OOM policy every session scope carries: `"continue"`, or
+    `null` when this systemd refused it or the scopes are off. With `continue`
+    an OOM kill inside a scope ends that process alone; under systemd's default
+    `stop` it ended the whole scope, the CLI and its background tasks included.
   - `memoryControllerDelegated`, the kernel's start-time check of whether a
     probe scope carrying the memory properties had a `memory.max` file in its
     cgroup: `true`, `false` (systemd holds the sizes above and applies nothing;
@@ -2152,21 +2178,23 @@ label the account digest itself, so a bucket can be matched to the log.
   - `unsettled`, the names of the kernel's start-time checks that were due and
     settled nothing: `memoryLimits` (the probe scope carrying the memory
     properties did not answer, or failed both with and without them),
-    `memoryController` (the check inside it gave no marker), `oomScoreAdj` (the
-    throwaway child's write did not answer). Empty when every due check
-    answered, and when none was due (the scopes off, no limit set). A value
-    listed above whose check is named here is set and handed to the wrapper as
-    read, and whether it applies is not known at the kernel's start; the other
-    fields cannot show this (`oomScoreAdj` present, `rejected` empty and
-    `memoryControllerDelegated` `true` read the same whether the adjustment's
-    check answered or not). Each named check is also a line in the boot log
-    saying why.
+    `oomPolicy` (the same probe, which carries the policy too, so the two are
+    named together when a limit is set), `memoryController` (the check inside it
+    gave no marker), `oomScoreAdj` (the throwaway child's write did not answer).
+    Empty when every due check answered, and when none was due (the scopes
+    off). A value listed above whose check is named here is set and handed to
+    the wrapper as read, and whether it applies is not known at the kernel's
+    start; the other fields cannot show this (`oomScoreAdj` present, `rejected`
+    empty and `memoryControllerDelegated` `true` read the same whether the
+    adjustment's check answered or not). Each named check is also a line in the
+    boot log saying why.
   - `limitsIgnored`, wrapper `romp-cli-scope: ignored: …` lines since boot (each
     also a problem line, `cli scope: session <name> (<sid8>) started its CLI
-    without a per-session limit — <line>`). It counts lines, not launches: one
-    launch writes one line for each value the wrapper refuses, one for the
-    memory properties together when systemd rejects them, and one for an
-    adjustment it could not write. `on: true` with a limit set and
+    without one of its scope's settings — <line>`). It counts lines, not
+    launches: one launch writes one line for each value the wrapper refuses,
+    one for the scope properties together (the memory limits and the OOM policy)
+    when systemd rejects them, and one for an adjustment it could not write.
+    `on: true` with a limit set and
     `limitsIgnored > 0` means a value the kernel accepted at its start was
     refused at a launch: the machine changed under the running kernel, or the
     value reached the wrapper outside the kernel's hand-off (see "Per-session

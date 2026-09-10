@@ -485,7 +485,7 @@ class ResumeNudgeDisarmsTheStopRecord(unittest.TestCase):
     say the user did not write it, and instruct the model to continue without asking."""
 
     def test_both_nudges_name_and_disown_the_stop_record(self):
-        for nudge in (sb.BOOT_RESUME_NUDGE, sb.CRASH_RESUME_NUDGE):
+        for nudge in (sb.BOOT_RESUME_NUDGE, sb.CRASH_RESUME_NUDGE, sb.CRASH_RESUME_NUDGE_OOM):
             self.assertIn("[Request interrupted by user]", nudge,
                           "the notice names the record it is disarming, verbatim")
             self.assertIn("nobody asked you to stop", nudge,
@@ -570,9 +570,14 @@ class MachineCutStampWiring(unittest.TestCase):
 
     def test_crash_resume_stamps_the_crash_cut(self):
         src = Path(BIN, "romp_sdk_backend.py").read_text()
-        cut = src.index("reg[\"queue\"] = [CRASH_RESUME_NUDGE]")
+        # the queued text is CRASH_RESUME_NUDGE or its out-of-memory form (2026-09-10), picked into `nudge`
+        # just above; both carry the lead sentence INTR_CRASH_SIG matches, and the stamp must still follow
+        pick = src.index("nudge = CRASH_RESUME_NUDGE_OOM if oom_unit else CRASH_RESUME_NUDGE")
+        cut = src.index("reg[\"queue\"] = [nudge]", pick)
         self.assertIn('append_machine_cut(self.state_dir, sid, "crash")', src[cut:cut + 1200],
                       "the crash resume must stamp its cut too")
+        self.assertIn(km.INTR_CRASH_SIG, sb.CRASH_RESUME_NUDGE_OOM, "the out-of-memory form keeps the crash signature")
+        self.assertNotIn(km.INTR_RESTART_SIG, sb.CRASH_RESUME_NUDGE_OOM)
 
     def setUp(self):
         km._machine_cut_cache.clear()      # the reader is mtime+size cached — never read a sibling's file
