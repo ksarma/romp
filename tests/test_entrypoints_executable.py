@@ -13,7 +13,9 @@ checkout whose bits were restored by hand still fails on the recorded mode.
 
 Scope: the entries git tracks directly under the three trees, enumerated from the index and never
 from the working tree's listing, so an untracked stray file in bin/ is not a shipped command and is
-ignored. The rule is content, not name shape:
+ignored. An entry marked skip-worktree is left out too: git deliberately did not check it out, so a
+cone sparse checkout that leaves out hooks/ is checked for the trees it has (the full check is CI's
+and a full checkout's). The rule is content, not name shape:
   - a tracked regular file is a command when its first two bytes are "#!". It must be recorded as
     100755 and be executable in the checkout, whatever its name: a launcher committed as
     bin/romp-<x>.sh without its bit is an offender. A regular file without a shebang (bin/README.md,
@@ -51,6 +53,8 @@ TREES = ("bin", "hooks", ".githooks")
 # the symlink whose target lost its bit in the incident this module answers, and the git hook.
 MUST_REACH = ("bin/romp", "bin/romp-kernel", ".githooks/pre-push")
 SYMLINK = "120000"
+# git ls-files -t's tag for an entry git deliberately did not check out
+SKIP_WORKTREE = "S"
 # git's own wording for a tree with no repository above it; the one nonzero exit that is a skip
 NOT_A_REPOSITORY = "not a git repository"
 EXECUTABLE = "100755"
@@ -61,9 +65,13 @@ def _index(root=ROOT, env=None):
     only when git is not installed or says `root` is not in a repository; any other failure is an
     AssertionError carrying git's stderr, never a skip. `env` is the environment git runs under; the
     real checkout inherits the process's (a hook's GIT_INDEX_FILE is the right index to read there),
-    the scratch class passes its scrubbed one."""
+    the scratch class passes its scrubbed one. Entries tagged skip-worktree are left out: they are
+    not checked out, so they are neither commands nor missing."""
+    # -t prefixes each entry with its status tag (H cached, S skip-worktree). git-ls-files(1) calls the
+    # flag semi-deprecated in favour of git status, but it is the one listing that exposes skip-worktree,
+    # and git 2.43 honours it.
     try:
-        proc = subprocess.run(["git", "ls-files", "-s", "-z"], cwd=root, env=env,
+        proc = subprocess.run(["git", "ls-files", "-s", "-t", "-z"], cwd=root, env=env,
                               capture_output=True, text=True, timeout=60)
     except FileNotFoundError:
         raise unittest.SkipTest("git is not installed; the recorded modes cannot be read")
@@ -79,7 +87,10 @@ def _index(root=ROOT, env=None):
         if not entry:
             continue
         meta, _, path = entry.partition("\t")
-        recorded[path] = meta.split()[0]
+        tag, mode = meta.split()[:2]
+        if tag == SKIP_WORKTREE:
+            continue
+        recorded[path] = mode
     return recorded
 
 
@@ -177,8 +188,9 @@ class ScratchCheckout(unittest.TestCase):
     repo's index or working tree: a shebang file recorded as 100644 is an offender in both layers
     whatever its name, a file without a shebang and a symlink with an extension are not commands, an
     untracked file is not a command, a symlink target without its bit is named through its link, a
-    hook under hooks/ or .githooks/ is held to the same rules, and the index reader skips for a
-    missing git or repository only. The scratch git runs under env(): it sees neither the index a
+    hook under hooks/ or .githooks/ is held to the same rules, an entry marked skip-worktree and absent
+    from the tree is neither a command nor missing, and the index reader skips for a missing git or
+    repository only. The scratch git runs under env(): it sees neither the index a
     run from a hook inherits nor the machine's own git config, hooks or excludes file."""
 
     def setUp(self):
@@ -305,6 +317,21 @@ class ScratchCheckout(unittest.TestCase):
         self.assertEqual(_checkout_offenders(commands, self.root), [".githooks/pre-push", "bin/romp-x.sh"])
         self.assertEqual(_index_offenders(commands, recorded, self.root),
                          ["bin/romp-x.sh: recorded as 100644", "hooks/romp-hook.sh: recorded as 100644"])
+
+    def test_a_skip_worktree_entry_absent_from_the_tree_is_neither_a_command_nor_missing(self):
+        # what a cone sparse checkout that leaves out hooks/ looks like: the entry stays in the index,
+        # tagged S, and git removed it from the working tree
+        self.git("update-index", "--skip-worktree", "hooks/romp-hook.sh")
+        os.remove(self.path("hooks/romp-hook.sh"))
+        recorded, commands, unresolved = self.walk()
+        self.assertEqual(unresolved, [])
+        self.assertNotIn("hooks/romp-hook.sh", recorded)
+        self.assertEqual([rel for rel, _ in commands], [".githooks/pre-push", "bin/romp", "bin/romp-kernel", "bin/romp-x.sh"])
+        # the same entry removed without the mark is missing, so the tag is what the walk reads
+        self.git("update-index", "--no-skip-worktree", "hooks/romp-hook.sh")
+        recorded, commands, unresolved = self.walk()
+        self.assertEqual(unresolved, ["hooks/romp-hook.sh: tracked but missing from the working tree"])
+        self.assertEqual(recorded["hooks/romp-hook.sh"], EXECUTABLE)
 
     def test_the_scratch_git_sees_neither_an_inherited_index_nor_the_machines_git_files(self):
         # a second scratch repo stands in for this checkout: git exports GIT_DIR and GIT_INDEX_FILE to
