@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Every command under bin/ stays executable, in the checkout and in the mode git records (2026-09-10).
 
-bin/romp-kernel is a symlink to kernel/kernel.py and bin/romp-serve execs it, so a kernel.py without
-its executable bit fails every kernel launch with PermissionError. On 2026-09-10 a whole-file rewrite
-of kernel/kernel.py was committed on a PR branch as mode 100644: every served browser test in the
-local sweep errored launching the kernel, and CI stayed green, because the served modules skip there
-without Playwright and nothing on CI read the mode. These two tests read it, one from the working
-tree and one from the index, so a checkout whose bits were restored by hand still fails on the
-recorded mode.
+bin/romp-kernel is a symlink to kernel/kernel.py, and the served browser tests spawn bin/romp-kernel
+by path, so a kernel.py without its executable bit fails every one of those spawns with
+PermissionError (bin/romp-serve, the launcher the manager goes through, refuses such a kernel at its
+-x guard and exits 1 instead). On 2026-09-10 a whole-file rewrite of kernel/kernel.py was committed
+on a PR branch as mode 100644: every served browser test in the local sweep errored launching the
+kernel, and CI stayed green, because the served modules skip there without Playwright and nothing on
+CI read the mode. These two tests read it, one from the working tree and one from the index, so a
+checkout whose bits were restored by hand still fails on the recorded mode.
 
 Scope: the entries git tracks directly under bin/, enumerated from the index and never from the
 working tree's listing, so an untracked stray file in bin/ is not a shipped command and is ignored.
@@ -150,8 +151,9 @@ class EntryPointsExecutable(unittest.TestCase):
     def test_every_command_and_its_target_is_executable_in_the_checkout(self):
         offenders = _checkout_offenders(self.commands, ROOT)
         self.assertEqual(offenders, [], "bin/ commands (and the files their symlinks reach) must be "
-                         "executable; bin/romp-serve execs bin/romp-kernel and fails with PermissionError "
-                         "otherwise. Restore with chmod +x and commit the mode change:\n" + "\n".join(offenders))
+                         "executable; the served tests spawn bin/romp-kernel by path and fail with "
+                         "PermissionError otherwise, and bin/romp-serve refuses a kernel without the bit. "
+                         "Restore with chmod +x and commit the mode change:\n" + "\n".join(offenders))
 
     def test_git_records_mode_100755_for_every_command_and_its_target(self):
         offenders = _index_offenders(self.commands, self.recorded, ROOT)
