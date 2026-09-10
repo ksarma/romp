@@ -13638,14 +13638,24 @@ class SdkBackend:
         own list is replaced, not merged (the reg mirrors it; a merge would duplicate or resurrect). With
         `nudge` the crash resume notice heads the queue and an earlier crash notice is dropped (the heal's
         de-dup, is_crash_resume_nudge); without one (the crash-loop refusal; a session ended during the
-        reads) the queue is written as it stands. Returns the entries written, in wire form. Raises what
-        read_reg and write_reg raise: the callers log it."""
+        reads) the queue is written as it stands. A reg that EXISTS but would not read (read_reg None with
+        the file present, a transient failure) is not rebuilt from {sid, queue}: that guts it (no alive, no
+        name, no cwd; _update_reg's guard, the 2026-08-31 blink class), so the queue is still closed under
+        the session's _lock and an OSError is raised instead, worded as that guard (round 6, correctness-2);
+        the reg keeps its last good queue, the session's pending texts do not reach it (the one-lost-update
+        trade _update_reg makes), and the callers log the raise. Returns the entries written, in wire form.
+        Raises that OSError and what read_reg and write_reg raise: the callers log it."""
         with sess._persist_lock:
             with self._reg_lock:
-                reg = read_reg(self.state_dir, sess.sid) or {"sid": sess.sid}
+                reg = read_reg(self.state_dir, sess.sid)
                 with sess._lock:
                     sess._queue_closed = True
                     pend = list(sess._pending)
+                    if reg is None:
+                        if _reg_path(self.state_dir, sess.sid).exists():
+                            raise OSError("reg %s unreadable: skipping the sealed queue write rather than gutting the "
+                                          "reg (%d pending text(s) did not reach it)" % (sess.sid[:8], len(pend)))
+                        reg = {"sid": sess.sid}
                     queue = [_queue_wire(t) for t in pend if not (nudge and is_crash_resume_nudge(t))]
                     if nudge:
                         queue = [nudge] + queue

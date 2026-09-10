@@ -2520,6 +2520,37 @@ class CrashHeal(unittest.TestCase):
             self.assertTrue(any("queue closed under the send" in m for m in logs), logs)
             self.assertEqual(be.problems(), [], "the re-resolve is the designed path, not a problem")
 
+    def test_an_unreadable_reg_skips_the_sealed_queue_write_and_the_heal_says_so(self):
+        # round 6 (correctness-2): _write_sealed_queue rebuilt the reg from `read_reg(...) or {"sid": ...}`, so a
+        # transient read failure of an EXISTING reg wrote a gutted {sid, queue} reg with no alive, name, cwd or
+        # lastSid (the 2026-08-31 blink class _update_reg guards against) and the heal went on to spawn the
+        # replacement from it. Now the queue is still closed under the session's _lock, nothing is written, an
+        # OSError worded as _update_reg's guard is raised and the heal's FAILED line names it; the reg keeps its
+        # last good queue and no replacement is spawned (a silent resume with no nudge otherwise). The session's
+        # pending texts do not reach the reg: the one-lost-update trade _update_reg makes, and the line says so.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        logs = []
+        be._log_cb = logs.append
+        _reg(d, self.SID, queue=["old text"])
+        s = self._dead_session(be, d, exit_code=self.KILL, baseline=0)   # its pending is seeded from the reg's queue
+        with s._lock:
+            s._pending.append("peer text")        # a send during the reads: in the pending, not in the reg
+        before = sb.read_reg(Path(d), self.SID)
+        with mock.patch.object(sb, "read_reg", return_value=None), mock.patch.object(be, "_ensure") as ens:
+            be._on_session_gone(s)
+        after = sb.read_reg(Path(d), self.SID)
+        self.assertEqual(after, before, "the reg is untouched: alive, name, cwd, lastSid and its prior queue")
+        for key in ("alive", "name", "cwd", "lastSid"):
+            self.assertIn(key, after)
+        self.assertEqual(after.get("queue"), ["old text"], "the reg keeps its last good queue")
+        ens.assert_not_called()
+        self.assertTrue(s._queue_closed, "the queue is closed before the raise")
+        failed = [m for m in logs if "crash-resume FAILED" in m]
+        self.assertEqual(len(failed), 1, logs)
+        self.assertIn("reg %s unreadable: skipping the sealed queue write rather than gutting the reg (2 pending text(s) "
+                      "did not reach it)" % self.SID[:8], failed[0])
+
     def test_a_send_during_the_read_under_a_crash_loop_refusal_is_parked_in_the_reg(self):
         # round 5 (fresh-2): with the one resume spent (_heal_attempts 1), a send that reaches the dying session during
         # the read is accepted and its text folded into the reg by the refusal's own write (the mirror is sealed from
