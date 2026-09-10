@@ -3,7 +3,7 @@ title: Name an OOM-killed scope in the crash heal's log line and resume notice
 status: candidate
 where: kernel/sdk_backend.py (_heal_cut_session, _oom_killed_scope, scope_results, oom_killed_scope, CRASH_RESUME_NUDGE_OOM, is_crash_resume_nudge); tests/test_sdk_lifecycle_hardening.py CrashHeal
 added: 2026-09-10
-pr:
+pr: 580
 tier: fix
 offered:
 closed:
