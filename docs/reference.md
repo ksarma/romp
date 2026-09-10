@@ -897,11 +897,13 @@ posting to the port.
 `romp refresh`, `romp down`, the dashboard's Restart, the release self-update,
 the automatic converge and the VS Code extension all send the header. When the
 manager refuses one of them anyway, the refusal is said where that caller
-reports. The manager's control client (`romp refresh`, `romp down`,
-`romp-manager restart-all` and `romp-manager restart [kernel]`) exits 3 when
-the manager answered and refused, against 1 when nothing answered, prints the
-manager's answer, and puts one line on stderr naming the door, the status and
-the way out: on a 401, whether it sent the token it read from the file under
+reports. The manager's control client (`romp refresh`, `romp-manager
+restart-all` and `romp-manager restart [kernel]`) exits 3 when the manager
+answered and refused, against 1 when nothing answered, prints the manager's
+answer, and puts one line on stderr naming the door, the status and the way
+out (`romp down` runs the same client but captures its output, composes its
+own line from it and exits 1; see Stopping): on a 401, whether it sent the
+token it read from the file under
 its own state root (then the manager runs under another root, and the fix is
 to run the command from a shell whose state root, `ROMP_STATE_DIR` or
 `XDG_STATE_HOME`, is the manager's) or from `ROMP_SERVE_TOKEN` (then unset or
