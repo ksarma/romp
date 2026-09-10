@@ -8,4 +8,4 @@ tier: feature
 offered: their PR #1276
 closed:
 ---
-Divergence-audit row 39 PR A (fork PRs 1 and 4), re-derived onto the project's hook after its symlink tip pass (their #1271). The CI secrets job is PR B, stacked on this branch, filed without auto-merge (touches .github/).
+Divergence-audit row 39 PR A (fork PRs 1 and 4), re-derived onto the project's hook after its symlink tip pass (their #1271). The CI secrets job is PR B, their PR #1279, stacked on this branch and filed without auto-merge (touches .github/).
