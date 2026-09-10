@@ -23,9 +23,10 @@ tests/test_chat_skeleton_reconnect_gate.py test_10, not re-asserted here.
 Three legs: the handler alone (a client dict with and without the dial record), the REAL shim core under node
 (the row's field in each shape, and the row's place against the ready: ahead of the re-sent ready on the declared
 shape, behind the queued ready on the ready-during-close shape, ahead of it on the ready-after-close shape), and
-the two joined (the real
-handshake dialed with the URL the shim built, the shim's own row dispatched on that client, the pair read back
-from the file; a chat socket after the real strip's consumption and a feed socket, which has no strip, read alike). Synthetic only: placeholder UUIDs, TESTHOST. Never run raw: pytest's conftest poisons the live ports.
+the two joined (the real handshake dialed with the URL the shim built, the shim's own row dispatched on that
+client, the pair read back from the file; a chat socket after the real strip's consumption and a feed socket,
+which has no strip, read alike). Synthetic only: placeholder UUIDs, TESTHOST. Never run raw: pytest's conftest
+poisons the live ports.
 """
 import contextlib
 import io
