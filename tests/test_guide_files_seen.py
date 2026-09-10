@@ -14,7 +14,14 @@ other and one is red whatever the guide says. Synthetic: only the repo's own tex
 import importlib.util
 import os
 import re
+import tempfile
 import unittest
+
+# Hermetic state BEFORE the loads: the sibling pin this module executes is a test module, not romp code, but the
+# isolation ratchet (tests/test_state_isolation_order.py) counts every in-process load, and paying its two lines is
+# cheaper than teaching it to resolve targets; only pytest runs conftest's floor.
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
