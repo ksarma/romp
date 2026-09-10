@@ -337,28 +337,38 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
     # the ops addressed by name, and the Continue shape for askFollowUp (itemId plus cont, which carries no text)
     FRONT_DOOR = {"askFollowUp": {"itemId": THEIRS + ":1", "cont": True}}
 
-    def _accepted_ops(self):
-        """Every op string _drive's front door accepts, read from its source: the ops named in the first if/elif
-        chain that tests `t`, resolved through the function body's local tuple, list, set and dict assigns
-        (ID_OPS), the kernel's module tuples (_TARGET_NAME_OPS) and inline tuple, list and set literals. A listing
+    def _accepted_ops(self, source=None):
+        """Every op string _drive's front door accepts, read from its source (`source` stands in for it, for the
+        listing's own tests): the ops named in the first if/elif chain that tests `t`, resolved through the
+        function body's local assigns of literals of string constants (a tuple, list or set, or a dict's keys:
+        ID_OPS), the kernel's module tuples (_TARGET_NAME_OPS) and inline literals of the same shapes. A listing
         only: nothing here reads what an arm does with the message. An arm the listing cannot read is RED, never
-        skipped: an arm of the chain that yields no op, or a `t in <name>` whose name resolves to nothing, is
+        skipped: an arm of the chain that yields no op, a `t in <name>` whose name resolves to nothing, or a
+        literal with an element that is not a string constant (a name, a starred element, a ** spread) is
         reported by its source text (round 11: an arm keyed on a local set or dict, a frozenset(...) call or a
-        BinOp yielded an empty set silently and the pin stayed green with the op unclassified; round 9's walk
-        did not catch this either, its unclassified list flagging only arms that also read msg["name"], so this
-        is a stricter check, not a restoration)."""
+        BinOp yielded an empty set silently and the pin stayed green with the op unclassified; round 12: a mixed
+        literal classified its constants and dropped the rest silently; round 9's walk did not catch either, its
+        unclassified list flagging only arms that also read msg["name"], so this is a stricter check, not a
+        restoration)."""
         import ast
         import inspect
         import textwrap
-        fn = ast.parse(textwrap.dedent(inspect.getsource(km._drive))).body[0]
+        fn = ast.parse(textwrap.dedent(source if source is not None else inspect.getsource(km._drive))).body[0]
 
         def literal_ops(node):
-            # the op strings of a tuple, list or set literal, or a dict literal's keys; None for any other shape
+            # the op strings of a tuple, list or set literal, or a dict literal's keys, when EVERY element is a
+            # string constant; None for any other shape, a literal with an element the listing cannot read
+            # included (a name, a starred element, a ** spread, whose key is None), so the arm is reported by its
+            # source text instead of classified by the constants beside the element (round 12)
             if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-                return tuple(e.value for e in node.elts if isinstance(e, ast.Constant))
-            if isinstance(node, ast.Dict):
-                return tuple(k.value for k in node.keys if isinstance(k, ast.Constant))
-            return None
+                elts = node.elts
+            elif isinstance(node, ast.Dict):
+                elts = node.keys
+            else:
+                return None
+            if not all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in elts):
+                return None
+            return tuple(e.value for e in elts)
         local_ops = {}
         for stmt in fn.body:
             if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
@@ -401,9 +411,31 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
                     node = node.orelse[0] if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If) else None
                 break
         self.assertEqual(unreadable, [], "arms of _drive's front door, or names they test `t` against, that this listing "
-                                         "cannot read: key the arm on a literal or a local or module tuple, list, set or "
-                                         "dict, or teach the listing the shape, so the arm's ops are classified")
+                                         "cannot read: key the arm on a literal of string constants, inline or a local or "
+                                         "module tuple, list, set or dict of them, or teach the listing the shape, so the "
+                                         "arm's ops are classified")
         return accepted
+
+    def test_an_arm_keyed_on_a_literal_with_an_element_the_listing_cannot_read_is_red_naming_it(self):
+        # literal_ops used to keep a literal's constants and drop every other element silently, so an arm keyed
+        # on `t in ("renameSession", OTHER_OP)` classified renameSession and neither classified nor flagged
+        # OTHER_OP, against the docstring's promise that an arm the listing cannot read is red (round 12). The
+        # listing runs over _drive's source with such an arm spliced in after the first; the constant beside the
+        # element is one the table classifies already, so the only reason to go red is the element itself.
+        import inspect
+        import textwrap
+        src = textwrap.dedent(inspect.getsource(km._drive))
+        anchor = '    if t in ID_OPS and msg.get("id"):\n        sid = str(msg["id"])\n'
+        self.assertIn(anchor, src, "the front door's first arm, as this test splices after it")
+        for literal, element in (('("renameSession", OTHER_OP)', "OTHER_OP"), ('["renameSession", OTHER_OP]', "OTHER_OP"),
+                                 ('{"renameSession", OTHER_OP}', "OTHER_OP"), ('("renameSession", *EXTRA_OPS)', "EXTRA_OPS"),
+                                 ('{"renameSession": 1, OTHER_OP: 2}', "OTHER_OP"), ('{"renameSession": 1, **EXTRA_D}', "EXTRA_D")):
+            arm = '    elif t in %s and msg.get("id"):\n        sid = str(msg["id"])\n' % literal
+            with self.assertRaises(AssertionError, msg=literal) as cm:
+                self._accepted_ops(source=src.replace(anchor, anchor + arm, 1))
+            self.assertIn(element, str(cm.exception), "the arm is reported with the element the listing cannot read")
+            self.assertIn("renameSession", str(cm.exception), "by the literal's source text")
+        self.assertGreater(len(self._accepted_ops(source=src)), 30, "the unmodified door still lists")
 
     def test_every_accepted_op_is_classified_and_its_refusal_keeps_the_name_as_classified(self):
         import pathlib
