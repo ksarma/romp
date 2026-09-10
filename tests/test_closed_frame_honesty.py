@@ -83,7 +83,7 @@ class ClosedHonestyBase(unittest.TestCase):
         patch("_tmux_sessions", lambda: self.live)
         patch("_record_death", lambda sid, t, kind: self.deaths.append((sid, kind)))
         patch("_comment_kill_all", lambda sid, be: self.comment_kills.append(sid))
-        patch("_kernel_knows", lambda sid: True)
+        patch("_kernel_knows", lambda sid, live=None: True)   # the HTTP gate passes the map it read
         patch("_name_of", lambda sid: "web")
         self._saved_bf = km.Sessions.backend_for
         km.Sessions.backend_for = staticmethod(lambda sid: self.be)
@@ -360,8 +360,9 @@ class RemoteEndRelaysTheRefusal(ClosedHonestyBase):
 
     def test_the_remote_refusal_reaches_the_caller_verbatim(self):
         refusal = {"ok": False, "error": "the session is still running — the kill didn't take"}
-        self._saved["_remote_forward"] = km._remote_forward
-        km._remote_forward = lambda r, path, body: (self.forwarded.append((path, body)) or refusal)
+        # the arm reads the far answer with its body (_remote_forward_answer), so that is the seam stubbed
+        self._saved["_remote_forward_answer"] = km._remote_forward_answer
+        km._remote_forward_answer = lambda r, path, body, method="POST": (self.forwarded.append((path, body)) or (200, refusal, json.dumps(refusal)))
         code, resp = self._post_end()
         self.assertEqual((code, resp), (200, refusal),
                          "the owning kernel said the kill didn't take — the caller must hear it")
@@ -369,14 +370,14 @@ class RemoteEndRelaysTheRefusal(ClosedHonestyBase):
         self.assertEqual(self.deaths, [], "the remote owns the death record, never the relay")
 
     def test_a_remote_success_still_relays_ok_true(self):
-        self._saved["_remote_forward"] = km._remote_forward
-        km._remote_forward = lambda r, path, body: {"ok": True}
+        self._saved["_remote_forward_answer"] = km._remote_forward_answer
+        km._remote_forward_answer = lambda r, path, body, method="POST": (200, {"ok": True}, "")
         code, resp = self._post_end()
         self.assertEqual((code, resp), (200, {"ok": True}))
 
     def test_a_dead_far_kernel_is_an_honest_failure(self):
-        self._saved["_remote_forward"] = km._remote_forward
-        km._remote_forward = lambda r, path, body: None
+        self._saved["_remote_forward_answer"] = km._remote_forward_answer
+        km._remote_forward_answer = lambda r, path, body, method="POST": (0, None, "")
         code, resp = self._post_end()
         self.assertEqual(code, 200)
         self.assertFalse(resp["ok"])

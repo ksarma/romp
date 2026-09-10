@@ -139,7 +139,7 @@ These are for scripting and for agents rather than daily use:
 | `romp perf client [--minutes <n>] [--json]` | What the open dashboards' browsers spent on the frames they received (below): handler milliseconds per minute by frame type with window p50/p90/p99 and max, the worst minute's main-thread-free p90, long animation frames and their attributed callbacks, the worst minute, heap and DOM, the slowest frames, per dashboard and pane over the last `<n>` minutes (default 10) |
 | `romp api-health` | The API-health signal as JSON (see [The API-health signal](#the-api-health-signal)): per-credential, per-model-family retry and give-up rates over rolling windows, with a derived state |
 | `romp mail …` | The postal service from the shell (below) |
-| `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}`; a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text |
+| `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}`; a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text. An unknown session is refused with the kernel's reason and exit 1; a session the kernel knows whose backend refuses it (an ended SDK session addressed by id, an ended comment thread by id or name, a tmux-backed session no pane runs) is refused the same way, HTTP 409 with the kernel's reason, and the message is not delivered; a session an attached machine runs, addressed by the name that machine lists or by its id, receives it through that machine's kernel, whose refusal is relayed in its words |
 | `romp new --model <id> <name>` | Model for the Claude Code session: a family alias such as `fable` (follows the family's newest release) or a full id such as `claude-fable-5` (a pin); re-asserted if `<name>` already runs |
 | `romp new --effort <level> <name>` | Reasoning effort for the Claude Code session (`high`, `ultracode`, ...); re-asserted if `<name>` already runs |
 | `romp new --env NAME=VALUE <name>` | A per-session env var for the Claude Code session, repeatable; a re-run against a running `<name>` replaces the whole set; vars not re-named are dropped |
@@ -147,9 +147,9 @@ These are for scripting and for agents rather than daily use:
 | `romp new --in <tag> <name>` | Put the new Claude Code or Codex session in `<tag>`, so its tab lands in that group (repeatable; a name that does not exist yet creates the tag). Applies to `<name>` if it already runs. The kernel echoes `tags` (the session's tags) and, per `--in`, the stored name it landed as (`tagsApplied`, beside `tagsRequested`): a name the store trimmed or clamped prints as "applied as"; a missing echo, or a tag the kernel refused, prints a warning |
 | `romp new --no-inherit <name>` | Run inside a romp session, `romp new` sends that session's stable id (`ROMP_SID`) as the new session's `parent` (marked `parentAuto`), and the kernel copies the parent's tags onto the child; inside a comment thread, the parent is the session the thread belongs to. This flag withholds the parent, so the new session starts outside them. A kernel that never ran the calling session creates the session untagged and echoes `parentIgnored`, which the CLI reports in one line. Raw POST /new callers pass `parent` (a live name or a known sid; an unknown one is a 400 unless `parentAuto` is set) and `tags` (a list of names); opening a name that already runs never inherits; a name that is being registered by another request right now is a 409 whose `error` says which door holds it |
 | `romp tag [<name>] [--add <session>…] [--remove <session>…] [--color <hex>] [--rename <new>] [--delete] [--host <kernel>]` | Session tags. Bare, it lists them; with a name, it merges one tag (created on first use). A tagged session leaves the untagged view, and its tab sits in that tag's section of the strip. `--host` edits an attached kernel's tag |
-| `romp interrupt <session>` | Interrupt whatever turn a session is taking |
+| `romp interrupt <session>` | Interrupt whatever turn a session is taking; the session stays open. A session an attached machine runs, addressed by the name that machine lists or by its id, is interrupted by that machine's kernel. An unknown session is refused with the kernel's reason and exit 1 |
 | `romp compact <session> [--wait] [--timeout <s>]` | Compact a session's context in place (Claude's `/compact`: summarize the history, keep the session's name, id, mailbox, and watches): the alternative to ending and recreating a long-lived session, and the external hand a session needs since it cannot `/compact` itself mid-turn. Quiet session → compacts now; open turn → queued, fires alone the moment the turn ends (the same safe path the chat's compact button uses). `--wait` blocks until the compaction has started and cleared, polling the kernel's own `compacting` signal on the `/sessions` rows (also the field to point a `romp watch` predicate at for scripted recycling); exits 1 honestly on timeout. A remote session's compaction is requested on its own kernel; `--wait` can't follow it from here and says so |
-| `romp end <session>` | End a session |
+| `romp end <session>\|self [--now\|--when-idle]` | End a session, at once by default. `--when-idle` ends it once its current turn settles, so the closing reply lands first; a session an attached machine runs, addressed by the name that machine lists or by its id, is ended by that machine's kernel, and `--when-idle` waits on the session's settle there. `self` names the calling session (from inside a session) and defaults to `--when-idle`, which `--now` overrides. An unknown session is refused with the kernel's reason and exit 1 |
 | `romp move <session> <dir>` | Move a Claude Code session's working directory to `<dir>` (the folder must already exist); the conversation, name, mail and history stay with the session. Quiet session → moves now; open turn → queued, fires when the turn ends. See [Moving a session to another folder](#moving-a-session-to-another-folder) |
 | `romp emoji <session> [<emoji>\|--clear]` | Put one emoji before the session's name on its tab; `--clear` removes it, and an empty argument is a usage error, not a clear; with no argument, print the current one (an empty line when there is none). Exactly one emoji is accepted; a refusal prints the kernel's reason. A live session is named by name or id, a dormant one by id, for setting, clearing and reading alike. A read by an id that has a record on this machine comes from the names registry and works with the kernel stopped; any other read (a name, or the id of a session an attached machine owns) goes through the kernel's `GET /emoji?target=`, which forwards to the owning machine as the set does. See [A session's tab emoji](#a-sessions-tab-emoji) |
 | `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it. The hub files this machine under the name it declares only when that name is a machine name (letters, digits, dots, hyphens or underscores, starting with a letter or digit, at most 128 characters). Any other declared name is refused with a 400 that states the rule and echoes nothing, is recorded nowhere, and is said once on both machines: on the hub, one stderr line and one Log entry under the `refused` kind, naming the value as a clipped repr; on this machine, one stderr line, one dial-log record and one Log entry carrying the hub's reason, after which the same name is not re-sent until it, or the hub's kernel, changes. A hub's `POST /tunnels/trust` for a host it has never seen (the remembered-hosts entry that tiers relayed mail by origin) holds the wider rule that registry's writers share, a machine name or an ssh alias (letters, digits, dots, hyphens, underscores, at-signs, colons or square brackets, not starting with a hyphen, at most 255 characters), because a hub keys an attached peer by its ssh alias and carries that alias when you set trust between two of your machines; anything else is refused the same way, on the hub, with nothing recorded. `ROMP_HOST_NAME` (the kernel) and `ROMP_POSTAL_HOST` (the postal bus) override the declared name only when they clear the same rule; an unusable value (a space, an at-sign, a trailing newline) is set aside once, on stderr or in the bus log, and the derived name (the short hostname, else the platform's machine name, else a minted id) is used |
@@ -941,6 +941,16 @@ server, when its own environment carries one of the names (it is what receives
 `romp new -t` refuses to start a terminal session while the tmux server's
 globals carry `ANTHROPIC_API_KEY`. A key romp holds is a key a session can
 print, so there is no quiet fallback anywhere.
+
+At boot the kernel also names, once and as information rather than a problem,
+the variables in its own environment shaped like credentials (names ending
+`_API_KEY` or `_TOKEN`, and 1Password's own `OP_*` names) that reach every
+session's Claude process and the shells it spawns: the SDK hands each session
+the kernel's environment, and romp takes only the login tokens it claims at
+boot (see [The login](#the-login)) out of it. The line carries names only,
+never values, and a second provider's key placed there on purpose is nothing
+to act on. To keep a variable away from sessions, remove it from `service.env`
+or from the service unit's environment and restart the manager.
 
 #### A key from a secret manager
 
@@ -1735,13 +1745,32 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   raised, a store that did not read) is recorded, and a session whose parse,
   store, journal, archive and episode log have not moved since such a scan is
   skipped whole; a raise inside one session's scan is that session's
-  `pass-crash` row, not the pass's. `plannerSkip` is the planner's change gate
-  (`skipped`, `planned`, `recorded`): a session whose parse, store, journal,
-  archive, episode log, its leaf's task store, captions file and reg have not
-  moved since a pass that had nothing to do, and none of whose running
-  background launches has crossed its deadline, is not planned again (this
-  fork's key also holds `cleared.jsonl`, the session's death marker and its
-  stall slice, inputs of the same decision path). `backref` is the
+  `pass-crash` row, not the pass's.
+  `plannerSkip` is the planner's inner change gate (`skipped`,
+  `planned`, `recorded`). The planner runs behind two gates. The outer gate is
+  the judge's evidence gate around `_plan_session` (`docs/judges.md`, "Ops and
+  knobs"): a session whose signature equals the one the planner stamped after
+  its last complete run is skipped before it is submitted. It keys on the
+  inner gate's inputs, the reg by its `spawnedAt` and backend values rather
+  than by identity, plus `cleared.jsonl`, the death marker and the session's
+  stall records. The inner gate
+  sits inside `_plan_session` and sees only the sessions the outer gate ran: a
+  session whose parse, store, journal, archive, episode log, its leaf's task
+  store, captions file and reg have not moved since a pass that had nothing to
+  do, and none of whose running background launches has crossed its deadline,
+  is not planned again. The inner key
+  carries `cleared.jsonl`, the death marker and the stall slice too (this
+  fork's three terms beyond upstream's key), so an input only the outer gate
+  would key re-arms both gates and an outer re-arm is never swallowed by an
+  inner skip. The inner gate records a pass only when it placed
+  nothing, left the store's key where it was, and ran to completion; a
+  deferral without a write, or a side file that exists and did not read,
+  marks the run incomplete, and that session is planned again next pass. So
+  `plannerSkip` counts the sessions the outer gate let through, not every
+  planner skip: an idle session stops at the outer gate and appears in neither
+  `skipped` nor `planned`. Outside a pass frame (`romp-judge --plan`) the
+  outer gate stamps nothing, and the inner gate does the skipping.
+  `backref` is the
   sender-board walk behind the courier's link repair, built once per state of
   the sender stores and served while they stand (`served`, `built`; a sender
   store that does not read is skipped, not every recipient). `captions` and
@@ -1752,9 +1781,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   file that fails to read answers nothing to the index bodies (the stage is
   marked incomplete and one `captions-unreadable` row is written per episode)
   and is never cached either. `goalArchive` never holds a record that did not
-  read (the `_unread` shape), so a failed read is read again next time. Their
-  skips are why the `tiers` block's `plan` and `courier` counters read zero
-  since that fold.
+  read (the `_unread` shape): an archive that exists and cannot be read or
+  parsed is answered as that marked empty shape, marks the running judge
+  stage incomplete, and is read again next time. The courier's and the
+  planner's change-gate tables are pruned to the sessions each pass
+  discovers, and the evidence gate's stamps are cleared at a fixed cap.
   The rest are the kernel's own memos, each a flat map of counters. `lift_gate` is
   the awaiting-lift job's per-session identity gate: `skip` and `load`
   (session-cycles that took no store read against the ones that read it, a
@@ -1813,12 +1844,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the feed's held card and the postal join read (named `captions` until the
   2026-09-09 fold, when the judge's file-read memo of that name arrived), keyed
   on the file's identity (inode, mtime, size) taken before the read: `hit`
-  and `miss` (reads served from memory against read and parsed), `fail`
-  (reads that failed after a
-  successful stat and were not memoized; the kernel's stderr names the file
-  once per episode), `evict` (entries dropped: a lane that left the timeline,
-  the 512-entry bound, or the pop of an entry whose file is now absent), and
-  the gauge `entries`. `states_overlay` is the states-log fold behind the
+  and `miss` (reads served from memory against read and parsed), `fail` (a
+  read that did not succeed on a file that exists, after a stat that succeeded
+  or one that failed other than for a file that cannot exist, no such file or
+  a name too long for the filesystem; nothing is memoized, and the kernel's
+  stderr names the file once per episode, with the stat's error when the stat
+  failed), `evict` (entries dropped: a lane that left the timeline, the
+  512-entry bound, or the pop of an entry whose file is now absent), and the
+  gauge `entries`. `states_overlay` is the states-log fold behind the
   awaiting overlay: `hit` (the records were the cached ones), `append` (only
   the appended rows were folded), `refold` (every row was folded: a rewrite, a
   shrink, or the file's first fold), `fail` (a read that failed on a file that
@@ -1826,8 +1859,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stderr names the file once per episode), `evict` (entries dropped for
   sessions that left the alive set), and `entries`. `thread_reg` is the SDK
   registry reader's memo, keyed like `caps`, with the same `hit`, `miss`,
-  `fail` and `entries`; its `evict` counts the 512-entry bound and the pop of
-  an absent file's entry.
+  `fail` and `entries` (its `fail` counts a read that did not succeed, as the
+  caps memo's does, and also a body that is not JSON or not a JSON object,
+  answered as a failed read and not memoized; its stderr line names the
+  stat's error when the stat failed too); its `evict` counts the 512-entry
+  bound and the pop of an absent file's entry.
   `feed_segs` is the feed build's per-session memo of the values that are pure
   functions of a session's parse and goal store (the seam maps, the tree shape
   and each top goal's flattened tree), keyed on the parse object, the served
@@ -1904,11 +1940,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   is the number of wakes a pass absorbed; the write-moment chain memo's
   counters are under `memos.chain`, not here). `tiers` holds
   the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
-  `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
-  and archiver; since the 2026-09-09 fold the `plan` and `courier` rows read
-  zero, those two passes being skipped by the judge's own change gates,
-  `memos.plannerSkip` and `memos.courierSkip`, while the other six tiers run
-  on this gate unchanged): `ran` (per-session stage
+  `group`, `consolidate`, `distill`, and `index`, the captioner and archiver;
+  there is no `courier` row, the courier running on its own change gate,
+  `memos.courierSkip`; the `plan` row counts the planner's outer gate, and
+  `memos.plannerSkip` its inner one over the sessions the outer gate let
+  through): `ran` (per-session stage
   runs), `skipped` (runs the gate declined because nothing the tier reads had
   changed), `stamped` (runs that ended complete and recorded what they
   judged), `bypassed` (runs with no signature to record, or whose parse ran

@@ -52,6 +52,7 @@ import { StagedStack, quoteReplyBody, stagedPosts } from "./staged-messages";
 import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, queuedCopyToHide, dropPending, bareGroupLabel, sentAtLabel } from "./send-pending";
 import { reconcileHeld, heldAsQueued, type HeldCopy, type HeldQueued, type HeldMemory } from "./queued-held";
 import { reloadHoldReason } from "./reload-hold";
+import { liveNotices, keepReloadNotices, releasedNotices, takeReloadNotices } from "./reload-notices";   // the notices a reload would wipe, replayed on the fresh page; the hold itself is __rompPaneBusy below (its reason from reload-hold.ts)
 import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional, focusResolvesProvisional } from "./provisional";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
@@ -80,7 +81,6 @@ import { retainLiveOmitted } from "./tab-order";
 import { userTurnShows } from "./user-turn-content";
 import { ScrollDiagBudget, classifyScroll, scrollWriteRow, tailChangeRow, tailLabel, spacerRow, readScrollDiagCap, summarizeTailMutations, tailMutRow, unitChangeRow, unitChanges, boxChanges, boxLabel, BOX_FROM_TAIL } from "./scroll-write";
 import { reloadScrollRecord, takeReloadScroll, type ReloadScroll } from "./reload-restore";
-import { liveNotices, releasedNotices, takePendingNotices } from "./reload-notices";   // the notices a reload would wipe, replayed on the fresh page (T215 meets T265); the hold itself is __rompPaneBusy below (T272, its reason from reload-hold.ts)
 import { keepResidentEvents } from "./frame-merge";
 import { activeTabToReannounce } from "./relay-active";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
@@ -11450,12 +11450,17 @@ function warnToast(msg: string): HTMLElement {
   setTimeout(() => t.remove(), 12000);
   return t;   // the toast, for a caller that marks it (ephemeralWarnToast)
 }
-// A toast about the connection itself (the fork, 2026-09-09): the session isn't reachable, the host is disconnected
-// and romp is re-dialing. It is true on the page that raised it and false on the page that follows a reconnect: the
-// reload core's restart reload fires from the reopened socket, so a notice like that, replayed by
-// persistNoticesForReload, would tell a connected page it is disconnected. The mark keeps it out of the replay
-// (reload-notices.ts liveNotices reads only the toasts without it). The nack and the other-tab ack stay unmarked: what
-// they say (the attachment was not saved, the held message was not sent) is as true after the reload as before.
+// A toast the page that follows a reload must not repeat. The staged sends' refusal ("Can't send yet") reports a STATE:
+// the session's host is unreachable (hostIsDown, a remote host's tunnel) or its tab is still being created
+// (isProvisionalId). The fresh page shows that state for itself (the host mark and the staged strip; a provisional tab
+// does not survive a reload), so replayed by persistNoticesForReload it would be redundant at best and stale at worst.
+// The mark keeps it out of the replay (reload-notices.ts liveNotices reads only the toasts without it). Toasts that
+// report what HAPPENED to a send or a file stay unmarked, since what they say is as true after the reload as before:
+// the nack (the attachment was not saved, the held message not sent), the dismissal and the other-tab ack (the held
+// message not sent). On this fork the refusal on a disconnected host (this message was not sent and is still in the
+// composer, romp is re-dialing) is marked too (the 2026-09-09 fold; offered upstream as their #1270): it is true on the
+// page that raised it and false on the page that follows, since the core's restart reload fires from the reopened socket,
+// so replayed it would tell a connected page it is disconnected.
 function ephemeralWarnToast(msg: string): void { warnToast(msg).dataset.ephemeral = "1"; }
 
 // Tail-windowing (see the View comment): a fresh/rewound view renders only the
@@ -12821,17 +12826,20 @@ function persistScrollForReload(): void {
   const rec = reloadScrollRecord(activeId, content.scrollTop, stick, stick ? null : captureScrollAnchor(content, v));
   try { if (rec) sessionStorage.setItem(RELOAD_SCROLL_KEY, JSON.stringify(rec)); } catch { /* ignore */ }
 }
-// The warning toasts on screen when the CORE reloads the page (the fork's 2026-09-08 fold, T215 meets T265). A toast
-// is DOM only and lives 12 s, and the core's restart reload follows the last pending ship's retirement within half a
-// second (it held for the ship: __rompPaneBusy's 'upload', ended by endReloadHoldIfIdle), so the nack saying an attachment was not saved and the message
-// not sent, or the ack saying a held message on another tab was not sent, was gone before it could be read, and the
-// fresh page's loss toast had nothing to say (shipsInFlight was already empty). Their texts ride the persisted state
-// beside the drafts as pendingNotices and the fresh page shows them again once (the load-time block after the loss
-// toast; reload-notices.ts liveNotices reads them, takePendingNotices consumes them). The core's synchronous hook alone
-// writes them: a reload of the user's own (pagehide) says nothing twice, the way the loss toast fires once and not on
-// every load (tests/test_ship_reship.py ReloadLossToast), while the scroll record rides both, as upstream wrote it.
+// The warning toasts on screen when the CORE reloads the page. A toast is DOM only and lives 12 s, and the core's restart
+// reload follows the last pending ship's retirement on the next task (it held for the ship: __rompPaneBusy's 'upload' or
+// 'held-send', ended by endReloadHoldIfIdle), so the nack saying an attachment was not saved and the held message not
+// sent, or the dismissal of the last pending chip or the ack landing on another tab, each saying the message was not
+// sent, was appended one task before the page went and the fresh page's loss toast had nothing to say (shipsInFlight
+// was already empty). Their texts ride THIS tab's sessionStorage (reload-notices.ts; per tab for the scroll record's
+// reason) and the fresh page shows them again once,
+// after the loss toast. The core's synchronous hook alone writes them: a navigation of the user's own (pagehide) says
+// nothing twice, the way the loss toast fires once and not on every load (tests/test_ship_reship.py ReloadLossToast),
+// while the scroll record rides both as before. This fork's list also carries the reload core's release note
+// (reload-notices.ts releasedNotices: the core's 60 s backstop released a pane hold that never ended, kernel.py
+// _RELOAD_CORE_JS; none when the reload fired on the hold's own event), so the fresh page says why it reloaded over the wait.
 function persistNoticesForReload(): void {
-  try { if (vscodeApi?.setState) vscodeApi.setState({ ...(vscodeApi.getState() || {}), pendingNotices: liveNotices(document.getElementById("warn-toasts")).concat(releasedNotices((window as any).__rompReload)) }); } catch { /* ignore */ }
+  try { keepReloadNotices(sessionStorage, liveNotices(document.getElementById("warn-toasts")).concat(releasedNotices((window as any).__rompReload))); } catch { /* ignore */ }
 }
 function persistForReload(): void { persistScrollForReload(); persistNoticesForReload(); }   // the core's hook: both records
 (window as any).__rompPersistForReload = persistForReload;
@@ -15452,17 +15460,10 @@ try {
     }
   }
 } catch { /* ignore */ }
-// The notices the last page was showing when a reload took it (persistNoticesForReload, the fork's 2026-09-08 fold):
-// shown again once, after the loss toast above, and the record cleared in the same breath so a later load says
-// nothing (one reload, one replay: the reloadScroll idiom). Cleared whenever the key is there, an empty record too:
-// a core reload with no toast on screen writes an empty list under `pendingNotices`, which would otherwise sit in the
-// state until the next core reload (harmless, since takePendingNotices reads it as none; tidied 2026-09-09).
-try {
-  const st = vscodeApi?.getState?.();
-  const taken = takePendingNotices(st);
-  if (st && typeof st === "object" && "pendingNotices" in st) vscodeApi?.setState?.(taken.rest);
-  for (const text of taken.notices) warnToast(text);
-} catch { /* ignore */ }
+// The notices the last page was showing when the reload core took it (persistNoticesForReload): shown again once, after
+// the loss toast above, and the record taken out of sessionStorage in the same call so a later load says nothing (one
+// reload, one replay: the scroll record's idiom).
+try { for (const text of takeReloadNotices(sessionStorage)) warnToast(text); } catch { /* ignore */ }
 
 // Composer EDIT mode (per session): set when the user clicks a bubble's edit affordance — the composer
 // then sends a rewindSend (branch from just before that message) instead of a plain message. The chip
