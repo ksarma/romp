@@ -435,6 +435,26 @@ def _tmux_server(sids):
     return run
 
 
+def _scripted_run(answers, calls=None):
+    """A stand-in for _TMUX._run that answers `list-sessions` from `answers` in order (None for a probe that
+    failed, a CompletedProcess for one that answered) and records each such call in `calls`; a request that
+    forks more often than the script allows raises rather than reading a stale answer. Every other command
+    exits 0 with nothing."""
+    import subprocess
+    answers = list(answers)
+
+    def run(args, t=3):
+        args = list(args)
+        if args[:1] == ["list-sessions"]:
+            if calls is not None:
+                calls.append(args)
+            if not answers:
+                raise AssertionError("tmux forked more often than the script allows: %r" % args)
+            return answers.pop(0)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+    return run
+
+
 def _drop_regs(paths):
     """Unlink a test's private SDK regs and forget them in the SDK backend module's reg cache and incident
     latch: the cache is module-global and prunes only past a 64-entry drift, so a row it cached for a path
@@ -1341,9 +1361,10 @@ class UnknownSessionRefused(_RouteServer):
         # inherits list_lines' error->[] collapse, _resolve_sid cannot map a name to its sid, and the routes
         # answered 404 "no live session named" for a session the kernel knows while the same request by id
         # said tmux isn't answering: a failed read reported as a session that does not exist, against
-        # _control_target's own rule. On the 404 path, when a live scan was performed and alive_sids (the
-        # failure-aware primitive) answers None, the routes answer 503 naming the list; a set (the no-server
-        # exit is the authoritative zero) and a tmux-less box keep the 404 (review round 5, 2026-09-09).
+        # _control_target's own rule. On the 404 path, when the live scan the resolution read failed (the
+        # map's own tmux_failed, the failure alive_sids reads as None), the routes answer 503 naming the list;
+        # the no-server exit (the authoritative zero) and a tmux-less box keep the 404 (review rounds 5 and 6,
+        # 2026-09-09).
         import subprocess
         fake = mock.Mock()
         with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
@@ -1401,9 +1422,102 @@ class UnknownSessionRefused(_RouteServer):
                     self.assertEqual(code, 503, resp)
                     self.assertIn("could not read the live session list", resp.get("error", ""))
                     self.assertEqual(srv.received, [], "nothing is forwarded while the local scan is unread")
+                    # the host:name spelling (the one the 409 tells the caller to type) names no local session:
+                    # NAME_RE forbids the colon at every name door, so the failed LOCAL scan is not what fails
+                    # it, and it forwards while the bare name is held (review round 6, 2026-09-09: it was
+                    # refused 503 by a scan that could never have matched it, while the far sid forwarded)
+                    code, resp = self._post("/interrupt", {"name": "TESTHOST:far-web"})
+                    self.assertEqual((code, resp), (200, {"ok": True}), "the 409's own spelling routes while the local probe is down")
+                    self.assertEqual(srv.received, [("/interrupt", {"id": FAR_SID})])
+                    code, resp = self._post("/interrupt", {"name": "far-web"})
+                    self.assertEqual(code, 503, "the bare name stays held: a local session of the name may run unseen")
                 with mock.patch.object(km._TMUX, "_run", lambda *a, **k: gone):
                     code, resp = self._post("/interrupt", {"name": "far-web"})
                     self.assertEqual((code, resp), (200, {"ok": True}))
+        finally:
+            srv.shutdown()
+        self.assertEqual(srv.received, [("/interrupt", {"id": FAR_SID})] * 2)
+
+    def test_the_failed_scan_verdict_is_the_scans_own_not_a_second_probes(self):
+        # the failed-scan 503 keyed on a SECOND tmux probe (_TMUX.alive_sids()) taken after the gate, not on
+        # the failure of the scan _resolve_sid read (Sessions.live() -> TmuxBackend.live_sessions(), which
+        # collapsed a failed _run to []). First probe fails, second answers: `romp end web` said 404 "no live
+        # session named 'web'" for a live session the second probe itself listed, while by id it was admitted.
+        # The mirror, the scan answers and the re-probe fails, gave an unknown name a spurious 503. live_sessions
+        # now classifies its own _run result as alive_sids does and the verdict rides the map (tmux_failed), so
+        # the 503 is decided by the one scan the request made and each by-name request forks tmux once
+        # (review round 6, 2026-09-09). The script answers one fork per request; a second fork would drain it.
+        import subprocess
+        fake = mock.Mock()
+        ok_sid_x = _tmux_server(["sid-x"])(["list-sessions", "-F", km.TmuxBackend.LANE_FMT])
+        empty = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+             mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+             mock.patch.object(km._TMUX, "available", lambda: True):
+            for path, body in (("/end", {"name": "web"}), ("/interrupt", {"name": "web"}),
+                               ("/send", {"name": "web", "text": "hello"})):
+                calls = []
+                with mock.patch.object(km._TMUX, "_run", _scripted_run([None, ok_sid_x], calls)):
+                    code, resp = self._post(path, body)
+                self.assertEqual(code, 503, (path, resp))
+                self.assertIn("could not read the live session list", resp.get("error", ""), path)
+                self.assertNotIn("no live session", resp.get("error", ""), path)
+                self.assertEqual(len(calls), 1, "%s forked tmux %d times: %r" % (path, len(calls), calls))
+            fake.kill.assert_not_called()
+            fake.interrupt.assert_not_called()
+            fake.send.assert_not_called()
+            # the mirror: the scan answered an empty board, so an unknown name is the accurate 404 whatever a
+            # later probe would have said
+            for path, body in (("/end", {"name": self.GHOST}), ("/interrupt", {"name": self.GHOST}),
+                               ("/send", {"name": self.GHOST, "text": "hello"})):
+                calls = []
+                with mock.patch.object(km._TMUX, "_run", _scripted_run([empty, None], calls)):
+                    code, resp = self._post(path, body)
+                self._assert_404(code, resp)
+                self.assertIn("no live session named '%s'" % self.GHOST, resp.get("error", ""), path)
+                self.assertEqual(len(calls), 1, "%s forked tmux %d times: %r" % (path, len(calls), calls))
+            # the scan that lists the session admits it by name, from that one fork
+            calls = []
+            with mock.patch.object(km._TMUX, "_run", _scripted_run([ok_sid_x], calls)):
+                code, resp = self._post("/interrupt", {"name": "web"})
+            self.assertEqual((code, resp), (200, {"ok": True}))
+            fake.interrupt.assert_called_once_with("sid-x")
+            self.assertEqual(len(calls), 1, calls)
+
+    def test_the_refusal_path_forks_tmux_once_on_a_tmux_box(self):
+        # the scans-once pin above counts Sessions.live calls under the fixture's tmux-off patch, so it could
+        # not see the second fork: on a tmux box every by-name 404 and every far-name forward forked tmux
+        # twice, the resolution's list-sessions plus the round-5 alive_sids probe, where the docstrings promised
+        # one scan. Counted at the fork: one list-sessions per refused request on all three routes and one on
+        # the far-name forward; by id the names registry answers and nothing forks (review round 6, 2026-09-09).
+        import subprocess
+        empty = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        calls = []
+        fake = mock.Mock()
+        srv = _far_kernel(200, json.dumps({"ok": True}))
+        row = _remote_row(srv, sids=[FAR_SID], names={FAR_SID: "far-web"})
+        try:
+            with mock.patch.object(km._TMUX, "available", lambda: True), \
+                 mock.patch.object(km._TMUX, "_run", lambda args, t=3: calls.append(list(args)) or empty), \
+                 mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+                 mock.patch.dict(km._remotes, {"TESTHOST": row}, clear=True):
+                for path, body in (("/end", {"name": self.GHOST}), ("/interrupt", {"name": self.GHOST}),
+                                   ("/send", {"name": self.GHOST, "text": "hello"})):
+                    del calls[:]
+                    code, resp = self._post(path, body)
+                    self._assert_404(code, resp)
+                    forks = [c for c in calls if c[:1] == ["list-sessions"]]
+                    self.assertEqual(len(forks), 1, "%s forked tmux %d times: %r" % (path, len(forks), calls))
+                del calls[:]
+                code, resp = self._post("/interrupt", {"name": "far-web"})
+                self.assertEqual((code, resp), (200, {"ok": True}))
+                forks = [c for c in calls if c[:1] == ["list-sessions"]]
+                self.assertEqual(len(forks), 1, "the far-name forward forked tmux %d times: %r" % (len(forks), calls))
+                del calls[:]
+                code, resp = self._post("/interrupt", {"id": "sid-x"})
+                self.assertEqual((code, resp), (200, {"ok": True}))
+                self.assertEqual(calls, [], "by id the names registry answers and nothing forks")
         finally:
             srv.shutdown()
         self.assertEqual(srv.received, [("/interrupt", {"id": FAR_SID})])
