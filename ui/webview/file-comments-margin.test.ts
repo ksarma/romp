@@ -384,6 +384,42 @@ test("the loose group: the whole-file comment and the detached comment stack at 
   w.close();
 });
 
+test("a tie on the desired top is laid the same by the render's pass and by an observer's pass: two cards whose marks share the first row, the focus below with room for one, hold their places through a resize and a paint pass", async () => {
+  // the Slice 4 review's round 16 (2026-09-10): the render's pass reads the list in the model's order (the change card
+  // first), an observer's pass (a resize, a card's growth, a composer's open or Cancel: scheduleLayout) reads it as the
+  // last pass left it, in placement order, and a tie broken by that order reversed the pair at every pass under a focus
+  const tied: StoreComment = {   // row 0, beside the change's mark
+    id: (T0 - 30000) + "-2", author: "you", ts: T0 - 30000, body: "Name the quarter in the title.",
+    anchor: { quote: "Report", prefix: "# ", suffix: "\n" }, replies: [], resolved: false,
+  };
+  const finding: StoreComment = {   // row 2: the focus, a little under the pair
+    id: (T0 - 20000) + "-11", author: "you", ts: T0 - 20000, body: "Lead with the numbers.",
+    anchor: { quote: "Findings", prefix: "## ", suffix: "\n" }, replies: [], resolved: false,
+  };
+  const heading: Hunk = { id: "h0", author: "api", ts: T0 - 30000, kind: "ins", curFrom: 0, curTo: 2, baseFrom: 0, baseTo: 0, oldText: "", newText: "# ", anchor: null };   // row 0
+  const { w } = await open({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [tied, finding, replied, passage] }, hunks: [heading] });
+  try {
+    const keys = [tied.id, "chg:h0", finding.id, replied.id, passage.id];
+    const snap = () => Object.fromEntries(keys.map((k) => [k, w.top(k)]));
+    const order = () => w.track().querySelectorAll(".fc-card").map((c) => c.dataset.id);
+    assert.deepEqual(new Set([w.top(tied.id), w.top("chg:h0")]), new Set([8, 8 + CARD + 8]), "no focus: the pair stacked from the start");
+    w.code.querySelector('.fc-hl[data-id="' + finding.id + '"]')!.click(); await tick();   // the focus: the render's pass, over the model's order
+    const render = snap(), placed = order();
+    resize(); flush();                                 // an observer's pass over the DOM in placement order
+    assert.deepEqual(snap(), render, "the observer's pass lays the same cards the same (as first built, the pair reversed)");
+    assert.deepEqual(order(), placed, "and moves none");
+    resize(); flush();
+    assert.deepEqual(snap(), render, "and the next");
+    w.setText(DOC); await tick();                      // a paint pass: the render's path again, over the model's order
+    assert.deepEqual(snap(), render, "the paint pass agrees with the observer's passes");
+    assert.deepEqual(order(), placed);
+    // the placement itself: the focus at its mark; of the pair, by key the comment is first, so it is the one the chain has no room for
+    assert.equal(render[finding.id], desired(2), "the focused card at its mark");
+    assert.equal(render["chg:h0"], 8, "the change card holds the start");
+    assert.equal(render[tied.id], desired(2) + OPEN + 8, "the comment below the focus");
+  } finally { w.close(); }                             // a failing assertion must not leave the panel alive for the tests after it
+});
+
 test("the scroll lock: a body scroll event puts the body's scrollTop on the track, a track scroll event the reverse, and neither echo writes back", async () => {
   const { w } = await open();
   const body = w.body, track = w.track();

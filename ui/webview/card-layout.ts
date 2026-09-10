@@ -3,7 +3,7 @@
 // (file-comments.ts, placeCards: each card's height, and the top of its mark in the body's content); this decides.
 //
 // The rule is a document editor's margin. A card with a mark wants the mark's top (`desired`); cards are laid in
-// order of desired top (ties by the list's order) and each takes the larger of its desired top and the previous
+// order of desired top (ties by key, below) and each takes the larger of its desired top and the previous
 // card's bottom plus the gap — so cards never overlap, and a card only ever moves DOWN from its mark, never up
 // over an earlier passage's card. Cards with no mark (`desired` null: a whole-file comment, a detached anchor, a
 // change the view does not paint, a region whose figure has not loaded) form the loose group at the top of the
@@ -34,6 +34,22 @@
 // below the focus follow the push-down rule from the end of the last card the focus displaced, as ever from a card's
 // end. Every card so stands at or below the start, where the track's scroll reaches it. A focus with no mark, or one
 // not among the items, changes nothing.
+//
+// Ties on the desired top (two marks on one line: a comment's and a change's, or two comments') are broken by the
+// card's KEY, never by the order the items are given in, so the placement is a function of the cards alone and every
+// pass over the same cards lays them the same. The panel gives the pass the cards as its list stands
+// (file-comments.ts, placeCards): the model's order after a render, and after every other pass (a resize, a card's
+// growth, a figure's load, a comment composer's open or Cancel) the order the LAST pass left, since a pass re-appends
+// the cards in placement order. A tie broken by that order, as first built, made the placement depend on which pass ran
+// last: under a focus, with the tied pair straddling the spill, each pass reversed the pair, and a comment card and a
+// change card whose marks shared a line swapped places at every composer open, Cancel and paint pass, every card below
+// moving by their height difference (the Slice 4 review of plans/markdown-viewer.md, round 16, 2026-09-10). The key
+// is the one order every pass carries; the model's order would have had to be fed by the panel on every pass, and the
+// panel does not hold it between renders. So a tie between a comment card and a change card lays the comment first (a
+// comment's id begins with the time it was made, a change's key with `chg:`), where the list shows the changes first;
+// between two comments the key's time prefix keeps the list's order by time. The loose group keeps the list's order: a pass never
+// reorders loose cards among themselves (a spilled suffix follows the focus, the rest keep their places), so the order
+// a pass reads back is the model's, and the two orders agree.
 export type LayoutItem = { key: string; desired: number | null; height: number };
 export type PlacedItem = { key: string; top: number; height: number; desired: number | null; pushed: number };
 export type Layout = { placed: PlacedItem[]; bottom: number };
@@ -41,10 +57,10 @@ export type Layout = { placed: PlacedItem[]; bottom: number };
 /** The gap between cards, the sheet's `.fc-cards { gap: 8px }` (pinned by card-layout.test.ts). */
 export const CARD_GAP = 8;
 
-/** Place `items` in a track: the loose ones first from `gap` down, then the marked ones by desired top with the
- *  push-down rule — or, with `focus` naming a marked item, anchored on that item (the module comment). Returns the
- *  placements in placement order and the bottom edge of the last card (the track's content must reach at least
- *  that far). */
+/** Place `items` in a track: the loose ones first from `gap` down, then the marked ones by desired top (ties by
+ *  key) with the push-down rule, or, with `focus` naming a marked item, anchored on that item (the module comment).
+ *  Returns the placements in placement order and the bottom edge of the last card (the track's content must reach
+ *  at least that far). */
 export function layoutCards(items: LayoutItem[], gap: number = CARD_GAP, focus: string | null = null): Layout {
   const placed: PlacedItem[] = [];
   let floor = gap;                                   // where the next card may begin at the earliest
@@ -54,8 +70,8 @@ export function layoutCards(items: LayoutItem[], gap: number = CARD_GAP, focus: 
     floor = top + it.height + gap;
     bottom = Math.max(bottom, top + it.height);
   };
-  const marked = items.map((it, i) => ({ it, i })).filter((x) => x.it.desired !== null)
-    .sort((a, b) => (a.it.desired as number) - (b.it.desired as number) || a.i - b.i);
+  const marked = items.map((it) => ({ it })).filter((x) => x.it.desired !== null)
+    .sort((a, b) => (a.it.desired as number) - (b.it.desired as number) || (a.it.key < b.it.key ? -1 : a.it.key > b.it.key ? 1 : 0));   // ties by key, never by the input's order (the module comment)
   const f = focus === null ? -1 : marked.findIndex((x) => x.it.key === focus);
   if (f < 0) {
     for (const it of items) if (it.desired === null) put(it, floor);
