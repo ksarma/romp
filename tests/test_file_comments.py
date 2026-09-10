@@ -610,7 +610,7 @@ class RejectTellsTheSession(_TraceWorld):
         self.verb("accept", {"ids": self.IDS}, reply={"accepted": self.IDS})
         self.verb("accept-all", {}, reply={"accepted": self.IDS + ["1781100000000-3"], "store": None, "hunks": []})
         self.verb("comment", {"anchor": "shipping the cache in v1.2", "note": "Which cache? Say which."})
-        self.verb("comment", {"suggestionId": self.IDS[0], "note": "Keep the old word."})
+        self.verb("comment", {"changeIds": [self.IDS[0]], "note": "Keep the old word."})
         self.assertEqual(self.reject_traced, [])
         self.assertEqual(self.reached, [])
         self.assertEqual(self.parked, [])

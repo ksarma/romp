@@ -494,7 +494,7 @@ test('a v:4 sidecar refuses unsupported-version on every verb and is never repla
   refused(w, { verb: 'accept-all', path: w.report, args: {}, fence: { storeMtimeNs: mt } }, 'unsupported-version');
   refused(w, { verb: 'reject', path: w.report, args: { ids: ['1'] }, fence: { storeMtimeNs: mt, fileMtimeNs: fileNs } }, 'unsupported-version');
   refused(w, { verb: 'reject-all', path: w.report, args: {}, fence: { storeMtimeNs: mt, fileMtimeNs: fileNs } }, 'unsupported-version');
-  refused(w, { verb: 'comment', path: w.report, args: { suggestionId: '1', note: 'x' }, fence: { storeMtimeNs: mt } }, 'unsupported-version');
+  refused(w, { verb: 'comment', path: w.report, args: { changeIds: ['1'], note: 'x' }, fence: { storeMtimeNs: mt } }, 'unsupported-version');
   assert.deepEqual(fileBytes(sp), bytes);
   assert.equal(fs.readFileSync(w.report, 'utf8'), w.text);
   assert.deepEqual(fs.readdirSync(path.dirname(sp)), [path.basename(sp)], 'no temp file, no config, no log');
@@ -516,7 +516,7 @@ test('an unparseable sidecar refuses corrupt on every verb and is never replaced
   refused(w, { verb: 'accept-all', path: w.report, args: {}, fence: { storeMtimeNs: mt } }, 'corrupt');
   refused(w, { verb: 'reject', path: w.report, args: { ids: ['1700000000000-4'] }, fence: { storeMtimeNs: mt, fileMtimeNs: fileNs } }, 'corrupt');
   refused(w, { verb: 'reject-all', path: w.report, args: {}, fence: { storeMtimeNs: mt, fileMtimeNs: fileNs } }, 'corrupt');
-  refused(w, { verb: 'comment', path: w.report, args: { suggestionId: '1700000000000-4', note: 'x' }, fence: { storeMtimeNs: mt } }, 'corrupt');
+  refused(w, { verb: 'comment', path: w.report, args: { changeIds: ['1700000000000-4'], note: 'x' }, fence: { storeMtimeNs: mt } }, 'corrupt');
   assert.deepEqual(fileBytes(sp), bytes);
   assert.equal(fs.readFileSync(w.report, 'utf8'), w.text);
   assert.deepEqual(fs.readdirSync(path.dirname(sp)), [path.basename(sp)]);
@@ -842,12 +842,12 @@ test('the log reply is the last 200 entries oldest first with logTruncated, whil
   assert.equal(fileBytes(lp).toString(), lines.join('\n') + '\n', 'reading never rewrites');
 });
 
-test('a decision older than the log tail still reaches the panel: `decided` carries, from the WHOLE log, the accept or reject of every change a comment is bound to that the sidecar no longer holds', () => {
+test('a decision older than the log tail still reaches the panel: `decided` carries, from the WHOLE log, the accept or reject of every change a comment is about that the sidecar no longer holds', () => {
   const w = world();
-  // a change, a comment bound to it, the change accepted: the accept entry names the id with its texts
+  // a change, a comment about it, the change accepted: the accept entry names the id with its texts
   const st1 = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
   const h = hunkFor(st1, 'cut p95 latency by 40%');
-  const st2 = comment(w, w.report, st1, { suggestionId: h.id, note: 'Say cut, not reduced.' });
+  const st2 = comment(w, w.report, st1, { changeIds: [h.id], note: 'Say cut, not reduced.' });
   assert.deepEqual(st2.decided, {}, 'the change is pending: nothing to remember for it');
   const st3 = accept(w, w.report, st2, [h.id]);
   assert.deepEqual(st3.decided, { [h.id]: { decision: 'accepted', oldText: 'cut p95 latency by 40%', newText: 'reduced p95 latency by 40%' } }, 'decided the moment the sidecar drops the change');
@@ -863,15 +863,19 @@ test('a decision older than the log tail still reaches the panel: `decided` carr
   assert.equal(r.logTruncated, true);
   assert.equal(r.log.filter((e) => e.kind === 'accept').length, 0, 'the tail no longer holds the accept');
   assert.deepEqual(r.decided, { [h.id]: { decision: 'accepted', oldText: 'cut p95 latency by 40%', newText: 'reduced p95 latency by 40%' } }, 'the decision rides `decided`, read off the whole log');
-  const c = r.store.comments.find((x) => x.suggestionId === h.id);
-  assert.ok(c && !c.resolved, 'the bound comment stays in the sidecar, open (a decision never resolves a comment: decision 42), which is why the panel needs the texts');
+  const c = r.store.comments.find((x) => Array.isArray(x.changeIds) && x.changeIds.includes(h.id));
+  assert.ok(c && !c.resolved, 'the comment about the change stays in the sidecar, open (a decision never resolves a comment: decision 42), which is why the panel needs the texts');
   // the pure derivation, on the edges: a pending or detached change is the sidecar's to describe, never the log's
   const entries = [{ kind: 'reject', changes: [{ id: 'x', oldText: 'a', newText: '' }] }, { kind: 'accept', changes: [{ id: 'x', oldText: 'a', newText: 'b' }, { id: 'y', oldText: '', newText: 'n' }] }];
-  const bound = (id) => ({ id: 'c1', author: 'you', ts: 1, body: 'k', suggestionId: id, replies: [], resolved: false });
+  const bound = (id) => ({ id: 'c1', author: 'you', ts: 1, body: 'k', suggestionId: id, replies: [], resolved: false });   // a legacy sidecar's binding: still read
+  const about = (...ids) => ({ id: 'c9', author: 'you', ts: 1, body: 'k', changeIds: ids, replies: [], resolved: false });   // the comment romp writes: the changes it is about
   assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('x')] }, entries), { x: { decision: 'accepted', oldText: 'a', newText: 'b' } }, 'the NEWEST entry for the id');
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [about('x')] }, entries), { x: { decision: 'accepted', oldText: 'a', newText: 'b' } }, 'a changeIds comment asks the same way');
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [about('x', 'y')] }, entries), { x: { decision: 'accepted', oldText: 'a', newText: 'b' }, y: { decision: 'accepted', oldText: '', newText: 'n' } }, 'every change the comment names');
+  assert.deepEqual(decidedFor({ suggestions: [{ id: 'x' }], comments: [about('x', 'y')] }, entries), { y: { decision: 'accepted', oldText: '', newText: 'n' } }, 'a pending one among them is the sidecar\'s to describe');
   assert.deepEqual(decidedFor({ suggestions: [{ id: 'x' }], comments: [bound('x')] }, entries), {}, 'pending: the sidecar holds it');
   assert.deepEqual(decidedFor({ suggestions: [], detached: [{ id: 'x' }], comments: [bound('x')] }, entries), {}, 'detached: the sidecar holds it');
-  assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('y'), { id: 'c2', author: 'you', ts: 2, body: 'p', replies: [], resolved: false }] }, entries), { y: { decision: 'accepted', oldText: '', newText: 'n' } }, 'only bound comments ask; a plain comment adds nothing');
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('y'), { id: 'c2', author: 'you', ts: 2, body: 'p', replies: [], resolved: false }] }, entries), { y: { decision: 'accepted', oldText: '', newText: 'n' } }, 'only a comment naming a change asks; a plain comment adds nothing');
   assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('z')] }, entries), {}, 'no entry for the id: nothing claimed');
   assert.deepEqual(decidedFor(null, entries), {}, 'no sidecar: nothing bound');
   assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('x')] }, [{ kind: 'accept', changes: [{ id: 'x', oldText: 7 }] }, null, { kind: 'edit' }]), { x: { decision: 'accepted', oldText: '', newText: '' } }, 'a hand-edited entry reads defensively');
@@ -1284,16 +1288,16 @@ test('accept and reject fences: "" over an existing sidecar, a stale sidecar mti
   refused(w2, { verb: 'accept', path: w2.report, args: { ids: [s1.hunks[0].id] }, fence: fenceFor(s1) }, 'store-moved');
 });
 
-test('comment {suggestionId} writes a change comment with no anchor and no target, track-reply answers it, and accept keeps it as it was, open (decision 42: a decision never resolves a comment)', () => {
+test('comment {changeIds} writes a comment about the change with no anchor and no target, track-reply answers it, and accept keeps it as it was, open (decision 42: a decision never resolves a comment)', () => {
   const w = world();
   const st = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
   const h = st.hunks[0];
-  const r = ok(w, { verb: 'comment', path: w.report, args: { suggestionId: h.id, note: '  Keep the exact number.  ' }, fence: fenceFor(st) });
+  const r = ok(w, { verb: 'comment', path: w.report, args: { changeIds: [h.id], note: '  Keep the exact number.  ' }, fence: fenceFor(st) });
   const c = readSidecar(r.storePath).comments[0];
-  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'suggestionId', 'body', 'replies', 'resolved']);
-  assert.equal(c.suggestionId, h.id);
+  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'changeIds', 'body', 'replies', 'resolved']);
+  assert.deepEqual(c.changeIds, [h.id]);
   assert.equal(typeof c.ts, 'number');
-  assert.equal(c.id, `${c.ts}-${h.curFrom}`);
+  assert.equal(c.id, `${c.ts}-${h.curFrom}`, 'the id takes the first named change\'s current offset');
   assert.equal(c.author, 'you');
   assert.equal(c.body, 'Keep the exact number.');
   assert.deepEqual(c.replies, []);
@@ -1301,40 +1305,87 @@ test('comment {suggestionId} writes a change comment with no anchor and no targe
   assert.equal('anchor' in c, false);
   assert.equal('target' in c, false);
   assert.equal('authorId' in c, false);
+  assert.equal('suggestionId' in c, false, 'romp never writes suggestionId');
   assert.deepEqual(r.store.comments[0], c);
   assert.equal(r.hunks.length, 1, 'the change stays pending');
   assert.deepEqual(r.unsent.comments, [c.id]);
   assert.equal(fs.readFileSync(w.report, 'utf8').includes('reduced p95'), true, 'the file is untouched');
-  // The session answers it with track-reply; the binding survives the CLI's load and save.
+  // The session answers it with track-reply; the about list survives the CLI's load and save.
   cliOk(w, 'reply', ['--file', w.report, '--thread', c.id, '--note', 'Kept.']);
   const after = readSidecar(r.storePath).comments[0];
   assert.deepEqual({ ...after, replies: [] }, c);
   assert.equal(after.replies.length, 1);
   assert.equal(after.replies[0].author, 'web');
   assert.equal(after.replies[0].body, 'Kept.');
-  // Accept keeps every field of it as it was — open, the binding, the replies (before decision 42 it marked the comment
+  // Accept keeps every field of it as it was: open, the about list, the replies (before decision 42 it marked the comment
   // resolved, and comments the session's edits had answered left the visible list with nothing said); the comment keeps the
   // sidecar alive.
   const st2 = status(w, w.report);
   const r2 = accept(w, w.report, st2, [h.id]);
   assert.deepEqual(r2.accepted, [h.id]);
   assert.deepEqual(r2.hunks, []);
-  assert.ok(fs.existsSync(r2.storePath), 'a bound comment keeps the sidecar');
+  assert.ok(fs.existsSync(r2.storePath), 'a comment about a change keeps the sidecar');
   const disk = readSidecar(r2.storePath);
   assert.deepEqual(disk.suggestions, []);
   assert.deepEqual(disk.comments, [after], 'the comment as loaded, field for field (before: resolved: true)');
   assert.equal(disk.comments[0].resolved, false, 'not resolved by the accept');
-  assert.equal(disk.comments[0].suggestionId, h.id, 'the binding stays, so the id a sent message named still answers');
+  assert.deepEqual(disk.comments[0].changeIds, [h.id], 'the about list stays, so the id a sent message named still answers');
   assert.deepEqual(r2.store.comments, disk.comments);
   // ...and track-reply still reaches it after the accept.
   cliOk(w, 'reply', ['--file', w.report, '--thread', c.id, '--note', 'Thanks.']);
   assert.equal(readSidecar(r2.storePath).comments[0].replies.length, 2);
-  // A change comment on an accepted (no longer pending) change refuses no-change.
-  refused(w, { verb: 'comment', path: w.report, args: { suggestionId: h.id, note: 'Again?' }, fence: fenceFor(status(w, w.report)) }, 'no-change');
-  // Anchor or target beside suggestionId is a caller bug.
-  const both = host(w, { verb: 'comment', path: w.report, args: { suggestionId: h.id, anchor: { quote: 'x' }, note: 'n' }, fence: fenceFor(status(w, w.report)) });
-  assert.notEqual(both.code, 0);
-  assert.match(both.stderr, /takes no anchor/);
+  // A comment about an accepted (no longer pending) change refuses no-change, naming the id.
+  const gone = refused(w, { verb: 'comment', path: w.report, args: { changeIds: [h.id], note: 'Again?' }, fence: fenceFor(status(w, w.report)) }, 'no-change');
+  assert.ok(gone.error.includes(h.id), gone.error);
+  // A request naming the change with suggestionId is a caller bug: romp never writes that field (the other editors do).
+  const bytes = fileBytes(r2.storePath);
+  const legacy = host(w, { verb: 'comment', path: w.report, args: { suggestionId: h.id, note: 'n' }, fence: fenceFor(status(w, w.report)) });
+  assert.equal(legacy.code, 2, legacy.stderr);
+  assert.match(legacy.stderr, /suggestionId is not accepted/);
+  // ...and so is a changeIds that is not a non-empty list of non-empty ids.
+  for (const bad of [[], 'x', {}, [''], [null], [h.id, '']]) {
+    const b = host(w, { verb: 'comment', path: w.report, args: { changeIds: bad, note: 'n' }, fence: fenceFor(status(w, w.report)) });
+    assert.equal(b.code, 2, `${JSON.stringify(bad)}: ${b.stderr}`);
+    assert.match(b.stderr, /changeIds must be a non-empty array|every change id in changeIds must be a non-empty string/, JSON.stringify(bad));
+  }
+  assert.deepEqual(fileBytes(r2.storePath), bytes, 'a caller bug writes nothing');
+});
+
+test('comment {anchor, changeIds} writes a passage comment about the changes it names: the anchor keys first, then changeIds; the id is the anchor\'s position; repeats are kept once, in the order first named', () => {
+  const w = world();
+  edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  const st = edit(w, w.report, 'shipping the cache in v1.2', 'shipping the cache in v1.3');
+  const A = hunkFor(st, 'cut p95 latency by 40%');
+  const B = hunkFor(st, 'shipping the cache in v1.2');
+  const cur = fs.readFileSync(w.report, 'utf8');
+  const { anchor, hintOffset, idx } = anchorAt(cur, 'reduced p95 latency by 40%', 0);
+  const r = ok(w, { verb: 'comment', path: w.report, args: { anchor, hintOffset, changeIds: [B.id, A.id, B.id], note: 'Both belong in the summary.' }, fence: fenceFor(st) });
+  const c = readSidecar(r.storePath).comments[0];
+  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'changeIds', 'body', 'replies', 'resolved']);
+  assert.deepEqual(c.changeIds, [B.id, A.id], 'each id once, as first named');
+  assert.equal(c.anchorAt, idx);
+  assert.equal(c.id, `${c.ts}-${idx}`, 'an anchored comment takes its id from the anchor, whatever changes it names');
+  assert.equal(c.resolved, false);
+  assert.deepEqual(r.store.comments[0], c);
+  assert.equal(r.hunks.length, 2, 'both changes stay pending');
+  // With no anchor, a comment about several changes takes the FIRST named change's offset.
+  const r2 = ok(w, { verb: 'comment', path: w.report, args: { changeIds: [B.id, A.id], note: 'Both.' }, fence: fenceFor(r) });
+  const c2 = readSidecar(r2.storePath).comments[1];
+  assert.deepEqual(c2.changeIds, [B.id, A.id]);
+  assert.equal(c2.id, `${c2.ts}-${B.curFrom}`);
+  // One unknown id among known ones refuses no-change naming the unknown alone, and writes nothing.
+  const bytes = fileBytes(r2.storePath);
+  const bad = refused(w, { verb: 'comment', path: w.report, args: { anchor, hintOffset, changeIds: [A.id, 'nope'], note: 'n' }, fence: fenceFor(r2) }, 'no-change');
+  assert.ok(bad.error.includes('nope') && !bad.error.includes(A.id), bad.error);
+  assert.deepEqual(fileBytes(r2.storePath), bytes);
+  // Accepting one of the two leaves both comments as loaded: the about lists still name the accepted id, and the panel
+  // reads that change's decision off the log.
+  const r3 = accept(w, w.report, r2, [A.id]);
+  assert.deepEqual(r3.accepted, [A.id]);
+  const disk = readSidecar(r3.storePath);
+  assert.deepEqual(disk.comments.map((x) => x.changeIds), [[B.id, A.id], [B.id, A.id]]);
+  assert.deepEqual(disk.comments.map((x) => x.resolved), [false, false]);
+  assert.deepEqual(r3.decided, { [A.id]: { decision: 'accepted', oldText: 'cut p95 latency by 40%', newText: 'reduced p95 latency by 40%' } });
 });
 
 test('accept leaves every comment as it was, bound by suggestionId or not, anchor or not: a decision never resolves a comment (decision 42; before it, accept resolved the bound ones)', () => {
@@ -1384,7 +1435,7 @@ test('a change that is no longer pending refuses no-change by id, after the fenc
   assert.match(r.error, /no changes are pending/);
   refused(w, { verb: 'reject', path: w.report, args: { ids: ['x'] }, fence: { storeMtimeNs: '', fileMtimeNs: statNs(w.report) } }, 'no-change');
   refused(w, { verb: 'reject-all', path: w.report, args: {}, fence: { storeMtimeNs: '', fileMtimeNs: statNs(w.report) } }, 'no-change');
-  refused(w, { verb: 'comment', path: w.loose, args: { suggestionId: 'x', note: 'hi' }, fence: { storeMtimeNs: '' } }, 'no-change');
+  refused(w, { verb: 'comment', path: w.loose, args: { changeIds: ['x'], note: 'hi' }, fence: { storeMtimeNs: '' } }, 'no-change');
   refused(w, { verb: 'accept-all', path: w.loose, args: {}, fence: { storeMtimeNs: '' } }, 'no-change');
   refused(w, { verb: 'reject-all', path: w.loose, args: {}, fence: { storeMtimeNs: '', fileMtimeNs: statNs(w.loose) } }, 'no-change');
   assert.equal(fs.existsSync(path.join(w.root, '.trackchanges')), false, 'a refused decision creates nothing');
@@ -1398,7 +1449,10 @@ test('a change that is no longer pending refuses no-change by id, after the fenc
   r = refused(w, { verb: 'accept', path: w.report, args: { ids: [id, 'nope'] }, fence: fenceFor(st) }, 'no-change');
   assert.ok(r.error.includes('nope') && !r.error.includes(id), r.error);
   refused(w, { verb: 'reject', path: w.report, args: { ids: ['nope'] }, fence: fileFenceFor(st) }, 'no-change');
-  refused(w, { verb: 'comment', path: w.report, args: { suggestionId: 'nope', note: 'hi' }, fence: fenceFor(st) }, 'no-change');
+  r = refused(w, { verb: 'comment', path: w.report, args: { changeIds: ['nope'], note: 'hi' }, fence: fenceFor(st) }, 'no-change');
+  assert.ok(r.error.includes('nope'), r.error);
+  r = refused(w, { verb: 'comment', path: w.report, args: { changeIds: [id, 'nope'], note: 'hi' }, fence: fenceFor(st) }, 'no-change');
+  assert.ok(r.error.includes('nope') && !r.error.includes(id), r.error);
   assert.deepEqual(fileBytes(st.storePath), bytes);
   assert.equal(fs.existsSync(logPathFor(st.storePath)), false);
   assert.deepEqual(status(w, w.report).hunks, st.hunks);
@@ -1423,7 +1477,7 @@ test('a change that is no longer pending refuses no-change by id, after the fenc
   r = refused(w2, { verb: 'accept', path: w2.report, args: { ids: [idA] }, fence: fenceFor(s2) }, 'no-change');
   assert.ok(r.error.includes(idA), r.error);
   refused(w2, { verb: 'reject', path: w2.report, args: { ids: [idA] }, fence: fileFenceFor(s2) }, 'no-change');
-  refused(w2, { verb: 'comment', path: w2.report, args: { suggestionId: idA, note: 'x' }, fence: fenceFor(s2) }, 'no-change');
+  refused(w2, { verb: 'comment', path: w2.report, args: { changeIds: [idA], note: 'x' }, fence: fenceFor(s2) }, 'no-change');
   // ...and the coalesced change decides under its own id.
   assert.deepEqual(accept(w2, w2.report, s2, [s2.hunks[0].id]).accepted, [s2.hunks[0].id]);
 });

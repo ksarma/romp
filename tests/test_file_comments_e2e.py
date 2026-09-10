@@ -776,7 +776,7 @@ def test_the_guard_denies_a_tracked_write_in_a_romp_session_and_stands_aside_oth
 EDITED_TWICE = EDITED.replace("shipping the cache", "shipping the response cache")
 
 
-def test_track_edit_records_a_change_a_change_comment_binds_to_it_and_accept_keeps_the_comment_open_without_dropping_it(world):
+def test_track_edit_records_a_change_a_comment_about_it_names_it_in_changeIds_and_accept_keeps_the_comment_open_without_dropping_it(world):
     s0 = world.ok("status", world.fp)
     on = world.ok("set-tracked", world.fp, {"on": True, "scope": "file"}, world.fence_of(s0))
     assert on["trackedBy"] == {"kind": "file", "entry": "docs/report.md"}
@@ -791,26 +791,27 @@ def test_track_edit_records_a_change_a_change_comment_binds_to_it_and_accept_kee
     assert s["store"]["suggestions"][0]["authorId"] == SID
     assert s["store"]["suggestions"][0]["id"] == h["id"]
     assert s["unsent"] == EMPTY_UNSENT, "the session's change is not the person's to send"
-    # a change comment: bound by suggestionId, no anchor, no target
-    c = world.ok("comment", world.fp, {"suggestionId": h["id"], "note": "Good; say what moved it."}, world.fence_of(s))
+    # a comment about the change: changeIds names it, no anchor, no target (romp never writes suggestionId)
+    c = world.ok("comment", world.fp, {"changeIds": [h["id"]], "note": "Good; say what moved it."}, world.fence_of(s))
     cm = c["store"]["comments"][0]
-    assert set(cm) == {"id", "author", "ts", "suggestionId", "body", "replies", "resolved"}
-    assert (cm["suggestionId"], cm["author"], cm["body"], cm["resolved"]) == (h["id"], "you", "Good; say what moved it.", False)
+    assert set(cm) == {"id", "author", "ts", "changeIds", "body", "replies", "resolved"}
+    assert (cm["changeIds"], cm["author"], cm["body"], cm["resolved"]) == ([h["id"]], "you", "Good; say what moved it.", False)
+    assert cm["id"] == "%s-%d" % (cm["ts"], h["curFrom"]), "the id takes the named change's current offset"
     assert c["unsent"] == dict(EMPTY_UNSENT, comments=[cm["id"]])
     assert world.fp.read_text() == EDITED
     # a change that is not pending refuses no-change and writes nothing
-    bad = world.op("comment", world.fp, {"suggestionId": "1-1", "note": "late"}, world.fence_of(c))
+    bad = world.op("comment", world.fp, {"changeIds": ["1-1"], "note": "late"}, world.fence_of(c))
     assert (bad["type"], bad["code"]) == ("fileCommentsFailed", "no-change")
-    assert "reload" in bad["error"]
+    assert "reload" in bad["error"] and "1-1" in bad["error"]
     assert len(json.loads(Path(c["storePath"]).read_text())["comments"]) == 1
-    # the session answers into the change comment with the vendored CLI
+    # the session answers into the comment about the change with the vendored CLI
     rep = _node([TRACK_REPLY, "--file", str(world.fp), "--thread", cm["id"], "--note", "The retry budget."],
                 env=_env(ROMP_SESSION_NAME="web", ROMP_SID=SID))
     assert rep.returncode == 0, rep.stderr
     s2 = world.ok("status", world.fp)
     bound = s2["store"]["comments"][0]
     assert [(r["author"], r["authorId"], r["body"]) for r in bound["replies"]] == [("web", SID, "The retry budget.")]
-    assert bound["suggestionId"] == h["id"] and "anchor" not in bound
+    assert bound["changeIds"] == [h["id"]] and "anchor" not in bound and "suggestionId" not in bound
     assert [x["id"] for x in s2["hunks"]] == [h["id"]], "a reply moves no change"
     # accept: the sidecar only, fenced on its mtime alone; the file's bytes and mtime do not move
     text_before, ns_before = world.fp.read_bytes(), world.fp.stat().st_mtime_ns
@@ -820,7 +821,7 @@ def test_track_edit_records_a_change_a_change_comment_binds_to_it_and_accept_kee
     kept = a["store"]["comments"][0]
     # kept as it was, open: a decision never resolves a comment (decision 42, 2026-09-09; before it, accept marked
     # the bound comment resolved), and never drops one
-    assert (kept["id"], kept["suggestionId"], kept["resolved"]) == (cm["id"], h["id"], False), "open and kept, never dropped"
+    assert (kept["id"], kept["changeIds"], kept["resolved"]) == (cm["id"], [h["id"]], False), "open and kept, never dropped"
     assert [r["body"] for r in kept["replies"]] == ["The retry budget."]
     disk = json.loads(Path(a["storePath"]).read_text())
     assert disk["suggestions"] == [] and disk["comments"][0]["resolved"] is False and disk["v"] == 3
@@ -835,7 +836,7 @@ def test_track_edit_records_a_change_a_change_comment_binds_to_it_and_accept_kee
     # the same id again: no longer pending
     again = world.op("accept", world.fp, {"ids": [h["id"]]}, world.fence_of(a))
     assert (again["type"], again["code"]) == ("fileCommentsFailed", "no-change")
-    # the CLI still answers the bound comment the sent message would name, and the accept left it open
+    # the CLI still answers the comment the sent message would name, and the accept left it open
     rep2 = _node([TRACK_REPLY, "--file", str(world.fp), "--thread", cm["id"], "--note", "Noted."],
                  env=_env(ROMP_SESSION_NAME="web", ROMP_SID=SID))
     assert rep2.returncode == 0, rep2.stderr

@@ -33,7 +33,8 @@
 //   * a decision about a change that is no longer pending (accepted already, or coalesced away by a
 //     later track-edit) refuses `no-change` by id, so the caller reloads instead of deciding a
 //     different change under the same name; and a decision never touches a comment: accept drops
-//     the change's record and leaves a comment bound to it (`suggestionId`) as it was, open or
+//     the change's record and leaves a comment about it (`changeIds`, the person's own pick of the
+//     changes a comment is about; or a legacy `suggestionId`) as it was, open or
 //     resolved, so the ids in a sent message stay addressable and resolving stays the person's own
 //     act (decision 42, 2026-09-09; before it, accept marked the bound comments resolved). Every
 //     decision — accept, reject, the ones a save carries — reads its staged sidecar back before the
@@ -1969,58 +1970,85 @@ function validateAnchor(anchor) {
 // The comment object in addComment's exact shape (cli/track-comment.mjs): id `${now}-${idx}`,
 // author `you`, no authorId, ts, anchor (a passage only), body, replies [], resolved false — plus,
 // on a passage comment, the romp-only `anchorAt` after the anchor (the located from-offset; the
-// anchor itself is widened until unique, uniqueAnchor). A whole-file comment has no anchor and the
-// id `${now}-0`. `target` (a region on an image or a
-// PDF page) is not attached here: doComment validates it and stamps the hash (stampTarget) once
-// the anchor, if any, is placed. A CHANGE comment (`args.suggestionId`, the
-// Reply on a change's card) has no anchor and no target, carries `suggestionId`, and takes its id
-// from the change's current offset the way the other hosts' change threads do; the change must be
-// pending in `suggestions`, else `{error: 'no-change'}`. The other hosts bind a thread to a change
-// on this field (track-edit --thread sets it on a passage comment too); here the panel's card and
-// decidedFor read it, and a decision leaves the comment as it was, open or resolved (decision 42,
-// 2026-09-09; before it, accept marked the bound comments resolved — requireCommentsUntouched now
-// refuses a decision that changes one).
-export function buildComment(text, args, now, suggestions) {
+// anchor itself is widened until unique, uniqueAnchor), and, when the request names the changes the
+// comment is about, the romp-only `changeIds` after those (the about follow-on, 2026-09-10; the third
+// additive field, docs/adr/0002). A whole-file comment has no anchor and the id `${now}-0`. `target`
+// (a region on an image or a PDF page) is not attached here: doComment validates it and stamps the
+// hash (stampTarget) once the anchor, if any, is placed.
+// `changeIds` is the person's own pick of the changes a comment is ABOUT (a change card's Comment on
+// this change; the composer's "about N changes" option over a selection that overlaps their marks): a
+// non-empty list of ids, each naming a change the sidecar holds, PENDING (in `suggestions`) or DETACHED
+// (in `detached`), else `{error: 'no-change', ids}` naming the ones it does not, and nothing written.
+// It goes with or without an anchor: a comment about a deletion, whose text is not in the file, names
+// the change alone, and takes its id from the first change's current offset (a detached change's last
+// place) the way the change threads of the other hosts did. The ids are kept as the request sent them,
+// as strings. The other editors read a comment on the field they set, `suggestionId`, and write the
+// object back whole, so this field survives them; romp never writes `suggestionId` (a request naming
+// one is a caller bug): the panel's card and decidedFor read a stored one as the change that ANSWERED
+// the comment, the legacy meaning, and a decision leaves such a comment as it was, open or resolved
+// (decision 42, 2026-09-09; before it, accept marked the bound comments resolved — requireCommentsUntouched
+// now refuses a decision that changes one).
+export function buildComment(text, args, now, suggestions, detached) {
   const note = requireNote(args);
-  let c;
   if (args.suggestionId != null) {
-    if (args.anchor != null) throw new BadRequest('a change comment (suggestionId) takes no anchor');
-    if (args.target != null) throw new BadRequest('a change comment (suggestionId) takes no target');
-    if ((typeof args.suggestionId !== 'string' && typeof args.suggestionId !== 'number') || args.suggestionId === '') {
-      throw new BadRequest('suggestionId must be a non-empty string');
+    throw new BadRequest('suggestionId is not accepted: a comment names the changes it is about with changeIds');
+  }
+  const ids = readChangeIds(args);
+  let held = null;                                     // the first named change's record, for the id of a comment with no anchor
+  if (ids) {
+    const missing = [];
+    for (const id of ids) {
+      const op = (suggestions || []).find((s) => s && String(s.id) === id);
+      const d = op ? null : (detached || []).find((x) => x && String(x.id) === id);
+      if (!op && !d) missing.push(id);
+      else if (held === null) held = { from: op ? engine.span(op).a : (typeof d.from === 'number' ? d.from : 0) };
     }
-    const op = (suggestions || []).find((s) => s && String(s.id) === String(args.suggestionId));
-    if (!op) return { error: 'no-change' };
-    c = { id: `${now}-${engine.span(op).a}`, author: AUTHOR, ts: now, suggestionId: op.id, body: note, replies: [], resolved: false };
+    if (missing.length) return { error: 'no-change', ids: missing };
+  }
+  const about = ids ? { changeIds: ids } : {};        // spread in place, so the field takes its slot before the body
+  if (args.anchor == null) {
+    const c = { id: `${now}-${held ? held.from : 0}`, author: AUTHOR, ts: now, ...about, body: note, replies: [], resolved: false };
     return { comment: c };
   }
-  if (args.anchor == null) {
-    c = { id: `${now}-0`, author: AUTHOR, ts: now, body: note, replies: [], resolved: false };
-  } else {
-    const anchor = validateAnchor(args.anchor);
-    const loc = locateExact(text, anchor, browserHint(text, args.hintOffset), { exact: true });
-    if (loc.error) return { error: loc.error };
-    c = {
-      id: `${now}-${loc.from}`,
-      author: AUTHOR,
-      ts: now,
-      anchor: uniqueAnchor(text, loc.from, loc.to).anchor,
-      anchorAt: loc.from,
-      body: note,
-      replies: [],
-      resolved: false,
-    };
-    // Where the anchor landed, for the checks a region comment makes on the passage (doComment).
-    return { comment: c, range: { from: loc.from, to: loc.to } };
+  const anchor = validateAnchor(args.anchor);
+  const loc = locateExact(text, anchor, browserHint(text, args.hintOffset), { exact: true });
+  if (loc.error) return { error: loc.error };
+  const c = {
+    id: `${now}-${loc.from}`,
+    author: AUTHOR,
+    ts: now,
+    anchor: uniqueAnchor(text, loc.from, loc.to).anchor,
+    anchorAt: loc.from,
+    ...about,
+    body: note,
+    replies: [],
+    resolved: false,
+  };
+  // Where the anchor landed, for the checks a region comment makes on the passage (doComment).
+  return { comment: c, range: { from: loc.from, to: loc.to } };
+}
+
+// The request's `changeIds`, as strings, or null when the request names none: absent or null is none; anything
+// else must be a non-empty array of non-empty strings or numbers (a caller bug otherwise: no romp client sends
+// another shape). Repeats are kept once, in the order first named.
+function readChangeIds(args) {
+  if (args.changeIds == null) return null;
+  if (!Array.isArray(args.changeIds) || !args.changeIds.length) throw new BadRequest('changeIds must be a non-empty array of change ids');
+  const out = [];
+  for (const id of args.changeIds) {
+    if ((typeof id !== 'string' && typeof id !== 'number') || id === '') throw new BadRequest('every change id in changeIds must be a non-empty string');
+    if (!out.includes(String(id))) out.push(String(id));
   }
-  return { comment: c };
+  return out;
 }
 
 // ── the reply ───────────────────────────────────────────────────────
 
-// The decisions the panel needs that the log TAIL may not carry: for every comment bound (suggestionId) to a
-// change the sidecar no longer holds — not pending, not detached — the newest accept or reject entry naming
-// that id, with the texts recorded at the time. The panel reads a decided change's texts from the log
+// The decisions the panel needs that the log TAIL may not carry: for every change a comment names that the
+// sidecar no longer holds — not pending, not detached — the newest accept or reject entry naming that id, with
+// the texts recorded at the time. A comment names a change in `changeIds` (the changes it is about) or, on a
+// sidecar written before the about follow-on, in `suggestionId` (the change that answered it); both are read.
+// The panel reads a decided change's texts from the log
 // (plans/file-review.md, The comments log: a decision survives the change leaving the sidecar), and the
 // reply's `log` is the newest LOG_TAIL entries; a decision older than that fell out of what the panel saw,
 // and its comment's card said "this file" (the review, 2026-09-06). Read from the FULL entries, keyed by
@@ -2033,7 +2061,11 @@ export function decidedFor(store, entries) {
   for (const d of store.detached || []) if (d && d.id != null) held.add(String(d.id));
   const want = new Set();
   for (const c of store.comments || []) {
-    if (c && c.suggestionId != null && !held.has(String(c.suggestionId))) want.add(String(c.suggestionId));
+    if (!c) continue;
+    if (c.suggestionId != null && !held.has(String(c.suggestionId))) want.add(String(c.suggestionId));
+    for (const id of Array.isArray(c.changeIds) ? c.changeIds : []) {
+      if (id != null && id !== '' && !held.has(String(id))) want.add(String(id));
+    }
   }
   for (let i = entries.length - 1; i >= 0 && want.size; i--) {
     const e = entries[i];
@@ -2273,7 +2305,8 @@ function noChange(ctx, ids) {
   return new Refusal('no-change', `${what} no longer pending in ${ctx.shown} — reload and retry`);
 }
 
-// comment {note}, {anchor, note}, {suggestionId, note}, {target, note}, {anchor, target, note}: the
+// comment {note}, {anchor, note}, {target, note}, {anchor, target, note}, each with or without
+// `changeIds` (the changes the comment is about; buildComment says the rule): the
 // target's shape is checked first (a caller bug, before any disk read the anchor needs), the
 // anchor is placed, the anchored passage is checked to embed the figure the target names
 // (`figure-mismatch`), and only then is the figure hashed — the region's own refusals
@@ -2286,7 +2319,7 @@ function doComment(ctx) {
   if (figureHash != null && ctx.args.target == null) throw new BadRequest('fence.figureHash fences the figure a region is on, and this comment has no target');
   return withSidecar(ctx, true, (store, text, root) => {
     const target = ctx.args.target == null ? null : validateTarget(ctx.args.target, ctx.args.anchor != null);
-    const built = buildComment(text, ctx.args, Date.now(), store ? store.suggestions : []);
+    const built = buildComment(text, ctx.args, Date.now(), store ? store.suggestions : [], store ? store.detached : []);
     // The words a refusal uses. A region on an embedded figure was drawn on the figure, not selected as text: its
     // anchor is the embed line, and the remedy is to draw again, so the refusal names the line and that gesture
     // (the review, 2026-09-08: every refusal said to select the passage again). A passage keeps the words it had.
@@ -2304,7 +2337,7 @@ function doComment(ctx) {
     if (built.error === 'anchor-moved') {
       throw new Refusal('anchor-ambiguous', `${what} occurs more than once in ${ctx.shown} with the same surroundings, and ${moved} no longer says which copy was meant — ${again}`);
     }
-    if (built.error === 'no-change') throw noChange(ctx, [ctx.args.suggestionId]);
+    if (built.error === 'no-change') throw noChange(ctx, built.ids);
     if (target) {
       if (target.src != null) checkEmbedNamesSrc(ctx, text, built.range.from, built.range.to, target.src);
       built.comment.target = stampTarget(ctx, root || path.dirname(ctx.abs), target, figureHash);
@@ -2536,8 +2569,9 @@ export function requireCommentsUntouched(ctx, store, loadedComments, verb) {
 }
 
 // accept / accept-all: the engine drops the records and the file is untouched (a change's effect
-// is already in the text). The comments are not touched: a comment bound to an accepted change by
-// `suggestionId` is KEPT as it was — a stated divergence from the Obsidian host, which drops them — so
+// is already in the text). The comments are not touched: a comment about an accepted change (`changeIds`),
+// or bound to one by a legacy `suggestionId`, is KEPT as it was — a stated divergence from the Obsidian host,
+// which drops the bound ones — so
 // the ids a sent message named still answer to track-reply, and it is NOT marked resolved (decision
 // 42, 2026-09-09: resolving is the person's own act; the accept used to resolve the bound comments,
 // and comments the session's edits had answered left the visible list with nothing said). The
