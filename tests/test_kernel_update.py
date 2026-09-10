@@ -1706,6 +1706,74 @@ class Routes(Fresh):
             km._MANAGER_READ_FAULT[0] = ""
             mgr.shutdown()
 
+    def test_a_notice_helper_that_raises_still_leaves_the_failed_outcome_latched(self):
+        # review round 7 of the confirm step (2026-09-10): round 6 wrote the decorator's except as latch, then notice,
+        # then re-raise, so that a notice helper that raises cannot skip the latch, and said so in its docstring; no
+        # test held the order (the two lines swapped left the pin above green). Here the notice helper raises too:
+        # the thread dies on the helper's error (the converge's own rides along as its context; the re-raise line
+        # is never reached), the finally still clears the flag, and every reader finds the latched outcome, which
+        # names the converge's error. Red with the latch and the notice swapped (verified in the round)
+        import http.server
+        from http.server import ThreadingHTTPServer
+        dials, deaths, hits = [], [], []
+
+        class Manager(http.server.BaseHTTPRequestHandler):
+            def _answer(self, body):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):            # the idle polls' registry read, once the converge has ended
+                hits.append(("GET", self.path))
+                self._answer(json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}]}).encode())
+
+            def do_POST(self):
+                hits.append(("POST", self.path))
+                self._answer(b"{}")
+
+            def log_message(self, *a):
+                pass
+        mgr = ThreadingHTTPServer(("127.0.0.1", 0), Manager)
+        threading.Thread(target=mgr.serve_forever, daemon=True).start()
+        port = mgr.server_address[1]
+        saved_port, saved_tried = os.environ.get("ROMP_MANAGER_PORT"), km._INPLACE_TRIED[0]
+
+        def check():
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            return json.loads(body)
+        try:
+            km._INPLACE_TRIED[0] = ""
+            os.environ["ROMP_MANAGER_PORT"] = str(port)
+            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(port, dials, allow={self.port})), \
+                 mock.patch.object(km, "_rebuild_dist", side_effect=RuntimeError("esbuild vanished")), \
+                 mock.patch.object(km, "_checkout_sha", return_value="abcdef01"), \
+                 mock.patch.object(km, "_sync_notice", side_effect=RuntimeError("the sync ring is gone")), \
+                 mock.patch.object(threading, "excepthook", lambda args: deaths.append(args.exc_value)), \
+                 mock.patch.object(km, "_send_to_app"):
+                code, body = self._drift_click_and_wait()
+                self.assertEqual((code, json.loads(body)["state"]), (200, "converging"))
+                self.assertEqual([type(e).__name__ for e in deaths], ["RuntimeError"], "the thread died on an exception")
+                self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the finally cleared the flag")
+                text = "the converge stopped on an error, RuntimeError: esbuild vanished; the Log has the traceback"
+                self.assertEqual((km._MAIN_CONVERGE_OUTCOME[0] or {}).get("failed"), text,
+                                 "the latch was written before the notice helper ran, and holds the converge's own error")
+                for reader in ("the window that clicked", "another window the running push flipped into the wait"):
+                    d = check()
+                    self.assertEqual((d["state"], d["failed"], d["updated"]), ("", text, ""), reader)
+                self.assertEqual([h for h in hits if h[0] == "POST"], [], "no restart request went out: the exception came before the dial")
+                self.assertEqual([x for x in dials if x[1] not in (port, self.port)], [], "nothing but the fake and the route's own server")
+        finally:
+            km._INPLACE_TRIED[0] = saved_tried
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            km._MANAGER_READ_FAULT[0] = ""
+            mgr.shutdown()
+
     def test_the_tag_door_clears_the_drift_doors_latched_outcome_and_none_is_served_while_its_child_runs(self):
         # review round 6 of the confirm step (2026-09-10): the drift door's outcome stayed latched when the TAG
         # door started (only _main_converge_begin and the converge's decorator cleared it), and /update-check
