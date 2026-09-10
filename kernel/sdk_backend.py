@@ -2855,7 +2855,7 @@ def down_resume_nudge(stop_t: int, start_t: int) -> str:
 
 def is_resume_nudge(text) -> bool:
     """Whether a queue entry is a boot-reconcile continuation nudge: BOOT_RESUME_NUDGE, its `romp
-    down` variant (down_resume_nudge, which shares the lead), or the crash one in either of its forms
+    down` variant (down_resume_nudge, which shares the lead), or the crash one in any of its three forms
     (is_crash_resume_nudge). Readers that keep the nudge at the head of a queue, or hide it from a
     'you' bubble, match on this, never on equality with one constant."""
     return isinstance(text, str) and (is_crash_resume_nudge(text) or text.startswith(_RESUME_NUDGE_LEAD))
@@ -3480,30 +3480,44 @@ def scope_pid(unit: str) -> int | None:
 #     member outlives the SIGTERM: when every process goes down on it, the unit is collected within
 #     milliseconds of the CLI's exit, before the SDK reports that exit (the transport awaits the process
 #     after stdout's EOF, then the thread unwinds), so the show reads LoadState=not-found (verified on
-#     systemd 255: 8/8 not-found after an EOF-then-wait). For a not-found unit with a non-SIGKILL exit
-#     the heal therefore reads the unit's journal tail (SCOPE_JOURNAL_ARGV): `<unit>: Failed with result
-#     'oom-kill'` names the whole-scope stop (SCOPE_JOURNAL_OOM_LINE); the `A process of this unit has
-#     been killed by the OOM killer` line is whole-life and appears under `continue` for a contained kill
-#     too, so it is never read as a verdict. An empty or failed journal read is a clause in the plain
-#     line, never silence.
+#     systemd 255: 8/8 not-found after an EOF-then-wait). For a not-found unit the heal therefore reads
+#     the unit's journal tail (SCOPE_JOURNAL_ARGV), whatever the exit: `<unit>: Failed with result
+#     'oom-kill'` names the whole-scope stop (SCOPE_JOURNAL_OOM_LINE). The `<unit>: A process of this
+#     unit has been killed by the OOM killer.` line (SCOPE_JOURNAL_KILL_LINE) is the user manager's
+#     record of EVERY OOM kill in the scope, written on the cgroup-empty event before the unit is
+#     collected (systemd 255: 60/60 lone processes OOM-killed under `continue` had the line in the
+#     journal at the instant of exit; 58/58 killed by hand had only the Started line), and it survives
+#     the collection the Result does not. It is whole-life, so for a non-SIGKILL exit it is no verdict
+#     (a contained kill under `continue` logs it too); for the SIGKILL + collected cell it is what tells
+#     the OOM killer from a kill by hand or a userspace killer (earlyoom, systemd-oomd), which leave no
+#     line: with the line the cell is "oom", without it "sigkill" (round 4). An empty or failed journal
+#     read is a clause in the plain line, never silence, and for the SIGKILL + collected cell it is the
+#     hedged "sigkill" too: a definite out-of-memory verdict needs a definite record.
 # The heal asks about the dead CLI's OWN scope by its exact unit name (SdkSession.cli_scope_unit, read
 # from the CLI's /proc/<pid>/cgroup at connect), never a glob over the sid's scopes: an older scope of
 # the same session, kept up by a tmux server and still draining an OOM kill of its own, would answer a
 # glob and be blamed for a newer CLI's death. A unit systemd no longer has loaded (the scope collected by
 # the wrapper's --collect once every process was gone; the common shape, since a lone CLI IS the scope's
 # last process) shows LoadState=not-found with an empty ControlGroup (the show still exits 0 and prints
-# Result=success for it, verified), so the live counter is gone and the CLI's SIGKILL exit is all the
-# heal has, which is why the exit is the primary signal. Every heal path writes ONE plain line saying
-# what was read and what was not; none returns silently, and the reason a counter could not be read (the
-# scope collected, a loaded unit with no readable file, a show that failed) is the caller's to state
-# (oom_verdict's counter_note): oom_verdict is pure and never sees the backend. The cgroup path is
-# ControlGroup under the cgroup v2 mount (CGROUP_ROOT; the same root the memory-controller probe reads).
+# Result=success for it, verified), so the live counter is gone and the CLI's SIGKILL exit plus the
+# journal's record are all the heal has, which is why the exit is the primary signal. Every heal path
+# writes ONE plain line saying what was read and what was not; none returns silently, and the reason a
+# counter or a journal could not be read (the scope collected, a loaded unit with no readable file, a
+# show or a journalctl that failed) is the caller's to state (oom_verdict's counter_note and
+# journal_note): oom_verdict is pure and never sees the backend. The cgroup path is ControlGroup under
+# the cgroup v2 mount (CGROUP_ROOT; the same root the memory-controller probe reads).
 SCOPE_SHOW_ARGV = ["systemctl", "--user", "show", "--no-pager", "-p", "Id,LoadState,Result,ControlGroup", "--"]
 SCOPE_SHOW_TIMEOUT = 10.0
-# the unit's last journal lines, read for a collected unit with a non-SIGKILL exit (the comment above);
-# `-o cat` prints the messages bare and `-n 5` bounds the read to the stop's own lines; the unit follows
-SCOPE_JOURNAL_ARGV = ["journalctl", "--user", "-n", "5", "-o", "cat", "-u"]
+# the unit's last journal lines, read for a collected unit whatever the exit (the comment above); `-o cat`
+# prints the messages bare, `-t systemd` keeps the user manager's own lines only (a scope member's `logger`
+# lines carry the unit too and would push the manager's out of the window: verified, six logger lines
+# displaced the Started line), and `-n 5` bounds the read to the newest few; the unit follows. The window
+# is read from its LAST `Started <unit>` line (journal_life), so an earlier same-named unit's death inside
+# it is cut off.
+SCOPE_JOURNAL_ARGV = ["journalctl", "--user", "-n", "5", "-o", "cat", "-t", "systemd", "-u"]
 SCOPE_JOURNAL_OOM_LINE = "Failed with result 'oom-kill'"
+SCOPE_JOURNAL_KILL_LINE = "A process of this unit has been killed by the OOM killer"
+SCOPE_JOURNAL_STARTED = "Started "     # the manager's line at each start of a unit: `Started <unit> - <description>.`
 SCOPE_RESULT_OOM = "oom-kill"
 CGROUP_ROOT = "/sys/fs/cgroup"
 MEMORY_EVENTS = "memory.events"
@@ -3564,16 +3578,46 @@ def exit_said(exit_code, subject: str = "the CLI") -> str:
     return "%s exited %d" % (subject, exit_code)
 
 
-def journal_oom_stop(journal_text: str) -> bool:
+def journal_life(journal_text: str, unit: str | None = None) -> list[str]:
+    """The lines of a unit's journal tail (SCOPE_JOURNAL_ARGV) that belong to its NEWEST start: the lines
+    after the last `Started <unit>` line (SCOPE_JOURNAL_STARTED; any unit's when `unit` is None), so an
+    earlier unit of the same name whose death sits inside the window is cut off, and every line of the
+    window when no Started line is in it (the manager's log level above info, or the window filled by
+    this life's own lines). With `unit`, a line counts only when it names the unit (`<unit>: ...`), which
+    the manager's kill and stop lines do. The residual: a same-named unit's earlier death inside the
+    window with no Started line to cut at, which the scope names (pid and a nanosecond stamp) make a
+    collision of both. Pure."""
+    lines = (journal_text or "").splitlines()
+    head = SCOPE_JOURNAL_STARTED + (unit + " " if unit else "")
+    start = 0
+    for i, ln in enumerate(lines):
+        if ln.startswith(head):
+            start = i + 1
+    life = lines[start:]
+    if unit:
+        life = [ln for ln in life if ln.startswith(unit + ":")]
+    return life
+
+
+def journal_oom_stop(journal_text: str, unit: str | None = None) -> bool:
     """Whether a unit's journal tail (SCOPE_JOURNAL_ARGV) records systemd stopping the scope whole over an
-    OOM kill: the `Failed with result 'oom-kill'` line (SCOPE_JOURNAL_OOM_LINE). The `A process of this
-    unit has been killed by the OOM killer` line is NOT read: it is whole-life and appears under
-    OOMPolicy=continue for a contained kill too. Pure."""
-    return any(SCOPE_JOURNAL_OOM_LINE in ln for ln in (journal_text or "").splitlines())
+    OOM kill in its newest life (journal_life): the `Failed with result 'oom-kill'` line
+    (SCOPE_JOURNAL_OOM_LINE). Pure."""
+    return any(SCOPE_JOURNAL_OOM_LINE in ln for ln in journal_life(journal_text, unit))
+
+
+def journal_oom_kill(journal_text: str, unit: str | None = None) -> bool:
+    """Whether a unit's journal tail (SCOPE_JOURNAL_ARGV) records the OOM killer taking a process in the
+    scope in its newest life (journal_life): the user manager's `A process of this unit has been killed by
+    the OOM killer` line (SCOPE_JOURNAL_KILL_LINE), written on the cgroup-empty event and surviving the
+    unit's collection. Whole-life within the start: a contained kill under OOMPolicy=continue leaves it
+    too, so what it decides is the caller's (oom_verdict: the SIGKILL + collected cell only). Pure."""
+    return any(SCOPE_JOURNAL_KILL_LINE in ln for ln in journal_life(journal_text, unit))
 
 
 def oom_verdict(props: dict, oom_kill: int | None, exit_code: int | None, baseline: int | None = None,
-                counter_note: str | None = None, journal: str | None = None) -> tuple[str, str] | None:
+                counter_note: str | None = None, journal: str | None = None,
+                journal_note: str | None = None) -> tuple[str, str] | None:
     """Whether a dead CLI's scope says how it died, as `(kind, evidence)` or None. Pure.
 
     `props` is the show's answer (scope_show_props) for the exact unit, {} when the unit was not found or
@@ -3583,13 +3627,21 @@ def oom_verdict(props: dict, oom_kill: int | None, exit_code: int | None, baseli
     `baseline` is the counter at the turn's start (None when it was never read); `counter_note` is the
     caller's reason an unreadable counter could not be read (only the caller knows whether the scope was
     collected, the unit loaded with no readable file, or the show failed; None reads plainly); `journal`
-    is the unit's journal tail when the caller read it (a not-found unit with a non-SIGKILL exit), else
-    None. The cells, primary first:
-      * a SIGKILL exit (SIGKILL_EXIT) with the counter risen over the turn-start baseline, or with the
-        counter unreadable (a collected scope, a legacy hierarchy), is "oom": the killer's signature
-        under OOMPolicy=continue, the cgroup's own killer and the kernel's global one alike; the counter,
-        when read, is stated as corroboration, and an unreadable one leaves the signal standing alone
-        with the note;
+    is the newest life of the unit's journal tail (journal_life) when the caller read it (a not-found
+    unit, whatever the exit), None when it was not read or the read failed, and `journal_note` is the
+    caller's clause about that read (what the journal said, or why it could not be read), None when no
+    read was attempted (a loaded unit). The cells, primary first:
+      * a SIGKILL exit (SIGKILL_EXIT) with the counter risen over the turn-start baseline is "oom": the
+        killer's signature under OOMPolicy=continue, the cgroup's own killer and the kernel's global one
+        alike, the counter stated as corroboration;
+      * a SIGKILL exit with the counter unreadable and the journal READ (a collected scope) is decided by
+        the journal (round 4): "oom" when the newest life carries the manager's OOM-killer line
+        (journal_oom_kill) or its whole-scope stop line (journal_oom_stop), else "sigkill" with the
+        journal's silence as the evidence (a kill by hand, or a userspace killer, leaves no line). A
+        journal that could not be read or has no line for the unit is "sigkill" too, the note saying so:
+        a definite out-of-memory verdict needs a definite record. With NO journal read (a loaded unit
+        whose memory.events could not be read, a legacy hierarchy, a show that failed) the SIGKILL stands
+        alone as "oom" with the counter note, and a loaded unit's Result is stated beside it;
       * a SIGKILL exit with a READABLE counter that did not rise (`oom_kill <= (baseline or 0)`, so a
         whole-life 0 with no baseline lands here too) is "sigkill": on cgroup v2 the counter counts the
         memcg killer's and the global killer's kills alike, so a flat one excludes the kernel's killers
@@ -3620,7 +3672,22 @@ def oom_verdict(props: dict, oom_kill: int | None, exit_code: int | None, baseli
     if exit_code == SIGKILL_EXIT:
         if oom_kill is None:
             base = "" if baseline is None else " (oom_kill was %d at the turn's start)" % baseline
-            return ("oom", "the CLI was killed by signal 9; %s%s" % (counter(), base))
+            # a loaded unit's Result is read, so it is stated (round 4, correctness-2); a collected or
+            # unshown unit has none (props {}), and its cells keep their words
+            shown = ", Result=%s" % props["Result"] if props.get("Result") else ""
+            if journal is not None and (journal_oom_kill(journal) or journal_oom_stop(journal)):
+                line = SCOPE_JOURNAL_OOM_LINE if journal_oom_stop(journal) else SCOPE_JOURNAL_KILL_LINE
+                return ("oom", "the CLI was killed by signal 9; %s%s%s; the journal records an OOM kill in its scope (%s)"
+                               % (counter(), base, shown, line))
+            if journal is not None:
+                return ("sigkill", "the CLI was killed by signal 9 and its scope's journal records no OOM kill (a kill by "
+                                   "hand, or a userspace killer the cgroup counter and so the journal cannot see); %s%s; %s"
+                                   % (counter(), base, journal_note or "the journal's newest lines record no OOM kill"))
+            if journal_note is not None:
+                return ("sigkill", "the CLI was killed by signal 9 and its scope's journal could not be read, so no OOM kill "
+                                   "is on record (a kill by hand, a userspace killer, or the OOM killer with its record "
+                                   "unread); %s%s; %s" % (counter(), base, journal_note))
+            return ("oom", "the CLI was killed by signal 9; %s%s%s" % (counter(), base, shown))
         if oom_kill > (baseline or 0):
             return ("oom", "the CLI was killed by signal 9; %s, Result=%s" % (counter(), result))
         if result != SCOPE_RESULT_OOM:   # systemd's own record of a whole-scope OOM stop outranks a flat counter
@@ -4594,6 +4661,29 @@ def _echo_queued_in(a: dict, queued) -> bool:
     return a.get("_echo_text") in idless
 
 
+def _wake_feeder(loop, wake) -> None:
+    """Wake a session's input generator from another thread, or do nothing when there is no open loop to
+    wake: asyncio.run closes the loop when the session thread ends and SdkSession.loop is never nulled, so
+    a send that reaches a session in its last milliseconds (the heal's scope reads now run before the dead
+    session is popped, kernel-3 2026-09-10, and _ensure hands the send to it) must not raise
+    RuntimeError('Event loop is closed') out of enqueue after the text is queued and persisted. The text
+    is safe either way: the heal re-heads the persisted queue behind its nudge. Never raises."""
+    if loop is None or wake is None:
+        return
+    closed = getattr(loop, "is_closed", None)
+    if callable(closed) and closed():
+        return
+    try:
+        loop.call_soon_threadsafe(wake.set)
+    except RuntimeError:     # closed between the check and the call
+        pass
+
+
+# _heal_cut_session's "the scope was not read yet" marker: None is a legitimate verdict (the scopes off, no
+# unit recorded), so the pre-read cannot key on it (kernel-3, 2026-09-10).
+_UNREAD = object()
+
+
 class SdkSession:
     """One long-lived SDK client running in its own thread + asyncio loop."""
 
@@ -4973,8 +5063,7 @@ class SdkSession:
             self._pending.append(text)
             loop, wake = self.loop, self._input_wake
         self._persist_queue()
-        if loop is not None and wake is not None:
-            loop.call_soon_threadsafe(wake.set)
+        _wake_feeder(loop, wake)
 
     def enqueue_if_empty(self, text: str) -> bool:
         """Enqueue `text` only when NOTHING is queued — the emptiness check and the append share
@@ -4989,8 +5078,7 @@ class SdkSession:
             self._pending.append(text)
             loop, wake = self.loop, self._input_wake
         self._persist_queue()
-        if loop is not None and wake is not None:
-            loop.call_soon_threadsafe(wake.set)
+        _wake_feeder(loop, wake)
         return True
 
     def pending(self) -> list[str]:
@@ -13227,6 +13315,17 @@ class SdkBackend:
         return rec if isinstance(rec, dict) and rec.get("text") else None
 
     def _on_session_gone(self, sess: SdkSession):
+        # The heal's scope reads (systemctl show and, for a collected unit, journalctl; each bounded by
+        # SCOPE_SHOW_TIMEOUT, a few ms typical) run BEFORE the pop (kernel-3, round 4, 2026-09-10): while
+        # the session is still in self.sessions a send for its sid lands in its own queue (_ensure returns
+        # it, its thread alive in this finally; _wake_feeder keeps the closed loop from raising) and the
+        # heal's re-head keeps the text behind the nudge. Popped first, the same send spawned a replacement
+        # from a reg the nudge had not reached, and the replacement's next persist dropped the nudge. The
+        # reads take no lock; the pop-to-write window is back to the microseconds of the heal's reg
+        # read-modify-write, and a send inside THAT window is the residual (it spawns from the reg ahead
+        # of the nudge, as it did before the scope was ever read).
+        cut = not sess.ended and sess.inflight > 0 and not sess._interrupted
+        oom = self._oom_killed_scope(sess) if cut else _UNREAD
         with self._lock:
             if self.sessions.get(sess.sid) is sess:
                 self.sessions.pop(sess.sid, None)
@@ -13237,7 +13336,7 @@ class SdkBackend:
                 # the cut (2026-07-06: reaped sessions settled 'waiting', so last_state_value never
                 # read 'working' and nothing ever resumed them — the silent stall). The trailing
                 # 'working' IS the cut marker; heal by resuming, bounded.
-                self._heal_cut_session(sess)
+                self._heal_cut_session(sess, oom)
             else:
                 # process exited on its own while idle (crash / EOF) — settle state; next send resumes
                 append_state(self.state_dir, sess.sid, "waiting")
@@ -13283,23 +13382,26 @@ class SdkBackend:
                 self._log("bg-task death notice (%s): %s" % (sess.name, traceback.format_exc()))
         self._poke()
 
-    def _heal_cut_session(self, sess: SdkSession):
+    def _heal_cut_session(self, sess: SdkSession, oom=_UNREAD):
         """A session's claude process died ABNORMALLY mid-turn while the kernel stayed up (killed by
         something external, OOM, a transport crash — the boot reconcile only heals cuts across a
         kernel RESTART, so without this the session stalls until the next restart). Resume it the
         same way the reconcile does: prepend the visible crash nudge to the persisted queue and
         re-ensure. BOUNDED to one resume per cut — the counter only resets when a turn COMPLETES
         (_turn_completed), so a CLI that keeps dying before finishing a turn is a crash loop and is
-        left cut (loudly) for the next boot reconcile instead of respawning forever."""
+        left cut (loudly) for the next boot reconcile instead of respawning forever. `oom` is the
+        scope's verdict _on_session_gone read before it popped the session (kernel-3, round 4); a
+        caller that has not read it (_UNREAD) gets the read here."""
         sid = sess.sid
-        # Read the dead CLI's own scope FIRST, before the crash-loop refusal below (kernel-1 2026-09-10):
+        # The dead CLI's own scope is read FIRST, before the crash-loop refusal below (kernel-1 2026-09-10):
         # a session OOM-killed twice in a row must still have its cause named in the log, and its scope's
         # evidence is gone by the next boot reconcile. The read is bounded (SCOPE_SHOW_TIMEOUT) and returns
         # at once when the scopes are off or no unit is recorded. (unit, kind, evidence) or None; kind
         # "oom" is the CLI's own death out of memory, "sigkill" a kill by signal 9 with no OOM kill counted
-        # in its scope this turn (a kill by hand, or a userspace killer the counter cannot see; round 3),
-        # "contained" a tool child the CLI outlived.
-        oom = self._oom_killed_scope(sess)
+        # in its scope this turn or recorded in its journal (a kill by hand, or a userspace killer the
+        # counter cannot see; rounds 3 and 4), "contained" a tool child the CLI outlived.
+        if oom is _UNREAD:
+            oom = self._oom_killed_scope(sess)
         kind = oom[1] if oom else None
         named = oom if kind == "oom" else None
         with self._lock:
@@ -13370,7 +13472,7 @@ class SdkBackend:
         baseline = getattr(sess, "_oom_baseline", None)
         base_said = ("oom_kill was %d at the turn's start" % baseline if baseline is not None
                      else "no turn-start baseline")
-        props, count, read_said, counter_note, journal = {}, None, None, None, None
+        props, count, read_said, counter_note, journal, journal_said = {}, None, None, None, None, None
         try:
             r = subprocess.run(SCOPE_SHOW_ARGV + [unit], capture_output=True, text=True, timeout=SCOPE_SHOW_TIMEOUT)
         except Exception as e:
@@ -13387,14 +13489,15 @@ class SdkBackend:
                 if shown.get("LoadState", "loaded") != "loaded" or not shown.get("Id"):
                     # already collected (a lone CLI IS the scope's last process): the not-found show prints
                     # Result=success, which is NOT this scope's verdict, so it is dropped and the counter is
-                    # gone; the CLI's exit is what is left, and for a non-SIGKILL exit the journal still
-                    # carries a whole-scope stop the unit no longer does (SCOPE_SHOW_ARGV's comment)
+                    # gone; the CLI's exit is what is left, and the journal still carries what the unit no
+                    # longer does: a whole-scope stop, and the manager's line for each OOM kill in the scope,
+                    # which for a SIGKILL exit tells the OOM killer from a kill by hand (round 4;
+                    # SCOPE_SHOW_ARGV's comment)
                     read_said = ("the scope was already collected (LoadState=%s), so the live counter could not be read"
                                  % (shown.get("LoadState") or "?"))
                     counter_note = "the scope was already collected, so its counter could not be read"
-                    if exit_code != SIGKILL_EXIT:
-                        journal, journal_said = self._scope_journal(unit)
-                        read_said += "; " + journal_said
+                    journal, journal_said = self._scope_journal(unit)
+                    read_said += "; " + journal_said
                 else:
                     props = shown
                     cgroup = shown.get("ControlGroup") or ""
@@ -13408,28 +13511,47 @@ class SdkBackend:
                             raise OSError("no oom_kill line in %s" % path)
                         read_said = "%s oom_kill=%d, Result=%s" % (MEMORY_EVENTS, count, shown.get("Result") or "unknown")
                     except OSError as e:
-                        read_said = "%s could not be read (%s); only systemd's Result can say" % (MEMORY_EVENTS, e)
+                        read_said = ("%s could not be read (%s); only systemd's Result can say (Result=%s)"
+                                     % (MEMORY_EVENTS, e, shown.get("Result") or "unknown"))
                         counter_note = "its scope's counter could not be read (%s)" % e
         self._log("session scope result (%s): %s; %s; %s" % (sid8, exit_said(exit_code), base_said, read_said),
                   problem=False)
-        verdict = oom_verdict(props, count, exit_code, baseline, counter_note, journal)
+        verdict = oom_verdict(props, count, exit_code, baseline, counter_note, journal, journal_said)
         if not verdict:
             return (unit, None, None)
         kind, evidence = verdict
+        if kind == "sigkill" and journal_said is not None and self.cli_scope_memory_delegated is False:
+            # the journal's silence excludes nothing here: systemd records an OOM kill from the scope's
+            # memory.events, which a user manager without the memory controller does not have (round 4)
+            evidence += ("; the memory controller is not delegated to the user manager, so systemd records no OOM "
+                         "kill for a scope and the journal's silence excludes none")
         if kind == "oom" and exit_code == SIGKILL_EXIT and "memoryMax" in self.cli_scope_limits \
                 and self.cli_scope_memory_delegated is not False:
-            # context, never the cause: named only when a MemoryMax is set AND the controller applies it
-            # (MemoryHigh throttles and MemorySwapMax alone kills nothing, so neither is named); a flat
-            # counter ("sigkill") excludes the memcg killer, so the limit is not named there
-            evidence += "; a memory limit (MemoryMax=%s) is in force on its scope" % self.cli_scope_limits["memoryMax"]
+            # context, never the cause: named only when a MemoryMax is set AND the controller is not known
+            # to leave it unapplied (MemoryHigh throttles and MemorySwapMax alone kills nothing, so neither
+            # is named); a flat counter ("sigkill") excludes the memcg killer, so the limit is not named
+            # there. The clause is worded by the boot probe's verdict (round 4, correctness-1): "in force"
+            # only when the controller check settled True; unsettled (None) says so and names the check
+            # that settled nothing, as the boot line does (_cli_scope_boot_line)
+            limit = self.cli_scope_limits["memoryMax"]
+            if self.cli_scope_memory_delegated is True:
+                evidence += "; a memory limit (MemoryMax=%s) is in force on its scope" % limit
+            else:
+                check = next((c for c in ("memoryLimits", "memoryController") if c in self.cli_scope_unsettled), None)
+                evidence += ("; a memory limit (MemoryMax=%s) is set for its scope but not settled (the %s settled nothing "
+                             "at start)" % (limit, CLI_SCOPE_CHECK_NAMES[check] if check else "boot probe"))
         return (unit, kind, evidence)
 
     def _scope_journal(self, unit: str):
-        """The last lines of a collected scope's user journal (SCOPE_JOURNAL_ARGV), as (text, said): the
-        text for oom_verdict (None when the read failed, so nothing is judged from it) and one clause for
-        the plain 'session scope result' line. Read only for a unit the show no longer finds, with a
-        non-SIGKILL exit: systemd's Result=oom-kill leaves with the unit, and the journal is what still
-        names a whole-scope stop (SCOPE_SHOW_ARGV's comment). Bounded like the show; never raises."""
+        """The newest life of a collected scope's user journal (SCOPE_JOURNAL_ARGV, cut at its last Started
+        line by journal_life), as (text, said): the text for oom_verdict (None when the read failed, so
+        nothing is judged from it) and one clause for the plain 'session scope result' line, which
+        oom_verdict also gets as its journal_note. Read for a unit the show no longer finds, whatever the
+        exit: systemd's Result=oom-kill leaves with the unit, and the journal is what still names a
+        whole-scope stop and, under OOMPolicy=continue, each OOM kill in the scope (SCOPE_SHOW_ARGV's
+        comment). Residuals: a user manager logging above notice writes no kill line; journald's
+        rate limit can drop it while the Started line stands; a line journald has not written yet at
+        the read is missed. Bounded like the show; never raises."""
         try:
             r = subprocess.run(SCOPE_JOURNAL_ARGV + [unit], capture_output=True, text=True, timeout=SCOPE_SHOW_TIMEOUT)
         except Exception as e:
@@ -13438,12 +13560,15 @@ class SdkBackend:
         if rc != 0:
             detail = ((getattr(r, "stderr", "") or "").strip().split("\n", 1)[0]) or "no detail"
             return None, "journalctl exited %s (%s)" % (rc, detail)
-        text = getattr(r, "stdout", "") or ""
-        if not text.strip():
-            return text, "the journal has no line for the scope"
+        raw = getattr(r, "stdout", "") or ""
+        if not raw.strip():
+            return "", "the journal has no line for the scope"
+        text = "\n".join(journal_life(raw, unit))
         if journal_oom_stop(text):
             return text, "the journal says systemd stopped the scope over an OOM kill (%s)" % SCOPE_JOURNAL_OOM_LINE
-        return text, "the journal's last lines name no whole-scope OOM stop"
+        if journal_oom_kill(text):
+            return text, "the journal records an OOM kill in the scope (%s)" % SCOPE_JOURNAL_KILL_LINE
+        return text, "the journal's newest lines for the scope record no OOM kill"
 
     def _turn_completed(self, sid: str):
         """A turn's ResultMessage landed — the session is demonstrably able to finish turns again, so
