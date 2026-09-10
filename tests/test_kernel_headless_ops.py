@@ -2244,8 +2244,8 @@ class UnknownSessionRefused(_RouteServer):
                         self.assertNotIn("no session", log, (label, op))
                         # the name is the session addressed, kept as the row's target and never as the text: a
                         # compact carries no text, a sendCommand's is its cmd (review round 8, 2026-09-09)
-                        self.assertEqual(errs[0]["title"], "That %s was not delivered" % km._FOREIGN_OP_VERB[op], (label, op))
                         self.assertEqual(errs[0]["copy"], extra.get("cmd", ""), (label, op))
+                        self.assertEqual(errs[0]["title"], "That %s was not delivered" % km._FOREIGN_OP_VERB[op], (label, op))
                         self.assertEqual([(r["what"], r["text"], r["target"]) for r in rows],
                                          [(km._FOREIGN_OP_VERB[op], extra.get("cmd", ""), "web")], (label, op))
                         if op == "compact":
@@ -2274,8 +2274,8 @@ class UnknownSessionRefused(_RouteServer):
                         self.assertEqual([(r["op"], r["sid"]) for r in rows], [(op, "web")], op)
                         self.assertIn("undeliverable %s: tmux probe failed while resolving 'web'" % op, log, op)
                         self.assertNotIn("no session", log, op)
-                        self.assertEqual(errs[0]["title"], "That %s was not delivered" % km._FOREIGN_OP_VERB[op], op)
                         self.assertEqual(errs[0]["copy"], extra.get("cmd", ""), "the name is the target, never the text")
+                        self.assertEqual(errs[0]["title"], "That %s was not delivered" % km._FOREIGN_OP_VERB[op], op)
                         self.assertEqual([(r["what"], r["text"], r["target"]) for r in rows],
                                          [(km._FOREIGN_OP_VERB[op], extra.get("cmd", ""), "web")], op)
                         if op == "compact":

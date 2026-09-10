@@ -190,14 +190,14 @@ class RefusesForeignDriveOps(unittest.TestCase):
             finally:
                 km.jd.STATE = saved
         self.assertEqual(self.reached, [])
+        compact, command, rename = self.sent
+        self.assertEqual(compact["copy"], "", "no text was typed, so none is offered back")
+        self.assertEqual(compact["title"], "That compact was not delivered")
         self.assertEqual([(r["op"], r["sid"], r["what"], r["text"], r["target"]) for r in rows],
                          [("compact", "web-2", "compact", "", "web-2"),
                           ("sendCommand", "web-2", "command", "/model opus", "web-2"),
                           ("renameSession", THEIRS, "rename", "a title I typed", "")],
                          "the name is the target for compact and sendCommand, the text for a rename")
-        compact, command, rename = self.sent
-        self.assertEqual(compact["title"], "That compact was not delivered")
-        self.assertEqual(compact["copy"], "", "no text was typed, so none is offered back")
         self.assertIn("The refusal is recorded in undelivered.jsonl", compact["text"])
         self.assertNotIn("Your text is saved verbatim", compact["text"])
         self.assertIn("has no session with id web-2", compact["text"])
