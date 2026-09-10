@@ -567,7 +567,7 @@ test("pins: the delegate action, the header's order, the store's key and default
   assert.match(head, /if \(s && \(s\.hunks \|\| \[\]\)\.length && !this\.ctx\.editing\(\)\) \{\n\s+const i = btn\("Show changes inline"/, "offered while the file has changes and the read view is up");
   assert.match(head, /i\.dataset\.on = this\.inline \? "1" : "0";\n\s+i\.setAttribute\("aria-pressed", this\.inline \? "true" : "false"\);/, "the two-state button's state, as Track changes wears it");
   assert.match(SRC, /inline = loadSettings\(\)\.changesInline;/, "read from the shared store when the panel is made");
-  assert.match(SRC, /private paintChanges\(root: Element, src: string, rendered: boolean\): void \{\n\s+const s = this\.status;\n\s+if \(!this\.inline\) return;/, "off: the change painters are not called, in either view");
+  assert.match(SRC, /private paintChanges\(root: Element, src: string, rendered: boolean, deferTrim = false\): void \{\n\s+const s = this\.status;\n\s+if \(!this\.inline\) return;/, "off: the change painters are not called, in either view");
   assert.match(SRC, /\} else if \(!painted && this\.inline && !editing && !inFlux && src !== null && this\.ctx\.mode\(\) !== "media"\) \{\n[^\n]*\n\s+const t = el\("span", "fc-tag", "not shown"\);/, "the tag is claimed only while the marks are on");
   assert.doesNotMatch(SRC, /The Rendered view cannot show a deletion/, "the Rendered view shows deletions now: the tag's del-specific title is gone");
   assert.match(SRC, /onExternalSettingsChange\(\(s\) => \{ if \(live && live\.inline !== s\.changesInline\) \{ live\.inline = s\.changesInline; live\.paintAll\(\); \} \}\);/, "one listener for the module, routed to the live panel");

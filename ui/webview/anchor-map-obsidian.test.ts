@@ -539,12 +539,14 @@ test("a highlight across two blocks inside a folded callout, or from a fold's bo
   // such node as a mark of its own: an empty ringed box on a line between the blocks, 4 x 18 px in the viewer, the details 22 px
   // taller per mark and everything below moved down, on every paint pass and in the composer's pending target too; a closed fold
   // showed the box the moment it opened. On main the same markdown is a plain blockquote (in the list) and painted clean (the Slice
-  // 4 review, round 8). A whitespace-only text node beside a block box renders nothing whatever its parent's tag (the browser
-  // collapses it), so the rule reads the node's neighbours too: a block-level sibling on either side, and the node is skipped.
-  // The rule reads tags, so an author's `<details>`, `<dl>` or `<figure>` (the same box on main) is held the same way; the test
-  // after this one drives them, from the paragraph before the html block to the paragraph after (round 8 held a range across
-  // their elements unpaintable, which is so for endpoints INSIDE the block, the fallback's quote holding the tags, and not for
-  // a range that spans it; round 9).
+  // 4 review, round 8). A whitespace-only text node between two block boxes, or at a block-box parent's edge, makes no line box
+  // whatever its parent's tag (CSS 2 section 9.2.2.1), so the rule reads the node's neighbours instead of the parent's tag: a
+  // block-level box on both sides, or the parent's edge and a block box, and the node is skipped without a measurement (since
+  // round 12 the one DOM-side skip below the root; every other blank is painted and the browser's layout decides,
+  // anchor-map.ts trimCollapsedMarks). The rule reads tags, so an author's `<details>`, `<dl>` or `<figure>` (the same box on
+  // main) is held the same way; the test after this one drives them, from the paragraph before the html block to the paragraph
+  // after (round 8 held a range across their elements unpaintable, which is so for endpoints INSIDE the block, the fallback's
+  // quote holding the tags, and not for a range that spans it; round 9).
   const SRC = [
     "# Title", "",
     "Intro para.", "",
@@ -608,49 +610,55 @@ test("a highlight across two blocks inside a folded callout, or from a fold's bo
   assert.deepEqual(im.map((m) => m.textContent), ["em text", " ", "strong text"], "the space between two inline elements is painted with the passage");
 });
 
-test("a highlight from the paragraph before an author's html block to the paragraph after it paints the block's text and never its whitespace: the parent's edge beside an image, the block-level tags round 8's list lacked, a double line break", () => {
-  // Round 8's neighbour rule read the nearest non-whitespace sibling on either side against a hand-written list of block boxes
-  // and missed three shapes, each an empty ringed box on main too (the Slice 4 review, round 9): the "\n" between an author's
-  // `<figure>` or `<details>` and its `<img>`, first or last under the parent (no sibling on that side, an inline one on the
-  // other), where the browser collapses a block's leading and trailing white space away; the "\n\n" beside a `<center>`, `<menu>`,
-  // `<dir>`, `<search>` or `<hgroup>`, block-level tags the sanitizer keeps that the list lacked (the set is derived now:
-  // md-config-paint-whitespace-browser.test.ts holds it to the sanitizer's allowlist and Chromium's computed display); and the
-  // "\n" between two `<br>`s, where the white space before a break is its line's trailing space and the white space after it the
-  // next line's leading space. Each range runs from the paragraph before the html block to the paragraph after: the endpoints
-  // sit in prose the map places, and wrapBetween wraps every unit between them, the html block's included, so the block's own
-  // nodes are painted or skipped by skipBlockWs alone. The controls: a space inside an inline element beside an image, mid-line
-  // and rendered, is painted with the passage; a single break leaves no whitespace node to judge.
+test("a highlight from the paragraph before an author's html block to the paragraph after it paints the block's text and skips the white space between its blocks and at its block edges; a blank beside its image or br is painted in node and left to the browser's layout (the browser legs trim it)", () => {
+  // The author html blocks the Slice 4 review's rounds 8 and 9 collected (each an empty ringed box on main): the "\n" between an
+  // author's `<figure>` or `<details>` and its `<img>`, the "\n\n" beside a `<center>`, `<menu>`, `<dir>`, `<search>` or
+  // `<hgroup>` (block-level tags the round 8 list lacked; the set is derived now: md-config-paint-whitespace-browser.test.ts
+  // holds it to the sanitizer's allowlist and Chromium's computed display, md-config-block-boxes.test.ts to the Rendering
+  // section's fixture), and the "\n" between two `<br>`s. Since round 12 the painter predicts only what is exact from the DOM
+  // (anchor-map.ts skipBlockWs): a node of collapsible white space between two block boxes, or at a block-box parent's edge with
+  // no sibling on that side, makes no line box and is skipped; every other blank in the range is painted, and the browser's
+  // layout decides afterwards (trimCollapsedMarks: a mark whose text lays out at zero width is unwrapped). The stand-in here has
+  // no layout, so the blank beside an image or a br carries a mark in node; md-config-paint-whitespace-browser.test.ts leg 2
+  // drives the same scenes over the real bundle and holds that no whitespace-only mark stands after the paint. Each range runs
+  // from the paragraph before the html block to the paragraph after: the endpoints sit in prose the map places, and wrapBetween
+  // wraps every unit between them, the html block's included, so the block's own nodes are painted or skipped by skipBlockWs
+  // alone. `blanks` names, per scene, the whitespace-only marks node paints, in order; the rest of the marks are the blocks'
+  // text. The controls: a space inside an inline element beside an image, mid-line and rendered, is painted with the passage; a
+  // single break leaves no whitespace node to judge.
   const stripWs = (s: string): string => s.replace(/\s+/g, "");
   const wrap = (block: string): string => "Intro para.\n\n" + block + "\n\nAfter para.\n";
   const IMG = '<img src="a.png" alt="pic">';
-  const cases: Array<[string, string, string[]]> = [
-    ["a figure with an image and a caption", wrap("<figure>\n" + IMG + "\n<figcaption>Caption text</figcaption>\n</figure>"), ["Intro para.", "Caption text", "After para."]],
-    ["a figure with an image alone, whitespace at both edges", wrap("<figure>\n" + IMG + "\n</figure>"), ["Intro para.", "After para."]],
-    ["an open details with a summary and an image", wrap("<details open>\n<summary>Shots</summary>\n\n" + IMG + "\n\n</details>"), ["Intro para.", "Shots", "After para."]],
-    ["a closed details with an image (its text is in the DOM shut or open)", wrap("<details>\n<summary>Shots</summary>\n\n" + IMG + "\n\n</details>"), ["Intro para.", "Shots", "After para."]],
-    ["a center with an image alone: the tag the list lacked, as the parent", wrap("<center>\n" + IMG + "\n</center>"), ["Intro para.", "After para."]],
-    ["a details whose body is a center", wrap("<details>\n<summary>Screenshots</summary>\n\n<center>alpha centred</center>\n\n</details>"), ["Intro para.", "Screenshots", "alpha centred", "After para."]],
-    ["a figure whose body is a menu", wrap("<figure>\n\n<menu><li>one</li></menu>\n\n</figure>"), ["Intro para.", "one", "After para."]],
-    ["a figure whose body is a dir", wrap("<figure>\n\n<dir><li>one</li></dir>\n\n</figure>"), ["Intro para.", "one", "After para."]],
-    ["a details whose body is a search", wrap("<details>\n<summary>Find</summary>\n\n<search>find it</search>\n\n</details>"), ["Intro para.", "Find", "find it", "After para."]],
-    ["a details whose body is an hgroup (not on CommonMark's html-block list; inside the details all the same)", wrap("<details>\n<summary>Head</summary>\n<hgroup>\n<h2>Title</h2>\n<p>Sub</p>\n</hgroup>\n</details>"), ["Intro para.", "Head", "Title", "Sub", "After para."]],
-    ["a description list, round 8's shape, kept", wrap("<dl>\n<dt>Term</dt>\n<dd>Def</dd>\n</dl>"), ["Intro para.", "Term", "Def", "After para."]],
-    ["a double line break in a paragraph", wrap("line one<br>\n<br>\nline three"), ["Intro para.", "line one", "\nline three", "After para."]],
-    ["white space before and after a line break, beside inline elements", wrap("text *one* <br>\n**bold** tail"), ["Intro para.", "text ", "one", "bold", " tail", "After para."]],
+  const cases: Array<[string, string, string[], string[]]> = [
+    ["a figure with an image and a caption (the newlines beside the image painted in node; the one after the caption, at the figure's edge, skipped)", wrap("<figure>\n" + IMG + "\n<figcaption>Caption text</figcaption>\n</figure>"), ["Intro para.", "Caption text", "After para."], ["\n", "\n"]],
+    ["a figure with an image alone, whitespace at both edges (both beside the image: painted in node)", wrap("<figure>\n" + IMG + "\n</figure>"), ["Intro para.", "After para."], ["\n", "\n"]],
+    ["an open details with a summary and an image (the newline before the summary skipped, the two beside the image painted in node)", wrap("<details open>\n<summary>Shots</summary>\n\n" + IMG + "\n\n</details>"), ["Intro para.", "Shots", "After para."], ["\n\n", "\n\n"]],
+    ["a closed details with an image (its text is in the DOM shut or open)", wrap("<details>\n<summary>Shots</summary>\n\n" + IMG + "\n\n</details>"), ["Intro para.", "Shots", "After para."], ["\n\n", "\n\n"]],
+    ["a center with an image alone: the tag the list lacked, as the parent (both newlines beside the image: painted in node)", wrap("<center>\n" + IMG + "\n</center>"), ["Intro para.", "After para."], ["\n", "\n"]],
+    ["a details whose body is a center", wrap("<details>\n<summary>Screenshots</summary>\n\n<center>alpha centred</center>\n\n</details>"), ["Intro para.", "Screenshots", "alpha centred", "After para."], []],
+    ["a figure whose body is a menu", wrap("<figure>\n\n<menu><li>one</li></menu>\n\n</figure>"), ["Intro para.", "one", "After para."], []],
+    ["a figure whose body is a dir", wrap("<figure>\n\n<dir><li>one</li></dir>\n\n</figure>"), ["Intro para.", "one", "After para."], []],
+    ["a details whose body is a search", wrap("<details>\n<summary>Find</summary>\n\n<search>find it</search>\n\n</details>"), ["Intro para.", "Find", "find it", "After para."], []],
+    ["a details whose body is an hgroup (not on CommonMark's html-block list; inside the details all the same)", wrap("<details>\n<summary>Head</summary>\n<hgroup>\n<h2>Title</h2>\n<p>Sub</p>\n</hgroup>\n</details>"), ["Intro para.", "Head", "Title", "Sub", "After para."], []],
+    ["a description list, round 8's shape, kept", wrap("<dl>\n<dt>Term</dt>\n<dd>Def</dd>\n</dl>"), ["Intro para.", "Term", "Def", "After para."], []],
+    ["a double line break in a paragraph (the newline between the breaks painted in node: a br is no block box)", wrap("line one<br>\n<br>\nline three"), ["Intro para.", "line one", "\nline three", "After para."], ["\n"]],
+    ["white space before and after a line break, beside inline elements (both painted in node)", wrap("text *one* <br>\n**bold** tail"), ["Intro para.", "text ", "one", "bold", " tail", "After para."], [" ", "\n"]],
   ];
-  for (const [why, src, texts] of cases) {
+  for (const [why, src, texts, blanks] of cases) {
     const box = buildRendered(src);
     const range = { start: src.indexOf("Intro para."), end: src.indexOf("After para.") + "After para.".length };
     const fresh = shape(box);
     const marks = paintRendered(El(box), src, range, "fc-hl") as unknown as FakeElement[] | null;
     assert.ok(marks && marks.length >= 2, why + ": both ends painted: " + JSON.stringify(marks && marks.map((m) => m.textContent)));
+    const painted = marks!.map((m) => m.textContent);
     const ws = marks!.filter((m) => stripWs(m.textContent) === "");
-    assert.deepEqual(ws.map((m) => (m.parentNode as FakeElement).tagName + " " + JSON.stringify(m.textContent)), [], why + ": no whitespace-only mark");
-    assert.deepEqual(marks!.map((m) => m.textContent), texts, why + ": the blocks' text and nothing else");
+    assert.deepEqual(ws.map((m) => m.textContent), blanks, why + ": the whitespace-only marks node paints are the blanks beside an image or a br and no other: " + JSON.stringify(ws.map((m) => (m.parentNode as FakeElement).tagName + " " + JSON.stringify(m.textContent))));
+    for (const m of ws) assert.notEqual(m.parentNode, box, why + ": no whitespace-only mark is a top-level node");
+    assert.deepEqual(painted.filter((t) => stripWs(t) !== ""), texts, why + ": the blocks' text and nothing else");
     unpaintAll(box);
     assert.deepEqual(shape(box), fresh, why + ": unpainted, the top level as rendered");
     const again = paintRendered(El(box), src, range, "fc-hl") as unknown as FakeElement[];
-    assert.deepEqual(again.map((m) => m.textContent), texts, why + ": the same marks on a repaint");
+    assert.deepEqual(again.map((m) => m.textContent), painted, why + ": the same marks on a repaint");
   }
   // the controls
   const mid = wrap("Some text<span> " + IMG + "</span> tail.");

@@ -11,9 +11,9 @@
 // stripped the fold 'Two paragraphs' is 95.19 px unpainted against 123.19 painted. The 4 x 18 px and 22 px per mark that
 // anchor-map.ts skipBlockWs quotes are the viewer's own prose (13px x 1.15 in its sans), a different font. On main the same
 // markdown is a plain blockquote and painted clean (the Slice 4 review, round 8). Now a whitespace-only text node with a
-// block-level sibling on either side is skipped whatever its parent is (anchor-map.ts skipBlockWs); since round 9 so is one
-// at the edge of a block-level parent or beside a `<br>`, and the block set is derived from the sanitizer's allowlist
-// (md-config-paint-whitespace-browser.test.ts).
+// block-level box on both sides, or at the edge of a block-level parent, is skipped whatever its parent is (anchor-map.ts
+// skipBlockWs, the block set derived from the sanitizer's allowlist, md-config-paint-whitespace-browser.test.ts), and every
+// other blank is painted and measured in the browser's layout, its mark unwrapped at zero width (trimCollapsedMarks, round 12).
 // Over the REAL file-comments.ts bundle in headless Chromium, mounted as md-config-goto-closed-details-browser.test.ts
 // mounts it, the markdown parsed by the one configuration (md-config.ts applyMdConfig) so the folds are the viewer's own.
 // The measure: the layout of the note with every fold open, read before the panel paints and after, must be the same box

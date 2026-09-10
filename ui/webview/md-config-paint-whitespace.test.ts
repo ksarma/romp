@@ -1,14 +1,16 @@
 // The paint's neighbour reads cost a paragraph its inline children once, not once per whitespace node. skipBlockWs (anchor-map.ts)
-// judges a whitespace-only text node by what the browser lays out beside it on either side (contentBeside, which reads the siblings
-// through readBeside and steps with sibling), and wrapRuns joins adjacent units by asking whether one follows the other (follows);
-// both step over the DOM's own sibling pointers when the node offers them, constant time a step, and index the parent's child list
-// only for a stand-in without them. Round 8 of the Slice 4 review indexed every time: each space between two inline elements of a
-// paragraph is a whitespace-only node the rule reads both neighbours of, and each read scanned the paragraph's child list from the
-// start, so one mark across a paragraph of N links cost N squared child reads (over 3,000 links, 850 ms in Chromium against 27 ms
-// before the rule; md-config-paint-whitespace-browser.test.ts times the same in equal-work legs over the real bundle). Here the
-// stand-in offers the pointers and each element counts the indexed reads of its child list through a Proxy the stand-in's own
-// methods bypass, so the count is the paint's alone; the bound is linear in the children with room, and the marks are the ones a
-// stand-in WITHOUT pointers paints (the fallback path, which the other test files' stand-ins take). Synthetic prose.
+// reads the neighbours of a whitespace-only text node for its one DOM-side skip below the root (a block box on both sides, or a
+// block-box parent's edge; every other blank is painted and the browser's layout decides, trimCollapsedMarks, which a stand-in
+// with no layout leaves alone), stepping with sibling, and wrapRuns joins adjacent units by asking whether one follows the other
+// (follows); both step over the DOM's own sibling pointers when the node offers them, constant time a step, and index the
+// parent's child list only for a stand-in without them. Round 8 of the Slice 4 review indexed every time: each space between two
+// inline elements of a paragraph is a whitespace-only node the rule reads both neighbours of, and each read scanned the
+// paragraph's child list from the start, so one mark across a paragraph of N links cost N squared child reads (over 3,000 links,
+// 850 ms in Chromium against 27 ms before the rule; md-config-paint-whitespace-browser.test.ts times the same in equal-work legs
+// over the real bundle). Here the stand-in offers the pointers and each element counts the indexed reads of its child list
+// through a Proxy the stand-in's own methods bypass, so the count is the paint's alone; the bound is linear in the children with
+// room, and the marks are the ones a stand-in WITHOUT pointers paints (the fallback path, which the other test files' stand-ins
+// take). Synthetic prose.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked } from "marked";
@@ -144,7 +146,8 @@ const textsOf = (marks: FakeElement[]): string => marks.map((m) => m.textContent
 // ── the scenes ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const N = 1000;
 /** A paragraph of N links separated by spaces: 2N - 1 children under one P, every space a whitespace-only node between two
- *  inline elements (the passage's own text, painted), each read for both neighbours by skipBlockWs. */
+ *  inline elements (the passage's own text, painted; in the browser the trim unwraps the ones at the wrap points), each read
+ *  for both neighbours by skipBlockWs. */
 const LINKS = "# Title\n\n" + Array.from({ length: N }, (_, i) => "[w" + i + "](#a" + i + ")").join(" ") + "\n\nAfter para.\n";
 /** A paragraph of N inline formulas with text between: 2N + 1 units that are all siblings (the formula roots are units of
  *  their own), so wrapRuns asks follows() of every adjacent pair and wraps the whole paragraph in one mark. */

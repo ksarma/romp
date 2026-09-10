@@ -1,7 +1,8 @@
-// The whitespace rule of the Rendered paint (anchor-map.ts skipBlockWs), over the REAL bundle in headless Chromium: marked with
-// the one configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as the viewer's mdBlock
-// builds it. Three legs (the Slice 4 review, round 9):
-// 1. BLOCK_BOXES, the tags a whitespace-only text node is skipped beside, is DERIVED here and held equal to the shipped set: every
+// The whitespace rule of the Rendered paint (anchor-map.ts skipBlockWs and trimCollapsedMarks), over the REAL bundle in headless
+// Chromium: marked with the one configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as
+// the viewer's mdBlock builds it. Four legs (the Slice 4 review, rounds 9 and 12):
+// 1. BLOCK_BOXES, the tags a whitespace-only text node between two of which is skipped without a measurement, is DERIVED here and
+//    held equal to the shipped set: every
 //    tag the sanitizer keeps (DOMPurify's allowlist under MD_PURIFY, read off the instance itself through its element hook, less
 //    MD_FORBID_TAGS) that Chromium lays out as a block-level box or a table or one of a table's parts (the computed display of the
 //    element under the viewer's prose root), the document's own html and body left out, which the parser never places in a
@@ -14,20 +15,28 @@
 //    whitespace-only mark, and moves nothing: the "\n" between a figure or a details and its image (the parent's edge, an inline
 //    neighbour), the "\n\n" beside a center, menu, dir or search, and the "\n" between two <br>s each painted an empty ringed box
 //    before (4 x 16 px on this page's 14px/1.5 sans-serif; 4 x 18 on the viewer's sheet), the figure or details taller by a line.
-//    The layout is read box for box, unpainted against painted and again after the panel's unpaint and a repaint; the controls
-//    (a space inside an inline element beside an image, mid-line and rendered; a figure whose body is a paragraph) hold the
-//    rule's two sides.
-// 3. The paint's cost is linear in a paragraph's inline children: the neighbour reads (contentBeside, stepping with sibling) and
-//    follows step over the DOM's sibling pointers (round 8 indexed the parent's child list per whitespace node, so one mark across
-//    3,000 links cost 850 ms against 27 ms before the rule). Timed as equal work in the same run: a paragraph of LARGE links
-//    painted once against a paragraph of SMALL links painted LARGE / SMALL times, seven pairs, the median of the pair ratios
-//    bounded at LINEAR_BOUND (a linear paint gives about 1, the quadratic one about LARGE / SMALL; the method
-//    md-config-block-start-memo.test.ts adopted in round 8, whose equal-work legs hold under a CPU quota where unequal ones did
-//    not), with an absolute guard on the large paint as the load-independent catcher. The source table (anchor-map.ts sourceTable)
-//    is one entry keyed on the source, and marked's lex of a 5,000-link paragraph is 300 ms of its own, so each timed paint follows
-//    an untimed one over the same source (the table warm, as it is for the panel, which paints one text many times) and the marks
-//    are unwrapped between paints, the DOM built once a size. Skips LOUDLY without a playwright browser (CI installs none).
-//    Synthetic prose, no paths.
+//    Since round 12 the "\n\n" between two blocks is the pre-skip's and the "\n" beside an image or a br is painted, measured at
+//    zero width and unwrapped by the trim: the same DOM after the paint either way. The layout is read box for box, unpainted
+//    against painted and again after the panel's unpaint and a repaint; the controls (a space inside an inline element beside an
+//    image, mid-line and rendered; a figure whose body is a paragraph) hold the rule's two sides.
+// 3. The paint less the trim is linear in a paragraph's inline children: the pre-skip's neighbour reads (stepping with sibling)
+//    and follows step over the DOM's sibling pointers (round 8 indexed the parent's child list per whitespace node, so one mark
+//    across 3,000 links cost 850 ms against 27 ms before the rule). Timed as equal work in the same run with the trim deferred
+//    (`trim: false`, the panel's own call shape): a paragraph of LARGE links painted once against a paragraph of SMALL links
+//    painted LARGE / SMALL times, seven pairs, the median of the pair ratios bounded at LINEAR_BOUND (a linear paint gives about 1,
+//    the quadratic one about LARGE / SMALL; the method md-config-block-start-memo.test.ts adopted in round 8, whose equal-work legs
+//    hold under a CPU quota where unequal ones did not), with an absolute guard on the large paint as the load-independent
+//    catcher. The source table (anchor-map.ts sourceTable) is one entry keyed on the source, and marked's lex of a 5,000-link
+//    paragraph is 300 ms of its own, so each timed paint follows an untimed one over the same source (the table warm, as it is for
+//    the panel, which paints one text many times) and the marks are unwrapped between paints, the DOM built once a size.
+// 4. The trim's shape and cost on the same LARGE paragraph, the pathological case (one comment across 5,000 links; round 12): the
+//    trimmed paint unwraps exactly one blank mark per line break of the painted paragraph (the space the line wraps at, collapsed
+//    as the line's trailing space) and leaves no blank mark of zero width and no rendered blank unmarked; it measures each blank
+//    mark once per pass, at most three passes (Range.getClientRects counted through a wrapper on its prototype: between B + (B -
+//    trimmed) and 3B calls for B blank marks, the second pass being the fixpoint's confirmation, never one measurement per unwrap,
+//    which relaid the block out 373 times and cost 12 s in the prototype); and it costs a bounded multiple of the untrimmed paint
+//    in the same run (TRIM_BOUND; the prototype measured about 8 for one pass, the build box about 16 with the confirming pass),
+//    with an absolute guard. Skips LOUDLY without a playwright browser (CI installs none). Synthetic prose, no paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -233,7 +242,7 @@ const LINEAR_BOUND = 3;
 const ABSOLUTE_MS = 1000;
 const links = (n: number): string => "# Title\n\n" + Array.from({ length: n }, (_, i) => "[w" + i + "](#a" + i + ")").join(" ") + "\n\nAfter para.\n";
 
-test("one mark across a paragraph of 5,000 links costs what ten across 500 cost: the neighbour and adjacency reads step over the DOM's sibling pointers, so the paint is linear in the inline children (equal-work legs, the median pair ratio bounded)", async (t) => {
+test("one mark across a paragraph of 5,000 links costs what ten across 500 cost with the trim deferred: the neighbour and adjacency reads step over the DOM's sibling pointers, so the paint less the trim is linear in the inline children (equal-work legs, the median pair ratio bounded)", async (t) => {
   await inBrowser(t, async (page) => {
     const r = await page.evaluate(([large, small, pairs]: [string, string, number]) => {
       const w = window as any;
@@ -244,7 +253,8 @@ test("one mark across a paragraph of 5,000 links costs what ten across 500 cost:
       const range = (src: string) => ({ start: src.indexOf("[w0]"), end: src.indexOf("\n\nAfter para.") });
       const paint = (h: HTMLElement, src: string): { ms: number; marks: number; ws: number } => {
         const rg = range(src);
-        const t0 = performance.now(); const marks = w.__romp.paintRendered(h, src, rg, "fc-hl", { id: "c1" }) || []; const t1 = performance.now();
+        // the trim deferred, as the panel defers it to its pass (leg 4 times the trim itself)
+        const t0 = performance.now(); const marks = w.__romp.paintRendered(h, src, rg, "fc-hl", { id: "c1" }, { trim: false }) || []; const t1 = performance.now();
         const out = { ms: t1 - t0, marks: marks.length, ws: marks.filter((m: Element) => !(m.textContent || "").trim()).length };
         unpaint(h);
         return out;
@@ -268,12 +278,77 @@ test("one mark across a paragraph of 5,000 links costs what ten across 500 cost:
                largeMarks: lm, largeWs: lws, smallMarks: sm, smallWs: sws, restored: shape(L) === lShape && shape(S) === sShape };
     }, [links(LARGE), links(SMALL), PAIRS]);
     assert.equal(r.reps, LARGE / SMALL);
-    assert.equal(r.largeMarks, 2 * LARGE - 1, "the large paragraph: every link text and every space a mark (the spaces are the passage's own text)");
+    assert.equal(r.largeMarks, 2 * LARGE - 1, "the large paragraph, the trim deferred: every link text and every space a mark (the spaces are the passage's own text)");
     assert.equal(r.largeWs, LARGE - 1);
     assert.equal(r.smallMarks, 2 * SMALL - 1);
     assert.equal(r.smallWs, SMALL - 1);
     assert.ok(r.restored, "the unpaint between paints gives the paragraphs back as built");
     assert.ok(r.median <= LINEAR_BOUND, "one paint of " + LARGE + " links against " + r.reps + " of " + SMALL + ": pair ratios " + r.ratios.join(" ") + ", median " + r.median + " over the bound " + LINEAR_BOUND + ": not linear");
     assert.ok(r.largeMedian <= ABSOLUTE_MS, "the large paint's median " + r.largeMedian + " ms is over " + ABSOLUTE_MS + " (about 50 ms with the pointers, 2,160 indexed, on the build box)");
+  });
+});
+
+// ── leg 4: the trim's shape and cost on the large paragraph ────────────────────────────────────────────────────────────────
+/** The trimmed paint against the untrimmed one, the median of PAIRS pair ratios: about 16 on the build box (two measurement
+ *  passes over 4,999 blank marks, 6 to 50 us a Range.getClientRects inside a 10k-box inline formatting context, against a 50 ms
+ *  paint), bounded with room for a loaded runner; a measurement per unwrap would read 200 and more. */
+const TRIM_BOUND = 60;
+/** The trimmed paint alone, the table warm: about 0.8 s on the build box; the load-independent catcher (12 s per unwrap-relayout). */
+const TRIM_ABSOLUTE_MS = 6000;
+
+test("the trim over one mark across 5,000 links unwraps one blank mark per line break and no other, measures each blank mark once per pass in at most three passes (never once per unwrap), leaves no zero-width blank mark and no rendered blank unmarked, and costs a bounded multiple of the untrimmed paint", async (t) => {
+  await inBrowser(t, async (page) => {
+    const r = await page.evaluate(([large, pairs]: [string, number]) => {
+      const w = window as any;
+      const host = (): HTMLElement => { const h = document.createElement("div"); h.className = "fileview-md"; h.style.width = "800px"; document.body.appendChild(h); return h; };
+      const build = (h: HTMLElement, src: string) => { h.replaceChildren(...Array.from(w.__romp.sanitizeMd(w.__romp.marked.parse(src)).childNodes as ArrayLike<Node>)); };
+      const unpaint = (h: HTMLElement) => { const parents = new Set<Node>(); for (const n of Array.from(h.querySelectorAll("mark"))) { const p = n.parentNode!; parents.add(p); while (n.firstChild) p.insertBefore(n.firstChild, n); p.removeChild(n); } for (const p of parents) p.normalize(); };
+      const range = (src: string) => ({ start: src.indexOf("[w0]"), end: src.indexOf("\n\nAfter para.") });
+      const blank = (s: string) => /^\s*$/.test(s);
+      const width = (n: Node): number => { const rg = document.createRange(); rg.selectNodeContents(n); let x = 0; for (const b of Array.from(rg.getClientRects())) x += b.width; return x; };
+      // Range.getClientRects counted through its prototype: one call per blank mark measured
+      let calls = 0; const proto = Range.prototype as any; const orig = proto.getClientRects;
+      proto.getClientRects = function (this: Range) { calls++; return orig.call(this); };
+      const L = host(); build(L, large);
+      const p = L.querySelector("p")!; const lineHeight = parseFloat(getComputedStyle(p).lineHeight);
+      const rg = range(large);
+      const paint = (trim: boolean): { ms: number; marks: Element[]; calls: number } => {
+        calls = 0;
+        const t0 = performance.now(); const marks = w.__romp.paintRendered(L, large, rg, "fc-hl", { id: "c1" }, { trim }) || []; const t1 = performance.now();
+        return { ms: t1 - t0, marks, calls };
+      };
+      const ratios: number[] = []; const trimmedMs: number[] = []; let shape: any = null;
+      for (let i = 0; i < pairs; i++) {
+        paint(false); unpaint(L);                                          // the table warm (untimed)
+        const u = paint(false); const uMarks = u.marks.length, uBlank = u.marks.filter((m: Element) => blank(m.textContent || "")).length; const uCalls = u.calls; unpaint(L);
+        const tr = paint(true); trimmedMs.push(tr.ms);
+        if (!shape) {
+          const kept = tr.marks.filter((m: Element) => blank(m.textContent || ""));
+          const lines = Math.round(p.getBoundingClientRect().height / lineHeight);
+          const zeroKept = kept.filter((m: Element) => width(m) === 0).length;
+          // every blank text node of the paragraph with a width in the painted layout carries a mark
+          let bareRendered = 0; const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+          for (let n = walk.nextNode(); n; n = walk.nextNode()) if (blank((n as Text).data) && width(n) > 0 && !(n.parentElement && n.parentElement.closest("mark"))) bareRendered++;
+          shape = { uMarks, uBlank, uCalls, tMarks: tr.marks.length, tBlank: kept.length, trimmed: uBlank - kept.length, lines, zeroKept, bareRendered, calls: tr.calls };
+        }
+        unpaint(L);
+        ratios.push(tr.ms / u.ms);
+      }
+      proto.getClientRects = orig;
+      const med = (a: number[]) => { const c = a.slice().sort((x, y) => x - y); return c[Math.floor(c.length / 2)]; };
+      return { ...shape, ratios: ratios.map((x) => Math.round(x * 10) / 10), median: Math.round(med(ratios) * 10) / 10, trimmedMedian: Math.round(med(trimmedMs)) };
+    }, [links(LARGE), PAIRS]);
+    assert.equal(r.uMarks, 2 * LARGE - 1, "the untrimmed paint: every link text and every space a mark");
+    assert.equal(r.uBlank, LARGE - 1, "the untrimmed paint: every space a blank mark");
+    assert.equal(r.uCalls, 0, "the untrimmed paint measures nothing");
+    assert.ok(r.lines > 100, "the paragraph wraps into many lines at 800 px: " + r.lines);
+    assert.equal(r.trimmed, r.lines - 1, "the trim unwraps one blank mark per line break of the painted paragraph, the space the line wraps at, and no other: " + r.trimmed + " unwrapped, " + r.lines + " lines");
+    assert.equal(r.tMarks, r.uMarks - r.trimmed, "the non-blank marks all stay");
+    assert.equal(r.zeroKept, 0, "no blank mark of zero width stands after the trim");
+    assert.equal(r.bareRendered, 0, "no rendered blank of the paragraph is left without a mark");
+    const B = r.uBlank;
+    assert.ok(r.calls >= B + (B - r.trimmed) && r.calls <= 3 * B, "each blank mark measured once per pass, two to three passes (the second confirms the fixpoint): " + r.calls + " Range.getClientRects calls for " + B + " blank marks, " + r.trimmed + " unwrapped");
+    assert.ok(r.median <= TRIM_BOUND, "the trimmed paint against the untrimmed one: pair ratios " + r.ratios.join(" ") + ", median " + r.median + " over the bound " + TRIM_BOUND);
+    assert.ok(r.trimmedMedian <= TRIM_ABSOLUTE_MS, "the trimmed paint's median " + r.trimmedMedian + " ms is over " + TRIM_ABSOLUTE_MS);
   });
 });

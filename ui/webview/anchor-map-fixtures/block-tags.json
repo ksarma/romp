@@ -9,7 +9,8 @@
     "summary first under a details is a list-item by a second rule; a closed dialog is hidden by one). The list is the",
     "section's, whatever the sanitizer does: dialog, form, fieldset, legend, option and optgroup are on it and",
     "md-sanitize.ts strips all six; listing, plaintext and xmp are on it and DOMPurify's allowlist lacks them. Two readers:",
-    "md-config-block-boxes.test.ts holds anchor-map.ts BLOCK_BOXES equal to these tags less the ones the sanitizer strips",
+    "md-config-block-boxes.test.ts holds anchor-map.ts BLOCK_BOXES (the tags a whitespace-only text node between two of which is",
+    "skipped without a measurement, skipBlockWs) equal to these tags less the ones the sanitizer strips",
     "or the parser never places in a fragment (html, body), in node, where CI runs;",
     "md-config-paint-whitespace-browser.test.ts leg 1 holds this list to Chromium's computed display over the tags the",
     "sanitizer keeps, where a browser exists."

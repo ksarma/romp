@@ -769,7 +769,7 @@ test("source pins: the in-flight guard, the touch handlers, the selection gate, 
   assert.match(SRC, /const src = c\.text === undefined \? null : c\.text;\n\s*if \(c\.range && src !== null\) \{ args\.anchor = makeAnchor\(src, c\.range\); args\.hintOffset = c\.range\.start; \}/,
     "the anchor is built over the text the range indexes");
   assert.match(SRC, /if \(!c \|\| c\.kind !== "comment" \|\| !c\.range \|\| c\.text !== src\) return;/, "the presel paints only over the text its range indexes");
-  assert.match(SRC, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); this\.retargetComposer\(\); if \(why === "reflow"\) this\.scheduleLayout\(\); else this\.paintAll\(\); \}\);/, "a repaint retires the float and what it was about (hideFloat: the picture and the place it was offered at); a reflow re-places the cards, a paint runs the pass");
+  assert.match(SRC, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); this\.retargetComposer\(\); if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else this\.paintAll\(\); \}\);/, "a repaint retires the float and what it was about (hideFloat: the picture and the place it was offered at); a reflow re-measures the marks' collapsed blanks (trimBlanks, anchor-map.ts trimCollapsedMarks) and re-places the cards, a paint runs the pass");
   assert.match(SRC, /this\.errors\.set\("head", \{ text: e\.error, reload: true \}\);/, "a refused refresh offers Reload");
   assert.doesNotMatch(SRC, /Reading the file's comments/, "no line claims a read");
 });

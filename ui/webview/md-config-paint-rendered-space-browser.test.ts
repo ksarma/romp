@@ -1,11 +1,19 @@
-// The whitespace rule of the Rendered paint (anchor-map.ts skipBlockWs) over the REAL bundle in headless Chromium: marked with the
-// one configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as the viewer's mdBlock builds
-// it, laid out under feed.css's prose rules. The browser is the oracle here for what md-config-paint-rendered-space.test.ts pins
-// over a stand-in (the Slice 4 review, round 10): a whitespace-only text node is measured BEFORE the paint (a Range around it), and
-// the rule must paint it when it has a width and skip it when it has none.
+// The whitespace rule of the Rendered paint (anchor-map.ts skipBlockWs and trimCollapsedMarks) over the REAL bundle in headless
+// Chromium: marked with the one configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as
+// the viewer's mdBlock builds it, laid out under feed.css's prose rules. The browser is the oracle here for what
+// md-config-paint-rendered-space.test.ts pins over a stand-in (the Slice 4 review, round 10; the layout-time trim since round
+// 12): a whitespace-only text node is measured BEFORE the paint (a Range around it), and the paint must leave it marked when it
+// has a width and unmarked when it has none (a DOM-side skip, or the trim's unwrap of the mark measured at zero width).
 // 1. The collapsible set: HTML's ASCII white space alone in a paragraph renders nothing (width 0, and the paragraph makes no line),
-//    and the paint skips it; a no-break, ideographic, em, thin or medium mathematical space renders its glyph's width and is
-//    painted. JavaScript's `\s` matches all of them, which is how round 9's readings unpainted the rendered ones.
+//    and the paint skips it (the block-neighbour pre-skip: a collapsible node at a block-box parent's edge with nothing beside
+//    it); a no-break, ideographic, em, thin or medium mathematical space renders its glyph's width and is painted. JavaScript's
+//    `\s` matches all of them, which is how round 9's readings unpainted the rendered ones. Before a paragraph's first inline
+//    element the same characters measure 0 px too, and since round 12 the paint measures rather than predicts (anchor-map.ts
+//    trimCollapsedMarks: the node is painted, its mark measured in the painted layout and unwrapped at zero width): a space, a
+//    tab and a line feed lose their mark there; a FORM FEED keeps it, since Chromium collapses a leading form feed in a bare text
+//    node and renders it as a 14 px glyph once the node stands in an inline box of its own (a span or the mark, measured in
+//    round 12), so the highlighted paragraph shows the glyph under its ring where the unpainted one shows nothing. A form feed
+//    leading a block is written by no author; recorded, not predicted around (plans/markdown-viewer.md, item 10).
 // 2. The scenes those readings unpainted, each a visible mark on main and at round 8: a `&nbsp;` spacer paragraph or cell (html
 //    and markdown tables), a nbsp before a paragraph's first inline element, a nbsp alone between two `<br>`s, a full-width
 //    indent. The mark is visible and wider than the sheet's 4 px of padding (7.89 x 16 for a nbsp, 18 x 16 for U+3000 at this
@@ -17,7 +25,9 @@
 //    is invalid at computed-value time and the prose inherits the body's 14px, the size every number in this file is read at),
 //    and after it the marks on the line are contiguous (the space's mark, 7.89 x 16, abuts its neighbours' rings), where before
 //    there was a bare gap of the space's width. Block children and the root's own white space paint no whitespace-only mark
-//    and no top-level mark.
+//    and no top-level mark (the two DOM-side skips); a collapsed blank beside an inline child (an html blockquote's edges, the
+//    newline between two br elements, the one beside a figure's image) is painted and its mark trimmed at zero width, so none
+//    stands after the paint either.
 // Skips LOUDLY without a playwright browser (CI installs none). Synthetic prose, no paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -149,7 +159,7 @@ const NBSP = "\u00a0", IDEO = "\u3000";
 const COLLAPSIBLE: Array<[string, string]> = [["a space", " "], ["a tab", "\t"], ["a line feed", "\n"], ["a form feed", "\f"]];
 const RENDERED_SPACES: Array<[string, string]> = [["a no-break space", NBSP], ["an ideographic space", IDEO], ["an em space", "\u2003"], ["a thin space", "\u2009"], ["a medium mathematical space", "\u205f"]];
 
-test("HTML's ASCII white space alone in a paragraph measures 0 px and is skipped; a no-break, ideographic, em, thin or medium mathematical space measures its glyph and is painted (JavaScript's \\s matches every one of them)", async (t) => {
+test("HTML's ASCII white space alone in a paragraph measures 0 px and is skipped, and before the paragraph's first inline element it is measured and trimmed (a form feed excepted: a glyph inside the mark); a no-break, ideographic, em, thin or medium mathematical space measures its glyph and is painted (JavaScript's \\s matches every one of them)", async (t) => {
   await inBrowser(t, async (page) => {
     for (const [why, ch] of COLLAPSIBLE) {
       assert.ok(/^\s$/.test(ch), why + " is \\s");
@@ -157,8 +167,13 @@ test("HTML's ASCII white space alone in a paragraph measures 0 px and is skipped
       const node = alone.ws.find((n) => !n.top && n.parent === "P");
       assert.ok(node, why + ": the paragraph holds the whitespace-only text node: " + JSON.stringify(alone.ws));
       assert.equal(node!.w, 0, why + " alone in a paragraph renders nothing");
-      const led = await drive(page, why + " before a paragraph's first inline element", wrap("<p>" + ch + "<b>x</b> tail</p>"), ["Intro para.", "x", " tail", "After para."]);
-      assert.equal(led.ws.find((n) => !n.top && n.parent === "P")!.w, 0, why + " at a paragraph's edge renders nothing");
+      // a form feed leading the paragraph: 0 px as a bare text node, a 14 px glyph inside the mark (header, point 1), so the trim
+      // keeps its mark and drive()'s own check holds the mark wider than the padding; the other three measure 0 px under the mark
+      // too and lose it
+      const glyph = ch === "\f";
+      const led = await drive(page, why + " before a paragraph's first inline element", wrap("<p>" + ch + "<b>x</b> tail</p>"), glyph ? ["Intro para.", ch, "x", " tail", "After para."] : ["Intro para.", "x", " tail", "After para."]);
+      assert.equal(led.ws.find((n) => !n.top && n.parent === "P")!.w, 0, why + " at a paragraph's edge renders nothing as a bare text node");
+      assert.equal(led.marks.filter((m) => m.wsOnly).length, glyph ? 1 : 0, why + " at a paragraph's edge: " + (glyph ? "a mark, the glyph Chromium renders inside an inline box" : "no mark once measured in the painted layout"));
     }
     for (const [why, ch] of RENDERED_SPACES) {
       assert.ok(/^\s$/.test(ch), why + " is \\s too");

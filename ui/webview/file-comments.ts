@@ -77,7 +77,7 @@ import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
 import { hostOf, bareId } from "./host-prefix";
 import { loadSettings, saveSettings, onExternalSettingsChange, type CommentsFilter } from "./settings";   // Show changes inline and the filter: the shared, persisted webview settings (the inline-display and filter follow-ons, 2026-09-07)
-import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine } from "./anchor-map";
+import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, trimCollapsedMarks, rawOffsetToLine } from "./anchor-map";
 import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
 import { revealFragmentTarget } from "./md-sanitize";   // the HTML spec's ancestor revealing steps, run on a mark inside a closed <details> before any scroll to it (revealMarks)
@@ -947,6 +947,9 @@ class Panel {
   statusRefusal: { code: string; error: string } | null = null;   // why there is no status, when the kernel refused one
   root: HTMLElement | null = null;          // the aside, built on first open
   marks = new WeakSet<Element>();           // the highlights and picture frames THIS panel painted into the body (owns)
+  /** The Rendered marks of the last paint pass (the highlights, the change marks, the pending target), the layout-time trim's
+   *  subjects (anchor-map.ts trimCollapsedMarks): trimmed once after the pass, and again on every reflow (trimBlanks). */
+  passMarks: Element[] = [];
   open = false;
   pending = new Map<number, Pending>();
   appliedReq = 0;                           // the reqId of the newest ask whose reply is showing (applyStatus)
@@ -1258,7 +1261,10 @@ class Panel {
     // 2026-09-09 a reflow ran paintAll too, unwrapping and re-wrapping every highlight and change mark and rebuilding the
     // aside, once per frame of a drag: 1.1 s a frame at 3,000 lines with 200 comments and 200 changes (bench
     // tools/viewer-resize-bench.ts), and the whole dashboard stalled for the drag on a bigger file.
-    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") this.scheduleLayout(); else this.paintAll(); });
+    // ...and on a reflow the Rendered marks' collapsed blanks are measured again first (trimBlanks: a space that rendered at the
+    // old width may be the wrap point at the new one, and its mark would be the sheet's padding around nothing), in the same
+    // frame, so the cards are placed over the marks that stay
+    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") { this.trimBlanks(); this.scheduleLayout(); } else this.paintAll(); });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
       if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)
@@ -2704,6 +2710,11 @@ class Panel {
     if (this.status && this.textCurrent(this.status)) this.bytesLanded();   // the view shows the status's text: a reject's reload has landed
     if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
     const rendered = this.ctx.mode() === "rendered";
+    // the pass's Rendered marks, painted with the trim deferred (`trim: false`) and trimmed ONCE after the pass (trimBlanks):
+    // the trim measures its marks against the layout, and a measurement after each call's wraps lays the mutated block out
+    // again, 0.45 ms a call on a 12k-element note, 90 ms added to a 200-comment pass; batched, the pass pays one layout
+    this.passMarks = [];
+    const byCard: Array<{ id: string; marks: Element[] }> = [];
     // the comment highlights — unless the filter shows the changes alone (activeFilter), when the text wears the change
     // marks only; the cards the filter hides are not rendered, so nothing reads `located` for them
     for (const card of this.activeFilter() === "changes" ? [] : this.cards()) {
@@ -2720,9 +2731,10 @@ class Panel {
       let painted = false;
       if (loc.state !== "detached" && loc.range) {
         const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");
-        const out = rendered ? paintRendered(root, src, loc.range, cls, { act: "fcopen", id: card.id })
+        const out = rendered ? paintRendered(root, src, loc.range, cls, { act: "fcopen", id: card.id }, { trim: false })
           : paintRaw(root, src, loc.range, cls, { act: "fcopen", id: card.id });
         painted = !!out && out.length > 0;
+        if (rendered && out) { this.passMarks.push(...out); byCard.push({ id: card.id, marks: out }); }
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
         // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
@@ -2735,11 +2747,24 @@ class Panel {
       }
       this.located.set(card.id, { ...loc, painted });
     }
-    this.paintChanges(root, src, rendered);
-    this.paintPresel(root, src, rendered);
+    this.paintChanges(root, src, rendered, true);
+    this.paintPresel(root, src, rendered, true);
+    this.trimBlanks();
+    // a card whose every mark was a collapsed blank (a passage of one zero-width character) shows nothing: card only, as the
+    // unbatched paint would have said (paintRendered returns null once its marks are trimmed)
+    for (const c of byCard) { const l = this.located.get(c.id); if (l && l.painted && !c.marks.some((m) => m.isConnected)) this.located.set(c.id, { ...l, painted: false }); }
     this.paintRegions();
     if (held) this.refocusMark(held);
     this.render();
+  }
+  /** The layout-time trim over the pass's standing Rendered marks (anchor-map.ts trimCollapsedMarks: a mark whose text is blank
+   *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every
+   *  mark of it in one measurement, and again on the seam's reflow, when a blank that rendered at the old width may be the
+   *  wrap point at the new one. A mark the trim or the unpaint already removed is skipped; a blank trimmed at the old width
+   *  that renders at the new one is not re-wrapped, and stays bare until the next paint pass (the trim's header). */
+  private trimBlanks(): void {
+    this.passMarks = this.passMarks.filter((m) => m.isConnected);
+    if (this.passMarks.length) this.passMarks = trimCollapsedMarks(this.passMarks);
   }
   // The marks in the BODY are controls too (KEY_ACTS: a highlight, a change mark, a rectangle), and every paint pass
   // rebuilds them — so a status landing while the keyboard was on one left it on the body, the way Enter on a card's
@@ -2795,7 +2820,7 @@ class Panel {
   /** The change marks, after the comment highlights (D5): stylesFor hands each mark the author's session colour
    *  from the Slice 1 colour map as `--fc-author` (nothing when unknown: the sheet's neutral). Every painted
    *  element is a control (it opens the card) and the panel's own (owns), like a comment highlight. */
-  private paintChanges(root: Element, src: string, rendered: boolean): void {
+  private paintChanges(root: Element, src: string, rendered: boolean, deferTrim = false): void {
     const s = this.status;
     if (!this.inline) return;                          // Show changes inline is off: no mark in either view, the cards say everything
     if (this.activeFilter() === "comments") return;    // the filter shows the comments alone: no change mark, the setting above untouched
@@ -2823,20 +2848,24 @@ class Panel {
       // paint ADDED: a `data-act="fcchange"` the file's author wrote survives the sanitizer, and swept in it would pass
       // owns() and act as a control (the delegate root's rule above)
       const before = new Set(Array.from(root.querySelectorAll('[data-act="fcchange"]')));
-      const r = paintChangesRendered(root, src, changes, stylesFor);
+      const r = paintChangesRendered(root, src, changes, stylesFor, { trim: !deferTrim });
       for (const id of r.painted) this.paintedChanges.add(id);
       marks = Array.from(root.querySelectorAll('[data-act="fcchange"]')).filter((m) => !before.has(m));
+      this.passMarks.push(...marks);
     } else {
       marks = paintChangesRaw(root, src, changes, stylesFor);
       for (const m of marks) { const id = (m as HTMLElement).dataset.id; if (id) this.paintedChanges.add(id); }
     }
     for (const m of marks) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open this change"; this.mark(m); }
   }
-  private paintPresel(root: Element, src: string, rendered: boolean): void {
+  /** The composer's pending target. `deferTrim` inside paintAll's pass (the pass trims once, trimBlanks); a repaint of the
+   *  target alone (repaintPresel) trims its own marks and adds them to the pass's standing marks for the next reflow. */
+  private paintPresel(root: Element, src: string, rendered: boolean, deferTrim = false): void {
     const c = this.composer;
     if (!c || c.kind !== "comment" || !c.range || c.text !== src) return;   // the range indexes c.text; over other bytes it would paint the wrong span
     if (!rendered) { paintRaw(root, src, c.range, "fc-presel"); return; }
-    const out = paintRendered(root, src, c.range, "fc-presel");
+    const out = paintRendered(root, src, c.range, "fc-presel", undefined, { trim: !deferTrim });
+    if (out) { if (!deferTrim) this.passMarks = this.passMarks.filter((m) => m.isConnected); this.passMarks.push(...out); }
     if (!out || !out.length) { const img = imgForRange(root, src, c.range, this.ctx.path); if (img) frameImage(img, "fc-presel"); }
   }
   /** Unwrap painted marks: the text nodes go back in place and the parent is normalized. A framed

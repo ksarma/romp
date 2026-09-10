@@ -1,27 +1,32 @@
-// A rendered blank under a highlight is painted; a collapsed one is not. skipBlockWs (anchor-map.ts) skips a text node of white
-// space between blocks so that no mark rings an empty box, and two readings of "white space" went wrong in the same function
-// (the Slice 4 review, round 10):
+// A rendered blank under a highlight is painted; a collapsed one is not. Two readings of "white space" in the Rendered paint went
+// wrong in the same function and were set right in the Slice 4 review's round 10, and the scenes here pin what they left:
 // 1. Whitespace-only was JavaScript's `\s`, which matches a no-break space (U+00A0) and an ideographic space (U+3000) besides the
 //    ASCII five; the browser collapses HTML's ASCII white space alone (space, tab, line feed, form feed, carriage return) and
-//    renders every other space as a glyph of its own width. Round 9's readings (a block box or a `<br>` beside the node; the
-//    edge of a block-level parent) so unpainted the `&nbsp;` spacer cell of a table, a `<p>&nbsp;</p>` spacer, a nbsp before a
-//    paragraph's first inline element or alone between two `<br>`s and a paragraph's full-width indent, each a visible 7.89 x 16
-//    (18 x 16) px mark on main and at round 8. Whitespace-only is now the collapsible set (isCollapsibleWs); a node of rendered
-//    spaces is the passage's text wherever it stands, so `<div>&nbsp;</div>` and `<li>&nbsp;</li>`, which main's container rule
-//    skipped, paint too (a blank line the note renders).
+//    renders every other space as a glyph of its own width. Round 9's readings so unpainted the `&nbsp;` spacer cell of a table, a
+//    `<p>&nbsp;</p>` spacer, a nbsp before a paragraph's first inline element or alone between two `<br>`s and a full-width indent,
+//    each a visible 7.89 x 16 (18 x 16) px mark on main and at round 8. A node of rendered spaces is the passage's text wherever it
+//    stands, so `<div>&nbsp;</div>` and `<li>&nbsp;</li>`, which main's container rule skipped, paint too (a blank line the note
+//    renders), and the one reading of the DOM that skips a blank without measuring it (anchor-map.ts skipBlockWs, the
+//    block-neighbour pre-skip) reads the collapsible set alone.
 // 2. Main's first reading skipped any whitespace-only node whose PARENT was one of twelve block containers (UL, OL, LI,
 //    BLOCKQUOTE, DIV, TABLE, THEAD, TBODY, TR, SECTION, ARTICLE, BODY; TD never among them, so the spacer cell of point 1
 //    painted on main), whatever its neighbours, so the rendered space between two inline children of a list item
 //    (`- **a** *b*`, a task item's after its checkbox), a centred badge row, an html blockquote or a section was never painted
 //    and the highlight ring broke at it: two ringed boxes with a 4.75 px bare gap under the viewer's sheet, on main too. The
-//    neighbour and edge readings cover every block-child case the list covered, so the list is gone; what stays is a guard for
-//    the render root alone (its white space is the block pairing's, never the passage's: a mark there would be a top-level
-//    node the next paint's pairing meets).
-// Every scene is driven through paintRendered from the paragraph before the block to the paragraph after, over marked with the
-// one configuration (md-config.ts) and a DOM stand-in that keeps `&nbsp;` as U+00A0 (the sibling files' stand-ins decode it to a
-// plain space and cannot see the distinction). md-config-paint-rendered-space-browser.test.ts measures the same scenes over the
-// real bundle in Chromium: the blank's rendered width before the paint, the mark after, the layout box for box unchanged.
-// Synthetic prose, no paths.
+//    list is gone; what stays is a guard for the render root alone (its white space is the block pairing's, never the passage's:
+//    a mark there would be a top-level node the next paint's pairing meets).
+// Since round 12 the painter predicts nothing else about which blanks the browser collapses: below the top level it skips a node
+// of collapsible white space between two block boxes, or at a block-box parent's edge (no line box at all, CSS 2 section 9.2.2.1),
+// and paints every other text node of its range; the browser's own layout decides afterwards (anchor-map.ts trimCollapsedMarks:
+// a mark whose text is blank and lays out at zero width is unwrapped). This DOM stand-in has no layout, so the trim measures
+// nothing here and a blank the two skips leave in the range carries a mark: the "\n" between two `<br>`s, the "\n" between a
+// figure's edge and its image, the spaces at an html blockquote's edges. Every scene's expected marks below are the node shape
+// (those blanks named), and the file's browser leg,
+// md-config-paint-rendered-space-browser.test.ts, holds the trimmed result over the real bundle in Chromium: each such blank
+// measures 0 px and carries no mark there, and the rendered blanks of point 1 and 2 keep theirs. Every scene is driven through
+// paintRendered from the paragraph before the block to the paragraph after, over marked with the one configuration
+// (md-config.ts) and a DOM stand-in that keeps `&nbsp;` as U+00A0 (the sibling files' stand-ins decode it to a plain space and
+// cannot see the distinction). Synthetic prose, no paths.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked } from "marked";
@@ -185,13 +190,16 @@ const RENDERED: Scene[] = [
   ["a nbsp alone in a list item (the same)", wrap("<ul><li>&nbsp;</li><li>two</li></ul>"), ["Intro para.", NBSP, "two", "After para."]],
 ];
 /** The other side: collapsible white space at the same positions renders nothing and is skipped, as round 9 left it. */
+/** Collapsible white space at a block-box parent's edge with nothing beside it is skipped by the pre-skip (the first four); one
+ *  beside a `<br>` or an image is painted in node and measures 0 px in the browser, where the trim unwraps its mark (the browser
+ *  leg's COLLAPSED scenes hold that). */
 const COLLAPSED: Scene[] = [
   ["a space alone in a paragraph", wrap("<p> </p>"), ["Intro para.", "After para."]],
   ["a tab alone in a paragraph", wrap("<p>\t</p>"), ["Intro para.", "After para."]],
   ["a form feed alone in a paragraph", wrap("<p>\f</p>"), ["Intro para.", "After para."]],
   ["a newline alone in a cell", wrap("<table><tr><td>\n</td><td>x</td></tr></table>"), ["Intro para.", "x", "After para."]],
-  ["a newline between two line breaks", wrap("line one<br>\n<br>\nline three"), ["Intro para.", "line one", "\nline three", "After para."]],
-  ["the newline between a figure and its image", wrap('<figure>\n<img src="a.png" alt="pic">\n<figcaption>Caption text</figcaption>\n</figure>'), ["Intro para.", "Caption text", "After para."]],
+  ["a newline between two line breaks (painted in node: a br is no block box; trimmed in the browser)", wrap("line one<br>\n<br>\nline three"), ["Intro para.", "line one", "\n", "\nline three", "After para."]],
+  ["the newlines between a figure's edge, its image and its caption (the two beside the image painted in node, trimmed in the browser; the one after the caption skipped)", wrap('<figure>\n<img src="a.png" alt="pic">\n<figcaption>Caption text</figcaption>\n</figure>'), ["Intro para.", "\n", "\n", "Caption text", "After para."]],
 ];
 
 test("the fixtures hold the shapes: the stand-in keeps a nbsp as U+00A0, and each rendered scene has a whitespace-only text node of a rendered space where the collapsed scenes have one of ASCII white space", () => {
@@ -211,7 +219,7 @@ test("the fixtures hold the shapes: the stand-in keeps a nbsp as U+00A0, and eac
   }
 });
 
-test("a highlight across a nbsp or an ideographic space at a block's edge, beside a block box or between two line breaks paints it: a rendered blank is the passage's text, as on main; collapsible white space at the same positions is skipped", () => {
+test("a highlight across a nbsp or an ideographic space at a block's edge, beside a block box or between two line breaks paints it: a rendered blank is the passage's text, as on main; collapsible white space alone at a block's edge is skipped, and beside a br or an image it is painted in node (the browser leg trims it)", () => {
   for (const scene of RENDERED) drive(scene);
   for (const scene of COLLAPSED) drive(scene);
 });
@@ -224,11 +232,12 @@ const INLINE_CHILDREN: Scene[] = [
   ["a task item: the space after its checkbox and the one between its inline elements", wrap("- [ ] **a** *b*"), ["Intro para.", " ", "a", " ", "b", "After para."]],
   ["two links in an item", wrap("- [a](#a) [b](#b)"), ["Intro para.", "a", " ", "b", "After para."]],
   ["a centred badge row: two linked images with a space between, in a div", wrap('<div align="center"><a href="#a">' + IMG_A + '</a> <a href="#b">' + IMG_B + "</a></div>"), ["Intro para.", " ", "After para."]],
-  ["an html blockquote of inline elements (its edges' white space skipped, the middle painted)", wrap("<blockquote> <b>q</b> <i>r</i> </blockquote>"), ["Intro para.", "q", " ", "r", "After para."]],
+  ["an html blockquote of inline elements (the middle space painted; the edges' spaces stand beside an inline child, so they are painted in node and trimmed in the browser)", wrap("<blockquote> <b>q</b> <i>r</i> </blockquote>"), ["Intro para.", " ", "q", " ", "r", " ", "After para."]],
   ["a section of inline elements", wrap("<section><b>a</b> <i>b</i></section>"), ["Intro para.", "a", " ", "b", "After para."]],
   ["an item inside a quote", wrap("> - **a** *b*"), ["Intro para.", "a", " ", "b", "After para."]],
 ];
-/** Block children, and the root: the container list's cases, each skipped by the readings that stay. */
+/** Block children, and the root: the container list's cases, each skipped by the two readings that stay (the pre-skip between
+ *  blocks, the root guard). */
 const BLOCK_CHILDREN: Scene[] = [
   ["a markdown list (the newlines between the items)", wrap("- one\n- two"), ["Intro para.", "one", "two", "After para."]],
   ["an html list with a blank line between its items", wrap("<ul>\n<li>one</li>\n\n<li>two</li>\n</ul>"), ["Intro para.", "one", "two", "After para."]],
@@ -236,7 +245,7 @@ const BLOCK_CHILDREN: Scene[] = [
   ["a quote of two paragraphs", wrap("> one\n>\n> two"), ["Intro para.", "one", "two", "After para."]],
   ["a div of two paragraphs", wrap("<div>\n<p>one</p>\n<p>two</p>\n</div>"), ["Intro para.", "one", "two", "After para."]],
   ["an item holding a space alone (the item's edge)", wrap("<ul><li> </li><li>two</li></ul>"), ["Intro para.", "two", "After para."]],
-  ["an item of inline elements with a sub-list (the space between the inline elements painted, the sub-list's newlines not)", wrap("- top **x** *y*\n  - sub"), ["Intro para.", "top ", "x", " ", "y", "sub", "After para."]],
+  ["an item of inline elements with a sub-list (the space between the inline elements painted, the sub-list's newlines not; marked leaves no text node between the last inline child and the sub-list)", wrap("- top **x** *y*\n  - sub"), ["Intro para.", "top ", "x", " ", "y", "sub", "After para."]],
   ["two images as one html block: the newline between them is the root's, never a top-level mark", wrap(IMG_A + "\n" + IMG_B), ["Intro para.", "After para."]],
   ["two images with a nbsp line between them, the root's as well", wrap(IMG_A + "\n&nbsp;\n" + IMG_B), ["Intro para.", "After para."]],
 ];
@@ -255,7 +264,7 @@ test("the fixtures hold the shapes: each inline-children scene has a whitespace-
   }
 });
 
-test("a highlight across a list item, a task item, a badge row, an html blockquote or a section paints the space between two inline children (main's container rule skipped it and broke the ring); the white space between block children and the root's own is skipped as before", () => {
+test("a highlight across a list item, a task item, a badge row, an html blockquote or a section paints the space between two inline children (main's container rule skipped it and broke the ring); the white space between block children and the root's own is skipped, a blank beside an inline child painted in node", () => {
   for (const scene of INLINE_CHILDREN) drive(scene);
   for (const scene of BLOCK_CHILDREN) drive(scene);
 });

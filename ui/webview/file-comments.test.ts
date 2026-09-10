@@ -709,7 +709,7 @@ test("the registry entry: exported by file-comments.ts, registered in file-view.
   const fromView = SRC.match(/^import .* from "\.\/file-view";$/gm) || [];
   assert.deepEqual(fromView, ['import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit, CloseAsk } from "./file-view";'], "types only");
   // contract C4: the anchor-map API, imported by name
-  assert.match(SRC, /import \{ mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine \} from "\.\/anchor-map";/);
+  assert.match(SRC, /import \{ mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, trimCollapsedMarks, rawOffsetToLine \} from "\.\/anchor-map";/);
   assert.doesNotMatch(SRC, /vendor\/track-changents/, "the engine is reached through anchor-map, never twice");
 });
 
@@ -797,7 +797,9 @@ test("click-safety: ONE delegate() root for every control (the body row, which a
   assert.match(SRC, /if \(!this\.root\.contains\(head\)\) this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/);
   assert.equal((SRC.match(/this\.root\.replaceChildren\(/g) || []).length, 1, "the aside's children are never rebuilt elsewhere");
   // the highlights carry the delegate's action and the comment id; painted through anchor-map, states located / context / detached
-  assert.match(SRC, /paintRendered\(root, src, loc\.range, cls, \{ act: "fcopen", id: card\.id \}\)/);
+  // the Rendered paint defers the trim of its collapsed blanks to the pass (`trim: false`; anchor-map.ts trimCollapsedMarks runs
+  // once over every mark of the pass, trimBlanks), the Raw paint has none to defer
+  assert.match(SRC, /paintRendered\(root, src, loc\.range, cls, \{ act: "fcopen", id: card\.id \}, \{ trim: false \}\)/);
   assert.match(SRC, /paintRaw\(root, src, loc\.range, cls, \{ act: "fcopen", id: card\.id \}\)/);
   assert.match(SRC, /const cls = "fc-hl" \+ \(loc\.state === "context" \? " fc-hl-context" : ""\);/);
   assert.match(SRC, /if \(c\.anchor && loc && loc\.range && !loc\.painted\) \{\n\s*const rv = btn\("Reveal", "fcreveal"\);/, "an unpainted comment's card never dead-ends");

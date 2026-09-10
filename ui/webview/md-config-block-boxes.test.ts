@@ -1,4 +1,6 @@
-// BLOCK_BOXES (anchor-map.ts), the tags a whitespace-only text node is skipped beside, held in node in both directions: the set
+// BLOCK_BOXES (anchor-map.ts), the tags a whitespace-only text node between two of which is skipped without a measurement (the
+// block-neighbour pre-skip, skipBlockWs; every other blank is painted and the browser's layout decides, trimCollapsedMarks), held
+// in node in both directions: the set
 // equals the tags the HTML Standard's Rendering section lays out as block-level boxes or as a table's parts
 // (anchor-map-fixtures/block-tags.json, the section's own display rules) that the sanitizer keeps (DOMPurify's html allowlist,
 // read off the installed module's source, less md-sanitize.ts's MD_FORBID_TAGS), html and body left out, which the parser

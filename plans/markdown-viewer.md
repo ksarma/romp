@@ -1249,67 +1249,94 @@ as built departs from the text above, why, and which test holds each rule:
    a pass against 6.4 ms scoped). A run of whitespace-only text nodes between blocks, the pair the sanitizer leaves
    where a block-level comment or a `<style>` stood, is never a mark of its own (round 7: wrapRuns skipped one such
    node alone and ringed the pair as an empty box between the blocks, which moved everything below down 30 px on every
-   fresh Rendered paint; anchor-map.test.ts and anchor-map-obsidian.test.ts hold both; and since round 8 the rule
-   reads the node's neighbours as well as its parent: skipBlockWs judged the parent's tag from a list of block
-   containers that lacked DETAILS, so a comment across two body paragraphs of a folded callout, or from a fold's last
-   block into the block after it, ringed each newline text node marked leaves between the blocks inside the details,
-   an empty 4 x 18 px box that grew the fold 22 px per mark and moved everything below, in the composer's pending
-   target too, where the same markdown, a plain blockquote on main, painted clean; a whitespace-only text node with a
-   block-level box beside it on either side is skipped whatever its parent (anchor-map.ts BLOCK_BOXES,
-   `.katex-display` among them; anchor-map-obsidian.test.ts, and md-config-fold-paint-browser.test.ts measures every
-   fold's height and every block's place unchanged over the real bundle). Round 9 finished that rule in four places:
-   BLOCK_BOXES is derived, every tag the sanitizer keeps that Chromium lays out as a block or a table's part, where
-   round 8's hand-written list lacked `center`, `dir`, `menu` and `search` and named `form` and `fieldset`, which the
-   sanitizer strips (md-config-paint-whitespace-browser.test.ts reads the set off DOMPurify's allowlist and the
-   computed display and holds the shipped set equal to it, and, since round 10, md-config-block-boxes.test.ts holds
-   the set in node too, both directions, against the HTML Standard's Rendering section's block-level tags
-   (anchor-map-fixtures/block-tags.json) that the installed DOMPurify's allowlist keeps, less MD_FORBID_TAGS, html and
-   body, since the browser leg skips on CI); a node at the edge of a block-level parent, no sibling on that side, is
-   the block's leading or trailing white space and is skipped whatever stands on its other side, `pre` excepted, since
-   the "\n" between an author's `<figure>` or `<details>` and its `<img>` was ringed, on main too; a `<br>` beside the
-   node counts as a block does, since the "\n" between two `<br>`s was ringed on the blank line; and the neighbour
-   reads step over the DOM's sibling pointers, since indexing the parent's child list per whitespace node had made a
-   paint quadratic in a paragraph's inline children (one mark across 3,000 links 850 ms in Chromium against 27 before
-   round 8 and 32 with the pointers; md-config-paint-whitespace.test.ts counts the child-list reads over a stand-in
-   that offers the pointers, 9,995 for 1,999 children against 2,009,993 indexed, and the browser leg times 5,000 links
-   once against 500 ten times as equal work with the source table warm, the median pair ratio 1.1 against 8.7 indexed,
-   bounded at 3). Every shape is driven through paintRendered from the paragraph before the html block to the
-   paragraph after (anchor-map-obsidian.test.ts and the browser leg), which round 8 had recorded as not paintable.
-   Round 10 set what whitespace-only means for the skip: the browser's collapsible white space, HTML's ASCII five
-   (space, tab, line feed, form feed, carriage return), never JavaScript's `\s`, so a text node of no-break or
-   ideographic spaces is the passage's text and paints as on main (round 9's readings judged it with `\s` and
-   unpainted the `&nbsp;` spacer cell of a table, a `<p>&nbsp;</p>` spacer, a nbsp before a paragraph's first inline
-   element or alone between two `<br>`s and a paragraph's full-width indent, each a visible 7.89 x 16 or 18 x 16 px
-   mark on main and at round 8); and main's own first reading, the parent's tag from a list of block containers (UL,
-   OL, LI, BLOCKQUOTE, DIV, TABLE, THEAD, TBODY, TR, SECTION, ARTICLE, BODY; TD was never on it, which is why the
-   `&nbsp;` spacer cell painted on main), is gone, since it skipped the rendered space between two inline children of
-   a list item (`- **a** *b*`, a task item's after its checkbox), a centred badge row, an html blockquote or a section
-   whatever the neighbours, and the ring broke at it, on main too; the neighbour and edge readings cover every
-   block-child case the list did, and one guard stays, for the render root alone, whose whitespace node is the block
-   pairing's (`\s`-only, the pairing's own test) and never a mark. The consequence: `<div>&nbsp;</div>` and
-   `<li>&nbsp;</li>`, which the list skipped, paint, a blank line the note renders
-   (md-config-paint-rendered-space.test.ts drives every shape from the paragraph before to the paragraph after over a
-   stand-in that keeps `&nbsp;` as U+00A0, the sibling stand-ins decoding it to a plain space; its browser leg
-   measures the blank before the paint and the mark after, the layout box for box unchanged).
-   Round 11 finished the skip's reading of the DOM in three places, each shape measured at 0 px before the paint in
-   Chromium and painted by round 10 as the sheet's 4 px of padding around nothing: a text node of zero-width format
-   characters alone (U+FEFF, which is `\s` and which round 10's ASCII alphabet made text, U+200B to U+200D, U+2060 to
-   U+2064) is skipped wherever it stands (anchor-map.ts ZERO_WIDTH_ONLY; as a neighbour such a character keeps the
-   space after it rendered, and a node mixing them with ASCII white space is text, painted); a whitespace-only node is
-   judged by what the browser lays out on each side of it within its line (contentBeside), read past inline elements
-   that render nothing (an `<a name>` anchor or an icon `<i>` leading a list item, an anchor closing one, an empty
-   span, sup or code, a `hidden` element, one nested in another) and through inline ancestors
-   (`<p><em> <b>a</b></em></p>`), a block inside an inline splitting the line and an atomic inline (an image, a
-   checkbox, an empty `kbd`, `a.fv-embed`) counting as content, where round 10's reading stopped at any element and
-   painted the collapsed space beside an empty anchor as the box under LI, DIV, BLOCKQUOTE and TD (main's container
-   rule had skipped it there; under P main painted it too); and, before the node, text ending in collapsible white
-   space or a `<br>` closing the neighbour (`<b>Label: </b> <i>value</i>`, `[docs ](#a) *x*`) collapses the node, the
-   after side reading no text since the node is the retained space before text that begins with one. Under `pre`
-   nothing is skipped, the ancestors read (a code line's indentation under the per-line wrap). A passage that is one
-   zero-width character alone gets a card and no highlight (md-config-paint-collapsed-blank.test.ts drives every shape
-   from the paragraph before to the paragraph after over a stand-in, with pointers and on the index path; its browser
-   leg measures each blank before the paint over the real bundle, 0 px skipped, a width painted, the layout box for
-   box unchanged).
+   fresh Rendered paint; anchor-map.test.ts and anchor-map-obsidian.test.ts hold both). Since round 12 the painter
+   predicts two things about white space, each exact, and paints every other whitespace-only text node of a range
+   for the browser's layout to judge (the layout-time trim, below). One: a text node directly under the render root
+   is skipped when it is `\s` and format characters alone (anchor-map.ts ROOT_BLANK). The top-level children are
+   what the block pairing reads, so such a node is never the passage's text, and a mark there would be a top-level
+   child of the root that the next pairing meets (anchor-map.test.ts, anchor-map-obsidian.test.ts and
+   md-config-paint-collapsed-blank.test.ts hold that no mark is a top-level node); round 11's guard read `\s` alone
+   and painted a lone U+200B between two top-level html paragraphs, pasted from a web page, as a box on a line of
+   its own. Two: a text node of collapsible white space (HTML's ASCII five, space, tab, line feed, form feed and
+   carriage return; never JavaScript's `\s`, so a node of no-break or ideographic spaces between two blocks is a
+   blank line the note renders, painted as on main) whose nearest non-blank sibling on both sides is a block-level
+   box, or whose parent is one and has no such sibling on that side, is skipped without a measurement: the
+   block-neighbour pre-skip (CSS 2 section 9.2.2.1, an anonymous inline box holding only collapsible white space
+   between block-level boxes is not rendered, and a block's leading and trailing white space is collapsed away;
+   under an author's `pre` such a node is a forced line break of zero width, the same answer). BLOCK_BOXES is
+   derived, every tag the sanitizer keeps that Chromium lays out as a block or a table's part, plus `.katex-display`
+   (md-config-paint-whitespace-browser.test.ts holds it against DOMPurify's allowlist and the computed display,
+   md-config-block-boxes.test.ts in node against the HTML Standard's Rendering section's block-level tags,
+   anchor-map-fixtures/block-tags.json), and the reading saves the mark, the measurement and the unwrap for the
+   hundreds of "\n" nodes marked leaves between a list's items, a quote's paragraphs or a fold's blocks; the trim
+   alone gives the same answer on every scene, so the reading is an optimisation kept because it is exact. The trim
+   (anchor-map.ts trimCollapsedMarks, exported): after the paint, every mark whose text is blank (no letter, digit,
+   punctuation or symbol in it, or the hangul fillers alone; the alphabet picks what is MEASURED and never what is
+   unwrapped, so a candidate that renders, U+093F alone as a dotted circle, keeps its mark) is measured with a Range
+   over its contents, its client rects' widths summed, and unwrapped at zero width when the mark has a box of its
+   own (one under a display:none ancestor is kept): a collapsible space at a line's edge or at the point where the
+   line wraps, one after a neighbour ending in a space or beside an element that renders nothing (an empty anchor,
+   an audio element without controls, a floated image, a picture without an image), a zero-width, bidi or
+   soft-hyphen character alone, a newline the browser drops; a rendered blank keeps its mark (a no-break or
+   ideographic space, a space between two inline children on one line, the space beside an svg icon, an image or a
+   checkbox). Three shapes, each measured on the round 12 prototype: two-phase (every candidate measured, then every
+   collapsed one unwrapped, one layout per pass; a measurement per unwrap cost 12 s on a paragraph of 5,000 code
+   spans against 0.4 s), batched (paintRendered trims its own marks by default, `PaintOptions.trim`; the Comments
+   panel paints every comment of a pass with `trim: false` and runs the trim once over the pass's marks,
+   file-comments.ts paintAll and trimBlanks, one layout for the pass, and a card whose every mark was a collapsed
+   blank is re-filed as not painted, as the unbatched paint returns null) and to a fixpoint (a mark's own 2 px side
+   padding is in the layout, so an unwrap can move a wrap point and collapse a later blank; at most three passes,
+   stopping when a pass unwraps nothing; over the 91 scenes 42 paints took one pass, 34 two and one three).
+   Event-based: the panel re-trims its standing marks when the seam reports a reflow (Slice 2's onRendered with
+   `why` "reflow", a width change or a text-size step) in the frame the cards are re-placed; the panel does not
+   repaint on a reflow, so a blank trimmed at the old width that renders at the new one stays bare until the next
+   paint pass (item 10). The cost, measured on the build box in headless Chromium under feed.css at 800 px: one
+   comment across a paragraph of 5,000 links (4,999 blank marks, 324 wrap points) paints trimmed in 300 ms against
+   269 untrimmed once the layout the panel reads next is counted on both sides (323 against 45 measured alone, the
+   difference being that layout), two passes of 9,674 Range.getClientRects calls in all, 324 marks unwrapped, one
+   per line break of the painted paragraph; a 200-comment pass over 300 paragraphs 21.1 ms batched against 20.3
+   untrimmed and 20.6 unbatched, Chromium laying the mutated paragraph out incrementally, so the batching bounds the
+   cost rather than saving much here. In node the stand-ins offer no layout, so the trim measures nothing and the
+   node tests pin the DOM shape and the two skips: md-config-paint-trim.test.ts over a stand-in that measures (the
+   rule, the hidden-ancestor guard, two-phase as one layout per pass, the fixpoint and its cap, the batching option,
+   the candidate alphabet, the root guard and the pre-skip) and md-config-paint-collapsed-blank.test.ts (no
+   top-level mark, no empty mark, the content marks exact, unpaint and repaint exact, over 66 scenes plus the
+   top-level zero-width one, with pointers and on the index path). The browser legs pin the trimmed result over the
+   union of every blank scene rounds 7 to 12 collected (anchor-map-fixtures/blank-scenes.json, 91 scenes: folds, an
+   author's figure, details, dl and center, badge rows, br pairs, wrap points at several widths, nbsp and U+3000,
+   U+FEFF, every zero-width character of round 11's alphabet, the bidi marks and the soft hyphen, svg icons, audio
+   with and without controls, an author pre with br and block children, tables, footnote definitions, list items, a
+   form feed, a CRLF, a floated image, a picture without an image, a space inside a kbd, a table caption, a plain
+   note): md-config-paint-trim-browser.test.ts (the trim removes blank marks alone, no padding-only mark, every
+   rendered blank of the painted blocks marked at 800 px, no top-level mark, the unpaint exact, the plain note
+   untouched; the wrap scenes at eight widths from 800 to 180 px; the reflow re-trim; the 200-comment pass batched
+   within a same-run bound of the untrimmed one), md-config-paint-trim-panel-browser.test.ts (the real viewer and
+   panel: the batched pass, the reflow, a text-size step), md-config-paint-collapsed-blank-browser.test.ts (every
+   whitespace-only node held across the paint and read node by node: a mark exactly when it renders with a width),
+   md-config-paint-whitespace-browser.test.ts leg 4 (the 5,000-link paragraph: one blank mark unwrapped per line
+   break, no zero-width blank mark, no rendered blank unmarked, the getClientRects count between B + (B - trimmed)
+   and 3B for B blank marks, the trimmed paint within a same-run bound of the untrimmed one) and
+   md-config-paint-rendered-space-browser.test.ts (a form feed leading a block renders a 14 px glyph inside the mark
+   where the bare node collapses, so the highlighted paragraph shows the glyph; item 10). History, for the reader of
+   the rounds' records: main skipped any whitespace-only node under one of twelve block containers (UL, OL, LI,
+   BLOCKQUOTE, DIV, TABLE, THEAD, TBODY, TR, SECTION, ARTICLE, BODY; TD never among them, which is why the `&nbsp;`
+   spacer cell painted on main) whatever its neighbours, so the rendered space between two inline children of a list
+   item or a centred badge row was never painted and the ring broke at it, and it painted every other blank as a
+   ringed box around nothing. Round 8 read the node's neighbours (the "\n" between a folded callout's paragraphs,
+   DETAILS not being on the list); round 9 derived BLOCK_BOXES, read a block-box parent's edge and a `<br>` as a
+   line edge, and made the neighbour reads constant time over the DOM's sibling pointers (one mark across 3,000
+   links 850 ms indexed against 32 with the pointers; md-config-paint-whitespace.test.ts counts the child-list reads
+   and its browser leg times equal work); round 10 restricted the readings to the collapsible five and retired
+   main's container list (md-config-paint-rendered-space.test.ts and its browser leg); round 11 read each side's
+   rendered content through empty inlines, hidden elements, atomic inlines and text ending in a space, and skipped a
+   zero-width run wherever it stood. Round 12's fresh reading found the next shapes that prediction got wrong (an
+   inline svg looked past as rendering nothing, an audio element without controls read as a box, a floated image, a
+   picture without an image, a form feed read as collapsible, the bidi marks and the soft hyphen outside the
+   zero-width alphabet, a space inside an inline-block, and the line wrap no reading of the DOM can see), and the
+   prediction gave way to the trim: the repo's rule is an exact mechanism over a heuristic that approximates it, and
+   the exact answer is the browser's own layout. A passage that is one zero-width character alone still gets a card
+   and no highlight (its one mark is trimmed and paintRendered returns null;
+   md-config-paint-collapsed-blank-browser.test.ts).
    anchor-map-obsidian.test.ts and the browser leg select across the formula and get the TeX between. The fill's two
    fallback shapes, KaTeX's `span.katex-error`
    on TeX it cannot parse and the belt's `code.md-math-src` past a bound, are controls like `.katex` (anchor-map.ts
@@ -1727,21 +1754,37 @@ as built departs from the text above, why, and which test holds each rule:
    to the glyph after it: its highlight starts one glyph in (14 px at 14px sans-serif for U+3000) while the quote
    anchors; the trim is a pinned rule (anchor-map.test.ts, whitespace at the selection's edges), and a narrower
    alphabet is a change to the walk, the matching and the panel's normalize together, main's contract, for Slice 5's
-   painter items. Open after the review round 11: a collapsible space between two inline children at which the browser
-   breaks the line is collapsed as the line's trailing space and is painted as the padding alone, a 4 x 18 px box at
-   the end of the line before the wrap (`- [Docs](a) [Guide](b) [API](c)` in a pane narrower than the item; a
-   paragraph of the same links shows the box on main, and round 10's rendered-space fix brought the shape to list
-   items, divs, blockquotes and sections); no reading of the DOM can tell where a line wraps, and the fix, a
-   layout-time trim of zero-width marks after the paint, is out of this slice's scope and stale on the next resize, so
-   it is recorded here and in skipBlockWs's header, for Slice 5's painter items; and a footnote definition's literal
-   separator, the space md-config.ts emits between the back link and the body for the author's space after the colon
-   that the marker's regex consumes (marked's task item puts one after its checkbox the same way), is a rendered space
-   at the head of the body, so a highlight across the note paints it as a mark of its own beside the back link, which
-   no mark holds, as it paints the task item's after its checkbox (a ruling, not a slip: the separator stays, since
-   without it the note's copied and accessible text reads `1alpha` for `1 alpha`, an inline-block adding no separator
-   of its own to a selection's text, and the sheets' margin-right alone halves the label's gap, 7.45 px to 3.86 at
-   15px; md-config-footnote-paint.test.ts and its browser leg pin the mark; a paint rule skipping a rendered space
-   beside a control would skip the checkbox's too and reopen round 10's pin).
+   painter items. Open after the review round 11: a footnote definition's literal separator, the space md-config.ts
+   emits between the back link and the body for the author's space after the colon that the marker's regex consumes
+   (marked's task item puts one after its checkbox the same way), is a rendered space at the head of the body, so a
+   highlight across the note paints it as a mark of its own beside the back link, which no mark holds, as it paints
+   the task item's after its checkbox (a ruling, not a slip: the separator stays, since without it the note's copied
+   and accessible text reads `1alpha` for `1 alpha`, an inline-block adding no separator of its own to a selection's
+   text, and the sheets' margin-right alone halves the label's gap, 7.45 px to 3.86 at 15px;
+   md-config-footnote-paint.test.ts and its browser leg pin the mark; a paint rule skipping a rendered space beside
+   a control would skip the checkbox's too and reopen round 10's pin). Closed after the review round 12: round 11's
+   wrap-point box (a collapsible space between two inline children at which the browser breaks the line, painted as
+   the padding alone at the end of the line before the wrap, on main too) is fixed by the layout-time trim (item 2),
+   which measures the mark in the browser's layout and unwraps it. Open after the review round 12, the trim's
+   recorded shapes: (a) the fixpoint's price: a blank unwrapped as collapsed that renders once a later unwrap moves
+   its line's wrap point back stays unmarked until the next paint pass, since a mark is never re-wrapped (a blank at
+   a line's last inch would flip with every pass), a ring gap of the space's width at a tight width (the list item
+   of fourteen links at 240 px shows one on the build box; md-config-paint-trim-browser.test.ts bounds such blanks
+   by the marks unwrapped and holds zero where nothing was unwrapped). The layout-neutral mark, `.fc-hl` and
+   `.fc-presel` with `margin: 0 -2px` beside their 2 px side padding in both sheets (a fileview-parity head), would
+   keep the paint from moving any wrap point and remove the shape; it is a design call about main's comments feature
+   for its owner, recorded and not applied. (b) A blank trimmed at one width that renders at another stays unmarked
+   until the next paint pass: the panel re-trims its standing marks on the seam's reflow and never re-wraps
+   (md-config-paint-trim-panel-browser.test.ts holds every rendered blank marked after a paint and not after a
+   reflow). (c) A form feed leading a block collapses as a bare text node (0 px) and renders as a 14 px glyph once
+   it stands in an inline box of its own, a span or the mark alike (Chromium, both probed), so the trimmed paint
+   keeps that mark and the highlighted paragraph shows the glyph where the unpainted one shows nothing
+   (md-config-paint-rendered-space-browser.test.ts pins it; a form feed leading a block is written by no author).
+   (d) A highlight from an html block into a markdown block after it whose whitespace-stripped text equals a node
+   the html block rendered is cut off and mislocated, the pairing defect Slice 5's list records (the resync across
+   an html block, `runFits`); pre-existing on main and untouched by the slice. Scene 86 of
+   anchor-map-fixtures/blank-scenes.json hits it, so md-config-paint-trim-browser.test.ts confines its
+   rendered-blank oracle to the top-level blocks the paint reached.
 
 ### Slice 5: comments anchor on real notes
 

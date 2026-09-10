@@ -34,7 +34,7 @@ function markClasses(): Record<string, string[]> {
   const hl = /const cls = "([\w-]+)" \+ \(loc\.state === "context" \? " ([\w-]+)" : ""\);/.exec(SRC);
   assert.ok(hl, "the highlight pass builds its class string as base + optional context class");
   const raw = /paintRaw\(root, src, c\.range, "([\w-]+)"\)/.exec(SRC);
-  const rendered = /paintRendered\(root, src, c\.range, "([\w-]+)"\)/.exec(SRC);
+  const rendered = /paintRendered\(root, src, c\.range, "([\w-]+)", undefined, \{ trim: !deferTrim \}\)/.exec(SRC);
   assert.ok(raw && rendered, "the presel paints in both views");
   assert.equal(raw![1], rendered![1], "one presel class for both views");
   return { "comment highlight": [hl![1]], "highlight located by context": [hl![1], hl![2]], "composer presel": [raw![1]] };
