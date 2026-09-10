@@ -220,6 +220,7 @@ test("every input the strip paints repaints it, once, when it changes", () => {
     ["the one-group-per-row setting (the row breaks and the trail's boundary read it)", () => { settings.stripGroupRows = true; }],
     ["the theme", () => { settings.theme = "yatharth"; }],
     ["the colormap", () => { settings.colormap = "hawaii"; }],
+    ["compact tabs and agents (the dense-chrome body class re-heights every strip item at an unchanged width: the rebuild's paint lays the hairlines and keep breaks under the new rows)", () => { settings.denseChrome = true; }],
     ["the + tab's key hint", () => { H.keyHint = "Open a session (J)"; }],
     ["the tag lens", () => { H.lens = { all: false, tags: ["t1"] }; }],
     ["the tag unions (a tag holding no visible tab: the filter chips read it)", () => { H.unions = [union("u", "#000000", ["zz"])]; }],
