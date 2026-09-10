@@ -113,7 +113,7 @@ test("the strip's Restart reads the kernel's answer: a refusal re-enables the bu
   // class rule whatever the source order (an id beats a class), so the colour needs a rule with the id's specificity,
   // placed after the :hover rule (same specificity, later wins) or hovering to read the title takes the red away
   const css = fs.readFileSync(path.join(path.resolve(process.cwd(), ".."), "ui", "webview", "strip.css"), "utf8");
-  const failRule = css.indexOf("#strip-refresh.sn-actfail { border-color: #E5534B; color: #E5534B; }");
+  const failRule = css.indexOf(".sn-actfail, #strip-refresh.sn-actfail { border-color: #E5534B; color: #E5534B; }");
   assert.ok(failRule > 0, "a rule for the refused button with the id's specificity");
   assert.ok(failRule > css.indexOf("#strip-refresh:hover"), "after the hover rule, so the red holds under the pointer");
   assert.ok(css.indexOf("#strip-refresh:hover") > 0);
