@@ -56467,11 +56467,18 @@ _UPD_JS = (
     # with its sha): a restart request the manager refused keeps its offer, so a retry can succeed; a refused
     # pull re-arms the kernel's drift slot instead (the next check re-offers once the cause is cured), and a
     # click on a re-shown Update got the route's 409, which the catch below renders as "already ran" though
-    # nothing ran (review round 6, 2026-09-10). A failure with no offer shows its text alone until then
-    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;show('The update did not finish: '+d.failed);return;}"
+    # nothing ran (review round 6, 2026-09-10). A failure with no offer shows its text alone until then.
+    # Both endings show Not now (set here: disarm() sets dm.hidden only while armed), so the message can be
+    # dismissed, and the updated ending hides Update in the clicking window too (it stood there disabled,
+    # where a pushed window had it hidden), so every window ends in one shape (review round 6). Not now on
+    # an ended wait posts /update-dismiss with curTag, the identifier this window last offered: after a pull
+    # that left the code on disk with no manager that is the pulled sha, which the kernel's next pass would
+    # offer again as a restart drift, and the dismissal is durable, so that offer stays quiet until a newer
+    # sha. Not now's own meaning, said here because the message it dismisses is not the offer it names
+    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;show('The update did not finish: '+d.failed);return;}"
     # the kernel words the step by case (`romp refresh` exits 1 with no manager, where `romp up` is
     # the step; review find, 2026-09-08); the fallback is the manager case, for an older kernel
-    "if(d.updated){waiting=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
+    "if(d.updated){waiting=false;go.hidden=true;dm.hidden=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
     "+' \\u2014 '+(d.hint||'restart romp yourself (romp refresh) to run it')+'.');return;}"
     "setTimeout(poll,3000);}).catch(function(){if(waiting)setTimeout(poll,3000);});}"
     # a held Enter or Space repeats its keydown with repeat:true; only the first may activate. Scoped to

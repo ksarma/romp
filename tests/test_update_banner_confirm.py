@@ -413,6 +413,32 @@ GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: at
                          "no claim about a manager the kernel never asked")
         self.assertEqual(s["after"]["label"], "Restart 3 sessions now, interrupting 1", "the arm's re-read fills the counts in")
 
+    def test_an_ended_wait_leaves_not_now_to_dismiss_the_message(self):
+        # review round 6 (2026-09-10): after the on-disk `updated` outcome ended the wait, the banner showed its
+        # message with no working control: Update hidden (a pushed window) or visible and disabled (the
+        # clicking window), Not now hidden since the click or the push. The failed exit had the same gap once
+        # no offer stands (the text alone, above). Both exits now show Not now, and the updated exit hides
+        # Update in the clicking window too, so every window ends in one shape. Not now there posts
+        # /update-dismiss with the identifier this window last offered (the script's comment says what that
+        # dismisses durably), and hides the banner
+        updated = "CHECK.tag = ''; CHECK.updated = 'abcdef01'; CHECK.why = 'no manager is running this kernel'; CHECK.hint = 'run romp up to start one';"
+        s = run_banner("GO.onclick(); await tick(); await tick(); " + updated
+                       + " CF.onclick(); await tick(); await tick(); await tick(); var ended = state(); DM.onclick(); out({ ended: ended, after: state() });")
+        e = s["ended"]
+        self.assertTrue(e["msg"].startswith("romp updated to abcdef01 on disk, but no manager is running this kernel"), e["msg"])
+        self.assertEqual((e["goHidden"], e["notNowHidden"], e["armed"], len(e["posts"])), (True, False, False, 1), "the clicking window")
+        self.assertFalse(s["after"]["shown"], "Not now hides the message")
+        s = run_banner("window.__rompUpdateOffer('', '', '', 'b1', 'running'); " + updated + " await tick(); await tick(); out(state());",
+                       check={"tag": ""})
+        self.assertEqual((s["goHidden"], s["notNowHidden"]), (True, False), "a window the running push flipped into the wait")
+        s = run_banner("await tick(); await tick(); out(state());", check={"tag": "", "state": "running", "updated": "abcdef01"})
+        self.assertTrue(s["msg"].startswith("romp updated to abcdef01 on disk"), s["msg"])
+        self.assertEqual((s["goHidden"], s["notNowHidden"]), (True, False), "a page loaded during the wait")
+        s = run_banner("GO.onclick(); await tick(); await tick(); CHECK.tag = ''; CHECK.failed = 'the fetch failed';"
+                       " CF.onclick(); await tick(); await tick(); await tick(); out(state());")
+        self.assertTrue(s["msg"].startswith("The update did not finish: the fetch failed"), s["msg"])
+        self.assertEqual((s["goHidden"], s["notNowHidden"]), (True, False), "a failure with no offer standing: the text alone, with Not now")
+
     def test_a_re_read_that_answers_running_changes_neither_the_label_nor_the_held_counts(self):
         # review round 6 (2026-09-10): an update started elsewhere between the click and the arm's re-read (another
         # window's confirm, the auto converge) answers state running with every count null, since the kernel
