@@ -669,12 +669,14 @@ class Routes(Fresh):
     def tearDownClass(cls):
         cls.srv.shutdown()
 
-    def _post(self, path, token=True, body=None):
+    def _post(self, path, token=True, body=None, legacy=False):
         """A POST as the banner's ARMED click sends it (2026-09-10): {"confirmed": true} unless the
-        test says otherwise. `body` is the JSON object to send; {} is the unconfirmed click."""
+        test says otherwise. `body` is the JSON object to send; {} is the unconfirmed click. `legacy` is
+        the request the banner sent before the confirm step, fetch('/update',{method:'POST'}) with no
+        body at all: Content-Length 0 and no Content-Type, as http.client sends a bodiless POST."""
         import urllib.request, urllib.error
         headers = {"X-Romp-Token": km.TOKEN} if token else {}
-        data = json.dumps({"confirmed": True} if body is None else body).encode()
+        data = None if legacy else json.dumps({"confirmed": True} if body is None else body).encode()
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), method="POST",
                                      data=data, headers=headers)
         try:
@@ -740,8 +742,11 @@ class Routes(Fresh):
         ran = []
         with mock.patch.object(km, "_run_update", side_effect=lambda tag: ran.append(tag) or True), \
              mock.patch.object(km, "_run_main_update", side_effect=lambda *a, **kw: ran.append(a)):
-            for body in ({}, {"confirmed": False}, {"confirmed": "yes"}, {"confirmed": 1}):
-                code, text = self._post("/update", body=body)
+            for body in ({}, {"confirmed": False}, {"confirmed": "yes"}, {"confirmed": 1}, "legacy"):
+                # "legacy": the request a page loaded before the confirm step sends, an EMPTY body (not
+                # the JSON text {}): it rides _json_object_body's empty branch, which no other route test
+                # reaches, and must get the same 400 and the same text, never a 500
+                code, text = self._post("/update", legacy=True) if body == "legacy" else self._post("/update", body=body)
                 self.assertEqual(code, 400, (body, text))
                 self.assertIn("confirmed click", text, body)
             km._UPDATE_AVAIL[0] = ""
@@ -755,6 +760,30 @@ class Routes(Fresh):
         # a body that is not JSON, or not an object, is a 400 too, never a traceback
         code, text = self._post("/update", body=[1, 2])
         self.assertEqual(code, 400, text)
+        # the refusal comes BEFORE the kernel's own checks are read, executed two ways: with nothing
+        # pending, an unconfirmed click still gets the 400 (a route that decided the nothing-pending 409
+        # first would answer 409); and with the check slots replaced by lists that raise when indexed,
+        # the 400 still comes back (a route that read a slot first would 500)
+        km._UPDATE_AVAIL[0] = ""
+        km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+        code, text = self._post("/update", body={})
+        self.assertEqual((code, "confirmed click" in text), (400, True), "refused before the 409 is decided: " + text)
+
+        class _Unread(list):
+            def __getitem__(self, i):
+                raise AssertionError("a kernel check was read before the confirmed refusal")
+        saved_avail, saved_drift = km._UPDATE_AVAIL, km._MAIN_DRIFT
+        km._UPDATE_AVAIL, km._MAIN_DRIFT = _Unread([""]), _Unread(["", ""])
+        try:
+            code, text = self._post("/update", body={})
+        finally:
+            km._UPDATE_AVAIL, km._MAIN_DRIFT = saved_avail, saved_drift
+        self.assertEqual((code, "confirmed click" in text), (400, True), "no check slot was read: " + text)
+
+    def test_an_empty_body_is_an_empty_object(self):
+        # the branch the legacy bodiless POST rides: a body of no bytes is {} with no error, so the route
+        # names the missing confirmation instead of a parse error
+        self.assertEqual(km._json_object_body(b""), ({}, None))
 
     def test_a_confirmed_click_writes_its_audit_row_tagged_update_confirmed(self):
         # the ledger tells a confirmed banner click from every other door: `via: update-confirmed`
@@ -784,25 +813,56 @@ class Routes(Fresh):
                          ("main-converge", "aaaa1111", "update-confirmed"))
         km._MAIN_DRIFT[0] = ""
 
-    def test_update_check_carries_what_a_restart_would_cut(self):
+    def test_update_check_carries_what_a_restart_would_stop_over_every_backend(self):
         # the banner's confirm step names these under the first click: how many sessions the restart
-        # stops and how many are mid-turn, read from the backend's own counters (restart_impact), never
-        # a guess from the page. No backend built: nothing to cut, and the route says 0/0.
-        class FakeBackend:
+        # stops and how many of them it interrupts, summed over every backend the kernel runs (the SDK
+        # backend and the Codex backend, each through its own restart_impact), never a guess from the
+        # page. Both globals are saved and restored: another test's real Codex backend would otherwise
+        # add its sessions to the count
+        class Fake:
+            def __init__(self, imp):
+                self.imp = imp
+
             def restart_impact(self):
-                return (3, 1)
-        saved = km._sdk_backend
+                return self.imp
+        saved = km._sdk_backend, km._codex_backend
+
+        def check():
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            d = json.loads(body)
+            return d["sessions"], d["midTurn"]
         try:
-            km._sdk_backend = FakeBackend()
-            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
-            d = json.loads(body)
-            self.assertEqual((d["sessions"], d["midTurn"]), (3, 1))
-            km._sdk_backend = None
-            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
-            d = json.loads(body)
-            self.assertEqual((d["sessions"], d["midTurn"]), (0, 0))
+            km._sdk_backend, km._codex_backend = Fake((3, 1)), Fake((2, 1))
+            self.assertEqual(check(), (5, 2), "a mixed box: Claude and Codex sessions summed")
+            km._sdk_backend, km._codex_backend = Fake((3, 1)), None
+            self.assertEqual(check(), (3, 1), "the Codex backend never built: no Codex session runs here")
+            km._sdk_backend, km._codex_backend = Fake((3, 1)), False
+            self.assertEqual(check(), (3, 1), "the Codex module unavailable: the same")
+            km._sdk_backend, km._codex_backend = False, Fake((2, 1))
+            self.assertEqual(check(), (2, 1), "a Codex-only box: its sessions are what the restart stops")
+            km._sdk_backend, km._codex_backend = False, False
+            self.assertEqual(check(), (0, 0), "no backend can run a session: nothing to stop")
+            # the SDK backend still being constructed (main() builds it on a thread at boot): the impact
+            # is UNKNOWN, and the route says null, never a 0/0 that reads as authoritative
+            km._sdk_backend, km._codex_backend = None, Fake((2, 1))
+            self.assertEqual(check(), (None, None))
+            self.assertIsNone(km._restart_impact())
         finally:
-            km._sdk_backend = saved
+            km._sdk_backend, km._codex_backend = saved
+
+    def test_restart_impact_reads_the_backends_already_built_and_never_builds_one(self):
+        # _restart_impact must not call _sdk() or _codex(): a /update-check landing in the boot window
+        # would otherwise construct the backend on the request thread
+        saved = km._sdk_backend, km._codex_backend
+        try:
+            km._sdk_backend, km._codex_backend = False, None
+            with mock.patch.object(km, "_sdk", side_effect=AssertionError("built the SDK backend")), \
+                 mock.patch.object(km, "_codex", side_effect=AssertionError("built the Codex backend")):
+                self.assertEqual(km._restart_impact(), (0, 0))
+                km._sdk_backend = None
+                self.assertIsNone(km._restart_impact())
+        finally:
+            km._sdk_backend, km._codex_backend = saved
 
     def test_post_update_converges_main_drift_when_no_release_is_pending(self):
         # the drift click is a REAL restart, so the converge is stubbed: a live manager must never hear

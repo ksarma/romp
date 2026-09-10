@@ -9225,16 +9225,27 @@ _UPDATE_MODES = ("ask", "auto", "off")
 
 
 def _restart_impact():
-    """(sessions, midTurn): how many SDK sessions a restart-all would stop right now, and how many of
-    them have a turn in flight it would cut. The update banner's confirm step shows these (2026-09-10:
-    a click that only meant to focus the dashboard window landed on Update, and one click was the whole
-    gesture; the restart cut every turn in flight on the box). Reads the backend already built, never
-    builds one: (0, 0) with no backend, which is also what the restart would cut."""
-    be = _sdk_backend or None
-    if be is None or not hasattr(be, "restart_impact"):
-        return 0, 0
-    live, inflight = be.restart_impact()
-    return int(live), int(inflight)
+    """(sessions, midTurn), or None: how many sessions a restart-all would stop right now, summed over
+    every backend this kernel runs (the SDK backend and the Codex backend, each through a restart_impact()
+    of one shape), and how many of them it would interrupt, by each backend's own busy predicate (a turn
+    in flight, or live background work the restart kills: the rule the manager's quiet-window gate reads
+    too). The update banner's confirm step shows these (2026-09-10: a click that only meant to focus the
+    dashboard window landed on Update, and one click was the whole gesture; the restart cut every turn in
+    flight on the box). Reads the backends already built, never builds one. None while the SDK backend is
+    still being constructed (main() builds it on a thread at boot; in that window the impact is unknown,
+    and the banner falls back to a label without counts, never a 0/0 that reads as authoritative). The
+    Codex backend is built on first use, so its None means no Codex session runs in this process and
+    there is nothing of theirs to stop; False (a backend unavailable) counts nothing likewise."""
+    if _sdk_backend is None:
+        return None
+    live = busy = 0
+    for be in (_sdk_backend, _codex_backend):
+        if be is None or be is False or not hasattr(be, "restart_impact"):
+            continue
+        n, m = be.restart_impact()
+        live += int(n)
+        busy += int(m)
+    return live, busy
 
 
 def _update_mode():
@@ -17654,8 +17665,10 @@ def _sdk_locked():
             # The backend's flag-consumption events resolve held rewinds (two-phase goal cleanup:
             # archive at the branch-take, restore on failure — _on_rewind_resolved).
             _sdk_backend.rewind_resolved_cb = _on_rewind_resolved
-            _mark_boot("reconcileDone")            # T217: the boot reconcile ran inside the
-            #                                        construct above — the settle's other bookend
+            _mark_boot("reconcileDone")            # T217: the settle's other bookend, marked when the
+            #                                        construct above returns (its boot reconcile runs on
+            #                                        the sdk-boot-reconcile thread it started, and may
+            #                                        still be running here)
         except Exception:
             sys.stderr.write("sdk-backend unavailable: %s\n" % traceback.format_exc())
             _sdk_problem("the Claude Code backend could not be built: %s" % traceback.format_exc())
@@ -55896,8 +55909,8 @@ def _stale_block(v):
 # `failed`/`updated` answer means the still-running kernel consumed the child's report → say so.
 # "Not now" is page-scoped on purpose — the next kernel start re-offers (what the user asked for).
 _UPD_CSS = (
-    "#rupd{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:99999;display:none;"
-    "align-items:center;gap:12px;max-width:92vw;background:#252526;border:1px solid rgba(255,255,255,0.12);"
+    "#rupd{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:99999;display:none;flex-wrap:wrap;"
+    "width:max-content;align-items:center;gap:12px;max-width:92vw;box-sizing:border-box;background:#252526;border:1px solid rgba(255,255,255,0.12);"
     "border-radius:8px;padding:10px 14px;color:#e6e6e6;box-shadow:0 8px 28px rgba(0,0,0,0.45);"
     "font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     "#rupd.show{display:flex}#rupd .rup-msg{font-weight:500}"
@@ -55909,9 +55922,23 @@ _UPD_CSS = (
     "#rupd .rup-dismiss,#rupd .rup-cancel{background:none;color:#9aa0a6;border-color:#4a4d51}"
     "#rupd .rup-dismiss:hover,#rupd .rup-cancel:hover{color:#e6e6e6}"
     # the ARMED state (the confirm step, 2026-09-10): the button restates itself as the restart it is
-    # about to run; a shift off the accent so the eye sees the button changed under the first click
-    "#rupd .rup-go.rup-arm{background:#c0392b;color:#fff;border-color:#962d22}"
-    "#rupd .rup-go.rup-arm:hover:not(:disabled){background:#d3453a}"
+    # about to run, in the error red (--err, which the shell defines for both themes; the literal is the
+    # var() fallback for a page without the token): a shift off the Update button's green (#54B204, the
+    # brand green styles.css names --st-awaitbg-bg) so the eye sees the button changed under the first click
+    "#rupd .rup-go.rup-arm{background:var(--err,#c0392b);color:#fff;border-color:rgba(0,0,0,0.25)}"
+    # the hover restates the red: the plain button's green hover rule has the same specificity and would
+    # otherwise win while the pointer still rests on the button it just armed (measured in Chromium)
+    "#rupd .rup-go.rup-arm:hover:not(:disabled){background:var(--err,#c0392b);filter:brightness(1.1)}"
+    # Widths (review round 1 of the confirm step). A fixed box with left:50% shrink-to-fits against the
+    # HALF viewport, so a long armed label wrapped the message to two lines on a desktop and, on a phone,
+    # pushed Cancel past the viewport's edge as a sliver no sideways scroll could reach: width:max-content
+    # sizes the box to its content (capped at 92vw), and flex-wrap lets the items wrap inside that cap
+    # instead of overflowing it. Under 640px the same rule as #rstale's: the message takes the full row
+    # and the buttons drop beneath it, sharing its width for finger-sized targets; width is explicit
+    # there so the row layout does not depend on the box's intrinsic size, and a button's text may wrap
+    # (the armed label is wider than a 360px phone's box in Firefox's metrics; nowrap would overflow it).
+    "@media (max-width:640px){#rupd{width:92vw;gap:10px 12px}"
+    "#rupd .rup-msg{flex:1 1 100%}#rupd button{flex:1 1 auto;white-space:normal}}"
     # light theme (body.theme-light): white card, hairline border, warm dark text
     "body.theme-light #rupd{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
     "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
@@ -55930,24 +55957,46 @@ _UPD_JS = (
     # Two clicks, never one (2026-09-10): a single click POSTed /update, and a click that only meant to
     # focus the dashboard window landed on the button and restarted every session on the box, cutting
     # every turn in flight. The first click ARMS the button: it restates itself as the consequence, in
-    # counts (how many sessions the restart stops, how many of them are mid-turn), with a Cancel beside
-    # it; only a click on the ARMED button posts. The armed state is dropped by exact events, never a
-    # timer: Cancel, a press anywhere outside the box (document pointerdown, capture phase, so a pane
-    # that stops propagation cannot hide it), the window losing focus (blur; a tab hidden), and every
-    # re-render of the banner (show(): a new offer, the running flip, a poll's verdict, the boot
-    # retire). So the click that focuses the window never counts: focus left the window on a blur that
-    # already disarmed the button, and a focusing click finds a plain Update it can at most arm.
-    # The counts are /update-check's sessions and midTurn: the arm shows the freshest answer held and
-    # re-reads the route at once, so the label names the box as it stands at the click. The kernel
-    # holds the same line: /update refuses a body without confirmed:true.
+    # counts (how many sessions the restart stops, how many of them it interrupts), with a Cancel beside
+    # it; only a click on the ARMED button posts. One gesture never posts: the armed click ignores an
+    # event whose detail is above 1 (the browser's own click count, no timer of ours), so the second and
+    # third clicks of a double- or triple-click are swallowed with no feedback and the button stays
+    # armed for a later single click; a keyboard activation (detail 0) confirms. The armed state is
+    # dropped by exact events, never a timer: Cancel; a pointerdown outside the box on this document
+    # (capture phase, so a shell control that stops propagation cannot hide it); a pointerdown inside
+    # any pane iframe, heard on the pane's own document (a press in a frame never reaches the shell
+    # document, and in Firefox fires neither the shell window's blur nor the button's focusout, measured
+    # in the browser leg of tests/test_update_banner_confirm.py: wireFrames below); focusout on the armed
+    # button itself (focus moving by keyboard or script to another control, a frame, or nothing); the
+    # window losing focus (blur; a tab hidden); and every re-render of the banner (show(): a new offer,
+    # the running flip, a poll's verdict, the boot retire). So the click that focuses the window never
+    # counts: focus left the window on a blur that already disarmed the button, and a focusing click
+    # finds a plain Update it can at most arm.
+    # The counts are /update-check's sessions and midTurn (a turn in flight or live background work,
+    # the sessions a restart interrupts, over every backend): the arm shows the freshest answer held and
+    # re-reads the route at once, so the label names the box as it stands at the click. A null answer
+    # (the kernel does not know yet) keeps the label without counts. The kernel holds the same line:
+    # /update refuses a body without confirmed:true.
     "function label(){if(!impact)return 'Restart every session now';var n=impact.sessions,m=impact.midTurn;"
-    "if(!n)return 'Restart now, no sessions live';"
-    "return 'Restart '+n+' session'+(n===1?'':'s')+' now'+(m?', '+m+' mid-turn':'');}"
+    "if(!n)return 'Restart now, nothing to interrupt';"
+    "return 'Restart '+n+' session'+(n===1?'':'s')+' now'+(m?', interrupting '+m:'');}"
     "function note(d){if(d&&typeof d.sessions==='number')impact={sessions:d.sessions,midTurn:d.midTurn||0};}"
     "function disarm(){if(!armed)return;armed=false;go.textContent='Update';go.classList.remove('rup-arm');cx.hidden=true;dm.hidden=waiting;}"
-    "function arm(){armed=true;go.textContent=label();go.classList.add('rup-arm');cx.hidden=false;dm.hidden=true;"
+    # the label is computed before armed flips: a label that threw would otherwise leave a plain-looking
+    # Update armed, and the next click would post
+    "function arm(){var t=label();armed=true;go.textContent=t;go.classList.add('rup-arm');cx.hidden=false;dm.hidden=true;wireFrames();"
     "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){note(d);if(armed)go.textContent=label();})"
     "['catch'](function(e){});}"
+    # every same-origin pane document hears presses for the banner: wired now (the panes precede this
+    # script in the body), on each (re)load of a frame (a pane that reloads while armed gets a fresh,
+    # unwired document; the load handler wires it), and at every arm (a frame added since the page
+    # loaded), as _LANDING_FOCUS_JS wires the focus ring. Idempotent per document; a cross-origin frame
+    # throws on contentDocument and is skipped (a residual: a press there disarms nothing).
+    "function wireFrame(f){try{var d=f.contentDocument;if(!d||d.readyState==='loading'||d.__rompUpdWired)return;"
+    "d.__rompUpdWired=true;d.addEventListener('pointerdown',function(){if(armed)disarm();},true);}catch(e){}}"
+    "function wireFrames(){var fs=document.getElementsByTagName('iframe');for(var i=0;i<fs.length;i++){(function(f){"
+    "if(!f.__rompUpdLoad){f.__rompUpdLoad=true;f.addEventListener('load',function(){wireFrame(f);});}wireFrame(f);})(fs[i]);}}"
+    "wireFrames();"
     "function show(m){disarm();msg.textContent=m;box.classList.add('show');}"
     # Not-now is PER RELEASE (the periodic re-check re-finds versions for weeks): the dismissed tag
     # stays quiet, a strictly newer one is new information and re-offers.
@@ -55984,7 +56033,8 @@ _UPD_JS = (
     "if(d.updated){waiting=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
     "+' \\u2014 '+(d.hint||'restart romp yourself (romp refresh) to run it')+'.');return;}"
     "setTimeout(poll,3000);}).catch(function(){if(waiting)setTimeout(poll,3000);});}"
-    "go.onclick=function(){if(!armed){arm();return;}"    # the first click arms; the armed click posts
+    "go.onclick=function(e){if(!armed){arm();return;}if(e&&e.detail>1)return;"    # the first click arms; the armed
+    # click posts, unless it is the second or third click of one gesture (e.detail: the browser's click count)
     "waiting=true;disarm();go.disabled=true;dm.hidden=true;"
     "show('Updating romp \\u2014 this can take a minute; the dashboard reloads when it restarts\\u2026');"
     "fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true})}).then(function(r){"
@@ -55998,7 +56048,11 @@ _UPD_JS = (
     "go.disabled=false;dm.hidden=false;"
     "show('Could not start the update: '+em);});};"
     "cx.onclick=function(){disarm();};"
+    # the disarms for attention moving off the armed button, each covering a case the others miss (the
+    # comment above says which): a press elsewhere in this document, a press in a pane (wireFrames above),
+    # focus leaving the button, the window losing focus
     "document.addEventListener('pointerdown',function(e){if(armed&&!(e&&e.target&&box.contains(e.target)))disarm();},true);"
+    "go.addEventListener('focusout',function(){disarm();});"
     "window.addEventListener('blur',function(){disarm();});"
     "document.addEventListener('visibilitychange',function(){if(document.hidden)disarm();});"
     "dm.onclick=function(){dismissedTag=curTag;box.classList.remove('show');"
@@ -56218,6 +56272,9 @@ def _landing():
             "<meta name=theme-color id=meta-theme content='#1e1e1e'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp</title><style>"
             ":root{--accent:#9cd2ff;--accent-fg:#0c1a2e}"
+            # the error red (styles.css --err), defined here because the shell loads no sheet: the update
+            # banner's armed state reads it, with the same literal as its var() fallback (2026-09-10)
+            ":root{--err:#c0392b}"
             # The menu vocabulary's tokens (CLAUDE.md "Menus and dropdowns wear ONE vocabulary"), defined
             # HERE because the shell loads no sheet: the bell popover reads them, with the same dark
             # literals as var() fallbacks in its rules. Byte-equal to styles.css's :root values.
@@ -56942,6 +56999,7 @@ def _landing():
             # so the dark rendering is byte-identical. Accent goes clay (#C2410C) via the same --accent var
             # every accent consumer already reads.
             "body.theme-light{--accent:#C2410C;--accent-fg:#FFF8F2;background:#F1EAE2}"
+            "body.theme-light{--err:#B02A1C}"     # the light theme's error red (styles.css body.theme-light --err)
             # the light theme's menu tokens — the values styles.css's body.theme-light block resolves
             # them to, so the bell popover is the same cream card every other menu is
             "body.theme-light{--menu-bg:#FBF6EF;--menu-fg:#1F1E1D;--menu-border:rgba(0,0,0,0.12);--menu-hover:rgba(0,0,0,0.06);"
@@ -58329,7 +58387,7 @@ class Handler(BaseHTTPRequestHandler):
                 dsha = _MAIN_DRIFT[0] or _MAIN_DRIFT[1]
                 if dsha in dis:
                     dsha = ""
-                imp = _restart_impact()
+                imp = _restart_impact()     # None while the SDK backend is still being built: unknown
                 return self._send(200, json.dumps({
                     "cur": _kernel_ver() or "",
                     "tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]),
@@ -58340,9 +58398,11 @@ class Handler(BaseHTTPRequestHandler):
                     "drift": (("pull" if _MAIN_DRIFT[0] else "restart") if dsha else ""),
                     "driftSha": dsha,
                     "boot": _BOOT_ID,
-                    # what a restart-all would cut right now: the banner's confirm step names these
-                    # counts under the first click (2026-09-10)
-                    "sessions": imp[0], "midTurn": imp[1]}), "application/json", cache="no-cache")
+                    # what a restart-all would stop and interrupt right now, over every backend: the
+                    # banner's confirm step names these counts under the first click (2026-09-10). null
+                    # while the impact is unknown; the banner then shows its label without counts
+                    "sessions": (None if imp is None else imp[0]),
+                    "midTurn": (None if imp is None else imp[1])}), "application/json", cache="no-cache")
             if p == "/notify-all":
                 # the master bell's state (the user 2026-08-09): on = every task notifies when it
                 # blocks on you or completes, unless its session/card bell mutes it. The shell
