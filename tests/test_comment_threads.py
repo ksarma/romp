@@ -581,8 +581,17 @@ class ThreadProjection(CommentBase):
         self.assertEqual(th["effort"], "high")
         self.assertIsNone(th["pickHeld"])
         self.assertIs(th["effortPending"], False)
+        self.assertIs(th["fastPending"], False); self.assertIs(th["modePending"], False)
         self.assertFalse([e for e in th["events"] if e.get("kind") == "reconnecting"])
         self.assertEqual(th["lastUuid"], held_last_uuid, "the marker never stands in for the newest record")
+        # a fast or mode pick's own reload (fastPending, modePending; review round 7, 2026-09-10): the frame carries the
+        # flag the popover's badge pulse reads, and the events end on the plain reloading line (no effort, no hold)
+        for flag in ("fastPending", "modePending"):
+            _Held.meta = {"mode": "default", "fast": "off", "effort": "high", "effortPending": False, "pickHeld": None, flag: True}
+            th = frame()
+            self.assertIs(th[flag], True, flag)
+            self.assertEqual(th["events"][-1], {"kind": "reconnecting", "effort": "", "held": None}, flag)
+            self.assertEqual(len([e for e in th["events"] if e.get("kind") == "reconnecting"]), 1, flag)
         # dormant (session_meta {}): the reg's effort, no hold, no element
         km._sdk = lambda: self._State("")
         th = frame()

@@ -261,7 +261,7 @@ class SetEnv(_Backend):
 
     def _live(self, sid):
         s = self._sess(sid)
-        s.request_reconnect = lambda: self.reconnects.append(1)
+        s.request_reconnect = lambda *a, **k: self.reconnects.append(1)
         self.reconnects = []
         self.be.sessions[sid] = s
         return s

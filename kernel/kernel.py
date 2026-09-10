@@ -16699,7 +16699,8 @@ def _comments_frame(sid, tmux=None):
         effort = str(meta.get("effort") or "") if "effort" in meta else ((reg.get("effort") or "") if reg else "")
         pick_held = meta.get("pickHeld") or None
         effort_pending = bool(meta.get("effortPending"))
-        if effort_pending or pick_held:
+        fast_pending, mode_pending = bool(meta.get("fastPending")), bool(meta.get("modePending"))   # round 7: the chat's gate
+        if _reconnect_pending(meta):
             events = events + [_reconnecting_event(meta)]
         threads.append({"tid": th.get("tid"), "anchorUuid": th.get("anchorUuid"),
                         "relayedT": th.get("relayedT") or 0,   # the persistent sent-back indicator's stamp (T145)
@@ -16714,6 +16715,7 @@ def _comments_frame(sid, tmux=None):
                         "model": (reg.get("liveModel") or reg.get("model") or "") if reg else "",
                         "effort": effort,                              # the running value on a live thread (see above)
                         "pickHeld": pick_held, "effortPending": effort_pending,   # the hold and the armed reconnect, as the live row's status carries them
+                        "fastPending": fast_pending, "modePending": mode_pending,   # the fast and mode reloads' flags (review round 7)
                         "sinceEpoch": since_ms,
                         "mode": str(meta.get("mode") or ""), "fast": str(meta.get("fast") or ""),
                         # the same rank tints the chat statusline's badges wear (the user 2026-08-25,
@@ -20444,6 +20446,8 @@ class Sessions:
                                 "model": st.get("model", ""), "effort": st.get("effort", ""),
                                 "modelPending": bool(st.get("modelPending")),   # a /model switch resolving → badge shows switching-dots
                                 "effortPending": bool(st.get("effortPending")),   # an /effort switch reconnecting → effort-badge dots + "Reloading session…"
+                                "fastPending": bool(st.get("fastPending")),   # a fast pick pending on its reconnect (review round 7, 2026-09-10)
+                                "modePending": bool(st.get("modePending")),   # a mode pick pending on its reconnect or the landing's live switch
                                 # a pick HELD for the session's live work before its reconnect ({surfaces,
                                 # subagents, tasks} or None): the chat's waiting line reads it (2026-09-09)
                                 "pickHeld": st.get("pickHeld") or None,
@@ -36654,8 +36658,9 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # run), nothing is reloading yet, so the element carries the hold and the webview renders a waiting
     # line in its place (review round 1, 2026-09-09: the reloading line ran for the whole hold), and it
     # shows for EVERY held kind, not only an effort pick (review round 2: a held mode, fast or billing pick
-    # reached no chat surface). _reconnecting_event composes it.
-    if (tm0 or {}).get("effortPending") or (tm0 or {}).get("pickHeld"):
+    # reached no chat surface), and for a fast or mode pick's own reload (fastPending, modePending; review
+    # round 7). _reconnect_pending is the gate; _reconnecting_event composes it.
+    if _reconnect_pending(tm0):
         events.append(_reconnecting_event(tm0))
     # Live API-RETRY indicator (the user 2026-07-08): while the CLI backs off + retries a rate-limited /
     # overloaded request the turn stalls in 'retrying' — which was visible ONLY as the amber tab border, with
@@ -37165,6 +37170,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                   "authPending": bool(tm.get("authPending")),   # an /auth reconnect applying → badge dots
                   "modelPending": _model_pending_now(sid, tm),   # switching-dots on the model badge until the pick lands, from EITHER surface (the user 2026-07-03)
                   "effortPending": bool(tm.get("effortPending")),   # switching-dots on the effort badge while the /effort reconnect applies (SDK-only; the user 2026-07-06)
+                  "fastPending": bool(tm.get("fastPending")),   # a fast pick pending on its reconnect (the badge's pulse, the reloading line; review round 7)
+                  "modePending": bool(tm.get("modePending")),   # a mode pick pending on its reconnect or the landing's live switch (ditto)
                   "pickHeld": tm.get("pickHeld") or None,   # the pick waits for live work before that reconnect (2026-09-09)
                   "ctx": str(tm["context"]) if tm["context"] is not None else "",
                   # the % above is clamped at 100 — ctxOver says the CLI reported 100+ (tokens exceed
@@ -49931,6 +49938,7 @@ def _fleet_view_sig(now, tmux):
                          t.get("fast"), t.get("since"), t.get("fastReason"),
                          _row_items_sig(t.get("subagents")), _row_ids_sig(t.get("bgTasks")),
                          bool(t.get("modelPending")), bool(t.get("effortPending")), bool(t.get("authPending")),
+                         bool(t.get("fastPending")), bool(t.get("modePending")),   # the fast and mode reloads (review round 7)
                          int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")),
                          _pick_held_sig(t.get("pickHeld")))   # the hold's start, its counts, and its end all repaint
     return tuple(sorted(sig.items()))
@@ -49948,14 +49956,23 @@ def _pick_held_sig(h):
             tuple(sorted(picked.items())) if isinstance(picked, dict) else None)
 
 
+def _reconnect_pending(tm0) -> bool:
+    """Whether a live row owes the chat its `reconnecting` element (build_session, _comments_frame): a pick
+    pending on a reconnect (effortPending; fastPending and modePending since review round 7, 2026-09-10, when
+    a held fast or mode pick that ARMED showed no reloading line between its arm and its landing, the gate
+    reading effortPending alone), or any pick held for the session's live work (pickHeld)."""
+    tm0 = tm0 or {}
+    return bool(tm0.get("effortPending") or tm0.get("fastPending") or tm0.get("modePending") or tm0.get("pickHeld"))
+
+
 def _reconnecting_event(tm0):
     """The chat's `reconnecting` element for a live row (build_session): {"kind", "effort", "held"}. Shown
-    while an effort reconnect is pending (effortPending) and, since review round 2 (2026-09-09), while ANY
-    pick is held for the session's live work (pickHeld: the status's one marker for a held effort, mode,
-    fast or billing pick), since a held mode, fast or billing pick reached no chat surface before. `effort`
-    names the pick only for the armed effort reconnect: a live row's effort is never empty, the renderer
-    took any effort text as the effort pick's, and while a pick is held the row's effort is the value the
-    session RUNS, not the pick."""
+    while a reconnect is pending for an effort, fast or mode pick (_reconnect_pending) and, since review round
+    2 (2026-09-09), while ANY pick is held for the session's live work (pickHeld: the status's one marker for a
+    held effort, mode, fast or billing pick), since a held mode, fast or billing pick reached no chat surface
+    before. `effort` names the pick only for the armed effort reconnect: a live row's effort is never empty,
+    the renderer took any effort text as the effort pick's, and while a pick is held the row's effort is the
+    value the session RUNS, not the pick; a fast or mode reload renders the plain reloading line."""
     tm0 = tm0 or {}
     held = tm0.get("pickHeld") or None
     effort = (tm0.get("effort") or "") if (tm0.get("effortPending") and not held) else ""

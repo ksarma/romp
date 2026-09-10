@@ -247,7 +247,7 @@ class OptionsInjection(_OptionsHarness):
         self.be.sessions[sid] = s
         s.loop = object()                        # a live loop, as far as _note_reconnect_ask is concerned
         asked = []
-        s.request_reconnect = lambda: asked.append(1)
+        s.request_reconnect = lambda *a, **k: asked.append(1)
         _stage_helper(self.cfg)                  # a helper appears in the operator's settings
         self.assertTrue(self.be.set_auth(sid, "key"))
         self.assertEqual(asked, [1], "the re-pick reconnects onto the helper")
@@ -867,7 +867,7 @@ class SetAuth(_Keyed):
         s = self._sess(9)
         s.sid = sid
         called = []
-        s.request_reconnect = lambda: called.append(True)
+        s.request_reconnect = lambda *a, **k: called.append(True)
         self.be.sessions[sid] = s
         self.assertTrue(self.be.set_auth(sid, "key"))
         self.assertTrue(called, "auth is connect-time — the reconnect is what applies it")

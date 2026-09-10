@@ -26,9 +26,21 @@ class EffortReconnect(unittest.TestCase):
     def test_build_session_emits_a_reconnecting_event_while_effort_pending(self):
         src = inspect.getsource(km.build_session)
         # ...and while ANY pick is held for the session's live work (review round 2, 2026-09-09): the
-        # event is the chat's only carrier of the hold, and a held mode, fast or billing pick had none
-        self.assertIn('if (tm0 or {}).get("effortPending") or (tm0 or {}).get("pickHeld"):', src)
+        # event is the chat's only carrier of the hold, and a held mode, fast or billing pick had none; and
+        # while a fast or mode pick's own reload is pending (review round 7, 2026-09-10: a held fast or mode
+        # pick that armed showed no reloading line between its arm and its landing). One gate, _reconnect_pending
+        self.assertIn('if _reconnect_pending(tm0):', src)
         self.assertIn('events.append(_reconnecting_event(tm0))', src)
+        gate = inspect.getsource(km._reconnect_pending)
+        for field in ("effortPending", "fastPending", "modePending", "pickHeld"):
+            self.assertIn('tm0.get("%s")' % field, gate)
+        # behaviour: any one flag, or the hold, gates it; nothing else does
+        for field in ("effortPending", "fastPending", "modePending"):
+            self.assertTrue(km._reconnect_pending({field: True}), field)
+        self.assertTrue(km._reconnect_pending({"pickHeld": {"surfaces": ["mode"], "subagents": 1, "tasks": 0}}))
+        self.assertFalse(km._reconnect_pending({"effortPending": False, "fastPending": False, "modePending": False, "pickHeld": None}))
+        self.assertFalse(km._reconnect_pending({"authPending": True, "modelPending": True}))
+        self.assertFalse(km._reconnect_pending(None))
 
     def test_the_reconnecting_event_covers_every_held_kind_and_names_the_effort_only_when_it_is_the_pick(self):
         # behaviour, not a pin: the composed event for the rows the chat can be in
@@ -57,10 +69,11 @@ class EffortReconnect(unittest.TestCase):
                                      "self._reset_reconnect_state()   # every request is served by this connect (a held pick rides it)"])
         self.assertLess(loop.index("self._reset_reconnect_state()"), loop.index('self._drop_live_work("reconnect")'))
         self.assertNotIn("self._reconnect = False   #", loop[:loop.index("self._reset_reconnect_state()")])
-        # and the stamps land with the connect: _connect_landed follows the launch-error clear, inside the loop
+        # and the stamps land with the connect: _connect_landed follows the launch-error clear, inside the loop; its
+        # return is the landing's mode decision, read under the same hold (review round 7)
         i = loop.index("self.backend._clear_launch_error(self.sid)")
         tail = [l.strip() for l in loop[i:].splitlines() if l.strip() and not l.strip().startswith("#")]
-        self.assertEqual(tail[1], "self._connect_landed()", tail[:3])
+        self.assertEqual(tail[1], "landing = self._connect_landed()", tail[:3])
 
     def test_the_held_pick_reaches_the_status_readers(self):
         # the backend snapshot's pickHeld ({surfaces, subagents, tasks} or None) passes through the live
@@ -129,6 +142,20 @@ class EffortReconnect(unittest.TestCase):
             row.update(effortPending=False)
             m = km.build_session(SID, now)
             self.assertEqual([e for e in m["events"] if e.get("kind") == "reconnecting"], [])
+            # a fast or mode pick's own reload (fastPending, modePending; review round 7): the plain reloading line,
+            # naming no effort and carrying no hold, and the status carries the flag the badge's pulse reads
+            for flag in ("fastPending", "modePending"):
+                row.update({flag: True})
+                live = km.Sessions.live()
+                self.assertTrue(live[SID][flag], "the live merge carries %s" % flag)
+                m = km.build_session(SID, now)
+                recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
+                self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": None}], flag)
+                self.assertTrue(m["status"][flag], "the status dict carries %s" % flag)
+                row.update({flag: False})
+                m = km.build_session(SID, now)
+                self.assertEqual([e for e in m["events"] if e.get("kind") == "reconnecting"], [], flag)
+                self.assertFalse(m["status"][flag])
         finally:
             for mod, k, v in saved:
                 setattr(mod, k, v)

@@ -485,6 +485,13 @@ class SkeletonFromCache(unittest.TestCase):
                             "a surface joining the hold busts it")
         self.assertNotEqual(sig(1000, {"S": held1}), sig(1000, {"S": {**pend, "pickHeld": None}}),
                             "the hold clearing while effortPending stays busts it")
+        # a fast or mode pick's own reload (fastPending, modePending; review round 7, 2026-09-10): the badge's pulse and
+        # the chat's reloading line read them, so each flipping repaints the lane, and both flipping is one repaint
+        for flag in ("fastPending", "modePending"):
+            self.assertNotEqual(base, sig(1000, {"S": {**row, flag: True}}), "%s must bust the view sig" % flag)
+            self.assertEqual(sig(1000, {"S": {**row, flag: True}}), sig(1000, {"S": {**row, flag: True}}), "stable on %s" % flag)
+        self.assertNotEqual(sig(1000, {"S": {**row, "fastPending": True}}), sig(1000, {"S": {**row, "modePending": True}}),
+                            "the two flags are distinct inputs")
         # a re-pick DURING the hold changes the picked value the menus check-mark and the tooltip rows name
         # (pickHeld.picked, review round 5, 2026-09-10): same surfaces, same counts, a different pick repaints
         pk1 = {**pend, "pickHeld": {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "picked": {"effort": "max"}}}
