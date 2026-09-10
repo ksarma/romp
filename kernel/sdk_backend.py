@@ -5714,6 +5714,33 @@ class SdkSession:
                 self._log_quietly("reconnect (%s): held for %s (%s); it arms at the settle that finds none"
                                   % (self.name, self._work_phrase(n_sub, n_task), reason))
             return False
+        if self._connecting and self._launching is not None:
+            # THE CONNECT IN PROGRESS ALREADY LAUNCHES IT (review round 5, 2026-09-10): a pick made between the arm
+            # and the loop top rode the connect (_options composed from the session), its surface was cleared with
+            # the picks that connect serves, and its own request runs here, after the compose. Until round 5 that
+            # request armed a second reconnect of the identical shape (the spawn window's stated cost). When the
+            # composed connect runs exactly what the session asks for now, the flag included, nothing is owed:
+            # the request is served by the connect in progress, and the riding picks get their flips here
+            shape = self.backend._launch_shape(self)
+            with self._hold_lock:
+                covered = shape == self._launching and bool(self.fast_opt) == bool(self._fast_unlocked)
+                if covered:
+                    self._reconnect_when_idle = False
+                    names = self._pick_names()
+                    self._reconnect_surfaces.difference_update(names)
+                    self._reconnect_held_for_work = False
+                    # the flips the arm owes the picks riding this connect, keyed on what the connect carries
+                    # (their surfaces went with the loop top's clear): the flag (fast_opt, and _fast_unlocked
+                    # equals it here), and a pending billing switch, whose report described the old process
+                    if self.fast_opt and self.fast != "on":
+                        self.fast = "on"
+                    if self._auth_pending:
+                        self.auth_live = ""
+            if covered:
+                self._log_quietly("reconnect (%s): the connect in progress launches what %s asks for; no second "
+                                  "reconnect (%s)" % (self.name, self._picks_phrase(names, "pending", "pending")
+                                                      if names else "the pending reconnect", reason))
+                return False
         # the arm, the names it read and the clear of exactly those names, in ONE hold of the lock (review
         # round 5, 2026-09-10): until then a pick landing on the kernel thread between the arm's read and a
         # clear() of the whole set was wiped, and its own queued request then armed naming nothing and never

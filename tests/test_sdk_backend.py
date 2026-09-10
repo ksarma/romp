@@ -7289,11 +7289,14 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             return s, q
         s, q = spawning(mode="bypassPermissions", effort="high")
         self.assertTrue(s.backend.set_mode(self.SID, "default"))       # pending: differs from the launching mode
+        q.flush()                                                        # its request arms a reconnect after the connect
+        self.assertTrue(s._reconnect); self.assertEqual(s._pick_names(), [], "the arm cleared its surface")
+        self.assertTrue(s.backend.set_mode(self.SID, "plan"))          # a second pick, its request not yet served
         self.assertIn("mode", s._reconnect_surfaces)
-        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))   # the revert, request not yet served
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))   # the revert: the surface still recorded
         self.assertNotIn("mode", s._reconnect_surfaces)
-        q.flush()                                                        # the request arms; the settle disarms
-        self.assertFalse(s._reconnect, "the arm stood for the withdrawn pick alone")
+        q.flush()                                                        # the plan request is served by the connect; the settle disarms
+        self.assertFalse(s._reconnect, "the arm stood for the withdrawn picks alone")
         self.assertFalse(s._wake.is_set(), "the waker is not left set for the landing")
         self.assertTrue(s._input_wake.is_set(), "the feeder is woken: it holds the queue while _reconnect is set")
         self.assertFalse(s._reconnect_when_idle); self.assertFalse(s._reconnect_held_for_work)
@@ -7301,6 +7304,17 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
                             "for; the reconnect armed after it is disarmed" in str(m) for m in self.logs), self.logs)
         self.assertEqual(s._launching["mode"], "bypassPermissions", "the connect in progress is untouched")
         self.assertEqual(len(self.pokes), 1)
+        # the request not yet served when the revert lands: it is then served by the connect in progress itself
+        # (nothing arms), and the settle finds nothing to disarm
+        s, q = spawning(mode="bypassPermissions", effort="high")
+        s._wake.clear()
+        self.assertTrue(s.backend.set_mode(self.SID, "default"))
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        q.flush()
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+        self.assertTrue(any("the connect in progress launches what the pending reconnect asks for; no second reconnect"
+                            in str(m) for m in self.logs), self.logs)
+        self.assertFalse(any("is disarmed" in str(m) for m in self.logs), self.logs)
         # another pick pending: the arm stands for it
         s, q = spawning(mode="bypassPermissions", effort="high")
         self.assertTrue(s.backend.set_mode(self.SID, "default"))
@@ -7430,6 +7444,53 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self._start(s, "a1")
         s._adopt_fast_state({"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"})
         self.assertEqual(s._pick_held()["surfaces"], ["fast-reset"]); self.assertEqual(s._pick_held()["picked"], {})
+
+    def test_w_a_pick_riding_the_composed_connect_arms_no_second_reconnect(self):
+        # a pick made between the arm and the loop top rides the connect (_options composes from the session) and
+        # its surface is cleared with the picks that connect serves, but its own request ran after the compose
+        # and armed a second reconnect of the identical shape: the spawn window's stated cost since round 4. The
+        # request now finds the connect in progress launching what the session asks for and arms nothing; the
+        # riding picks get their flips there (review round 5). A pick made AFTER the compose still arms
+        q = self._Queue()
+        s = self._sess(effort="high", auth="login")
+        s._launched_effort = sb.effort_launch_shape("high"); s._launched_auth = "login"
+        s.auth_live = "login"; s.fast = "off"; s._fast_unlocked = False
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.loop = q
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))          # idle: its request arms at once
+        q.flush()
+        self.assertTrue(s._reconnect); self.assertEqual(s._launching["effort"], sb.effort_launch_shape("max"))
+        self.assertTrue(s.backend.set_effort(self.SID, "low"))          # the arm-to-teardown half: pending, request queued
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.backend.set_auth(self.SID, "key"))
+            self.assertEqual(s._pick_names(), ["effort", "fast", "auth"])
+            self.assertEqual(len(q.queued), 3, "three requests wait for the loop")
+            # the loop top: the arm state reset, the connect composed from the session (low, flagged, keyed)
+            s._reset_reconnect_state()
+            self.assertEqual(s._pick_names(), [], "the surfaces went with the picks this connect serves")
+            s._launching = s.backend._launch_shape(s); s._connecting = True; s._fast_unlocked = s.fast_opt
+            self.assertEqual(s._launching["effort"], sb.effort_launch_shape("low")); self.assertEqual(s._launching["auth"], "key")
+            q.flush()                                                    # the three requests run after the compose
+        self.assertFalse(s._reconnect, "no second reconnect: the connect in progress launches what they ask for")
+        self.assertFalse(s._reconnect_when_idle); self.assertFalse(s._reconnect_held_for_work)
+        self.assertEqual(s.fast, "on", "the riding fast pick's flip: the flag rides this connect")
+        self.assertEqual(s.auth_live, "", "the riding billing pick's flip")
+        served = [str(m) for m in self.logs if "the connect in progress launches what" in str(m)]
+        self.assertEqual(len(served), 3, self.logs)
+        self.assertIn("reconnect (web): the connect in progress launches what the pending reconnect asks for; no second reconnect (request)", served[0])
+        s._connect_landed()
+        self.assertEqual(s._effort_pending, ""); self.assertEqual(s._auth_pending, "")
+        self.assertEqual((s._launched_effort, s._launched_auth), (sb.effort_launch_shape("low"), "key"))
+        # a pick made AFTER the compose differs from the connect in progress: its request arms, as it must
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        s.loop = q
+        s._launching = s.backend._launch_shape(s); s._connecting = True
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        q.flush()
+        self.assertTrue(s._reconnect, "the connect in progress launches high; the max pick needs the relaunch")
+        self.assertTrue(any("effort (web): set to max; reconnecting to apply" in str(m) for m in self.logs), self.logs)
 
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
