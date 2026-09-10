@@ -81,7 +81,9 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   assert.ok(panel.includes('const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);'), 'asked of a located comment, at the copy the engine returned, with the stored position in the view\'s coordinates');
   // the position the engine and copyUnsure read is the stored one mapped into the view's coordinates (viewAt): the
   // host keeps a BOM the fetch strips, and the status says whether it does (bom), the host's own word on its text
-  assert.ok(panel.includes('const at = this.viewAt(card);') && panel.includes('const loc = locateComment(src, card.anchor, at);'), 'the hint is the mapped position');
+  // ...or the sequential hint for a card with no position whose anchor an earlier card of the pass shares (plans/markdown-viewer.md
+  // Slice 5, item 7: nextCopyHint), the stored position still being what copyUnsure judges the copy by (below)
+  assert.ok(panel.includes('const at = this.viewAt(card);') && panel.includes('const hint = at !== undefined || !prev ? at : this.nextCopyHint(src, card.anchor, prev);') && panel.includes('const loc = locateComment(src, card.anchor, hint);'), 'the hint is the mapped position, or the sequential one for a card with none');
   const view = method(panel, 'viewAt');
   assert.ok(view.includes('if (card.anchorAt === null) return undefined;') && view.includes('return this.status && this.status.bom ? card.anchorAt - 1 : card.anchorAt;'), 'one character on a BOM file, as the status says; 0 is a position');
   assert.ok(read('ui', 'webview', 'file-comments-model.ts').includes('bom?: boolean;'), 'the status type carries the bit');

@@ -606,6 +606,11 @@ const EMBED_ELSEWHERE = "The file changed where you drew this region, and the li
 /** Save's refusal rows for an `elsewhere` pair: the note stays, and the person selects or draws again. */
 const PASSAGE_ELSEWHERE_SAVE = "Nothing saved: the file changed where you selected this passage, and its text now occurs only elsewhere in the file. Select the passage again.";
 const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file. Draw the region again.";
+/** One anchor's identity for the pass's sequential hint (paintAll, nextCopyHint): the quote with its prefix and suffix, the
+ *  three the host compares when it asks whether two comments share a passage; two anchors alike in all three tie at the same
+ *  copies, whatever the copies' positions. */
+type PassageAnchor = NonNullable<Card["anchor"]>;
+const anchorKey = (a: PassageAnchor): string => JSON.stringify([a.quote, a.prefix, a.suffix]);
 /** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
  *  open card, since a tag's title never reaches touch. */
 function copyUnsureWords(c: Card): string {
@@ -3229,15 +3234,25 @@ class Panel {
     // again, 0.45 ms a call on a 12k-element note, 90 ms added to a 200-comment pass; batched, the pass pays one layout
     this.passMarks = []; this.passChanges = [];
     const byCard: Array<{ id: string; marks: Element[] }> = [];
+    // the last located range per anchor over this pass (the anchor's quote, prefix and suffix, anchorKey): the sequential hint's
+    // subject for a card with no stored position that shares its anchor with a card painted before it (nextCopyHint)
+    const lastLocated = new Map<string, SourceRange>();
     // the comment highlights — unless the filter shows the changes alone (activeFilter), when the text wears the change
     // marks only; the cards the filter hides are not rendered, so nothing reads `located` for them
     for (const card of this.activeFilter() === "changes" ? [] : this.cards()) {
       if (card.resolved || !card.anchor) continue;
       // the stored position is the engine's tie-break (nearest wins), so a comment on text that recurs with the same
       // surroundings past the anchor's context is painted on the copy that was chosen — in the VIEW's coordinates
-      // (viewAt: the host's text keeps a BOM the fetch strips, so its offsets run one ahead on such a file)
+      // (viewAt: the host's text keeps a BOM the fetch strips, so its offsets run one ahead on such a file). A card with NO
+      // stored position (written by the CLI or another editor) whose anchor an earlier card of this pass shares takes a
+      // sequential hint instead, the copy after that card's (plans/markdown-viewer.md Slice 5, item 7; nextCopyHint), so
+      // same-text comments without a position take the copies in turn where they all painted on the first copy; copyUnsure
+      // below still reads the STORED position, so the guess is painted as one
       const at = this.viewAt(card);
-      const loc = locateComment(src, card.anchor, at);
+      const key = anchorKey(card.anchor), prev = lastLocated.get(key);
+      const hint = at !== undefined || !prev ? at : this.nextCopyHint(src, card.anchor, prev);
+      const loc = locateComment(src, card.anchor, hint);
+      if (loc.state === "located" && loc.range) lastLocated.set(key, loc.range);
       // ...and where the anchor ties and the position names none of the tied copies, the copy painted is the engine's
       // guess: painted in the dashed cue and said on the card (copyUnsure), never shown as the copy that was chosen
       const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);
@@ -3342,6 +3357,29 @@ class Panel {
     if (first.state !== "located" || !first.range) return false;
     const last = locateComment(src, card.anchor, src.length);
     return last.state === "located" && !!last.range && last.range.start !== first.range.start;
+  }
+  /** The hint for a card with no stored position whose anchor a card painted before it in this pass shares (paintAll): a
+   *  position whose nearest tied copy is the first copy AFTER that card's (`prev`, its located range), so same-text comments
+   *  without a position take the copies in turn; undefined when no copy follows, and the engine's own earliest pick stands, as
+   *  it did before the hint (plans/markdown-viewer.md Slice 5, item 7; the design's narrow case: only a card with no position,
+   *  only an anchor equal in quote, prefix and suffix, the host's own reading of "the anchor ties"). The engine breaks a tie by
+   *  the copy nearest the hint (engine.js pickCandidate), so the previous copy's end names the next copy only when it starts
+   *  within a quote's length of that end (a line repeated back to back), and a repeated paragraph would keep landing on the
+   *  same copy. The probe steps the hint right from the previous copy's start, doubling the distance, until the engine's pick
+   *  moves past that copy: at each step the pick said no copy started nearer than the same distance beyond the hint, so the
+   *  next step stays at or short of the next copy, which is then the pick, never a copy beyond it; log2(gap / quote) probes,
+   *  each an engine scan of the text, only for such a card, and one when no copy follows (the engine's last pick, hint at the
+   *  text's end, is the card's own copy). */
+  private nextCopyHint(src: string, anchor: PassageAnchor, prev: SourceRange): number | undefined {
+    const last = locateComment(src, anchor, src.length);
+    if (last.state !== "located" || !last.range || last.range.start <= prev.start) return undefined;
+    const quote = Math.max(1, prev.end - prev.start);
+    for (let step = quote; prev.start + step <= src.length; step *= 2) {
+      const hint = prev.start + step;
+      const loc = locateComment(src, anchor, hint);
+      if (loc.state === "located" && loc.range && loc.range.start > prev.start) return hint;
+    }
+    return undefined;
   }
   /** OUR marks (owns) for one subject, in document order: a comment's highlight may span several rows, and a
    *  substitution paints a deletion point and then its new text, all with the same action and id. */

@@ -236,7 +236,10 @@ test('the contract names anchorAt as the second optional field with its rule, an
   // the model and the panel: the field rides on the store comment and the card beside an anchor, and is the painter's hint
   assert.ok(model.includes('anchor?: Anchor | null; anchorAt?: number;'), 'the store comment type');
   assert.ok(/const anchorAt = anchor && typeof c\.anchorAt === "number" && Number\.isFinite\(c\.anchorAt\) \? c\.anchorAt : null;/.test(model), 'the card carries it only beside an anchor');
-  assert.ok(/const at = this\.viewAt\(card\);\s*\n\s*const loc = locateComment\(src, card\.anchor, at\);/.test(panel), 'the painter passes it as the hint, in the view\'s coordinates');
+  // ...or, for a card with NO position whose anchor an earlier card of the pass shares, the sequential hint (plans/markdown-viewer.md
+  // Slice 5, item 7: nextCopyHint, the copy after that card's); copyUnsure reads the stored position either way
+  assert.ok(/const at = this\.viewAt\(card\);\s*\n\s*const key = anchorKey\(card\.anchor\), prev = lastLocated\.get\(key\);\s*\n\s*const hint = at !== undefined \|\| !prev \? at : this\.nextCopyHint\(src, card\.anchor, prev\);\s*\n\s*const loc = locateComment\(src, card\.anchor, hint\);/.test(panel), 'the painter passes it as the hint, in the view\'s coordinates, or the sequential hint for a card with none');
+  assert.ok(panel.includes('this.copyUnsure(src, card, at, loc.range.start)'), 'the copy is judged against the STORED position, never the sequential hint');
   assert.ok(/if \(card\.anchorAt === null\) return undefined;\s*\n\s*return this\.status && this\.status\.bom \? card\.anchorAt - 1 : card\.anchorAt;/.test(panel), 'viewAt: 0 is a position, and a BOM file\'s runs one ahead');
   assert.ok(ux.includes('with the comment\'s stored `anchorAt` as the tie-break'), 'the painting paragraph says so');
 });
