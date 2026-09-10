@@ -1,24 +1,29 @@
-// Resolve answered (plans/file-review.md, "The about follow-on (2026-09-10)" under Slice 2; decision 46): nothing resolves
-// a comment except the person, and a header action resolves at once every open comment of theirs the session has answered.
-// Driven over the Slice 2 stand-in (copied here as the sibling modules copy it, the tree's edges hidden from a failing
-// assertion). Pinned: the model's pick of the answered comments (unresolved, the person's, with a turn by another author,
-// words or a revision, after the person's last turn on the comment); the header action "Resolve answered (N)" while N > 0
-// and its absence at N = 0; the plain confirm line and Cancel; one resolve request per comment, in order, each answered;
-// a refusal reported under its card, the rest resolved; "Reopen all" in the acknowledgment's position, its click reopening
-// the same comments, and its end at the person's next gesture (a press on the button itself excepted), the sent
-// acknowledgment it displaced back in its place at that end (in place, before any render, and kept by the next); nothing
-// else in the panel resolving a comment. Synthetic fixtures only: the notes-api world, placeholder ids, the sessions "api"
-// and "web".
+// Resolve answered, the review of 2026-09-10 (plans/file-review.md, "The about follow-on (2026-09-10)" under Slice 2;
+// decision 46): what the first stand-in (file-comments-resolve-answered.test.ts) left unpinned, driven over the same Slice 2
+// stand-in. Pinned:
+//   • The confirm row is over once the status it was asked over leaves nothing for it: the answered comments resolved from
+//     their own cards take the count to zero, and a status that answers two more shows the header action and NO confirm;
+//     nor does the confirm survive the panel's close. Before, the flag was cleared by Resolve and Cancel alone, and a
+//     question the person walked away from came back re-counted, one click from resolving with no gesture behind it.
+//   • The file-editing consent is asked once for a Resolve answered and once for a Reopen all: declined, one row under the
+//     header action and nothing written; granted, the writes go with no second ask. Before, every write asked, and a decline
+//     was asked again for each comment and left one identical row per comment at the list's foot.
+//   • The Reopen all line wears the acknowledgment's dress with the size on the words and the button alone (a .fc-note
+//     inside a .fc-note compounded to 0.74 of the acknowledgment beside it), and borrows nothing from the saved line
+//     (.fc-saved is that line's own, one class string in the panel: feed-css-saved-line-head-dress.test.ts); in the margin
+//     layout it sticks to the Send section's bottom edge, as the saved line does.
+//   • A wheel while Reopen all holds the keyboard ends the offer and moves the focus to the nearest control, never to the
+//     body (removeLine's rule for the saved line).
+// Synthetic fixtures only: the notes-api world, placeholder ids, the sessions "api" and "web".
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
-import { type Status, type Hunk, type StoreComment, type Card, answeredComments, cardModel } from "./file-comments-model";
+import { type Status, type Hunk, type StoreComment } from "./file-comments-model";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
-const HOST = fs.readFileSync(path.resolve(process.cwd(), "..", "tools", "file-comments-host.mjs"), "utf8");
 
 // ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
 const SID = "11111111-2222-3333-4444-555555555555";
@@ -62,21 +67,6 @@ function status(over: Partial<Status> = {}): Status {
     ...over,
   };
 }
-
-// ── the pure half ──────────────────────────────────────────────────────────────────────────────────
-
-test("answeredComments: the person's unresolved comments with a turn by another author after the person's last turn; a revision counts; the person's own last word, a resolved one and the session's own comment do not", () => {
-  const cards = cardModel(status().store, [h1]);
-  assert.deepEqual(answeredComments(cards).map((c) => c.id), [answered.id, revised.id], "in the cards' order (oldest first)");
-  assert.deepEqual(answeredComments([]), []);
-  const byId = (id: string): Card => cards.find((c) => c.id === id)!;
-  assert.deepEqual(answeredComments([byId(mineLast.id)]), [], "the person replied after the session: not answered since");
-  assert.deepEqual(answeredComments([byId(open.id)]), [], "no reply at all");
-  assert.deepEqual(answeredComments([byId(theirs.id)]), [], "the session's comment, answered by the person: not the person's");
-  assert.deepEqual(answeredComments([byId(done.id)]), [], "already resolved");
-  const twice = cardModel({ v: 3, path: "docs/report.md", suggestions: SUGG, comments: [{ ...mineLast, replies: [...mineLast.replies!, reply("api", T0 + 4300, "The nightly one.")] }] }, [h1]);
-  assert.deepEqual(answeredComments(twice).map((c) => c.id), [mineLast.id], "answered again after the person's last word: answered");
-});
 
 // ── a DOM stand-in: ancestry, attributes, events with capture and bubbling, a small selector engine ──
 /** The tree's edges as non-enumerable properties: a failing assertion over a stand-in node would otherwise have node's
@@ -137,7 +127,8 @@ class El {
   listeners: Reg[] = [];
   hidden = false; disabled = false; readOnly = false; title = ""; type = ""; value = ""; checked = false; placeholder = "";
   innerHTML = "";
-  style: Record<string, string> = {};
+  // the inline style as a record, with the two methods the margin layout's pass writes through (setProperty, removeProperty)
+  style: Record<string, any> = { setProperty(k: string, v: string) { this[k] = v; }, removeProperty(k: string) { delete this[k]; } };
   rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
   constructor(tag: string) { this.tagName = tag.toUpperCase(); hideEdges(this, true); }
   get ownerDocument(): typeof doc { return doc; }
@@ -267,6 +258,9 @@ win.getSelection = () => null;
 win.confirm = () => true;
 (globalThis as any).window = win;
 (globalThis as any).document = doc;
+// the sheet's verdict on the fold (file-comments.ts marginMode): the list layout unless a test asks for the margin
+let marginOn = false;
+(globalThis as any).getComputedStyle = (el: El) => ({ flexDirection: el.classList.contains("fileview-main") && !marginOn ? "column" : "row" });
 const store = new Map<string, string>();
 (globalThis as any).localStorage = {
   getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
@@ -370,186 +364,140 @@ const reopen = (aside: El): El | null => act(aside, "fcreopenall");
 const resolves = (w: World) => w.posted.filter((m) => m.type === "fileComments" && m.verb === "resolve").map((m) => m.args);
 const resolvedAll = (ids: string[]): Status => status({ verb: "resolve", storeMtimeNs: "1757145600000000009", store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: ALL.map((c) => (ids.includes(c.id) ? { ...c, resolved: true } : c)) } });
 const gesture = (el: El, type: string): void => { el.dispatchEvent(new Ev(type)); };
-/** A send of the person's words alone (nothing is unsent in the fixture), so a sent acknowledgment stands at the foot: the
- *  confirm, its accept option unchecked (the pending change stays out of this: no accept goes before the send), the words in
- *  the note box, its Send; the send answered, the refresh it asks answered with the status. */
-async function sendWords(w: World, aside: El, words: string): Promise<void> {
-  act(aside, "fcsend")!.click();
-  const accept = aside.querySelector('input[data-opt="accept"]');
-  if (accept) { accept.checked = false; dispatch(accept, new Ev("change")); }
-  const box = aside.querySelector(".fc-confirm .fc-send-note")!;
-  assert.ok(box, "the confirm is up, with its note box");
-  box.value = words; dispatch(box, new Ev("input"));
-  act(aside, "fcsendgo")!.click(); await flush();
-  const m = lastOf(w, "fileCommentsSend");
-  assert.ok(m, "the send went out");
-  assert.equal(lastOf(w, "fileComments", "accept"), undefined, "the words alone: no accept went before it");
-  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSent", reqId: m.reqId, queued: false } })); await flush();
-  answer(w, status()); await flush(); await flush();
+/** Both answered comments resolved through the header action, the replies answered: the offer stands. */
+async function resolveBoth(w: World, aside: El): Promise<void> {
+  headBtn(aside)!.click();
+  act(aside, "fcresolveanswereddo")!.click(); await flush();
+  answer(w, resolvedAll([answered.id]), lastOf(w, "fileComments", "resolve")); await flush(); await flush();
+  answer(w, resolvedAll([answered.id, revised.id]), lastOf(w, "fileComments", "resolve")); await flush(); await flush();
+  assert.ok(aside.querySelector(".fc-reopen"), "the offer stands");
 }
-/** The plain sent acknowledgment in the Send section: the div in the acknowledgment's dress that is not the Reopen all line
- *  (the line and its button wear the same dress, so the class alone does not tell them apart). */
-const sentAck = (aside: El): El[] => aside.querySelectorAll(".fc-send div.fc-sent").filter((d) => !d.classList.contains("fc-reopen"));
 
-test("the header action names the count while the session has answered open comments of the person's, and is absent at zero; its click asks in one line, Cancel withdraws", async (t: TestContext) => {
-  const w = world(); t.after(() => w.close());
-  const { aside } = await openPanel(w);
-  const b = headBtn(aside)!;
-  assert.ok(b, "the action is in the header");
-  assert.equal(b.textContent, "Resolve answered (2)", "the two answered: in words and by a revision");
-  assert.equal(b.title, "Resolve the 2 comments of yours the session has answered; a comment stays open until you resolve it");
-  assert.ok(aside.querySelector(".fc-head")!.contains(b), "in the head");
-  assert.equal(confirmRow(aside), null, "no confirm until the click");
-  b.click();
-  const row = confirmRow(aside)!;
-  assert.ok(row, "the confirm row");
-  assert.equal(row.querySelector(".fc-note")!.textContent, "Resolve the 2 comments the session has answered?");
-  assert.deepEqual(texts(row.querySelectorAll("button")), ["Resolve", "Cancel"]);
-  act(aside, "fcresolveansweredcancel")!.click();
-  assert.equal(confirmRow(aside), null, "Cancel withdraws the question");
-  assert.deepEqual(resolves(w), [], "nothing resolved");
-  // at zero the action is not offered: the person's last word stands on every comment
-  const w2 = world(); t.after(() => w2.close());
-  const { aside: a2 } = await openPanel(w2, status({ store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [mineLast, open, theirs, done] } }));
-  assert.equal(headBtn(a2), null, "nothing answered: no action (progressive disclosure)");
-});
+// ── the confirm's end ─────────────────────────────────────────────────────────────────────────────
 
-test("Resolve: one resolve request per answered comment, in order, each with on true; the acknowledgment says how many, Reopen all stands in its place; the header action is gone with the count", async (t: TestContext) => {
+test("the confirm is over once the count falls to zero: asked, then both answered comments resolved from their own cards, a status that answers two more shows the header action and no confirm row", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   headBtn(aside)!.click();
-  act(aside, "fcresolveanswereddo")!.click(); await flush();
-  const first = lastOf(w, "fileComments", "resolve");
-  assert.deepEqual(first.args, { commentId: answered.id, on: true }, "the first, the oldest");
-  assert.equal(countOf(w, "fileComments", "resolve"), 1, "one at a time: the next waits for the reply");
-  assert.equal(headBtn(aside)!.textContent, "Resolving…"); assert.equal(headBtn(aside)!.disabled, true, "the action says it is at work");
-  answer(w, resolvedAll([answered.id]), first); await flush(); await flush();
-  const second = lastOf(w, "fileComments", "resolve");
-  assert.deepEqual(second.args, { commentId: revised.id, on: true });
-  answer(w, resolvedAll([answered.id, revised.id]), second); await flush(); await flush();
-  assert.deepEqual(resolves(w), [{ commentId: answered.id, on: true }, { commentId: revised.id, on: true }]);
-  assert.equal(headBtn(aside), null, "nothing answered is open now: the action is gone");
-  const line = aside.querySelector(".fc-reopen")!;
-  assert.ok(line, "the acknowledgment's position carries the line");
-  assert.ok(aside.querySelector(".fc-send")!.contains(line), "…in the Send section, where the sent acknowledgment stands");
-  assert.equal(line.querySelector(".fc-note")!.textContent, "Resolved 2 comments");
-  assert.equal(reopen(aside)!.textContent, "Reopen all");
-  assert.ok(card(aside, answered.id) === null && card(aside, revised.id) === null, "the two cards left the open list");
-  assert.match(aside.querySelectorAll(".fc-sec").find((s) => s.textContent.includes("Resolved ("))!.textContent, /Resolved \(3\)/, "…for the Resolved fold");
+  assert.ok(confirmRow(aside), "the confirm is up");
+  const resolveFromCard = async (id: string, after: Status): Promise<void> => {
+    card(aside, id)!.querySelector(".fc-card-head")!.click();   // open: the card's own buttons are one click down
+    act(card(aside, id)!, "fcresolve", id)!.click(); await flush();
+    const m = lastOf(w, "fileComments", "resolve");
+    assert.deepEqual(m.args, { commentId: id, on: true });
+    answer(w, after, m); await flush(); await flush();
+  };
+  await resolveFromCard(answered.id, resolvedAll([answered.id]));
+  assert.ok(confirmRow(aside), "one answered comment still open: the question stands, re-counted");
+  assert.equal(confirmRow(aside)!.querySelector(".fc-note")!.textContent, "Resolve the 1 comment the session has answered?");
+  await resolveFromCard(revised.id, resolvedAll([answered.id, revised.id]));
+  assert.equal(headBtn(aside), null, "nothing answered: no action");
+  assert.equal(confirmRow(aside), null, "…and no confirm");
+  // the session answers two more (open, and done reopened): the reply to a card's Resolve carries the status
+  const again: Status = status({ verb: "resolve", storeMtimeNs: "1757145600000000013", store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [
+    { ...answered, resolved: true }, { ...revised, resolved: true }, { ...mineLast, resolved: true },
+    { ...open, replies: [reply("api", T0 + 5100, "Added a summary.")] }, theirs, { ...done, resolved: false }] } });
+  await resolveFromCard(mineLast.id, again);
+  assert.equal(headBtn(aside)!.textContent, "Resolve answered (2)", "two answered again: the action is back");
+  assert.equal(confirmRow(aside), null, "the question the person walked away from is not: a click on the action asks it");
+  assert.equal(resolves(w).length, 3, "three resolves, every one a card's own; the header action wrote nothing");
 });
 
-test("Reopen all: one resolve request per comment with on false, the same comments; the line goes with the click", async (t: TestContext) => {
+test("the confirm does not survive the panel's close: asked, closed, reopened, the action stands and the row does not", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
-  const { aside } = await openPanel(w);
+  const { aside, button } = await openPanel(w);
   headBtn(aside)!.click();
-  act(aside, "fcresolveanswereddo")!.click(); await flush();
+  assert.ok(confirmRow(aside));
+  button.click();
+  assert.equal(w.main.querySelector(".fileview-aside"), null, "closed");
+  button.click(); answer(w, status()); await flush(); await flush();
+  const a2 = w.main.querySelector(".fileview-aside")!;
+  assert.ok(a2, "reopened");
+  assert.equal(headBtn(a2)!.textContent, "Resolve answered (2)");
+  assert.equal(confirmRow(a2), null, "a question asked in the panel the person closed is not asked again by the reopen");
+});
+
+// ── the consent, once per run ─────────────────────────────────────────────────────────────────────
+
+test("the file-editing consent is asked once for a Resolve answered and once for a Reopen all: declined, one row under the header action and nothing written; granted, the writes go with no second ask", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  let asks = 0, grant = false;
+  w.ctx.ensureEditingAllowed = async () => { asks++; return grant; };
+  const { aside } = await openPanel(w);
+  headBtn(aside)!.click(); act(aside, "fcresolveanswereddo")!.click(); await flush(); await flush();
+  assert.equal(asks, 1, "one ask for the run, not one per comment");
+  assert.deepEqual(resolves(w), [], "declined: nothing written");
+  const rows = aside.querySelectorAll(".fc-err");
+  assert.equal(rows.length, 1, "one row, not one per comment");
+  assert.equal(rows[0].dataset.slot, "answered");
+  assert.equal(rows[0].querySelector("span")!.textContent, "Nothing written: comments need file editing on.", "mutate's words");
+  assert.ok(aside.querySelector(".fc-head")!.contains(rows[0]), "under the header, where the action that asked is");
+  assert.ok((rows[0].nextSibling as El).classes.includes("fc-filter"), "under the toggles' row and above the filter's, where the confirm stood");
+  assert.equal(headBtn(aside)!.textContent, "Resolve answered (2)"); assert.equal(headBtn(aside)!.disabled, false, "the action is back, not stuck at Resolving…");
+  assert.equal(aside.querySelector(".fc-reopen"), null, "nothing resolved: no offer");
+  act(aside, "fcerrx")!.click();
+  assert.equal(aside.querySelector(".fc-err"), null, "the row's ✕ dismisses it");
+  // granted: the two writes go, and the consent is not asked again for the second
+  grant = true;
+  headBtn(aside)!.click(); act(aside, "fcresolveanswereddo")!.click(); await flush();
+  assert.equal(asks, 2, "the run's one ask");
   answer(w, resolvedAll([answered.id]), lastOf(w, "fileComments", "resolve")); await flush(); await flush();
   answer(w, resolvedAll([answered.id, revised.id]), lastOf(w, "fileComments", "resolve")); await flush(); await flush();
-  assert.ok(reopen(aside));
-  reopen(aside)!.click(); await flush();
-  assert.equal(aside.querySelector(".fc-reopen"), null, "the offer is taken: the line goes");
-  let m = lastOf(w, "fileComments", "resolve");
-  assert.deepEqual(m.args, { commentId: answered.id, on: false });
-  answer(w, resolvedAll([revised.id]), m); await flush(); await flush();
-  m = lastOf(w, "fileComments", "resolve");
-  assert.deepEqual(m.args, { commentId: revised.id, on: false });
-  answer(w, status({ verb: "resolve", storeMtimeNs: "1757145600000000011" }), m); await flush(); await flush();
-  assert.equal(resolves(w).length, 4);
-  assert.equal(headBtn(aside)!.textContent, "Resolve answered (2)", "both open and answered again");
-  assert.ok(card(aside, answered.id) && card(aside, revised.id), "their cards are back in the open list");
+  assert.equal(resolves(w).length, 2); assert.equal(asks, 2, "the second write asked nothing");
+  // Reopen all: one ask for its run, declined the same row, granted the writes
+  grant = false;
+  reopen(aside)!.click(); await flush(); await flush();
+  assert.equal(asks, 3); assert.equal(resolves(w).length, 2, "declined: nothing reopened");
+  assert.equal(aside.querySelectorAll('.fc-err[data-slot="answered"]').length, 1, "the one row");
+  assert.equal(aside.querySelector(".fc-reopen"), null, "the offer was taken by the click, as ever");
 });
 
-test("a refusal on one comment: its row under the card, the rest resolved, the acknowledgment counts the resolved alone and Reopen all reopens those alone", async (t: TestContext) => {
-  const w = world(); t.after(() => w.close());
-  const { aside } = await openPanel(w);
-  headBtn(aside)!.click();
-  act(aside, "fcresolveanswereddo")!.click(); await flush();
-  const first = lastOf(w, "fileComments", "resolve");
-  refuse(w, first, "no-comment", "comment " + answered.id + " is not among the comments for ~/notes-api/docs/report.md — reload and retry"); await flush(); await flush();
-  const second = lastOf(w, "fileComments", "resolve");
-  assert.deepEqual(second.args, { commentId: revised.id, on: true }, "the refusal does not stop the rest");
-  answer(w, resolvedAll([revised.id]), second); await flush(); await flush();
-  const row = aside.querySelector('.fc-err[data-slot="card:' + answered.id + '"]');
-  assert.ok(row && row.textContent.includes("is not among the comments"), "the refusal, in the comment's slot, verbatim (the card's own Resolve would put it in the same slot)");
-  assert.ok(aside.querySelector(".fc-cards")!.contains(row!), "in the list: inside the card when it is open, else where the section is (strayRows), as a card's own refused Resolve stands");
-  card(aside, answered.id)!.querySelector(".fc-card-head")!.click();
-  assert.ok(card(aside, answered.id)!.contains(aside.querySelector('.fc-err[data-slot="card:' + answered.id + '"]')!), "open, the card carries its row");
-  assert.equal(aside.querySelector(".fc-reopen .fc-note")!.textContent, "Resolved 1 comment");
-  reopen(aside)!.click(); await flush();
-  assert.deepEqual(lastOf(w, "fileComments", "resolve").args, { commentId: revised.id, on: false }, "only the one that was resolved");
-  answer(w, status({ verb: "resolve", storeMtimeNs: "1757145600000000012" }), lastOf(w, "fileComments", "resolve")); await flush(); await flush();
-  assert.equal(countOf(w, "fileComments", "resolve"), 3);
-});
+// ── the offer's dress ─────────────────────────────────────────────────────────────────────────────
 
-test("the offer ends at the person's next gesture, a press on the offer itself excepted; the sent acknowledgment it displaced comes back in place, and the next render keeps it", async (t: TestContext) => {
+test("the Reopen all line: the acknowledgment's dress with the size on the words and the button alone, nothing of the saved line's; the words then the button on one line", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
-  // a send's acknowledgment stands first
-  await sendWords(w, aside, "The findings read well now.");
-  assert.equal(sentAck(aside).length, 1, "the acknowledgment at the foot");
-  assert.match(sentAck(aside)[0].textContent, /^Sent to api at /);
-  headBtn(aside)!.click();
-  act(aside, "fcresolveanswereddo")!.click(); await flush();
-  answer(w, resolvedAll([answered.id]), lastOf(w, "fileComments", "resolve")); await flush(); await flush();
-  answer(w, resolvedAll([answered.id, revised.id]), lastOf(w, "fileComments", "resolve")); await flush(); await flush();
+  await resolveBoth(w, aside);
   const line = aside.querySelector(".fc-reopen")!;
-  assert.ok(line);
-  assert.equal(sentAck(aside).length, 0, "the offer stands in the acknowledgment's place: the acknowledgment is displaced, not doubled");
-  gesture(reopen(aside)!, "pointerdown");
-  assert.ok(aside.querySelector(".fc-reopen"), "a press on the offer itself ends nothing: its click is what it is for");
-  assert.equal(sentAck(aside).length, 0, "…and brings nothing back");
-  gesture(w.body, "pointerdown");
-  assert.equal(aside.querySelector(".fc-reopen"), null, "a press anywhere else ends the offer");
-  assert.equal(resolves(w).length, 2, "and reopens nothing");
-  // the end is in place (reflectLines, no render): the foot shows the acknowledgment again, never neither
-  const back = sentAck(aside);
-  assert.equal(back.length, 1, "the acknowledgment the offer displaced is back in place, once");
-  assert.match(back[0].textContent, /^Sent to api at /, "the same words");
-  assert.ok(aside.querySelector(".fc-send")!.contains(back[0]), "where the offer stood, in the Send section");
-  // the next render (a fold toggled: a click, no gesture) puts the same back and no offer
-  act(aside, "fcresolved")!.click();
-  assert.equal(aside.querySelector(".fc-reopen"), null, "the offer stays ended across the render");
-  assert.equal(sentAck(aside).length, 1, "the render shows the acknowledgment, once");
-  assert.match(sentAck(aside)[0].textContent, /^Sent to api at /);
-  // a key ends it too, Tab and a modifier alone excepted; a wheel ends it, and the acknowledgment comes back the same way
-  const w2 = world(); t.after(() => w2.close());
-  const { aside: a2 } = await openPanel(w2);
-  await sendWords(w2, a2, "Ship it.");
-  assert.equal(sentAck(a2).length, 1);
-  headBtn(a2)!.click(); act(a2, "fcresolveanswereddo")!.click(); await flush();
-  answer(w2, resolvedAll([answered.id]), lastOf(w2, "fileComments", "resolve")); await flush(); await flush();
-  answer(w2, resolvedAll([answered.id, revised.id]), lastOf(w2, "fileComments", "resolve")); await flush(); await flush();
-  assert.ok(a2.querySelector(".fc-reopen"));
-  assert.equal(sentAck(a2).length, 0, "displaced");
-  dispatch(w2.body, new Ev("keydown", { key: "Tab" }));
-  assert.ok(a2.querySelector(".fc-reopen"), "Tab moves the keyboard toward the offer and ends nothing");
-  dispatch(w2.body, new Ev("keydown", { key: "Shift" }));
-  assert.ok(a2.querySelector(".fc-reopen"), "a modifier alone ends nothing");
-  assert.equal(sentAck(a2).length, 0, "…and neither brings the acknowledgment back early");
-  gesture(w2.body, "wheel");
-  assert.equal(a2.querySelector(".fc-reopen"), null, "a wheel ends it");
-  assert.equal(sentAck(a2).length, 1, "the acknowledgment is back in place after the wheel too");
-  assert.match(sentAck(a2)[0].textContent, /^Sent to api at /);
-  // with no send before the offer there is nothing to bring back: the foot is bare, not an empty line
-  const w3 = world(); t.after(() => w3.close());
-  const { aside: a3 } = await openPanel(w3);
-  assert.equal(sentAck(a3).length, 0, "no acknowledgment before");
-  headBtn(a3)!.click(); act(a3, "fcresolveanswereddo")!.click(); await flush();
-  answer(w3, resolvedAll([answered.id]), lastOf(w3, "fileComments", "resolve")); await flush(); await flush();
-  answer(w3, resolvedAll([answered.id, revised.id]), lastOf(w3, "fileComments", "resolve")); await flush(); await flush();
-  assert.ok(a3.querySelector(".fc-reopen"));
-  gesture(w3.body, "pointerdown");
-  assert.equal(a3.querySelector(".fc-reopen"), null);
-  assert.equal(sentAck(a3).length, 0, "nothing to restore: no acknowledgment appears");
+  assert.deepEqual(line.classes, ["fc-note", "fc-sent", "fc-reopen"], ".fc-note and .fc-sent on the row as on the acknowledgment (the Send section's tiers count it as the acknowledgment, not as growth)");
+  assert.equal(line.style.fontSize, "inherit", "the row's own size set back to the section's: its .fc-note is the tier's and the colour's, and a .fc-note inside it would compound (ui/CLAUDE.md)");
+  const words = line.querySelector(".fc-note")!;
+  assert.deepEqual(words.classes, ["fc-note", "fc-sent"], "the words at the note's size, in the acknowledgment's colour"); assert.equal(words.textContent, "Resolved 2 comments");
+  const b = reopen(aside)!;
+  assert.deepEqual(b.classes, ["fc-note", "fc-sent", "fc-link"], "the button: the note's size, the acknowledgment's colour, the panel's link hover; no .fc-saved, the saved line's own dress");
+  assert.equal(b.style.background, "none"); assert.equal(b.style.border, "0"); assert.equal(b.style.padding, "0");
+  assert.equal(b.style.display, undefined, "inline beside the words (.fc-saved's display: block stood it on a line of its own)");
+  assert.equal(line.textContent, "Resolved 2 commentsReopen all", "the words, then the button (its gap is a margin, not a space)");
+  assert.equal(b.style.marginLeft, "6px");
+  assert.equal(line.style.position, undefined, "the list layout: not sticky (the margin layout's, below)");
+  assert.ok(aside.querySelector(".fc-send")!.contains(line), "in the Send section, the acknowledgment's position");
+  // the source: one class string in the panel holds the fc-saved token, the saved line's own (feed-css-saved-line-head-dress.test.ts pins the same)
+  assert.deepEqual(SRC.match(/"[^"\n]*\bfc-saved(?![\w-])[^"\n]*"/g), ['"fc-note fc-sent fc-saved"']);
 });
 
-test("sources: nothing resolves a comment but the person's two actions; the host writes resolved in doResolve alone; the acts in the delegate table", () => {
-  assert.equal((HOST.match(/\.resolved\s*=(?!=)/g) || []).length, 1, "the host's one write to resolved is the resolve verb's");
-  const writes = SRC.match(/mutate\("resolve"/g) || [];
-  assert.equal(writes.length, 3, "the card's Resolve, Resolve answered, and Reopen all: " + writes.length);
-  assert.match(SRC, /fcresolveanswered: \(\) => \{ this\.resolveAnsweredConfirm = true; this\.render\(\); \},/);
-  assert.match(SRC, /fcresolveansweredcancel: \(\) => \{ this\.resolveAnsweredConfirm = false; this\.render\(\); \},/);
-  assert.match(SRC, /fcresolveanswereddo: \(\) => \{ void this\.resolveAnswered\(\); \},/);
-  assert.match(SRC, /fcreopenall: \(\) => \{ void this\.reopenAnswered\(\); \},/);
-  assert.match(SRC, /const undo = this\.reopenAll !== null && !on\("fcreopenall"\);/, "the gesture ends the offer, a press on it excepted");
+test("in the margin layout the offer sticks to the Send section's bottom edge, as the saved line does: the section scrolls inside itself while its confirm is up, and a line after the confirm stood past its box", async (t: TestContext) => {
+  marginOn = true; t.after(() => { marginOn = false; });
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  assert.ok(aside.classes.includes("fc-margin"), "the margin layout");
+  await resolveBoth(w, aside);
+  const line = aside.querySelector(".fc-reopen")!;
+  assert.equal(line.style.position, "sticky"); assert.equal(line.style.bottom, "0"); assert.equal(line.style.background, "var(--bg)");
+  assert.ok(aside.querySelector(".fc-send")!.contains(line));
+});
+
+// ── the keyboard on the offer ─────────────────────────────────────────────────────────────────────
+
+test("a wheel while Reopen all holds the keyboard ends the offer and moves the focus to the nearest control of the panel, never to the body", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  await resolveBoth(w, aside);
+  const b = reopen(aside)!;
+  b.focus(); assert.equal(doc.activeElement, b, "Tab reached the offer");
+  gesture(w.body, "wheel");
+  assert.equal(aside.querySelector(".fc-reopen"), null, "the wheel ends the offer");
+  assert.notEqual(doc.activeElement, b, "the removed button does not keep the focus (the browser would drop it to the body)");
+  assert.ok(doc.activeElement && aside.contains(doc.activeElement), "the keyboard is on a control of the panel");
+  assert.equal(doc.activeElement!.tagName, "BUTTON");
+  assert.equal(resolves(w).length, 2, "and nothing was reopened");
 });

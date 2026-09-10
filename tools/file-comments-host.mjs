@@ -1996,10 +1996,18 @@ export function buildComment(text, args, now, suggestions, detached) {
   const ids = readChangeIds(args);
   let held = null;                                     // the first named change's record, for the id of a comment with no anchor
   if (ids) {
+    // The sidecar's records by id (the first under each id, as a find() over the rows read), looked up once
+    // per named id: the check is linear in the request however many changes the sidecar holds (readChangeIds).
+    const byId = (rows) => {
+      const m = new Map();
+      for (const r of rows || []) if (r && !m.has(String(r.id))) m.set(String(r.id), r);
+      return m;
+    };
+    const pending = byId(suggestions), gone = byId(detached);
     const missing = [];
     for (const id of ids) {
-      const op = (suggestions || []).find((s) => s && String(s.id) === id);
-      const d = op ? null : (detached || []).find((x) => x && String(x.id) === id);
+      const op = pending.get(id);
+      const d = op ? null : gone.get(id);
       if (!op && !d) missing.push(id);
       else if (held === null) held = { from: op ? engine.span(op).a : (typeof d.from === 'number' ? d.from : 0) };
     }
@@ -2030,16 +2038,20 @@ export function buildComment(text, args, now, suggestions, detached) {
 
 // The request's `changeIds`, as strings, or null when the request names none: absent or null is none; anything
 // else must be a non-empty array of non-empty strings or numbers (a caller bug otherwise: no romp client sends
-// another shape). Repeats are kept once, in the order first named.
+// another shape). Repeats are kept once, in the order first named: a Set, which keeps insertion order, so the
+// walk is linear in the list. The kernel admits a request of up to _FILE_COMMENTS_REPLY_MAX (16 MB) and kills
+// the host at _FILE_COMMENTS_TIMEOUT (10 s); an includes() scan per id was quadratic, and a list of a hundred
+// thousand ids, about a megabyte, ran past the deadline, so the person saw host-error where `accept` with the
+// same list refuses no-change in milliseconds (the about follow-on's review, 2026-09-10).
 function readChangeIds(args) {
   if (args.changeIds == null) return null;
   if (!Array.isArray(args.changeIds) || !args.changeIds.length) throw new BadRequest('changeIds must be a non-empty array of change ids');
-  const out = [];
+  const out = new Set();
   for (const id of args.changeIds) {
     if ((typeof id !== 'string' && typeof id !== 'number') || id === '') throw new BadRequest('every change id in changeIds must be a non-empty string');
-    if (!out.includes(String(id))) out.push(String(id));
+    out.add(String(id));
   }
-  return out;
+  return [...out];
 }
 
 // ── the reply ───────────────────────────────────────────────────────

@@ -1453,9 +1453,10 @@ survives a re-render; Show more makes the card the focus and centers its mark, a
 The row stands at the card's foot above the action row — on a comment's card under the run of turns, on a change card
 after its old and new text, above Accept and Reject — and a reply's box opened on the card stands between the row and
 the buttons (`placeComposer` puts it before `.fc-actions`): the box below the turns and above the card's Reply and
-Resolve, as asked on 2026-09-07, with the toggle kept by the text it lifts; a hosted comment's Reply and Resolve so
-stand above the change card's one Show more, which lifts the hosted parts too (the verification review, 2026-09-09,
-raised both orders; recorded as the choice, and the reply-place stand-ins assert the comment card's).
+Resolve, as asked on 2026-09-07, with the toggle kept by the text it lifts (until the about follow-on, 2026-09-10, a
+hosted comment's Reply and Resolve so stood above the change card's one Show more, which lifted the hosted parts too:
+the verification review, 2026-09-09, raised both orders and the choice was recorded; with every comment on its own card
+there is one order, the comment card's, which the reply-place stand-ins assert).
 The list layout caps nothing. The keyboard stays on Show more and Show less (the review, 2026-09-08): the row is rendered hidden and the
 pass shows it, so `render`'s refocus before the pass could not land on the fresh toggle — focus() on an element not
 rendered is a no-op — and the keyboard fell to the body when the toggle was pressed, and on any re-render while it was
@@ -1499,19 +1500,21 @@ second pushed by the first alone; a card above the spilled one still pushing the
 giving the first paragraph's card the start, and the card under a kept head laid from that head's end; and a grid of
 fixtures where every card under its mark sits exactly a gap under the card placed above it),
 `file-comments-focus-verify.test.ts` (the panel over the stand-in: a reply saved on an open card that is not the focus
-making it the focus, level with its mark and centered, the tall change card above moved up; a change card's hosted
-comment folding with the card, its run of turns cut and scrolled to its end and lifted by the card's one Show more, on a
-change whose own text is long and on a short one where the hosted run is the only part cut; the fold's choice surviving
-a re-render a status drives, an ask answered with the store; and the module's own vocabulary),
+making it the focus, level with its mark and centered, the tall change card above moved up; a comment a change
+answered folding on its own card, its run of turns cut and scrolled to its end and lifted by that card's own Show more,
+while the change card folds its own text alone and hosts nothing, on a change whose own text is long and on a short
+one, whose card offers no toggle while the comment's does (the about follow-on's rewrite, 2026-09-10, of the hosted
+comment's fold with the change card the module pinned until then); the fold's choice surviving a re-render a status
+drives, an ask answered with the store; and the module's own vocabulary),
 `tools/file-review-plan-focus-centering.test.mjs` (the fallback's trigger as recorded here held to `centerOn`'s
 condition — the card's end against the centered scroll, not its height against the track's — and to the panel fixtures'
 geometry, whose open card fits the track and takes the fallback) and `tools/file-review-plan-focus-verify.test.mjs` (the
-re-lay, the save's focus and the hosted fold as recorded here held to the layout, the panel and the modules this round
-names, and every focus module in the tree — the layout's, the panel's, the guide's and the plan's — named here and in the
-Tests section's bullet, so a round's module fails by name, not in a later consolidation — a scan of the names,
-`card-layout` and `file-comments-focus`, which a focus module named otherwise passed unnamed: the module of the review
-of the merge audit's fixes, named for Reveal, until `tools/file-review-plan-focus-audit.test.mjs` below read the
-headers);
+re-lay, the save's focus and the fold's parts as recorded here, the hosted fold among them as history, held to the
+layout, the panel and the modules this round names, and every focus module in the tree — the layout's, the panel's,
+the guide's and the plan's — named here and in the Tests section's bullet, so a round's module fails by name, not in a
+later consolidation — a scan of the names, `card-layout` and `file-comments-focus`, which a focus module named
+otherwise passed unnamed: the module of the review of the merge audit's fixes, named for Reveal, until
+`tools/file-review-plan-focus-audit.test.mjs` below read the headers);
 and from its second round, `file-comments-focus-verify-2.test.ts` (the panel over the review stand-in: a head click, a
 Show more and a whole-file comment's save on a loose card the reach rule laid below the focused card leave the layout
 and the scroll as they were, the focus kept on the card the person was reviewing; the keyboard's memory of a control a
@@ -1548,7 +1551,9 @@ from Raw and from Rendered, and on the deletion's card, runs one pass, the switc
 keeps the focus it had, with none after it — before, the whole margin was measured and written a second time, to the
 same values — the row centered and wearing the landing cue; on a file with no Rendered view the pass `revealInRaw` runs
 itself is the click's only pass, laying the card level with its point; and on the comment's branch in Rendered the
-switch's own pass, laying the card level with its Raw highlight, is the only one).
+switch's own pass, laying the card level with its Raw highlight, is the only one). From the about follow-on's review
+(2026-09-10), `tools/file-review-plan-about-records.test.mjs` holds the sentences here the follow-on superseded, the
+Show more row's order and the focus module's fold, to the panel and the module as history.
 
 The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that
 recurs. Before it, a comment on a passage whose 24 characters of context matched another copy's was
@@ -1846,8 +1851,9 @@ and Firefox), `tests/test_guide_files_arrivals.py` (the guide's two sentences he
 `tests/test_guide_files_save_line.py` (the save sentences' gesture words derived from the listeners) and
 `tools/file-review-plan-arrivals.test.mjs` (this note held to the code and the modules it names).
 
-The about follow-on (2026-09-10): the user's answers to the decoupling assessment of 2026-09-09 (the report under
-the repo's notes), three rulings and one requirement. The first: a comment should say which changes it is about, by the
+The about follow-on (2026-09-10): the user's answers to the decoupling assessment of 2026-09-09 (a report kept
+outside the repo, at ~/romp-handoffs/romp-filereview-notes/decouple-assessment-report.txt), three rulings and one
+requirement. The first: a comment should say which changes it is about, by the
 user's own pick, not by the session's stamp; built as `changeIds` on the comment (decision 45), the third romp-only
 additive field. The second: one list with the All / Comments / Changes filter, no tabs and no second section. The third:
 nothing resolves a comment except the user, with a bulk action for the comments the session has answered (decision 46).
@@ -2472,12 +2478,15 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   cards above the focus without the cards laid below it: the card between a spilled tall card and the focus at its
   own mark, the loose group's spill giving the first paragraph's card the start, a grid where every card under its
   mark sits a gap under the card placed above it); `file-comments-focus-verify.test.ts` (the stand-in: a reply's save
-  making an open card that was not the focus the focus, level and centered; a change card's hosted comment folding
-  with the card, on a long change and on a short one where the hosted run is the only part cut; the fold's choice
-  surviving a status-driven re-render); `tools/file-review-plan-focus-centering.test.mjs` holds the paragraph's
+  making an open card that was not the focus the focus, level and centered; a comment a change answered folding on
+  its own card while the change card folds its own text alone and hosts nothing, on a long change and on a short one
+  whose card offers no toggle (the about follow-on's rewrite, 2026-09-10, of the hosted fold the module pinned until
+  then); the fold's choice surviving a status-driven re-render); `tools/file-review-plan-focus-centering.test.mjs`
+  holds the paragraph's
   account of the centering fallback — its trigger the card's end past the track's box with the mark centered, an open
   card that fits the track included — to `centerOn`'s condition and the panel fixtures' geometry;
-  `tools/file-review-plan-focus-verify.test.mjs` holds the paragraph's re-lay, save and hosted-fold statements to the
+  `tools/file-review-plan-focus-verify.test.mjs` holds the paragraph's re-lay, save and fold statements (the hosted
+  fold as history) to the
   layout, the panel and these modules, and every focus module in the tree to the paragraph and this bullet (the
   round's commit added modules this section did not name, as the margin follow-on's three review rounds' had; found
   in the round's review, 2026-09-09).
@@ -2572,7 +2581,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tools/file-review-plan-seen-review-3.test.mjs` holds the third round's plan fixes (the saved line's place stated by
   layout in the arrivals paragraph, decision 43 and the Docs sentence; the keys that are no gesture named against
   `NAV_KEYS`; the acknowledgment never a note, across a wrap either; this list against the tree) to the panel, the guide
-  and the tree.
+  and the tree. From the about follow-on's review (2026-09-10), `tools/file-review-plan-about-records.test.mjs` holds
+  this paragraph's superseded sentences, the Show more row's order and the focus module's fold, to the panel and the
+  module as history.
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
@@ -2617,8 +2628,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   filter's) and pins their source; `ui/webview/file-comments-filter-fixes.test.ts` drives the second
   round's cases the same way (the track slot's loader and refusal with and without a filter row, the
   Changes empty state and the "Nothing decided" row under it, a region comment's saved line naming the
-  rectangle, the line's end when the comment comes to ride a change card, and the inline toggle's title
-  under each filter) and pins the anchor and the title at source;
+  rectangle, the line standing when a change comes to answer the comment and its end at the count's click (the
+  about follow-on, 2026-09-10; until it the comment rode the change card and the line ended there), and the inline
+  toggle's title under each filter) and pins the anchor and the title at source;
   `ui/webview/file-comments-filter-saved-line.test.ts` drives the third round's cases the same way (a
   status answering a save with several fresh comments, a session's among them, and the saved row's shape:
   `.fc-note` on the words' span, the ✕ a `.fileview-btn` under the unsized row) and pins the row at
@@ -2677,7 +2689,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   resolve requests, a refusal per comment, Reopen all and its end at a gesture) and `file-comments-resolve-answered-browser.test.ts`
   (Chromium and Firefox); `tests/test_guide_files_about.py` holds the guide's sentences to the panel;
   `tools/file-review-plan-about.test.mjs` holds the about follow-on's note and decisions 45 and 46 to the code and the
-  modules they name.
+  modules they name; `tools/file-review-plan-about-records.test.mjs` holds the hosted-era sentences the follow-on
+  superseded elsewhere in this document (the Show more row's order, the focus module's fold, the filter module's saved
+  line) to the panel and the modules as history, decision 46 to the vocabulary, and the note's citation of the
+  assessment to the tree (the report is outside it).
 
 ## Docs
 
@@ -2961,7 +2976,7 @@ document stands on its own, each with the reasoning it was given.
     on what should resolve a comment: nothing but them, and a button that resolves every comment the session has
     replied to. Built: nothing in the host or the panel resolves a comment except the card's Resolve (as before) and a
     header action "Resolve answered (N)", shown while N > 0, N being the unresolved comments by the person that carry a
-    reply by another author since the person's last message on the thread (a reply of kind edit counts as an answer;
+    reply by another author since the person's last message on the comment (a reply of kind edit counts as an answer;
     the person's own later reply does not). Its click asks in one plain line, "Resolve the N comments the session has
     answered?", resolves them through the host's `resolve` op one request each (a refusal is reported per comment,
     under the card), and puts "Reopen all" in the acknowledgment's position until the person's next gesture, which

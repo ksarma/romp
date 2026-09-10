@@ -10,8 +10,9 @@
 //   • The action-row entry is the glance ("Comments · 2 · 5 changes"); the panel is one click; a card
 //     expands on click, keyed by comment id in a set that survives every re-render.
 //   • A session's pending changes (Slice 2) are cards too: one per change, grouped by the paragraph it
-//     falls in, with Accept, Reject, Reply (a comment bound to the change, so the session's answering
-//     track-edit revisions fold into it) and Reveal; the comments bound to a change sit ON its card. Past
+//     falls in, with Accept, Reject, Comment on this change (the about follow-on, 2026-09-10: a comment of the person's
+//     naming the change by its stored id, changeIds, its own card in the list) and Reveal; no comment is drawn inside a
+//     change's card, and the two are linked by tags ("about N changes" on the comment, "N comments" on the change). Past
 //     three groups the rest fold behind one row. The changes are also marked inline in both views — insertions
 //     tinted, deletions struck at their point (Rendered places it through the index map since the inline-display
 //     follow-on, 2026-09-07; a deletion the map cannot place is card-only) — through anchor-map's change painters
@@ -633,6 +634,9 @@ export function followPassage(oldText: string, range: SourceRange, newText: stri
 /** Why the head of the card holding a reply does not fold it: the head's title, and on a coarse pointer the line under the head
  *  (holdHead, heldNote) — one sentence for both, so the pointer and the touch read the same words. */
 const HOLD_WORDS = "The card stays open while its reply is written; Save or Cancel the reply first";
+/** The row under a control whose write the file-editing consent refused (mutate; resolveAnswered and reopenAnswered ask once for
+ *  their run and put the one row under the header action). */
+const CONSENT_REFUSED = "Nothing written: comments need file editing on.";
 // ── the composer's box (the follow-on of 2026-09-07: a comment is often several lines) ──────────────
 /** The box starts at this many rows (the sheets' min-height says the same in em) and grows with its content to the cap,
  *  COMPOSER_MAX_ROWS rows, then scrolls. The cap is autosizeComposer's alone, not a max-height in the sheets: the person
@@ -1155,8 +1159,13 @@ class Panel {
   // markNew) until seen; `newKeys` is the set of card keys the current render marks. The set lives with the panel, so a
   // Raw/Rendered switch, a reload, a close and reopen of the aside keep it; a new file is a new panel.
   lit = new Set<string>();                    // the change ids whose marks a comment's tag lit under the pointer (lightChanges)
-  resolveAnsweredConfirm = false;             // the header action's confirm row is showing (decision 46)
+  // the header action's confirm row is showing (decision 46). Set by the action's click, cleared by Resolve or Cancel — and by
+  // the events that take the question away: the status whose count falls to zero (the comments resolved from their own
+  // cards, settleResolveAnsweredConfirm) and the panel's close. Left set, it came back re-counted when the count rose again,
+  // one click from resolving with no gesture behind it (the same shape the Reject-all confirm had at Edit, begin())
+  resolveAnsweredConfirm = false;
   resolvingAnswered = false;                  // the resolves are out, one after the other (resolveAnswered)
+  consentHeld = false;                        // a run of writes asked the file-editing consent once and holds it (consentForRun); mutate asks nothing meanwhile
   reopenAll: string[] | null = null;          // the comments the last Resolve answered resolved, offered back as Reopen all until the next gesture
   seenKeys: Set<string> | null = null;
   // the texts of every SEEN pending change, by its entry key, as they read when it was marked seen (the seeds above, a
@@ -1353,7 +1362,7 @@ class Panel {
         fcresolveansweredcancel: () => { this.resolveAnsweredConfirm = false; this.render(); },
         fcresolveanswereddo: () => { void this.resolveAnswered(); },
         fcreopenall: () => { void this.reopenAnswered(); },
-        // the changes (Slice 2): a decision per card, both at once in the footer, a reply bound to the change, the fold
+        // the changes (Slice 2): a decision per card, both at once in the footer, a comment about the change (the about follow-on), the fold
         fcaccept: (x, ev) => { ev.stopPropagation(); void this.mutate("accept", { ids: [x.dataset.id!] }, "change:" + x.dataset.id!); },
         fcreject: (x, ev) => { ev.stopPropagation(); void this.mutate("reject", { ids: [x.dataset.id!] }, "change:" + x.dataset.id!); },
         fcacceptall: () => { this.rejectAllConfirm = false; void this.mutate("accept-all", {}, "changes"); },
@@ -1615,6 +1624,7 @@ class Panel {
     this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
     this.noteArrivals(s);                              // the entries this status brings that the person has not seen (the arrivals follow-on)
+    this.settleResolveAnsweredConfirm();               // a confirm whose count this status took to zero is over, not parked (the field's comment)
     this.releaseAnswered(s);                           // a todo this status lists, asked after a send stamped it, is open again (answeredTodos)
     this.statusRefusal = null;
     this.errors.delete("head");                        // a status refusal's row (probe, refresh) is answered by a status
@@ -1630,6 +1640,13 @@ class Panel {
     this.syncBytes(s);                                 // the view shows the text these hunks index, or is asked to (stands down while the editor holds the body)
     this.paintAll();                                   // repaints the highlights and renders the panel
     return true;
+  }
+  /** The Resolve answered confirm (decision 46) is over once the status it was asked over leaves nothing for it to do: the
+   *  comments resolved from their own cards, or by another client, take the header action away (renderHead offers it at N > 0
+   *  alone), and a confirm parked behind an absent action came back re-counted when the count rose again, one click from
+   *  resolving with no gesture behind it (the field's comment). The status that takes the count to zero ends it. */
+  private settleResolveAnsweredConfirm(): void {
+    if (this.resolveAnsweredConfirm && !answeredComments(this.cards()).length) this.resolveAnsweredConfirm = false;
   }
   /** The page's memory of the todos its sends stamped (answeredTodos) ends for every todo `s` lists whose latch
    *  predates the ask: the status was issued after the send's reply landed, and the kernel stamps — or parks — before
@@ -1739,6 +1756,7 @@ class Panel {
     this.ctx.aside(null);
     this.button.classList.remove("on"); this.button.setAttribute("aria-pressed", "false");
     this.hideFloat();
+    this.resolveAnsweredConfirm = false;               // a question this panel asked, and the person closed the panel on it (the field's comment)
     // A pending Re-place is a gesture of the OPEN panel: its instruction and Cancel are the composer box, and the drag it
     // waits for is disarmed with the panel. Left pending, the closed panel's picture kept the cue (the dashed accent
     // outline inviting a drag) over an overlay that took none, with nothing on screen saying why, and escapeReplace kept
@@ -1919,6 +1937,10 @@ class Panel {
    *  (BULK_VERBS), which re-issue status and stop, saying nothing was decided; a second refusal shows
    *  verbatim, with Reload when the store, file, or config moved. Resolves the fresh status, or null
    *  when nothing was written. */
+  /** The file-editing consent is asked per write below — unless a run of writes holds it (consentHeld: resolveAnswered and
+   *  reopenAnswered asked once for the run, consentForRun), when this write asks nothing again: the real ask reads the kernel's
+   *  flag per call and confirms whenever it is off, and a decline latches nothing, so N writes in a row asked N times and left
+   *  N identical rows (the review, 2026-09-10). */
   async mutate(verb: string, args: Record<string, unknown>, slot: string): Promise<Status | null> {
     // a decision while the editor is up is refused before anything is asked of the kernel (DECIDES: why, and where it goes)
     if (DECIDES.has(verb) && this.ctx.editing()) { this.refuseDecision(slot); return null; }
@@ -1936,7 +1958,9 @@ class Panel {
       // the changes as the card showed them: with a status held, requireStatus asked nothing, so this is the status the
       // card was rendered from. Every attempt (mutateOnce) is checked against it, the retry after a moved fence included.
       if (DECIDE_VERBS.has(verb)) this.seen.set(slot, seenChanges(this.status, args));
-      if (!(await this.ctx.ensureEditingAllowed())) { this.errors.set(slot, { text: "Nothing written: comments need file editing on.", reload: false }); return null; }
+      if (!this.consentHeld) {                         // a run holding the consent asked it once already (consentForRun); every other write asks, per click
+        if (!(await this.ctx.ensureEditingAllowed())) { this.errors.set(slot, { text: CONSENT_REFUSED, reload: false }); return null; }
+      }
       return await this.mutateOnce(verb, args, slot, false);
     } finally { if (decides) this.holdEdit(-1); this.busy.delete(slot); this.busyVerb.delete(slot); this.seen.delete(slot); this.render(); }
   }
@@ -2388,19 +2412,25 @@ class Panel {
    *  by the format's own field): the composer opens in the panel's slot anchored over the change's span in the current
    *  text, as a selection of it would open it, with the about option checked for the change (changeIds [id] on save;
    *  the message says "about your change …"). A change with no span in the text (a deletion, whose text is not in the
-   *  file; a detached change) takes the comment by id alone, laid at the change's mark while it is pending (markTop). The
-   *  text must be the status's (textCurrent): the change's offsets index the host's text, and over other bytes the span
-   *  would name the wrong words. */
+   *  file; a detached change) takes the comment by id alone, laid at the change's mark while it is pending (markTop).
+   *  The span is cut from the text the change's offsets index (indexedText): the status's text, which while the editor is
+   *  up is the file as the editor loaded it, never the buffer — the buffer moves under the offsets with every unsaved
+   *  keystroke, and a span cut from it quoted and anchored other words (the review, 2026-09-10). And only while the view's
+   *  text IS that text (spanCarried): over other bytes the card offers no Comment on this change for a spanned change
+   *  (renderChangeCard), since the span would name the wrong words and a comment by id alone would lose the passage the
+   *  change has; a deletion's is by id whatever the view shows. */
   startChangeComment(id: string): void {
     const c = this.changeView().cards.find((x) => x.id === id);
     if (!c) return;
-    const src = this.ctx.text(); const s = this.status;
-    const spanned = !c.detached && c.curTo > c.curFrom && src !== null && !!s && this.textCurrent(s) && this.ctx.mode() !== "media";
+    const s = this.status;
+    const spanned = !c.detached && c.curTo > c.curFrom;
+    if (spanned && !this.spanCarried(c)) return;       // the card offers no button in this state (renderChangeCard); a click that reached here anyway writes nothing
     this.openCards.add(c.key);
     if (spanned) {
+      const src = this.indexedText()!;                 // non-null: spanCarried
       const off = s!.bom ? 1 : 0;                       // the host's offsets run one ahead of the view's on a BOM file (viewAt)
       const range = { start: Math.max(0, c.curFrom - off), end: Math.max(0, c.curTo - off) };
-      this.composer = { kind: "comment", range, quote: src!.slice(range.start, range.end), text: src!, refusal: null, about: { ids: [id], on: true, only: false } };
+      this.composer = { kind: "comment", range, quote: src.slice(range.start, range.end), text: src, refusal: null, about: { ids: [id], on: true, only: false } };
     } else {
       this.composer = { kind: "comment", range: null, quote: null, refusal: null, about: { ids: [id], on: true, only: true } };
     }
@@ -2408,6 +2438,15 @@ class Panel {
     this.repaintPresel();
     this.render();                                     // the change card opens for it: the cards too, whatever `was` (renderFrom renders the composer alone otherwise)
     this.input.focus();
+  }
+  /** Whether the view carries a spanned change's text where its offsets say (startChangeComment, renderChangeCard): a text to
+   *  cut the span from (indexedText: the view's, or the file as the editor loaded it), the status's — not the bytes of a
+   *  reject's reply before its reload lands, or of the poll's reload before its status (textCurrent; renderChangeCard's
+   *  inFlux, which withholds an unpainted insertion's Reveal on the same ground) — and a view that shows text at all (not
+   *  the picture of a media file). A deletion has no span to carry and never asks. */
+  private spanCarried(c: ChangeCard): boolean {
+    const s = this.status;
+    return !!s && this.textCurrent(s) && this.indexedText() !== null && this.ctx.mode() !== "media";
   }
   /** The pending changes whose marks a selection's range overlaps (the about follow-on): an insertion's or a
    *  substitution's span sharing any character with the range, a deletion's point strictly inside it (a selection that
@@ -2427,9 +2466,14 @@ class Panel {
   }
   /** The one deletion mark of the panel's a selection intersects, by change id, or null: the struck label is generated
    *  text under user-select none, so a selection over it alone holds no text of the file (the mapping refuses or maps an
-   *  empty range), and the change it marks is what the person selected. Several marks, or none, is nothing to claim. */
+   *  empty range), and the change it marks is what the person selected. Several marks, or none, is nothing to claim.
+   *  Nor is a selection that HOLDS text of the file (its string, which generated text never enters): the mapping refused
+   *  it for a reason of its own — it reaches outside the file text, it touches a table in Rendered — and that refusal,
+   *  with its Switch to Raw, is the answer; a deletion mark under such a selection is not what the person selected, and
+   *  a comment about it in the refusal's place answered a selected passage with a change (the review, 2026-09-10). */
   private deletionUnder(sel: Selection): string | null {
     if (!sel.rangeCount) return null;
+    if (sel.toString().trim() !== "") return null;
     const marks = Array.from(this.ctx.body().querySelectorAll('.fc-del[data-act="fcchange"]')).filter((m) => this.marks.has(m)) as HTMLElement[];
     const hit = new Set<string>();
     for (let i = 0; i < sel.rangeCount; i++) {
@@ -2733,8 +2777,8 @@ class Panel {
     const rec = this.seenTexts.get(key);
     return !!rec && changedSince([rec], s.hunks || []).length > 0;
   }
-  /** The card an entry shows on: a change's own; a comment's or a reply's the comment's card, which for a comment bound
-   *  to a pending change is the change's card (cardKey, as the list shows it). */
+  /** The card an entry shows on: a change's own; a comment's or a reply's the comment's own card (cardKey, as the list
+   *  shows it; until the about follow-on, 2026-09-10, a comment bound to a pending change showed on the change's card). */
   private arrivalCard(e: Entry): string {
     return e.subject.startsWith("chg:") ? e.subject : this.cardKey(e.subject);
   }
@@ -2832,7 +2876,14 @@ class Panel {
     // the Reopen all offer ended at a gesture (decision 46): its line leaves in place, and the sent acknowledgment it stood in
     // for comes back where it was (the render puts the same back)
     const offer = this.root?.querySelector(".fc-reopen") as HTMLElement | null;
-    if (offer && this.reopenAll === null) { if (this.sentNote) offer.parentNode?.insertBefore(el("div", "fc-note fc-sent", this.sentNote), offer); offer.remove(); }
+    if (offer && this.reopenAll === null) {
+      if (this.sentNote) offer.parentNode?.insertBefore(el("div", "fc-note fc-sent", this.sentNote), offer);
+      // the offer's button may hold the keyboard (Tab reaches it, and a wheel is the one gesture that ends the offer while it
+      // does): removed under it, the focus would fall to the body and the next Tab start the page over (removeLine's rule)
+      const held = offer.contains(document.activeElement);
+      offer.remove();
+      if (held) this.focusNear({ act: "fcreopenall" });
+    }
     const line = this.root?.querySelector('[data-act="fcsavedgo"]') as HTMLElement | null;
     if (this.savedOut) {
       const side = this.cardWhere(this.savedOut.key);
@@ -4135,7 +4186,10 @@ class Panel {
    *  (answeredComments: the status is the one source, and nothing is kept between the button and the click), resolved
    *  through the host's resolve op one request each, in the cards' order; a refusal stands under that comment's card as
    *  the card's own Resolve's would (mutate's row) and the rest go on. The ones resolved are offered back as Reopen all
-   *  in the acknowledgment's position until the person's next gesture (reopenAll; gesture ends it). */
+   *  in the acknowledgment's position until the person's next gesture (reopenAll; gesture ends it).
+   *  The file-editing consent is asked ONCE for the run (consentForRun), before the first request: asked per write, as
+   *  mutate asks it, a decline was asked again for every comment and left one identical row per comment at the list's foot
+   *  (the review, 2026-09-10); declined, the one row stands under the header action (the answered slot) and nothing goes. */
   async resolveAnswered(): Promise<void> {
     if (this.resolvingAnswered) return;
     const ids = answeredComments(this.cards()).map((c) => c.id);
@@ -4144,22 +4198,38 @@ class Panel {
     this.resolvingAnswered = true; this.reopenAll = null; this.render();
     const done: string[] = [];
     try {
+      if (!(await this.consentForRun())) return;
       for (const id of ids) {
         const r = await this.mutate("resolve", { commentId: id, on: true }, "card:" + id);
         if (r) done.push(id);
       }
     } finally {
+      this.consentHeld = false;
       this.resolvingAnswered = false;
       this.reopenAll = done.length ? done : null;
       this.render();
     }
   }
-  /** Reopen all: the same comments back, one request each, the offer taken. */
+  /** Reopen all: the same comments back, one request each, the offer taken; the consent once, as for the resolve. */
   async reopenAnswered(): Promise<void> {
     const ids = this.reopenAll;
     this.reopenAll = null;
     this.render();
-    for (const id of ids || []) await this.mutate("resolve", { commentId: id, on: false }, "card:" + id);
+    if (!ids || !ids.length) return;
+    try {
+      if (!(await this.consentForRun())) return;
+      for (const id of ids) await this.mutate("resolve", { commentId: id, on: false }, "card:" + id);
+    } finally { this.consentHeld = false; }
+  }
+  /** The file-editing consent for a run of writes (resolveAnswered, reopenAnswered): one ask, held for the run (consentHeld,
+   *  which the caller clears when its run ends); declined, mutate's words in the answered slot, under the header action that
+   *  asked (renderHead), and false. */
+  private async consentForRun(): Promise<boolean> {
+    this.errors.delete("answered");
+    if (await this.ctx.ensureEditingAllowed()) { this.consentHeld = true; return true; }
+    this.errors.set("answered", { text: CONSENT_REFUSED, reload: false });
+    this.render();
+    return false;
   }
   async doSend(): Promise<void> {
     const s = this.status;
@@ -4640,9 +4710,11 @@ class Panel {
     // (the head's own children with the slot — the row's ✕ and Reload carry it too, and stay in their row). With no filter row
     // (a file with nothing to filter, or no status) the move's anchor is the first of the head's other rows instead: an
     // insertBefore with no anchor appends, and appended after the status refusal's row the answer to the Track click stood
-    // below a row about the file (the review, 2026-09-07)
+    // below a row about the file (the review, 2026-09-07). The answered slot's row (Resolve answered's or Reopen all's consent
+    // refusal, consentForRun) is an answer to the action row's button too, and stands where its confirm stood.
     if (!filterRow) filterRow = (Array.from(head.childNodes) as HTMLElement[]).find((n) => n.nodeType === 1 && ["head", "poll", "edit"].includes(n.dataset.slot || "")) || null;
     for (const n of Array.from(head.childNodes)) if (n.nodeType === 1 && (n as HTMLElement).dataset.slot === "track") underToggles(n as HTMLElement);
+    const ar = this.errRow("answered"); if (ar) underToggles(ar);
     const sv = this.errRow("save"); if (sv) head.appendChild(sv);   // a landed save's logWarning (saveThroughComments): the Log below lacks the entry
     // a Reload from the head's or the poll's row: the slot wears the loader where the row was, until the answer (refresh)
     for (const n of [this.loader("head"), this.loader("poll")]) if (n) head.appendChild(n);
@@ -5045,6 +5117,7 @@ class Panel {
     // person's own pick, "answered by a change" for a legacy binding — its title the changes' words and states, and the
     // pointer over it lights the pending changes' marks in the text (lightChanges), so the comment and its changes read
     // together without a click; the change card's own tag counts the comments about it (renderChangeCard)
+    const refNotes: string[] = [];                     // the about tag's words, for the open card (a title never reaches touch)
     for (const source of ["about", "answered"] as const) {
       const refs = c.refs.filter((r) => r.source === source);
       if (!refs.length) continue;
@@ -5052,6 +5125,7 @@ class Panel {
       t.dataset.refs = refs.map((r) => r.id).join(" ");
       t.title = (source === "about" ? "This comment is about: " : "The session answered this comment with: ")
         + refs.map((r) => (r.kind === null ? "a change the file no longer records" : changeRef({ kind: r.kind, oldText: r.oldText, newText: r.newText })) + " (" + refStateWords(r.state) + ")").join("; ");
+      if (source === "about") refNotes.push(t.title);   // the same words stand in the open card (below), where a title never reaches; an answered comment's open card shows the answering revision as a turn already (renderTurns)
       const pending = refs.filter((r) => r.state === "pending").map((r) => r.id);
       if (pending.length) {
         t.addEventListener("pointerenter", () => this.lightChanges(pending, true));
@@ -5059,7 +5133,15 @@ class Panel {
       }
       head.appendChild(t);
     }
-    if (c.decision) { const d = el("span", "fc-tag", c.decision); d.title = "You " + c.decision + " the change this comment is on"; head.appendChild(d); }
+    // the decision, when every change the comment names was decided alike (cardModel): the person's own pick (about) is the
+    // changes the comment is ABOUT, one or several (CONTEXT.md's vocabulary; before the about follow-on a comment named one
+    // change, by the format's field, and the title said "on"); a legacy binding keeps the words it had
+    if (c.decision) {
+      const d = el("span", "fc-tag", c.decision);
+      const about = c.refs.filter((r) => r.source === "about");
+      d.title = "You " + c.decision + (about.length > 1 ? " the " + about.length + " changes this comment is about" : about.length ? " the change this comment is about" : " the change this comment is on");
+      head.appendChild(d);
+    }
     if (c.resolved) head.appendChild(el("span", "fc-tag", "resolved"));
     if (c.replies.length && !isOpen) head.appendChild(el("span", "fc-tag fc-count", String(c.replies.length)));
     head.appendChild(el("span", "fc-time", clock(c.ts)));
@@ -5079,6 +5161,11 @@ class Panel {
     if (shownGone || shownSt === "stale") card.appendChild(el("div", "fc-note", staleWords));
     else if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status, c.id)));
     if (unreadable) card.appendChild(el("div", "fc-note", UNREADABLE_REGION + " " + recourse));
+    // the changes the comment is about, in words (the about tag's title, which never reaches touch, and the pointer's lighting
+    // of the marks, which a keyboard has no way to): on a phone the compact tag read "about 2 changes" and nothing said which
+    // two or where (the review, 2026-09-10; ui/CLAUDE.md: never dead-end a compact view). A legacy comment a change answered
+    // has no line: the answering revision stands among its turns below, old and new text (renderTurns)
+    for (const words of refNotes) card.appendChild(el("div", "fc-note fc-about-note", words));
     if (c.replies.length) card.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");
     const reply = btn("Reply", "fcreply"); reply.dataset.id = c.id; acts.appendChild(reply);
@@ -5130,18 +5217,22 @@ class Panel {
   }
   // ── the change cards (Slice 2) ─────────────────────────────────────────────────────────────────
   /** One card per pending change. Collapsed: the author's chip, the one-line reference (a link to its mark
-   *  when the view shows one), and the buttons — Accept and Reject are the card's reason to exist, so they
-   *  never hide behind the expand. Open: the old and new text, and the comments bound to the change with
-   *  their turns and their own Reply and Resolve. Reveal on a deletion (a point in both views, which a scroll can
-   *  miss) and on any change whose mark the view does not show — a refused block, or Show changes inline off — so
-   *  the compact card never dead-ends. While the
+   *  when the view shows one), the "N comments" tag counting the open comments about the change (a control: its click
+   *  shows the first, showAbout), and the buttons — Accept and Reject are the card's reason to exist, so they never hide
+   *  behind the expand. Open: the old and new text. No comment is drawn inside the card (the about follow-on, 2026-09-10:
+   *  every comment is its own card, and a comment about this change wears the "about" tag); Comment on this change opens
+   *  the composer over the change's span (startChangeComment) — offered for a spanned change only while the view carries
+   *  its text (spanCarried: not while the bytes are in flux, since a comment then would name the wrong words or lose the
+   *  passage; a deletion's is by id and stands whatever the view shows). Reveal on a deletion (a point in both views,
+   *  which a scroll can miss) and on any change whose mark the view does not show — a refused block, or Show changes
+   *  inline off — so the compact card never dead-ends. While the
    *  editor is up (Slice 5) the editor's own marks show every change, deletions included, and the read view Reveal
    *  and the link would scroll is gone, so neither is offered; Accept and Reject stay, and answer with where to
    *  decide (DECIDES).
    *  A DETACHED change (the load-time rebase could not place it; the sidecar keeps it, not pending) wears the
-   *  comment cards' detached dress and a tag saying so, and offers no Accept, Reject, Reply or Reveal: the host
-   *  decides pending changes only and refuses each of those `no-change`, and the change's last offset points
-   *  into a text that no longer holds it. Its texts and the comments bound to it are one click down, as ever. */
+   *  comment cards' detached dress and a tag saying so, and offers no Accept, Reject, Comment on this change or Reveal:
+   *  the host decides pending changes only and refuses each of those `no-change`, and the change's last offset points
+   *  into a text that no longer holds it. Its texts are one click down, as ever. */
   private renderChangeCard(c: ChangeCard): HTMLElement {
     const isOpen = this.openCards.has(c.key);
     const editing = this.ctx.editing();
@@ -5207,9 +5298,14 @@ class Panel {
       no.title = editing ? decide : "Put the old text back in the file";
       if (editing) { ok.classList.add("fileview-btn-blocked"); no.classList.add("fileview-btn-blocked"); }   // real buttons, dimmed: the click answers in place (DECIDES)
       acts.appendChild(ok); acts.appendChild(no);
-      const re = btn("Comment on this change", "fcchangecomment"); re.dataset.id = c.id;   // the about follow-on (before: Reply, a comment bound by the format's own field)
-      re.title = "Leave a comment about this change; the message to the session names the change and its text";
-      acts.appendChild(re);
+      // Comment on this change (the about follow-on; before: Reply, a comment bound by the format's own field): for a spanned
+      // change only while the view carries its text (spanCarried) — in flux, the composer over the span would quote other
+      // bytes and one by id alone would lose the passage the change has; it comes back with the bytes, as Reveal does below
+      if (c.curTo === c.curFrom || this.spanCarried(c)) {
+        const re = btn("Comment on this change", "fcchangecomment"); re.dataset.id = c.id;
+        re.title = "Leave a comment about this change; the message to the session names the change and its text";
+        acts.appendChild(re);
+      }
       if (!editing) {   // Reveal switches to Raw and scrolls the read view: neither exists while the editor holds the body, which shows the change itself
         if (c.kind === "del" || !painted) {
           const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
@@ -5340,16 +5436,34 @@ class Panel {
     if (saved) box.appendChild(saved);
     // the Reopen all offer (decision 46) stands in the acknowledgment's position, in its dress, until the next gesture; the
     // sent acknowledgment it stands in for comes back when it ends (reflectLines, or this render)
-    if (this.reopenAll !== null) {
-      const line = el("div", "fc-note fc-sent fc-reopen");
-      line.appendChild(el("span", "fc-note", resolvedWords(this.reopenAll.length)));
-      const b = btn("Reopen all", "fcreopenall", "fc-note fc-sent fc-saved");
-      b.title = "Reopen the " + (this.reopenAll.length === 1 ? "comment" : this.reopenAll.length + " comments") + " just resolved";
-      line.appendChild(b);
-      box.appendChild(line);
-    } else if (this.sentNote) box.appendChild(el("div", "fc-note fc-sent", this.sentNote));
+    if (this.reopenAll !== null) box.appendChild(this.reopenLine(this.reopenAll.length));
+    else if (this.sentNote) box.appendChild(el("div", "fc-note fc-sent", this.sentNote));
     for (const x of [this.loader("send"), this.errRow("send")]) if (x) box.appendChild(x);
     return box;
+  }
+  /** The Reopen all offer's line (decision 46; renderSend): the acknowledgment's words ("Resolved N comments") and the offer
+   *  as a text button beside them, in the sent acknowledgment's dress — .fc-note and .fc-sent on the row, as on the
+   *  acknowledgment, so the Send section's tiers count it as the acknowledgment and not as growth (the sheets'
+   *  `:not(.fc-note)`), and its size on the words and the button alone: the row's own is set back to the section's, since a
+   *  .fc-note inside a .fc-note compounds (ui/CLAUDE.md, font sizes; the review, 2026-09-10: the offer rendered at 0.74 of the
+   *  acknowledgment beside it). The button wears no class of the saved line's (.fc-saved is that line's own dress, one in the
+   *  panel: feed-css-saved-line-head-dress.test.ts), and the sheets have no rule for it, so its text-button shape is inline,
+   *  the todo option's idiom; .fc-link gives it the panel's link hover. In the margin layout the Send section scrolls inside
+   *  itself while its confirm is up, and a line after the confirm stood past the section's box (the saved line's case,
+   *  savedButton, measured 2026-09-09; the offer's, 2026-09-10): it sticks to the section's bottom edge there, as that line
+   *  does. The list layout's Send section is the scroller's foot, below every card; the offer stands there all the same
+   *  (the plan: the acknowledgment's position). */
+  private reopenLine(n: number): HTMLElement {
+    const line = el("div", "fc-note fc-sent fc-reopen");
+    line.style.fontSize = "inherit";                   // the class is the tier's and the colour's; the size is the children's
+    line.appendChild(el("span", "fc-note fc-sent", resolvedWords(n)));
+    const b = btn("Reopen all", "fcreopenall", "fc-note fc-sent fc-link");
+    b.title = "Reopen the " + (n === 1 ? "comment" : n + " comments") + " just resolved";
+    b.style.background = "none"; b.style.border = "0"; b.style.padding = "0"; b.style.marginLeft = "6px";   // beside the words, a word's gap
+    b.style.fontFamily = "inherit"; b.style.fontWeight = "inherit"; b.style.lineHeight = "inherit";
+    line.appendChild(b);
+    if (this.margin) { line.style.position = "sticky"; line.style.bottom = "0"; line.style.background = "var(--bg)"; }
+    return line;
   }
   /** The line for the card a save landed in out of view (savedOut; decision 43): "Saved · the card is above" or "below"
    *  (savedWhereWords), a button whose click scrolls the card into view as the focus (fcsavedgo: scrollCard). Rendered

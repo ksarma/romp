@@ -175,7 +175,7 @@ const PLAIN_BUTTONS: Record<string, string> = {
   "title bar Download / Copy path / ✕": BAR + " > button.fileview-btn",
   "title bar Comments toggle": BAR + " > span.fileview-fc > button.fileview-btn",
   "panel Track changes": HEAD + " > div.fc-row > button.fileview-btn.fc-toggle",
-  "panel Comment on this file": HEAD + " > div.fc-row > button.fileview-btn",
+  "panel Comment on this file / Resolve answered (N)": HEAD + " > div.fc-row > button.fileview-btn",
   "composer Save / Cancel": COMPOSER + " > div.fc-actions > button.fileview-btn",
   "reply composer Save / Cancel, in its card": IN_CARD + " > div.fc-actions > button.fileview-btn",
   "card Reply / Resolve / Reveal": CARD + " > div.fc-actions > button.fileview-btn",
@@ -242,7 +242,16 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   assert.match(PANEL, /before\(host, \(Array\.from\(host\.childNodes\) as HTMLElement\[\]\)\.find\(\(n\) => n\.nodeType === 1 && n\.classList\.contains\("fc-actions"\)\) \|\| null\);\n\s*box\.classList\.add\("fc-composer-in"\);/);
   assert.match(PANEL, /const card = el\("div", "fc-card fc-change"/, "a change card is a .fc-card too");
   assert.match(PANEL, /const head = el\("div", "fc-head"\);\n\s*const row = el\("div", "fc-row"\);\n\s*const t = btn\("Track changes", "fctrack", "fileview-btn fc-toggle"\);/);
-  assert.match(PANEL, /row\.appendChild\(btn\("Comment on this file", "fcfile"\)\);\n\s*head\.appendChild\(row\);/);
+  // Comment on this file ends the row's fixed part; Resolve answered (decision 46; the about follow-on, 2026-09-10) stands after
+  // it in the SAME row, a default-class .fileview-btn (btn's third argument omitted) offered only while the session has answered
+  // a comment of the person's, and then the row lands in the head. The pin admits that block alone between the two lines, and
+  // holds that nothing there appends to any other node or makes a node a chain could pass through
+  const rowLands = /row\.appendChild\(btn\("Comment on this file", "fcfile"\)\);\n((?:[^\n]*\n)*?)\s*head\.appendChild\(row\);/.exec(PANEL);
+  assert.ok(rowLands, "Comment on this file, then the row lands in the head");
+  const afterFile = rowLands![1];
+  assert.match(afterFile, /const ra = btn\(this\.resolvingAnswered \? "Resolving…" : resolveAnsweredLabel\(answered\.length\), "fcresolveanswered"\);/, "Resolve answered is a default-class .fileview-btn");
+  assert.deepEqual(afterFile.match(/\w+\.appendChild\([^)]*\)/g), ["row.appendChild(ra)"], "between Comment on this file and the row's landing, the row takes Resolve answered and nothing else is appended anywhere");
+  assert.doesNotMatch(afterFile, /\bel\(|createElement|\bbtn\((?!this\.resolvingAnswered)/, "no other node is made there: no chain passes through the block");
   assert.match(PANEL, /const list = el\("div", "fc-cards"\);/);
   assert.match(PANEL, /const card = el\("div", "fc-card"/);
   assert.match(PANEL, /const acts = el\("div", "fc-actions"\);\n\s*const reply = btn\("Reply", "fcreply"\);[\s\S]*?card\.appendChild\(acts\);/);
