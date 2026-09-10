@@ -389,31 +389,16 @@ const ALLOWLIST = [
   "webview/file-comments-send-seen.test.ts",
   "webview/file-view-notice.test.ts",
   "webview/file-view.test.ts",
-  "webview/fileview-chip.test.ts",
-  "webview/github-link.test.ts",
-  "webview/path-links-pointer-focus.test.ts",
-  "webview/path-links.test.ts",
   "webview/pdf-new-tab.test.ts",
   "webview/perf-telemetry.test.ts",
-  "webview/pinned-notes.test.ts",
-  "webview/pr-links.test.ts",
   "webview/preview-retry-pace.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/render-todo-file-chip.test.ts",
-  "webview/setting-stale-fold.test.ts",
   "webview/shell-perf.test.ts",
   "webview/tab-hide.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/tab-snapshot-view.test.ts",
   "webview/thread-selection-scope.test.ts",
-  "webview/timeline-boot.test.ts",
   "webview/timeline-rehover.test.ts",
   "webview/track-decorations-hover-cost.test.ts",
   "webview/track-decorations.test.ts",
-  "webview/url-links.test.ts",
-  "webview/user-todo-links.test.ts",
-  "webview/user-todo-title-links.test.ts",
-  "webview/waiting-detail-link.test.ts",
-  "webview/waiting-file-chip-unframed.test.ts",
-  "webview/waiting-file-chip.test.ts",
 ];
 // The list's exact length on 2026-09-10, after the detector's fourth round: the 148 files whose code initialised an
 // edge when the rule was written, plus the eight class fakes main added between this branch's base and its landing
@@ -426,7 +411,7 @@ const ALLOWLIST = [
 // The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
 // alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
 // is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 45;
+const ALLOWLIST_MAX = 30;
 // the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
 // tags-scale test whose shim it grew from
 const SWITCHED = [

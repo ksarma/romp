@@ -10,14 +10,22 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Marked } from "marked";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in: text and element nodes with the handful of members the applier touches, plus the
 // path pass (path-links.ts linkifyPathTokens: a tree walker, fragments, replaceWith, class selectors), so
 // the two-pass case runs both linkers for real over one tree ─────────────────────────────────────────
+/** the DOM's detach: a node that left its parent's list forgets the parent. A helper, so no class assigns an edge of
+ *  its own (the ratchet in ui/test-dom-shim.test.ts reads a class's own null assignment to parentNode as an enumerable edge). */
+const detach = (n: { parentNode: E | null }): void => { n.parentNode = null; };
 class T {
   nodeType = 3;
-  parentNode: E | null = null;
-  constructor(public textContent: string) {}
+  parentNode!: E | null;
+  constructor(public textContent: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get data(): string { return this.textContent; }
   get parentElement(): E | null { return this.parentNode; }
   replaceWith(frag: Frag): void {
@@ -25,25 +33,33 @@ class T {
     const i = p.childNodes.indexOf(this);
     for (const k of frag.childNodes) k.parentNode = p;
     p.childNodes.splice(i, 1, ...frag.childNodes);
-    this.parentNode = null;
+    detach(this);
   }
 }
-class Frag { childNodes: Array<E | T> = []; appendChild<N extends E | T>(c: N): N { this.childNodes.push(c); return c; } }
+class Frag {
+  childNodes!: Array<E | T>;
+  constructor() { Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true }); hideEdges(this); }
+  appendChild<N extends E | T>(c: N): N { this.childNodes.push(c); return c; }
+}
 class E {
   nodeType = 1;
-  parentNode: E | null = null;
-  childNodes: Array<E | T> = [];
+  parentNode!: E | null;
+  childNodes!: Array<E | T>;
   href = ""; target = ""; rel = ""; title = ""; className = "";
   dataset: Record<string, string | undefined> = {};
   // the class and the title as attributes, reflected to the properties (markPathLink writes them as attributes, for an SVG <a>'s sake)
   attrs: Record<string, string> = {};
   setAttribute(n: string, v: string): void { if (n === "class") this.className = v; else if (n === "title") this.title = v; else this.attrs[n] = v; }
   getAttribute(n: string): string | null { if (n === "class") return this.className || null; if (n === "title") return this.title || null; return n in this.attrs ? this.attrs[n] : null; }
-  constructor(public tagName: string) {}
+  constructor(public tagName: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get parentElement(): E | null { return this.parentNode; }
   get classList() { const cs = this.className.split(/\s+/).filter(Boolean); return { contains: (c: string) => cs.includes(c) }; }
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; if (v) this.appendChild(new T(v)); }
+  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; if (v) this.appendChild(new T(v)); }
   appendChild<N extends E | T>(c: N): N { c.parentNode = this; this.childNodes.push(c); return c; }
   insertBefore<N extends E | T>(n: N, ref: E | T | null): N {
     const i = ref ? this.childNodes.indexOf(ref) : -1;
@@ -983,5 +999,17 @@ test("the pr-link anchor wears the hyperlink ink in both sheets", () => {
     const css = read(f);
     assert.match(css, /\.pr-link \{ color: var\(--link\); text-decoration: none; \}/, f);
     assert.match(css, /\.pr-link:hover \{ text-decoration: underline; \}/, f);
+  }
+});
+
+// The projection rule (ui/test-dom-shim.ts, hideEdges): a stand-in node enumerates its primitives alone, so a failing
+// assertion's dump of one stops at the node instead of walking the whole tree through its edges.
+test("a stand-in node enumerates its primitives alone, and a dump of it names neither parentNode nor childNodes", () => {
+  const root = new E("DIV"); const kid = root.appendChild(new E("SPAN")); kid.appendChild(new T("x"));
+  const nodes = [root, kid, kid.childNodes[0]];
+  for (const n of nodes) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "every enumerable own key holds a primitive");
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump stops at the node");
   }
 });

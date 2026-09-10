@@ -14,6 +14,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -26,14 +28,17 @@ const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kern
 class El {
   id = ""; title = ""; hidden = false; type = ""; disabled = false; tabIndex = -1;
   href = ""; target = ""; rel = "";
-  childNodes: Array<El | string> = [];
+  childNodes!: Array<El | string>;
   private attrs = new Map<string, string>();
   private classes = new Set<string>();
   classList = {
     add: (...c: string[]) => { for (const x of c) this.classes.add(x); },
     contains: (c: string) => this.classes.has(c),
   };
-  constructor(public tagName: string) {}
+  constructor(public tagName: string) {
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get className(): string { return [...this.classes].join(" "); }
   set className(v: string) { this.classes = new Set(v.split(/\s+/).filter(Boolean)); }
   get textContent(): string { return this.childNodes.map((c) => (typeof c === "string" ? c : c.textContent)).join(""); }
@@ -284,4 +289,16 @@ test("the GitHub link is the action REGISTRY's first entry, not another hand-wir
   // one per-open seam ctx (plans/file-review.md Slice 1: path, sid, todoId plus the viewer closures)
   assert.match(VIEW, /const ctx: FileViewActionCtx = \{\n    path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null,/);
   assert.match(VIEW, /for \(const a of fileViewActions\) \{\n    const n = a\.mount\(ctx\);\n    if \(n\) acts\.appendChild\(n\);\n  \}/);
+});
+
+// The projection rule (ui/test-dom-shim.ts, hideEdges): a stand-in node enumerates its primitives alone, so a failing
+// assertion's dump of one stops at the node instead of walking the whole tree through its edges.
+test("a stand-in node enumerates its primitives alone, and a dump of it names neither parentNode nor childNodes", () => {
+  const root = new El("div"); const kid = root.appendChild(new El("span")); kid.appendChild(new El("i"));
+  const nodes = [root, kid];
+  for (const n of nodes) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "every enumerable own key holds a primitive");
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
 });

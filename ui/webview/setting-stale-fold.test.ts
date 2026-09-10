@@ -9,6 +9,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
 
@@ -22,8 +24,11 @@ type Node = {
   querySelector(sel: string): Node | null; addEventListener(type: string, fn: (e: any) => void): void;
 };
 function node(tag: string): Node {
+  // the edges are built beside the literal and hidden after it (hideEdges, the shared shim's rule): a failing
+  // assertion's dump of a node stops at the node instead of walking the toast box through its parent
+  const children: Node[] = [], clicks: Array<(e: any) => void> = [], parentNode: Node | null = null;
   const n: Node = {
-    tag, id: "", className: "", textContent: "", title: "", type: "", children: [], parentNode: null, clicks: [],
+    tag, id: "", className: "", textContent: "", title: "", type: "", children, parentNode, clicks,
     appendChild(c) { c.parentNode = n; n.children.push(c); },
     remove() { if (n.parentNode) { const p = n.parentNode; p.children.splice(p.children.indexOf(n), 1); n.parentNode = null; } },
     setAttribute() { /* role/aria — not under test */ },
@@ -31,7 +36,7 @@ function node(tag: string): Node {
     querySelector(sel) { return n.children.find((c) => c.className.split(" ").includes(sel.slice(1))) || null; },
     addEventListener(type, fn) { if (type === "click") n.clicks.push(fn); },
   };
-  return n;
+  return hideEdges(n);
 }
 
 function lift() {
@@ -253,4 +258,16 @@ test("a write refused because the publish itself failed names THAT cause: could 
             why: "read failed: [Errno 5] Input/output error", gesture: { type: "setCompactSuggest", enabled: true } });
   assert.match(g.texts()[1], /could not be read \(read failed: \[Errno 5\] Input\/output error\)/);
   assert.doesNotMatch(g.texts()[1], /could not be written/);
+});
+
+// The projection rule (ui/test-dom-shim.ts, hideEdges): a stand-in node enumerates its primitives alone, so a failing
+// assertion's dump of one stops at the node instead of walking the whole tree through its edges.
+test("a stand-in node enumerates its primitives alone, and a dump of it names neither parentNode nor children", () => {
+  const root = node("div"); const kid = node("span"); root.appendChild(kid); kid.appendChild(node("i"));
+  const nodes = [root, kid];
+  for (const n of nodes) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "every enumerable own key holds a primitive");
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes") && !dump.includes("children"), "the dump stops at the node");
+  }
 });
