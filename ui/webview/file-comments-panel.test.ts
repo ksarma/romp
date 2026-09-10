@@ -6,9 +6,11 @@
 // Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import { marked } from "marked";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
 import type { Status, StoreComment, LogEntry, Hunk } from "./file-comments-model";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── the DOM stand-in ───────────────────────────────────────────────────────────────────────────────
 class Doc {
@@ -26,9 +28,13 @@ class Doc {
 }
 class N {
   nodeType = 0;
-  parentNode: N | null = null;
-  childNodes: N[] = [];
-  constructor(public ownerDocument: Doc) {}
+  parentNode!: N | null;
+  childNodes!: N[];
+  constructor(public ownerDocument: Doc) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get parentElement(): E | null { return this.parentNode instanceof E ? this.parentNode : null; }
   get firstChild(): N | null { return this.childNodes[0] || null; }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as T).data : this.childNodes.map((c) => c.textContent).join(""); }
@@ -42,7 +48,7 @@ class N {
 }
 class T extends N {
   nodeType = 3;
-  constructor(doc: Doc, public data: string) { super(doc); }
+  constructor(doc: Doc, public data: string) { super(doc); hideEdges(this); }
   get length(): number { return this.data.length; }
   splitText(offset: number): T {
     const tail = new T(this.ownerDocument, this.data.slice(offset));
@@ -91,6 +97,7 @@ class E extends N {
       deleteProperty: (_t, k) => { this.attrs.delete("data-" + kebab(k)); return true; },
       has: (_t, k) => this.attrs.has("data-" + kebab(k)),
     });
+    hideEdges(this);
   }
   private classes(): string[] { return (this.attrs.get("class") || "").split(/\s+/).filter(Boolean); }
   private setClasses(c: string[]): void { this.attrs.set("class", [...new Set(c)].join(" ")); }
@@ -108,7 +115,7 @@ class E extends N {
     const i = this.childNodes.indexOf(ref);
     this.childNodes.splice(i, 0, n); n.parentNode = this; return n;
   }
-  replaceChildren(...c: N[]): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes = []; for (const x of c) this.appendChild(x); }
+  replaceChildren(...c: N[]): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
   normalize(): void {
     const out: N[] = [];
     for (const c of this.childNodes) {
@@ -687,4 +694,17 @@ test("a save through the panel: a moved config (or a sidecar whose records are u
   await tick();
   assert.equal(h.posted.filter((m) => m.verb === "status").length, asks + 1);
   h.dispose();
+});
+
+test("the stand-in's nodes inspect as their projection: no enumerable edge, so a failing assertion's dump cannot walk the tree", () => {
+  const root = doc.createElement("div");
+  const kid = doc.createElement("span");
+  root.appendChild(kid);
+  kid.appendChild(doc.createTextNode("leaf"));
+  root.setAttribute("data-x", "1"); root.classList.add("c");
+  for (const n of [root, kid, kid.firstChild as T]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as unknown as Record<string, unknown>)[k])), "only primitives stay enumerable on " + n.constructor.name);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump: " + dump);
+  }
 });

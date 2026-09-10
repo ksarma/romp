@@ -9,10 +9,12 @@
 // Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, Hunk, StoreComment } from "./file-comments-model";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -67,8 +69,11 @@ type Reg = { type: string; cb: Listener; capture: boolean };
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public data: string) {}
+  parentNode!: El | null;
+  constructor(public data: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.data; }
   get length(): number { return this.data.length; }
   get parentElement(): El | null { return this.parentNode; }
@@ -94,15 +99,20 @@ function parseSel(sel: string): Compound[][] {
 class El {
   nodeType = 1;
   tagName: string;
-  parentNode: El | null = null;
-  childNodes: Array<El | Txt> = [];
+  parentNode!: El | null;
+  childNodes!: Array<El | Txt>;
   attrs = new Map<string, string>();
   listeners: Reg[] = [];
   hidden = false; disabled = false; readOnly = false; title = ""; type = ""; value = ""; checked = false; placeholder = "";
   innerHTML = "";
   style: Record<string, string> = {};
   rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get ownerDocument(): typeof doc { return doc; }
   get parentElement(): El | null { return this.parentNode; }
   get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
@@ -442,4 +452,17 @@ test("pins: the title branches on the toggle's field, and both branches share th
   const block = SRC.slice(i, SRC.indexOf("acts.appendChild(rv)", i));
   assert.match(block, /const line = src !== null && !inFlux \? " \(line " \+ \(rawOffsetToLine\(src, c\.curFrom\) \+ 1\) \+ "\)" : "";/, "one line suffix");
   assert.match(block, /rv\.title = this\.inline \? "Show the change in the Raw view" \+ line\n\s+: "Open the Raw view at the change" \+ line \+ "; the marks are off, so the change is not marked there";/, "on: the mark; off: the place, and why");
+});
+
+test("the stand-in's nodes inspect as their projection: no enumerable edge, so a failing assertion's dump cannot walk the tree", () => {
+  const root = doc.createElement("div");
+  const kid = doc.createElement("span");
+  root.appendChild(kid);
+  kid.appendChild(doc.createTextNode("leaf"));
+  root.setAttribute("data-x", "1"); root.classList.add("c");
+  for (const n of [root, kid, kid.firstChild as Txt]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as unknown as Record<string, unknown>)[k])), "only primitives stay enumerable on " + n.constructor.name);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump: " + dump);
+  }
 });
