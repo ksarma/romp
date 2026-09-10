@@ -10,7 +10,9 @@
 # see exactly what the wrapper asked for and the fake "real CLI" still runs. The wrapper calls it
 # twice per launch: a pre-flight `-- true`, then the scoped CLI, both carrying `-p OOMPolicy=continue`
 # (every scope does, since 2026-09-10; the per-session limits section below has the rest). A failed
-# pre-flight is retried bare, so a fallback costs two calls. Nothing here touches the real systemd-run.
+# pre-flight is retried bare, so a fallback costs two calls, except when the pre-flight had no property
+# to drop (the kernel's marker set and no limit): a bare pre-flight that failed is not retried, one call.
+# Nothing here touches the real systemd-run.
 
 setup() {
     TEST_DIR="$(mktemp -d)"
@@ -440,6 +442,36 @@ SH
     ROMP_CLI_SCOPE_OOM_POLICY_REJECTED= run "$WRAPPER" a
     [ "$status" -eq 0 ]
     [[ "$(sed -n 2p "$FAKE_CALLS")" == *" -p OOMPolicy=continue -- $REAL a" ]]
+}
+
+@test "the marker set and no limit: a failed pre-flight has no property to drop, so it falls back at once, one call, one fallback: line" {
+    # the immediate-fallback branch (`[ -z "$props" ]`): with the marker set and no limit the pre-flight is
+    # bare already, so a failure of it is the fallback, with no bare retry (the other tests' chains cost two
+    # calls); the CLI still runs, directly, and the one stderr line is the fallback form
+    cat > "$BIN/systemd-run" <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_LOG"
+echo "$*" >> "$FAKE_CALLS"
+echo "Failed to connect to bus: No such file or directory" >&2
+exit 1
+SH
+    chmod +x "$BIN/systemd-run"
+    ERR="$TEST_DIR/stderr"
+    ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1 run sh -c '"$0" a 2>"$1"' "$WRAPPER" "$ERR"
+    [ "$status" -eq 0 ]
+    [[ "$output" == "REAL pid="*"ARG:a" ]]    # the real CLI's output, on stdout, the argument passed through
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 1 ]
+    [ "$(cat "$FAKE_CALLS")" = "--user --scope --quiet --collect -- true" ]
+    [ "$(wc -l < "$ERR")" -eq 1 ]
+    [[ "$(cat "$ERR")" == "romp-cli-scope: fallback: systemd-run cannot start a transient scope (Failed to connect to bus: No such file or directory)"* ]]
+    # the control: without the marker the same failure costs the two-call chain (with the policy, then bare)
+    rm -f "$FAKE_CALLS" "$FAKE_LOG" "$ERR"
+    run sh -c '"$0" a 2>"$1"' "$WRAPPER" "$ERR"
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$FAKE_CALLS")" -eq 2 ]
+    [ "$(sed -n 1p "$FAKE_CALLS")" = "--user --scope --quiet --collect -p OOMPolicy=continue -- true" ]
+    [ "$(sed -n 2p "$FAKE_CALLS")" = "--user --scope --quiet --collect -- true" ]
+    [ "$(wc -l < "$ERR")" -eq 1 ]
 }
 
 @test "a systemd-run that rejects OOMPolicy= with no limit set: the pre-flight re-runs bare and the CLI gets a bare scope, after one ignored: line" {

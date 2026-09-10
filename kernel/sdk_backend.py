@@ -171,8 +171,12 @@ CLI_SCOPE_IGNORED_PREFIX = CLI_SCOPE_NOTICE_PREFIX + " ignored:"
 # memory-controller check inside it, and the adjustment write in a throwaway child. What that refuses
 # lands in `rejected` and goes down empty, or, for the policy, as ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1
 # (the wrapper then leaves the property off), so a per-launch `ignored:` line marks a change since boot,
-# not a standing condition. A systemd that refuses the policy on a scope takes no action on an OOM kill
-# inside one either, which is the outcome the property asks for, so that refusal alone is a plain line.
+# not a standing condition. The policy is probed apart from the limits: a systemd before 253 refuses
+# `OOMPolicy=` on a scope and takes the memory properties, so when a failure names the policy the limits
+# are probed alone once more and stand when that passes (the marker goes down, the limits go down in
+# full). Such a systemd stops the whole scope on an OOM kill inside it, as every scope did before the
+# property went on all of them; the refusal is the box's version, not a setting to fix, so it is a plain
+# line, and a problem is logged only when a limit is refused.
 # Rows: (environment variable, report key — the word the boot line prints, as in `memoryMax=16G` —,
 # validator, the rule in words, the type a report of the value carries: sizes as the strings systemd
 # reads, the adjustment as an integer. Nothing here converts: the wrapper receives every value as the
@@ -275,17 +279,23 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
         so this probe is due on every start, limits or none) on a probe scope (`systemd-run … -p …
         -- true`), with the wrapper's own retry chain: a failure is retried bare, a bare pass is followed
         by one more try with the properties, and only that second failure rejects them, quoting the
-        deciding failure. The memory limits set are rejected together, as the wrapper drops them; the
-        policy is rejected when the failure names it (`Unknown assignment: OOMPolicy=`, a systemd before
-        253) or when it was the only property. With limits among the properties the line is a problem
-        (limits the operator set apply nowhere); the policy refused alone is a plain line, since a
-        systemd that refuses it takes no action on an OOM kill inside a scope either, the outcome the
-        property asks for, unless the failure does not name the policy, when it is a problem. A pass
-        logs one plain line saying the policy is in force. Two outcomes settle nothing: a bare failure
-        too (the bus is away; the scope verdict is moments old), and a second try that does not answer
-        (a raise: the 10 s bound, an OSError). One plain line each says so, the properties go down as
-        read, and the wrapper reports per launch — its fallback line, or its `ignored:` line if the
-        properties turn out to be refused;
+        deciding failure. The policy is rejected when the deciding failure names it (`Unknown
+        assignment: OOMPolicy=`, a systemd before 253) or when it was the only property. A failure
+        that names the policy with limits among the properties says nothing about the limits (that
+        systemd takes the memory properties), so the limits are then probed ALONE, once: a pass rejects
+        the policy by itself, keeps the limits in `in_force` and sends the controller check below in
+        with the limits alone; a failure rejects the limits with the policy, as a problem line quoting
+        both failures (limits the operator set apply nowhere); no answer (a raise) rejects the policy
+        and leaves the limits UNSETTLED (memoryLimits), a plain line, the values standing as read for
+        the wrapper to report on. A failure that does not name the policy rejects the limits set and,
+        when the policy was the only property, the policy, as a problem. The policy refused alone by a
+        failure that names it is a plain line: a systemd before 253 stops the whole scope on an OOM kill
+        inside it, as every scope did before the property went on all of them, and the refusal is the
+        box's version, not a setting to fix. A pass logs one plain line saying the policy is in force.
+        Two outcomes settle nothing: a bare failure too (the bus is away; the scope verdict is moments
+        old), and a second try that does not answer (a raise: the 10 s bound, an OSError). One plain
+        line each says so, the properties go down as read, and the wrapper reports per launch: its
+        fallback line, or its `ignored:` line if the properties turn out to be refused;
       * the memory controller, inside a probe scope carrying the properties (CLI_SCOPE_MEMORY_PROBE_CMD),
         since systemd accepts the properties from a user manager without the controller and applies
         nothing. The verdict is the marker the command prints (CLI_SCOPE_MEMORY_PROBE_MARKS): no
@@ -335,31 +345,54 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
         if mem:
             unsettled.append("memoryLimits")
         unsettled.append("oomPolicy")
-    elif rc != 0:
+    limits_stand = rc == 0    # the memory limits passed a probe: the controller check below is due
+    if rc is not None and rc != 0:
         names_policy = "OOMPolicy" in err
-        for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
-            if key in CLI_SCOPE_MEMORY_PROPS and key in in_force:
-                rejected[var] = in_force[key]
+        m_rc = None    # the limits-alone probe's exit, when one ran (a failure naming the policy, limits set)
+        if names_policy and mem:
+            m_rc, m_err, _out = _cli_scope_probe(run, base + mem + ["--", "true"])
         if names_policy or not mem:
             rejected["OOMPolicy"] = "continue"
-        if log:
-            if mem:
-                hint = " (OOMPolicy= on scopes needs systemd 253)" if names_policy else ""
-                log("cli scope: systemd-run rejected the scope properties (%s: %s), so they are not applied; sessions "
-                    "run in their scopes without them%s" % (" ".join(props), err or "no detail", hint), problem=True)
-            elif names_policy:
-                log("cli scope: systemd-run rejected OOMPolicy=continue on a scope (%s): OOMPolicy= on scopes needs "
-                    "systemd 253, and a scope on an older systemd takes no action when a process in it is killed by "
-                    "the OOM killer, which is the outcome the property asks for; sessions run in their scopes "
-                    "without it" % (err or "no detail"))
-            else:
-                log("cli scope: systemd-run rejected OOMPolicy=continue on a scope (%s), so it is not applied; "
-                    "sessions run in their scopes without it, and one OOM kill inside a scope may then stop the whole "
-                    "scope" % (err or "no detail"), problem=True)
-    else:
-        if log:
-            log("cli scope: OOMPolicy=continue in force on every session scope: an OOM kill inside a scope ends that "
-                "process alone, not the scope")
+        older = ("OOMPolicy= on scopes needs systemd 253, and an OOM kill inside a scope on this systemd stops the "
+                 "whole scope, as it did before the property")
+        if names_policy and mem and m_rc == 0:
+            limits_stand = True
+            props = mem    # what the scopes carry from here: the controller check and its lines name these words
+            if log:
+                log("cli scope: systemd-run rejected OOMPolicy=continue on a scope (%s): %s; the memory limits alone (%s) "
+                    "were taken and stand; sessions run in their scopes with them and without the policy"
+                    % (err or "no detail", older, " ".join(mem)))
+        elif names_policy and mem and m_rc is None:
+            unsettled.append("memoryLimits")
+            if log:
+                log("cli scope: systemd-run rejected OOMPolicy=continue on a scope (%s): %s; sessions run in their scopes "
+                    "without it, and the memory limits alone (%s) could not be settled: a probe scope with them did not "
+                    "answer (%s); they go to the wrapper as read, and the wrapper reports on each launch"
+                    % (err or "no detail", older, " ".join(mem), m_err or "no detail"))
+        else:
+            for var, key, _ok, _rule, _typ in CLI_SCOPE_LIMITS:
+                if key in CLI_SCOPE_MEMORY_PROPS and key in in_force:
+                    rejected[var] = in_force[key]
+            if log:
+                if names_policy and mem:    # the limits alone were refused too: that failure decided for them
+                    log("cli scope: systemd-run rejected the scope properties (%s: %s) and the memory limits alone (%s: %s), "
+                        "so they are not applied; sessions run in their scopes without them (OOMPolicy= on scopes needs "
+                        "systemd 253)" % (" ".join(props), err or "no detail", " ".join(mem), m_err or "no detail"),
+                        problem=True)
+                elif mem:
+                    log("cli scope: systemd-run rejected the scope properties (%s: %s), so they are not applied; sessions "
+                        "run in their scopes without them" % (" ".join(props), err or "no detail"), problem=True)
+                elif names_policy:
+                    log("cli scope: systemd-run rejected OOMPolicy=continue on a scope (%s): %s; sessions run in their "
+                        "scopes without it" % (err or "no detail", older))
+                else:
+                    log("cli scope: systemd-run rejected OOMPolicy=continue on a scope (%s), so it is not applied; "
+                        "sessions run in their scopes without it, and one OOM kill inside a scope may then stop the whole "
+                        "scope" % (err or "no detail"), problem=True)
+    elif rc == 0 and log:
+        log("cli scope: OOMPolicy=continue in force on every session scope: an OOM kill inside a scope ends that "
+            "process alone, not the scope")
+    if limits_stand:
         if mem:
             d_argv = base + props + ["--"] + CLI_SCOPE_MEMORY_PROBE_CMD
             d_rc, d_err, d_out = _cli_scope_probe(run, d_argv, stdout=True)
@@ -470,7 +503,9 @@ def cli_scope_limits(environ=None, log=None, scope_on=True, run=None) -> tuple[d
     check answered, and when none was due). With the scopes on and `run` given the property probe is
     always due, since every scope carries OOMPolicy=continue (_cli_scope_props): a systemd that refuses
     it puts `OOMPolicy` in `rejected` (the one key there that is no variable), which _options hands the
-    wrapper as ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1. `log`, when given, takes (message, problem=bool);
+    wrapper as ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1; the policy is settled apart from the limits, so a
+    systemd that refuses it and takes the memory properties (before 253) keeps the limits in `in_force`
+    (_cli_scope_settle). `log`, when given, takes (message, problem=bool);
     the boot line comes last, after every refusal: with `scope_on` false it says the limits apply to nothing,
     since no scope is started for them to apply to; otherwise it lists each value in force under its own
     verdict (_cli_scope_boot_line) — in force, applied to nothing until the controller is delegated, or
@@ -2844,8 +2879,12 @@ RENAME_PING_HEAD = "<!-- romp-injected --><!-- romp-system -->[romp] This sessio
 # while the kernel stayed up, so the kernel itself resumes it (_heal_cut_session) instead of waiting
 # for the next boot's reconcile. The lead is what INTR_CRASH_SIG matches and is_crash_resume_nudge
 # keys on; the parenthesis names the cause when the kernel knows it: the OOM form (2026-09-10) is
-# queued when the dead CLI's scope reads Result=oom-kill (oom_killed_scope), a bare "killed or
-# crashed" otherwise. The rest is the same disarming of the stop record as BOOT_RESUME_NUDGE.
+# queued when the dead CLI's own scope says the OOM killer took a process in it (its cgroup's
+# memory.events oom_kill count, or Result=oom-kill on a scope systemd stopped over one; oom_verdict), a
+# bare "killed or crashed" otherwise. The OOM form does not say whether the rest of the session's
+# processes went too: under OOMPolicy=continue the kill took one process, under `stop` systemd ended the
+# whole scope, and the notice is one text for both, so it asks the session to check what it had running.
+# The rest is the same disarming of the stop record as BOOT_RESUME_NUDGE.
 _CRASH_NUDGE_LEAD = "<!-- romp-injected --><!-- romp-system -->[romp] This session's claude process died mid-turn"
 _CRASH_NUDGE_REST = (
     "; the session has been resumed with its history intact. If the conversation "
@@ -2854,8 +2893,9 @@ _CRASH_NUDGE_REST = (
     "it stopped, without asking whether to continue.")
 CRASH_RESUME_NUDGE = _CRASH_NUDGE_LEAD + " (killed or crashed)" + _CRASH_NUDGE_REST
 CRASH_RESUME_NUDGE_OOM = (_CRASH_NUDGE_LEAD
-                          + " (out of memory: the OOM killer took a process this session had started, and everything "
-                            "else running under it was stopped along with it)" + _CRASH_NUDGE_REST)
+                          + " (out of memory: the OOM killer took a process running under this session, and anything "
+                            "else that was running under it may have been stopped with it; check what you had running "
+                            "before relying on it)" + _CRASH_NUDGE_REST)
 
 
 # A CLI that cannot even START says so on the way out — and the ONE cause that reliably does this is the
@@ -3335,40 +3375,76 @@ def scope_pid(unit: str) -> int | None:
 # WHY A DEAD CLI'S SCOPE IS ASKED HOW IT ENDED (2026-09-10). A scope under OOMPolicy=stop (the user
 # manager's default) is stopped whole by systemd the moment the OOM killer takes ONE process in it: the
 # CLI gets SIGTERM and exits 143, the kernel heals the session (_heal_cut_session), and nothing in the
-# log said why 41 background tasks had just died. systemd records the cause on the unit as Result=oom-kill
-# before it signals the cgroup, and the unit stays loaded while its processes are still going down, so
-# a `systemctl show` at the heal reads it; once every process is gone the scope is collected (the wrapper's
-# --collect) and the pattern matches nothing, which reads as no verdict, never as a wrong one. The pattern
-# is the session's own scopes (the name carries the sid's first 8 characters), so another session's OOM
-# can never be blamed on this one.
-SCOPE_SHOW_ARGV = ["systemctl", "--user", "show", "--no-pager", "-p", "Id,Result", "--"]
+# log said why 41 background tasks had just died. Every session scope now carries OOMPolicy=continue
+# (bin/romp-cli-scope), under which systemd records NO Result=oom-kill (verified on systemd 255: a hog
+# killed under MemoryMax=64M left memory.events `oom_kill 1` and Result=success), so the authoritative
+# signal is the cgroup's own counter: the scope's memory.events `oom_kill` line counts the processes the
+# OOM killer took in it, whatever the policy. Result=oom-kill is the second signal, for a scope WITHOUT
+# the policy (the kernel's marker after a refused boot probe; a launch whose pre-flight dropped the
+# properties; a systemd before 253), which systemd stops whole, recording the cause on the unit before it
+# signals the cgroup; the unit stays loaded while its processes are going down, so a show at the heal
+# reads it. The heal asks about the dead CLI's OWN scope by its exact unit name (SdkSession.cli_scope_unit,
+# read from the CLI's /proc/<pid>/cgroup at connect), never a glob over the sid's scopes: an older scope
+# of the same session, kept up by a tmux server and still draining an OOM kill of its own, would answer a
+# glob and be blamed for a newer CLI's death. A unit systemd no longer has loaded (the scope collected by
+# the wrapper's --collect once every process was gone) shows LoadState=not-found with an empty ControlGroup
+# (the show still exits 0 and prints Result=success for it, verified), which reads as no verdict, never as
+# a wrong one. The cgroup path is ControlGroup under the cgroup v2 mount (CGROUP_ROOT; the same root the
+# memory-controller probe reads).
+SCOPE_SHOW_ARGV = ["systemctl", "--user", "show", "--no-pager", "-p", "Id,LoadState,Result,ControlGroup", "--"]
 SCOPE_SHOW_TIMEOUT = 10.0
 SCOPE_RESULT_OOM = "oom-kill"
+CGROUP_ROOT = "/sys/fs/cgroup"
+MEMORY_EVENTS = "memory.events"
 
 
-def scope_results(show_text: str) -> list[tuple[str, str]]:
-    """The (Id, Result) of each unit in a `systemctl show -p Id,Result <pattern>` listing: one block of
-    `Key=value` lines per loaded unit the pattern matched, blank-line separated; nothing at all for a
-    pattern that matched none (verified on systemd 255). Pure."""
-    out = []
-    for block in re.split(r"\n\s*\n", (show_text or "").strip()):
-        props = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
-        unit = (props.get("Id") or "").strip()
-        if unit:
-            out.append((unit, (props.get("Result") or "").strip()))
+def scope_show_props(show_text: str) -> dict:
+    """The `Key=value` lines of a `systemctl show -p … -- <unit>` answer for ONE unit, as a dict (values
+    stripped). Empty for an empty answer. Pure."""
+    out = {}
+    for ln in (show_text or "").splitlines():
+        if "=" in ln:
+            k, v = ln.split("=", 1)
+            out[k.strip()] = v.strip()
     return out
 
 
-def oom_killed_scope(show_text: str, sid: str) -> str | None:
-    """The session scope of `sid` in a show listing (scope_results) that systemd ended over an OOM kill
-    inside it (Result=oom-kill), or None. The unit must be one of this sid's (the name's sid8 is the
-    sid's first 8 characters), whatever the pattern matched. Pure."""
-    sid8 = str(sid)[:8].lower()
-    for unit, result in scope_results(show_text):
-        m = _SESSION_SCOPE_RE.match(unit)
-        if m and m.group(1).lower() == sid8 and result == SCOPE_RESULT_OOM:
-            return unit
+def oom_kill_count(memory_events_text: str) -> int | None:
+    """The `oom_kill` count in a cgroup's memory.events (`<key> <count>` lines), or None when the text
+    has no such line (not a memory.events, or a kernel without the counter). Pure."""
+    for ln in (memory_events_text or "").splitlines():
+        parts = ln.split()
+        if len(parts) == 2 and parts[0] == "oom_kill" and parts[1].isdigit():
+            return int(parts[1])
     return None
+
+
+def oom_verdict(props: dict, oom_kill: int | None) -> str | None:
+    """What a dead CLI's scope says about an OOM kill in it, as the evidence for the heal's log line, or
+    None. `props` is the show's answer (scope_show_props) for the exact unit; `oom_kill` is its cgroup's
+    memory.events count, None when unreadable. The count is the primary signal (a process in this scope
+    was OOM-killed, whatever the policy); Result=oom-kill the second (systemd stopped the scope over one,
+    which only a scope without OOMPolicy=continue does). Pure."""
+    if oom_kill:
+        return "%s oom_kill=%d, Result=%s" % (MEMORY_EVENTS, oom_kill, props.get("Result") or "unknown")
+    if props.get("Result") == SCOPE_RESULT_OOM:
+        return "Result=%s" % SCOPE_RESULT_OOM
+    return None
+
+
+def own_scope_unit(cgroup_text: str, pid: int, sid: str) -> str | None:
+    """The session scope a CLI STARTED, from its /proc/<pid>/cgroup listing: the romp session scope it
+    runs in (scope_unit_of) when that scope's name carries this pid and this sid's first 8 characters
+    (bin/romp-cli-scope names the unit `romp-session-<sid8>-$$-<t>` and execs into it, so a CLI in its
+    own scope always matches both); None for no scope, or one it merely inherited (a kernel launched
+    from inside a session's tool shell spawns CLIs inside that session's scope). Pure."""
+    unit = scope_unit_of(cgroup_text or "")
+    if not unit:
+        return None
+    m = _SESSION_SCOPE_RE.match(unit)
+    if not m or int(m.group(2)) != int(pid) or m.group(1).lower() != str(sid)[:8].lower():
+        return None
+    return unit
 
 
 def session_scope_units(list_lines: list[str], lastsids: list[str]) -> list[str]:
@@ -4370,6 +4446,12 @@ class SdkSession:
         # protocol/runtime state
         self.loop: asyncio.AbstractEventLoop | None = None
         self.client = None
+        # The systemd scope the live CLI runs in (bin/romp-cli-scope's `romp-session-<sid8>-<pid>-<t>.scope`),
+        # read from the CLI's own /proc/<pid>/cgroup at connect (_record_cli_scope); None when the CLI runs
+        # in no scope of its own (the scopes off, a fallback launch, a scope it merely inherited). The
+        # crash heal asks THIS unit how the CLI died (_oom_killed_scope), never a glob over the sid's scopes,
+        # so an older scope of the session still draining an OOM kill is never blamed for a newer CLI's death.
+        self.cli_scope_unit: str | None = None
         self.inflight = 0
         # The TEXTS of turns fed to the current client whose ResultMessage hasn't landed — the fed-turn
         # twin of `inflight` (append at feed, cleared at the authoritative settle), all on the loop
@@ -5503,6 +5585,25 @@ class SdkSession:
             self._release_hold_at_exit()   # the CLI's queue died with it: a held text goes back to the queue
             self.backend._on_session_gone(self)
 
+    def _record_cli_scope(self, client, cgroup=None):
+        """Record the scope unit the live CLI runs in (cli_scope_unit), read from its own /proc/<pid>/cgroup
+        while the pid is there to read: the SDK transport's process pid (client._transport._process.pid;
+        the wrapper execs systemd-run, which execs the CLI in place, so the pid the SDK spawned IS the CLI's
+        and sits in the scope by the time the handshake answered). Only a scope this CLI STARTED counts
+        (own_scope_unit: the name carries its pid and this sid); an inherited scope, a fallback launch or
+        the scopes off leave None. `cgroup` is the test seam for _read_cgroup. Never raises: the record
+        only refines a heal's wording, and a transport without the attribute is not this method's
+        problem to report."""
+        self.cli_scope_unit = None
+        if not self.backend.cli_scope:
+            return
+        try:
+            pid = int(client._transport._process.pid)
+            self.cli_scope_unit = own_scope_unit((cgroup or _read_cgroup)(pid), pid, self.sid)
+        except Exception as e:
+            self.backend._log("session %s: its CLI's scope could not be recorded at connect (%s); a crash heal will "
+                              "name no OOM kill" % (self.name, e), problem=False)
+
     async def _amain(self):
         # Lazy SDK import — keeps the module importable without the dep. RECORD a failure here before it
         # propagates: this is the FIRST thing a session does, so with the dep missing every session dies
@@ -5666,6 +5767,7 @@ class SdkSession:
                 async with ClaudeSDKClient(options=opts) as client:
                     connected = True
                     self.client = client
+                    self._record_cli_scope(client)   # the CLI's own scope unit, while its pid is alive to read
                     # The handshake IS the "this session is open" event (snapshot `connected`, the flip
                     # the kernel's opening chip stands down on) — push THIS session now. Left to the
                     # periodic cycle, a fresh session wore the opening dots seconds after its CLI was
@@ -9801,9 +9903,12 @@ class SdkBackend:
                         kw["env"][var] = ""
                 # The policy every scope carries has no variable of its own; a boot probe that found this
                 # systemd refuses it on a scope tells the wrapper so, and the wrapper leaves it off instead
-                # of finding out again, one `ignored:` line per launch. Not sent otherwise.
-                if "OOMPolicy" in self.cli_scope_rejected:
-                    kw["env"][CLI_SCOPE_OOM_POLICY_REJECTED_VAR] = "1"
+                # of finding out again, one `ignored:` line per launch. Sent on EVERY launch with an explicit
+                # value, "1" or "" (the same treatment as a refused limit above): the wrapper reads the
+                # marker from its environment, which merges this overlay over the manager's, so a stale "1"
+                # inherited there (a service.env line, a shell that exported it) would otherwise strip the
+                # policy from every scope while the boot line and /api-health said it was in force.
+                kw["env"][CLI_SCOPE_OOM_POLICY_REJECTED_VAR] = "1" if "OOMPolicy" in self.cli_scope_rejected else ""
             elif not self._cli_scope_wrapper_logged:
                 self._cli_scope_wrapper_logged = True
                 self._log("cli scope: the wrapper %s is missing or not executable (a packaging bug) — "
@@ -12917,13 +13022,14 @@ class SdkBackend:
                       "crash loop; NOT resuming again, turn left cut for the next kernel restart"
                       % sess.name)
             return
-        # The cause, when the dead CLI's scope still says: an OOM kill inside it that systemd answered by
-        # stopping the whole scope (SCOPE_SHOW_ARGV; the comment there). Named in the log and in the notice
-        # the session reads, instead of a bare exit 143 (2026-09-10).
-        oom_unit = self._oom_killed_scope(sid)
+        # The cause, when the dead CLI's own scope still says: the OOM killer took a process in it (its
+        # cgroup's memory.events count; or Result=oom-kill on a scope systemd stopped over one; the comment
+        # at SCOPE_SHOW_ARGV). Named in the log, with the evidence, and in the notice the session reads,
+        # instead of a bare exit 143 (2026-09-10).
+        oom_unit = self._oom_killed_scope(sess)
         if oom_unit:
-            self._log("session %s: claude process died mid-turn; systemd stopped its scope %s after the OOM killer "
-                      "took a process in it (Result=oom-kill); resuming with history intact" % (sess.name, oom_unit))
+            self._log("session %s: claude process died mid-turn; the OOM killer took a process in its scope %s (%s); "
+                      "resuming with history intact" % (sess.name, oom_unit[0], oom_unit[1]))
         else:
             self._log("session %s: claude process died mid-turn — resuming with history intact" % sess.name)
         nudge = CRASH_RESUME_NUDGE_OOM if oom_unit else CRASH_RESUME_NUDGE
@@ -12939,21 +13045,49 @@ class SdkBackend:
             self._log("session %s: crash-resume FAILED (turn left cut for the next kernel restart): %s"
                       % (sess.name, traceback.format_exc()))
 
-    def _oom_killed_scope(self, sid: str) -> str | None:
-        """The session scope of `sid` that systemd ended over an OOM kill inside it (Result=oom-kill), read
-        from `systemctl --user show` over this sid's scope pattern (oom_killed_scope), or None: the scopes
-        off (nothing to ask), no such unit loaded (the scope already collected, or the CLI never ran in
-        one), another Result, or a show that failed or did not answer (logged, plain). Never raises: it
-        decides the wording of a heal, not whether the heal happens."""
-        if not self.cli_scope:
+    def _oom_killed_scope(self, sess: SdkSession) -> tuple[str, str] | None:
+        """(unit, evidence) when the dead CLI's OWN scope says the OOM killer took a process in it, else
+        None. The unit is the one recorded at connect (sess.cli_scope_unit; the comment at SCOPE_SHOW_ARGV
+        says why the exact name and never a glob), asked with `systemctl --user show` for its LoadState,
+        Result and ControlGroup; its cgroup's memory.events oom_kill count is the primary signal and
+        Result=oom-kill the second (oom_verdict). None, silently: the scopes off or no unit recorded
+        (nothing to ask), a unit no longer loaded (the scope collected once every process was gone), a
+        count of 0 with another Result. None, after a PLAIN log line (it decides the wording of a heal,
+        not whether the heal happens, so it is no problem; the line is the fail-loud half of the rule): a
+        show that exited non-zero (the bus away), one that raised (the 10 s bound, no systemctl), or a
+        memory.events that could not be read, in which case Result=oom-kill still counts. Never raises."""
+        unit = sess.cli_scope_unit
+        if not self.cli_scope or not unit:
             return None
-        pattern = "%s%s-*.scope" % (SESSION_SCOPE_PREFIX, str(sid)[:8])
+        sid8 = str(sess.sid)[:8]
         try:
-            r = subprocess.run(SCOPE_SHOW_ARGV + [pattern], capture_output=True, text=True, timeout=SCOPE_SHOW_TIMEOUT)
+            r = subprocess.run(SCOPE_SHOW_ARGV + [unit], capture_output=True, text=True, timeout=SCOPE_SHOW_TIMEOUT)
         except Exception as e:
-            self._log("session scope result (%s): %s" % (str(sid)[:8], e))
+            self._log("session scope result (%s): systemctl show %s did not answer: %s" % (sid8, unit, e), problem=False)
             return None
-        return oom_killed_scope(getattr(r, "stdout", "") or "", sid)
+        rc = getattr(r, "returncode", 0)
+        if rc != 0:
+            detail = ((getattr(r, "stderr", "") or "").strip().split("\n", 1)[0]) or "no detail"
+            self._log("session scope result (%s): systemctl show %s exited %s (%s)" % (sid8, unit, rc, detail), problem=False)
+            return None
+        props = scope_show_props(getattr(r, "stdout", "") or "")
+        if props.get("LoadState", "loaded") != "loaded" or not props.get("Id"):
+            return None
+        count = None
+        cgroup = props.get("ControlGroup") or ""
+        path = os.path.join(CGROUP_ROOT, cgroup.lstrip("/"), MEMORY_EVENTS) if cgroup else None
+        try:
+            if not path:
+                raise OSError("the unit shows no ControlGroup")
+            with open(path) as f:
+                count = oom_kill_count(f.read())
+            if count is None:
+                raise OSError("no oom_kill line in %s" % path)
+        except OSError as e:
+            self._log("session scope result (%s): %s of %s could not be read (%s); only systemd's Result can say"
+                      % (sid8, MEMORY_EVENTS, unit, e), problem=False)
+        evidence = oom_verdict(props, count)
+        return (unit, evidence) if evidence else None
 
     def _turn_completed(self, sid: str):
         """A turn's ResultMessage landed — the session is demonstrably able to finish turns again, so

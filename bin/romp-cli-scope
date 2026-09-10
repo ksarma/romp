@@ -63,9 +63,11 @@
 # only, so a limit added later cannot bring it (verified). It used to ride along only with a memory
 # limit below, so a scope started without one kept `stop`. The kernel's boot probe settles once whether
 # this systemd takes the property on a scope (OOMPolicy= on scopes needs 253) and, when it does not,
-# hands ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1 down, so the refusal is not repeated on every launch; a
-# scope on such a systemd takes no action on an OOM kill inside it anyway, which is the outcome
-# `continue` asks for. The variable is the kernel's, never a setting: without it the property goes on.
+# hands ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1 down, so the refusal is not repeated on every launch; such
+# a systemd stops the whole scope on an OOM kill inside it, as every scope did before the property went
+# on all of them, and the kernel probes the memory limits apart from the policy, so they still apply
+# there. The variable is the kernel's, never a setting: the kernel sends it on every launch, "1" or
+# empty, and only the value 1 leaves the property off.
 #
 # Per-session limits (2026-09-06), every one opt-in and none set by default. A session's shell that
 # globbed a bloated /tmp grew past 30 GB, and the box's userspace OOM killer took the largest process

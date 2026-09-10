@@ -1374,7 +1374,10 @@ error center also shows) naming the variable and the rule, and the wrapper
 receives that variable empty, so the value is applied nowhere. The probe at the
 kernel's start, described below, catches a value that passes the rule but that
 systemd refuses (a size past its range; `OOMPolicy=` on a scope before systemd
-253) and reports it the same way, quoting systemd.
+253) and reports it the same way, quoting systemd; the policy refused on such a
+systemd, by a failure that names it, is the plain line described in the
+`OOMPolicy=continue` paragraph below, and the memory limits are then probed
+apart from it, so they stand where the policy does not.
 The wrapper checks the same rule on every launch and reports a value it refuses
 on stderr as `romp-cli-scope: ignored: …`, which the kernel logs as a problem
 naming the session and counts in `/api-health` (`cliScope.limitsIgnored`, see
@@ -1391,11 +1394,19 @@ a hardened container). Without a check at the kernel's start, each would be
 refused again on every launch, one `ignored:` line and one problem each, while
 the kernel's boot line and `/api-health` (the `cliScope` block) said the value
 was in force. So with the scopes on, the kernel runs the wrapper's own steps
-once at its start: it starts a probe scope carrying the memory properties, and
-has a throwaway child write the adjustment to its own `oom_score_adj`. A refusal
-there is a problem line at the kernel's start, joins `cliScope.rejected` in
-`/api-health`, and reaches the wrapper as an empty variable, so no launch
-repeats it. The adjustment's problem line quotes the shell and says which step
+once at its start: it starts a probe scope carrying the memory properties and
+`OOMPolicy=continue`, and has a throwaway child write the adjustment to its own
+`oom_score_adj`. A refusal there is a problem line at the kernel's start (a
+plain line when only the policy was refused, by a failure that named it), joins
+`cliScope.rejected` in `/api-health`, and reaches the wrapper as an empty
+variable, or, for the policy, as `ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1`, so no
+launch repeats it. When the failure names the policy and a memory limit is set,
+the kernel probes the limits alone once more: if that scope starts, only the
+policy is refused and the limits stand (the memory-controller check below then
+runs with the limits alone); if it fails too, the limits are refused with the
+policy, as one problem line quoting both failures; if it does not answer, the
+policy is refused and the limits are left unsettled, as described next. The
+adjustment's problem line quotes the shell and says which step
 failed: it names the floor only when the file opened and the write was refused;
 otherwise it says the file could not be opened, and why. The wrapper's
 `ignored:` line makes the same distinction. A probe that does not answer (the
@@ -1428,16 +1439,34 @@ never becomes a cut turn. The property has to be set when the scope is created:
 `systemctl set-property` takes cgroup properties only, so a limit added to a
 running scope cannot add it. Until 2026-09-10 the wrapper set it only along
 with a memory limit, so a scope started without one kept `stop`. A systemd
-before 253 refuses `OOMPolicy=` on a scope; the kernel's probe at its start
-(below) settles that once, hands the wrapper `ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1`
-so that no launch finds it out again, and says so in a plain line rather than a
-problem, because a scope on such a systemd takes no action on an OOM kill inside
-it, which is the outcome the property asks for. The variable is the kernel's,
-not a setting. `/api-health` shows the policy as `cliScope.oomPolicy`. When a
-session's CLI dies mid-turn and its scope reads `Result=oom-kill` (a scope
-started before the property went on every one, or one `systemd-oomd` stopped),
-the kernel names the OOM kill in its log line for the resume and in the notice
-the session reads, instead of reporting a bare exit.
+before 253 refuses `OOMPolicy=` on a scope and stops the whole scope on an OOM
+kill inside it, as every scope did before the property went on all of them; the
+kernel's probe at its start (above) settles the refusal once, hands the wrapper
+`ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1` so that no launch finds it out again, and
+says so in a plain line rather than a problem, since the refusal is the
+machine's systemd version, not a setting to fix. The memory limits are probed
+apart from the policy (above), so on such a systemd they still apply; a problem
+line comes only when a limit is refused. The variable is the kernel's, not a
+setting: the kernel sends it on every launch with an explicit value, `1` or
+empty, so a value inherited from the manager's environment is never read.
+`/api-health` shows the policy as `cliScope.oomPolicy`. When a session's CLI
+dies mid-turn, the kernel asks systemd about the scope that CLI ran in, by its
+exact unit name (recorded from the CLI's own `/proc/<pid>/cgroup` when it
+connected; never a pattern over the session's scopes, so an older scope of the
+same session, kept up by a tmux server and still draining an OOM kill of its
+own, is not blamed for a newer CLI's death), and reads two signals. The first is
+the scope's cgroup `memory.events`, whose `oom_kill` count says the OOM killer
+took a process in that scope, whatever the policy; under `continue` systemd
+records no failure on the unit, so this counter is the only trace. The second is
+the unit's `Result=oom-kill`, which systemd records on a scope WITHOUT the
+property when it stops the scope over an OOM kill in it: a launch on a systemd
+that refused the property (the marker above), a launch whose pre-flight dropped
+the properties (the `ignored:` line above), or a scope started before the
+property went on every one. Either signal makes the kernel name the OOM kill,
+with the evidence, in its log line for the resume and in the notice the session
+reads, instead of reporting a bare exit; a scope systemd has already collected
+(every process gone) reads as no verdict, and a `systemctl show` that fails or a
+`memory.events` that cannot be read is a plain log line and the bare notice.
 systemd logs each kill to the user journal as `<unit>: A process of this unit
 has been killed by the OOM killer` (`journalctl --user --since today | grep
 'romp-session-'`), and a scope it stopped over one as `<unit>: Failed with result
@@ -2162,8 +2191,9 @@ label the account digest itself, so a bucket can be matched to the log.
     rule or by this machine at the kernel's start (memory properties systemd
     rejected; an adjustment the process could not write), each also a problem
     line at the kernel's start; and `OOMPolicy` when this systemd refused the
-    policy on a scope (a plain line when the refusal named it, since nothing is
-    lost on such a systemd; a problem otherwise).
+    policy on a scope (a plain line when the refusal named it: the machine's
+    systemd version, not a setting, and the memory limits are probed apart from
+    the policy and stand; a problem otherwise).
   - `oomPolicy`, the OOM policy every session scope carries: `"continue"`, or
     `null` when this systemd refused it or the scopes are off. With `continue`
     an OOM kill inside a scope ends that process alone; under systemd's default
@@ -2177,9 +2207,11 @@ label the account digest itself, so a bucket can be matched to the log.
     answer, and `unsettled` says which.
   - `unsettled`, the names of the kernel's start-time checks that were due and
     settled nothing: `memoryLimits` (the probe scope carrying the memory
-    properties did not answer, or failed both with and without them),
+    properties did not answer, or failed both with and without them; or, with
+    the policy refused, the probe with the limits alone did not answer),
     `oomPolicy` (the same probe, which carries the policy too, so the two are
-    named together when a limit is set), `memoryController` (the check inside it
+    named together when a limit is set and the probe settles nothing),
+    `memoryController` (the check inside it
     gave no marker), `oomScoreAdj` (the throwaway child's write did not answer).
     Empty when every due check answered, and when none was due (the scopes
     off). A value listed above whose check is named here is set and handed to
