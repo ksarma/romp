@@ -252,6 +252,7 @@ function blank(s: string, literals: boolean): string {
     while (j >= 0 && /\s/.test(out[j])) j--;
     if (j < 0) return true;
     if (out[j] === ")" || out[j] === "]") return false;
+    if (out[j] === "\"" || out[j] === "'" || out[j] === "`") return false;   // a closing quote or backtick: a string or template literal is an operand
     if (j >= 1 && ((out[j] === "+" && out[j - 1] === "+") || (out[j] === "-" && out[j - 1] === "-"))) return false;   // a postfix ++ or --
     if (!/[\w$]/.test(out[j])) return true;
     let k = j; while (k >= 0 && /[\w$]/.test(out[k])) k--;
@@ -629,6 +630,10 @@ const POSITIVE: Array<[string, string, string]> = [   // [the shape it must trip
   // a slash after a postfix ++ or -- is a division: the code up to the next slash stays code
   ["assignment", "const v = x++ / 2; n.EDGE = null; const w = y / 3;", "parentNode"],
   ["assignment", "const v = x-- / 2; n.EDGE = null; const w = y / 3;", "nextSibling"],
+  // a slash after a closing quote or backtick is a division: a string or template literal is an operand
+  ["assignment", "const x = '10' / 2; n.EDGE = null; const y = a / b;", "parentNode"],
+  ["assignment", "const x = \"10\" / 2; n.EDGE = null; const y = a / b;", "children"],
+  ["assignment", "const x = `10` / 2; n.EDGE = null; const y = a / b;", "parent"],
   // a conditional whose final operand is an admitted value, read after its last colon
   ["assignment", "win.EDGE = opts.framed ? {} : win;", "parent"],   // the window stand-in of a framed-pane test
   ["assignment", "win.EDGE = framed ? {} : win;\nwin.postMessage = post;", "parent"],
@@ -685,6 +690,8 @@ const NEGATIVE: Array<[string, string, string]> = [   // [what it is, scratch so
   ["a regex pin on the line after a trailing line comment", "const pins = [\n  /a/,   // one\n  /\\{ EDGE: null \\}/,   // two\n];", "parentNode"],
   ["a cascade of regex pins, one per line, each with a trailing comment", "const pins = [\n  /x/,   // note\n  /class N { EDGE = []; }/,   // a class\n  /\\{ EDGE: undefined \\}/,   // a literal\n];", "children"],
   ["a regex after the semicolon that follows a postfix increment (the ++ rule reads the two characters before the slash)", "i++; /\\{ EDGE: null \\}/.test(s);", "parentNode"],
+  ["a division after a string, then a regex pin: the pin is a regex, not code", "const a = 'x' / 2; const s = /{ EDGE: null }/;", "parentNode"],
+  ["a division after a template, then a regex pin", "const a = `x` / 2; const s = /class N { EDGE = []; }/;", "children"],
   ["a conditional with a member-expression head whose final operand is an object literal (out of scope)", "win.EDGE = opts.framed ? win : {};", "parent"],
   ["a conditional with a member-expression head whose final operand is a member expression (out of scope)", "win.EDGE = opts.framed ? win : g.top;", "parent"],
   ["a conditional carrying a call (out of scope)", "n.EDGE = mk(x ? y : kid);", "firstChild"],
@@ -709,11 +716,13 @@ const INDISTINGUISHABLE: Array<[string, string, string, string]> = [   // [what 
   ["a regex literal right after a condition's closing paren (read as a division: its text stays code)", "class field", "if (x) /class N { EDGE = null; }/.test(y);", "parentNode"],
 ];
 // the misreads the lexer docstring accepts: a literal read as code whose quote or backtick then swallows the code after
-// it, HIDING a shape (a false negative, never a false positive). Each is pinned so a lexer that starts reading the write
-// moves the case to POSITIVE and the docstring's account with it.
+// it, or a division after a closing brace read as a regex that runs to the next slash on the line, HIDING a shape (a
+// false negative, never a false positive). Each is pinned so a lexer that starts reading the write moves the case to
+// POSITIVE and the docstring's account with it.
 const ACCEPTED_MISREADS: Array<[string, string, string]> = [   // [what it is, scratch source, edge name]
   ["a quote inside a regex right after a condition's closing paren opens a string to the line end", "if (x) /'/.test(y); const n = { EDGE: null };", "parentNode"],
   ["a backtick inside such a regex opens a template to the next backtick in the file", "if (x) /`/.test(y);\nconst n = { EDGE: null };\nconst t = `z`;", "parentNode"],
+  ["a division after a closing brace opens a regex to the next slash on the line", "const q = {} / 2; n.EDGE = null; const r = y / 3;", "parentNode"],
 ];
 test("the detector: each shape trips on a scratch source, its near-misses do not, and the code this detector does not tell from a shape trips as the docstring says", () => {
   for (const [shape, src, edge] of POSITIVE) {
