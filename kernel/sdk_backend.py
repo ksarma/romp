@@ -5961,8 +5961,9 @@ class SdkSession:
         names = self._pick_names_locked()
         what_waits = self._picks_phrase(names, "pending", "pending") if names else "the pending reconnect"
         still = ("%s still run" % self._work_phrase(n_sub, n_task)) if (n_sub or n_task) else "the live sets are empty"
-        self._log_quietly("reconnect (%s): %s ended; %s; %s waits for the next turn's settle"
-                          % (self.name, what, still, what_waits))
+        # the verb agrees in number, as the arm's ride line does (review round 11; round 4 reached the ride line only)
+        self._log_quietly("reconnect (%s): %s ended; %s; %s %s for the next turn's settle"
+                          % (self.name, what, still, what_waits, "wait" if len(names) > 1 else "waits"))
 
     def _withdraw_held_pick(self, surface: str, how: str = "withdrawn", standing: bool = False) -> None:
         """A newer pick made `surface`'s pending reconnect moot: the ONE withdraw routine for every surface

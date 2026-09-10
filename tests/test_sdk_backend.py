@@ -5458,8 +5458,9 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         return [str(m) for m in self.logs if "live work finished" in str(m)]
 
     def _ended(self):
-        """The removal sites' lines: what ended, and that the pick waits for the next turn's settle."""
-        return [str(m) for m in self.logs if "waits for the next turn's settle" in str(m)]
+        """The removal sites' lines: what ended, and that the pick waits for the next turn's settle (the verb agrees
+        in number since review round 11, so the filter reads past it)."""
+        return [str(m) for m in self.logs if " for the next turn's settle" in str(m)]
 
     def _seed(self, s):
         return sb.read_sdk_defaults(s.backend.state_dir)
@@ -5697,6 +5698,26 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self._stop(s, "a1")
         self._settle(s)
         self.assertIn("the held effort and auth picks reconnect now", self._armed()[0])
+
+    def test_d3_two_pending_picks_wait_for_the_settle_in_the_plural(self):
+        # _note_work_ended's line hard-coded "waits" (review round 11, kernel-1): with two picks pending it read "the
+        # pending effort and auth picks waits for the next turn's settle", a number disagreement round 4's ride-line
+        # fix did not reach. The verb follows the count, as _reset_reconnect_state's ride line does
+        s = self._sess(auth="key")
+        s._launched_auth = "key"
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "max")
+        s.backend.set_auth(self.SID, "login")
+        self._stop(s, "a1")
+        ended = self._ended()
+        self.assertEqual(len(ended), 1, self.logs)
+        self.assertIn("the live sets are empty; the pending effort and auth picks wait for the next turn's settle", ended[0])
+        # one pick: the singular, as before
+        s = self._sess()
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "max")
+        self._stop(s, "a1")
+        self.assertIn("the pending effort pick waits for the next turn's settle", self._ended()[0])
 
     def test_e_a_rewind_still_reconnects_over_live_work(self):
         # a rewind replaces the conversation from a point; the work inside the old process is what it
