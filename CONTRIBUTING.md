@@ -16,12 +16,24 @@ bats tests/*.bats          # the shell surfaces (hooks, postal, manager)
 cd vscode-extension && npm ci && npm test
 ```
 
-`npm test` caps `node --test` at 8 worker processes (`--test-concurrency=8`). Node's
-default is one worker per core minus one, so a 32-core machine would start 31 test
-processes at once, some driving a headless Chromium, and overlapping runs there ran the
-machine out of memory. To use another count, build the tests and start the runner
-yourself, from `vscode-extension/`: `node esbuild.js --tests && node --test
---test-concurrency=N 'out-tests/**/*.test.js'`.
+`npm test` caps `node --test` at 8 worker processes (`--test-concurrency=8`) and each
+worker's V8 heap at 2 GB (`--max-old-space-size=2048`). Node's default concurrency is
+one worker per core minus one, so a 32-core machine would start 31 test processes at
+once, some driving a headless Chromium, and overlapping runs there ran the machine out
+of memory. V8's default heap scales with the machine's RAM (about a quarter of it, up to
+about 4 GB on 64-bit: 4144 MB measured under node 22 on the machine that ran the suite,
+about 2 GB on an 8 GB laptop), so the cap is what bounds eight workers to 16 GB. It is
+sized at about 8x the largest DOM fixture measured, `ui/timeline-tags-scale.test.ts` at
+210 to 246 MB RSS over ten runs (the suite-wide per-file peak was not measured). The cap
+bounds the V8 heap only (objects, strings, arrays); ArrayBuffer and typed-array backing
+stores live outside it, so it would not have stopped the runaway of 2026-09-09, in which
+node's `assert` built a diff of tens of GB in typed arrays from a failing assertion on
+a fake DOM node. That class is stopped by the fake DOM itself (`ui/test-dom-shim.ts`: a
+node inspects as a short projection, never as its tree) and bounded only by a process
+or cgroup limit (`systemd-run --scope -p MemoryMax=...`, `prlimit`). To use another
+worker count, build the tests and start the runner yourself, from `vscode-extension/`:
+`node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=N
+'out-tests/**/*.test.js'`.
 
 `tests/gitleaks-config.bats` checks the secret-scanning rules against the real
 scanner and skips itself when `gitleaks` is not installed (`brew install

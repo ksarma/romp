@@ -14,6 +14,7 @@
 // the inline swatches posted. Synthetic ids and names only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { inspect } from "node:util";
@@ -981,4 +982,21 @@ test("executed: thirty tags and forty sessions: every row, every chip and the se
   swatches(panel._tagColorPop)[0]._listeners.click();
   assert.deepEqual([tagOps()[0].op, tagOps()[0].tid, tagOps()[0].color], ["recolor", "g30", PALETTE[0]]);
   panel._closeViewsDialog();
+});
+
+// ── the runner cap: a source pin on vscode-extension/package.json's test script and CONTRIBUTING.md's passage ────
+test("source pin: npm test caps each worker's V8 heap at 2 GB and the workers at eight, and CONTRIBUTING.md carries the cap, its derivation and its limit", () => {
+  // npm test runs in vscode-extension/, so the package is the cwd's. --max-old-space-size=2048 caps each test child's V8
+  // heap (objects, strings, arrays): about 8x this file's peak (210 to 246 MB RSS over ten runs), so eight workers stay
+  // under 16 GB where V8's default takes up to about 4 GB each. It does not count ArrayBuffer or typed-array backing
+  // stores, so it would not have stopped the Myers trace of 2026-09-09 (the projection does; only a process or cgroup
+  // limit bounds that class). --test-concurrency=8 is the worker cap (2026-09-08); node v22 refuses it in NODE_OPTIONS,
+  // so both flags travel on the script line, and a fold that drops either fails here rather than in the next runaway.
+  const pkg = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"));
+  assert.equal(pkg.scripts.test, "node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=8 'out-tests/**/*.test.js'");
+  const doc = fs.readFileSync(path.resolve(process.cwd(), "..", "CONTRIBUTING.md"), "utf8").replace(/\s+/g, " ");
+  assert.ok(doc.includes("`--max-old-space-size=2048`"), "CONTRIBUTING.md names the heap cap");
+  for (const said of ["8x the largest DOM fixture", "V8 heap only", "typed-array backing stores", "node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=N 'out-tests/**/*.test.js'"]) {
+    assert.ok(doc.includes(said), "CONTRIBUTING.md says: " + said);
+  }
 });
