@@ -147,8 +147,10 @@ class RestartRefusalProbeTest(unittest.TestCase):
     """The web shell's Restart discarded the kernel's answer (review round 2, 2026-09-10): a 502 (the manager
     refused the restart) left the boot splash up for the two-minute backstop and then reloaded onto the same
     kernel, hiding the dashboard and the bell the whole time. Now a not-ok answer skips the /healthz poll,
-    drops the splash, restores the rail button and puts the kernel's error text in the bell under the refused
-    kind; a 2xx polls as before."""
+    drops the splash and restores the rail button; a 2xx polls as before. The page files NO notice of its
+    own (review round 3, 2026-09-10): the kernel's /restart handler filed the refusal under the refused kind
+    before it answered, and the feed pane mirrors that into the same bell, so a page-side copy of the text
+    made one refused click read as two rows."""
 
     def _probe(self, scenario):
         import json
@@ -168,17 +170,15 @@ class RestartRefusalProbeTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr[:2000])
         return json.loads(r.stdout.strip().splitlines()[-1])
 
-    def test_a_refused_restart_polls_nothing_drops_the_splash_restores_the_button_and_lands_in_the_bell(self):
+    def test_a_refused_restart_polls_nothing_drops_the_splash_restores_the_button_and_files_no_notice_of_its_own(self):
         got = self._probe("refused")
         self.assertEqual(got["restarts"], 1)
         self.assertEqual(got["healthz"], 0, "nothing is restarting: no poll for a new boot id")
         self.assertEqual(got["reloads"], 0)
         self.assertIs(got["bootGone"], True, "the splash comes down")
         self.assertEqual((got["railPointer"], got["railOpacity"]), ("", ""), "the rail button is back")
-        self.assertEqual(len(got["notices"]), 1, got["notices"])
-        self.assertEqual(got["notices"][0]["kind"], "refused")
-        self.assertIn("the manager refused (HTTP 401)", got["notices"][0]["text"])
-        self.assertIn("Run romp refresh", got["notices"][0]["text"], "the kernel's text carries the way out")
+        self.assertEqual(got["notices"], [], "the kernel's own notice is the one row in the bell, through the feed mirror")
+        self.assertNotIn("__rompNotify('refused'", km._LANDING_SETTINGS_JS, "no page-side copy of the kernel's text")
 
     def test_a_taken_restart_polls_for_the_new_boot_id_under_the_splash_as_before(self):
         got = self._probe("taken")
