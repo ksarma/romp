@@ -45,8 +45,9 @@ function refusingLib(message: string): FakeLib {
   return { lib: lib as unknown as PdfLib, calls };
 }
 let created = 0;
-// hideEdges: the element inspects as its primitives (ui/test-dom-shim.ts), never as the records and children it hangs
-const el = (tag: string) => { created++; const children: any[] = []; return hideEdges({ tagName: tag.toUpperCase(), style: {}, dataset: {}, children, appendChild() {}, remove() {} }); };
+// hideEdges: the element inspects as its primitives (ui/test-dom-shim.ts), never as the records and children it hangs;
+// the children key is written out (not a shorthand) so the ratchet's detector keeps reading the literal as a fake DOM
+const el = (tag: string) => { created++; return hideEdges({ tagName: tag.toUpperCase(), style: {}, dataset: {}, children: [] as any[], appendChild() {}, remove() {} }); };
 /** A container render() must never reach for on a document it refuses: every property read throws. */
 const untouchable = () => new Proxy({}, {
   get(_t, k) { throw new Error("render() touched the container (" + String(k) + ") for a document pdf.js refused"); },

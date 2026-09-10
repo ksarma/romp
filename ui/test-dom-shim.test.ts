@@ -8,8 +8,9 @@
 // or a namespace import, either quote style on the specifier, with or without .js; an import without a call in code
 // is not switched), or is named on one of the two lists below, each pinned to its exact length by a constant:
 // ALLOWLIST, the unmigrated fakes, empty since 2026-09-10 and never to grow (a file that comes off lowers the constant
-// in the same commit, a new file may not join), and NON_DOM_EDGES, the files whose
-// edge-named key is a documented non-DOM use (a data fixture, a list model), each with its reason. There is no
+// in the same commit, a new file may not join), and NON_DOM_EDGES, the files whose edge-named key is a documented
+// non-DOM use (a data fixture, a list model), each with its reason and the count of edge-initialising lines the
+// detector reads in it, pinned so a fake that grows in a listed file trips. There is no
 // vocabulary gate: a window stand-in's parent, a goal fixture's children and a class's parentNode are the same kind
 // of property to a regex, a failing dump walks each, and the cure for a fake is the same one-line call. The rule hides
 // the edges at CREATION: a property product code hangs on a node later enumerates, whatever its type, and a
@@ -382,6 +383,19 @@ function blank(s: string, literals: boolean): string {
 /** The names of the shapes the code of `s` initialises an edge in; empty when none. */
 const edgeShapes = (s: string): string[] => { const c = blank(s, true); return Object.keys(EDGE_INIT).filter((k) => EDGE_INIT[k].test(c)); };
 const initsEdge = (s: string) => edgeShapes(s).length > 0;
+/** The lines (1-based) on which the code of `s` initialises an edge: for every shape's every match over the blanked
+ *  code, the line of the first edge name inside the match. NON_DOM_EDGES pins each listed file's count, so a fake that
+ *  grows in a listed file, in any shape, on any new line, changes the number the ratchet checks. */
+const edgeLines = (s: string): number[] => {
+  const code = blank(s, true), edge = new RegExp("\\b" + KEY + "\\b"), out = new Set<number>();
+  for (const k of Object.keys(EDGE_INIT)) {
+    for (const m of code.matchAll(new RegExp(EDGE_INIT[k].source, EDGE_INIT[k].flags + "g"))) {
+      const at = m[0].search(edge);
+      out.add(code.slice(0, m.index! + (at < 0 ? 0 : at)).split("\n").length);
+    }
+  }
+  return [...out].sort((a, b) => a - b);
+};
 /** The credential: an import of hideEdges or nodeFactory from the shared module AND a call of one of them, in code.
  *  The import is a statement in code at line start (its text up to the specifier reads the same once every literal
  *  is blanked: an import line quoted inside a template or a backslash-continued string is not one), either quote
@@ -456,15 +470,19 @@ const ALLOWLIST = [
 // to take off. The ratchet pins it by equality, so a file that comes off lowers this in the same commit, and neither
 // the list nor this number goes up.
 const ALLOWLIST_MAX = 11;
-// NON_DOM_EDGES: the test files whose edge-named key the detector reads but which fake no DOM, each with its reason. A
-// listed file is a DOCUMENTED NON-DOM USE of an edge-named key, never an unmigrated fake: the detector reads shape, not
-// meaning, and a goal fixture's children or a list model's children initialise no edge a failing dump could walk (a
-// dump of each is the fixture's own few lines). NON_DOM_EDGES_MAX is this list's exact length too: a file that joins
-// raises it in the same commit, with its reason; one that stops reading as a shape, calls the module or is gone comes
-// off and lowers it.
-const NON_DOM_EDGES: Array<[string, string]> = [   // [file, why its edge-named key is no DOM edge]
-  ["webview/card-subgoals.test.ts", "a goal fixture's children array holds ids (strings): a data tree the card renders, not a DOM"],
-  ["webview/tab-snapshot-view.test.ts", "a list model's children are plain rows of an id and a text with no edge back, so a dump is the rows"],
+// NON_DOM_EDGES: the test files whose edge-named key the detector reads but which fake no DOM, each with its reason
+// and the count of lines on which the detector reads an edge init in it. An entry documents the use AS IT READS TODAY:
+// the detector reads shape, not meaning, and a goal fixture's children or a list model's children initialise no edge
+// a failing dump could walk (a dump of each is the fixture's own few lines). The count is what the pin enforces: a
+// fake DOM that later grows in a listed file, in any shape, adds a line the detector reads and the count changes,
+// where the list alone would have stayed green (a rewrite of the documented line itself, one for one, is the move the
+// count cannot see; the reason is the reviewer's check on that). A listed file has no projection test, so the runner's
+// cgroup cap is its backstop. NON_DOM_EDGES_MAX is this list's exact length too: a file that joins raises it in the
+// same commit, with its reason and count; one that stops reading as a shape, calls the module or is gone comes off and
+// lowers it.
+const NON_DOM_EDGES: Array<[string, string, number]> = [   // [file, why its edge-named key is no DOM edge, edge-initialising lines the detector reads]
+  ["webview/card-subgoals.test.ts", "a goal fixture's children array holds ids (strings): a data tree the card renders, not a DOM", 1],
+  ["webview/tab-snapshot-view.test.ts", "a list model's children are plain rows of an id and a text with no edge back, so a dump is the rows", 1],
 ];
 const NON_DOM_EDGES_MAX = 2;
 const NON_DOM = NON_DOM_EDGES.map(([f]) => f);
@@ -481,7 +499,7 @@ const SWITCHED = [
   "timeline-transform-tick.test.ts", "timeline-views-ack.test.ts", "timeline-zoom-anchor.test.ts", "webview/tab-color-picker.test.ts",
 ];
 
-test("ratchet: every UI test file that initialises an edge calls the shared module, is on the allowlist or is a documented non-DOM use; every listed file still reads as one; each list's length is its pinned count", () => {
+test("ratchet: every UI test file that initialises an edge calls the shared module, is on the allowlist or is a documented non-DOM use; every listed file still reads as one; each list's length is its pinned count, and each non-DOM entry's edge-line count holds", () => {
   const files = testFiles();
   assert.ok(files.includes("test-dom-shim.test.ts") && files.includes("webview/tab-color-picker.test.ts"), "the sweep covers ui/ and ui/webview/");
   const matching = files.filter((f) => needsListing(src(f)));
@@ -504,10 +522,39 @@ test("ratchet: every UI test file that initialises an edge calls the shared modu
     "replaces its entry and the count stands; a file that comes off lowers the constant in the same commit; a new file may not join, so neither the list nor the constant goes up");
   assert.equal(NON_DOM_EDGES.length, NON_DOM_EDGES_MAX,
     "NON_DOM_EDGES holds " + NON_DOM_EDGES.length + " files, not its pinned count of " + NON_DOM_EDGES_MAX + ": a file that joins or leaves moves the constant in the same commit");
-  for (const [f, why] of NON_DOM_EDGES) assert.ok(why.trim().length >= 40, f + " carries a one-line reason its edge-named key is no DOM edge");
+  for (const [f, why, n] of NON_DOM_EDGES) {
+    assert.ok(why.trim().length >= 40, f + " carries a one-line reason its edge-named key is no DOM edge");
+    const found = edgeLines(src(f));
+    assert.equal(found.length, n, f + " initialises an edge-named key on " + found.length + " line(s) (" + found.join(", ") + "), not the " + n + " its NON_DOM_EDGES entry " +
+      "pins: the file changed under its documented non-DOM use, so re-examine it. A fake DOM that grew there migrates onto the shim (hideEdges at the end of each constructor " +
+      "or on the literal, plus a projection test) and the file comes off this list; a non-DOM use that grew or shrank is re-documented, reason and count, in the same commit");
+  }
   assert.deepEqual(ALLOWLIST, ALLOWLIST.slice().sort(), "the allowlist is sorted, so a change to it reads as one line");
   assert.deepEqual(NON_DOM, NON_DOM.slice().sort(), "NON_DOM_EDGES is sorted by file, so a change to it reads as one line");
   assert.equal(new Set([...ALLOWLIST, ...NON_DOM]).size, ALLOWLIST.length + NON_DOM.length, "no name twice, within or across the two lists");
+});
+
+test("the NON_DOM_EDGES count pin: a listed file's copy with one more edge-initialising line, in either shape, counts one more, so the pin goes red on growth; edgeLines counts lines, not matches", () => {
+  for (const [f, , n] of NON_DOM_EDGES) {
+    const s = src(f);
+    assert.equal(edgeLines(s).length, n, f + " counts its pinned lines");
+    assert.equal(edgeLines(s + "\n" + scratch("const extra = { tagName: 'DIV', EDGE: null, appendChild() {} };\n", "parentNode")).length, n + 1, f + ": an appended node literal adds one line");
+    assert.equal(edgeLines(s + "\n" + scratch("class Extra {\n  EDGE: Extra | null = null;\n  appendChild(c: Extra) { c.EDGE = this; }\n}\n", "parentNode")).length, n + 2, f + ": an appended class fake adds its field line and its assignment line");
+  }
+  assert.deepEqual(edgeLines(scratch("const n = { EDGE: null, x: 1 };\nclass N { EDGE = []; }\nn.EDGE = kid;\n", "children")), [1, 2, 3], "one entry per line, across shapes");
+  assert.deepEqual(edgeLines(scratch("const n = { EDGE: null, kids: [] }; n.EDGE = other;\n", "parentNode")), [1], "two inits on one line count once");
+  assert.deepEqual(edgeLines(scratch("// EDGE: null\nconst s = 'EDGE: []'; /* n.EDGE = kid */\n", "parentNode")), [], "comments and strings count for nothing");
+});
+
+test("every ui/webview test file whose code calls hideEdges( initialises an edge the detector reads: a caller the detector cannot see is a shape drift, the credential read but the rule not", () => {
+  // ui/test-dom-shim.test.ts (its text uses EDGE) and ui/timeline-tags-scale.test.ts (nodeFactory nodes, hideEdges on a variant-shape
+  // node it builds) are the two callers outside ui/webview/ that the detector does not read, by design; the webview files are the rule's
+  const callers = testFiles().filter((f) => f.startsWith("webview/") && /\bhideEdges\(/.test(blank(src(f), true)));
+  assert.ok(callers.length >= 100, "the sweep found " + callers.length + " webview callers");
+  assert.deepEqual(callers.filter((f) => !initsEdge(src(f))), [],
+    "a ui/webview test file calls hideEdges( on an object whose edge the detector does not read (a shorthand key, a spread, a computed key), so the ratchet " +
+    "would stay green if the call came off. Write the edge in a shape it reads (a declared field, `EDGE: [] as any[]` on a literal), or add the shape to the " +
+    "detector with a POSITIVE case");
 });
 
 test("the files that carried the shim's copies import nodeFactory or hideEdges, call it, and keep no node factory of their own; this file's own code initialises no edge", () => {
