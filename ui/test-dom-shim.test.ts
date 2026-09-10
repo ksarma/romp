@@ -461,27 +461,16 @@ const needsListing = (s: string) => initsEdge(s) && !switched(s);
 // end of each or on the literal, plus a projection test; the file-comments Ev classes end in hideEdges too, so an
 // event's target and currentTarget hide with the nodes). The eight class fakes main added between this branch's base
 // and its landing (actions, file-comments-markclick, file-comments-markclick-controls, file-comments-seen-fixes,
-// -seen-review2, -seen-review3, file-comments-send-seen, file-view-notice) were migrated the same way. What the list
-// holds at this commit is the eleven PR 523 listed at its final rebase: the seven file-comments-about and
-// file-comments-resolve-answered class fakes, the tab-hide and preview-retry-pace class fakes, federation-hidden-hold's
-// conditional-valued window parent and the fold's timeline-tag-chips node literal.
-const ALLOWLIST = [
-  "timeline-tag-chips.test.ts",   // an object-literal fake the upstream fold added after this branch's base, listed at the final rebase
-  "webview/federation-hidden-hold.test.ts",   // a conditional-valued window parent, read since the sixth review round
-  "webview/file-comments-about-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-about-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-arrivals-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-resolve-answered-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-resolve-answered-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-resolve-answered.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/preview-retry-pace.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/tab-hide.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-];
-// The list's exact length: 11 at this commit, the eleven PR 523 listed at its final rebase, for the rebase's migration
-// to take off. The ratchet pins it by equality, so a file that comes off lowers this in the same commit, and neither
-// the list nor this number goes up.
-const ALLOWLIST_MAX = 11;
+// -seen-review2, -seen-review3, file-comments-send-seen, file-view-notice) were migrated the same way, and so were the
+// eleven PR 523 listed at its final rebase onto main: the seven file-comments-about and file-comments-resolve-answered
+// class fakes (six of them already defined parentNode and childNodes non-enumerable through a local helper; the shared
+// module's call replaces it and their Ev classes end in it too), the tab-hide and preview-retry-pace class fakes,
+// federation-hidden-hold's window stand-in (hideEdges on the literal after its conditional-valued parent) and the
+// fold's timeline-tag-chips node literal, which takes nodeFactory outright and joins SWITCHED. The list is empty.
+const ALLOWLIST: string[] = [];
+// The list's exact length: 0 since 2026-09-10, when the last of the 167 came off or moved to NON_DOM_EDGES. The ratchet
+// pins it by equality, so neither the list nor this number goes up.
+const ALLOWLIST_MAX = 0;
 // NON_DOM_EDGES: the test files whose edge-named key the detector reads but which fake no DOM, each with its reason
 // and the count of lines on which the detector reads an edge init in it. An entry documents the use AS IT READS TODAY:
 // the detector reads shape, not meaning, and a goal fixture's children or a list model's children initialise no edge
@@ -498,16 +487,16 @@ const NON_DOM_EDGES: Array<[string, string, number]> = [   // [file, why its edg
 ];
 const NON_DOM_EDGES_MAX = 2;
 const NON_DOM = NON_DOM_EDGES.map(([f]) => f);
-// SWITCHED: the sixteen files whose own copies of the node factory the shared module REPLACED (2026-09-10): the fifteen
-// near-copies (fourteen ui/timeline-*.test.ts siblings and ui/webview/tab-color-picker.test.ts) and the tags-scale test
-// the shim grew from. They keep no makeNode of their own. The other ui/webview test files that fake a DOM are not listed
+// SWITCHED: the seventeen files whose own copies of the node factory the shared module REPLACED (2026-09-10): the sixteen
+// near-copies (fifteen ui/timeline-*.test.ts siblings, the fold's timeline-tag-chips among them, and
+// ui/webview/tab-color-picker.test.ts) and the tags-scale test the shim grew from. They keep no makeNode of their own. The other ui/webview test files that fake a DOM are not listed
 // here: each keeps its own node classes, window stand-ins or literals and hides their edges through hideEdges
 // (ui/webview/timeline-boot.test.ts takes nodeFactory outright); the call is the credential the ratchet reads, and each
 // file's projection test is the executed check on its edges.
 const SWITCHED = [
   "timeline-hidden-hold.test.ts", "timeline-hidden-stub.test.ts", "timeline-kernel-post.test.ts", "timeline-live-tick.test.ts",
   "timeline-nan-window.test.ts", "timeline-open-interval.test.ts", "timeline-pending-hosts.test.ts", "timeline-render.test.ts",
-  "timeline-tagbtn-click.test.ts", "timeline-tagorder-drag.test.ts", "timeline-tags-scale.test.ts", "timeline-theme-light.test.ts",
+  "timeline-tag-chips.test.ts", "timeline-tagbtn-click.test.ts", "timeline-tagorder-drag.test.ts", "timeline-tags-scale.test.ts", "timeline-theme-light.test.ts",
   "timeline-transform-tick.test.ts", "timeline-views-ack.test.ts", "timeline-zoom-anchor.test.ts", "webview/tab-color-picker.test.ts",
 ];
 

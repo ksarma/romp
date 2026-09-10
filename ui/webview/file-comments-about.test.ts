@@ -13,6 +13,8 @@
 // the notes-api world, placeholder ids, the session "api".
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
@@ -61,13 +63,6 @@ function status(over: Partial<Status> = {}): Status {
 }
 
 // ── a DOM stand-in: ancestry, attributes, events with capture and bubbling, a small selector engine ──
-/** The tree's edges as non-enumerable properties: a failing assertion over a stand-in node would otherwise have node's
- *  assert walk the whole cyclic tree for its diff and allocate without bound (the box's finding of 2026-09-09; the shim
- *  migration's hideEdges). The tests here compare extracted fields, never two nodes, and this is the backstop. */
-function hideEdges(n: { parentNode?: unknown; childNodes?: unknown }, withKids: boolean): void {
-  Object.defineProperty(n, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
-  if (withKids) Object.defineProperty(n, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
-}
 class Ev {
   target: El | Txt | null = null;
   currentTarget: El | null = null;
@@ -75,7 +70,7 @@ class Ev {
   stopped = false;
   key: string;
   ctrlKey: boolean; metaKey: boolean;
-  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; hideEdges(this); }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -85,7 +80,10 @@ const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 class Txt {
   nodeType = 3;
   parentNode!: El | null;
-  constructor(public data: string) { hideEdges(this, false); }
+  constructor(public data: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.data; }
   get length(): number { return this.data.length; }
   get parentElement(): El | null { return this.parentNode; }
@@ -121,7 +119,14 @@ class El {
   innerHTML = "";
   style: Record<string, string> = {};
   rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); hideEdges(this, true); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    // the tree's edges are non-enumerable, so a node inspects as its own projection and a failing assertion's dump
+    // stays small (ui/test-dom-shim.ts says why); assignments later keep them hidden
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get ownerDocument(): typeof doc { return doc; }
   get parentElement(): El | null { return this.parentNode; }
   get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
@@ -145,7 +150,7 @@ class El {
     deleteProperty: (_, k) => { this.attrs.delete("data-" + kebab(String(k))); return true; },
   });
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; if (v !== "") this.appendChild(new Txt(v)); }
+  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; if (v !== "") this.appendChild(new Txt(v)); }
   private detach(n: El | Txt): void { const p = n.parentNode; if (p) { const i = p.childNodes.indexOf(n); if (i >= 0) p.childNodes.splice(i, 1); n.parentNode = null; } }
   appendChild<T extends El | Txt>(n: T): T { this.detach(n); this.childNodes.push(n); n.parentNode = this; return n; }
   insertBefore<T extends El | Txt>(n: T, ref: El | Txt | null): T {
@@ -155,7 +160,7 @@ class El {
     this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, n); n.parentNode = this; return n;
   }
   removeChild<T extends El | Txt>(n: T): T { this.detach(n); return n; }
-  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes = []; for (const x of c) this.appendChild(x); }
+  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
   remove(): void { this.detach(this); }
   normalize(): void {
     const out: Array<El | Txt> = [];
@@ -613,4 +618,23 @@ test("sources: no hosted comment in the panel or the sheets; the new acts in the
   }
   const block = (css: string) => css.slice(css.indexOf("/* ── file comments panel"), css.indexOf("/* ── end file comments panel ── */"));
   assert.equal(block(CHAT_CSS), block(FEED_CSS), "the panel block is byte-equal in both sheets");
+});
+
+// The stand-in's nodes inspect as their own projection, never as the tree: every edge (parentNode, childNodes, the
+// attribute map, the listener table, style, dataset, classList) is non-enumerable, so a failing assertion's dump of a
+// node is a few lines, not the whole document (ui/test-dom-shim.ts says why; ui/test-dom-shim.test.ts keeps the ratchet).
+test("stand-in: a node enumerates its primitives alone and inspects without its edges", () => {
+  const root = doc.createElement("div");
+  const kid = root.appendChild(doc.createElement("span"));
+  kid.appendChild(doc.createTextNode("leaf"));
+  kid.setAttribute("data-id", "k1");
+  for (const n of [root, kid, kid.firstChild!]) {
+    const o = n as unknown as Record<string, unknown>;
+    assert.ok(Object.keys(o).every((k) => staysEnumerable(o[k])), "only primitives enumerate on " + n.constructor.name + ": " + Object.keys(o).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump of " + n.constructor.name);
+  }
+  assert.equal(kid.parentNode, root); assert.equal(root.childNodes.length, 1); assert.equal(kid.textContent, "leaf");
+  // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
+  assertHiddenEvent(new Ev("click"), root, kid);
 });

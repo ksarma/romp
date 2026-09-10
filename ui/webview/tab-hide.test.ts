@@ -11,6 +11,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import { viewTagUnion } from "./session-views";
 import { parseTabGroups, readTabGroups, writeTabGroups, setSectionCollapsed, toggleSectionCollapsed, isSectionCollapsed, planStrip,
          isHidden, setHidden, toggleHidden, isPinned, setPinned, prunePinned, followTagRenames, followAdoption, tagRenames, headWords,
@@ -552,14 +554,21 @@ test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks 
 // compiling against the stand-in fails loudly here (a ReferenceError), which is the point.
 const requireCjs = createRequire(__filename);
 class FakeEl {
-  tag: string; className: string; children: FakeEl[] = []; parent: FakeEl | null = null;
+  tag: string; className: string;
+  children!: FakeEl[]; parent!: FakeEl | null;   // both edges are defined in the constructor, non-enumerable (ui/test-dom-shim.ts hideEdges):
+                                                 // a node inspects as its primitives, never as the tree it hangs in
   textContent = ""; innerHTML = ""; title = ""; type = ""; placeholder = ""; maxLength = 0; value = ""; id = "";
   style: Record<string, string> = {}; dataset: Record<string, string> = {}; attrs: Record<string, string> = {};
   listeners: Record<string, Array<(ev: unknown) => void>> = {};
-  constructor(tag: string, cls = "") { this.tag = tag; this.className = cls; }
+  constructor(tag: string, cls = "") {
+    this.tag = tag; this.className = cls;
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "parent", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);   // style, dataset, attrs and listeners hide too; the strings and numbers (tag, className, textContent, title, value, the selection) stay
+  }
   appendChild(c: FakeEl) { this.children.push(c); c.parent = this; return c; }
   append(...cs: FakeEl[]) { for (const c of cs) this.appendChild(c); }
-  replaceChildren(...cs: FakeEl[]) { this.children = []; this.append(...cs); }
+  replaceChildren(...cs: FakeEl[]) { this.children.length = 0; this.append(...cs); }   // emptied in place: the tests snapshot a child list with slice() before comparing
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; }
   get firstChild(): FakeEl | null { return this.children[0] ?? null; }
   insertBefore(n: FakeEl, ref: FakeEl | null) { if (!ref) return this.appendChild(n); const at = this.children.indexOf(ref); this.children.splice(at, 0, n); n.parent = this; return n; }
@@ -2854,4 +2863,16 @@ test("executed: the store CARRIES A KEY THIS BUILD DOES NOT KNOW through its wri
   assert.deepEqual(setSectionCollapsed(st, "infra", true).rest, st.rest);
   assert.deepEqual(prunePinned(st, unions, new Set(ALL), HOSTS).rest, st.rest);
   assert.deepEqual(followTagRenames(st, [], unions, V).rest, st.rest);
+});
+
+// ── the stand-in's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps a node's primitives, never the tree ──
+test("a node of the menu's DOM stand-in enumerates its primitives alone, and a dump of it names neither parent nor children", () => {
+  const root = new FakeEl("div", "ctx-menu"); const kid = new FakeEl("span"); root.appendChild(kid); kid.dataset.kind = "tab"; kid.classList.add("ctx-icon");
+  const gone = root.appendChild(new FakeEl("div", "ctx-item")); gone.remove();   // remove() reassigns the parent's children: an existing hidden property stays hidden
+  for (const n of [root, kid, gone]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.tag + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parent", "children", "listeners", "dataset"]) assert.ok(!dump.includes(edge), n.tag + " dumps " + edge + ":\n" + dump);
+  }
+  assert.ok(kid.parent === root && root.children[0] === kid && kid.parentNode === root && root.children.length === 1 && gone.parent === null, "the edges are still reachable");
 });

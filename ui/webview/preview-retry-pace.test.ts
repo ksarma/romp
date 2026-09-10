@@ -10,6 +10,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const PREVIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "preview.ts"), "utf8");
 const SID = "TESTHOST:11111111-2222-4333-8444-000000000291";
@@ -17,16 +19,23 @@ const PATH = "/home/user/notes-api/plots/latency.png";
 
 // ── a minimal DOM: what previewFull touches, nothing more ──────────────────────────────────────────────────
 class FakeEl {
-  tag: string; children: FakeEl[] = []; parent: FakeEl | null = null; attrs: Record<string, string> = {};
+  tag: string; attrs: Record<string, string> = {};
+  children!: FakeEl[]; parent!: FakeEl | null;   // both edges are defined in the constructor, non-enumerable (ui/test-dom-shim.ts hideEdges):
+                                              // a node inspects as its primitives, never as the tree it hangs in
   style: Record<string, string> = {}; _cls = new Set<string>(); _text = ""; isConnected = true;
   onclick: any = null; onerror: any = null; onmousedown: any = null; onauxclick: any = null; title = ""; src = ""; alt = ""; loading = ""; decoding = "";
   listeners: Record<string, Function[]> = {};
-  constructor(tag: string) { this.tag = tag; }
+  constructor(tag: string) {
+    this.tag = tag;
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "parent", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);   // attrs, style, _cls, listeners and the onclick-style nulls hide too; a later `img.onerror = fn` keeps the attribute
+  }
   get className(): string { return [...this._cls].join(" "); }
   set className(v: string) { this._cls = new Set(v.split(/\s+/).filter(Boolean)); }
   get classList() { const s = this._cls; return { add: (...c: string[]) => c.forEach((x) => s.add(x)), remove: (...c: string[]) => c.forEach((x) => s.delete(x)), contains: (c: string) => s.has(c), toggle: (c: string, on?: boolean) => { if (on === undefined) on = !s.has(c); on ? s.add(c) : s.delete(c); return on; } }; }
   get textContent(): string { return this.children.length ? this.children.map((c) => c.textContent).join("") : this._text; }
-  set textContent(v: string) { this.children.forEach((c) => (c.parent = null)); this.children = []; this._text = v; }
+  set textContent(v: string) { this.children.forEach((c) => (c.parent = null)); this.children.length = 0; this._text = v; }
   appendChild(c: FakeEl): FakeEl { if (c.parent) c.parent.children = c.parent.children.filter((x) => x !== c); c.parent = this; this.children.push(c); return c; }
   append(...cs: FakeEl[]) { cs.forEach((c) => this.appendChild(c)); }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((x) => x !== this); this.parent = null; }
@@ -187,4 +196,15 @@ test("the source keeps the two rules where the behaviour lives", () => {
   assert.match(RENDER, /window\.addEventListener\("romp:hostRelayUp", \(e\) => \{[\s\S]{0,600}?refreshSettledPreviews\(\);/);
   assert.match(PREVIEW, /const \{ note \} = waitBox\(\);\s*\n\s*if \(!note\.textContent\) setNote\(note, got > 0 \? "resuming… "/, "an attempt keeps the note that is up");
   assert.match(PREVIEW, /const setNote = \(note: HTMLElement, text: string\) => \{ if \(note\.textContent !== text\) note\.textContent = text; \};/, "the words change only when they do");
+});
+
+// ── the stand-in's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps a node's primitives, never the tree ──
+test("a node of the preview's DOM stand-in enumerates its primitives alone, and a dump of it names neither parent nor children", () => {
+  const root = new FakeEl("span"); const kid = new FakeEl("img"); root.appendChild(kid); kid.textContent = "text"; kid.setAttribute("src", "blob:fake"); kid.style.display = "none";
+  for (const n of [root, kid]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.tag + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parent", "children", "listeners", "attrs", "style"]) assert.ok(!dump.includes(edge), n.tag + " dumps " + edge + ":\n" + dump);
+  }
+  assert.ok(kid.parent === root && root.children[0] === kid && kid.textContent === "text" && kid.attrs.src === "blob:fake" && kid.style.display === "none", "the edges are still reachable");
 });
