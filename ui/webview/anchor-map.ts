@@ -164,8 +164,10 @@ const isControl = (n: DNode): boolean => CONTROL_CLASSES.some((cls) => hasClass(
 // class="ct">…</span></span>` per line; the Raw view's `.fv-cl` rows are built the same way), and the wrap DROPS the
 // newline each row stands for, so a wrapped code element's textContent runs its lines together. The helpers below put
 // the newline back, so a reader of a code block's text sees the source's line structure whether the code was wrapped or
-// not. paintRendered's fallback below builds its hay from codeRuns (a comment across two code lines matched its quote,
-// which holds a newline, against a hay reading "commentdef" and painted nothing; Slice 3 of plans/markdown-viewer.md).
+// not. paintRendered's fallback below builds its hay from hayRuns, codeRuns with a blank put between two adjacent table
+// parts as well (a comment across two code lines matched its quote, which holds a newline, against a hay reading
+// "commentdef" and painted nothing, Slice 3 of plans/markdown-viewer.md; a comment across two cells reads its pipe as a
+// blank and finds the cells apart, Slice 5).
 // codeLineAt and codeLineStart, the line of a DOM position and the position where a line starts, are exported for
 // Slice 8's exact mapping of code lines and have no caller in production today: reader-place.ts read the code line at
 // the body's top edge through codeLineAt until the Slice 3 review's round 3 retired that hit-test read, and now counts
@@ -179,25 +181,35 @@ const isCodeRow = (n: DNode): boolean => hasClass(n, "cl") || hasClass(n, "fv-cl
  *  which `row` is the second of. */
 export type CodeRun = { node: DText | null; text: string; row?: DElement };
 
+/** A table's parts, as the sanitizer keeps them. Two of them adjacent with no text between (two cells of a row, two rows)
+ *  hold text the browser lays out apart, and the fallback's hay puts a blank between them (hayRuns): a DOM the parser left
+ *  whitespace nodes between has the blank already, one it did not (a minified table) ran the cells' text together. */
+const TABLE_PARTS = new Set(["TD", "TH", "TR", "THEAD", "TBODY", "TFOOT", "CAPTION"]);
+const isTablePart = (n: DNode): boolean => isElement(n) && TABLE_PARTS.has(n.tagName.toUpperCase());
+
+/** The runs under `n`, appended to `out`: its text nodes, with a "\n" run put back between two adjacent code rows and,
+ *  when `cells`, a " " run between two adjacent table parts. */
+function runsUnder(n: DNode, out: CodeRun[], cells: boolean): void {
+  if (isText(n)) { out.push({ node: n, text: n.data }); return; }
+  let prevRow = false, prevCell = false;
+  for (let i = 0; i < n.childNodes.length; i++) {
+    const c = n.childNodes[i];
+    if (isControl(c)) continue;
+    const row = isElement(c) && isCodeRow(c);
+    if (row && prevRow) out.push({ node: null, text: "\n", row: c as DElement });
+    const cell = cells && isTablePart(c);
+    if (cell && prevCell) out.push({ node: null, text: " " });
+    runsUnder(c, out, cells);
+    prevRow = row; prevCell = cell;
+  }
+}
 /** The text runs of `code` in document order: its text nodes, with a "\n" run put back between two adjacent rows. A
  *  text node itself is its one run. */
-export function codeRuns(code: DNode): CodeRun[] {
-  const out: CodeRun[] = [];
-  const visit = (n: DNode) => {
-    if (isText(n)) { out.push({ node: n, text: n.data }); return; }
-    let prevRow = false;
-    for (let i = 0; i < n.childNodes.length; i++) {
-      const c = n.childNodes[i];
-      if (isControl(c)) continue;
-      const row = isElement(c) && isCodeRow(c);
-      if (row && prevRow) out.push({ node: null, text: "\n", row: c as DElement });
-      visit(c);
-      prevRow = row;
-    }
-  };
-  visit(code);
-  return out;
-}
+export function codeRuns(code: DNode): CodeRun[] { const out: CodeRun[] = []; runsUnder(code, out, false); return out; }
+/** The runs paintRendered's fallback builds its hay from: codeRuns's, plus a blank between two adjacent table parts (a
+ *  quote across two cells, `cell one | cell two`, reads its pipe as a blank and must find the cells apart; Slice 5 of
+ *  plans/markdown-viewer.md, item 8). */
+function hayRuns(n: DNode): CodeRun[] { const out: CodeRun[] = []; runsUnder(n, out, true); return out; }
 
 /** The text of `code` as its source shows it: the text nodes' data with the newline between rows put back. */
 export const codeText = (code: DNode): string => codeRuns(code).map((r) => r.text).join("");
@@ -723,6 +735,8 @@ function blockLexView(v: View): View {
 type Hole = { reason: string; startN: number; endN: number };
 /** The reason of a formula's hole (mathInline, mathBlock), the one formulaExtra finds a hole by. */
 const FORMULA_HOLE = "a formula";
+/** The reasons of a code block's and a table's holes, the ones paintRendered's fallback reads a quote by (holeSpans). */
+const CODE_HOLE = "a code block", INDENTED_CODE_HOLE = "an indented code block", TABLE_HOLE = "a table";
 /** The emitted characters of one top-level block: `chars` are its non-whitespace rendered characters in
  *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a nested code
  *  block or table the renderer shows but the mapping refuses). */
@@ -981,13 +995,13 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
       case "code": {
         // shown by the renderer, refused by the mapping: a hole the selection may not touch
         const tt = t as Tokens.Code;
-        em.holes.push({ reason: tt.codeBlockStyle === "indented" ? "an indented code block" : "a code block", startN: view.n(p), endN: view.n(p + raw.length) });
+        em.holes.push({ reason: tt.codeBlockStyle === "indented" ? INDENTED_CODE_HOLE : CODE_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
         em.putHole(tt.text, em.holes.length - 1);
         break;
       }
       case "table": {
         const tt = t as Tokens.Table;
-        em.holes.push({ reason: "a table", startN: view.n(p), endN: view.n(p + raw.length) });
+        em.holes.push({ reason: TABLE_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
         const h = em.holes.length - 1;
         for (const cell of tt.header) em.putHole(plainInline(cell.tokens), h);
         for (const row of tt.rows) for (const cell of row) em.putHole(plainInline(cell.tokens), h);
@@ -1988,12 +2002,52 @@ function applyMarkupRule(m: Mapped, rule: MarkupRule): Mapped {
 
 /**
  * Inline markup a source slice carries that the rendered text does not (for the fallback matcher), applied
- * line by line, with every surviving character mapped back to its index in `s`. The text is what
- * stripMarkup returns; the map is what lets the fallback tell WHICH occurrence of a stripped quote in a
- * block's source is the one the comment's or change's range covers, when the quote carries markup of its
- * own (a code span in a table cell, a bold word) and its plain text recurs in the block.
+ * line by line, with every surviving character mapped back to its index in `s`. The text is the flat
+ * strip's; the map is what lets the fallback tell WHICH occurrence of a stripped quote in a block's source
+ * is the one the comment's or change's range covers, when the quote carries markup of its own (a code span
+ * in a table cell, a bold word) and its plain text recurs in the block. The fallback reads a scope through
+ * scopeMapped: this strip over the lines outside a code or table hole, the hole's own reading inside one.
  */
-export function stripMarkupMapped(s: string): Mapped {
+export function stripMarkupMapped(s: string): Mapped { return scopeMapped(s, 0, []); }
+
+/** A code block's or a table's hole as a span of SOURCE offsets, for scopeMapped: `quoted` when a blockquote's marker stands
+ *  before the hole on its first line, so the marker is the container's on every line of the hole (the walk's suffix view reads
+ *  a quote's lines the same way) and comes off each. */
+type HoleSpan = { start: number; end: number; kind: "code" | "table"; quoted: boolean };
+/** The code and table holes of `blocks` as HoleSpans. A hole of another kind (a formula's, the front matter's, a callout's
+ *  title) is none of the fallback's business: its text is not in the rendering, or not the note's. */
+function holeSpans(idx: RenderedIndex, blocks: Block[], source: string): HoleSpan[] {
+  const out: HoleSpan[] = [];
+  for (const blk of blocks) for (const h of blk.holes) {
+    const kind = h.reason === CODE_HOLE || h.reason === INDENTED_CODE_HOLE ? "code" : h.reason === TABLE_HOLE ? "table" : null;
+    if (!kind) continue;
+    const start = nOf(idx, h.startN), end = nOf(idx, h.endN);
+    const prefix = source.slice(source.lastIndexOf("\n", start - 1) + 1, start);   // the container's markers before the hole
+    out.push({ start, end, kind, quoted: prefix.indexOf(">") >= 0 });
+  }
+  return out;
+}
+/** A blockquote's markers at a line's start, under any indentation: what a quoted hole's lines carry before their text. */
+const QUOTE_MARKERS: MarkupRule = { re: /^\s*(?:>\s?)+/g };
+/** A table row's cell delimiter: an unescaped `|` (`\|` is a literal pipe in the cell, the escape rule's business). */
+const UNESCAPED_PIPE = /(?<!\\)\|/g;
+/**
+ * A scope's source as the fallback matches it, line by line, every surviving character mapped back to its index in `s`
+ * (`base` is the source offset of s[0]; `holes` the scope's code and table holes). A line outside every hole is stripped of
+ * the markup the renderer consumes (MARKUP_LEAD, MARKUP_FENCE, MARKUP_INLINE). A line of a code hole is kept as the source
+ * holds it, since the rendering shows a code line raw: a quote on `total = a * b * 2` stripped of its asterisks matched
+ * nothing and the comment painted in Raw alone, and one on `# a comment` lost its `# ` and painted two characters in (Slice
+ * 5 of plans/markdown-viewer.md, item 2); a fence line is dropped, since it renders nothing, so a quote over the whole
+ * block, fences included, still paints. A line of a table hole reads each unescaped `|` as a blank, so a quote across two
+ * cells, `cell one | cell two`, matches the cells' text with the hay's blank between them (hayRuns), and keeps the inline
+ * strip for the cells' own markup (a code span, a bold word); the lead rules are skipped there, since a cell beginning `- `
+ * or `# ` shows those characters. The delimiter row keeps its dashes, which no rendered text holds, so a quote spanning it
+ * paints nothing and the card keeps Reveal (item 8). On a hole's first line the container's prefix before the hole (a
+ * list's bullet and indent, a quote's marker) is dropped, and on the following lines of a quoted hole the quote's markers
+ * come off (QUOTE_MARKERS), as the walk's suffix view reads them; a list's indentation is white space the match ignores.
+ * Needle and scope source are read the same way, so the count guard stays exact on both sides.
+ */
+function scopeMapped(s: string, base: number, holes: HoleSpan[]): Mapped {
   let text = "";
   const map: number[] = [];
   const lines = s.split("\n");
@@ -2001,17 +2055,26 @@ export function stripMarkupMapped(s: string): Mapped {
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
     if (i > 0) { text += "\n"; map.push(lineStart - 1); }   // the line ending the split consumed
-    let m: Mapped = { text: ln, map: Array.from({ length: ln.length }, (_, j) => lineStart + j) };
-    for (const r of MARKUP_LEAD) m = applyMarkupRule(m, r);
-    if (MARKUP_FENCE.test(m.text)) m = { text: "", map: [] };
-    else for (const r of MARKUP_INLINE) m = applyMarkupRule(m, r);
+    const ls = base + lineStart, le = ls + ln.length;
+    let hole: HoleSpan | null = null;   // the hole this line belongs to: one reaching the line's end from at or before it
+    for (const h of holes) if (h.start <= le && le <= h.end) { hole = h; break; }
+    const from = hole && hole.start > ls ? hole.start - ls : 0;   // the container's prefix before the hole on its first line
+    let m: Mapped = { text: ln.slice(from), map: Array.from({ length: ln.length - from }, (_, j) => lineStart + from + j) };
+    if (!hole) {
+      for (const r of MARKUP_LEAD) m = applyMarkupRule(m, r);
+      if (MARKUP_FENCE.test(m.text)) m = { text: "", map: [] };
+      else for (const r of MARKUP_INLINE) m = applyMarkupRule(m, r);
+    } else {
+      if (hole.quoted && from === 0) m = applyMarkupRule(m, QUOTE_MARKERS);
+      if (hole.kind === "code") { if (MARKUP_FENCE.test(m.text)) m = { text: "", map: [] }; }
+      else { m = { text: m.text.replace(UNESCAPED_PIPE, " "), map: m.map }; for (const r of MARKUP_INLINE) m = applyMarkupRule(m, r); }
+    }
     text += m.text;
     for (const x of m.map) map.push(x);
     lineStart += ln.length + 1;
   }
   return { text, map };
 }
-const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 
 // ── the layout-time trim of collapsed blanks ───────────────────────────────────────────────────────
 //
@@ -2265,27 +2328,31 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
       if (out) return out;
     }
   }
-  // ── the fallback: a whitespace-tolerant match of the quote stripped of its markup, inside the blocks
-  //    the range overlaps (a refused block, typically), else anywhere in the rendered text
-  const raw = source.slice(range.start, range.end);
-  const quote = stripMarkup(raw);
-  if (stripWs(quote) === "") return null;
+  // ── the fallback: a whitespace-tolerant match of the quote read as the rendering shows it (scopeMapped: stripped of its
+  //    markup in prose, raw in a code block, its cell delimiters blanks in a table), inside the blocks the range overlaps
+  //    (a refused block or a hole, typically), else anywhere in the rendered text
   let scope: DNode[] = [];
+  let scopeBlocks: Block[] = [];
   let scopeStart = source.length, scopeEnd = 0;   // the source span the scope's blocks cover
   for (const blk of idx.blocks) {
     const bs = nOf(idx, blk.startN), be = nOf(idx, blk.endN);
     if (be > range.start && bs < range.end) {
-      scope.push(...blk.dom);
+      scope.push(...blk.dom); scopeBlocks.push(blk);
       scopeStart = Math.min(scopeStart, bs); scopeEnd = Math.max(scopeEnd, be);
     }
   }
-  if (!scope.length) { scope = idx.topNodes.slice(); scopeStart = 0; scopeEnd = source.length; }
-  // the hay is the scope's text with the newline between a wrapped code block's rows put back (codeRuns, above): a
-  // quote across two code lines holds one, and the rows' text nodes alone do not
+  if (!scope.length) { scope = idx.topNodes.slice(); scopeBlocks = idx.blocks; scopeStart = 0; scopeEnd = source.length; }
+  const spans = holeSpans(idx, scopeBlocks, source);
+  const raw = source.slice(range.start, range.end);
+  const quote = scopeMapped(raw, range.start, spans).text;
+  if (stripWs(quote) === "") return null;
+  // the hay is the scope's text with the newline between a wrapped code block's rows put back and a blank between two
+  // adjacent table parts (hayRuns, above): a quote across two code lines holds a newline, one across two cells a blank
+  // for its pipe, and the text nodes alone hold neither
   const nodes: DText[] = [];
-  const gaps: number[] = [];   // where in the hay the row newlines sit; they are no text node's characters
+  const gaps: number[] = [];   // where in the hay the put-back blanks sit; they are no text node's characters
   let hay = "";
-  for (const n of scope) for (const r of codeRuns(n)) { if (r.node) { nodes.push(r.node); hay += r.text; } else { gaps.push(hay.length); hay += r.text; } }
+  for (const n of scope) for (const r of hayRuns(n)) { if (r.node) { nodes.push(r.node); hay += r.text; } else { gaps.push(hay.length); hay += r.text; } }
   const inNodes = (i: number): number => { let g = 0; for (const p of gaps) { if (p < i) g++; else break; } return i - g; };
   const hits = occurrences(hay, quote);
   if (!hits.length) return null;
@@ -2298,7 +2365,9 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
   // shows its text twice. The ordinal is exact when the rendering shows the text as many times as the
   // stripped source holds it, so the counts must agree, else nothing is painted and the comment or change
   // keeps its card (and Reveal). The range's own occurrence is the one whose characters map back inside it.
-  const scopeSrc = stripMarkupMapped(source.slice(scopeStart, scopeEnd));
+  // The scope's source is read as the quote was (scopeMapped): a code hole's lines raw, a table hole's pipes
+  // as blanks, so a code line holding `*` or a cell's text counts the same on both sides.
+  const scopeSrc = scopeMapped(source.slice(scopeStart, scopeEnd), scopeStart, spans);
   const srcHits = occurrences(scopeSrc.text, quote);
   if (srcHits.length !== hits.length) return null;
   const k = srcHits.findIndex((h) => scopeStart + scopeSrc.map[h.start] >= range.start && scopeStart + scopeSrc.map[h.end - 1] < range.end);

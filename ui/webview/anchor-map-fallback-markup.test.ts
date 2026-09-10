@@ -10,6 +10,15 @@
 // mapped back to its origin (stripMarkupMapped), and the range's occurrence is the one whose characters
 // map inside it. Driven over the viewer's two DOM shapes the way anchor-map.test.ts drives them; fixtures
 // are synthetic (the notes-api world).
+// Parts 3 and 4 (Slice 5 of plans/markdown-viewer.md, items 2 and 8) cover the two holes whose text the rendering
+// shows differently from prose: a code block's lines are shown raw, so the strip that serves prose broke the needle
+// (`total = a * b * 2` lost its asterisks to the emphasis rule and painted in Raw alone; `# a comment` lost its `# `
+// and painted two characters in), and a table row's `|` delimiters are shown nowhere, so a quote across two cells,
+// `cell one | cell two`, matched nothing. Inside a code hole the fallback reads the quote and the scope's source raw
+// (fence lines dropped); inside a table hole it reads each unescaped `|` as a blank on both sides, with a blank in the
+// hay between two adjacent table parts; the stored quote stays the exact source slice (the owner's ruling 5: the
+// plan's "strip cell delimiters" is a paint-time rule). The browser leg anchor-map-code-table-paint-browser.test.ts
+// drives both through the real viewer and panel, a Raw save and a fresh open.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked } from "marked";
@@ -286,4 +295,141 @@ test("Rendered fallback: the count guard still holds for a marked-up quote — a
   assert.ok(h.marks && h.marks.length);
   assert.equal(h.text, "GET /notes");
   assert.equal(h.cell!.index, 0);
+});
+
+// ── 3. Slice 5, item 2: a quote inside a code block is read raw ────────────────────────────────────
+
+/** The rendered text before `n` in document order (the code's earlier lines, for a repeated line's ordinal). */
+function textBefore(root: FakeNode, n: FakeNode): string {
+  let out = "";
+  for (const x of docOrder(root)) { if (x === n) break; if (x.nodeType === 3) out += (x as FakeText).data; }
+  return out;
+}
+const norm = (s: string): string => s.replace(/\s+/g, " ").trim();
+const TOTALS = "# Totals\n\nIntro paragraph with several words in it.\n\n```python\ntotal = a * b * 2\nname_ = under_score  # trailing comment\n```\n\nAfter paragraph.\n";
+const FENCED = "# Handler notes\n\nBefore paragraph.\n\n```python\n# a comment\ndef f(x):\n    return x + 1  # trailing\n\nvalue = f(2)\n```\n\nAfter paragraph.\n";
+
+test("Rendered fallback, a code hole: `total = a * b * 2` paints inside the pre with the marks' text the raw line (the emphasis rule stripped its asterisks and nothing matched); `name_ = under_score` still paints; `# a comment` paints from its `#`; the whole fence, fence lines included, paints from the `#` too", () => {
+  let h = highlight(TOTALS, rangeOf(TOTALS, "total = a * b * 2"), "PRE");
+  assert.ok(h.marks && h.marks.length, "painted (was null: the needle read `total = a  b  2`)");
+  assert.equal(norm(h.text!), "total = a * b * 2");
+  assert.equal(h.cell!.el.tagName, "PRE");
+  // the neighbouring line painted before too (the `_` rule's word-boundary guard spared it) and still does
+  h = highlight(TOTALS, rangeOf(TOTALS, "name_ = under_score  # trailing comment"), "PRE");
+  assert.ok(h.marks && h.marks.length);
+  assert.equal(norm(h.text!), "name_ = under_score # trailing comment");
+  // a comment line: the heading rule took its `# ` and the mark began at the `a`
+  h = highlight(FENCED, rangeOf(FENCED, "# a comment"), "PRE");
+  assert.ok(h.marks && h.marks.length);
+  assert.equal(h.text, "# a comment", "the mark begins at the `#`, not two characters in");
+  // the whole block, fence lines included: the fences render nothing and drop from the needle; the marks cover the code from its `#`
+  const whole = { start: FENCED.indexOf("```python"), end: FENCED.indexOf("```\n\nAfter") + 3 };
+  h = highlight(FENCED, whole, "PRE");
+  assert.ok(h.marks && h.marks.length, "the whole block paints");
+  assert.equal(norm(h.text!), norm("# a comment\ndef f(x):\n    return x + 1  # trailing\n\nvalue = f(2)"));
+});
+
+test("Rendered fallback, a code hole: a line repeated in the fence paints the range's own line by ordinal, the count taken raw on both sides", () => {
+  const src = "```\ntotal = a * b * 2\ntotal = a * b * 2\n```\n";
+  const second = src.lastIndexOf("total = a * b * 2"), first = src.indexOf("total = a * b * 2");
+  let h = highlight(src, { start: second, end: second + "total = a * b * 2".length }, "PRE");
+  assert.ok(h.marks && h.marks.length === 1, "one mark (was null)");
+  assert.equal(textBefore(h.box, h.marks![0]), "total = a * b * 2\n", "the second line");
+  h = highlight(src, { start: first, end: first + "total = a * b * 2".length }, "PRE");
+  assert.ok(h.marks && h.marks.length === 1);
+  assert.equal(textBefore(h.box, h.marks![0]), "", "the first line");
+});
+
+test("Rendered fallback, a code hole: an indented code block, a fence in a list item and a fence in a blockquote read raw too; a quoted fence's lines shed the quote's markers, so a two-line quote there still paints", () => {
+  const indented = "Intro paragraph.\n\n    total = a * b * 2\n    next = total * 2\n\nAfter paragraph.\n";
+  let h = highlight(indented, rangeOf(indented, "total = a * b * 2"), "PRE");
+  assert.ok(h.marks && h.marks.length, "indented code (was null)");
+  assert.equal(norm(h.text!), "total = a * b * 2");
+  const two = { start: indented.indexOf("total ="), end: indented.indexOf("next = total * 2") + "next = total * 2".length };
+  h = highlight(indented, two, "PRE");   // the range holds the second line's indentation: white space the match ignores
+  assert.ok(h.marks && h.marks.length, "two indented lines (was null)");
+  assert.equal(norm(h.text!), "total = a * b * 2 next = total * 2");
+  const listed = "- Item text with `make` in it.\n\n  ```\n  x * y\n  ```\n\n- Second item.\n";
+  h = highlight(listed, rangeOf(listed, "x * y"), "PRE");
+  assert.ok(h.marks && h.marks.length, "a fence in a list item (was null)");
+  assert.equal(norm(h.text!), "x * y");
+  assert.equal(cellOf(h.marks![0], "LI").index, 0);
+  const quoted = "> Quoted intro.\n>\n> ```\n> a = 1\n> b = 2\n> ```\n";
+  const span = { start: quoted.indexOf("a = 1"), end: quoted.indexOf("b = 2") + "b = 2".length };
+  h = highlight(quoted, span, "PRE");   // the raw slice is "a = 1\n> b = 2": the second line's marker is the quote's, not the code's
+  assert.ok(h.marks && h.marks.length, "a two-line quote in a quoted fence paints (the strip took the markers before; the markers still come off)");
+  assert.equal(norm(h.text!), "a = 1 b = 2");
+  h = highlight(quoted, rangeOf(quoted, "b = 2"), "PRE");
+  assert.ok(h.marks && h.marks.length);
+  assert.equal(norm(h.text!), "b = 2");
+});
+
+test("Rendered fallback, a code hole nested in a list item: the item's prose keeps the strip while the code reads raw, so a code token the prose repeats in a link's label and URL counts the same on both sides and the code's copy paints (a control: green before too; the raw source alone would count the URL's copy and paint nothing)", () => {
+  const src = "- See [make](https://example.invalid/make) first.\n\n      make\n\n- Second item.\n";
+  const h = highlight(src, rangeOf(src, "make", src.indexOf("      make")), "PRE");
+  assert.ok(h.marks && h.marks.length, "painted");
+  assert.equal(h.text, "make");
+  assert.equal(h.cell!.el.tagName, "PRE");
+});
+
+// ── 4. Slice 5, item 8: a quote across two cells reads its pipe as a blank ──────────────────────────
+
+const CELLS = "# Table\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n| cell three | cell four |\n\nAfter paragraph.\n";
+/** The marks with text of their own (a blank between two cells is a trim candidate in a browser, never the passage). */
+const textMarks = (marks: FakeElement[]): FakeElement[] => marks.filter((m) => m.textContent.trim() !== "");
+
+test("Rendered fallback, a table hole: `cell one | cell two` paints one mark in each of the row's two cells (was null: the needle kept the pipe); one cell still paints one; a quote spanning the delimiter row paints nothing; `\\|` stays the cell's own pipe", () => {
+  let h = highlight(CELLS, rangeOf(CELLS, "cell one | cell two"));
+  assert.ok(h.marks && h.marks.length, "painted");
+  const tm = textMarks(h.marks!);
+  assert.deepEqual(tm.map((m) => m.textContent), ["cell one", "cell two"]);
+  assert.deepEqual(tm.map((m) => cellOf(m, "TD").index), [0, 1]);
+  assert.equal(cellOf(tm[0], "TR").el, cellOf(tm[1], "TR").el, "the same row");
+  assert.equal(h.marks!.length, 2, "the blank between the two cells is skipped, not wrapped (skipBlockWs: collapsible white space between two table cells)");
+  // one cell: as before
+  h = highlight(CELLS, rangeOf(CELLS, "cell one"));
+  assert.ok(h.marks && textMarks(h.marks!).length === 1);
+  assert.equal(h.cell!.index, 0);
+  // across the delimiter row: its dashes stand in no rendered text
+  const acrossDelim = { start: CELLS.indexOf("Col B"), end: CELLS.indexOf("cell one") + "cell one".length };
+  const box = buildRendered(CELLS);
+  const before = serialize(box);
+  assert.equal(paintRendered(El(box), CELLS, acrossDelim, "fc-hl"), null, "the quote spans the delimiter row: nothing painted, the card keeps Reveal");
+  assert.equal(serialize(box), before);
+  // an escaped pipe is the cell's own character
+  const esc = "| a \\| b | c |\n|---|---|\n| d | e |\n";
+  h = highlight(esc, rangeOf(esc, "a \\| b"), "TH");
+  assert.ok(h.marks && h.marks.length);
+  assert.equal(h.text, "a | b");
+  assert.equal(h.cell!.index, 0);
+});
+
+test("Rendered fallback, a table hole: cells with no whitespace between them in the DOM are kept apart by the hay's blank; a quote across two rows paints both cells; a repeated row paints the range's own by ordinal; a quoted table reads the same", () => {
+  // a DOM with the newlines between tags gone (a minifying step): the cells' text nodes are adjacent
+  const doc = new FakeDocument();
+  const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
+  for (const n of parseHTML(doc, (marked.parse(CELLS) as string).replace(/>\n</g, "><"))) box.appendChild(n);
+  const marks = paintRendered(El(box), CELLS, rangeOf(CELLS, "cell one | cell two"), "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(marks && marks.length, "painted over adjacent cells");
+  assert.deepEqual(textMarks(marks!).map((m) => m.textContent), ["cell one", "cell two"]);
+  // two rows
+  let h = highlight(CELLS, rangeOf(CELLS, "cell two |\n| cell three"));
+  assert.ok(h.marks && h.marks.length, "two rows paint");
+  const tm = textMarks(h.marks!);
+  assert.deepEqual(tm.map((m) => m.textContent), ["cell two", "cell three"]);
+  assert.notEqual(cellOf(tm[0], "TR").el, cellOf(tm[1], "TR").el, "two rows");
+  // a repeated row: the ordinal picks the range's
+  const rep = "| a | b |\n|---|---|\n| x | y |\n| x | y |\n";
+  const second = rep.lastIndexOf("x | y"), first = rep.indexOf("x | y");
+  h = highlight(rep, { start: second, end: second + "x | y".length });
+  assert.ok(h.marks && h.marks.length, "the repeated row paints");
+  assert.equal(cellOf(textMarks(h.marks!)[0], "TR").index, 1, "the second body row");
+  h = highlight(rep, { start: first, end: first + "x | y".length });
+  assert.ok(h.marks && h.marks.length);
+  assert.equal(cellOf(textMarks(h.marks!)[0], "TR").index, 0, "the first body row");
+  // a table in a blockquote: the quote's markers are the container's
+  const quoted = "> | a | b |\n> |---|---|\n> | c | d |\n";
+  h = highlight(quoted, rangeOf(quoted, "c | d"));
+  assert.ok(h.marks && h.marks.length, "a quoted table's two cells paint");
+  assert.deepEqual(textMarks(h.marks!).map((m) => m.textContent), ["c", "d"]);
 });
