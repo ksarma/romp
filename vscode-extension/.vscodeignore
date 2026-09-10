@@ -8,3 +8,6 @@ tsconfig.json
 **/*.map
 **/*.ts
 out-tests/**
+# the served labs' build lock and marker (tests/lab_dist.py): vsce reads dist whole, and .gitignore does not govern a VSIX
+dist/.lab-build.lock
+dist/.lab-built

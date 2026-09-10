@@ -15,6 +15,7 @@ driver opens it, scrolls the chat transcript to mid-history, and
 Skips LOUDLY when the extension deps or a playwright browser are absent (CI installs none); the decision code
 itself runs in node in test_dashboard_auto_reload.py regardless. All fixtures synthetic."""
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -168,11 +169,8 @@ class ServedAutoReload(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served leg needs them")
         cls.lab = tempfile.mkdtemp(prefix="auto-reload-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            raise unittest.SkipTest("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
         dist = os.path.join(cls.lab, "dist")
-        shutil.copytree(os.path.join(EXT, "dist"), dist)
+        lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.bump_file = os.path.join(dist, "render.js")
         state = os.path.join(cls.lab, "xdg", "romp")
         cwd = os.path.join(cls.lab, "proj")
