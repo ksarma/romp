@@ -57,9 +57,13 @@ const ABSOLUTE_MS = 1500;           // the large note's median; the cold first r
  *  measured 1.0 to 1.1 alone) and a quadratic one eight times as long on the large note. Measured on the pre-memo sources
  *  at 205f5f3d (git archive of ui/webview with HEAD's md-block-start.ts copied in): these two legs, with the absolute
  *  guard disabled so the ratio assertion is the one that fires, medians 7.33 to 7.50 over seven runs (review rounds 8
- *  and 9), least pair 6.91, one pair at 10.41 under a load burst; a probe of the helper's shape over the same sources,
- *  medians 7.48 to 7.75, no pair under 7.34. The two sides are timed back to back, PAIRS times over, and the median of
- *  the pair ratios is bounded at LINEAR_BOUND, under half the least quadratic pair. Equal work is what holds the ratio
+ *  and 9) and 7.38 to 7.49 over eight more (round 10), one pair at 10.41 under a load burst; a probe of the helper's
+ *  shape over the same sources, medians 7.48 to 7.75, no pair under 7.34. The two sides are timed back to back, PAIRS
+ *  times over, and the median of the pair ratios is bounded at LINEAR_BOUND: under half the least quadratic median
+ *  (7.33 / 2 = 3.67) and about three times the linear one, a factor of about 2.5 from each in the statistic the
+ *  assertion computes. A single pair is not the basis, since pairs spread where the medians hold: the least pair was
+ *  6.91 in the first seven runs and 6.86 in round 10's, and 5.35 under a one-core CPU quota with induced bursts, in a
+ *  run whose median, 7.35, kept the bound's headroom as the pairs scattered. Equal work is what holds the ratio
  *  under contention: the review round 7 timed one small lex against one large one, bounded at three times their
  *  paragraph ratio (24), and a CPU quota (eight test workers in a 400% cgroup scope, the shape of a runner with a CPU
  *  limit) or nice-19 starvation under other load inflated that ratio three times, steadily across every pair, because

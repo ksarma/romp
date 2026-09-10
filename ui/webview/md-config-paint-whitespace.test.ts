@@ -78,9 +78,13 @@ class FakeElement extends FakeNode {
   removeChild(n: FakeNode): FakeNode { this.detach(n); return n; }
 }
 const VOID = new Set(["br", "hr", "img", "input", "meta", "link", "area", "base", "col", "embed", "source", "track", "wbr"]);
-const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
 const decode = (s: string): string => s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e: string) => e[0] === "#" ? String.fromCodePoint(parseInt(e[1] === "x" || e[1] === "X" ? e.slice(2) : e.slice(1), e[1] === "x" || e[1] === "X" ? 16 : 10)) : (e in NAMED ? NAMED[e] : m));
-/** marked's HTML into the stand-in (anchor-map.test.ts's parser, cut to what the scenes here emit: elements with attributes, text). */
+/** marked's HTML into the stand-in (anchor-map.test.ts's parser, cut to what the scenes here emit: elements with attributes, text,
+ *  entities, comments). Two readings a pin over white space rests on: `&nbsp;` decodes to U+00A0, the character the browser
+ *  builds and renders (a plain space here would be collapsible white space to skipBlockWs, and a scene meant to hold a rendered
+ *  blank would test the wrong character); and an HTML comment is dropped, as DOMPurify drops it before the viewer adopts the
+ *  DOM, so the white space on its two sides stands as two adjacent text nodes, the shape the browser holds (round 10). */
 function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
   const root = doc.createElement("#fragment");
   const stack: FakeElement[] = [root];
@@ -88,6 +92,7 @@ function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
   let i = 0;
   while (i < html.length) {
     if (html[i] === "<") {
+      if (html.startsWith("<!--", i)) { const e = html.indexOf("-->", i); i = e < 0 ? html.length : e + 3; continue; }
       if (html[i + 1] === "/") {
         const e = html.indexOf(">", i);
         const name = html.slice(i + 2, e).trim().toUpperCase();
@@ -150,6 +155,29 @@ const paraRange = (src: string): { start: number; end: number } => ({ start: src
  *  and the pointers make every neighbour and adjacency read free; round 8's index scans cost about the square of the children
  *  over two on top (N = 1,000 links: 2,009,993 reads measured at round 8's source against 9,995 here). */
 const LINEAR = (children: number): number => 8 * children + 16;
+
+/** Two shapes the viewer's DOM (DOMPurify's output of marked's HTML) holds and a stand-in must build the same way before a
+ *  pin over them here means anything: a `&nbsp;` decodes to U+00A0, the character the browser renders and never collapses,
+ *  not the U+0020 the skip readings treat as collapsible; an HTML comment is dropped, as the sanitizer drops it, leaving the
+ *  white space on its two sides as two adjacent text nodes. The expected marks are Chromium's over the real bundle (the
+ *  Slice 4 review, round 10). */
+const NBSP_BETWEEN = "Intro para.\n\n<b>a</b>&nbsp;<i>b</i>\n\nAfter para.\n";
+const COMMENT_BETWEEN = "Intro para.\n\n<b>a</b> <!-- c --> <i>b</i>\n\nAfter para.\n";
+const fullRange = (src: string): { start: number; end: number } => ({ start: src.indexOf("Intro para."), end: src.indexOf("After para.") + "After para.".length });
+const kidsOf = (p: FakeElement): string[] => p.kids.map((c) => c.nodeType === 3 ? "#text(" + JSON.stringify((c as FakeText).data) + ")" : "<" + (c as FakeElement).tagName + ">");
+
+test("the stand-in builds what the sanitizer's DOM holds: `&nbsp;` is a U+00A0 text node (painted between two inline elements as Chromium paints it) and an HTML comment is dropped, its two sides two adjacent whitespace nodes painted as one mark", () => {
+  for (const pointers of [true, false]) {
+    const nb = buildRendered(NBSP_BETWEEN, pointers);
+    assert.deepEqual(kidsOf(topEl(nb, 1)), ["<B>", '#text("\u00a0")', "<I>"], "a no-break space entity decodes to U+00A0, the browser's character, not to a plain space (pointers " + pointers + ")");
+    const nbMarks = paintRendered(El(nb), NBSP_BETWEEN, fullRange(NBSP_BETWEEN), "fc-hl") as unknown as FakeElement[];
+    assert.equal(textsOf(nbMarks), "Intro para.|a|\u00a0|b|After para.", "the nbsp between two inline elements is painted, and the mark's text is the no-break space (pointers " + pointers + ")");
+    const cb = buildRendered(COMMENT_BETWEEN, pointers);
+    assert.deepEqual(kidsOf(topEl(cb, 1)), ["<B>", '#text(" ")', '#text(" ")', "<I>"], "the comment is dropped as DOMPurify drops it, the white space on its two sides left as two adjacent text nodes (pointers " + pointers + ")");
+    const cbMarks = paintRendered(El(cb), COMMENT_BETWEEN, fullRange(COMMENT_BETWEEN), "fc-hl") as unknown as FakeElement[];
+    assert.equal(textsOf(cbMarks), "Intro para.|a|  |b|After para.", "the two adjacent whitespace nodes between two inline elements are one run and one mark of two spaces, as in Chromium (pointers " + pointers + ")");
+  }
+});
 
 test("the fixtures hold the shapes: a paragraph of 2N - 1 children with N - 1 whitespace-only nodes between inline elements, and a paragraph of 2N + 1 sibling units around N formula roots", () => {
   const lb = buildRendered(LINKS, true);

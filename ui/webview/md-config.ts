@@ -217,6 +217,18 @@ export const frontMatter: TokenizerAndRendererExtension = {
 // before its own paragraph), so a display formula on the line after a definition is a block after the note, as a fence
 // or a heading there already was. The regex before this took only four-space continuations, so a wrapped definition
 // lost its second line to a paragraph of its own.
+// The body renders as a PARAGRAPH inside the div, the back link first in it (GitHub's own shape, `li > p` with the back
+// link in the paragraph), never as inline content directly under the div, so the spaces between the body's inline
+// elements are a paragraph's to the Rendered paint whatever anchor-map.ts skipBlockWs reads under a DIV. With the body
+// directly under the div, the paint's container rule of the time (a whitespace-only text node under a DIV read as the
+// white space between blocks and skipped, main's rule through the review round 9) never painted the spaces of
+// `[^1]: **a** *b*` or between two links in a definition, and a highlight across the note broke at each (a 4 px gap
+// between two ring ends), where main, which rendered the line as a plain paragraph, painted it whole (the 2026-09-09
+// review, round 10, which also retired that container rule in anchor-map.ts, so a rendered space between two inline
+// children of a div paints too; the paragraph stands on GitHub's shape; md-config-footnote-paint.test.ts and its browser
+// leg). The div keeps the footnote's own spacing and rail, so the sheets give the inner paragraph no margin of its own
+// (`.md .md-footnote p, .fileview-md .md-footnote p`, both sheets): the box is the one the div had, measured equal to the
+// pixel.
 export const FOOTNOTE_CLASS = "md-footnote";
 export const FOOTNOTE_REF_CLASS = "md-fnref";
 export const FOOTNOTE_BACK_CLASS = "md-fnback";
@@ -283,7 +295,7 @@ export const footnoteDef: TokenizerAndRendererExtension = {
     const back = label === undefined
       ? `<span class="${FOOTNOTE_BACK_CLASS}" title="${FOOTNOTE_ORPHAN_TITLE}">[^${id}]:</span>`   // nothing refers to it: the marker as written, no link to a reference that is not there
       : `<a class="${FOOTNOTE_BACK_CLASS}" href="#fnref-${id}" title="Back to the text">${label}</a>`;
-    return `<div class="${FOOTNOTE_CLASS}"${idAttr}>${back} ${this.parser.parseInline(t.tokens)}</div>`;
+    return `<div class="${FOOTNOTE_CLASS}"${idAttr}><p>${back} ${this.parser.parseInline(t.tokens)}</p></div>`;   // the body a paragraph inside the div (the header)
   },
 };
 

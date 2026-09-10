@@ -6,7 +6,10 @@
 //    MD_FORBID_TAGS) that Chromium lays out as a block-level box or a table or one of a table's parts (the computed display of the
 //    element under the viewer's prose root), the document's own html and body left out, which the parser never places in a
 //    fragment. Round 8 wrote the list by hand and left out center, dir, menu and search while naming form and fieldset, which the
-//    sanitizer strips; a list read from the sanitizer and the browser cannot drift from either.
+//    sanitizer strips; a list read from the sanitizer and the browser cannot drift from either. The leg also holds the checked-in
+//    fixture anchor-map-fixtures/block-tags.json (the Rendering section's block-level tags) to Chromium over every kept tag, in
+//    both directions and to the display named, since md-config-block-boxes.test.ts pins the set to that fixture in node, where CI
+//    runs and this leg skips (round 10).
 // 2. A highlight from the paragraph before an author's html block to the paragraph after it paints the block's text and no
 //    whitespace-only mark, and moves nothing: the "\n" between a figure or a details and its image (the parent's edge, an inline
 //    neighbour), the "\n\n" beside a center, menu, dir or search, and the "\n" between two <br>s each painted an empty ringed box
@@ -35,6 +38,8 @@ const EXT = process.cwd();                                        // npm test ru
 const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const FEED = fs.readFileSync(path.join(UI, "feed.css"), "utf8");
+/** The Rendering section's block-level tags, the node pin's fixture (md-config-block-boxes.test.ts); leg 1 holds it to Chromium. */
+const FIXTURE = JSON.parse(fs.readFileSync(path.join(UI, "anchor-map-fixtures", "block-tags.json"), "utf8")) as { tags: Record<string, string> };
 
 /** marked with the viewer's grammar, the sanitizer and its profile, DOMPurify itself (for the allowlist), the paint and the
  *  shipped set, bundled as the webview build bundles them. */
@@ -147,6 +152,13 @@ test("BLOCK_BOXES is the set of tags the sanitizer keeps that Chromium lays out 
     for (const tag of NEVER_IN_A_FRAGMENT) assert.ok(r.derived.includes(tag), tag + " is derived (a block the sanitizer allows) and left out of the set by name");
     const expected = r.derived.filter((tag: string) => !NEVER_IN_A_FRAGMENT.includes(tag));
     assert.deepEqual(r.shipped, expected, "the shipped BLOCK_BOXES equals the derived set: every kept block tag is in it and nothing else is");
+    // the fixture the node pin reads is Chromium's over every kept tag: a tag is on it exactly when Chromium lays the element out
+    // as a block-level box or a table's part, and with the display the fixture names (the section's rule for the bare element)
+    const off = Object.entries(r.displays as Record<string, string>)
+      .filter(([tag, d]) => (tag in FIXTURE.tags ? FIXTURE.tags[tag] !== d : BLOCK_DISPLAYS.includes(d)))
+      .map(([tag, d]) => tag + " (fixture " + (FIXTURE.tags[tag] || "absent") + ", Chromium " + d + ")");
+    assert.deepEqual(off, [], "anchor-map-fixtures/block-tags.json is Chromium's over the kept tags");
+    assert.ok(Object.keys(r.displays).filter((tag) => tag in FIXTURE.tags).length >= 40, "the kept tags cover the fixture's blocks");
   });
 });
 

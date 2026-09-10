@@ -51,11 +51,11 @@ test("front matter: one folded element at the document's start, the YAML shown; 
   assert.equal(Lexer.lex("---\na: 1\n---\n\nPara")[0].raw, "---\na: 1\n---\n\n", "the token's raw tiles the source from offset 0, trailing blank lines included");
 });
 
-test("footnotes: a reference is a numbered sup link, a definition renders IN PLACE as one div with a back link, numbered by order of first reference; a URL-only definition is a footnote, not a swallowed link definition", () => {
+test("footnotes: a reference is a numbered sup link, a definition renders IN PLACE as one div holding a paragraph that opens with the back link, numbered by order of first reference; a URL-only definition is a footnote, not a swallowed link definition", () => {
   const out = html("Ref[^b] and [^a] then [^b] again.\n\n[^a]: Def A\n    continued\n\n[^b]: https://example.test/def-only\n\nAfter.\n");
   assert.match(out, /<p>Ref<sup class="md-fnref"><a href="#fn-b" id="fnref-b">1<\/a><\/sup> and <sup class="md-fnref"><a href="#fn-a" id="fnref-a">2<\/a><\/sup> then <sup class="md-fnref"><a href="#fn-b" id="fnref-b-2">1<\/a><\/sup> again\.<\/p>/, "numbered by first reference; a second reference to the same note keeps its own id");
-  assert.match(out, /<div class="md-footnote" id="fn-a"><a class="md-fnback" href="#fnref-a" title="Back to the text">2<\/a> Def A\ncontinued<\/div>/, "the definition in place, its continuation line de-indented");
-  assert.match(out, /<div class="md-footnote" id="fn-b"><a class="md-fnback" href="#fnref-b" title="Back to the text">1<\/a> <a href="https:\/\/example\.test\/def-only">https:\/\/example\.test\/def-only<\/a><\/div>/, "the URL-only definition renders (marked's def rule used to swallow it)");
+  assert.match(out, /<div class="md-footnote" id="fn-a"><p><a class="md-fnback" href="#fnref-a" title="Back to the text">2<\/a> Def A\ncontinued<\/p><\/div>/, "the definition in place, its body a paragraph inside the div (round 10: its spaces paint as a paragraph's), its continuation line de-indented");
+  assert.match(out, /<div class="md-footnote" id="fn-b"><p><a class="md-fnback" href="#fnref-b" title="Back to the text">1<\/a> <a href="https:\/\/example\.test\/def-only">https:\/\/example\.test\/def-only<\/a><\/p><\/div>/, "the URL-only definition renders (marked's def rule used to swallow it)");
   assert.ok(out.indexOf("fn-a") < out.indexOf("<p>After."), "in place, before the paragraph that follows it");
   oneRoot(html("[^1]: only a definition\n"), "div");
   assert.match(html("[^x]: unreferenced\n"), /<span class="md-fnback" title="[^"]+">\[\^x\]:<\/span> unreferenced/, "a definition nothing refers to shows its marker as written, and has no back link to a reference that is not there (below)");
@@ -162,26 +162,26 @@ test("footnotes: a reference with no definition stays as written; a definition's
   assert.deepEqual((Lexer.lex("a [^1] b")[0] as { tokens: Array<{ type: string }> }).tokens.map((t) => t.type), ["text"], "no token for the anchor map either");
   const cross = html("See [^b] then.\n\n[^b]: has [^a] inside\n\n[^a]: the other\n");
   assert.match(cross, /<p>See <sup class="md-fnref"><a href="#fn-b" id="fnref-b">1<\/a><\/sup> then\.<\/p>/);
-  assert.match(cross, /<div class="md-footnote" id="fn-b"><a class="md-fnback" href="#fnref-b" title="Back to the text">1<\/a> has <sup class="md-fnref"><a href="#fn-a" id="fnref-a">2<\/a><\/sup> inside<\/div>/, "a reference inside a definition's text finds a definition written later: every definition is known before any inline text is lexed");
-  assert.match(cross, /<div class="md-footnote" id="fn-a"><a class="md-fnback" href="#fnref-a" title="Back to the text">2<\/a> the other<\/div>/);
+  assert.match(cross, /<div class="md-footnote" id="fn-b"><p><a class="md-fnback" href="#fnref-b" title="Back to the text">1<\/a> has <sup class="md-fnref"><a href="#fn-a" id="fnref-a">2<\/a><\/sup> inside<\/p><\/div>/, "a reference inside a definition's text finds a definition written later: every definition is known before any inline text is lexed");
+  assert.match(cross, /<div class="md-footnote" id="fn-a"><p><a class="md-fnback" href="#fnref-a" title="Back to the text">2<\/a> the other<\/p><\/div>/);
   const dup = html("Ref[^d].\n\n[^d]: First.\n\n[^d]: Second.\n");
   assert.equal((dup.match(/id="fn-d"/g) || []).length, 1, "one element carries the id, so #fn-d lands on the first definition");
-  assert.match(dup, /<div class="md-footnote" id="fn-d"><a class="md-fnback" href="#fnref-d" title="Back to the text">1<\/a> First\.<\/div><div class="md-footnote"><a class="md-fnback" href="#fnref-d" title="Back to the text">1<\/a> Second\.<\/div>/, "the second keeps its class and its back link");
-  assert.equal(html("[^x]: unreferenced\n"), `<div class="md-footnote" id="fn-x"><span class="md-fnback" title="${FOOTNOTE_ORPHAN_TITLE}">[^x]:</span> unreferenced</div>`, "nothing refers to it: the marker as written is the label, which says so, with no link to a reference that is not there");
+  assert.match(dup, /<div class="md-footnote" id="fn-d"><p><a class="md-fnback" href="#fnref-d" title="Back to the text">1<\/a> First\.<\/p><\/div><div class="md-footnote"><p><a class="md-fnback" href="#fnref-d" title="Back to the text">1<\/a> Second\.<\/p><\/div>/, "the second keeps its class and its back link");
+  assert.equal(html("[^x]: unreferenced\n"), `<div class="md-footnote" id="fn-x"><p><span class="md-fnback" title="${FOOTNOTE_ORPHAN_TITLE}">[^x]:</span> unreferenced</p></div>`, "nothing refers to it: the marker as written is the label, which says so, with no link to a reference that is not there");
   // round 2: an orphan definition's text is dressed, never changed. A regex character class an agent explains at a line start
   // is GFM's definition shape (GitHub drops the whole block); the marker stays in view, so the reply reads as written.
   const regex = "The pattern:\n\n[^a-z]: matches anything but a lowercase letter\n[^0-9]+: one or more non-digits";
-  assert.match(html(regex), /<div class="md-footnote" id="fn-a-z"><span class="md-fnback" title="[^"]+">\[\^a-z\]:<\/span> matches anything but a lowercase letter\n\[\^0-9\]\+: one or more non-digits<\/div>$/);
+  assert.match(html(regex), /<div class="md-footnote" id="fn-a-z"><p><span class="md-fnback" title="[^"]+">\[\^a-z\]:<\/span> matches anything but a lowercase letter\n\[\^0-9\]\+: one or more non-digits<\/p><\/div>$/);
   assert.equal(html(regex).replace(/<[^>]+>/g, ""), "The pattern:\n[^a-z]: matches anything but a lowercase letter\n[^0-9]+: one or more non-digits", "every character the author wrote is in the rendered text");
   assert.doesNotMatch(FOOTNOTE_ORPHAN_TITLE, /—|fleet/i);
   const lazy = "Ref[^1].\n\n[^1]: first\nlazy second line\n\nAfter.\n";
-  assert.match(html(lazy), /<div class="md-footnote" id="fn-1"><a class="md-fnback" href="#fnref-1" title="Back to the text">1<\/a> first\nlazy second line<\/div><p>After\.<\/p>\n$/, "a lazy continuation line stays in the note, as GitHub keeps it");
+  assert.match(html(lazy), /<div class="md-footnote" id="fn-1"><p><a class="md-fnback" href="#fnref-1" title="Back to the text">1<\/a> first\nlazy second line<\/p><\/div><p>After\.<\/p>\n$/, "a lazy continuation line stays in the note, as GitHub keeps it");
   assert.equal(Lexer.lex(lazy).map((t) => t.raw).join(""), lazy, "the tokens tile the source");
-  assert.match(html("Ref[^1].\n\n[^1]: first\n  two-space line\n"), /1<\/a> first\ntwo-space line<\/div>$/, "Obsidian's two-space continuation, de-indented");
-  assert.match(html("Ref[^1].\n\n[^1]: first\n    four-space line\n"), /1<\/a> first\nfour-space line<\/div>$/, "GitHub's four-space continuation, as before");
-  assert.match(html("Ref[^1] and [^2].\n\n[^1]: a\n[^2]: b\n"), /1<\/a> a<\/div><div class="md-footnote" id="fn-2"><a class="md-fnback" href="#fnref-2" title="Back to the text">2<\/a> b<\/div>$/, "another definition on the next line ends the first");
-  assert.match(html("Ref[^1].\n\n[^1]: a\n- item\n"), /1<\/a> a<\/div><ul>\n<li>item<\/li>\n<\/ul>\n$/, "a list ends it");
-  assert.match(html("Ref[^1].\n\n[^1]: a\n# Head\n"), /1<\/a> a<\/div><h1>Head<\/h1>\n$/, "a heading ends it");
+  assert.match(html("Ref[^1].\n\n[^1]: first\n  two-space line\n"), /1<\/a> first\ntwo-space line<\/p><\/div>$/, "Obsidian's two-space continuation, de-indented");
+  assert.match(html("Ref[^1].\n\n[^1]: first\n    four-space line\n"), /1<\/a> first\nfour-space line<\/p><\/div>$/, "GitHub's four-space continuation, as before");
+  assert.match(html("Ref[^1] and [^2].\n\n[^1]: a\n[^2]: b\n"), /1<\/a> a<\/p><\/div><div class="md-footnote" id="fn-2"><p><a class="md-fnback" href="#fnref-2" title="Back to the text">2<\/a> b<\/p><\/div>$/, "another definition on the next line ends the first");
+  assert.match(html("Ref[^1].\n\n[^1]: a\n- item\n"), /1<\/a> a<\/p><\/div><ul>\n<li>item<\/li>\n<\/ul>\n$/, "a list ends it");
+  assert.match(html("Ref[^1].\n\n[^1]: a\n# Head\n"), /1<\/a> a<\/p><\/div><h1>Head<\/h1>\n$/, "a heading ends it");
 });
 
 test("a callout keeps a lazy continuation line, as the blockquote it displaces does and as GitHub keeps it; its start hint never fires inside a paragraph", () => {
@@ -269,11 +269,11 @@ test("a footnote definition ends where the lexer's own paragraph would: a displa
     const toks = Lexer.lex(src).map((t) => [t.type, t.raw]);
     assert.deepEqual(toks, [["paragraph", "ref[^1]"], ["space", "\n\n"], ["footnoteDef", "[^1]: text\n"], ["mathBlock", math + "\n\n"], ["paragraph", "After.\n"]], name);
     assert.equal(toks.map((t) => t[1]).join(""), src, name + ": the tokens tile the source");
-    assert.match(html(src), /1<\/a> text<\/div><div class="md-math-display">x<\/div><p>After\.<\/p>\n$/, name + ": the formula is a display block after the note, not a span inside it");
+    assert.match(html(src), /1<\/a> text<\/p><\/div><div class="md-math-display">x<\/div><p>After\.<\/p>\n$/, name + ": the formula is a display block after the note, not a span inside it");
   }
   const rejected = "ref[^1]\n\n[^1]: text\n$$x$$ is inline here.\n\nAfter.\n";
   assert.deepEqual(Lexer.lex(rejected).map((t) => t.type), ["paragraph", "space", "footnoteDef", "paragraph"], "a line the block tokenizer refuses is a continuation line, as in a paragraph");
-  assert.match(html(rejected), /text\n<span class="md-math-display">x<\/span> is inline here\.<\/div>/);
+  assert.match(html(rejected), /text\n<span class="md-math-display">x<\/span> is inline here\.<\/p><\/div>/);
   assert.equal(Lexer.lex(rejected).map((t) => t.raw).join(""), rejected);
 });
 

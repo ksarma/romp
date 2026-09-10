@@ -119,7 +119,7 @@ function readConstructs() {
     frontMatter: fm ? { first: md.firstElementChild === fm, open: fm.hasAttribute("open"), summary: fm.querySelector("summary.md-frontmatter-head")?.textContent, pre: fm.querySelector("pre")?.textContent, hr: qa(":scope > hr").length, h2Top: qa(":scope > h2").map((h) => h.id) } : null,
     fnref: qa("sup.md-fnref a").map(linkOf),
     fnrefIds: qa("sup.md-fnref a").map((a) => a.id),
-    fn1: fn1 ? { tag: fn1.tagName, cls: fn1.className, text: fn1.textContent, prevHasRef: !!fn1.previousElementSibling?.querySelector("sup.md-fnref"), back: linkOf(fn1.firstElementChild!) } : null,
+    fn1: fn1 ? { tag: fn1.tagName, cls: fn1.className, text: fn1.textContent, prevHasRef: !!fn1.previousElementSibling?.querySelector("sup.md-fnref"), body: [fn1.firstElementChild?.tagName, fn1.children.length, fn1.firstElementChild?.firstElementChild?.className], back: linkOf(fn1.querySelector(".md-fnback")!) } : null,
     fn2: fn2 ? { text: fn2.textContent, link: linkOf(fn2.querySelector("a[href^='https://']")!) } : null,
     callouts: qa(".md-callout").map((c) => ({ tag: c.tagName, cls: c.className, open: c.hasAttribute("open"), title: c.querySelector(".md-callout-title")?.tagName + ":" + c.querySelector(".md-callout-title")?.textContent, body: Array.from(c.children).slice(1).map((e) => e.textContent).join("|") })),
     mark: qa("mark").map((m) => m.textContent), del: qa("del").map((d) => d.textContent), single: (q("h1")!.nextElementSibling!.textContent || "").includes("~single~"),
@@ -173,6 +173,7 @@ test("the Files bundle renders every construct of the fixture as its element, in
     assert.deepEqual(c.fnrefIds, ["user-content-fnref-1"]);
     assert.ok(c.fn1, "the definition renders");
     assert.deepEqual([c.fn1!.tag, c.fn1!.cls, c.fn1!.text, c.fn1!.prevHasRef], ["DIV", "md-footnote", "1 The footnote definition text.", true]);
+    assert.deepEqual(c.fn1!.body, ["P", 1, "md-fnback fv-frag"], "the body is one paragraph inside the div, the back link first in it (round 10: its spaces paint as a paragraph's)");
     assert.deepEqual([c.fn1!.back.text, c.fn1!.back.href, c.fn1!.back["data-frag"], c.fn1!.back.class], ["1", "#fnref-1", "fnref-1", "md-fnback fv-frag"]);
     assert.ok(c.fn2, "the URL-only definition renders");
     assert.equal(c.fn2!.text, "[^2]: https://example.test/def-only", "nothing refers to this definition: its label is the marker as written (md-config.ts), never a number that looks like a reference's");

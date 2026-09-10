@@ -1762,6 +1762,7 @@ a.fileview-gh-note { border-style: dashed; }
 .md sup.md-fnref, .fileview-md sup.md-fnref { line-height: 0; }
 .md sup.md-fnref a, .fileview-md sup.md-fnref a { padding: 0 0.15em; }
 .md .md-footnote, .fileview-md .md-footnote { margin: 0.5em 0; padding-left: 12px; border-left: 2px solid var(--box-border); font-size: 0.86em; color: var(--dim); }
+.md .md-footnote p, .fileview-md .md-footnote p { margin: 0; }   /* the body is a paragraph inside the div (md-config.ts footnotes): the div carries the spacing */
 .md .md-fnback, .fileview-md .md-fnback { display: inline-block; min-width: 1.2em; margin-right: 0.3em; text-align: center; }
 .md .md-callout, .fileview-md .md-callout { --callout: var(--box-border); color: inherit; border-left: 3px solid var(--callout); border-radius: 0 6px 6px 0; padding: 0.4em 0.8em; background: color-mix(in srgb, var(--callout) 8%, transparent); }
 /* the folded form's box spacing: a details matches no block rule, so it had the UA's 0 margin where the blockquote

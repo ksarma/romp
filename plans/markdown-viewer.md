@@ -1261,17 +1261,35 @@ as built departs from the text above, why, and which test holds each rule:
    BLOCK_BOXES is derived, every tag the sanitizer keeps that Chromium lays out as a block or a table's part, where
    round 8's hand-written list lacked `center`, `dir`, `menu` and `search` and named `form` and `fieldset`, which the
    sanitizer strips (md-config-paint-whitespace-browser.test.ts reads the set off DOMPurify's allowlist and the
-   computed display and holds the shipped set equal to it); a node at the edge of a block-level parent, no sibling on
-   that side, is the block's leading or trailing white space and is skipped whatever stands on its other side, `pre`
-   excepted, since the "\n" between an author's `<figure>` or `<details>` and its `<img>` was ringed, on main too; a
-   `<br>` beside the node counts as a block does, since the "\n" between two `<br>`s was ringed on the blank line; and
-   the neighbour reads step over the DOM's sibling pointers, since indexing the parent's child list per whitespace node
-   had made a paint quadratic in a paragraph's inline children (one mark across 3,000 links 850 ms in Chromium against
-   27 before round 8 and 32 with the pointers; md-config-paint-whitespace.test.ts counts the child-list reads over a
-   stand-in that offers the pointers, 9,995 for 1,999 children against 2,009,993 indexed, and the browser leg times
-   5,000 links once against 500 ten times as equal work with the source table warm, the median pair ratio 1.1 against
-   8.7 indexed, bounded at 3). Every shape is driven through paintRendered from the paragraph before the html block to
-   the paragraph after (anchor-map-obsidian.test.ts and the browser leg), which round 8 had recorded as not paintable.
+   computed display and holds the shipped set equal to it, and, since round 10, md-config-block-boxes.test.ts holds
+   the set in node too, both directions, against the HTML Standard's Rendering section's block-level tags
+   (anchor-map-fixtures/block-tags.json) that the installed DOMPurify's allowlist keeps, less MD_FORBID_TAGS, html and
+   body, since the browser leg skips on CI); a node at the edge of a block-level parent, no sibling on that side, is
+   the block's leading or trailing white space and is skipped whatever stands on its other side, `pre` excepted, since
+   the "\n" between an author's `<figure>` or `<details>` and its `<img>` was ringed, on main too; a `<br>` beside the
+   node counts as a block does, since the "\n" between two `<br>`s was ringed on the blank line; and the neighbour
+   reads step over the DOM's sibling pointers, since indexing the parent's child list per whitespace node had made a
+   paint quadratic in a paragraph's inline children (one mark across 3,000 links 850 ms in Chromium against 27 before
+   round 8 and 32 with the pointers; md-config-paint-whitespace.test.ts counts the child-list reads over a stand-in
+   that offers the pointers, 9,995 for 1,999 children against 2,009,993 indexed, and the browser leg times 5,000 links
+   once against 500 ten times as equal work with the source table warm, the median pair ratio 1.1 against 8.7 indexed,
+   bounded at 3). Every shape is driven through paintRendered from the paragraph before the html block to the
+   paragraph after (anchor-map-obsidian.test.ts and the browser leg), which round 8 had recorded as not paintable.
+   Round 10 set what whitespace-only means for the skip: the browser's collapsible white space, HTML's ASCII five
+   (space, tab, line feed, form feed, carriage return), never JavaScript's `\s`, so a text node of no-break or
+   ideographic spaces is the passage's text and paints as on main (round 9's readings judged it with `\s` and
+   unpainted the `&nbsp;` spacer cell of a table, a `<p>&nbsp;</p>` spacer, a nbsp before a paragraph's first inline
+   element or alone between two `<br>`s and a paragraph's full-width indent, each a visible 7.89 x 16 or 18 x 16 px
+   mark on main and at round 8); and main's own first reading, the parent's tag from a list of block containers (UL,
+   OL, LI, BLOCKQUOTE, DIV, TABLE and its parts, SECTION, ARTICLE, BODY), is gone, since it skipped the rendered space
+   between two inline children of a list item (`- **a** *b*`, a task item's after its checkbox), a centred badge row,
+   an html blockquote or a section whatever the neighbours, and the ring broke at it, on main too; the neighbour and
+   edge readings cover every block-child case the list did, and one guard stays, for the render root alone, whose
+   whitespace node is the block pairing's (`\s`-only, the pairing's own test) and never a mark. The consequence:
+   `<div>&nbsp;</div>` and `<li>&nbsp;</li>`, which the list skipped, paint, a blank line the note renders
+   (md-config-paint-rendered-space.test.ts drives every shape from the paragraph before to the paragraph after over a
+   stand-in that keeps `&nbsp;` as U+00A0, the sibling stand-ins decoding it to a plain space; its browser leg
+   measures the blank before the paint and the mark after, the layout box for box unchanged).
    anchor-map-obsidian.test.ts and the browser leg select across the formula and get the TeX between. The fill's two
    fallback shapes, KaTeX's `span.katex-error`
    on TeX it cannot parse and the belt's `code.md-math-src` past a bound, are controls like `.katex` (anchor-map.ts
@@ -1387,13 +1405,19 @@ as built departs from the text above, why, and which test holds each rule:
    known when a reference is lexed): `[^1]` with no `[^1]:` line stays as written, where it rendered a live-looking
    link to nowhere (the review round 1). A second reference to the same note gets `fnref-id-2`. A definition renders
    IN PLACE as `div.md-footnote[id="fn-id"]` with a back link `a.md-fnback[href="#fnref-id"]` first, one element per
-   definition, so the paragraphs after it pair as before (the acceptance); its text runs as far as marked's paragraph
-   rule reads a paragraph, so a lazy continuation line (GitHub's form) or a two-space indented one (Obsidian's) stays
-   in the note and another definition, a list, a heading or a line a registered block extension's start hint names
-   ends it (a four-space rule lost a wrapped definition's second line; md-config.ts clipAtBlockStarts applies the cut
-   marked makes before its own paragraph, so a `$$` block on the line after `[^1]: text` is a display formula after
-   the note, where the borrowed paragraph rule ran over it: the review round 2). Block content inside a definition,
-   GitHub's four-space form (a fence, a list, a second paragraph indented four spaces), is not adopted: a
+   definition, so the paragraphs after it pair as before (the acceptance); its body is a paragraph inside the div, the
+   back link first in it (GitHub's `li > p`, since the review round 10: rendered directly under the div, the spaces
+   between the body's inline elements were whitespace-only text nodes under a DIV, which the paint's container rule of
+   the time skipped, so a highlight across `[^1]: **a** *b*` or two links in a definition broke at each space, a 4 px
+   gap, where main, rendering the line as a plain paragraph, painted it whole; both sheets give that paragraph no
+   margin of its own, so the footnote's box is unchanged, measured to the pixel; md-config-footnote-paint.test.ts and
+   its browser leg drive paintRendered from the paragraph before to the paragraph after); its text runs as far as
+   marked's paragraph rule reads a paragraph, so a lazy continuation line (GitHub's form) or a two-space indented one
+   (Obsidian's) stays in the note and another definition, a list, a heading or a line a registered block extension's
+   start hint names ends it (a four-space rule lost a wrapped definition's second line; md-config.ts clipAtBlockStarts
+   applies the cut marked makes before its own paragraph, so a `$$` block on the line after `[^1]: text` is a display
+   formula after the note, where the borrowed paragraph rule ran over it: the review round 2). Block content inside a
+   definition, GitHub's four-space form (a fence, a list, a second paragraph indented four spaces), is not adopted: a
    four-space-indented line is the paragraph's continuation, as marked's own paragraph reads it, so an indented fence
    renders as a code span (the review round 3, open in item 10). A duplicate definition keeps its class and back link
    and drops its id, so `#fn-id` lands on the first. Numbering is by order of first reference, kept on the lexer
@@ -1676,7 +1700,14 @@ as built departs from the text above, why, and which test holds each rule:
    9,999 marks over a paragraph of 5,000 links painted in 33 ms and unwrapped in 469, 999 marks over 500 links in 3.6
    and 5.5 (headless Chromium, the medians of five); normalizing each parent once after the loop unwraps the 9,999 in
    11 ms (md-config-paint-whitespace-browser.test.ts's timing leg does so on its own copy, so the paint alone is
-   timed), a panel change for Slice 5's painter items.
+   timed), a panel change for Slice 5's painter items. Open after the review round 10: the mapping's alphabet is
+   JavaScript's `\s` on every side (anchor-map.ts Emitter.put drops each such character from a block's chars,
+   nonWsBefore and nthNonWs count in the same alphabet, and the panel's quote matching, comments.ts normalize,
+   collapses the same set), so a selection begun on a no-break or ideographic space, a full-width indent, is trimmed
+   to the glyph after it: its highlight starts one glyph in (14 px at 14px sans-serif for U+3000) while the quote
+   anchors; the trim is a pinned rule (anchor-map.test.ts, whitespace at the selection's edges), and a narrower
+   alphabet is a change to the walk, the matching and the panel's normalize together, main's contract, for Slice 5's
+   painter items.
 
 ### Slice 5: comments anchor on real notes
 
