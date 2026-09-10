@@ -392,9 +392,12 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
   // One python3, all cases on stdin, one JSON array back: the kernel's text for each, in order.
   const script = [
     "import json, os, sys",
-    "from importlib.machinery import SourceFileLoader",
+    // the tests dir on the child's path: load_source is tests/romp_load.py's, the repo's file-path importer
+    // (kernel/loadsource.py); SourceFileLoader.load_module() warns on 3.12+ and is removed in Python 3.15
+    "sys.path.insert(0, os.path.join(sys.argv[1], 'tests'))",
+    "from romp_load import load_source",
     "os.environ.pop('ROMP_STATE_DIR', None)",
-    "km = SourceFileLoader('romp_kernel_parity', os.path.join(sys.argv[1], 'bin', 'romp-kernel')).load_module()",
+    "km = load_source('romp_kernel_parity', os.path.join(sys.argv[1], 'bin', 'romp-kernel'))",
     "out = []",
     "for c in json.load(sys.stdin):",
     "    p = c['absPath']",
