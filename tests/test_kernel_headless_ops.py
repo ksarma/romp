@@ -2207,12 +2207,31 @@ class UnknownSessionRefused(_RouteServer):
                  mock.patch.object(km, "_send_or_park", lambda be, sid, text: fake.send(sid, text)), \
                  mock.patch.object(km, "_route_meta_command", lambda *a, **k: False), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None):
-                # the torn dormant record, at a cold cache (the scan lists nothing) and then warm (round 6's state)
-                torn_path.write_bytes(b"{not json")
-                _drop_regs([])
-                km._thread_reg_memo.clear()
-                km._thread_reg_failed.clear()
+                # the torn dormant record, at a cold cache (the scan lists nothing for sid-q, so the name misses every
+                # door and _named_miss finds the torn generation in the names registry), then warm (round 6's state,
+                # built the real way: a good reg the scan cached, then torn; the map serves the cached last good row,
+                # _live_names resolves web to sid-q, and the gate's own unreadable arm refuses with the typed
+                # spelling, no miss path). Round 7's warm iteration was the cold one repeated: the file was torn
+                # before any scan, so nothing was cached and both took the miss path (review round 8, 2026-09-09)
                 for label in ("cold", "warm"):
+                    if label == "cold":
+                        torn_path.write_bytes(b"{not json")
+                        km._thread_reg_memo.clear()
+                        km._thread_reg_failed.clear()
+                        self.assertNotIn("sid-q", km.Sessions.live(), "cold: the scan lists nothing for the torn sid")
+                    else:
+                        _drop_regs([torn_path])
+                        torn_path.write_text(json.dumps({"sid": "sid-q", "alive": True, "name": "web"}))
+                        km._thread_reg_memo.clear()
+                        km._thread_reg_failed.clear()
+                        self.assertEqual(km.Sessions.live().get("sid-q", {}).get("backend"), "sdk", "the scan cached the readable row")
+                        torn_path.write_bytes(b"{not json")
+                        km._thread_reg_memo.clear()
+                        km._thread_reg_failed.clear()
+                        warm = km.Sessions.live()
+                        self.assertIn("sid-q", warm, "warm: the map serves the cached last good row")
+                        self.assertEqual(km._live_names(warm).get("web"), "sid-q", "the name resolves to the cached row")
+                        self.assertTrue(km._reg_unreadable("sid-q"))
                     for op, extra in (("compact", {}), ("sendCommand", {"cmd": "/model opus"})):
                         errs, rows, log = drive(op, "web", **extra)
                         self.assertEqual(len(errs), 1, (label, op, frames))
