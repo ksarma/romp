@@ -2517,7 +2517,9 @@ class CrashHeal(unittest.TestCase):
             self.assertEqual(rep.pending(), [sb.CRASH_RESUME_NUDGE_OOM, "peer mail"], "the replacement took it, behind the nudge")
             rep._persist_queue()
             self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM, "peer mail"])
-            self.assertTrue(any("queue closed under the send" in m for m in logs), logs)
+            # round 7 (kernel-2): the helper logs the verb it serves, so a deliver's re-resolve is not logged as a send
+            self.assertTrue(any(m.startswith("deliver (") and "queue closed under the deliver" in m for m in logs), logs)
+            self.assertFalse(any("under the send" in m for m in logs), logs)
             self.assertEqual(be.problems(), [], "the re-resolve is the designed path, not a problem")
 
     def test_a_rewind_during_the_heals_scope_read_is_refused_and_the_replacement_takes_the_nudge_alone(self):

@@ -10954,7 +10954,7 @@ class SdkBackend:
             if send_id:
                 return s.enqueue(text, todo=user_todo or "", send_id=str(send_id))
             return s.enqueue(text, todo=user_todo or "")     # the two-argument shape every session double answers
-        s = self._enqueue_resolving(sid, s, attempt)   # a queue the crash heal closed under the send: the replacement
+        s = self._enqueue_resolving(sid, s, attempt, "send")   # a queue the crash heal closed under the send: the replacement
         if not s:
             return False
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
@@ -11559,12 +11559,12 @@ class SdkBackend:
         s = self._ensure(sid)
         if not s:
             return False
-        if not self._enqueue_resolving(sid, s, lambda s: s.enqueue(text)):   # a queue the crash heal closed under
-            return False                                                     # the deliver: the replacement (round 6)
+        if not self._enqueue_resolving(sid, s, lambda s: s.enqueue(text), "deliver"):   # a queue the crash heal closed
+            return False                                                                # under the deliver: the replacement (round 6)
         self._poke()
         return True
 
-    def _enqueue_resolving(self, sid: str, s: SdkSession, attempt) -> "SdkSession | None":
+    def _enqueue_resolving(self, sid: str, s: SdkSession, attempt, what: str) -> "SdkSession | None":
         """Queue a text on the session `sid` resolves to, re-resolving the sid when the session's queue CLOSED
         under the attempt (round 5, kernel-3; one helper for send and deliver since round 6, regression-1,
         when deliver ignored the refusal and reported a text it had dropped as delivered; the rewind arm
@@ -11577,17 +11577,18 @@ class SdkBackend:
         wrote, nudge first), which takes the text in order. Bounded to three attempts: a replacement that
         dies inside the same window is a crash loop, which the heal refuses to respawn. Returns the session
         the text was queued on; None when the sid stopped resolving (the caller's own False) or the bound
-        was hit (logged as a problem)."""
+        was hit (logged as a problem). `what` is the caller's verb ("send", "deliver"), which both log lines
+        name (round 7, kernel-2: a deliver's re-resolve was logged as a send)."""
         for _attempt in range(3):
             if attempt(s) is not False:
                 return s
-            self._log("send (%s): the session's queue closed under the send (its crash heal folded the queue "
-                      "and popped it); re-resolving to the replacement" % sid[:8], problem=False)
+            self._log("%s (%s): the session's queue closed under the %s (its crash heal folded the queue "
+                      "and popped it); re-resolving to the replacement" % (what, sid[:8], what), problem=False)
             s = self._ensure(sid)
             if not s:
                 return None
-        self._log("send (%s): the session's queue closed under the send three times; the text was not queued"
-                  % sid[:8], problem=True)
+        self._log("%s (%s): the session's queue closed under the %s three times; the text was not queued"
+                  % (what, sid[:8], what), problem=True)
         return None
 
     def interrupt(self, sid: str) -> bool:
