@@ -316,7 +316,7 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
     with the product's name on it; these two must not teach the model a tracking system.)"""
 
     def test_the_descriptions_carry_no_romp_vocabulary(self):
-        pm = SourceFileLoader("romp_postal_voice", os.path.join(BIN, "romp-postal-service")).load_module()
+        pm = load_source("romp_postal_voice", os.path.join(BIN, "romp-postal-service"))
         tools = {t["name"]: t for t in pm.MCP_TOOLS}
         for name in ("add_user_todo", "withdraw_user_todo"):
             self.assertIn(name, tools, "the tool exists to be scanned")
@@ -339,8 +339,7 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
         # identity refusal is out of scope on purpose: it is every postal tool's answer, and
         # the bus names romp deliberately (visible tooling); identity is stubbed so no branch
         # here can reach it.
-        pm = SourceFileLoader("romp_postal_voice_results",
-                              os.path.join(BIN, "romp-postal-service")).load_module()
+        pm = load_source("romp_postal_voice_results", os.path.join(BIN, "romp-postal-service"))
         saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
         canned = {}
         pm._kernel_post = lambda path, body, timeout=4.0: canned.get("res")

@@ -1028,7 +1028,7 @@ class BuildSessionSeam(unittest.TestCase):
         # FAIL LOUDLY on the task store, but the waiting-on-you rows come from a DIFFERENT store:
         # the error card carries them too, so an unreadable ~/.claude/tasks never hides an ask
         km._read_task_store = lambda fsid, fold=None: None
-        km._fold_tasks = lambda session: [{"id": "1", "subject": "Build the fixtures",
+        km._fold_tasks = lambda session, sid=None: [{"id": "1", "subject": "Build the fixtures",
                                            "activeForm": None, "status": "pending"}]
         km._add_user_todo(SID, "Need the staging port")
         payload = km.build_session(SID, NOW)
