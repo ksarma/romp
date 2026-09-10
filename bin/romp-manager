@@ -23,7 +23,8 @@
 //   romp down      → `down`        stop every kernel and exit — the UNSUPERVISED half of `romp down`
 //                                  (under the login service bin/romp stops the service instead, or
 //                                  Restart=always / KeepAlive would respawn us within seconds)
-// (`restart [kernel]` (single) also exists for front ends — no romp verb.)
+// (`restart [kernel]` (single) is this client's own verb: no romp verb and no front end dials POST /restart;
+//  the dashboard's Restart posts the KERNEL's /restart, which the kernel forwards here as POST /restart-all.)
 //
 // The control port is loopback-only, and every state-changing door on it (POST /restart-all, /restart,
 // /stop, /ensure) requires the kernel's serve token in an `X-Romp-Token` header: the same 0600 file the
@@ -252,7 +253,7 @@ const QUIET_MAX_DEFER_MS = Number(process.env.ROMP_QUIET_MAX_DEFER_MS) || 15 * 6
 // and then stops the service, and this row lands after it (kernel/kernel.py _recent_restart_reason
 // skips them; any reader that takes only the newest row must do the same). `trigger` names what
 // set the SIGTERM off, so the row is legible on its own:
-//   restart      one kernel, POST /restart (the dashboard button, `romp-manager restart`)
+//   restart      one kernel, POST /restart (`romp-manager restart [kernel]`; the dashboard's Restart arrives as restart-all)
 //   restart-all  every kernel, POST /restart-all (`romp refresh`), at once or at the quiet window
 //   refresh      the stale-manager self-bounce: kernels stopped so the supervisor respawns the new manager
 //   cli-down     a stop while `romp down`'s marker (DOWN_MARKER) is on disk: the CLI asked for it
@@ -1081,7 +1082,7 @@ function startManager() {
         if (!kernels.has(kid)) return json(404, { ok: false, error: `no kernel '${kid}'` });
         return json(202, { ok: true, deferred: true, coalesced: queueQuietRestart(kid) });
       }
-      clearPendingQuiet();                                       // the dashboard ↻ satisfies a pending deploy in passing
+      clearPendingQuiet();                                       // a single restart satisfies a pending deploy in passing
       return restartKernel(kid) ? json(200, { ok: true, restarted: kid }) : json(404, { ok: false, error: `no kernel '${kid}'` });
     }
     if (req.method === 'POST' && url.pathname === '/stop') {

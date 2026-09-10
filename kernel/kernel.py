@@ -10330,7 +10330,7 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
         body = resp.read()
         c.close()
     except Exception as e:
-        _sync_notice("romp is updated on disk but the restart request failed (%s) — "
+        _sync_notice("romp is updated on disk but the restart request failed (%s); "
                      "restart it yourself: romp refresh" % e, ok=False)
         return
     if resp.status >= 400:

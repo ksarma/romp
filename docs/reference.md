@@ -861,24 +861,50 @@ the two collide.
 
 The manager (`romp up`, or the login service) listens on loopback at `:7432`
 (`ROMP_MANAGER_PORT`). `GET /status` is open: `romp status` and the probes read
-it. Every request that changes state, `POST /restart-all` (`romp refresh`),
-`POST /restart` (the dashboard's Restart), `POST /stop` (`romp down`) and
-`POST /ensure` (a front end asking for a kernel), needs the kernel's serve token
-in an `X-Romp-Token` header: the same 0600 file the kernel gates its own writes
-with (`~/.local/state/romp/serve-token`, or `ROMP_SERVE_TOKEN`), which the
-manager reads fresh on every request, so a reminted token is honoured without a
-manager restart. A request with no token, or the wrong one, is answered 401
-with a one-line body, and the manager logs one line naming the address and the
-door, never the token. While the manager itself cannot read the token file,
-every state-changing request is answered 503, saying so, until the file is
-back: the doors never open on a missing token. Before this gate (2026-09-10) a
-local process restarted every session by posting to the port.
+it. Every request that changes state needs a serve token in an `X-Romp-Token`
+header:
+
+- `POST /restart-all`: `romp refresh`, the automatic converge, the release
+  self-update, and the dashboard's Restart, which posts the kernel's own
+  `/restart` and is forwarded here by the kernel.
+- `POST /restart`: `romp-manager restart [kernel]`, one kernel. No romp verb and
+  no front end uses it.
+- `POST /stop`: `romp down`.
+- `POST /ensure`: a front end asking for a kernel (the VS Code extension).
+
+The token is the same 0600 file the kernel gates its own writes with
+(`~/.local/state/romp/serve-token`, or `ROMP_SERVE_TOKEN`). The manager accepts
+the token of every kernel it manages: the primary root's file, and each
+`kernels.json` profile's own `<stateDir>/serve-token`, since a profile kernel
+serves with its own root's token and presents it when its dashboard's Restart or
+its converge posts here. Every file is read fresh on every request, so a
+reminted token is honoured without a manager restart. A request with no token,
+or one the manager does not hold, is answered 401 with a one-line body, and the
+manager logs one line naming the address and the door, never the token.
+
+When nothing is at the primary root's token path as the manager starts, it mints
+the file itself (the kernel's shape: 18 random bytes as base64url, mode 0600,
+written whole) before its port opens, so a manager whose kernel never got as far
+as minting one can still be stopped. While the manager cannot read a token file
+that does exist (wrong owner or mode, a symlink, a directory), every
+state-changing request is answered 503, saying so, until the file is repaired:
+the doors never open on a missing token. Before this gate (2026-09-10) a local
+process restarted every session by posting to the port.
 
 `romp refresh`, `romp down`, the dashboard's Restart, the release self-update,
-the automatic converge and the VS Code extension all send the header, so
-nothing changes for them. A script of your own that posts to the port needs the
-header too. Read the file and hand it to curl on stdin rather than in argv,
-which every account on the machine can read:
+the automatic converge and the VS Code extension all send the header. When the
+manager refuses one of them anyway, the refusal is said where that caller
+reports: the dashboard's Restart answers the page with the refusal instead of
+acking a restart that will not happen, and both it and the converge put a
+notice in the bell naming the status, where the kernel read its token, and the
+way out (`romp refresh` from a terminal, which reads the manager's own file),
+with one line on the kernel's stderr and a `manager-refused-restart-all` row
+in `restart-audit.jsonl`; `romp down` prints the refusal and the remedy (below,
+under Stopping); the extension's toast says whether this window found a token,
+which file it read, and that the manager runs under another state root. A
+script of your own that posts to the port needs the header too. Read the file
+and hand it to curl on stdin rather than in argv, which every account on the
+machine can read:
 
     printf 'header = "X-Romp-Token: %s"\n' "$(cat ~/.local/state/romp/serve-token)" \
       | curl -fsS -X POST --config - http://127.0.0.1:7432/restart-all
@@ -1204,12 +1230,20 @@ it run every time:
 - The manager probe: `romp-manager status` on the control port (`:7432` by
   default). A manager that answers is stopped through its own control endpoint
   (`romp-manager down`, a `POST /stop` carrying the serve token; see [The
-  manager's control port](#the-managers-control-port)) and given up to seven
-  seconds to leave
-  (the manager itself waits five for its kernels, then sends SIGKILL). One
-  still answering after that: `romp down` releases the hold, removes the
-  marker, prints `romp down: a manager is still running on :<port> (pid <pid>)`,
-  which says to stop it by hand and run `romp down` again, and exits 1.
+  manager's control port](#the-managers-control-port)). Two outcomes:
+  - The manager answers and refuses (HTTP 401: the token this romp read is not
+    one the manager holds, so it runs under another state root or belongs to
+    another romp; HTTP 503: the manager cannot read its own token file). Said
+    at once, with no poll: `romp down` releases the hold, removes the marker,
+    writes a `down-failed` row naming the status, prints `romp down: the manager
+    on :<port> refused the stop (HTTP <status>: <the manager's words>)` followed
+    by the remedy (where this romp read its token and to check `ROMP_STATE_DIR`
+    and `ROMP_MANAGER_PORT`, or to repair the manager's file), and exits 1.
+  - The manager takes the stop and is given up to seven seconds to leave (the
+    manager itself waits five for its kernels, then sends SIGKILL). One still
+    answering after that: `romp down` releases the hold, removes the marker,
+    prints `romp down: a manager is still running on :<port> (pid <pid>)`,
+    which says to stop it by hand and run `romp down` again, and exits 1.
 - The kernel probe: `GET /healthz` on the kernel port (`:29855` by default). A
   kernel the earlier steps already asked to stop gets three seconds of drain
   first. One still answering (it ran with no manager, or outlived the

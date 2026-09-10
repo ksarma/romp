@@ -198,5 +198,5 @@ test("attachFailureToast: each reason names its own fix; a refusal never sends t
   const other = attachFailureToast({ ok: false, reason: "manager-refused", status: 500, detail: "HTTP 500" }, ctx);
   assert.match(other, /HTTP 500/);
   assert.match(other, /romp status/);
-  for (const t of [none, dead, wrong, missing, env, notoken, other]) assert.doesNotMatch(t, /—/, "no em dashes in a toast");
+  for (const t of [none, dead, wrong, missing, env, notoken, other]) assert.doesNotMatch(t, /\u2014/, "no em dashes in a toast");
 });
