@@ -5941,7 +5941,7 @@ class SdkSession:
         self._log_quietly("reconnect (%s): %s ended; %s; %s waits for the next turn's settle"
                           % (self.name, what, still, what_waits))
 
-    def _withdraw_held_pick(self, surface: str, how: str = "withdrawn") -> None:
+    def _withdraw_held_pick(self, surface: str, how: str = "withdrawn", standing: bool = False) -> None:
         """A newer pick made `surface`'s pending reconnect moot: the ONE withdraw routine for every surface
         (review round 3, 2026-09-09). set_mode calls it for a live pick of a non-bypass mode while a pick
         INTO bypass waits (review round 2); set_effort, set_auth, set_fast and set_env call it when the pick
@@ -5976,11 +5976,26 @@ class SdkSession:
         not recorded any more (the arm cleared it, or nothing was pending) the settle is told "repeat": a
         re-pick of what the connect in progress launches, with nothing withdrawn and only a reconnect armed
         after it to answer for (review round 5, 2026-09-10; the setters' already-applying branches in the
-        spawn window call this for that reason)."""
+        spawn window call this for that reason). A pick whose name an ARM carries is withdrawn too (review round 10,
+        2026-09-10; the review's correctness-1, regression-1 and kernel-1): its surface was cleared at the arm, but the
+        name rides the arm's set until its landing, so the kernel thread takes it off the set the arm wrote (the next
+        set while a connect is in progress, else the riding set) in this same hold, and snapshot's fastPending or
+        modePending drop the moment the pick no longer stands, whether the settle then disarms the arm (it stood for
+        this pick alone) or the arm stands for another pick. Until round 10 a name left the riding sets only with a
+        whole-arm disarm or at a landing, so a fast pick withdrawn beside a bypass pick pulsed its badge and named a
+        fast change through the bypass reload. `standing=True` says the pick STANDS and nothing is withdrawn: a repeat
+        click of the arm's own pick (the launching value, which differs from what the running process has), whose name
+        keeps riding so the flag holds through its reload; only set_mode's already-applying branches pass it. A name
+        found riding counts as withdrawn for the settle's line ("withdrawn", not "repeat")."""
         with self._hold_write():
             present = surface in self._reconnect_surfaces
             self._reconnect_surfaces.discard(surface)
-        if how == "withdrawn" and not present:
+            rode = False
+            if not standing:
+                riding = self._reconnect_riding_next if self._connecting else self._reconnect_riding
+                rode = surface in riding
+                riding.discard(surface)
+        if how == "withdrawn" and not (present or rode):
             how = "repeat"
         if self.loop is not None and not self.ended:
             self.loop.call_soon_threadsafe(self._settle_withdrawal, surface, how)
@@ -6628,6 +6643,10 @@ class SdkSession:
                     repicked = self.mode != mode
                     if not repicked:
                         self._reconnect_surfaces.discard("mode")
+                        # ...and its name leaves the arm it rode (the landing moved it into the riding set), so a
+                        # reconnect standing for ANOTHER pick no longer reports a mode change pending (review round
+                        # 10; _withdraw_held_pick's rule applied to the landing's live switch)
+                        self._reconnect_riding.discard("mode")
         except Exception as e:
             if landing:
                 with self._hold_write():
@@ -9415,7 +9434,8 @@ class SdkSession:
         # showed the picked value flat until the landing before
         with self._hold_lock:
             asked = set(self._reconnect_surfaces) | set(self._reconnect_riding) | set(self._reconnect_riding_next)
-            mode_pending = "mode" in asked or self._mode_switching is not None
+            mode_switching = self._mode_switching is not None
+            mode_pending = "mode" in asked or mode_switching
         # while a pick is HELD the process still runs the value it launched with (or, for the mode, the
         # last one the CLI confirmed live), so that is the value reported: every badge shows the running
         # value with the hold as its pending mark, never the picked value as if it applied (review round
@@ -9428,6 +9448,9 @@ class SdkSession:
                 "effortPending": bool(self._effort_pending),   # an /effort switch reconnecting → effort-badge dots + "Reloading session…"
                 "fastPending": "fast" in asked,   # a fast pick pending on a reconnect (its reload, or the hold before it)
                 "modePending": mode_pending,      # a mode pick pending on a reconnect or the landing's live switch
+                # the landing's live switch is in flight (review round 10, 2026-09-10): modePending is true then too, and
+                # nothing reloads, so the chat's line names the switch being applied rather than a reload
+                "modeSwitching": mode_switching,
                 # a pick WAITING for live work to end before its reconnect (review round 1, 2026-09-09):
                 # {"surfaces": [...], "subagents": n, "tasks": m}, else None. The one marker for every
                 # held kind: the chat renders a waiting line off it instead of the reloading animation
@@ -13015,7 +13038,7 @@ class SdkBackend:
         return 0
 
     def session_meta(self, sid: str) -> dict:
-        """{'mode','fast','effort','effortPending','fastPending','modePending','pickHeld'} from the live snapshot
+        """{'mode','fast','effort','effortPending','fastPending','modePending','modeSwitching','pickHeld'} from the live snapshot
         ({} unknown). The comments frame's statusline parity: the popover shows the chat statusline's FULL
         element set (the user 2026-08-25). The effort and the hold ride too since review round 6 (2026-09-10):
         the running effort (the snapshot's, which reports what the process RUNS while an effort pick is held),
@@ -13032,6 +13055,7 @@ class SdkBackend:
                 return {"mode": str(snap.get("mode") or ""), "fast": str(snap.get("fast") or ""),
                         "effort": str(snap.get("effort") or ""), "effortPending": bool(snap.get("effortPending")),
                         "fastPending": bool(snap.get("fastPending")), "modePending": bool(snap.get("modePending")),
+                        "modeSwitching": bool(snap.get("modeSwitching")),   # the landing's live switch in flight (round 10)
                         "pickHeld": snap.get("pickHeld") or None}
             except Exception:
                 return {}
@@ -13571,7 +13595,9 @@ class SdkBackend:
           so it stays per-session rather than quietly spreading to every new session.
         - A connection made WITH the flag (_fast_unlocked) takes the literal send in both directions:
           the send's echo is the chat's acknowledgement, the flip here is optimistic for the badge,
-          and fast_mode_state on the next init re-asserts the truth.
+          and fast_mode_state on the next init re-asserts the truth. Except in the arm half of a spawn
+          window, where the flag describes the connection being torn down and the pick folds into the
+          compose: an off relaunches without the flag, an on rides the standing arm (review round 9).
         - A connection made WITHOUT the flag can't take the send, but 'off' needs none (fast mode is
           already off there) and 'on' reconnects: the flag applies at the (re)connect, at once when the
           session is quiet, else at the turn settle that finds it quiet (request_reconnect, the /effort
@@ -13588,12 +13614,15 @@ class SdkBackend:
         if not s or not s.thread.is_alive():
             return True                        # dormant: the persisted ask applies at the next connect
         with s._hold_write():                  # the ask, beside the surfaces it drives (review round 5)
+            was_on = s.fast_opt                # the ask as it stood: an on over an on asks for nothing (round 10)
             s.fast_opt = (value == "on")
             # ...and the connection's flag and the connect in progress, read in the SAME hold (review round 7,
             # 2026-09-10; the review's correctness-2): _options stamps both at its one read of the ask, under
             # this lock, so a pick landing inside the compose decides against the connection being composed,
-            # never the one being replaced
-            unlocked, launching, connecting = s._fast_unlocked, s._launching, s._connecting
+            # never the one being replaced. `armed` is a reconnect standing after a landing, before the loop
+            # top composes it (review round 10): an off there is a withdrawal too, and its line says a reconnect
+            # is armed
+            unlocked, launching, connecting, armed = s._fast_unlocked, s._launching, s._connecting, s._reconnect
         # THE LIVE SEND NEEDS A CONNECTION THE FLAG DESCRIBES (review round 9, 2026-09-10; the review's correctness-4):
         # with no connect in progress the flag is the running connection's; in the composed half of the spawn window
         # (_connecting) it is the connection being composed, stamped at _options' read, and the send reaches the new
@@ -13641,25 +13670,45 @@ class SdkBackend:
             self._wake_push()
             return True
         if value == "off":                     # no flag at connect → fast mode is already off; nothing to send
+            # `unlocked` here means the ARM half on a flagged running connection (every other flagged case took the
+            # live send above): the off is a real change the relaunch applies, so a fast name riding the arm stands
+            # for it. Otherwise the connection the flag describes is flagless, the off returns to it, and an on
+            # pick anywhere (recorded, or riding an arm) is withdrawn (review round 10)
             if "fast" in s._pick_names_locked():
                 # an on pick is pending on a reconnect (held for live work, or deferred to the turn's end) and
                 # this returns to the state the process runs: the pick is withdrawn through the one withdraw
                 # routine (review round 3, 2026-09-09; set_mode's shape), which ends the hold and the reconnect
                 # when nothing else asked. The running state is off (a flagless connection reports off), so
                 # the badge reads it whether or not the arm had flipped it
-                s._withdraw_held_pick("fast")
+                s._withdraw_held_pick("fast", standing=unlocked)
                 s.fast = "off"
                 self._log("fast (%s): set to off; the pending on pick is withdrawn" % s.name)
                 self._wake_push()
                 return True
-            if launching is not None:
-                # THE SPAWN WINDOW (review round 4, 2026-09-10): an armed reconnect is in flight, and on this
-                # flagless connection that is the idle opt-in's own (its arm flipped s.fast to on and cleared
-                # the surfaces, so the withdraw above has nothing to find). The reg carries the off and
-                # fast_opt is off, so the relaunch runs without the flag: s.fast follows the ask. Until round
-                # 4 this read "unchanged, no reconnect" and left the badge on for the teardown plus spawn
+            if launching is not None or armed:
+                # THE SPAWN WINDOW (review round 4, 2026-09-10), or the gap between a landing and the loop top with a
+                # reconnect armed after it (round 10): a reconnect is in flight or armed, and the reg carries the off
+                # and fast_opt is off, so the relaunch runs without the flag; s.fast follows the ask. Until round 4
+                # this read "unchanged, no reconnect" and left the badge on for the teardown plus spawn. An on pick
+                # ARMED on that reconnect (its arm cleared the surface, so the branch above found nothing) is
+                # withdrawn through the one withdraw routine (review round 10; the review's correctness-1): its name
+                # leaves the arm's riding set at once, so fastPending drops here and not at the landing, and in the
+                # composed half the settle disarms an arm that stood for the on pick alone (an effort reload's compose
+                # with a fast on then off inside it relaunched the identical flagless shape a second time, the third
+                # client, and the badge pulsed through it). In the arm half nothing is disarmed (the loop top
+                # composes the relaunch, flagless, from the session); after a landing the arm stands for the same
+                # reason (the loop is about to break for it) and relaunches flagless, the flag right meanwhile
+                if not unlocked and was_on:
+                    s._withdraw_held_pick("fast")
                 s.fast = "off"
-                self._log("fast (%s): set to off; the reconnect in flight launches without the flag" % s.name)
+                if connecting:
+                    self._log("fast (%s): set to off; the connect in progress launches without the flag%s"
+                              % (s.name, "; the on pick armed after it is withdrawn" if was_on else ""))
+                elif launching is not None:
+                    self._log("fast (%s): set to off; the reconnect in flight launches without the flag" % s.name)
+                else:
+                    self._log("fast (%s): set to off; %sthe reconnect armed after the landing launches without the flag"
+                              % (s.name, "the pending on pick is withdrawn; " if was_on else ""))
                 self._wake_push()
                 return True
             if s.fast == "on":
@@ -13668,6 +13717,15 @@ class SdkBackend:
                 s.fast = "off"
                 self._wake_push()
             self._log("fast (%s): set to off; unchanged, no reconnect" % s.name)
+            return True
+        if launching is not None and not connecting and was_on:
+            # the ARM half, the ask already on (review round 10; the review's fresh-1): the relaunch the arm stands
+            # for composes the flag from the ask, whether the running connection has it (an on over an on: nothing
+            # changes) or a fast pick riding the arm asked for it (a repeat click: the pick stands, its name keeps
+            # riding). Nothing to record and nothing to request; until round 10 the pick took the reconnect route,
+            # pulsed the badge and named a fast change until the landing for a pick that changed nothing
+            self._log("fast (%s): set to on; unchanged, the reconnect in flight launches with the flag" % s.name)
+            self._wake_push()
             return True
         outcome = s._note_reconnect_ask("fast")   # the one line per pick, in set_env's voice (2026-09-09)
         s.request_reconnect(pick="fast")                  # first opt-in: the flag applies at the (re)connect
@@ -13725,6 +13783,7 @@ class SdkBackend:
                 switching = s._mode_switching
                 running = switching or s._launched_mode
                 launching = s._launching                            # the connect in progress, arm to landing
+                connecting = s._connecting                          # its composed half (round 10: the standing rule)
                 launching_mode = (launching or {}).get("mode")
                 s.mode = mode
                 s.perm_mode = mode      # snapshot reflects it immediately (clears the picker's meta-pending)
@@ -13734,6 +13793,10 @@ class SdkBackend:
                     #   branch below re-adds it through _note_reconnect_ask, idempotently, for its line)
             mode_pending = pending_mode and running
             prev = running if mode_pending else (switching or declared)
+            # a re-pick of the LAUNCHING value in the arm half of the window whose stamp differs from what the running
+            # process has is the arm's own pick clicked again: it STANDS, and its name keeps riding (review round 10;
+            # _withdraw_held_pick says why). Anywhere else a withdrawal takes the mode's name off the arm it rode
+            standing = launching is not None and not connecting and mode != running
             if mode == "bypassPermissions" and prev != "bypassPermissions":
                 # the CLI REFUSES a live switch INTO bypass unless the process was LAUNCHED with
                 # --dangerously-skip-permissions (probed on CLI 2.1.221, T139: 'Cannot set permission
@@ -13749,7 +13812,7 @@ class SdkBackend:
                     # after that connect is disarmed by the settle when it stood for the withdrawn pick
                     # alone (review round 5; _settle_withdrawal), and in the arm-to-teardown half of the
                     # window the loop top composes the relaunch from the session, so nothing is redundant
-                    s._withdraw_held_pick("mode")
+                    s._withdraw_held_pick("mode", standing=standing)
                     self._log("mode (%s): set to %s; the pending %s pick is withdrawn" % (s.name, mode, declared))
                 elif launching_mode == "bypassPermissions":
                     # ALREADY APPLYING in the spawn window (review round 2, 2026-09-09): the connect in
@@ -13757,7 +13820,7 @@ class SdkBackend:
                     # the loop top). A repeat click used to read prev as the declared bypass and go LIVE, and
                     # the CLI refused it with the red "did NOT apply" problem. A reconnect armed during this
                     # spawn for a since-reverted pick is redundant now: the settle disarms it (review round 5)
-                    s._withdraw_held_pick("mode")
+                    s._withdraw_held_pick("mode", standing=standing)
                     self._log("mode (%s): set to %s; already applying, no new request" % (s.name, mode))
                 elif pending_mode and not out_pending:
                     # ALREADY APPLYING: the bypass pick is pending on a reconnect (held for live work, or
@@ -13785,14 +13848,14 @@ class SdkBackend:
                 # the connect in flight launches this very mode: nothing to add, except that a reconnect armed
                 # during this spawn for a since-reverted mode pick is redundant now (the settle disarms it,
                 # review round 5)
-                s._withdraw_held_pick("mode")
+                s._withdraw_held_pick("mode", standing=standing)
                 self._log("mode (%s): set to %s; already applying, no new request" % (s.name, mode))
             elif switching is not None and mode == switching:
                 # THE LANDING'S SWITCH IS APPLYING IT (review round 6, 2026-09-10): the control request that
                 # switches the landed process to this very mode is in flight, so the re-pick is already
                 # applying; a pending surface for it goes (the landing settles the pick as applied when it
                 # confirms), and no second set_permission_mode is sent
-                s._withdraw_held_pick("mode")
+                s._withdraw_held_pick("mode", standing=standing)
                 self._log("mode (%s): set to %s; already applying, no new request" % (s.name, mode))
             elif mode == "bypassPermissions" and pending_mode and declared != "bypassPermissions":
                 # a bypass re-pick while a pick OUT of bypass is pending on a process that already runs bypass
@@ -13800,7 +13863,7 @@ class SdkBackend:
                 # only withdraws that pick, and never sends set_permission_mode into a process already in
                 # bypass (review round 5; the CLI accepts that call on a bypass launch, so the request was
                 # redundant, not refused)
-                s._withdraw_held_pick("mode")
+                s._withdraw_held_pick("mode", standing=standing)
                 self._log("mode (%s): set to %s; the pending %s pick is withdrawn" % (s.name, mode, declared))
             else:
                 # a live pick while a mode pick waits on a reconnect: the newer intent wins, and the live
@@ -13809,7 +13872,7 @@ class SdkBackend:
                 # behind the request it withdraws and ends the reconnect when nothing else asked
                 withdrawn = pending_mode
                 if withdrawn:
-                    s._withdraw_held_pick("mode")
+                    s._withdraw_held_pick("mode", standing=standing)
                 # never "applied live" without a client to apply it (review round 4; set_mode_live sends to
                 # nobody then): outside the spawn window that is a session between connects, whose next
                 # connect reads the reg
@@ -14421,7 +14484,7 @@ class SdkBackend:
                 sys.stderr.write("live_sessions: row for %s failed (kept as minimal row): %s\n"
                                  % (sid, traceback.format_exc()))
                 out[sid] = {"state": "waiting", "since": "", "model": "", "modelPending": False,
-                            "effortPending": False, "fastPending": False, "modePending": False,
+                            "effortPending": False, "fastPending": False, "modePending": False, "modeSwitching": False,
                             "effort": "", "auth": "", "authLive": "",
                             "authPicked": False, "authPending": False, "mode": "", "fast": "", "fastReason": "",
                             "color": None, "connected": False, "spawning": False, "retryCount": 0,
@@ -14454,7 +14517,7 @@ class SdkBackend:
                     "model": model_label(reg.get("liveModel") or "", reg.get("model") or ""),
                     "modelPending": bool(reg.get("modelPending")),
                     "effortPending": bool(reg.get("effortPending")),
-                    "fastPending": False, "modePending": False,   # runtime-only: a dormant session has no reconnect in flight
+                    "fastPending": False, "modePending": False, "modeSwitching": False,   # runtime-only: a dormant session has no reconnect in flight
                     "effort": reg.get("effort", ""),
                     "auth": self.default_auth(reg),
                     "authPickUnavailable": self.pick_unavailable(reg.get("auth") or ""),   # same as snapshot()
