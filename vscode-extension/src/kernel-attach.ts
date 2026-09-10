@@ -140,6 +140,12 @@ export function attachFailureToast(res: Exclude<AttachResult, { ok: true }>,
     return `romp: the manager on ${mp} needs the serve token, and this window found none at ${src}. `
       + `Point this window at the manager's state root (ROMP_STATE_DIR) or check \`romp status\` in a terminal. Manager: ${res.detail}`;
   }
+  if (res.status === 401 && ctx.tokenFromEnv) {
+    // the env spelling outranks the file (review round 2, 2026-09-10): a stale ROMP_SERVE_TOKEN in the window's
+    // environment is the likelier cause, and the state root changes nothing while it is set
+    return `romp: the manager on ${mp} does not hold the serve token this window read from ROMP_SERVE_TOKEN. `
+      + `Unset it and relaunch this window (or start VS Code from a shell without it), or check \`romp status\` in a terminal. Manager: ${res.detail}`;
+  }
   if (res.status === 401) {
     return `romp: the manager on ${mp} does not hold the serve token this window read from ${src}, so it runs under another state root. `
       + `Point this window at that root (ROMP_STATE_DIR) or check \`romp status\` in a terminal. Manager: ${res.detail}`;

@@ -191,6 +191,15 @@ test("attachFailureToast: each reason names its own fix; a refusal never sends t
   assert.match(missing, /ROMP_STATE_DIR/);
   const env = attachFailureToast({ ok: false, reason: "manager-refused", status: 401, detail: words }, { ...ctx, tokenFromEnv: true });
   assert.match(env, /read from ROMP_SERVE_TOKEN/, "the env spelling outranks the file, so the toast names it");
+  // review round 2 (2026-09-10): a stale env value is the likelier cause, and ROMP_STATE_DIR changes nothing while
+  // it is set, so the remedy is to unset it and relaunch, never a state-root claim
+  assert.match(env, /[Uu]nset it and relaunch this window/, "the env case's remedy");
+  assert.match(env, /start VS Code from a shell without it/);
+  assert.match(env, /romp status/);
+  assert.doesNotMatch(env, /another state root/, "the root is not the cause when the env spelling is in force");
+  assert.doesNotMatch(env, /ROMP_STATE_DIR/);
+  assert.doesNotMatch(env, /romp up/);
+  assert.ok(env.endsWith(`Manager: ${words}`));
   const notoken = attachFailureToast({ ok: false, reason: "manager-refused", status: 503, detail: "the manager cannot read the serve token (/m/state/serve-token: EACCES); state-changing requests are refused until it can" }, ctx);
   assert.match(notoken, /cannot read its serve-token file/);
   assert.match(notoken, /0600 file/);
