@@ -18534,7 +18534,9 @@ _FOREIGN_OP_VERB = {"sendMessage": "message", "askFollowUp": "reply", "askText":
 # keys them by session name), which the row keeps under `target` and never offers back as the user's text (review
 # round 8, 2026-09-09: a compact refused by name filed the session name as its text, the modal promised it verbatim
 # and "Copy my text" copied it, under the title "That action was not delivered" since the verb table knew
-# compactSession only)
+# compactSession only). commentCreate's entry is inert for a message its handler accepts, since the handler requires
+# `text` and the fold reads text first; it holds for a text-less create refused at the gate, whose title is then the
+# one typed thing to keep. tests/test_drive_foreign_sid.py pins both tuples to the _drive arms that read the name.
 _TYPED_NAME_OPS = ("renameSession", "forkSession", "commentPromote", "commentCreate")
 _TARGET_NAME_OPS = ("compact", "sendCommand")
 
@@ -18720,8 +18722,8 @@ def _drive(msg, client):
     live, named, store_unreadable = None, None, False
     if t in ID_OPS and msg.get("id"):
         sid = str(msg["id"])
-    elif t in ("compact", "sendCommand") and msg.get("name"):
-        # the timeline keys these by session NAME. The routes' own resolution (_resolve_sid), with the map it
+    elif t in _TARGET_NAME_OPS and msg.get("name"):
+        # the timeline keys these by session NAME (the tuple the records writer keeps the name under `target` for). The routes' own resolution (_resolve_sid), with the map it
         # scanned and what it could not read handed back, so the gate below reads that one scan and the miss
         # path (_named_miss) can say a read failed. _sid_of dropped both: this door read a failed tmux probe
         # as "no session with id" from the base on, and round 6 left the torn dormant record's by-name 503 to

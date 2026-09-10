@@ -170,8 +170,9 @@ class RefusesForeignDriveOps(unittest.TestCase):
         # writer read ("text", "cmd", "name") for the text to keep, so a compact refused by name filed a row whose
         # text was the session name, the modal promised "Your text is saved verbatim" and Copy my text copied the
         # name, under "That action was not delivered" (the verb table knew compactSession, not compact). The name
-        # is typed text for renameSession, forkSession and commentPromote only; for compact and sendCommand it is
-        # the target, kept in the row under its own key so the row still says which session was addressed, and
+        # is typed text for the ops in _TYPED_NAME_OPS (renameSession, forkSession, commentPromote, commentCreate);
+        # for compact and sendCommand it is the target, kept in the row under its own key so the row still says
+        # which session was addressed, and
         # a sendCommand's text stays its cmd (review round 8, 2026-09-09). tmux is off, the comment threads' store
         # empty and the roster clear, so the name resolves to nothing and the unknown refusal answers.
         import pathlib
@@ -208,6 +209,50 @@ class RefusesForeignDriveOps(unittest.TestCase):
         self.assertEqual(rename["title"], "That rename was not delivered")
         self.assertEqual(rename["copy"], "a title I typed", "a rename's name is typed text, kept as before")
         self.assertIn("Your text is saved verbatim", rename["text"])
+
+    def test_a_fork_promote_or_thread_refused_at_the_gate_keeps_the_typed_name_as_its_text(self):
+        # the op-aware fold (the test above) was pinned for renameSession alone, so a _TYPED_NAME_OPS that dropped
+        # forkSession or commentPromote left every test green while a refused fork filed a row with no text and
+        # offered nothing back. The other three members, each refused at the gate for a foreign sid: the typed
+        # name is the row's text and the modal's copy, and the target is empty (the name addresses no session).
+        # commentCreate's handler requires text, which the fold reads first, so its entry reaches the fold only
+        # for a text-less create refused at the gate, which is what is driven here; with text the text wins.
+        # None of the three is in the verb table, so the modal wears the generic title; pinned as it stands
+        # (review round 9, 2026-09-09).
+        import pathlib
+        typed = {"forkSession": "a fork title I typed", "commentPromote": "a promote title I typed",
+                 "commentCreate": "a thread title I typed"}
+        msgs = ({"type": "forkSession", "id": THEIRS, "uuid": "u1", "name": typed["forkSession"]},
+                {"type": "commentPromote", "id": THEIRS, "tid": "t1", "name": typed["commentPromote"]},
+                {"type": "commentCreate", "id": THEIRS, "uuid": "u1", "exact": "the quoted span",
+                 "name": typed["commentCreate"]},
+                {"type": "commentCreate", "id": THEIRS, "uuid": "u2", "exact": "the quoted span",
+                 "text": "the comment I typed", "name": "a thread title the text outranks"})
+        with tempfile.TemporaryDirectory() as d:
+            saved = km.jd.STATE
+            km.jd.STATE = pathlib.Path(d)
+            try:
+                with mock.patch.object(km._TMUX, "available", lambda: False):
+                    for msg in msgs:
+                        self.assertTrue(km._drive(msg, self.client), msg)
+                rows = [json.loads(x) for x in (pathlib.Path(d) / "undelivered.jsonl").read_text().splitlines()]
+            finally:
+                km.jd.STATE = saved
+        self.assertEqual(self.reached, [], "nothing was handed to a backend")
+        self.assertEqual([(r["op"], r["sid"], r["text"], r["target"]) for r in rows],
+                         [("forkSession", THEIRS, typed["forkSession"], ""),
+                          ("commentPromote", THEIRS, typed["commentPromote"], ""),
+                          ("commentCreate", THEIRS, typed["commentCreate"], ""),
+                          ("commentCreate", THEIRS, "the comment I typed", "")],
+                         "the typed name is the row's text and never its target; a create's text outranks its title")
+        self.assertEqual([m["copy"] for m in self.sent],
+                         [typed["forkSession"], typed["commentPromote"], typed["commentCreate"], "the comment I typed"],
+                         "the typed name is offered back")
+        for m in self.sent:
+            self.assertEqual(m["type"], "err")
+            self.assertEqual(m["sid"], THEIRS)
+            self.assertIn("Your text is saved verbatim", m["text"])
+            self.assertEqual(m["title"], "That action was not delivered", "no verb in the table for these three")
 
     def test_a_record_that_will_not_read_refuses_the_typed_text_into_the_same_three_records(self):
         # _session_gate's unreadable verdict (a NOT-running session whose SDK registry entry exists but will not
@@ -252,6 +297,72 @@ class RefusesForeignDriveOps(unittest.TestCase):
         self.assertIn("Nothing was sent", msg["text"])
         self.assertNotIn("no session with id", msg["text"], "a record that will not read is never called foreign")
         self.assertEqual((msg["sid"], msg["op"]), (sid, "sendMessage"))
+
+
+class TypedNameOpsClassifyEveryNameReadingArm(unittest.TestCase):
+    """The records writer folds `name` into a refusal's text for the ops in _TYPED_NAME_OPS and keeps it as the
+    row's target for those in _TARGET_NAME_OPS; an op whose arm reads msg["name"] and sits in neither tuple is a
+    refusal that drops a typed title or files a session name as text (round 8's compact). The tuples are pinned
+    to the handlers themselves: the ops of every _drive arm that reads the message's name, in its condition or
+    its body, are exactly the union of the two tuples (review round 9, 2026-09-09)."""
+
+    def test_the_ops_whose_arms_read_a_name_are_the_two_tuples(self):
+        import ast
+        import inspect
+        import textwrap
+        fn = ast.parse(textwrap.dedent(inspect.getsource(km._drive))).body[0]
+
+        def reads_name(node):
+            for n in ast.walk(node):
+                if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "msg" \
+                        and isinstance(n.slice, ast.Constant) and n.slice.value == "name":
+                    return True
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "get" \
+                        and isinstance(n.func.value, ast.Name) and n.func.value.id == "msg" \
+                        and n.args and isinstance(n.args[0], ast.Constant) and n.args[0].value == "name":
+                    return True
+            return False
+
+        def ops_of(test):
+            # the ops an arm's condition admits: t == "op", t in ("a", "b"), t in _A_MODULE_TUPLE; a local name
+            # (ID_OPS) resolves to nothing, and an arm this pin cannot classify may not read a name (below)
+            out = set()
+            for n in ast.walk(test):
+                if isinstance(n, ast.Compare) and isinstance(n.left, ast.Name) and n.left.id == "t":
+                    for op, right in zip(n.ops, n.comparators):
+                        if isinstance(op, ast.Eq) and isinstance(right, ast.Constant):
+                            out.add(right.value)
+                        elif isinstance(op, ast.In) and isinstance(right, (ast.Tuple, ast.List)):
+                            out.update(e.value for e in right.elts if isinstance(e, ast.Constant))
+                        elif isinstance(op, ast.In) and isinstance(right, ast.Name):
+                            out.update(getattr(km, right.id, ()))
+            return out
+
+        readers, unclassified, arms = set(), [], 0
+        for stmt in fn.body:
+            node = stmt
+            while isinstance(node, ast.If):
+                ops = ops_of(node.test)
+                arms += bool(ops)
+                if reads_name(node.test) or any(reads_name(b) for b in node.body):
+                    if ops:
+                        readers.update(ops)
+                    else:
+                        unclassified.append(ast.unparse(node.test)[:80])
+                tail = node.orelse
+                if len(tail) == 1 and isinstance(tail[0], ast.If):
+                    node = tail[0]
+                else:
+                    if any(reads_name(b) for b in tail):
+                        unclassified.append("the chain's final else")
+                    node = None
+        self.assertGreater(arms, 30, "the walk found _drive's dispatch chain")
+        self.assertEqual(unclassified, [], "an arm this pin cannot classify by op reads the message's name")
+        expected = set(km._TYPED_NAME_OPS) | set(km._TARGET_NAME_OPS)
+        self.assertEqual(readers, expected,
+                         "ops whose arm reads the message's name but sit in neither tuple: %s; tuple members whose arm "
+                         "reads no name: %s" % (sorted(readers - expected), sorted(expected - readers)))
+        self.assertEqual(set(km._TYPED_NAME_OPS) & set(km._TARGET_NAME_OPS), set(), "an op is typed text or a target")
 
 
 if __name__ == "__main__":
