@@ -6855,7 +6855,15 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         # the landing closes the window: off on the landed flagless connection is unchanged, and says so
         s._reset_reconnect_state(); s._connect_landed()
         self.assertIsNone(s._launching)
+        # a stale on left on a landed FLAGLESS connection is reset by an off pick (round 4's backstop, pinned
+        # in review round 5, tests-5): a flagless connection runs off, and its init or the connect-time
+        # initialize response says so, so the state is a backstop for a CLI whose report lacks the field. No
+        # path here constructs it (the arm flips on only with the flag armed, _fast_unlocked is stamped at
+        # _options, and an off in the spawn window resets already); the badge must not read on for it
+        s.fast = "on"
         self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertEqual(s.fast, "off", "the stale on is reset to the state a flagless connection runs")
+        self.assertEqual(s.snapshot()["fast"], "off")
         self.assertTrue(any("fast (web): set to off; unchanged, no reconnect" in str(m) for m in self.logs), self.logs)
         # effort: the revert after the immediate arm is recorded pending against the shape being launched, never
         # logged as a withdrawal (the reconnect in flight cannot be withdrawn), and the landing clears it
@@ -7018,6 +7026,24 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s.request_reconnect = lambda: asked.append(1)
         self.assertTrue(s.backend.set_env(self.SID, {}))
         self.assertEqual(asked, [])
+        # the UNCHANGED arm with nothing pending (review round 5, tests-6): the process runs this env, no connect
+        # is in progress and no env pick waits, but the reg disagrees with the launch, so the compare is reached
+        # (a reg written outside set_env: another writer, or a legacy reg carrying a since-reserved name the
+        # launch strip drops; the reg drift here stands in for one, since the validator and the strip cover the
+        # same names). The env is re-asserted, the reg reads the launch again, and nothing reconnects
+        s = self._sess(env={"A": "1"})
+        s._launched_env = {"A": "1"}
+        s.backend._update_reg(self.SID, env={"A": "2"})                    # the drift, not through set_env
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        self.assertTrue(s.backend.set_env(self.SID, {"A": "1"}))
+        self.assertTrue(any("env (web): per-session env set (A); unchanged, no reconnect" in str(m) for m in self.logs), self.logs)
+        self.assertEqual(asked, [], "no ask")
+        self.assertEqual(s._reconnect_surfaces, set()); self.assertFalse(s._reconnect_when_idle)
+        self.assertEqual(s.env_vars, {"A": "1"})
+        self.assertEqual(sb.read_reg(s.backend.state_dir, self.SID).get("env"), {"A": "1"}, "the reg reads the launch again")
+        self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertFalse(any("withdrawn" in str(m) for m in self.logs if "env (web)" in str(m)), self.logs)
 
     def test_s_a_second_withdrawal_between_the_settles_reads_neither_raises_nor_skips_the_poke(self):
         # _settle_withdrawal read the set three times (its truthiness, `surface in`, _pick_names for the line)
@@ -7217,8 +7243,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s = self._sess(mode="default")
         s.perm_mode = "default"; s._launched_mode = "bypassPermissions"
         s.client = object(); s._launching = None
-        with s._hold_lock:
-            s._reconnect_surfaces.add("mode")
+        s._reconnect_surfaces.add("mode")                                 # the pending surface, as the setter records it
         s._reconnect_when_idle = True
         live = []
         s.set_mode_live = lambda mode, prev="default": live.append((mode, prev))
@@ -7317,6 +7342,56 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         q.flush()
         self.assertFalse(s._reconnect_when_idle)
         self.assertTrue(any("the re-picked mode was the only one pending; no reconnect" in str(m) for m in self.logs), self.logs)
+
+    def test_u_a_pending_pick_out_of_bypass_survives_the_init_and_the_snapshot_reports_the_running_mode(self):
+        # round 4 generalised the init guard and snapshot's mode substitution from the pick INTO bypass to ANY
+        # pending mode pick, and no test had a non-bypass pending pick (review round 5, tests-2): reverting both
+        # to the round-3 form left every module green. The state: the process runs bypass, a pick OUT of bypass
+        # is pending on the reconnect (held for live work), and the CLI's per-turn init reports bypass. perm_mode
+        # keeps the declared default, the report goes to the running-mode stamp, and the snapshot shows the
+        # running mode with the held mark, so no badge shows the pick as if it applied
+        class _Init:
+            subtype, uuid = "init", "i1"
+            data = {"model": "claude-x", "permissionMode": "bypassPermissions"}
+
+        def init(s):
+            async def _noop(): pass
+            s._do_refresh_usage = _noop; s._do_refresh_context = _noop
+
+            async def run():
+                s.loop = asyncio.get_running_loop()
+                s._input_wake = asyncio.Event(); s._wake = asyncio.Event()
+                s._handle_stream_message(_Init(), _AssistantMessage, self._Res, _Init)
+            asyncio.run(run())
+            s.loop = self._Now()
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "bypassPermissions"
+        self._start(s, "a1")
+        s._reconnect_surfaces.add("mode")                                 # the pending surface, as the setter records it
+        s._reconnect_when_idle = True; s._reconnect_held_for_work = True
+        snap = s.snapshot()
+        self.assertEqual(snap["pickHeld"]["surfaces"], ["mode"])
+        self.assertEqual(snap["mode"], "bypassPermissions", "the running mode, not the pick")
+        init(s)
+        self.assertEqual(s.perm_mode, "default", "the declared intent survives the init")
+        self.assertEqual(s._launched_mode, "bypassPermissions", "the report is the running mode")
+        snap = s.snapshot()
+        self.assertEqual(snap["mode"], "bypassPermissions"); self.assertEqual(snap["pickHeld"]["surfaces"], ["mode"])
+        # a different non-bypass pick pending the same way (plan over an acceptEdits process)
+        s = self._sess(mode="acceptEdits")
+        s.perm_mode = "plan"; s._launched_mode = "acceptEdits"
+        self._start(s, "a1")
+        s._reconnect_surfaces.add("mode")                                 # the pending surface, as the setter records it
+        s._reconnect_when_idle = True; s._reconnect_held_for_work = True
+        _Init.data = {"model": "claude-x", "permissionMode": "acceptEdits"}
+        init(s)
+        self.assertEqual((s.perm_mode, s._launched_mode), ("plan", "acceptEdits"))
+        self.assertEqual(s.snapshot()["mode"], "acceptEdits")
+        # no mode pick pending: the init's report IS perm_mode, as before
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        init(s)
+        self.assertEqual(s.perm_mode, "acceptEdits")
 
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
@@ -7769,6 +7844,51 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertEqual(s._launched_mode, "default"); self.assertEqual(s.perm_mode, "default")
         self.assertEqual(sb.read_reg(self.be.state_dir, self.SID).get("mode"), "default")
         self.assertEqual([l for l in self.lines if "contract says this cannot happen" in l], [])
+        self._Client.refuse_modes = False
+
+    def test_a_held_pick_out_of_bypass_the_landing_could_not_apply_survives_a_real_init(self):
+        # the init guard and the snapshot substitution for a NON-bypass pending pick, through the real loop
+        # (review round 5, tests-2): a subagent registered during the bypass spawn holds the pick OUT of bypass,
+        # and the CLI refuses the landing's live switch (not what 2.1.266 does on a bypass launch, but the code
+        # path the refusal leaves is the one that can carry such a pick into a turn's init). The landed process
+        # runs bypass, its init reports bypass: perm_mode keeps default, the stamp takes the report, the snapshot
+        # shows bypass with the held mark; the settle after the work ends launches the pick
+        s, c1 = self.s, self._connect()
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        self._Client.spawn_gate[1] = gate
+        self._Client.refuse_modes = True
+        self.assertTrue(self.be.set_mode(self.SID, "bypassPermissions"))
+        self._wait(lambda: len(self._Client.instances) == 2 and s.client is None, "the bypass connect is spawning")
+        asyncio.run(s._subagent_start_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        self.assertTrue(self.be.set_mode(self.SID, "default"))      # held for the subagent
+        self.assertTrue(any("mode (web): set to default; reconnect held for 1 subagent and 0 background tasks" in l
+                            for l in self.lines), self.lines)
+        self._wait(lambda: s._reconnect_when_idle and s._reconnect_held_for_work, "held")
+        gate.set()
+        c2 = self._Client.instances[1]
+        self._wait(lambda: c2 is s.client and s._launching is None, "landed")
+        self._wait(lambda: any("refused the live switch to the pending default pick" in l for l in self.lines), "the refusal")
+        self.assertFalse(s._reconnect, "held for the work: the refusal could not arm")
+        self.assertTrue(s._reconnect_when_idle)
+        self.assertEqual(s.snapshot()["mode"], "bypassPermissions"); self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["mode"])
+        self.assertEqual(s.perm_mode, "default"); self.assertEqual(s._launched_mode, "bypassPermissions")
+        self._turn(c2, mode="bypassPermissions")                     # a CLI-started turn: its init reports bypass
+        self._wait(lambda: s.inflight == 0 and s._settled_msg is not None, "the turn settled")
+        time.sleep(0.2)
+        self.assertEqual(len(self._Client.instances), 2, "the settle found live work")
+        self.assertEqual(s.perm_mode, "default", "the declared intent survives the init")
+        self.assertEqual(s._launched_mode, "bypassPermissions", "the init's report is the running mode")
+        self.assertEqual(sb.read_reg(self.be.state_dir, self.SID).get("mode"), "default")
+        self.assertEqual(s.snapshot()["mode"], "bypassPermissions"); self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["mode"])
+        asyncio.run(s._subagent_stop_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        s._settled_msg = None
+        self._turn(c2, mode="bypassPermissions")
+        self._wait(lambda: len(self._Client.instances) == 3 and self._Client.instances[2] is s.client
+                   and s._launching is None, "the reconnect at the settle that found no live work landed")
+        self.assertEqual(self._Client.instances[2].options.permission_mode, "default", "the third client launches the pick")
+        self.assertEqual((s.perm_mode, s._launched_mode), ("default", "default"))
+        self.assertEqual(s.snapshot()["mode"], "default"); self.assertIsNone(s.snapshot()["pickHeld"])
         self._Client.refuse_modes = False
 
     def test_a_revert_in_the_spawn_window_disarms_the_reconnect_that_stood_for_it_alone(self):

@@ -19,6 +19,7 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_efr", os.path.join(BIN, "romp-kernel"))
 BACKEND_SRC = open(os.path.join(BIN, "romp_sdk_backend.py")).read()
+SID = "11111111-2222-3333-4444-555555555555"   # the shared placeholder: no goals are minted here
 
 
 class EffortReconnect(unittest.TestCase):
@@ -67,6 +68,73 @@ class EffortReconnect(unittest.TestCase):
         self.assertIn('"pickHeld": st.get("pickHeld") or None,', inspect.getsource(km.Sessions.live))
         self.assertIn('"pickHeld": tm.get("pickHeld") or None,', inspect.getsource(km.build_session))
         self.assertIn('"pickHeld": held,', BACKEND_SRC)
+
+    def test_a_held_pick_reaches_the_live_row_and_the_chat_event_through_the_kernel(self):
+        # behaviour beside the pins above (review round 5, fresh-3): the kernel.py half of the held chat line
+        # was covered by source pins only, and mutations that kept the pinned text (the merge's key list
+        # dropping pickHeld, the append moved under `if effortPending:`, the status dict sending None) kept
+        # every test green. A fake backend reports one live row with a held effort pick; the live merge must
+        # carry it, and build_session must emit exactly the reconnecting event with the hold and put the same
+        # dict on the status. No transcript on disk: the SDK session is built from its live row (be.owns)
+        import tempfile as _tf
+        import time as _time
+        from pathlib import Path
+        held = {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "inflight": False}
+        row = {"state": "working", "since": "1781100000", "model": "Opus 5", "effort": "high",
+               "effortPending": True, "pickHeld": held, "connected": True, "spawning": False, "backend": "sdk"}
+
+        class _Fake:
+            """The real backend on the module's hermetic state (so every other read the build makes answers as
+            an empty backend does), with ONE live row and its ownership overridden."""
+            def __init__(self, real): self._real = real
+            def __getattr__(self, k): return getattr(self._real, k)
+            def live_sessions(self): return {SID: dict(row)}
+            def owns(self, sid): return sid == SID
+        real = km._sdk()
+        self.assertTrue(real, "the kernel builds its backend even without the SDK dependency")
+        fake = _Fake(real)
+        td = _tf.TemporaryDirectory()
+        t = Path(td.name)
+        names, proj = t / "names", t / "projects"
+        names.mkdir(); proj.mkdir()
+        (names / SID).write_text("web\t%s\t#abcdef\n" % str(t / "work"))
+        saved = [(m, k, getattr(m, k)) for m in (km.jd,) for k in ("NAMES", "PROJECTS", "CAPDIR", "ARCHDIR", "GOALDIR", "STATE")]
+        saved += [(km, "NAMES", km.NAMES), (km, "_sdk", km._sdk), (km, "_codex", km._codex),
+                  (km._TMUX, "live_sessions", km._TMUX.live_sessions)]
+        try:
+            km.jd.NAMES, km.jd.PROJECTS = names, proj
+            km.jd.CAPDIR, km.jd.ARCHDIR, km.jd.GOALDIR, km.jd.STATE = t / "captions", t / "archive", t / "goals", t
+            km.NAMES = names
+            km._sdk = lambda: fake
+            km._codex = lambda: None
+            km._TMUX.live_sessions = lambda: {}
+            live = km.Sessions.live()
+            self.assertEqual(live[SID]["pickHeld"], held, "the live merge carries the hold")
+            self.assertTrue(live[SID]["effortPending"])
+            now = _time.time()
+            m = km.build_session(SID, now)
+            self.assertIsNotNone(m, "the live SDK session builds from its row")
+            recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
+            self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": held}],
+                             "the chat's element carries the hold, and names no effort while a pick is held")
+            self.assertEqual(m["status"]["pickHeld"], held, "the status dict carries the same hold")
+            self.assertTrue(m["status"]["effortPending"])
+            # the hold over, the armed effort reload names the effort and carries no hold
+            row.update(pickHeld=None)
+            m = km.build_session(SID, now)
+            recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
+            self.assertEqual(recon, [{"kind": "reconnecting", "effort": "high", "held": None}])
+            self.assertIsNone(m["status"]["pickHeld"])
+            # neither flag: no element at all
+            row.update(effortPending=False)
+            m = km.build_session(SID, now)
+            self.assertEqual([e for e in m["events"] if e.get("kind") == "reconnecting"], [])
+        finally:
+            for mod, k, v in saved:
+                setattr(mod, k, v)
+            for slot in ("snapshot", "sessions", "paths", "names"):
+                setattr(km._live_scope, slot, None)
+            td.cleanup()
 
     def test_the_reconnecting_notice_precedes_the_queued_bubble(self):
         # like the compacting element, it must sit ABOVE any queued/provisional message
