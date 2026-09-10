@@ -5877,13 +5877,14 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
     def test_g_every_setter_logs_the_pick_and_its_outcome(self):
         s = self._sess(effort="high", mode="default")
         s.perm_mode = "default"
+        s.client = object()                                     # a live switch needs a client (review round 4)
         s.set_mode_live = lambda mode, prev="default": None
         s.backend.set_mode(self.SID, "plan")
         self.assertTrue(any("mode (web): set to plan; applied live" in str(m) for m in self.logs), self.logs)
         s.backend.set_mode(self.SID, "bypassPermissions")
         self.assertTrue(any("mode (web): set to bypassPermissions; reconnecting to apply" in str(m) for m in self.logs), self.logs)
         self.assertTrue(s._reconnect, "quiet and no live work: the bypass pick reconnects at once")
-        s._reconnect = False
+        s._reconnect = False; s._launching = None               # as the loop top and the landing leave them
         s.thread = mock.Mock(is_alive=lambda: True)
         s.backend.send = lambda sid, text, **kw: True
         s._fast_unlocked = True
@@ -6266,6 +6267,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         # when nothing else asked, so the settle relaunches nothing (review round 2)
         s = self._sess(mode="default")
         s.perm_mode = "default"; s._launched_mode = "default"
+        s.client = object()                                     # a live switch needs a client (review round 4)
         live = []
         s.set_mode_live = lambda mode, prev="default": live.append((mode, prev))
         self._start(s, "a1")
@@ -6646,6 +6648,62 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(s.fast, "on", "the arm flips: the flag rides this connect")
         self.assertIn("the held fast pick reconnects now", self._armed()[0], self.logs)
 
+    def test_p_a_pick_after_the_immediate_arm_reads_the_connect_in_flight(self):
+        # an idle pick arms at once: the arm flipped s.fast to on, cleared the surfaces, and the relaunch was a
+        # teardown and a spawn away. An off pick in that window found no fast surface and no _launching (the
+        # stamp was _options', a teardown later), so it read the OLD connection, logged "unchanged, no
+        # reconnect" and left s.fast and the badge on for 2 to 7 s while the relaunch ran flagless; an effort
+        # revert there logged "the pending max pick is withdrawn" while the armed reconnect relaunched the
+        # identical shape. The arm opens the spawn window now (_launching, review round 4), so a pick made
+        # between the arm and the connect is a connect-time pick, treated by the spawn-window guards
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = False
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertTrue(s._reconnect, "idle: the arm is immediate"); self.assertEqual(s.fast, "on", "the arm's flip")
+        self.assertIsNotNone(s._launching, "the spawn window opens at the arm")
+        self.assertEqual(s._reconnect_surfaces, set())
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertEqual(s.fast, "off", "s.fast follows the ask"); self.assertEqual(s.snapshot()["fast"], "off")
+        self.assertFalse(s.fast_opt, "what _options hands the flag-settings file: no flag")
+        self.assertFalse(sb.read_reg(s.backend.state_dir, self.SID).get("fast"), "the reg agrees")
+        self.assertTrue(s._reconnect, "the armed reconnect stands, and relaunches without the flag")
+        self.assertTrue(any("fast (web): set to off; the reconnect in flight launches without the flag" in str(m)
+                            for m in self.logs), self.logs)
+        self.assertFalse(any("unchanged, no reconnect" in str(m) for m in self.logs), self.logs)
+        self.assertFalse(any("pick is withdrawn" in str(m) for m in self.logs), "nothing was pending to withdraw")
+        # the landing closes the window: off on the landed flagless connection is unchanged, and says so
+        s._reset_reconnect_state(); s._connect_landed()
+        self.assertIsNone(s._launching)
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertTrue(any("fast (web): set to off; unchanged, no reconnect" in str(m) for m in self.logs), self.logs)
+        # effort: the revert after the immediate arm is recorded pending against the shape being launched, never
+        # logged as a withdrawal (the reconnect in flight cannot be withdrawn), and the landing clears it
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertTrue(s._reconnect)
+        self.assertEqual(s._launching["effort"], sb.effort_launch_shape("max"), "the arm stamped the shape the relaunch runs")
+        self.assertTrue(s.backend.set_effort(self.SID, "high"))
+        self.assertEqual(s._effort_pending, "high", "recorded pending for the landing")
+        self.assertTrue(sb.read_reg(s.backend.state_dir, self.SID).get("effortPending"))
+        self.assertFalse(any("pick is withdrawn" in str(m) for m in self.logs), self.logs)
+        self.assertFalse(any("unchanged, no reconnect" in str(m) for m in self.logs), "never unchanged while the reg disagrees")
+        self.assertTrue(any("effort (web): set to high; reconnecting to apply" in str(m) for m in self.logs), self.logs)
+        s._reset_reconnect_state()
+        s._launching = s.backend._launch_shape(s)               # _options composes from the session: it reads high
+        self.assertEqual(s._launching["effort"], sb.effort_launch_shape("high"))
+        s._connect_landed()
+        self.assertEqual(s._effort_pending, ""); self.assertEqual(s._launched_effort, sb.effort_launch_shape("high"))
+        # a stamp already standing is never overwritten by a second arm: the connect _options composed runs
+        # that shape, and the landing must stamp it as launched
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        s._launching = {"effort": sb.effort_launch_shape("max"), "mode": "default", "auth": "login"}
+        self.assertTrue(s.backend.set_effort(self.SID, "low"))
+        self.assertTrue(s._reconnect)
+        self.assertEqual(s._launching["effort"], sb.effort_launch_shape("max"), "the composed shape stands")
+
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
         # RUNS: the effort it launched with, the mode it runs, the fast state the init reported, the CLI's
@@ -6717,6 +6775,8 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
 
     class _Client:
         instances = []
+        spawn_gate = {}   # client index -> threading.Event: that client's __aenter__ waits for it, so a test can
+        #   hold the spawn window open (the connect in progress, no client yet) and pick during it
 
         def __init__(self, options=None, transport=None):
             self.options = options
@@ -6727,6 +6787,9 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
             self.torn_down = False
 
         async def __aenter__(self):
+            gate = type(self).spawn_gate.get(type(self).instances.index(self))
+            if gate is not None:
+                await self.loop.run_in_executor(None, gate.wait)
             return self
 
         async def __aexit__(self, *a):
@@ -6769,6 +6832,7 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
 
     def setUp(self):
         self._Client.instances = []
+        self._Client.spawn_gate = {}
         fake = types.ModuleType("claude_agent_sdk")
         fake.__spec__ = ModuleSpec("claude_agent_sdk", loader=None)
         fake.ClaudeSDKClient, fake.ClaudeAgentOptions, fake.HookMatcher = self._Client, self._Options, (lambda **kw: kw)
@@ -6948,6 +7012,51 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self._turn(c2, mode="acceptEdits")
         self._wait(lambda: s.inflight == 0 and s._settled_msg is not None, "the turn settled")
         self.assertEqual(s.perm_mode, "acceptEdits")
+
+    def test_a_live_pick_out_of_bypass_in_the_spawn_window_is_pending_and_applies_after_the_landing(self):
+        # a pick OUT of bypass made while the bypass connect was spawning (s.client None, _launching mode
+        # bypass) took set_mode's live branch: set_mode_live had no client and dropped it silently while the
+        # line said "applied live"; nothing armed, the landing stamped bypass, the first init wrote bypass to
+        # perm_mode, and the reg said default against a process running bypass until some later reconnect
+        # applied the pick by accident (review round 4). In the spawn window the pick is a connect-time pick:
+        # recorded pending, said so, and applied by the reconnect after the landing. The second client's
+        # __aenter__ is held on an event so the window stays open for the pick
+        s, c1 = self.s, self._connect()
+        gate = threading.Event()
+        self.addCleanup(gate.set)                                    # a failed assertion must not leave the loop thread on the gate
+        self._Client.spawn_gate[1] = gate
+        self.assertTrue(self.be.set_mode(self.SID, "bypassPermissions"))
+        self._wait(lambda: len(self._Client.instances) == 2 and s.client is None, "the bypass connect is spawning")
+        self.assertEqual((s._launching or {}).get("mode"), "bypassPermissions")
+        n0 = len(self.lines)
+        self.assertTrue(self.be.set_mode(self.SID, "default"))      # a live pick OUT of bypass, during the spawn
+        new = self.lines[n0:]
+        self.assertTrue(any("mode (web): set to default; reconnecting to apply" in l for l in new), new)
+        self.assertFalse(any("applied live" in l for l in new), new)
+        self._wait(lambda: s._reconnect or s._reconnect_when_idle, "the pick's request ran on the loop")
+        gate.set()                                                   # the bypass connect lands
+        self._wait(lambda: len(self._Client.instances) == 3 and self._Client.instances[2] is s.client
+                   and s._launching is None, "the reconnect after the landing")
+        self.assertEqual(self._Client.instances[1].options.permission_mode, "bypassPermissions")
+        self.assertEqual(self._Client.instances[2].options.permission_mode, "default", "the third client launches the pick")
+        self.assertEqual(s._launched_mode, "default"); self.assertEqual(s.perm_mode, "default")
+        self.assertEqual(sb.read_reg(self.be.state_dir, self.SID).get("mode"), "default", "the reg agrees with the process")
+        self.assertEqual(s.snapshot()["mode"], "default"); self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+        self.assertEqual([l for l in self.lines if "contract says this cannot happen" in l], [])
+        # a repeat of the mode being launched, during its own spawn, is already applying
+        self._Client.spawn_gate[3] = gate2 = threading.Event()
+        self.addCleanup(gate2.set)
+        self.assertTrue(self.be.set_mode(self.SID, "bypassPermissions"))
+        self._wait(lambda: len(self._Client.instances) == 4 and s.client is None, "the second bypass connect is spawning")
+        n1 = len(self.lines)
+        self.assertTrue(self.be.set_mode(self.SID, "bypassPermissions"))
+        self.assertTrue(any("mode (web): set to bypassPermissions; already applying, no new request" in l for l in self.lines[n1:]), self.lines[n1:])
+        gate2.set()
+        self._wait(lambda: self._Client.instances[3] is s.client and s._launching is None, "the second bypass connect landed")
+        time.sleep(0.2)
+        self.assertEqual(len(self._Client.instances), 4, "the repeat pick reconnected nothing")
+        self.assertEqual(s._launched_mode, "bypassPermissions")
 
 
 class WorkflowProgressShapeIsLoud(unittest.TestCase):
