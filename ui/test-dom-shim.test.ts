@@ -276,7 +276,8 @@ const ALLOWLIST = [
   "webview/waiting-file-chip-unframed.test.ts",
   "webview/waiting-file-chip.test.ts",
 ];
-// the fifteen files whose near-copies of the shim the shared module replaced (2026-09-10)
+// the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
+// tags-scale test whose shim it grew from
 const SWITCHED = [
   "timeline-hidden-hold.test.ts", "timeline-hidden-stub.test.ts", "timeline-kernel-post.test.ts", "timeline-live-tick.test.ts",
   "timeline-nan-window.test.ts", "timeline-open-interval.test.ts", "timeline-pending-hosts.test.ts", "timeline-render.test.ts",
