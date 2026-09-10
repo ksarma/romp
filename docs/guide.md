@@ -141,8 +141,11 @@ group is renamed. The `archived` section starts folded. Drag a header to reorder
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
 adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. If the
-tab left that group just before you clicked (a change from another pane or another dashboard), the
-click moves nothing: the row flashes and its tooltip says to click again. The row's
+tab left that group just before you clicked, or the group is the same one under a new tag (its tag
+removed and made again under the same name), a change from another pane or another dashboard, the
+click moves nothing: the row flashes and its tooltip says to click again. **Show when folded** refuses
+the same way, and so does **Hide tab** on a re-created tag; the **✕** beside a tag and the row's **+**
+act on the re-created tag at once. The row's
 **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser. The groups follow one another across the
 strip and wrap as they need; the gear's **One tag group per row in the tab strip** starts every
