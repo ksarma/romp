@@ -572,7 +572,7 @@ class MachineCutStampWiring(unittest.TestCase):
         src = Path(BIN, "romp_sdk_backend.py").read_text()
         # the queued text is CRASH_RESUME_NUDGE or its out-of-memory form (2026-09-10), picked into `nudge`
         # just above; both carry the lead sentence INTR_CRASH_SIG matches, and the stamp must still follow
-        pick = src.index("nudge = CRASH_RESUME_NUDGE_OOM if oom_unit else CRASH_RESUME_NUDGE")
+        pick = src.index("nudge = CRASH_RESUME_NUDGE_OOM if named else CRASH_RESUME_NUDGE")
         cut = src.index("reg[\"queue\"] = [nudge]", pick)
         self.assertIn('append_machine_cut(self.state_dir, sid, "crash")', src[cut:cut + 1200],
                       "the crash resume must stamp its cut too")

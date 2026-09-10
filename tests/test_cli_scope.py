@@ -1162,16 +1162,64 @@ class LimitsSettledAtBoot(unittest.TestCase):
 
     def test_a_rejection_that_does_not_name_oompolicy_gets_no_systemd_253_hint(self):
         # a size the rule passes and systemd refuses (out of range): the line quotes systemd and adds
-        # nothing about scope OOMPolicy= support, which is not the cause
+        # nothing about scope OOMPolicy= support, which is not the cause. The failure does not name the
+        # policy, so the policy is probed alone (here it stands), and only the limit is rejected
         rows, log = self._log()
         runs = _Runs((1, b"Failed to parse MemoryMax=99999999999999999999T: Numerical result out of range\n"),
                      (0, b""),
-                     (1, b"Failed to parse MemoryMax=99999999999999999999T: Numerical result out of range\n"))
+                     (1, b"Failed to parse MemoryMax=99999999999999999999T: Numerical result out of range\n"),
+                     OK)   # the policy-alone re-probe: it stands, so the policy is not refused
         _in_force, rejected, _, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "99999999999999999999T"}, log=log, run=runs)
         self.assertEqual(rejected, {"ROMP_CLI_SCOPE_MEMORY_MAX": "99999999999999999999T"},
                          "the policy is not refused on a failure that does not name it")
+        self.assertNotIn("OOMPolicy", rejected, "the marker goes down empty")
         self.assertIn("Numerical result out of range", rows[0][0])
         self.assertNotIn("253", rows[0][0])
+
+    def test_a_limit_refused_by_a_failure_that_does_not_name_the_policy_keeps_the_policy_on(self):
+        # correctness-1/regression-1: the deciding failure names a LIMIT (systemd refuses the size), so it
+        # says nothing about the policy; the kernel probes the POLICY alone, it stands, and only the memory
+        # limits are dropped. OOMPolicy stays OUT of rejected (the marker goes down empty, /api-health reads
+        # continue), and the problem line never claims the policy is off.
+        rows, log = self._log()
+        runs = _Runs(M_FAIL, OK, M_FAIL, OK)   # P fail, B ok, P fail (Invalid argument, not naming the policy), POLICY ok
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(MEM_ENV, log=log, run=runs)
+        self.assertEqual(runs.calls, [PROPS_PROBE, PROBE, PROPS_PROBE, OOM_POLICY_PROBE],
+                         "the policy is probed alone, and no controller check runs for rejected limits")
+        self.assertEqual(rejected, MEM_REJECTED, "only the memory limits: the policy stood on its own")
+        self.assertNotIn("OOMPolicy", rejected)
+        self.assertEqual(in_force, {}, "both limits dropped")
+        self.assertEqual(unsettled, [])
+        self.assertEqual([p for _m, p in rows], [True], "the dropped limits are a problem")
+        self.assertIn("rejected the memory limits", rows[0][0])
+        self.assertIn("Invalid argument", rows[0][0])
+        self.assertIn("OOMPolicy=continue was taken on its own and stays on every scope", rows[0][0])
+        self.assertNotIn("253", rows[0][0], "the limits' refusal is not about scope OOMPolicy= support")
+
+    def test_a_limit_refused_and_the_policy_alone_refused_too_rejects_both(self):
+        # both refused, apart: the limits by the combined failure, the policy by its own probe (a systemd
+        # before 253); both land in rejected, one problem line quoting both
+        rows, log = self._log()
+        runs = _Runs(M_FAIL, OK, M_FAIL, REJECT)   # the policy-alone probe fails naming OOMPolicy
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(MEM_ENV, log=log, run=runs)
+        self.assertEqual(runs.calls, [PROPS_PROBE, PROBE, PROPS_PROBE, OOM_POLICY_PROBE])
+        self.assertEqual(rejected, dict(MEM_REJECTED, OOMPolicy="continue"))
+        self.assertEqual([p for _m, p in rows], [True])
+        self.assertIn("rejected the memory limits", rows[0][0])
+        self.assertIn("OOMPolicy=continue alone", rows[0][0])
+
+    def test_a_limit_refused_and_the_policy_alone_unsettled_leaves_the_policy_unsettled(self):
+        # the policy-alone probe raised (the bus away): the policy's fate is unknown, so it is left
+        # UNSETTLED (never rejected), the marker down empty, the limits rejected
+        rows, log = self._log()
+        runs = _Runs(M_FAIL, OK, M_FAIL, TIMEOUT())
+        in_force, rejected, delegated, unsettled = sb.cli_scope_limits(MEM_ENV, log=log, run=runs)
+        self.assertEqual(runs.calls, [PROPS_PROBE, PROBE, PROPS_PROBE, OOM_POLICY_PROBE])
+        self.assertEqual(rejected, MEM_REJECTED, "the policy is unsettled, not rejected")
+        self.assertNotIn("OOMPolicy", rejected)
+        self.assertEqual(unsettled, ["oomPolicy"])
+        self.assertEqual([p for _m, p in rows], [True])
+        self.assertIn("whether OOMPolicy=continue stays on the scope could not be settled", rows[0][0])
 
     def test_a_passing_fault_on_the_first_try_costs_nothing(self):
         rows, log = self._log()
@@ -1581,10 +1629,12 @@ ADJ_ODD = (2, b"sh: 1: cannot create /proc/self/oom_score_adj: Permission denied
 ADJ_KILLED = (-9, b"")
 ADJ_KILLED_SAID = (-15, b"sh: terminated\n")
 P, B, D, A = PROPS_PROBE, PROBE, DELEGATION_PROBE, ADJ_PROBE
+PA = OOM_POLICY_PROBE   # the policy-alone re-probe, when the deciding failure did not name the policy
 MEM = {"memoryMax": "16G", "memorySwapMax": "0"}
 ADJ = {"oomScoreAdj": "500"}
 ALL3 = dict(MEM, **ADJ)
 MEM_REJECTED = {"ROMP_CLI_SCOPE_MEMORY_MAX": "16G", "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX": "0"}
+MEM_ENV = dict(MEM_REJECTED)   # the two memory limits alone as a manager environment (no adjustment)
 MEM_OOM_REJECTED = dict(MEM_REJECTED, OOMPolicy="continue")   # REJECT names the policy, so it is refused with them
 ADJ_REJECTED = {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}
 ADJ_ONLY = {"ROMP_CLI_SCOPE_OOM_SCORE_ADJ": "500"}
@@ -1632,6 +1682,22 @@ POLICY_REFUSED_LIMITS_UNSETTLED_TEXT = lambda t: ("cli scope: systemd-run reject
                                                   "each launch" % (OLDER_SYSTEMD, " ".join(MEM_PROPS), t))
 POLICY_REFUSED_LIMITS_UNSETTLED_LINE = lambda t: (False, [POLICY_REFUSED_LIMITS_UNSETTLED_TEXT(t)], [])
 POLICY_ONLY_REJECTED = {"OOMPolicy": "continue"}
+# the mirror: a deciding failure that does NOT name the policy refuses the memory limits, and the POLICY
+# is probed alone. It stands (rejected is the limits only, the marker down empty), or is refused too (both
+# in rejected, one line quoting both), or cannot be settled (the policy left unsettled, the limits refused).
+LIMITS_REFUSED_POLICY_STANDS_TEXT = ("cli scope: systemd-run rejected the memory limits (%s: Failed to start transient scope unit: "
+                                     "Invalid argument) on a scope, so they are not applied; sessions run in their scopes without "
+                                     "them; OOMPolicy=continue was taken on its own and stays on every scope" % " ".join(MEM_PROPS))
+LIMITS_REFUSED_POLICY_STANDS_LINE = (True, [LIMITS_REFUSED_POLICY_STANDS_TEXT], ["253"])
+LIMITS_AND_POLICY_REFUSED_LINE = (True, ["cli scope: systemd-run rejected the memory limits (%s: Failed to start transient scope "
+                                         "unit: Invalid argument) and OOMPolicy=continue alone (Failed to start transient scope unit: "
+                                         "Unknown assignment: OOMPolicy=continue), so neither is applied; sessions run in their scopes "
+                                         "without them (OOMPolicy= on scopes needs systemd 253)" % " ".join(MEM_PROPS)], [])
+LIMITS_REFUSED_POLICY_UNSETTLED_LINE = lambda t: (True, ["cli scope: systemd-run rejected the memory limits (%s: Failed to start "
+                                                         "transient scope unit: Invalid argument) on a scope, so they are not applied; "
+                                                         "sessions run in their scopes without them; whether OOMPolicy=continue stays on "
+                                                         "the scope could not be settled: a probe scope with it alone did not answer (%s), "
+                                                         "and the wrapper reports on each launch" % (" ".join(MEM_PROPS), t)], [])
 # the plain line a passing property probe logs for the policy every scope carries (before any controller line)
 OOM_IN_FORCE_LINE = (False, [OOM_IN_FORCE_TEXT], [])
 CONTROLLER_UNSETTLED_LINE = lambda why, absent=(): (True, ["cli scope: the memory-controller check could not be settled — %s; whether the "
@@ -1809,8 +1875,12 @@ def _chain_parts():
     text = lambda answer: str(answer()) if callable(answer) else answer[1].decode().strip()
     first_tries = [("fail", FAULT), ("raise", TIMEOUT), ("reject", REJECT)]   # REJECT first: the 252 path, both P fail alike
     bare_tries = [("fail", BUS_GONE), ("raise", RAISE("bus gone"))]
-    retries = [("ok", OK), ("reject", REJECT), ("raise", RAISE("boom"))]
+    # the retry (P again after a bare pass) is the deciding failure. `reject` names the policy (probe the
+    # limits alone); `reject-other` (M_FAIL, Invalid argument) does NOT (probe the policy alone); `raise`
+    # settles nothing
+    retries = [("ok", OK), ("reject", REJECT), ("reject-other", M_FAIL), ("raise", RAISE("boom"))]
     limits_alone = [("ok", OK), ("fail", M_FAIL), ("raise", RAISE("boom"))]
+    policy_alone = [("ok", OK), ("fail", REJECT), ("raise", RAISE("boom"))]   # the mirror, when the retry did not name the policy
     limits_unsettled = lambda script, calls, line: _part(script, calls, MEM, unsettled=["memoryLimits", "oomPolicy"], lines=[line],
                                                          clause=(MEM_WORDS, UNSETTLED_BY("memoryLimits")))
     reaching = [("P ok", _part([OK], [P], lines=[OOM_IN_FORCE_LINE]), D)]
@@ -1834,6 +1904,18 @@ def _chain_parts():
                         parts.append((label4, _part([a1, OK, a3, a4], [P, B, P, M], MEM, rejected=POLICY_ONLY_REJECTED,
                                                     unsettled=["memoryLimits"], lines=[POLICY_REFUSED_LIMITS_UNSETTLED_LINE(text(a4))],
                                                     clause=(MEM_WORDS, UNSETTLED_BY("memoryLimits")))))
+            elif l3 == "reject-other":
+                for l5, a5 in policy_alone:
+                    label5 = "%s, PA %s" % (label, l5)
+                    if l5 == "ok":       # the policy stands alone: only the limits are dropped, the marker down empty
+                        parts.append((label5, _part([a1, OK, a3, a5], [P, B, P, PA], rejected=MEM_REJECTED,
+                                                    lines=[LIMITS_REFUSED_POLICY_STANDS_LINE])))
+                    elif l5 == "fail":   # the policy is refused too, apart: both in rejected
+                        parts.append((label5, _part([a1, OK, a3, a5], [P, B, P, PA], rejected=MEM_OOM_REJECTED,
+                                                    lines=[LIMITS_AND_POLICY_REFUSED_LINE])))
+                    else:                # the policy-alone probe raised: the policy is unsettled, the limits rejected
+                        parts.append((label5, _part([a1, OK, a3, a5], [P, B, P, PA], rejected=MEM_REJECTED,
+                                                    unsettled=["oomPolicy"], lines=[LIMITS_REFUSED_POLICY_UNSETTLED_LINE(text(a5))])))
             else:
                 parts.append((label, limits_unsettled([a1, OK, a3], [P, B, P], LIMITS_RETRY_UNSETTLED_LINE(text(a1), text(a3)))))
     for label, chain, d_argv in reaching:
@@ -1845,10 +1927,10 @@ def _chain_parts():
 
 
 # the chain's outcome count, from its axes (the table test pins _chain_parts against it): 3 first tries × 2
-# bare failures settle nothing; per first try, a retry that raises (1) and a reject whose limits-alone probe
-# fails or raises (2); the paths reaching the controller (P ok; per first try, a retry that passes and a
-# reject whose limits pass alone) × 2 markers
-CHAIN_OUTCOMES = 3 * 2 + 3 * (1 + 2) + (1 + 3 * 2) * 2
+# bare failures settle nothing; per first try, a retry that raises (1), a reject whose limits-alone probe
+# fails or raises (2), and a reject-other whose policy-alone probe stands, fails or raises (3); the paths
+# reaching the controller (P ok; per first try, a retry that passes and a reject whose limits pass alone) × 2
+CHAIN_OUTCOMES = 3 * 2 + 3 * (1 + 2 + 3) + (1 + 3 * 2) * 2
 
 
 # Every outcome of the adjustment write: (label, part). The verdict rides the probe's exit status —
@@ -1892,6 +1974,10 @@ MEM_PARTS = [
                                           CONTROLLER_UNSETTLED_LINE("its probe " + FAULT_TEXT + MOMENTS + ", and again on the retry")],
                                    clause=(MEM_WORDS, UNSETTLED_BY("memoryController")))),
     ("memory rejected", _part([FAULT, OK, REJECT, M_FAIL], [P, B, P, M], rejected=MEM_OOM_REJECTED, lines=[MEM_REJECTED_LINE])),
+    # the deciding failure did not name the policy (a size systemd refuses): the limits are dropped, and the
+    # POLICY is probed alone and stands, so it stays off `rejected` (the marker goes down empty)
+    ("memory rejected, policy stands", _part([FAULT, OK, M_FAIL, OK], [P, B, P, PA], rejected=MEM_REJECTED,
+                                             lines=[LIMITS_REFUSED_POLICY_STANDS_LINE])),
     # a systemd before 253: the policy refused by a failure naming it, the limits alone taken and standing,
     # the controller check with the limits alone; and the limits-alone probe not answering
     ("policy refused, limits stand", _part([FAULT, OK, REJECT, OK, HAS], [P, B, P, M, D_MEM], MEM, rejected=POLICY_ONLY_REJECTED,
@@ -2027,20 +2113,22 @@ class SettleTable(_Backend):
             rc, err = (None, str(answer())) if callable(answer) else (answer[0], answer[1].decode().strip())
             self.assertEqual(sb._cli_scope_attempt(rc, err), (kind, text))
         self.assertEqual({kind for *_r, kind in ATTEMPTS}, {"no-start", "no-answer", "no-marker"})
-        # the axes are what the docstring says: the chain's outcomes (CHAIN_OUTCOMES: 15 that settle or refuse,
+        # the axes are what the docstring says: the chain's outcomes (CHAIN_OUTCOMES: 24 that settle or refuse,
         # 7 reaching the controller × 2 markers), the controller's 2 + 9 × (2 + 9 + 2) + 2, the adjustment's 9
-        # beside the memory's 8, plus the anchors
+        # beside the memory's 9, plus the anchors
         self.assertEqual(len(_chain_parts()), CHAIN_OUTCOMES)
-        self.assertEqual(CHAIN_OUTCOMES, 15 + 7 * 2)
+        self.assertEqual(CHAIN_OUTCOMES, 24 + 7 * 2)
         self.assertEqual(len(_controller_parts()), 2 + len(ATTEMPTS) * (2 + len(ATTEMPTS) + 2) + 2)
         self.assertEqual(len(SETTLE_TABLE), len(SETTLE_ANCHORS) + CHAIN_OUTCOMES + 121 + len(ADJ_PARTS) * len(MEM_PARTS))
-        # the limits-alone probe and the controller check with the limits alone are on the chain axis, with the
-        # policy refused and the limits kept, and the marker's stray value never reaches the wrapper (the
-        # backend test above); one row per M outcome per reject path
+        # the limits-alone probe (M) rides a reject that NAMES the policy; the policy-alone probe (PA) rides a
+        # reject-other that does NOT; one row per outcome per first-try
         names = [label for label, _part_ in _chain_parts()]
         self.assertEqual(sum(", M ok, controller" in n for n in names), 3 * 2)
         self.assertEqual(sum(n.endswith(", M fail") for n in names), 3)
         self.assertEqual(sum(n.endswith(", M raise") for n in names), 3)
+        self.assertEqual(sum(n.endswith(", PA ok") for n in names), 3)
+        self.assertEqual(sum(n.endswith(", PA fail") for n in names), 3)
+        self.assertEqual(sum(n.endswith(", PA raise") for n in names), 3)
         # every anchor's cell is on an axis too, under the same answers (an exception by its text)
         keyed = lambda row: (tuple(sorted(row["env"].items())), tuple(str(i()) if callable(i) else i for i in row["script"]))
         axis_keys = {keyed(row) for row in _settle_rows()}
