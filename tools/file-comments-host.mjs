@@ -1975,17 +1975,17 @@ function validateAnchor(anchor) {
 // additive field, docs/adr/0002). A whole-file comment has no anchor and the id `${now}-0`. `target`
 // (a region on an image or a PDF page) is not attached here: doComment validates it and stamps the
 // hash (stampTarget) once the anchor, if any, is placed.
-// `changeIds` is the person's own pick of the changes a comment is ABOUT (a change card's Comment on
-// this change; the composer's "about N changes" option over a selection that overlaps their marks): a
-// non-empty list of ids, each naming a change the sidecar holds, PENDING (in `suggestions`) or DETACHED
-// (in `detached`), else `{error: 'no-change', ids}` naming the ones it does not, and nothing written.
-// It goes with or without an anchor: a comment about a deletion, whose text is not in the file, names
-// the change alone, and takes its id from the first change's current offset (a detached change's last
-// place), where the other hosts put a comment whose `suggestionId` names the change. The ids are kept
-// as the request sent them, as strings. The other editors read a comment on the field they set,
-// `suggestionId`, and write the object back whole, so this field survives them; romp never writes
-// `suggestionId` (a request naming one is a caller bug): the panel's card and decidedFor read a stored
-// one as the change that ANSWERED
+// `changeIds` is the person's own pick of the changes a comment is ABOUT (a change card's
+// Comment on this change; the composer's "about N changes" option over a selection that overlaps
+// their marks): a non-empty list of ids, each naming a change the sidecar holds, PENDING (in
+// `suggestions`) or DETACHED (in `detached`), else `{error: 'no-change', ids}` naming the ones it
+// does not, and nothing written. It goes with or without an anchor: a comment about a deletion,
+// whose text is not in the file, names the change alone, and takes its id from the first change's
+// current offset (a detached change's last place), where the other hosts put a comment whose
+// `suggestionId` names the change. The ids are kept as the request sent them, as strings. The
+// other editors read a comment on the field they set, `suggestionId`, and write the object back
+// whole, so this field survives them; romp never writes `suggestionId` (a request naming one is
+// a caller bug): the panel's card and decidedFor read a stored one as the change that ANSWERED
 // the comment, the legacy meaning, and a decision leaves such a comment as it was, open or resolved
 // (decision 42, 2026-09-09; before it, accept marked the bound comments resolved — requireCommentsUntouched
 // now refuses a decision that changes one).
