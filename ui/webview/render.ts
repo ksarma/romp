@@ -6650,7 +6650,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // refresh ends by seating both again (reseat): the menu from its own corner, so a menu that shrank stays where it
   // was and one that grew moves only as far as the pane's edge asks, the flyout from the Tags row's current rect and
   // its own current size, read after the menu. Keyed on the refresh, which is keyed on the write; no timer. Nothing to
-  // seat while the menu is still being built (corner null) or the flyout is closed (isConnected).
+  // seat while the menu is still being built (corner null) or the flyout is closed (isConnected). PLACEMENT IS SEPARATE
+  // FROM WORDS (round 6): the seat runs after every refresh whatever the row's words did, since the flyout's rows change
+  // with every build and rebuild while the row's sentence often stands (round 5 returned before the seat on unchanged
+  // words, and a flyout clamped at the pane's bottom grew past the edge, its foot unreachable).
   let corner: { x: number; y: number } | null = null;
   const seatMenu = (x: number, y: number) => {
     const r = menu.getBoundingClientRect();
@@ -6719,23 +6722,29 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     let shown: ReturnType<typeof sectionRef> | null = null;   // the section the row names (round 4): the click writes for that copy or not at all
     let dressed: string | null = null;   // the words the row shows; null while it is off the menu (round 5)
     const rowHome = () => (phoneLayout() ? undefined : homeNow());   // the row's own resolution (round 6): none on the phone layout, where the strip is flat and a hide shows nothing; the refresh and the click read the same gate
-    refreshHideRow = () => {
+    // THE WORDS, then THE PLACEMENT: two steps of one refresh (round 6). The words: the row's resolution, its bit and its sentence, the
+    // node dressed and seated after Notify me, or taken off the menu while the copy has no section. UNCHANGED WORDS: the node stands
+    // (round 5; a rebuild on every arrival dropped a click under way), while the section the row names and its bit follow all the same
+    // (an ack swaps a placeholder id under the same words; the guard compares by the id). The placement (reseat: the menu, then the
+    // open flyout) runs after the words whatever they did, since the flyout's rows change with every build and rebuild while the row's
+    // sentence often stands: the flyout's own build ends in this refresh, so a push that adds a tag, the user's New tag or the trail's
+    // copy places the grown flyout again (round 5 returned before the seat on unchanged words, and a flyout clamped at the pane's bottom
+    // grew past the edge, New tag and Configure tags unreachable; a rename beside new tags seated at the old height, before the rebuild)
+    const refreshHideWords = () => {
       const home = rowHome();
-      if (!home) { shown = null; if (dressed === null) return; dressed = null; row.remove(); reseat(); return; }
+      if (!home) { shown = null; if (dressed === null) return; dressed = null; row.remove(); return; }
       shown = sectionRef(home);
       hidden = isHidden(tabGroups(), shown, id);
       const lab = hidden ? "Show tab" : "Hide tab";
       const sub = hidden ? `back on the strip in ${home.name}` : `hidden in ${home.name}; to show it, open the group's view`;
       const words = lab + "\n" + sub;
-      // UNCHANGED WORDS: the node stands (round 5; a rebuild on every arrival dropped a click under way), while the section the row
-      // names and its bit follow all the same (an ack swaps a placeholder id under the same words; the guard compares by the id)
       if (row.parentNode && words === dressed) return;
       dressed = words;
       dressToggle(row, "tab", hidden, lab, sub);
       row.title = sub;   // the whole sentence as the row's tooltip (round 5): the sub-line elides at long names (ctx-sub-capped) and its instruction went with it
       if (!row.parentNode) bellItem.after(row);
-      reseat();
     };
+    refreshHideRow = () => { refreshHideWords(); reseat(); };   // the placement after the words, every time (round 6)
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
       const now = rowHome();
@@ -7074,7 +7083,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         }
         if (holding().length || others.length) add(el("div", "ctx-sep"));
         tagsItem.title = subText();   // the Tags row's tooltip follows the flyout's own edits (its sub-line is written by their handlers after this build)
-        refreshHideRow();   // every edit above rebuilds this flyout: the Hide tab row speaks for the copy where it now sits (keyed on the write, no timer)
+        refreshHideRow();   // every edit above rebuilds this flyout: the Hide tab row speaks for the copy where it now sits (keyed on the write, no timer), and the refresh ends by placing the menu and this flyout at its new size (round 6: after every build and rebuild, whatever the row's words did)
       };
       build();
       // Configure tags… at the foot, behind the divider (T163): the ONE route the tag-lens menus

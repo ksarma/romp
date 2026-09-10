@@ -873,12 +873,14 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // round 5: the refresh computes the words and returns before any rebuild when they are unchanged and the row is on the menu (the
   // section and the bit still follow: an ack swaps a placeholder id under the same words); the rebuild, the seating and the removal
   // run through the menu's one hold (pressHold(menu)), so a push under a pressed pointer waits for the release, and a parked run
-  // checks the menu is still on the page; the section the row names is set as the row comes to show it
+  // checks the menu is still on the page; the section the row names is set as the row comes to show it. Round 6: the refresh is two
+  // steps, the words (refreshHideWords) and the placement (reseat), and the placement runs after the words whatever they did, so a
+  // flyout that grew while the row's sentence stood is placed again (round 5's unchanged-words return skipped the seat)
   assert.match(MENU, /const reseat = \(\) => \{ if \(!corner\) return; seatMenu\(corner\.x, corner\.y\); reseatFly\(\); \};\s*\n(?:\s*\/\/[^\n]*\n)+\s*const hold = pressHold\(menu\);\s*\n\s*const gone = \(\) => corner !== null && !menu\.isConnected;/, "one hold for the whole menu, declared before the row and the flyout that share it; a parked run's bail reads seated-once-and-off-the-page (the first refresh runs before the mount)");
   assert.equal(MENU.split("pressHold(").length - 1, 1, "one hold");
   assert.equal(RENDER.split("hold.defer(").length - 1, 1, "one run goes through it, the views hook's whole run (the row's refresh and the Tags block's, the flyout's rebuild inside); two separate parked runs would replace each other under one press");
   assert.match(RENDER, /^import \{ delegate, pressHold \} from "\.\/actions";$/m, "the shared helper, not a copy");
-  assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*let dressed: string \| null = null;[^\n]*\n\s*const rowHome = \(\) => \(phoneLayout\(\) \? undefined : homeNow\(\)\);[^\n]*\n\s*refreshHideRow = \(\) => \{\s*\n\s*const home = rowHome\(\);\s*\n\s*if \(!home\) \{ shown = null; if \(dressed === null\) return; dressed = null; row\.remove\(\); reseat\(\); return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*const lab = hidden \? "Show tab" : "Hide tab";\s*\n\s*const sub = hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`;\s*\n\s*const words = lab \+ "\\n" \+ sub;\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(row\.parentNode && words === dressed\) return;\s*\n\s*dressed = words;\s*\n\s*dressToggle\(row, "tab", hidden, lab, sub\);\s*\n\s*row\.title = sub;[^\n]*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*reseat\(\);\s*\n\s*\};\s*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\);\s*\n\s*const now = rowHome\(\);\s*\n\s*if \(!now\) \{ dismissTabMenu\(\); return; \}\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| !sameSection\(sec, shown\)\) \{ refreshHideRow\(\); return; \}\s*\n\s*dismissTabMenu\(\);\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/,
+  assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*let dressed: string \| null = null;[^\n]*\n\s*const rowHome = \(\) => \(phoneLayout\(\) \? undefined : homeNow\(\)\);[^\n]*\n(?:\s*\/\/[^\n]*\n)+\s*const refreshHideWords = \(\) => \{\s*\n\s*const home = rowHome\(\);\s*\n\s*if \(!home\) \{ shown = null; if \(dressed === null\) return; dressed = null; row\.remove\(\); return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*const lab = hidden \? "Show tab" : "Hide tab";\s*\n\s*const sub = hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`;\s*\n\s*const words = lab \+ "\\n" \+ sub;\s*\n\s*if \(row\.parentNode && words === dressed\) return;\s*\n\s*dressed = words;\s*\n\s*dressToggle\(row, "tab", hidden, lab, sub\);\s*\n\s*row\.title = sub;[^\n]*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*\};\s*\n\s*refreshHideRow = \(\) => \{ refreshHideWords\(\); reseat\(\); \};[^\n]*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\);\s*\n\s*const now = rowHome\(\);\s*\n\s*if \(!now\) \{ dismissTabMenu\(\); return; \}\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| !sameSection\(sec, shown\)\) \{ refreshHideRow\(\); return; \}\s*\n\s*dismissTabMenu\(\);\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/,
     "round 5: the guard runs before the dismissal, so a refused click re-dresses the row on a menu still on the page; the no-home branch dismisses explicitly; a click that writes dismisses first, as every other row does; round 6: the refresh and the click read the copy's section through one gate, rowHome, so a click that lands on the phone layout before the flip's parked refresh writes nothing");
   assert.equal(MENU.split("phoneLayout()").length - 1, 1, "the gate is read once, in rowHome, which the refresh and the click share (round 6; the flyout's home read is untouched)");
   assert.equal(MENU.split("rowHome()").length - 1, 2, "read by the refresh and by the click");
@@ -886,7 +888,8 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.equal(MENU.split("tagsItem.title = ").length - 1, 3, "the Tags row's title: at the build, in the refresh, at every build of the flyout (round 5)");
   assert.equal(MENU.split("row.title = sub;").length - 1, 1, "the Hide tab row's title is its sub-line, set as the row is dressed (round 5)");
   assert.equal(MENU.split("refreshHideRow()").length - 1, 3, "called at build, at the end of the flyout's build, and by the click that found the resolution moved off the copy the row named (round 4); the views hook that also calls it is set past the menu's build (pinned above); no timer, no other caller");
-  assert.equal(MENU.split("reseat()").length - 1, 2, "the refresh's two exits seat again; no other caller, no timer");
+  assert.equal(MENU.split("reseat()").length - 1, 1, "one caller: the refresh's placement step, after the words whatever they did (round 6; round 5 seated on the two exits that changed the words and skipped the seat on the unchanged-words return); no other caller, no timer");
+  assert.equal(MENU.split("refreshHideWords()").length - 1, 1, "the words step has one caller, the refresh");
   const bellAt = MENU.indexOf('toggle("bell"'), billingAt = MENU.indexOf("// Billing submenu"), tagsAt = MENU.indexOf('l.textContent = "Tags"');
   assert.ok(bellAt > 0 && hideAt > bellAt && billingAt > hideAt && tagsAt > billingAt, "after the bell, before Billing and Tags");
   const row = MENU.slice(MENU.indexOf("// HIDE TAB (the user 2026-09-09)"), billingAt);
@@ -1751,7 +1754,7 @@ test("executed: A RENAME PUSHED WHILE THE MENU IS OPEN (menu review round 4). Th
   });
 });
 
-test("executed: THE FLYOUT FOLLOWS THE ROW (menu review round 3). With the Tags flyout open, an x on the copy's tag takes the Hide tab row out above the Tags row and the flyout's top follows the row; an add that brings the row back moves both down again; a menu clamped at the pane's bottom moves up by the row that came back, and the emoji picker's anchor follows", () => {
+test("executed: THE FLYOUT FOLLOWS THE ROW (menu review rounds 3 and 6). With the Tags flyout open, an x on the copy's tag takes the Hide tab row out above the Tags row and the flyout's top follows the row; an add that brings the row back moves both down again; a menu clamped at the pane's bottom moves up by the row that came back, and the emoji picker's anchor follows; a flyout clamped at the pane's bottom that grows while the row's words stand (a push adding a tag, the user's New tag) or change (a rename beside new tags) is placed again at its new size", () => {
   // the flyout's top was set once, from the Tags row's rect at open; the refresh then removed or re-inserted the Hide tab row above
   // the Tags row and the flyout stood one row low (or high) until reopened. The refresh ends by seating the menu and the open flyout
   // again, keyed on itself (the write's build), no timer. Executed over the harness's rect model: a menu's rows stack ROW apart under
@@ -1807,6 +1810,38 @@ test("executed: THE FLYOUT FOLLOWS THE ROW (menu review round 3). With the Tags 
     xOf(fly2, "infra").click();
     assert.equal(top(fly), flyTop, "the closed flyout's style is not written");
     assert.equal(top(fly2), menu.children.find((it) => it.has("ctx-item-tags"))!.getBoundingClientRect().top, "the open one follows");
+    assert.equal(hooks.writes.length, 0, "no hide written by any of it");
+    // F4 (round 6): a flyout clamped at the pane's BOTTOM grows while the Hide tab row's words stand: a push that adds a tag (one Move to
+    // row more), then the user's own New tag (a creating... row). The placement runs after every build and rebuild whatever the words did,
+    // so the flyout's top moves up and its foot stays inside the pane. Round 5 returned before the seat on unchanged words, and build()
+    // reached the seat through that refresh alone, so the flyout grew past the pane's edge with New tag and Configure tags unreachable
+    const typeName = (f: FakeEl, name: string) => { const inp = f.all().find((n) => n.has("ctx-tag-input"))!; inp.value = name; for (const fn of inp.listeners.keydown || []) fn({ key: "Enter" }); };
+    hooks.views = V; hooks.win = { w: 1200, h: 800 };
+    menu = api.open("web", "infra", { x: 10, y: 790 });
+    fly = flyOf(menu);
+    const tags3 = menu.children.find((it) => it.has("ctx-item-tags"))!;
+    const clamped = (f: FakeEl) => Math.min(tags3.getBoundingClientRect().top, 800 - f.getBoundingClientRect().height - 4);
+    assert.equal(top(fly), clamped(fly), "at open the flyout is placed against the pane's bottom");
+    assert.ok(top(fly) < tags3.getBoundingClientRect().top, "and the clamp is what places it: the Tags row stands lower");
+    const h0 = fly.getBoundingClientRect().height;
+    api.push({ ...V, tags: [...V.tags, { id: "g6", name: "draft", color: "#f0f", members: [] as string[] }], seq: 4 });
+    assert.equal(fly.getBoundingClientRect().height, h0 + FakeEl.ROW, "a tag more: the flyout grew by a row");
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"), "while the row's words stand");
+    assert.equal(top(fly), clamped(fly), "the flyout moved up by that row, its foot inside the pane (round 5 left its top where it was)");
+    typeName(fly, "qa");
+    assert.equal(fly.getBoundingClientRect().height, h0 + 2 * FakeEl.ROW, "the user's New tag: a creating... row more");
+    assert.equal(top(fly), clamped(fly), "placed again");
+    // the words change too: a rename beside two new tags. The hook runs the row's refresh before the flyout's rebuild, so round 5 seated
+    // at the OLD height and the rebuild's own refresh returned before the seat; the placement after every refresh reads the new height
+    hooks.views = V;
+    menu = api.open("web", "infra", { x: 10, y: 790 });
+    fly = flyOf(menu);
+    const tags4 = menu.children.find((it) => it.has("ctx-item-tags"))!;
+    const h1 = fly.getBoundingClientRect().height;
+    api.push({ ...V, tags: [{ ...V.tags[0], name: "platform" }, V.tags[1], { id: "g6", name: "draft", color: "#f0f", members: [] as string[] }, { id: "g7", name: "qa", color: "#0ff", members: [] as string[] }], seq: 5 });
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("platform"), "the words changed");
+    assert.equal(fly.getBoundingClientRect().height, h1 + 2 * FakeEl.ROW, "and the flyout grew by two rows");
+    assert.equal(top(fly), Math.min(tags4.getBoundingClientRect().top, 800 - fly.getBoundingClientRect().height - 4), "placed at the new height (round 5: at the old one)");
     assert.equal(hooks.writes.length, 0, "no hide written by any of it");
   });
 });
