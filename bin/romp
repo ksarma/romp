@@ -2780,7 +2780,9 @@ try:
 except Exception:
     err = ""
 tok = os.environ.get("DN_TOK") or "its token file"
-src = "ROMP_SERVE_TOKEN" if os.environ.get("DN_ENV") else tok
+# where the client read the token it sent, from the client's own line first (it knows what it sent; review
+# round 3, 2026-09-10: this snippet's own env check could disagree with the client's), else from DN_ENV
+env = bool(re.search(r"read from ROMP_SERVE_TOKEN\b", out)) if "read from " in out else bool(os.environ.get("DN_ENV"))
 none = re.search(r"the serve token could not be read \((.*?)\); the manager refuses", out)
 if code == "401" and none:
     why = none.group(1)
@@ -2788,10 +2790,15 @@ if code == "401" and none:
         why = why[len(tok) + 2:]
     fix = ("It needs the serve token, and this romp found none at %s (%s). Point ROMP_STATE_DIR at the manager's "
            "state root, or set ROMP_SERVE_TOKEN." % (tok, why))
+elif code == "401" and env:
+    # the state root changes nothing while the variable is set: the remedy is the variable (the control
+    # client's and the extension's wording; review round 3, 2026-09-10)
+    fix = ("It does not hold the serve token this romp read from ROMP_SERVE_TOKEN. Unset it in this shell, or set "
+           "it to the manager's token, or check ROMP_MANAGER_PORT.")
 elif code == "401":
     fix = ("It does not hold the serve token this romp read from %s, so it runs under another state root or "
            "belongs to another romp. Check ROMP_STATE_DIR and ROMP_MANAGER_PORT, or stop it from the shell that "
-           "started it." % src)
+           "started it." % tok)
 elif code == "503":
     fix = ("It cannot read its own serve-token file. Make that file a regular 0600 file that you own, under the "
            "manager's state root, then run romp down again.")

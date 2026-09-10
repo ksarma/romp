@@ -2993,12 +2993,15 @@ PY
     # line must say this romp FOUND NO token, never that the manager does not hold one it "read from" the
     # file; and the line takes the documented shape, the manager's words closing the parenthesis and the
     # remedy following as its own sentence.
+    # Review round 3 (2026-09-10): a 401 for a token read from ROMP_SERVE_TOKEN. The state root changes
+    # nothing while the variable is set, so the remedy says to unset or correct it (the control client's and
+    # the extension's wording), never to check ROMP_STATE_DIR or that the manager runs under another root.
     local bin; bin="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)"
     unset ROMP_SERVE_TOKEN
     mkdir -p "$XDG_STATE_HOME/romp"
     mock_service 3                                           # no login service: down goes to the manager's own /stop
     local case code body mport i
-    for case in 401 503 401-none 401-empty; do
+    for case in 401 503 401-none 401-empty 401-env; do
         code="${case%%-*}"
         rm -f "$TEST_DIR/mgr-seen"
         case "$case" in
@@ -3006,6 +3009,7 @@ PY
             401-empty) : > "$XDG_STATE_HOME/romp/serve-token" ;;
             *)         printf 'refused-down-token\n' > "$XDG_STATE_HOME/romp/serve-token" ;;
         esac
+        if [ "$case" = 401-env ]; then export ROMP_SERVE_TOKEN=refused-down-env-token; fi   # the file holds another
         if [ "$code" = 401 ]; then body="serve token required: send it in X-Romp-Token (the serve-token file under the kernel's state root: /x/state/serve-token for the primary kernel)"
         else body='the manager cannot read the serve token (/x/state/serve-token: EACCES); state-changing requests are refused until it can'; fi
         free_port mport
@@ -3034,6 +3038,7 @@ PY
         for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
         export ROMP_MANAGER_PORT=$mport ROMP_MANAGER_BIN="$bin/romp-manager"
         run run_romp down --now
+        unset ROMP_SERVE_TOKEN
         [ "$status" -eq 1 ]
         # "said at once, no poll" is carried by the request counts below (one POST, no /status read after it)
         # and the absent "still running" text, not by a wall-clock bound (review round 2, 2026-09-10: a
@@ -3050,6 +3055,12 @@ PY
                 [[ "$output" == *"). It does not hold the serve token this romp read from $XDG_STATE_HOME/romp/serve-token"* ]]
                 [[ "$output" == *"Check ROMP_STATE_DIR and ROMP_MANAGER_PORT"* ]]
                 grep -qx 'POST /stop token=refused-down-token' "$TEST_DIR/mgr-seen" ;;
+            401-env)
+                # the env spelling went out (not the file's), and the remedy is the variable, never the state root
+                [[ "$output" == *"). It does not hold the serve token this romp read from ROMP_SERVE_TOKEN. Unset it in this shell, or set it to the manager's token, or check ROMP_MANAGER_PORT. The kernel keeps running."* ]]
+                [[ "$output" != *"another state root"* ]]
+                [[ "$output" != *"ROMP_STATE_DIR"* ]]
+                grep -qx 'POST /stop token=refused-down-env-token' "$TEST_DIR/mgr-seen" ;;
             401-none|401-empty)
                 # no header went out, and the line says this romp found none, with the client's reason
                 [[ "$output" == *"). It needs the serve token, and this romp found none at $XDG_STATE_HOME/romp/serve-token ("* ]]

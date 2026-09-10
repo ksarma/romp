@@ -1255,8 +1255,11 @@ it run every time:
     removes the marker, writes a `down-failed` row naming the status, prints
     `romp down: the manager on :<port> refused the stop (HTTP <status>: <the
     manager's words>). <the remedy> The kernel keeps running.` and exits 1. The
-    remedy names where this romp read its token and says to check
-    `ROMP_STATE_DIR` and `ROMP_MANAGER_PORT`; when this romp found no token, it
+    remedy names where this romp read its token: for the file under its state
+    root it says to check `ROMP_STATE_DIR` and `ROMP_MANAGER_PORT`; for
+    `ROMP_SERVE_TOKEN` it says to unset the variable in this shell or set it to
+    the manager's token, or check `ROMP_MANAGER_PORT` (the state root changes
+    nothing while the variable is set); when this romp found no token, it
     names the file and the reason and says to point `ROMP_STATE_DIR` at the
     manager's state root or set `ROMP_SERVE_TOKEN`; on a 503 it says to repair
     the manager's file.
