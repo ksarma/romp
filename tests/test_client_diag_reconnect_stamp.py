@@ -12,8 +12,11 @@ own. Two fields fix that, each recorded where it is known:
   has consumed the flag. The shim queues the `wsclose` row while its socket is down and flushes it onto the redial;
 - the shim's `wsclose` row carries `bundleReady`, the shim's state at the close.
 The pair: both true, a declared redial; both false, a drop before the bundle said ready; reconnect false with
-bundleReady true, the ready queued during the close and the redial carried no term. `readyQueued` is not recorded:
-it is false at every close the row is built at, and the pair above already separates the shapes.
+bundleReady true, the ready queued during the close and the redial carried no term. `readyQueued` is not recorded
+because the pair already carries it: at the one close where it is true (a ready that arrived while the socket was
+going down) the pair reads reconnect false, bundleReady true, and the redial's onopen clears it; at the other
+closes it is false. A ready that lands after onclose and before the redial leaves bundleReady false on the row and
+reads as the gated pair (false, false), correctly.
 
 Three legs: the handler alone (a client dict with and without the dial record), the REAL shim core under node
 (the row's field in each shape, and the row's place ahead of the queued ready), and the two joined (the real
@@ -197,7 +200,9 @@ class TheShimRowCarriesBundleReady(unittest.TestCase):
     def test_the_row_is_built_from_the_shim_state_at_the_close(self):
         js = km._shim("chat", caps=km.READY_GATE_CAP)
         self.assertIn("everConnected:everConnected,bundleReady:bundleReady}", js)
-        self.assertNotIn("readyQueued:readyQueued", js, "not recorded: false at every close the row is built at")
+        self.assertNotIn("readyQueued:readyQueued", js, "not recorded: the pair already carries it (true at the one close "
+                         "where the pair reads reconnect false, bundleReady true, and cleared by the redial's onopen; "
+                         "false at the other closes)")
 
 
 class ThePairInTheLog(_State):
