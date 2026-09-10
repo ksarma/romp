@@ -42,7 +42,7 @@ export type AttachResult =
 export async function ensureThenAttach(d: AttachDeps): Promise<AttachResult> {
   // 1. Already a kernel on our port? Attach straight away — the common case.
   if (await d.healthz()) return { ok: true };
-  // 2. None there — ask the manager to ensure one. If the manager isn't running, we can't proceed. A
+  // 2. None there: ask the manager to ensure one. If the manager isn't running, we can't proceed. A
   //    manager that answered and refused is a different failure with a different fix (review round 1,
   //    2026-09-10: a 401 or 503 used to read as "no manager", and the toast sent the user to `romp up`,
   //    which then reported a manager already running).
