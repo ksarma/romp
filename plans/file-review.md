@@ -1878,7 +1878,9 @@ the panel's slot anchored over the change's span in the current text, the presel
 (`aboutOption`, `input[data-opt="about"]`, "about this change"), and Save posts `changeIds: [id]` beside the anchor; a
 deletion, whose text is not in the file, takes the comment by id alone, the reference row saying "About the change …"
 and, in one line, that the comment is laid at the change's point (`markTop`'s fallback lays an anchorless comment's card
-level with the first pending change it names). For a spanned change, an insertion or a substitution, the card offers
+level with the first pending change it names) or, in the list layout, where no card is laid at any point, that the comment
+names the change instead of a passage (the review's second round, 2026-09-10). For a spanned change, an insertion or a
+substitution, the card offers
 Comment on this change only while the view carries the change's text (`spanCarried`: the view's bytes are the status's,
 whose offsets place the span (`textCurrent`); there is a text to cut it from (`indexedText`: the view's, or while the
 editor is up the file as the editor loaded it, never the buffer); and the view shows text at all, not the picture of a
@@ -1904,8 +1906,9 @@ unchanged. Tests: `file-comments-about.test.ts` (the stand-in: the list, the tag
 key, Comment on this change on a substitution and on a deletion, the option unchecked, a selection inside an insertion,
 across two marks, reaching a deletion's point and over its label alone, the sources), `file-comments-about-browser.test.ts`
 (Chromium and Firefox, Rendered with the marks shown and hidden and Raw: the composer over the real span, a real drag
-inside an insertion and a substitution's new text, the option unchecked, the deletion's label and the card laid level
-with its mark, the ring's computed outline, the count tag's click), `file-comments-model-about.test.ts` (the pure half),
+inside an insertion and a substitution's new text, the option unchecked, a drag across the insertion's end with its
+highlight painting in the other view too, the deletion's label and the card laid level with its mark, the ring's computed
+outline, the count tag's click), `file-comments-model-about.test.ts` (the pure half),
 `tools/file-comments-host-about.test.mjs` (the host), `tests/test_guide_files_about.py` (the guide's sentences held to
 the panel) and `tools/file-review-plan-about.test.mjs` (this note and decisions 45 and 46 held to the code and the
 modules they name). From the about follow-on's review (2026-09-10): `file-comments-about-fixes.test.ts` (the stand-in
@@ -1916,7 +1919,12 @@ in media mode and standing on a deletion, a refused selection crossing a deletio
 all row's dress and place, a wheel ending the offer under focus), `tools/file-comments-host-about-scale.test.mjs` (the
 host's id walk in linear time: a hundred thousand ids refused `no-change` inside the kernel's deadline) and
 `tools/file-review-plan-about-flux.test.mjs` (the withholding as recorded here and in the Slice 2 build paragraph held to
-the panel and the stand-in).
+the panel and the stand-in). From its second round (2026-09-10): `file-comments-about-review2.test.ts` (the stand-in
+with the layout switchable: the composer's about ids pruned as a status retires a change, a selection starting exactly at a deletion's point, the
+deletion marks a drag crosses, the kind cue's title by source, the ids-only line by layout),
+`file-comments-resolve-answered-review2.test.ts` (the Reopen all offer's place by layout and the keyboard after a run
+the confirm's Resolve began from the keyboard) and `file-comments-arrivals-about.test.ts` (a session's reply on a comment
+about a pending change shows on the comment's own card, never the change's).
 
 ### Slice 3: region comments on images
 
@@ -2723,7 +2731,12 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   focus) and `tools/file-comments-host-about-scale.test.mjs` (the host's id walk in linear time: a hundred thousand ids
   refused `no-change` inside the kernel's deadline); `tools/file-review-plan-about-flux.test.mjs` holds the paragraph's
   account of Comment on this change withheld in flux and in media mode, and the Slice 2 build paragraph's clause, to the
-  panel and the stand-in.
+  panel and the stand-in. From its second round (2026-09-10): `file-comments-about-review2.test.ts` (the stand-in with
+  the layout switchable: the composer's about ids pruned as a status retires a change, a selection starting exactly at a deletion's point, the
+  deletion marks a drag crosses, the kind cue's title by source, the ids-only line by layout),
+  `file-comments-resolve-answered-review2.test.ts` (the Reopen all offer's place by layout and the keyboard after a run
+  the confirm's Resolve began from the keyboard) and `file-comments-arrivals-about.test.ts` (a session's reply on a
+  comment about a pending change shows on the comment's own card, never the change's).
 
 ## Docs
 
@@ -3011,9 +3024,10 @@ document stands on its own, each with the reasoning it was given.
     reply by another author since the person's last message on the comment (a reply of kind edit counts as an answer;
     the person's own later reply does not). Its click asks in one plain line, "Resolve the N comments the session has
     answered?", resolves them through the host's `resolve` op one request each (a refusal is reported per comment,
-    under the card), and puts "Reopen all" in the acknowledgment's position until the person's next gesture, which
-    reopens the same comments the same way. Event-based: the set is read off the status when the button is pressed,
-    never a timer. Client-only; no kernel change.
+    under the card), and puts "Reopen all" in the acknowledgment's position (the margin layout's Send section; in the list
+    layout, whose Send section is the scroller's foot and left the offer off screen after the click, under the header: the
+    review's second round, 2026-09-10) until the person's next gesture, which reopens the same comments the same way.
+    Event-based: the set is read off the status when the button is pressed, never a timer. Client-only; no kernel change.
 
 ## Open questions for the user
 

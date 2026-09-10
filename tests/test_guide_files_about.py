@@ -42,7 +42,8 @@ def _paragraph(section, lead):
 
 COMMENT_ON = ("**Comment on this change** on a change's card opens the comment box over the change's text with **about this "
               "change** checked, so the comment names the change and the message tells the session which change it is about; "
-              "a deletion, whose text is no longer in the file, takes a comment about the change alone, laid beside its mark.")
+              "a deletion, whose text is no longer in the file, takes a comment about the change alone, laid beside its mark (in the "
+              "list under a narrow column, listed like any other card).")
 OWN_CARD = ("A comment is never shown inside a change's card: every comment is its own card, and the comment and the change "
             "each carry a tag for the other, **about a change** on the comment (hover it to ring the change's marks) and "
             "**N comments** on the change (click it to open the first).")
@@ -55,7 +56,7 @@ SEND = ("the comments and replies you wrote since the last send, each with what 
 RESOLVE = ("Nothing resolves a comment but you: **Resolve** on its card, or **Resolve answered (N)** in the panel's header, "
            "shown once the session has replied to N of your open comments since you last wrote on them (a revision counts as a "
            "reply), which resolves those N after a plain confirm and offers **Reopen all** where the sent acknowledgment stands "
-           "until your next scroll, click, tap, or key.")
+           "(in the list under a narrow column, under the panel's header) until your next scroll, click, tap, or key.")
 
 
 class TheSentences(unittest.TestCase):

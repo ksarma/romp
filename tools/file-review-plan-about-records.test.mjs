@@ -207,3 +207,43 @@ test('the filter\'s option titles and the decision tag on a legacy binding speak
   assert.ok(changesReview.includes('assert.equal(tag.title, "You accepted the change that answered this comment"'));
   assert.ok(changesReview.includes('assert.equal(tag2.title, "You rejected the change that answered this comment");'));
 });
+
+// ── the list layout's places: the guide and the plan say where the ids-only line and the Reopen all offer stand ─────
+
+test('the guide and the plan state the list layout\'s places as the panel has them: the ids-only line by layout, the Reopen all offer under the header in the list (the consolidation, 2026-09-10)', () => {
+  // the guide's vocabulary for the layouts, set by the saved line's sentence
+  assert.ok(guide.includes('In the list under a narrow column, the line stands under the panel\'s header instead.'), 'the saved line\'s precedent');
+  assert.ok(guide.includes('a deletion, whose text is no longer in the file, takes a comment about the change alone, laid beside its mark (in the list under a narrow column, listed like any other card).'));
+  assert.ok(guide.includes('offers **Reopen all** where the sent acknowledgment stands (in the list under a narrow column, under the panel\'s header) until your next scroll, click, tap, or key.'));
+  assert.ok(aboutNote.includes('or, in the list layout, where no card is laid at any point, that the comment names the change instead of a passage (the review\'s second round, 2026-09-10)'));
+  assert.ok(d46.includes('puts "Reopen all" in the acknowledgment\'s position (the margin layout\'s Send section; in the list layout, whose Send section is the scroller\'s foot and left the offer off screen after the click, under the header: the review\'s second round, 2026-09-10) until the person\'s next gesture'));
+  // the panel: the line by layout, the offer by layout
+  assert.match(panel, /this\.margin \? "The removed text is not in the file, so the comment is laid at the change's point\."\s*: "The removed text is not in the file, so the comment names the change instead of a passage\."/);
+  assert.ok(panel.includes('private reopenLineHead(): HTMLElement | null {'));
+  assert.ok(panel.includes('return this.margin || this.reopenAll === null ? null : this.reopenLine(this.reopenAll.length);'), 'the head\'s offer in the list layout alone');
+  assert.ok(panel.includes('if (this.reopenAll !== null && this.margin) box.appendChild(this.reopenLine(this.reopenAll.length));'), 'the Send section\'s in the margin layout alone');
+  assert.ok(panel.includes('const offer = this.reopenLineHead();\n    if (offer) head.appendChild(offer);'), 'renderHead appends it');
+  // the guide's pins carry the same sentences
+  const guidePins = read('tests', 'test_guide_files_about.py');
+  assert.ok(guidePins.includes('laid beside its mark (in the "\n              "list under a narrow column, listed like any other card).'));
+  assert.ok(guidePins.includes('"(in the list under a narrow column, under the panel\'s header) until your next scroll, click, tap, or key."'));
+});
+
+test('both Tests indexes name the second round\'s modules and say what each holds, and the browser leg\'s two later cases; every module named is in the tree and the leg\'s title has the cases', () => {
+  for (const [name, text] of [['the about paragraph', aboutNote], ['the Tests bullet', aboutBullet]]) {
+    assert.ok(text.includes('From its second round (2026-09-10): `file-comments-about-review2.test.ts` (the stand-in with the layout switchable: the composer\'s about ids pruned as a status retires a change, a selection starting exactly at a deletion\'s point, the deletion marks a drag crosses, the kind cue\'s title by source, the ids-only line by layout), `file-comments-resolve-answered-review2.test.ts` (the Reopen all offer\'s place by layout and the keyboard after a run the confirm\'s Resolve began from the keyboard) and `file-comments-arrivals-about.test.ts` (a session\'s reply on a comment about a pending change shows on the comment\'s own card, never the change\'s).'), name);
+  }
+  for (const m of ['file-comments-about-review2.test.ts', 'file-comments-resolve-answered-review2.test.ts', 'file-comments-arrivals-about.test.ts']) {
+    assert.ok(fs.existsSync(path.join(REPO, 'ui', 'webview', m)), m + ' is in the tree');
+  }
+  assert.ok(aboutNote.includes('a drag across the insertion\'s end with its highlight painting in the other view too, the deletion\'s label and the card laid level with its mark'));
+  const leg = read('ui', 'webview', 'file-comments-about-browser.test.ts');
+  assert.ok(leg.includes('a drag across the insertion\'s end is a passage comment over the whole selection with the option, its highlight and the one inside the mark painting in the other view too'), 'the leg\'s title has the case');
+  // the modules hold what the indexes say
+  const review2 = read('ui', 'webview', 'file-comments-about-review2.test.ts');
+  assert.ok(review2.includes('pruneAbout') && review2.includes('STARTING exactly at a deletion\'s point') && review2.includes('The ids-only composer\'s line says what the layout does'));
+  const resolve2 = read('ui', 'webview', 'file-comments-resolve-answered-review2.test.ts');
+  assert.ok(resolve2.includes('In the LIST layout (the narrow pane, the panel under the text) the Reopen all offer stands under the header') && resolve2.includes('Enter on the confirm\'s Resolve'));
+  const arrivals = read('ui', 'webview', 'file-comments-arrivals-about.test.ts');
+  assert.ok(arrivals.includes('marks the comment\'s own card new, and never the change\'s card'));
+});

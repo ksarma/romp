@@ -479,7 +479,8 @@ deletion, since a point is easy to miss; a change the current view does not mark
 cannot or because the marks are hidden, offers it too. **Comment on this change** on a change's
 card opens the comment box over the change's text with **about this change** checked, so the
 comment names the change and the message tells the session which change it is about; a deletion,
-whose text is no longer in the file, takes a comment about the change alone, laid beside its mark.
+whose text is no longer in the file, takes a comment about the change alone, laid beside its mark (in the list
+under a narrow column, listed like any other card).
 A comment is never shown inside a change's card: every comment is its own card, and the comment
 and the change each carry a tag for the other, **about a change** on the comment (hover it to ring
 the change's marks) and **N comments** on the change (click it to open the first). Selecting text
@@ -528,8 +529,9 @@ session rewrote is shown as it is now.
 A line under the panel's header counts the changes, comments, and replies the session added since you last looked, and each of their cards wears a dot until you scroll or click with it in view; click the line to open the first of them.
 Nothing resolves a comment but you: **Resolve** on its card, or **Resolve answered (N)** in the panel's header, shown once
 the session has replied to N of your open comments since you last wrote on them (a revision counts as a reply), which
-resolves those N after a plain confirm and offers **Reopen all** where the sent acknowledgment stands until your next
-scroll, click, tap, or key. The first comment, like the first save, asks once
+resolves those N after a plain confirm and offers **Reopen all** where the sent acknowledgment stands (in the list under
+a narrow column, under the panel's header) until your next scroll, click, tap, or key. The first comment, like the first
+save, asks once
 whether the dashboard may write files on that machine; the same switch, **File editing** in
 the gear, turns it off again, and while it is off a send is refused too (it writes the log)
 and asks for the consent back. The **Log** at the foot of the panel is the comments log: what
