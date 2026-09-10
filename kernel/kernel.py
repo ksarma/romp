@@ -9245,8 +9245,11 @@ _MAIN_CONVERGE_OUTCOME = [None]     # how the last main converge ended when the 
 #                                        request the manager refused, or a refused pull (both "failed", so Update
 #                                        re-shows where a retry can succeed). The poll's own fields (failed, updated,
 #                                        why, hint), served by /update-check outside the running gate and LATCHED
-#                                        until the next converge starts: the running push flipped every window into
-#                                        the wait, so a slot consumed on first read would end one window's wait
+#                                        until the next update starts through either door (_main_converge_begin
+#                                        and the converge's decorator; _run_update for the tag door, whose child's
+#                                        wait the slot never ends: review round 6): the running push flipped every
+#                                        window into the wait, so a slot consumed on first read would end one
+#                                        window's wait
 _MAIN_CONVERGE_LOCK = threading.Lock()   # the in-flight flag's compare-and-set (two clicks racing the drift door)
 _UPDATE_MODES = ("ask", "auto", "off")
 
@@ -9492,6 +9495,11 @@ def _run_update(tag):
     if not _semver(tag) or _UPDATE_STATE[0] == "running":
         return False
     _UPDATE_STATE[0] = "running"
+    # the drift door's latched outcome (_MAIN_CONVERGE_OUTCOME) is cleared here too, for the route's tag branch
+    # and the auto path alike (review round 6 of the confirm step, 2026-09-10): the running push flips every
+    # window into the wait for THIS update, and a slot left over from the last converge would otherwise be
+    # served to each of them as soon as this child's latch clears
+    _MAIN_CONVERGE_OUTCOME[0] = None
     q = shlex.quote
     log, rep = q(str(jd.STATE / "update.log")), q(str(jd.STATE / "update-report.json"))
     mport = _manager_port(os.environ.get("ROMP_MANAGER_PORT"))     # None: no manager (absent, empty or not a port)
@@ -58848,10 +58856,14 @@ class Handler(BaseHTTPRequestHandler):
                 oth = None if running else _other_kernels()      # None when the manager's registry could not be read
                 # the drift converge's latched outcome (_MAIN_CONVERGE_OUTCOME): served whether or not a
                 # converge is still marked running (it is written before the flag clears), to every window
-                # that polls (latched until the next converge starts), and never over the tag door's report,
-                # which is consumed once above and would otherwise be lost
+                # that polls (latched until the next update starts through either door: _main_converge_begin,
+                # the converge's decorator, _run_update), and never over the tag door's report, which is
+                # consumed once above and would otherwise be lost. Not while the tag door's child runs (review
+                # round 6, 2026-09-10): its wait ends on its own report or the new boot id, and an outcome an
+                # auto converge latches meanwhile must not end it early; _run_update clears the slot at its
+                # start, and this gate covers a slot written after that
                 out = _MAIN_CONVERGE_OUTCOME[0]
-                if out and not failed and not updated:
+                if out and not failed and not updated and _UPDATE_STATE[0] != "running":
                     failed, updated, why, hint = out["failed"], out["updated"], out["why"], out["hint"]
                 answer = {
                     "cur": _kernel_ver() or "",

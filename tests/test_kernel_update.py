@@ -1356,6 +1356,47 @@ class Routes(Fresh):
             km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
             mgr.shutdown()
 
+    def test_the_tag_door_clears_the_drift_doors_latched_outcome_and_none_is_served_while_its_child_runs(self):
+        # review round 6 of the confirm step (2026-09-10): the drift door's outcome stayed latched when the TAG
+        # door started (only _main_converge_begin and the converge's decorator cleared it), and /update-check
+        # folded the slot into its answer whether or not the tag child was in flight, so every window's wait
+        # for a release update ended at once with the previous converge's words. Two halves, each red alone
+        # under mutation in the round's probes: _run_update clears the slot beside its running state (the
+        # route's tag branch and the auto path alike), and the route serves the slot only while _UPDATE_STATE
+        # is not running, so an auto converge that latches an outcome while a release child runs does not end
+        # that wait either (the child's own report does, consumed above the fold)
+        km._MAIN_CONVERGE_OUTCOME[0] = {"failed": "a stale outcome", "updated": "", "why": "", "hint": ""}
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+
+        def check():
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            return json.loads(body)
+        try:
+            with mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: None), \
+                 mock.patch.object(km, "_send_to_app"):
+                code, body = self._post("/update")
+            self.assertEqual((code, json.loads(body)), (200, {"ok": True, "state": "running"}))
+            self.assertIsNone(km._MAIN_CONVERGE_OUTCOME[0], "the tag door's start cleared the drift door's slot")
+            for reader in ("the window that clicked", "another window the running push flipped into the wait"):
+                d = check()
+                self.assertEqual((d["state"], d["failed"], d["updated"]), ("running", "", ""), reader)
+            # the second half: an outcome latched while the child runs (an auto converge ending) is not served
+            km._main_converge_outcome(failed="a converge that ended while the child ran")
+            d = check()
+            self.assertEqual((d["state"], d["failed"]), ("running", ""), "the tag child's wait ends on its own report alone")
+            km._UPDATE_STATE[0] = ""
+            d = check()
+            self.assertEqual((d["state"], d["failed"]), ("", "a converge that ended while the child ran"),
+                             "idle: the latched outcome is served")
+            # the auto path takes the same door: _run_update itself clears the slot
+            km._MAIN_CONVERGE_OUTCOME[0] = {"failed": "a stale outcome", "updated": "", "why": "", "hint": ""}
+            with mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: None):
+                self.assertTrue(km._run_update("v0.7.1"))
+            self.assertIsNone(km._MAIN_CONVERGE_OUTCOME[0], "_run_update clears the slot for every caller, the auto path included")
+        finally:
+            km._UPDATE_STATE[0] = ""
+
     def test_a_manager_port_that_is_not_a_port_reads_as_no_manager_and_is_said_once(self):
         # review round 5 of the confirm step (2026-09-10): _manager_port did int(value) outside every caller's
         # try, so a ROMP_MANAGER_PORT that was not a number (a typo on a kernel started by hand) made every
