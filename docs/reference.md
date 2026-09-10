@@ -1485,7 +1485,11 @@ reads, and never says out of memory. A counter that cannot be read on a loaded
 unit (a legacy hierarchy, a `memory.events` that will not open) leaves the
 SIGKILL standing alone as the killer's signature, with the unit's `Result`
 stated beside it; a counter gone with the scope's collection hands the decision
-to the journal (below). An increase WITHOUT a SIGKILL exit is a contained tool-child kill the
+to the journal (below). One timing race sits between the show and the read: a
+unit the show called loaded whose cgroup systemd collects before `memory.events`
+is opened (about 10 ms after a lone process's death) reads as a loaded unit with
+an unreadable counter, so its SIGKILL is named out of memory from the exit alone,
+with no journal read. An increase WITHOUT a SIGKILL exit is a contained tool-child kill the
 CLI outlived, named as a child and never as the CLI's own death, and only
 against a baseline that was read: the whole-life count without one is context,
 not a verdict. The third is the unit's `Result=oom-kill`, which systemd records
@@ -1500,19 +1504,22 @@ the kernel therefore reads the user manager's last journal lines for it,
 whatever the exit (`journalctl --user -n 5 -o cat -t systemd -u <unit>`,
 bounded like the show; `-t systemd` keeps the manager's own lines, since a
 scope member's `logger` lines carry the unit too and would push them out of the
-window), and reads them from the last `Started <unit>` line on, so an earlier
-unit of the same name inside the window is not read as this one. `<unit>:
+window), and reads them from the last `Started` line on (whatever the manager's
+`StatusUnitFormat=` puts after the word: the unit, its description, or both), so
+an earlier unit of the same name inside the window is not read as this one. `<unit>:
 Failed with result 'oom-kill'` names the whole-scope stop, with the journal as
 the source. `<unit>: A process of this unit has been killed by the OOM killer`
 is the manager's record of each OOM kill in the scope, written before the unit
 is collected and surviving it; it is whole-life, so with a non-SIGKILL exit it
 names nothing (a contained kill under `continue` leaves it too), and with a
-SIGKILL exit and the scope collected it is what decides: with the line the
-death is out of memory, without it the kernel names a kill by signal 9 that the
-journal does not record (a kill by hand, or a userspace killer such as earlyoom
-or systemd-oomd, which leave no line) and never says out of memory, and a
-journal that cannot be read or has no line for the unit reads the same way,
-since a definite verdict needs a definite record. The kernel names the OOM
+SIGKILL exit and the scope collected it is what decides, with the stop line and
+the manager's `<unit>: systemd-oomd killed N process(es) in this unit` line (its
+record of a kill by systemd-oomd, the one userspace killer that leaves a line):
+with any of the three the death is out of memory, with none of them the kernel
+names a kill by signal 9 that the journal does not record (a kill by hand, or
+earlyoom, which leaves no line) and never says out of memory, and a journal that
+cannot be read or has no line for the unit reads the same way, since a definite
+verdict needs a definite record. The kernel names the OOM
 kill, with the evidence, in its log line for the resume and in the notice the
 session reads, instead of reporting a bare exit; a memory limit is named beside
 it only when `MemoryMax` is set and the controller is not known to leave it
@@ -1528,7 +1535,9 @@ is silent. systemd logs each kill to the user journal as `<unit>: A process of
 this unit has been killed by the OOM killer` (`journalctl --user --since today
 | grep 'romp-session-'`), and a scope it stopped over one as `<unit>: Failed
 with result 'oom-kill'`; without the memory controller delegated to the user
-manager (below) it logs neither, and the kernel says so beside the verdict.
+manager (below) it logs neither. When the kernel's start-time controller check
+settled that verdict (it runs only with a memory limit set) the heal says so
+beside the kill verdict; otherwise the evidence carries no such clause.
 
 The limits need the memory controller delegated to the systemd user manager;
 stock systemd delegates it (`systemctl show user@$(id -u).service -p
@@ -2276,7 +2285,10 @@ label the account digest itself, so a bucket can be matched to the log.
     `oomPolicy` (the same probe, which carries the policy too, so the two are
     named together when a limit is set and the probe settles nothing; or alone,
     when the memory limits were refused and the policy, probed by itself, did
-    not answer or failed without naming it, the limits then in `rejected`),
+    not answer or failed without naming it, the limits then in `rejected`; or
+    alone when no limit is set, the probe then carrying the policy by itself,
+    and it did not answer or failed both with and without it, `rejected` then
+    empty),
     `memoryController` (the check inside it
     gave no marker), `oomScoreAdj` (the throwaway child's write did not answer).
     Empty when every due check answered, and when none was due (the scopes
@@ -2288,7 +2300,7 @@ label the account digest itself, so a bucket can be matched to the log.
     boot log saying why.
   - `limitsIgnored`, wrapper `romp-cli-scope: ignored: …` lines since boot (each
     also a problem line, `cli scope: session <name> (<sid8>) started its CLI
-    without one of its scope's settings — <line>`). It counts lines, not
+    without one of its scope's settings: <line>`). It counts lines, not
     launches: one launch writes one line for each value the wrapper refuses,
     one for the scope properties together (the memory limits and the OOM policy)
     when systemd rejects them, and one for an adjustment it could not write.

@@ -324,7 +324,7 @@ def _cli_scope_settle(in_force: dict, run, log=None) -> tuple[dict, bool | None,
         plain line; the wrapper reports per launch).
     Returns (rejected: variable → value, plus `OOMPolicy` → `continue` when the policy was refused;
     memory_delegated: True/False, None when not settled; unsettled: the checks that were due and settled
-    nothing, named as CLI_SCOPE_CHECKS — empty when every due check answered; the caller words its boot
+    nothing, named as CLI_SCOPE_CHECKS, empty when every due check answered; the caller words its boot
     line from it, so no value whose check did not answer is ever called in force). `run` is
     subprocess.run or a stand-in; `log`, when given, takes (message, problem=bool)."""
     rejected, delegated, unsettled = {}, None, []
@@ -3473,8 +3473,10 @@ def scope_pid(unit: str) -> int | None:
 #     SIGKILL exit excludes the kernel's killers and leaves a kill by hand or a userspace killer the
 #     counter cannot see (earlyoom SIGKILLs on its own free-memory thresholds and never moves
 #     memory.events), named as a SIGKILL with no OOM kill counted and never as out of memory (kind
-#     "sigkill", CRASH_RESUME_NUDGE_KILLED); an unreadable counter (the scope collected, a legacy
-#     hierarchy) leaves the SIGKILL standing alone as the killer's signature. An increase WITHOUT a
+#     "sigkill", CRASH_RESUME_NUDGE_KILLED); a counter that could not be read on a LOADED unit (a legacy
+#     hierarchy, a memory.events that will not open, a show that failed) leaves the SIGKILL standing alone
+#     as the killer's signature, and a counter gone with the scope's collection hands the decision to the
+#     journal (the Result bullet below; round 4). An increase WITHOUT a
 #     SIGKILL exit is a contained kill (a tool child the memcg took while the CLI ran on), named as a
 #     child, never as the CLI's cause, and only against a READ baseline: the whole-life count without one
 #     is context, not a verdict.
@@ -10207,10 +10209,10 @@ class SdkBackend:
         CLI_SCOPE_IGNORED_PREFIX): a per-session limit (CLI_SCOPE_LIMITS), or the OOM policy every scope
         carries, was not applied, and the CLI runs in its scope without it. Logged at once as a problem,
         for the fallback's reason (the CLI starts, so nothing drains the tail), and counted for
-        /api-health (cliScope.limitsIgnored) — apart from the fallbacks, since the scope itself is there."""
+        /api-health (cliScope.limitsIgnored), apart from the fallbacks, since the scope itself is there."""
         with self._lock:
             self.cli_scope_ignored += 1
-        self._log("cli scope: session %s (%s) started its CLI without one of its scope's settings — %s"
+        self._log("cli scope: session %s (%s) started its CLI without one of its scope's settings: %s"
                   % (sess.name, str(sess.sid)[:8], text), problem=True)
 
     def api_health_snapshot(self, now: float | None = None, uptime_s=None) -> dict:
@@ -13599,10 +13601,17 @@ class SdkBackend:
         The PRIMARY signal is the CLI's own exit (sess._cli_exit_code); the cgroup's memory.events oom_kill
         count, read against the turn-start baseline (sess._oom_baseline), decides what a SIGKILL was and
         tells a contained child kill apart; Result=oom-kill is the second signal for a scope without the
-        policy, and for a unit already collected with a non-SIGKILL exit the unit's journal tail is read
-        for the same whole-scope stop (_scope_journal). The reason a counter could not be read goes to
-        oom_verdict as its counter_note (the scope collected; a loaded unit whose file could not be read; a
-        show that failed): oom_verdict is pure and sees none of this. A memory limit in force on the scope
+        policy, and for a unit already collected the unit's journal tail is read, whatever the exit, for
+        the whole-scope stop line and the manager's OOM-kill lines, which decide the SIGKILL cell (oom with
+        one of them, the hedged sigkill without; round 4, _scope_journal). The reason a counter could not
+        be read goes to oom_verdict as its counter_note (the scope collected; a loaded unit whose file
+        could not be read; a show that failed): oom_verdict is pure and sees none of this. One timing race
+        sits between the show and the open (round 5, regression-4): a unit the show called loaded whose
+        cgroup the manager collects before memory.events is opened (about 10 ms after a lone process's
+        death on systemd 255) reads as a loaded unit with an unreadable counter, so its -9 files oom from
+        the exit alone with no journal read; a ruled cell, since the same ENOENT with the directory still
+        present is the no-memory-controller steady state where the journal is silent by construction, and
+        the two are not told apart here. A memory limit in force on the scope
         (memoryMax in cli_scope_limits, with the controller delegated) is appended to an "oom" verdict by
         SIGKILL as context, never guessed. EVERY read path logs ONE plain 'session scope result' line
         saying what was read and what was not: it decides a heal's wording, not whether it happens, so it
@@ -13654,6 +13663,9 @@ class SdkBackend:
                             raise OSError("no oom_kill line in %s" % path)
                         read_said = "%s oom_kill=%d, Result=%s" % (MEMORY_EVENTS, count, shown.get("Result") or "unknown")
                     except OSError as e:
+                        # a loaded unit whose file will not open: the steady state without the memory
+                        # controller, or the collection landing between the show and this open (the
+                        # docstring's timing race); the cell is the same for both
                         read_said = ("%s could not be read (%s); only systemd's Result can say (Result=%s)"
                                      % (MEMORY_EVENTS, e, shown.get("Result") or "unknown"))
                         counter_note = "its scope's counter could not be read (%s)" % e

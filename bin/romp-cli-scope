@@ -43,9 +43,9 @@
 #     tail; without that the line would never have been read and the boot verdict would keep saying
 #     scopes are on. The launch-error card drops these lines from a failed CLI's stderr tail, since
 #     the log already has them.
-#   `romp-cli-scope: refused: …` — ROMP_CLI_REAL unset, exit 127, no CLI at all. The kernel counts no
+#   `romp-cli-scope: refused: …`: ROMP_CLI_REAL unset, exit 127, no CLI at all. The kernel counts no
 #     fallback for it: the launch fails, and the launch-error path reports the line on its own.
-#   `romp-cli-scope: ignored: …` — one of the scope's properties or per-session limits below was not
+#   `romp-cli-scope: ignored: …`: one of the scope's properties or per-session limits below was not
 #     applied: a value that does not parse, a property this systemd rejects (the OOM policy included), or
 #     an adjustment that parses but Linux will not let this process write. The CLI runs in its scope
 #     without it. The CLI starts, so the kernel logs this line the moment it arrives, as a problem naming
@@ -125,8 +125,8 @@
 # as the variable above (cli_scope_limits in sdk_backend.py), so on a kernel-driven launch that line
 # too means something changed since boot.
 #
-# Environment: ROMP_CLI_REAL (required) — the real CLI; ROMP_SID — the session id (kernel-set);
-# ROMP_CLI_SCOPE=0 — run the CLI directly, no scope; ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1, leave
+# Environment: ROMP_CLI_REAL (required), the real CLI; ROMP_SID, the session id (kernel-set);
+# ROMP_CLI_SCOPE=0, run the CLI directly, no scope; ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1, leave
 # OOMPolicy= off the scope (kernel-set, above); the limits above. Arguments pass through verbatim.
 set -u
 
