@@ -1459,32 +1459,58 @@ line comes only when a limit is refused. The variable is the kernel's, not a
 setting: the kernel sends it on every launch with an explicit value, `1` or
 empty, so a value inherited from the manager's environment is never read.
 `/api-health` shows the policy as `cliScope.oomPolicy`. When a session's CLI
-dies mid-turn, the kernel names the cause from three signals, primary first. The
-first is the CLI's own exit: the SDK reports how the process ended, and a death
-by SIGKILL (signal 9) is the OOM killer's signature under `continue`: the
-cgroup's own killer and the machine-wide one alike. It is the exact
-discriminator, and it survives the scope's collection: a lone CLI IS the scope's
-last process, so the scope is gone the instant it dies and the counter with it,
-but the exit is always read. The second is the scope's cgroup `memory.events`,
-whose `oom_kill` count is read against a baseline taken at the start of each turn
-(one file read per turn): an increase over that baseline with a SIGKILL exit
-corroborates the kill, and an increase WITHOUT one is a contained tool-child kill
-the CLI outlived, named as a child and never as the CLI's own death; the fix for
-the whole-life counter, which under `continue` counts every kill in the scope's
-life and cannot say which death this was. The third is the unit's
-`Result=oom-kill`, which systemd records on a scope WITHOUT the property when it
-stops the scope over an OOM kill in it: a launch on a systemd that refused the
-property (the marker above), a launch whose pre-flight dropped the properties
-(the `ignored:` line above), or a scope started before the property went on every
-one; it stands alone. The kernel names the OOM kill, with the evidence, in its
-log line for the resume and in the notice the session reads, instead of reporting
-a bare exit; a non-SIGKILL exit with no counter increase reads as no OOM verdict
-and the bare notice. Every path writes one plain log line saying what was read
-and what was not: a scope already collected (the counter gone), a `systemctl
-show` that fails, and a `memory.events` that cannot be read all say so, and none
-is silent. systemd logs each kill to the user journal as `<unit>: A process of
-this unit has been killed by the OOM killer` (`journalctl --user --since today |
-grep 'romp-session-'`), and a scope it stopped over one as `<unit>: Failed with
+dies mid-turn, the kernel names the cause from three signals, primary first:
+the CLI's own exit, the scope's cgroup counter, and systemd's record of the
+scope. The first is the CLI's own exit: the SDK reports how the process ended,
+and a death by SIGKILL (signal 9) is the OOM killer's signature under
+`continue`, the cgroup's own killer and the machine's global one alike. It
+survives the scope's collection: a lone CLI IS the scope's last process, so the
+scope is gone the instant it dies and the counter with it, but the exit is
+always read. The exit is -9 because every layer of the launch chain execs in
+place, so a `claude_bin` wrapper must exec too: a shim that runs the CLI as a
+child reports the child's SIGKILL as its own exit 137, which the kernel reads as
+a plain exit, and such a shim also defeats the interrupt escalation and the
+orphan finder, so it is outside what romp supports. An exit of -1 is the SDK's
+own sentinel for an exit it could not read (a SIGHUP death reports the same) and
+is logged in those words, never as a kill by signal 1. The second is the scope's
+cgroup `memory.events`, whose `oom_kill` count is read against a baseline taken
+at the start of each turn (one file read per turn) and decides what a SIGKILL
+was, since on cgroup v2 the counter counts the memcg killer's and the global
+killer's kills alike. An increase over the baseline with a SIGKILL exit names
+the CLI's death out of memory. A readable counter that did NOT rise with a
+SIGKILL exit excludes the kernel's killers and leaves a kill by hand or a
+userspace killer the counter cannot see (earlyoom), so the kernel names a kill
+by signal 9 with no OOM kill counted, in its log and in the notice the session
+reads, and never says out of memory. A counter that cannot be read (the scope
+collected, a legacy hierarchy) leaves the SIGKILL standing alone as the killer's
+signature. An increase WITHOUT a SIGKILL exit is a contained tool-child kill the
+CLI outlived, named as a child and never as the CLI's own death, and only
+against a baseline that was read: the whole-life count without one is context,
+not a verdict. The third is the unit's `Result=oom-kill`, which systemd records
+on a scope WITHOUT the property when it stops the scope over an OOM kill in it:
+a launch on a systemd that refused the property (the marker above), a launch
+whose pre-flight dropped the properties (the `ignored:` line above), or a scope
+started before the property went on every one. The Result survives on the unit
+only while a member outlives the SIGTERM; when every process goes down on it,
+systemd collects the unit within milliseconds of the CLI's exit, before the SDK
+reports that exit, and `systemctl show` finds nothing. For a unit already gone
+with a non-SIGKILL exit the kernel therefore reads the unit's last journal lines
+(`journalctl --user -n 5 -o cat -u <unit>`, bounded like the show): `<unit>:
+Failed with result 'oom-kill'` names the whole-scope stop, with the journal as
+the source; the `A process of this unit has been killed by the OOM killer` line
+is whole-life and appears under `continue` for a contained kill too, so it names
+nothing. The kernel names the OOM kill, with the evidence, in its log line for
+the resume and in the notice the session reads, instead of reporting a bare
+exit; a memory limit is named beside it only when `MemoryMax` is set and the
+controller is delegated, as context, never as a guess. A non-SIGKILL exit with
+no counter increase reads as no OOM verdict and the bare notice. Every path
+writes one plain log line saying what was read and what was not: a scope
+already collected (the counter gone, and what the journal said), a loaded unit
+whose `memory.events` cannot be read, a `systemctl show` that fails, and a
+`journalctl` that fails or has no line all say so, and none is silent. systemd
+logs each kill to the user journal as `<unit>: A process of this unit has been
+killed by the OOM killer` (`journalctl --user --since today | grep
+'romp-session-'`), and a scope it stopped over one as `<unit>: Failed with
 result 'oom-kill'`.
 
 The limits need the memory controller delegated to the systemd user manager;
@@ -2231,7 +2257,9 @@ label the account digest itself, so a bucket can be matched to the log.
     properties did not answer, or failed both with and without them; or, with
     the policy refused, the probe with the limits alone did not answer),
     `oomPolicy` (the same probe, which carries the policy too, so the two are
-    named together when a limit is set and the probe settles nothing),
+    named together when a limit is set and the probe settles nothing; or alone,
+    when the memory limits were refused and the policy, probed by itself, did
+    not answer or failed without naming it, the limits then in `rejected`),
     `memoryController` (the check inside it
     gave no marker), `oomScoreAdj` (the throwaway child's write did not answer).
     Empty when every due check answered, and when none was due (the scopes
