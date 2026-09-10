@@ -273,7 +273,7 @@ class NewRouteEnv(unittest.TestCase):
         code, body = self._post({"name": "opt", "dir": self.dir, "env": {"FEATURE_FLAG": "1"}})
         self.assertEqual(code, 200)
         self.assertFalse(body["ok"], "a session that can't take the env must say so, not drop it")
-        self.assertIn("SDK", body["error"])
+        self.assertIn("needs a Claude Code session", body["error"])   # the backend's name since T288
         self.assertIn("tmux", body["error"], "the tmux session's own reason")
         self.assertNotIn("Codex", body["error"])
         self.assertEqual(self.calls, [])
@@ -289,7 +289,7 @@ class NewRouteEnv(unittest.TestCase):
         code, body = self._post({"name": "opt", "dir": self.dir, "env": {"FEATURE_FLAG": "1"}})
         self.assertEqual(code, 200)
         self.assertFalse(body["ok"], "a Codex session can't take the env either — say so, don't drop it")
-        self.assertIn("SDK", body["error"])
+        self.assertIn("needs a Claude Code session", body["error"])   # the backend's name since T288
         self.assertIn("Codex", body["error"], "the session is named as a Codex one")
         self.assertIn("shared app-server", body["error"], "the create arm's sentence, not the tmux one")
         self.assertNotIn("tmux", body["error"])
@@ -300,7 +300,7 @@ class NewRouteEnv(unittest.TestCase):
                                  "backend": "tmux", "env": {"FEATURE_FLAG": "1"}})
         self.assertEqual(code, 200)
         self.assertFalse(body["ok"], "no tmux spawn, no env silently dropped")
-        self.assertIn("SDK", body["error"])
+        self.assertIn("needs a Claude Code session", body["error"])   # the backend's name since T288
         time.sleep(0.2)                       # the tmux spawn is threaded — give a regression a beat
         self.assertEqual(self.spawns, [], "the refusal must come BEFORE the spawn thread starts")
 
@@ -466,7 +466,7 @@ class NewRouteTags(unittest.TestCase):
         code, body = self._post({"name": "term1", "dir": self.dir, "backend": "tmux", "tags": ["pool"]})
         self.assertEqual(code, 200)
         self.assertFalse(body["ok"], "no tmux spawn with the tags silently dropped")
-        self.assertIn("SDK or Codex", body["error"])
+        self.assertIn("Claude Code or Codex", body["error"])
         code, body = self._post({"name": "term1", "dir": self.dir, "backend": "tmux", "parent": SID})
         self.assertFalse(body["ok"])
         time.sleep(0.2)
@@ -554,7 +554,7 @@ class NewRouteTags(unittest.TestCase):
         code, body = self._post({"name": "api", "dir": self.dir, "backend": "codex", "env": {"X": "1"}})
         self.assertEqual(code, 200)
         self.assertFalse(body["ok"], "no Codex spawn with the env silently dropped")
-        self.assertIn("SDK backend", body["error"])
+        self.assertIn("needs a Claude Code session", body["error"])
         self.assertEqual(self.created_codex, [], "the refusal comes before the spawn")
 
     def test_a_threads_name_answers_the_tags_ask_with_nothing_applied_and_the_reason(self):

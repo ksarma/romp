@@ -70,8 +70,7 @@ _cred = sys.modules.get("romp_credentials") or load_source("romp_credentials", H
 HOME     = Path.home()
 STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root override (plans/multi-kernel.md)
                 or Path(os.environ.get("XDG_STATE_HOME") or str(HOME / ".local/state")) / "romp")
-# `or`, not a .get default: an EMPTY XDG_STATE_HOME is unset, as in the XDG spec and every bash
-# reader's ${XDG_STATE_HOME:-...} (event_model.py has the same line and the same note).
+# `or`, not a .get default: an empty XDG_STATE_HOME is unset (the note at event_model.py's STATE).
 # Keep the romp state root private (0700): it holds session names, prompts,
 # captions, goals, and postal message bodies. The traverse bit on the root is
 # enough to block other local users from reading anything beneath it. Runs on
@@ -4521,6 +4520,21 @@ def append_override(fsid, node_id, op, t):
         f.write(json.dumps({"node": node_id, "op": op, "t": int(t)}) + "\n")
 
 
+def append_clear(fsid, node_id, src, why, t):
+    """Journal the user's cross-off (or a romp-authored clear: the episode boundary, a mute) BEFORE the
+    caller's store save, so a clobbered clear re-applies on the very next load (2026-09-09). Until now a
+    clear lived in two places only, the cleared.jsonl ledger and the store's own node verdict and flag: a
+    triage pass that loaded the store before the clear and saved after it erased the verdict and the flag,
+    the ledger kept hiding the live card so nothing showed, and the compaction then archived the node with
+    cleared false, where the archive projections trusted the flag alone and the card came back completed
+    and uncleared after a restart. The row carries its author and why, so the replay re-records the same
+    verdict the live write made."""
+    d = _overrides_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    with (d / (fsid + ".jsonl")).open("a") as f:
+        f.write(json.dumps({"node": node_id, "op": "clear", "src": src, "why": why, "t": int(t)}) + "\n")
+
+
 def append_block(fsid, node_id, src, why, t):
     """Journal a KERNEL-side block verdict (src "nudge"/"interrupt") — the same clobber protection
     append_override gives user clicks, for the blocks the kernel stamps BETWEEN judge passes. These are
@@ -4592,6 +4606,14 @@ def _replay_overrides(fsid, store, lines=None):
             return False                               # the running stage must not stamp
     applied = False                                    # any write → load_goals re-runs rollup (one truth)
     arch_nodes = None                                  # the archive is read once, only if a restore entry needs it
+    last_seal = {}                                     # node -> the LAST clear/unclear row's op, in journal order: a
+    for ln in lines:                                   # clear, undo and clear inside one second are settled by the rows'
+        try:                                           # order, not by their integer seconds (review find, 2026-09-09)
+            ev0 = json.loads(ln)
+        except ValueError:
+            continue
+        if ev0.get("op") in ("clear", "unclear") and ev0.get("node"):
+            last_seal[ev0["node"]] = ev0["op"]
     for ln in lines:
         try:
             ev = json.loads(ln)
@@ -4673,15 +4695,28 @@ def _replay_overrides(fsid, store, lines=None):
             # reopen (e.g. the card reply seconds after the restore) must NOT eat it, so `later` is
             # deliberately not consulted. was_done mirrors _mark_nodes_cleared: re-settle a completed
             # top so the restored card returns to Completed, not Working.
-            if _twin("reopen", undo=True) or any(e.get("kind") == "clear"
-                                                 and int(e.get("ev_t") or 0) > t for e in uev):
-                continue                               # survived, or re-dismissed since
+            if _twin("reopen", undo=True) or last_seal.get(ev.get("node")) == "clear" or any(
+                    e.get("kind") == "clear" and int(e.get("ev_t") or 0) > t for e in uev):
+                continue                               # survived, re-dismissed by a LATER row (journal order, 2026-09-09), or since
             was_done = nd.get("parentId") is None and (
                 store.get("status", {}).get(ev.get("node")) == "completed" or nd.get("nodeComplete"))
             if record_verdict(store, nd, "user", "reopen", t, why="undo clear", undo=True):
                 applied = True
                 if was_done and not nd.get("settledDone"):
                     record_verdict(store, nd, "romp", "settle", t)
+        elif op == "clear":
+            # The cross-off (_mark_nodes_cleared value=True, append_clear), replayed so a store a racing pass
+            # save clobbered re-seals exactly as the live one did (2026-09-09; the unclear arm's mirror).
+            # Voided by a LATER undo: a strictly-later user reopen (the undo-clear's own verdict, or its
+            # replayed "unclear" row) outranks this entry; the twin check keeps the survived write as is.
+            if nd.get("cleared") or _twin("clear") or last_seal.get(ev.get("node")) != "clear" \
+                    or any(e.get("kind") == "reopen" and int(e.get("ev_t") or 0) > t for e in uev):
+                continue                               # sealed already, survived, undone by a LATER row (the undo's
+                #                                        unclear row follows its clear row in the journal, whatever the
+                #                                        seconds say), or reopened strictly later by another gesture
+            if record_verdict(store, nd, ev.get("src") or "user", "clear", t,
+                              why=ev.get("why") or "cleared from the feed"):
+                applied = True
         elif op == "block":
             # A kernel-side block (append_block). The answer guard keeps AT-OR-AFTER (>= via later|eq):
             # a user reply in the same second as the nudge stamp genuinely answered it, so replaying

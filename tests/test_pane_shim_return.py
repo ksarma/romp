@@ -284,7 +284,9 @@ open();recv({type:"ka"});recv({type:"restarting"});out({fifo:FIFO.length,armed:f
     def test_abandon_does_not_clear_the_fifo(self):
         r = _run(self.KEY + r"""
 open();recv({type:"feed",n:1});recv({type:"session",n:1});abandon();connect();open();recv({type:"chatTail",n:2});runFlushes();out({got:delivered.map(k)});""")
-        self.assertEqual(r["got"], ["feed1", "session1", "chatTail2"], "the old socket's frames are the newest state; the new socket's enter behind")
+        self.assertEqual(r["got"], ["feed1", "session1", "wsup", "chatTail2"],
+                         "the old socket's frames are the newest state; the reconnect's own marker frame enters "
+                         "behind them, and the new socket's frames behind that")
 
     def test_the_hop_is_a_message_channel_and_the_shim_has_no_raf(self):
         js = km._shim("chat", 1)
@@ -555,6 +557,108 @@ out({got:delivered.map(function(m){return m.id;}),fifo:FIFO.length,armed:flushAr
         self.assertIn("var FLUSH_MS=8;", js)
         self.assertIn("if(FIFO.length&&Date.now()-t0>=FLUSH_MS){flushArmed=true;ch.port2.postMessage(0);break;}", js)
         self.assertIn("while(FIFO.length){var m=FIFO.shift();", js, "drained from the head, in order")
+
+
+class ReconnectFlag(unittest.TestCase):
+    """The redial declares itself (2026-09-07). A redial's URL ends with &reconnect=1 when THIS page has opened a
+    socket before AND its bundle has said ready AND that ready is not still waiting in the shim's queue for the
+    open (`everConnected&&bundleReady&&!readyQueued`): the one party that knows it may already hold sessions it can
+    reload lazily, so the kernel skeletons the tabs the page is not looking at (tests/test_chat_skeleton_reconnect.py).
+    The FIRST dial never carries it: a fresh page holds nothing and must get everything, as today. Nor does a redial
+    after a first socket that opened and died before the bundle's ready (2026-09-10): the page held nothing on that
+    socket, and its bundle's OWN ready would otherwise reach the kernel on a socket flagged as a redial and be served
+    skeletons for tabs it never had (upstream pops the state on every ready and never sees this; the fork's re-sent
+    ready made the flag load-bearing, so the dial keys on the bundle's ready). Nor does a redial whose bundle said
+    ready while the socket was down (round 6, 2026-09-10): that ready sits in the queue (readyQueued) and flushes
+    onto the redial socket as the bundle's own, so the dial keys on the queue bit too. What no shim bit sees: a
+    ready that left on an OPEN socket which then died before any frame came back; that redial carries the flag and
+    is served skeletons that fill on click or in idle (stated at the kernel's accept). The twin-retire at
+    registration was rejected as the signal: it misses a socket the kernel already dropped."""
+
+    def test_the_first_dial_has_no_flag_and_a_redial_after_the_bundles_ready_left_on_a_socket_carries_it_after_iid_and_active(self):
+        r = _run(r"""
+function redial(){var live=timers.filter(function(t){return t.live&&t.fn.name==="connect";});live[live.length-1].fn();}
+var first=sockets[0].url;
+localStorage.getItem=function(){return JSON.stringify({activeId:"S1"});};   // the page persisted its active tab before the drop
+open();window.__rompLocalSend({type:"ready"});recv({type:"ka"});sock().readyState=3;sock().onclose();redial();var second=sock().url;   // the bundle said ready on the first socket: the page held sessions
+localStorage.getItem=function(){return null;};                              // a page with no hint still says it reconnected
+open();recv({type:"ka"});sock().readyState=3;sock().onclose();redial();var third=sock().url;
+out({first:first,second:second,third:third,n:sockets.length});""")
+        self.assertEqual(r["n"], 3)
+        self.assertNotIn("reconnect", r["first"], "a fresh page holds nothing: no flag on the first dial")
+        self.assertTrue(r["first"].startswith("ws://TESTHOST/ws?app=test&delta=1&iid="), r["first"])
+        self.assertTrue(r["second"].startswith("ws://TESTHOST/ws?app=test&delta=1&iid="), r["second"])
+        self.assertTrue(r["second"].endswith("&active=S1&reconnect=1"),
+                        "the flag is APPENDED after the active hint, so the kernel's active-first build is untouched: " + r["second"])
+        self.assertTrue(r["third"].endswith("&reconnect=1") and "active=" not in r["third"],
+                        "no hint → the kernel sends everything, but the page still names itself a reconnect: " + r["third"])
+        self.assertEqual(r["third"].count("&reconnect=1"), 1)
+
+    def test_a_first_socket_that_died_before_the_bundles_ready_redials_without_the_flag(self):
+        # the documented mid-load drop (the shim's onopen comment: 3/3 headless loads with the first socket dropped
+        # mid-load): the page has opened a socket, so everConnected is true, but its bundle has not said ready, so it
+        # holds nothing. The redial must dial as a fresh page: with the flag, the bundle's own ready would land on a
+        # socket the kernel flags as a redial and the page would be served skeletons for tabs it never had.
+        r = _run(r"""
+function redial(){var live=timers.filter(function(t){return t.live&&t.fn.name==="connect";});live[live.length-1].fn();}
+localStorage.getItem=function(){return JSON.stringify({activeId:"S1"});};
+open();recv({type:"ka"});sock().readyState=3;sock().onclose();redial();var midLoad=sock().url;    // opened, died, no bundle yet
+open();recv({type:"ka"});sock().readyState=3;sock().onclose();redial();var midLoad2=sock().url;   // and again: still no bundle
+open();window.__rompLocalSend({type:"ready"});recv({type:"ka"});                                // the bundle says ready on the third socket
+var readySent=sock().sent.filter(function(s){return JSON.parse(s).type==="ready";}).length;
+sock().readyState=3;sock().onclose();redial();var designed=sock().url;                         // the designed redial: the page held sessions
+open();var reSent=sock().sent.filter(function(s){return JSON.parse(s).type==="ready";}).length;
+out({midLoad:midLoad,midLoad2:midLoad2,readySent:readySent,designed:designed,reSent:reSent,n:sockets.length});""")
+        self.assertEqual(r["n"], 4)
+        self.assertNotIn("reconnect", r["midLoad"], "opened and died before the bundle's ready: no flag, the page holds nothing: " + r["midLoad"])
+        self.assertTrue(r["midLoad"].endswith("&active=S1"), "the active hint still rides: " + r["midLoad"])
+        self.assertNotIn("reconnect", r["midLoad2"], "however many sockets died before the bundle: " + r["midLoad2"])
+        self.assertEqual(r["readySent"], 1, "the bundle's own ready went out on the third socket")
+        self.assertTrue(r["designed"].endswith("&active=S1&reconnect=1"),
+                        "once the bundle has said ready, a redial declares itself: " + r["designed"])
+        self.assertEqual(r["reSent"], 1, "and the shim re-sends the handshake on it (onopen), once")
+
+    def test_a_ready_that_queued_while_the_socket_was_down_redials_without_the_flag_and_goes_out_once_on_the_redial(self):
+        # round 5's documented residual, closed (2026-09-10): the first socket opened and died before the bundle's
+        # ready; the bundle says ready WHILE the socket is down, so send() sets bundleReady and queues it. Keyed on
+        # everConnected&&bundleReady the redial declared itself and the flushed ready (the bundle's first) reached the
+        # kernel on a socket flagged as a redial. The dial keys on !readyQueued too: no flag, and the queued ready is
+        # the ONE ready on the redial socket (onopen's re-send stands down for a flush that carried it). Once that
+        # ready has left and a frame has come back, the next redial is the designed one and declares itself.
+        r = _run(r"""
+function redial(){var live=timers.filter(function(t){return t.live&&t.fn.name==="connect";});live[live.length-1].fn();}
+function readys(s){return s.sent.filter(function(x){return JSON.parse(x).type==="ready";}).length;}
+localStorage.getItem=function(){return JSON.stringify({activeId:"S1"});};
+open();recv({type:"ka"});sock().readyState=3;sock().onclose();                 // opened, died, no bundle yet
+window.__rompLocalSend({type:"ready"});var onDead=readys(sockets[0]);           // the bundle says ready while the socket is down: queued
+redial();var queued=sock().url;
+open();var flushed=readys(sock());                                              // the redial opens: the flush carries the ready
+recv({type:"ka"});sock().readyState=3;sock().onclose();redial();var designed=sock().url;   // the page held sessions on that socket: the designed redial
+open();var reSent=readys(sock());
+out({onDead:onDead,queued:queued,flushed:flushed,designed:designed,reSent:reSent,n:sockets.length});""")
+        self.assertEqual(r["n"], 3)
+        self.assertEqual(r["onDead"], 0, "nothing goes out on a dead socket: the ready waits in the queue")
+        self.assertNotIn("reconnect", r["queued"], "the bundle's ready is still queued: no flag, the page holds nothing: " + r["queued"])
+        self.assertTrue(r["queued"].endswith("&active=S1"), "the active hint still rides: " + r["queued"])
+        self.assertEqual(r["flushed"], 1, "the queued ready goes out on the redial socket, once: the flush carries it and onopen adds no second")
+        self.assertTrue(r["designed"].endswith("&active=S1&reconnect=1"),
+                        "the ready has left on a socket and a frame came back: the next redial declares itself: " + r["designed"])
+        self.assertEqual(r["reSent"], 1, "and the shim re-sends the handshake on it (onopen), once")
+
+
+class SocketFlipMarker(unittest.TestCase):
+    """The socket flip reaches the bundle as a FRAME ({type:"wsup"}) through the FIFO, in order with the frames — a
+    bundle that scopes 'loaded on this socket' must not learn the flip at onopen while the dead socket's last frames
+    are still draining (review find 2026-09-07). A first open sends none."""
+
+    def test_a_reconnect_open_enqueues_the_marker_first_and_a_first_open_does_not(self):
+        r = _run(r"""
+open();var first=FIFO.length;recv({type:"ka"});sock().readyState=3;sock().onclose();timers[timers.length-1].fn();open();
+var afterRedial=FIFO.map(function(m){return m.type;});runFlushes();
+out({first:first,afterRedial:afterRedial,delivered:delivered.map(function(m){return m.type;})});""")
+        self.assertEqual(r["first"], 0, "a first open is not a flip")
+        self.assertEqual(r["afterRedial"], ["wsup"], "the redial's open enqueues the marker, before any frame of the new socket")
+        self.assertEqual(r["delivered"], ["wsup"])
 
 
 if __name__ == "__main__":

@@ -53,14 +53,12 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   // the TOKEN watermarks diff the cumulative modelUsage map, never the flat `usage` dict — that one is
   // the TURN's own total on the current CLI, and diffing it recorded a fraction of every turn (the user
   // 2026-09-06). Each spend window also carries the by-KIND split of its tokens for the hover.
-  // …the settle calls the fold's two halves itself (result_token_totals picks the counter and says which
-  // kind it is; _fold_turn_tokens keeps the watermarks) so it can say when the per-turn fallback was taken;
-  // _turn_usage, upstream's name for the same fold, wraps the pair: the 2026-09-07 upstream fold kept the
-  // fork's fold under upstream's name, and the settle calls the halves rather than the wrapper
-  assert.ok(BACKEND.includes("totals, cumulative = result_token_totals(msg)"));
-  assert.ok(BACKEND.includes("turn_u = self._fold_turn_tokens(totals, cumulative)"));
-  assert.ok(BACKEND.includes('totals = model_usage_totals(getattr(msg, "model_usage", None))'));
-  assert.ok(BACKEND.includes("turn_u[k] = v - last if v >= last else v"), "a shrunken running total is a reset we missed → fold whole");
+  // …the settle calls one fold, _turn_usage (upstream #1192, the fork's own offer come home in the 2026-09-10
+  // fold): it sums the per-model map across models and diffs it against the watermarks, folds the flat dict
+  // whole when the map is absent, and says once when that per-turn fallback was taken (_note_usage_fallback)
+  assert.ok(BACKEND.includes("turn_u = self._turn_usage(msg)"));
+  assert.ok(BACKEND.includes('mu = getattr(msg, "model_usage", None)'));
+  assert.ok(BACKEND.includes("out[k] = v - last if v >= last else v"), "a shrunken running total is a reset we missed → fold whole");
   assert.ok(KERNEL.includes('KINDS = ("tokIn", "tokOut", "tokCacheR", "tokCacheW")'));
   assert.ok(BACKEND.includes("sid=self.thread_of or self.sid)   # the rail's spend"),
     "the settle threads the OWNING sid — a comment thread bills its owner (T144), a plain session itself (T100)");

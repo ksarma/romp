@@ -11,10 +11,13 @@ while the kernel looked for it under ./romp and reported the SDK as not installe
 postal/postal_service.py and cli/idle_dots.py carried the same .get default, so the postal bus's mail and
 the idle-dots pidfile would have moved with the cwd the same way; all four readers now use `or`.
 
-Pinned here in a child process, because every one of these modules resolves STATE at import time: with
-an empty XDG_STATE_HOME the root is $HOME/.local/state/romp; with a value it is that value plus /romp;
-with ROMP_STATE_DIR set that wins. HOME is a temp dir in the child, so judge.py's import-time mkdir of
-the root lands nowhere real."""
+Pinned in a child process, because every one of these modules resolves STATE at import time. The
+empty-value case and the honored-value case are pinned upstream since #1211 in
+tests/test_state_dir_override.py (PythonSurfaces.test_empty_xdg_state_home_is_unset and
+test_default_is_untouched_without_the_override, over the same readers plus the postal NAMES_DIR); this
+module keeps the one case those do not run: ROMP_STATE_DIR set BESIDE an empty XDG_STATE_HOME wins
+(PythonSurfaces' override case has no XDG_STATE_HOME in its env at all). HOME is a temp dir in the child,
+so judge.py's import-time mkdir of the root lands nowhere real."""
 import json
 import os
 import subprocess
@@ -57,19 +60,9 @@ def _roots(env_over):
 
 
 class EmptyXdgStateHome(unittest.TestCase):
-    def test_empty_is_unset(self):
-        home, roots = _roots({"XDG_STATE_HOME": ""})
-        want = os.path.join(home, ".local", "state", "romp")
-        self.assertEqual(roots, {r: want for r in READERS},
-                         "the bash pickers read an empty value as unset; every Python reader must agree")
-
-    def test_a_value_is_honored(self):
-        base = tempfile.mkdtemp()
-        _, roots = _roots({"XDG_STATE_HOME": base})
-        want = os.path.join(base, "romp")
-        self.assertEqual(roots, {r: want for r in READERS})
-
     def test_romp_state_dir_outranks_both(self):
+        # an EMPTY XDG_STATE_HOME beside the override: the override is read first and the empty value
+        # never gates it (test_state_dir_override.py's override case runs with no XDG_STATE_HOME set)
         base = tempfile.mkdtemp()
         _, roots = _roots({"XDG_STATE_HOME": "", "ROMP_STATE_DIR": base})
         self.assertEqual(roots, {r: base for r in READERS})

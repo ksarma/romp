@@ -102,14 +102,14 @@ caret move away and back, do not reopen it. In the sent message, a name that mat
 session is shown as a chip in that session's color.
 
 **Sending while the session is working.** The session takes your message at its next
-step. In an SDK session the message stays where you sent it: it sits below everything that
-had already happened, the steps the session runs in the meantime appear below it, and when
+step. In a Claude Code session the message stays where you sent it: it sits below everything
+that had already happened, the steps the session runs in the meantime appear below it, and when
 the session takes it, it lands in that same place. Send several messages during one turn (a
 composer message, then a todo reply) and each reaches the session as its own message, in
 the order you sent them: the next one waits, shown as queued, until the session has taken
-the one before it, so two messages are never joined into one. A tmux session takes a
-message only while it is idle, so messages sent during its turn wait, shown as queued, and
-arrive together when the turn ends, as one message.
+the one before it, so two messages are never joined into one. A Claude Code (tmux) session
+takes a message only while it is idle, so messages sent during its turn wait, shown as queued,
+and arrive together when the turn ends, as one message.
 
 **While a message is on its way.** A message you have sent shows as a dashed bubble
 marked "sending…" until the session records it, however long that takes; the bubble
@@ -197,6 +197,20 @@ about four rows that scroll; the cap lifts while a row's details are open. Where
 showing (a desktop-width screen, or a tablet wide enough for it) it also shrinks the tabs and group
 headers; on a phone the session picker stands in for the strip, so there the setting tightens the
 box. Like the other chat settings, it is per browser.
+
+**Coming back after a dropped connection.** When the dashboard's link to the kernel
+drops and comes back (a laptop lid closed and opened, a network change, a phone that
+slept), the page does not fetch every session again. The kernel sends the session you
+were reading in full and lists the others as skeleton tabs: the strip is complete at
+once, each tab with its name, color and status, and a transcript arrives only when it
+is wanted. Click a skeleton tab and the romp loader stands in until its transcript
+lands; the tabs you do not click fill in one at a time while the page is idle, never
+while the browser tab is hidden. Until then a skeleton tab's hover tooltip says it is
+not loaded yet.
+
+![After a reconnect, the tab you were reading is back in full while the other tabs wait as skeletons](assets/guide/reconnect-skeleton-tabs.png){ width="32%" }
+![Clicking a skeleton tab puts up the loader until its transcript arrives](assets/guide/reconnect-skeleton-click.png){ width="32%" }
+![The clicked tab, loaded](assets/guide/reconnect-skeleton-loaded.png){ width="32%" }
 
 ### The feed
 
@@ -381,21 +395,22 @@ you open the editor. A notice raised while you edit (a save that failed) goes wh
 leave the editor; a warning about the comments log stays when the save that raised it
 closes the editor.
 
-**A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under the
-rules GitHub applies to a README, so nothing in a file can move, hide or cover the viewer's
-own controls. A `<style>` block is dropped whole. A form, its controls and a `<dialog>` are
-dropped but their text stays as prose. A task-list checkbox stays but cannot be ticked. An
-inline `style` keeps only its `color` and `background-color`, and only when the value is a
-color name, a hex code, or `rgb()`, `rgba()`, `hsl()` or `hsla()`. A span colored that way
-keeps its color; one colored with any other function, such as `oklch()` or `var()`, loses it.
-A `background=` attribute is dropped, since it would load a remote image the moment the file
-opens. An inline `svg`, a `canvas` or a `video` shrinks to the column, as a picture does. An
-element's `id` or `name` is prefixed `user-content-`, as on GitHub; the viewer's own
-heading ids are not, so a link to a heading in the file still lands on it, and a link to an
-element's own `id` or `<a name>` lands on it under the prefix. A link in the file is handled
-by its target, not by the element that carries it, a link drawn inside an inline SVG
-included: a web address opens a tab, a file target opens the file in the viewer, and a
-section link scrolls to it. An image map (`<map>`, `usemap`) is dropped, as on GitHub.
+**A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under rules
+modelled on those GitHub applies to a README, so nothing in a file can move, hide or cover the
+viewer's own controls. A `<style>` block is dropped whole. A form, its controls and a
+`<dialog>` are dropped but their text stays as prose. A task-list checkbox stays but cannot be
+ticked. An inline `style` keeps only its `color` and `background-color`, and only when the
+value is a color name, a hex code, or `rgb()`, `rgba()`, `hsl()` or `hsla()`; a span colored
+with any other function, such as `var()`, loses its color. A `background=` attribute is
+dropped, since it would load a remote image the moment the file opens. An inline `svg`, a
+`canvas` or a `video` shrinks to the column, as a picture does. An element's `id` or `name` is
+prefixed `user-content-`, as on GitHub; the viewer's own heading ids are not, so a link to a
+heading in the file still lands on it, and a link to an element's own `id` or `<a name>` lands
+on it under the prefix. A link in the file is handled by its target, not by the element that
+carries it, a link drawn inside an inline SVG included: a web address opens a tab, a file
+target opens the file in the viewer, and a section link scrolls to it. An image map (`<map>`,
+`usemap`) is dropped. The same rules apply to the HTML in a chat message, where a link to an
+element's own `id` or `<a name>` lands on it under the prefix.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file, where each card sits level with the passage it is about and scrolls with the text;
@@ -670,21 +685,25 @@ did, so searching for the work finds the session that did it, months later.
 
 ### Session backends
 
-Sessions run on one of two backends, chosen per session:
+Sessions run on one of these backends, chosen per session:
 
-- **SDK (the default, strongly recommended).** The kernel manages the Claude
-  Code session through the Claude Agent SDK.
-- **tmux.** A Claude Code session running in a terminal inside tmux. Run
-  `romp new -t <name>` and that terminal session joins the interface like any other, so
-  you can work in the terminal directly and still see it in Romp. The cost is
-  that Romp has no direct connection to it: it reads what appears in the
-  terminal and on disk, and sends messages and nudges by injecting keystrokes.
-  That makes it less reliable and less responsive than the SDK, since scraping a
-  terminal has edge cases a real API does not, and updates wait on the
-  transcript reaching disk.
+- **Claude Code (the default, strongly recommended).** The kernel runs the
+  Claude Code session itself, through the Claude Agent SDK.
+- **Claude Code (tmux).** A Claude Code session running in a terminal inside
+  tmux. Run `romp new -t <name>` and that terminal session joins the interface
+  like any other, so you can work in the terminal directly and still see it in
+  Romp. The cost is that Romp has no direct connection to it: it reads what
+  appears in the terminal and on disk, and sends messages and nudges by
+  injecting keystrokes. That makes it less reliable and less responsive than
+  Claude Code itself, since scraping a terminal has edge cases a real API does
+  not, and updates wait on the transcript reaching disk. The new-session picker
+  and the gear's Default backend list offer it only while **Enable Claude Code
+  tmux backend** is on in the gear's Updates & debug section (off by default);
+  sessions already running on it keep working either way.
+- **Codex.** An OpenAI Codex agent; see [docs/codex.md](codex.md).
 
-The two backends interleave freely, so terminal sessions and SDK sessions sit
-side by side in the interface and message each other like any other pair.
+The backends interleave freely, so terminal sessions and Claude Code sessions
+sit side by side in the interface and message each other like any other pair.
 
 ## The Romp kernel (the back end)
 
@@ -854,7 +873,7 @@ own a direct path; the dashboard is then a plain URL on your tailnet.
     Tunnels the extension still relays each whole view payload to the local
     window as it changes. It does not yet take the deltas the browser panes do.
     A pane that falls 16 MB behind is dropped and reconnects on its own; the
-    drop is logged in the kernel log and shows in the dashboard's bell, so a
+    drop is logged in the kernel log and shows in the Log (the settings panel's "Open log" button carries the unread count on the desktop; the phone's bottom bar reddens its bell), so a
     link that cannot keep up reads as what it is rather than as a flaky network.
 
 ### From your phone

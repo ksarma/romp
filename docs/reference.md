@@ -140,17 +140,17 @@ These are for scripting and for agents rather than daily use:
 | `romp api-health` | The API-health signal as JSON (see [The API-health signal](#the-api-health-signal)): per-credential, per-model-family retry and give-up rates over rolling windows, with a derived state |
 | `romp mail …` | The postal service from the shell (below) |
 | `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}`; a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text |
-| `romp new --model <id> <name>` | Model for the SDK session: a family alias such as `fable` (follows the family's newest release) or a full id such as `claude-fable-5` (a pin); re-asserted if `<name>` already runs |
-| `romp new --effort <level> <name>` | Reasoning effort for the SDK session (`high`, `ultracode`, ...); re-asserted if `<name>` already runs |
-| `romp new --env NAME=VALUE <name>` | A per-session env var for the SDK session, repeatable; a re-run against a running `<name>` replaces the whole set; vars not re-named are dropped |
-| `romp new --no-env <name>` | Clear a running SDK session's per-session env (declares the empty set) |
-| `romp new --in <tag> <name>` | Put the new SDK or Codex session in `<tag>`, so its tab lands in that group (repeatable; a name that does not exist yet creates the tag). Applies to `<name>` if it already runs. The kernel echoes `tags` (the session's tags) and, per `--in`, the stored name it landed as (`tagsApplied`, beside `tagsRequested`): a name the store trimmed or clamped prints as "applied as"; a missing echo, or a tag the kernel refused, prints a warning |
+| `romp new --model <id> <name>` | Model for the Claude Code session: a family alias such as `fable` (follows the family's newest release) or a full id such as `claude-fable-5` (a pin); re-asserted if `<name>` already runs |
+| `romp new --effort <level> <name>` | Reasoning effort for the Claude Code session (`high`, `ultracode`, ...); re-asserted if `<name>` already runs |
+| `romp new --env NAME=VALUE <name>` | A per-session env var for the Claude Code session, repeatable; a re-run against a running `<name>` replaces the whole set; vars not re-named are dropped |
+| `romp new --no-env <name>` | Clear a running Claude Code session's per-session env (declares the empty set) |
+| `romp new --in <tag> <name>` | Put the new Claude Code or Codex session in `<tag>`, so its tab lands in that group (repeatable; a name that does not exist yet creates the tag). Applies to `<name>` if it already runs. The kernel echoes `tags` (the session's tags) and, per `--in`, the stored name it landed as (`tagsApplied`, beside `tagsRequested`): a name the store trimmed or clamped prints as "applied as"; a missing echo, or a tag the kernel refused, prints a warning |
 | `romp new --no-inherit <name>` | Run inside a romp session, `romp new` sends that session's stable id (`ROMP_SID`) as the new session's `parent` (marked `parentAuto`), and the kernel copies the parent's tags onto the child; inside a comment thread, the parent is the session the thread belongs to. This flag withholds the parent, so the new session starts outside them. A kernel that never ran the calling session creates the session untagged and echoes `parentIgnored`, which the CLI reports in one line. Raw POST /new callers pass `parent` (a live name or a known sid; an unknown one is a 400 unless `parentAuto` is set) and `tags` (a list of names); opening a name that already runs never inherits; a name that is being registered by another request right now is a 409 whose `error` says which door holds it |
 | `romp tag [<name>] [--add <session>…] [--remove <session>…] [--color <hex>] [--rename <new>] [--delete] [--host <kernel>]` | Session tags. Bare, it lists them; with a name, it merges one tag (created on first use). A tagged session leaves the untagged view, and its tab sits in that tag's section of the strip. `--host` edits an attached kernel's tag |
 | `romp interrupt <session>` | Interrupt whatever turn a session is taking |
 | `romp compact <session> [--wait] [--timeout <s>]` | Compact a session's context in place (Claude's `/compact`: summarize the history, keep the session's name, id, mailbox, and watches): the alternative to ending and recreating a long-lived session, and the external hand a session needs since it cannot `/compact` itself mid-turn. Quiet session → compacts now; open turn → queued, fires alone the moment the turn ends (the same safe path the chat's compact button uses). `--wait` blocks until the compaction has started and cleared, polling the kernel's own `compacting` signal on the `/sessions` rows (also the field to point a `romp watch` predicate at for scripted recycling); exits 1 honestly on timeout. A remote session's compaction is requested on its own kernel; `--wait` can't follow it from here and says so |
 | `romp end <session>` | End a session |
-| `romp move <session> <dir>` | Move an SDK session's working directory to `<dir>` (the folder must already exist); the conversation, name, mail and history stay with the session. Quiet session → moves now; open turn → queued, fires when the turn ends. See [Moving a session to another folder](#moving-a-session-to-another-folder) |
+| `romp move <session> <dir>` | Move a Claude Code session's working directory to `<dir>` (the folder must already exist); the conversation, name, mail and history stay with the session. Quiet session → moves now; open turn → queued, fires when the turn ends. See [Moving a session to another folder](#moving-a-session-to-another-folder) |
 | `romp emoji <session> [<emoji>\|--clear]` | Put one emoji before the session's name on its tab; `--clear` removes it, and an empty argument is a usage error, not a clear; with no argument, print the current one (an empty line when there is none). Exactly one emoji is accepted; a refusal prints the kernel's reason. A live session is named by name or id, a dormant one by id, for setting, clearing and reading alike. A read by an id that has a record on this machine comes from the names registry and works with the kernel stopped; any other read (a name, or the id of a session an attached machine owns) goes through the kernel's `GET /emoji?target=`, which forwards to the owning machine as the set does. See [A session's tab emoji](#a-sessions-tab-emoji) |
 | `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it. The hub files this machine under the name it declares only when that name is a machine name (letters, digits, dots, hyphens or underscores, starting with a letter or digit, at most 128 characters). Any other declared name is refused with a 400 that states the rule and echoes nothing, is recorded nowhere, and is said once on both machines: on the hub, one stderr line and one Log entry under the `refused` kind, naming the value as a clipped repr; on this machine, one stderr line, one dial-log record and one Log entry carrying the hub's reason, after which the same name is not re-sent until it, or the hub's kernel, changes. A hub's `POST /tunnels/trust` for a host it has never seen (the remembered-hosts entry that tiers relayed mail by origin) holds the wider rule that registry's writers share, a machine name or an ssh alias (letters, digits, dots, hyphens, underscores, at-signs, colons or square brackets, not starting with a hyphen, at most 255 characters), because a hub keys an attached peer by its ssh alias and carries that alias when you set trust between two of your machines; anything else is refused the same way, on the hub, with nothing recorded. `ROMP_HOST_NAME` (the kernel) and `ROMP_POSTAL_HOST` (the postal bus) override the declared name only when they clear the same rule; an unusable value (a space, an at-sign, a trailing newline) is set aside once, on stderr or in the bus log, and the derived name (the short hostname, else the platform's machine name, else a minted id) is used |
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
@@ -492,11 +492,11 @@ CLI's own picker), a value the kernel cannot vouch for (a typo), or a longer
 message that merely opens with the command goes to the CLI verbatim, and the
 chat shows the CLI's own reply.
 
-The two backends apply the change differently. An SDK session switches model
-live but reloads to apply a new effort: the chat shows "Reloading session…"
-and the effort badge shows switching-dots until the reload completes, and a
-session that is mid-turn reloads when the turn ends. A terminal (tmux) session
-gets the CLI's own command typed into its pane. `/model` there asks for a
+The backends apply the change differently. A Claude Code session switches
+model live but reloads to apply a new effort: the chat shows "Reloading
+session…" and the effort badge shows switching-dots until the reload completes,
+and a session that is mid-turn reloads when the turn ends. A Claude Code (tmux)
+session gets the CLI's own command typed into its pane. `/model` there asks for a
 confirmation, which the kernel accepts on your behalf so the pane is never
 left waiting on a keystroke the dashboard cannot send; `/effort` and `/fast`
 apply in place.
@@ -517,7 +517,7 @@ the control never silently disappears.
 
 ### Per-session billing (login vs API key)
 
-An SDK session bills either the machine's Claude login (subscription usage) or
+A Claude Code session bills the machine's Claude login (subscription usage) or
 the API key, chosen per session. The key is Claude Code's own: the CLI runs the
 `apiKeyHelper` configured in its settings (the helper; setup under [A key from
 a secret manager](#a-key-from-a-secret-manager)) and holds what it prints.
@@ -526,7 +526,7 @@ romp to hold no key). The per-session pick decides only whether the helper
 runs for that session.
 
 The new-session picker's **Billing** row states the case whenever the backend
-toggle says SDK: segmented buttons when the selected host offers both choices,
+toggle says Claude Code: segmented buttons when the selected host offers both choices,
 and with only one real choice, the same spot writes out which applies,
 `Login (name@example.com)` or `API key`. The key choice exists when Claude
 Code's settings for the kernel's working directory carry a helper; romp reads
@@ -582,15 +582,20 @@ pick to the key when a helper is configured; with neither, to the side
 picker's Billing row writes `API key` out even when the box has no Claude login
 to show beside it. A remembered
 key pick on a box whose settings carry no helper leaves new sessions unpicked,
-and the kernel log says so once, naming the settings file to configure. tmux
-sessions are not
-covered by the picker: their CLI lives in the tmux server's environment, which
-the kernel does not control, and resolves its credential the way any `claude`
-in a terminal does.
+and the kernel log says so once, naming the settings file to configure.
+Claude Code (tmux) sessions are not covered by the picker: their CLI lives in
+the tmux server's environment, which the kernel does not control, and resolves
+its credential the way any `claude` in a terminal does.
 
-An SDK session's chat tab carries the same fact as a `Billing` row in its hover
-tooltip, one-auth machines included; tmux sessions, whose billing romp cannot
-know, and Codex sessions, which bill no Claude account, show no row. The row
+A tab not yet loaded after a reconnect shows "Not loaded yet — click to load"
+as its hover tooltip, until its transcript arrives. The strip's skeleton tabs
+appear after the page's bundle has said it is listening (its `ready`), never
+before it.
+
+A Claude Code session's chat tab carries the same fact as a `Billing` row in
+its hover tooltip, one-auth machines included; Claude Code (tmux) sessions,
+whose billing romp cannot know, and Codex sessions, which bill no Claude
+account, show no row. The row
 has four readings. Unless one of the three cases below applies, it reads
 `API key` or `Login (name@example.com)` (`Login` alone when the account name is
 unknown): once the session's CLI has reported which credential it found (its
@@ -701,7 +706,10 @@ output, cache writes, and cache reads. Cache reads are most of it: every API
 call within a turn (one per tool step) re-reads the whole context from the
 cache, so a long session's single turn can read tens of millions of tokens at
 a tenth of the input price. The hover splits each window's count by kind, so
-the size of the number carries its explanation.
+the size of the number carries its explanation. A result that carries no
+per-model usage map is counted from the main loop alone, and the error center
+says so once: once per session when the CLI left the map out, once per kernel
+run when the Agent SDK the kernel imported has no field for it.
 
 ### Self-scheduled work wakes an idle session
 
@@ -732,7 +740,8 @@ For `./install.sh`:
 
 - `ROMP_NO_SERVICE=1` skips the login service.
 - `ROMP_NO_EXT=1` skips the VS Code / Cursor extension.
-- `ROMP_NO_SDK=1` skips the SDK backend's venv (tmux sessions still work).
+- `ROMP_NO_SDK=1` skips the Claude Code backend's Agent SDK venv (Claude Code
+  (tmux) sessions still work).
 
 For the one-line installer (`bootstrap.sh`), which passes all of the above
 through to `install.sh`:
@@ -769,6 +778,21 @@ yes. The gear reports a machine that is missing node or the comment tools.
   applies on the judges' next pass with no restart, wins over the variable,
   and follows to every connected machine like the other judge settings; its
   Default option clears the setting back to the variable, else 6.
+
+### Session backends
+
+- **Enable Claude Code tmux backend** (the gear's Updates & debug section; off
+  by default) decides whether the new-session picker and the gear's Default
+  backend list offer **Claude Code (tmux)**, a Claude Code session in a
+  terminal pane that Romp follows by reading the terminal. The setting gates
+  the offer alone: sessions already running on that backend keep working and
+  keep their label, `romp new -t` still works, and a saved default of Claude
+  Code (tmux) is set aside while the setting is off (new sessions use Claude
+  Code) and returns when it comes back. Like the judge settings, a change
+  applies at once, without a restart, and follows to every connected machine.
+  The backends read as **Claude Code** (the default), **Claude Code (tmux)**
+  and **Codex** everywhere: the picker, the gear, the tab tooltip's Backend
+  row.
 
 ### Ports
 
@@ -828,7 +852,7 @@ the venv's record (the version `pyvenv.cfg` holds plus the tag of its
 follows a repointed base interpreter) against the new interpreter's tag,
 rebuilds on any difference and says from what to what. A kernel that does come
 up on a Python the venv was not built for logs one line naming both tags, and
-each SDK session reports the mismatch and the remedy that fits: the
+each Claude Code session reports the mismatch and the remedy that fits: the
 `ROMP_PYTHON` pin when the venv's recorded interpreter still runs (the kernel
 checks by running it), the rebuild when it does not. `romp new` and the
 browser's create refuse with the same verdict, read from the disk at the moment
@@ -1542,12 +1566,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   1.0 s (`PUSH_MIN_INTERVAL_S` in
   the kernel): a cycle starts no sooner than that after the previous one
   began unless the live tail of a chat tab a connected client is watching
-  changed (an SDK session's streamed text, an echo, a turn's end, the
-  session ending), which runs its cycle at once. A tmux session's mid-turn
-  output has no event: it refreshes on the backstop cycle, which runs at the
-  later of the previous cycle's end plus 0.5 s and its start plus the
-  interval. `ROMP_PUSH_MIN_INTERVAL=<seconds>` in the kernel's environment
-  overrides it; 0 removes the bound.
+  changed (a Claude Code session's streamed text, an echo, a turn's end, the
+  session ending), which runs its cycle at once. A Claude Code (tmux)
+  session's mid-turn output has no event: it refreshes on the backstop cycle,
+  which runs at the later of the previous cycle's end plus 0.5 s and its start
+  plus the interval. `ROMP_PUSH_MIN_INTERVAL=<seconds>` in the kernel's
+  environment overrides it; 0 removes the bound.
 - `stages_ms`: `jobs` (the cycle's tick jobs outside the push), `push`, and
   inside it `push.chat`, `push.feed`, `push.timeline`, `push.send`. The
   `push.*` stages count every push, including the one a connecting page gets,
@@ -2298,7 +2322,7 @@ or the clock stepped), so the restart row is always the newest row; the payload
 serves that stamp as `bootAt`, and the kernel log says when it was moved. The
 pre-restart state is not carried over: an empty ring is no
 evidence. A state file, or an entry in it, that cannot be read is skipped and
-logged, and never keeps the SDK backend from starting.
+logged, and never keeps the Claude Code backend from starting.
 
 Earlier builds appended one row per transition to `STATE/api-health.jsonl`. A
 kernel that boots without a state file seeds one from that ledger's last 64 KB,
@@ -2313,7 +2337,8 @@ the kernel owns directly:
 
 - Each alive session's newest transcript API-error record, latched until the
   session produces assistant output again (a user prompt does not clear it,
-  romp's own retry included), plus the live retrying state of SDK sessions.
+  romp's own retry included), plus the live retrying state of Claude Code
+  sessions.
 - The retry-pause file (`retry-paused.json` under the state directory). A
   pause writes `paused`, `t` (when it began, the auto-resume floor) and its
   `reason`: `limit`, `spend`, or none for a manual stop. A spend pause adds
@@ -2352,7 +2377,7 @@ kernel. `waiting` is `retrying` plus `blocked`. `cls` is the plurality class ove
 affected sessions, ties resolved 429, then 529, then offline, then errors.
 `since` is the pause's time when paused, else the earliest affected session's
 event (a record's timestamp, or the retrying turn's start), else 0. `tmux`
-counts alive tmux-backed sessions, which the cell sees through their
+counts alive Claude Code (tmux) sessions, which the cell sees through their
 transcripts only. Every timestamp is an event's time, never the clock, so an
 unchanged world sends nothing. On-you failures (a too-long prompt, a spent
 model allowance, a dead credential, a refusal) are not counted; a spend cap is,
@@ -2510,5 +2535,5 @@ Effective immediately, no restart.
 `touch` to **enable**, `rm` to turn back off:
 
 - `~/.claude/romp-summarize-on`: the live tmux activity phrase. Off by default,
-  because it spends tokens on every turn and the SDK backend reports what a
-  session is doing without it.
+  because it spends tokens on every turn and the Claude Code backend reports
+  what a session is doing without it.

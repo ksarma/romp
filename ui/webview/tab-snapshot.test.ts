@@ -276,10 +276,10 @@ test("pinned: a no-change push rebuilds nothing — same object → only the ago
   assert.match(RENDER, /if \(snapView\) renderSnapshot\(\);/, "renderTabs (every push) refreshes it");
   assert.match(SHOW, /if \(snapView && renderSnapshot\(\)\) \{\s*\n\s*for \(const v of views\.values\(\)\) v\.el\.style\.display = "none";/, "showActive: every transcript hidden under it");
   assert.match(SHOW, /if \(ta\) \{ ta\.disabled = true; ta\.placeholder = "Pick a session above to write to it"; \}/, "the composer says what to do instead of taking a message with no session");
-  assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? sessions\.get\(activeId\) : null;/, "a transcript showing → the snapshot hidden");
+  assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? liveSession\(activeId\) : null;/, "a transcript showing → the snapshot hidden (the read is liveSession's since upstream #1017's skeleton tabs)");
   assert.match(RENDER, /if \(snapView\) \{ sl\.replaceChildren\(\); return; \}/, "no session's statusline chip under a section list");
-  assert.match(RENDER, /if \(!activeId \|\| !liveAsks\.has\(activeId\) \|\| snapView\) \{/, "no live ask card under it");
-  assert.match(RENDER, /const s = activeId && !snapView \? sessions\.get\(activeId\) : null;/, "no background-task box under it");
+  assert.match(RENDER, /if \(!activeId \|\| skeletonTabs\.ids\.has\(activeId\) \|\| !liveAsks\.has\(activeId\) \|\| snapView\) \{/, "no live ask card under it (nor over a skeleton active, upstream #1017's term)");
+  assert.match(RENDER, /const s = activeId && !snapView \? liveSession\(activeId\) : null;/, "no background-task box under it (the read is liveSession's since upstream #1017)");
 });
 
 test("pinned: the sheet — two sizes (the body's and the header's 0.82em), tokens only, the tab's state colors on the pip, the one action hover", () => {

@@ -409,7 +409,7 @@ await step("order", async () => {
   await ev((f) => { window.__rompApiHealth(f); }, frame({ state: "degraded", cls: "429", text: "rate limited · 1 waiting", waiting: 1, retrying: 1, since: NOW_PLACEHOLDER, tmux: 1, seq: 1,
     sessions: [{ sid: "SID_PLACEHOLDER", name: "web", color: null, kind: "retrying", cls: "429", status: 429, since: NOW_PLACEHOLDER, suppressed: false }] }));
   await enter(); await waitRows();
-  R.order = await ev(() => Array.from(document.querySelectorAll("#ah-tip > .ru-tip-win")).map((w) => { const n = w.querySelector(".ru-tip-name span"); return n ? n.textContent : w.textContent.slice(0, 24); }));
+  R.order = await ev(() => Array.from(document.querySelectorAll("#ah-tip > .ru-tip-win")).map((w) => { const n = w.querySelector(".ru-tip-name span"); return n ? n.textContent : w.textContent.slice(0, 48); }));
   await leave();
   await ev((f) => { window.__rompApiHealth(f); }, frame());
 });
@@ -818,7 +818,7 @@ class ServedHistory(unittest.TestCase):
     def test_the_section_sits_between_the_sessions_waiting_and_the_tmux_line(self):
         order = self.R["order"]
         self.assertEqual(order[:3], ["API · this machine", "Sessions waiting", "History"])
-        self.assertTrue(order[3].startswith("1 tmux session is seen"), order)
+        self.assertTrue(order[3].startswith("1 Claude Code (tmux) session is seen"), order)
 
     def test_focus_shows_the_hover_and_blur_hides_it(self):
         R = self.R

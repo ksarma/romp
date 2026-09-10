@@ -47,7 +47,9 @@ class DisconnectBanner(unittest.TestCase):
         self.assertIn('if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;'
                       'restartAnnounced=0;', js)   # T217: the announced-restart latch spends inside the gate
         self.assertIn('if(!ann)armStale(pendingWhy||"reconnect");', js)
-        self.assertIn('try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}', js)
+        # the flip as a FRAME too (upstream 2026-09-07): enqueue() follows the dispatch, and the onopen body closes
+        # after it; the fork's ready re-send below sits above both (the resolved shim's order)
+        self.assertIn('try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}\nenqueue({type:"wsup"});}', js)
         # …and re-sends the bundle's connect handshake, so the kernel's connect push resyncs this socket
         # at once instead of on the pusher's next cycle (2026-09-02) — ONLY once the bundle has sent its own
         # and the flush did not just carry it (the 2026-09-03 review: a redial that completed before the
@@ -276,7 +278,10 @@ class DisconnectBanner(unittest.TestCase):
         # old fixed top banner is GONE (it got in the way, the user 2026-07-27)
         self.assertIn("var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;", km._LANDING_ERRS_JS)
         land = inspect.getsource(km._landing)
-        self.assertIn("id=rail-errs", land, "the bell sits in the bottom bar's action cluster")
+        self.assertNotIn("id=rail-errs", land, "the Log's opener left the bottom bar's action cluster (T290): it opens from the gear")
+        self.assertIn("if(m.romp==='openLog'&&window.__rompOpenErrs)window.__rompOpenErrs();", km._LANDING_SETTINGS_JS,
+                      "the gear's Open log reaches the shell's panel")
+        self.assertIn("if(!back||!list)return;", km._LANDING_ERRS_JS, "the center's script stands without the bar icon")
         self.assertIn("id=rerr-back", land, "the popover backdrop is in the shell body")
         self.assertIn("_LANDING_ERRS_JS", land, "the center's script is injected into the shell")
         self.assertNotIn("id=romp-offline", land, "the top banner element is gone")

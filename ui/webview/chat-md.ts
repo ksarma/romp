@@ -11,8 +11,9 @@
 // Both take the SAME extensions from `chatMdExtensions`, so a user message with math or strikethrough
 // renders exactly as it did before — only its newlines are kept. Pure (no DOM): the executed tests import
 // it directly, the way render-math.test.ts exercises math.ts. Sanitizing is the caller's job: render.ts's
-// userMd() runs the output through the same DOMPurify profile md() uses before it ever reaches innerHTML;
-// the math fill rides that sanitize as a registered post-pass (below), so no caller renders it by hand.
+// userMd() runs the output through the same sanitizer md() uses (sanitizeMd, md-sanitize.ts) before it ever
+// reaches innerHTML; the math fill rides that sanitize as a registered post-pass (below), so no caller
+// renders it by hand.
 import { Marked, type MarkedExtension } from "marked";
 import { mathBlock, mathInline, renderMathPlaceholders } from "./math";
 import { registerMdPostPass } from "./md-sanitize";
