@@ -451,6 +451,20 @@ def _tmux_server(sids):
     return run
 
 
+class _BoxTmuxForked(BaseException):
+    """Raised by _no_box_tmux; a BaseException, so no read-swallowing `except Exception` on the way hides it."""
+
+
+def _no_box_tmux(*args, **kwargs):
+    """A stand-in for _TMUX._run under a test that patches _TMUX.available True and means to patch every fork it
+    makes over this (_tmux_server, _scripted_run, a probe stand-in): a call that reaches it is a fork of the
+    box's own tmux, which _RouteServer.setUp's policy forbids, so it raises instead of forking (review round
+    13, 2026-09-10: both pair tests' two-torn blocks reached the real _run from _torn_reg_at's warm premise, and
+    the routes' running-generation premise did too; conftest points TMUX_TMPDIR at a private dir, so each such
+    fork exited "no server", an unpinned answer the box's tmux gave)."""
+    raise _BoxTmuxForked("the box's tmux was forked: %r" % (list(args[0]) if args else (),))
+
+
 def _scripted_run(answers, calls=None):
     """A stand-in for _TMUX._run that answers `list-sessions` from `answers` in order (None for a probe that
     failed, a CompletedProcess for one that answered) and records each such call in `calls`; a request that
@@ -2892,18 +2906,24 @@ class UnknownSessionRefused(_RouteServer):
         # sorts on: the walk ranks each generation by the gate's own by-id verdict and its backend's liveness
         # (round 12; round 11 read the SDK backend's running set alone, so both ranked below the dead
         # generation's torn record and every door answered its 503 by name while by id the gate admitted them).
-        # Two admitted generations of one name: the lower sid answers, in both orders of the backend's running
-        # list (the pin tells the sorted walk from a reversed one; an unsorted .items() walk cannot be pinned,
-        # since scandir order may coincide with sorted); two torn ones: the 503 names the lower sid's file, the
-        # docstring's stated tie-break. The text by name says that if a live session of the name runs it is
-        # reachable by it once no torn record bears the name. Fails before on the cold side (review rounds 9
-        # and 10, 2026-09-09), for the running generation by name at round 10's head, and for the Codex and
+        # Two live generations of one name (each admitted by id and live by its own backend): the lower sid
+        # answers, in both orders of the backend's running list (the pin tells the sorted walk from a reversed
+        # one; an unsorted .items() walk cannot be pinned, since scandir order may coincide with sorted); two
+        # torn ones: the 503 names the lower sid's file, the docstring's stated tie-break. A readable DORMANT
+        # generation (its reg says alive false) on either side of the torn sid is passed over: the torn record
+        # answers by name and the dormant generation stays reachable by id (round 13). The text by name says
+        # that if a live session of the name runs it is reachable by it once no torn record bears the name.
+        # Every block runs under a stand-in for _TMUX._run that raises on a fork it did not patch over, so the
+        # box's own tmux is never forked (round 13: the two-torn block's warm premise and the running
+        # generation's reached the real _run). Fails before on the cold side (review rounds 9 and 10,
+        # 2026-09-09), for the running generation by name at round 10's head, and for the Codex and
         # conserved generations by name at round 11's head.
         sid, name = "cdcd7777-8888-9999-0000-111111111111", "pair-web"
         mate = "cdcd7777-8888-9999-0000-222222222222"
         cx_sids = ("cdcd7777-8888-9999-0000-000000000000", "cdcd7777-8888-9999-0000-333333333333")
         reg_path = km.jd.STATE / "sdk" / (sid + ".json")
         mate_path = km.jd.STATE / "sdk" / (mate + ".json")
+        low_path = km.jd.STATE / "sdk" / (cx_sids[0] + ".json")
         reg_path.parent.mkdir(parents=True, exist_ok=True)
         _register(sid, name)
         fake = mock.Mock()
@@ -2911,6 +2931,10 @@ class UnknownSessionRefused(_RouteServer):
                     ("/end", {"name": name}), ("/send", {"id": sid, "text": "hello"}),
                     ("/send", {"name": name, "text": "hello"}))
         again = "If a live session named '%s' runs, it is reachable by that name once no torn record bears it." % name
+        # the three tmux states every by-name block runs in: off, the probe up with no pane, the probe down
+        tmux_states = (("tmux off", lambda: mock.patch.object(km._TMUX, "available", lambda: False)),
+                       ("probe up", lambda: mock.patch.object(km._TMUX, "_run", _tmux_server([]))),
+                       ("probe down", lambda: mock.patch.object(km._TMUX, "_run", lambda *a, **k: None)))
 
         def verdicts(label, reqs):
             out = []
@@ -2938,9 +2962,6 @@ class UnknownSessionRefused(_RouteServer):
             # liveness its own backend reports: a reg that says alive, a Codex session): by NAME every route
             # reaches it with the call carrying that sid, at a cold and a warm cache, with tmux off, the probe up
             # and the probe down; by id the torn record keeps the record's verdict unless it is the running one
-            tmux_states = (("tmux off", lambda: mock.patch.object(km._TMUX, "available", lambda: False)),
-                           ("probe up", lambda: mock.patch.object(km._TMUX, "_run", _tmux_server([]))),
-                           ("probe down", lambda: mock.patch.object(km._TMUX, "_run", lambda *a, **k: None)))
             for tmux_label, tmux_state in tmux_states:
                 with tmux_state(), \
                      mock.patch.object(km, "_end_and_record", lambda s, be, now, via, fresh=False, why=None: calls.append(("end", s)) or True), \
@@ -3006,7 +3027,8 @@ class UnknownSessionRefused(_RouteServer):
         try:
             with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda s: fake)), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
-                 mock.patch.object(km._TMUX, "available", lambda: True):
+                 mock.patch.object(km._TMUX, "available", lambda: True), \
+                 mock.patch.object(km._TMUX, "_run", _no_box_tmux):
                 # a live namesake: a pane carrying another sid registered under the same name
                 _register(mate, name)
                 pair("a live namesake pane bears the name", [mate], None)
@@ -3029,7 +3051,8 @@ class UnknownSessionRefused(_RouteServer):
                 mate_path.write_text(json.dumps({"sid": mate, "alive": True, "name": name}))
                 km._thread_reg_memo.clear()
                 with mock.patch.object(km, "_sdk", lambda be=_sdk_reporting([mate]): be):
-                    self.assertEqual(km.Sessions.live().get(mate, {}).get("backend"), "sdk", "the premise: the running generation is in the map")
+                    with mock.patch.object(km._TMUX, "_run", _tmux_server([])):      # the premise's own scan
+                        self.assertEqual(km.Sessions.live().get(mate, {}).get("backend"), "sdk", "the premise: the running generation is in the map")
                     self.assertTrue(km._backend_reports_running(mate))
                     reached("a running SDK generation bears the name", mate)
                     code, resp = self._post("/interrupt", {"id": mate})
@@ -3085,24 +3108,59 @@ class UnknownSessionRefused(_RouteServer):
                         reached("two running generations, the backend listing %s first" % order[0][-4:], sid)
                 self.assertEqual(fake.method_calls, [], "nothing but the lower running generation reached a backend")
                 # two torn dormant generations, none running: the 503 names the lexically first file at both
-                # warmths (verdicts asserts the torn sid's path, the lower of the two)
+                # warmths and in every tmux state (verdicts asserts the torn sid's path, the lower of the two;
+                # round 13: the block ran in the ambient state alone and its warm premise forked the box's tmux)
                 mate_path.write_bytes(b"{not json")
                 _forget_regs([mate_path])
                 km._thread_reg_memo.clear()
                 km._thread_reg_failed.clear()
                 self.assertTrue(km._reg_unreadable(mate))
-                for cold_cache in (True, False):
-                    self._torn_reg_at(reg_path, sid, name, cold=cold_cache)
-                    self.assertEqual(km._unreadable_dormant_named(name), sid, "the lower torn sid answers")
-                    verdicts("two torn generations, %s" % ("cold" if cold_cache else "warm"), requests)
+                for tmux_label, tmux_state in tmux_states:
+                    with tmux_state():
+                        for cold_cache in (True, False):
+                            where = "two torn generations, %s, %s" % ("cold" if cold_cache else "warm", tmux_label)
+                            self._torn_reg_at(reg_path, sid, name, cold=cold_cache)
+                            self.assertEqual(km._unreadable_dormant_named(name), sid, (where, "the lower torn sid answers"))
+                            verdicts(where, requests)
                 self.assertEqual(fake.method_calls, [], "nothing reached a backend for two torn generations")
+                # a readable DORMANT generation of the name (its reg says alive false: an ended session whose
+                # record is kept) sorting after the torn sid, then before it: the gate admits it by id (the names
+                # door) and no backend lists it live, so the walk passes it over and the torn record answers by
+                # name, the 503 naming the torn file, while the dormant generation stays reachable by id. What this
+                # adds over the namesake blocks above is a PRESENT dormant reg beside the torn one, not an absent
+                # one: a walk that read any readable reg as live once a torn one was seen would answer the dormant
+                # generation in the torn-first order (round 13; the round-5 rule, a dormant session addressed by id
+                # and 404 by name, holds beside a torn record too). tmux off: the walk reads no map, and the warm
+                # premise's scan is the SDK half alone
+                for dormant, dormant_path, side in ((mate, mate_path, "after"), (cx_sids[0], low_path, "before")):
+                    _register(dormant, name)
+                    dormant_path.write_text(json.dumps({"sid": dormant, "alive": False, "name": name}))
+                    km._thread_reg_memo.clear()
+                    km._thread_reg_failed.clear()
+                    with mock.patch.object(km, "_sdk", lambda be=_sdk_reporting([]): be), \
+                         mock.patch.object(km._TMUX, "available", lambda: False):
+                        for cold_cache in (True, False):
+                            where = "a readable dormant generation sorting %s the torn sid, %s" % (side, "cold" if cold_cache else "warm")
+                            self._torn_reg_at(reg_path, sid, name, cold=cold_cache)
+                            self.assertEqual(km._session_gate(dormant)[0], km._GATE_ADMITTED, (where, "admitted by id"))
+                            self.assertFalse(km._named_generation_live(dormant, None), (where, "live by no backend"))
+                            self.assertEqual(km._unreadable_dormant_named(name), sid, (where, "the torn record answers by name"))
+                            verdicts(where, requests)
+                            code, resp = self._post("/interrupt", {"id": dormant})
+                            self.assertEqual((code, resp), (200, {"ok": True}), (where, "the dormant generation by id"))
+                            fake.interrupt.assert_called_once_with(dormant)
+                            fake.reset_mock()
+                    self.assertEqual(fake.method_calls, [], "nothing but the dormant generation by id reached a backend")
+                    _unregister(dormant)
+                    _drop_regs([dormant_path])
+                    km._thread_reg_memo.clear()
         finally:
             km._end_on_idle_save(km._end_on_idle_load() - {sid})
             _unregister(sid)
             _unregister(mate)
             for cx_sid in cx_sids:
                 _unregister(cx_sid)
-            _drop_regs([reg_path, mate_path])
+            _drop_regs([reg_path, mate_path, low_path])
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
 
@@ -3116,8 +3174,10 @@ class UnknownSessionRefused(_RouteServer):
         # in every tmux state, the call carrying its sid, and so is the torn generation itself when it is the
         # running one (round 11; round 10 refused the name with the torn generation's frame beside a running
         # generation). So are a live Codex-backed generation and a conserved SDK generation of the name, and
-        # of two admitted or two torn generations the lower sid answers (round 12; the routes pair test's
-        # header says why and how). Fails before on the cold side (no err frame, fake.interrupt called; with
+        # of two live generations (each admitted by id and live by its own backend) or two torn ones the lower
+        # sid answers (round 12; the routes pair test's header says why and how). Every block runs under a
+        # stand-in for _TMUX._run that raises on a fork it did not patch over, so the box's own tmux is never
+        # forked (round 13). Fails before on the cold side (no err frame, fake.interrupt called; with
         # the namesake, the compact reached the namesake) (review rounds 9 and 10, 2026-09-09), for the running
         # generation by name at round 10's head, and for the Codex and conserved generations at round 11's.
         sid, name = "cdcd8888-9999-0000-1111-222222222222", "pair-ws-web"
@@ -3133,6 +3193,10 @@ class UnknownSessionRefused(_RouteServer):
         msgs = ({"type": "interrupt", "id": sid}, {"type": "sendMessage", "id": sid, "text": "keep this"},
                 {"type": "compact", "name": name}, {"type": "sendCommand", "name": name, "cmd": "/model opus"})
         again = "If a live session named '%s' runs, it is reachable by that name once no torn record bears it." % name
+        # the three tmux states every by-name block runs in: off, the probe up with no pane, the probe down
+        tmux_states = (("tmux off", lambda: mock.patch.object(km._TMUX, "available", lambda: False)),
+                       ("probe up", lambda: mock.patch.object(km._TMUX, "_run", _tmux_server([]))),
+                       ("probe down", lambda: mock.patch.object(km._TMUX, "_run", lambda *a, **k: None)))
 
         def verdicts(label, ms):
             out = []
@@ -3163,9 +3227,6 @@ class UnknownSessionRefused(_RouteServer):
             # liveness its own backend reports): the compact and sendCommand by NAME reach it with the call
             # carrying that sid, at a cold and a warm cache, with tmux off, the probe up and the probe down; the
             # by-id ops on the torn record keep the record's frame unless it is the running one
-            tmux_states = (("tmux off", lambda: mock.patch.object(km._TMUX, "available", lambda: False)),
-                           ("probe up", lambda: mock.patch.object(km._TMUX, "_run", _tmux_server([]))),
-                           ("probe down", lambda: mock.patch.object(km._TMUX, "_run", lambda *a, **k: None)))
             for tmux_label, tmux_state in tmux_states:
                 with tmux_state(), \
                      mock.patch.object(km, "_send_or_park", lambda be, s, text, **k: fake.send(s, text)), \
@@ -3221,7 +3282,8 @@ class UnknownSessionRefused(_RouteServer):
             with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda s: fake)), \
                  mock.patch.object(km, "_compact_or_park", lambda be, s: fake.compact(s)), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
-                 mock.patch.object(km._TMUX, "available", lambda: True):
+                 mock.patch.object(km._TMUX, "available", lambda: True), \
+                 mock.patch.object(km._TMUX, "_run", _no_box_tmux):
                 _register(mate, name)
                 pair("a live namesake pane bears the name", [mate], None)
                 with mock.patch.object(km._TMUX, "_run", _tmux_server([mate])):
@@ -3277,16 +3339,21 @@ class UnknownSessionRefused(_RouteServer):
                         self.assertTrue(km._backend_reports_running(mate))
                         reached("two running generations, the backend listing %s first" % order[0][-4:], sid)
                 self.assertEqual(fake.method_calls, [], "nothing but the lower running generation reached a backend")
-                # two torn dormant generations: the frame names the lower sid and its file at both warmths
+                # two torn dormant generations: the frame names the lower sid and its file at both warmths and in
+                # every tmux state (round 13: the block ran in the ambient state alone and its warm premise forked
+                # the box's tmux)
                 mate_path.write_bytes(b"{not json")
                 _forget_regs([mate_path])
                 km._thread_reg_memo.clear()
                 km._thread_reg_failed.clear()
                 self.assertTrue(km._reg_unreadable(mate))
-                for cold_cache in (True, False):
-                    self._torn_reg_at(reg_path, sid, name, cold=cold_cache)
-                    self.assertEqual(km._unreadable_dormant_named(name), sid, "the lower torn sid answers")
-                    verdicts("two torn generations, %s" % ("cold" if cold_cache else "warm"), msgs)
+                for tmux_label, tmux_state in tmux_states:
+                    with tmux_state():
+                        for cold_cache in (True, False):
+                            where = "two torn generations, %s, %s" % ("cold" if cold_cache else "warm", tmux_label)
+                            self._torn_reg_at(reg_path, sid, name, cold=cold_cache)
+                            self.assertEqual(km._unreadable_dormant_named(name), sid, (where, "the lower torn sid answers"))
+                            verdicts(where, msgs)
                 self.assertEqual(fake.method_calls, [], "nothing reached a backend for two torn generations")
         finally:
             _unregister(sid)
@@ -3348,7 +3415,9 @@ class UnknownSessionRefused(_RouteServer):
         # io.open whatever io.open is patched to (3.11 and later call io.open directly), and the names registry
         # is read through pathlib (_names_parts, _names_snapshot). Without that patch the guard saw none of those
         # reads on 3.10, and the control at the end found its open only in a process whose SDK backend was not
-        # yet built (the backend's first build reads a settings file through builtins.open): CI's 3.10 job failed
+        # yet built (the backend's first build opens the API-health legacy ledger, STATE/api-health.jsonl, the
+        # seed of a missing api-health.json, through builtins.open; the settings reads run on the model-catalog
+        # thread and never decided the control, round 13): CI's 3.10 job failed
         # the control at 61ee8e50 in an xdist worker where an earlier test had built the backend, while it passed
         # alone and on 3.12, where _name_of's read is the first open (round 12).
         import builtins
@@ -3429,9 +3498,10 @@ class UnknownSessionRefused(_RouteServer):
                 # names the probe file here); then with the fake, so the answer is shown to cost no read
                 for who in spellings:
                     refused(who, "plain")
-                # the SDK backend is built before the guard goes up: its first build reads a settings file, an open
-                # of its own that would stand in for the names read the control below expects (in a fresh process
-                # on 3.10 at 61ee8e50 it was the only open the control caught)
+                # the SDK backend is built before the guard goes up: its first build opens the API-health legacy
+                # ledger (STATE/api-health.jsonl), an open of its own that would stand in for the names read the
+                # control below expects (in a fresh process on 3.10 at 61ee8e50 it was the only open the control
+                # caught)
                 km._sdk()
                 with mock.patch("builtins.open", guard), mock.patch.object(iolib, "open", guard), path_open:
                     for who in spellings:
