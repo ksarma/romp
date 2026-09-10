@@ -2127,54 +2127,67 @@ class UnknownSessionRefused(_RouteServer):
             km._thread_reg_failed.clear()
 
 
-    def test_a_failed_scan_is_answered_before_a_torn_dormant_record_of_the_name(self):
-        # with the tmux probe down and a torn dormant generation of the name on disk, the 404 arm answered the
-        # torn record's 503 ("repair or remove that file") for a transient probe failure, and the failed-scan
-        # log line was not written; the record's verdict does not depend on the scan, but whether the NAME
-        # routes to that record does. The failed scan comes first (try again, the log line, no record named);
-        # once the probe answers, a pane that carries the name is acted on; the no-server exit is the
-        # authoritative empty board, so the torn record's 503 is then correct (review round 7, 2026-09-09).
+    def test_a_torn_record_of_the_name_is_the_records_verdict_before_the_scan_is_read(self):
+        # round 7 answered a failed scan before a torn dormant generation of the name (try again, the log line,
+        # no file named) and reached a pane's generation of the name once the scan answered, so the by-name
+        # verdict for a torn record rode the probe and, at a warm list_regs cache, the cache. The doors'
+        # resolution reads the on-disk names registry first now: a name registered to a torn record is the
+        # record's verdict with the probe down (no scan is made, so no probe-failed log line), with a pane's
+        # generation of the name listed (the pane is not reached; the text says a live session of the name is
+        # reachable by it again once the file is repaired or removed) and on the no-server exit, and the request
+        # forks tmux zero times; with the file removed the same name reaches the pane's generation from the
+        # resolution's one fork (review round 10, 2026-09-09).
         import subprocess
         torn_path = km.jd.STATE / "sdk" / ("sid-q" + ".json")
         torn_path.parent.mkdir(parents=True, exist_ok=True)
         torn_path.write_bytes(b"{not json")
-        _drop_regs([])
+        _forget_regs([torn_path])
         km._thread_reg_memo.clear()
         km._thread_reg_failed.clear()
         fake = mock.Mock()
         gone = subprocess.CompletedProcess(args=[], returncode=1, stdout="",
                                            stderr="no server running on /tmp/tmux-1000/default")
+        ok_sid_x = _tmux_server(["sid-x"])(["list-sessions", "-F", km.TmuxBackend.LANE_FMT])
+        again = "A live session named 'web' is reachable by that name again once the file is repaired or removed."
         try:
             with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
                  mock.patch.object(km._TMUX, "available", lambda: True):
-                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
-                    for path, body in (("/end", {"name": "web"}), ("/interrupt", {"name": "web"}),
-                                       ("/send", {"name": "web", "text": "hello"})):
-                        err = io.StringIO()
-                        with contextlib.redirect_stderr(err):
-                            code, resp = self._post(path, body)
-                        self.assertEqual(code, 503, (path, resp))
-                        self.assertIn("could not read the live session list", resp.get("error", ""), path)
-                        self.assertIn("try again", resp.get("error", ""), path)
-                        self.assertNotIn("sid-q", resp.get("error", ""), "no file is named for a transient failure")
-                        self.assertNotIn("Repair or remove", resp.get("error", ""), path)
-                        self.assertIn("control %s: tmux probe failed while resolving 'web'; answered 503, nothing done" % path,
-                                      err.getvalue(), path)
+                for label, run in (("the probe down", lambda *a, **k: None),
+                                   ("a pane's generation of the name listed", _tmux_server(["sid-x"])),
+                                   ("the no-server exit", lambda *a, **k: gone)):
+                    with mock.patch.object(km._TMUX, "_run", run):
+                        for path, body in (("/end", {"name": "web"}), ("/interrupt", {"name": "web"}),
+                                           ("/send", {"name": "web", "text": "hello"})):
+                            err = io.StringIO()
+                            with contextlib.redirect_stderr(err):
+                                code, resp = self._post(path, body)
+                            self.assertEqual(code, 503, (label, path, resp))
+                            self.assertIn("could not read the record for 'web'", resp.get("error", ""), (label, path))
+                            self.assertIn(km._tilde(str(torn_path)), resp.get("error", ""), (label, path))
+                            self.assertIn(again, resp.get("error", ""), (label, path))
+                            self.assertNotIn("try again", resp.get("error", "").lower(), (label, path))
+                            self.assertNotIn("could not read the live session list", resp.get("error", ""), (label, path))
+                            self.assertNotIn("tmux probe failed", err.getvalue(), (label, path, "no scan is made for a torn name"))
                     fake.interrupt.assert_not_called()
                     fake.kill.assert_not_called()
                     fake.send.assert_not_called()
-                with mock.patch.object(km._TMUX, "_run", _tmux_server(["sid-x"])):
-                    code, resp = self._post("/interrupt", {"name": "web"})
-                    self.assertEqual((code, resp), (200, {"ok": True}), "the scan answered: the pane's generation is the name's")
-                    fake.interrupt.assert_called_once_with("sid-x")
-                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: gone):
+                # zero forks: the script refuses any
+                calls = []
+                with mock.patch.object(km._TMUX, "_run", _scripted_run([], calls)):
                     code, resp = self._post("/interrupt", {"name": "web"})
                     self.assertEqual(code, 503, resp)
-                    self.assertIn("could not read the record for 'web'", resp.get("error", ""))
-                    self.assertIn(km._tilde(str(torn_path)), resp.get("error", ""))
-                    self.assertNotIn("try again", resp.get("error", "").lower())
-                fake.interrupt.assert_called_once()
+                    self.assertEqual(calls, [], "a torn record of the name forks tmux zero times")
+                # the file removed: the pane's generation is the name's again, from the resolution's one fork
+                _drop_regs([torn_path])
+                km._thread_reg_memo.clear()
+                km._thread_reg_failed.clear()
+                calls = []
+                with mock.patch.object(km._TMUX, "_run", _scripted_run([ok_sid_x], calls)):
+                    code, resp = self._post("/interrupt", {"name": "web"})
+                self.assertEqual((code, resp), (200, {"ok": True}), "the file removed: the pane's generation is the name's")
+                fake.interrupt.assert_called_once_with("sid-x")
+                self.assertEqual(len(calls), 1, calls)
         finally:
             _drop_regs([torn_path])
             km._thread_reg_memo.clear()
@@ -2217,12 +2230,13 @@ class UnknownSessionRefused(_RouteServer):
                  mock.patch.object(km, "_send_or_park", lambda be, sid, text: fake.send(sid, text)), \
                  mock.patch.object(km, "_route_meta_command", lambda *a, **k: False), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None):
-                # the torn dormant record, at a cold cache (the scan lists nothing for sid-q, so the name misses every
-                # door and _named_miss finds the torn generation in the names registry), then warm (round 6's state,
-                # built the real way: a good reg the scan cached, then torn; the map serves the cached last good row,
-                # _live_names resolves web to sid-q, and the gate's own unreadable arm refuses with the typed
-                # spelling, no miss path). Round 7's warm iteration was the cold one repeated: the file was torn
-                # before any scan, so nothing was cached and both took the miss path (review round 8, 2026-09-09)
+                # the torn dormant record, at a cold cache (the scan lists nothing for sid-q), then warm (round 6's
+                # state, built the real way: a good reg the scan cached, then torn; the map serves the cached last
+                # good row and _live_names resolves web to sid-q). Since round 10 the doors' resolution reads the torn
+                # generation from the names registry FIRST at both warmths, so neither state reads the map for it;
+                # the premises stay asserted to show what the map holds in each. Round 7's warm iteration was the
+                # cold one repeated: the file was torn before any scan, so nothing was cached and both took the
+                # round-7 miss path (review round 8, 2026-09-09)
                 for label in ("cold", "warm"):
                     if label == "cold":
                         torn_path.write_bytes(b"{not json")
@@ -2454,18 +2468,19 @@ class UnknownSessionRefused(_RouteServer):
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
 
-    def test_a_torn_record_under_a_failed_probe_is_the_records_verdict_by_id_and_the_scans_by_name(self):
+    def test_a_torn_record_under_a_failed_probe_is_the_records_verdict_by_id_and_by_name(self):
         # for a names-registered sid whose SDK reg is torn, at a cold list_regs cache (the map lists no row for
         # the sid), _session_gate answered the record's 503 while the probe was down (round 5); rounds 7 and 8
         # then made it the scan's verdict there (try again) and admitted the sid the moment a pane carried it.
         # Both read the live map, whose answer for a torn reg depends on the cache, so the verdict flipped with
         # the warmth of the cache and not with the world. The gate reads no map for a torn record now: by id the
         # record's verdict in every tmux state (the probe down, the no-server exit, a pane carrying the sid), the
-        # file named, no "try again", no probe made and so no probe-failed log line, at every door. By NAME while
-        # the probe is down the verdict is the scan's (_named_miss: the name resolves to nothing at a cold cache,
-        # and whether it routes to a running namesake the map could not list cannot be evaluated); once the scan
-        # answers, the name reaches the sid through the pane's row and gets the record's verdict too (review
-        # round 9, 2026-09-09; rounds 7 and 8 pinned the flips this test denies).
+        # file named, no "try again", no probe made and so no probe-failed log line, at every door (round 9). By
+        # NAME the same since round 10: the doors' resolution reads the torn record from the names registry
+        # ahead of any scan, so with the probe down the verdict is the record's, not the scan's (round 9 left it
+        # the scan's there: the name resolved to nothing at a cold cache), and the text says a live session of the
+        # name is reachable by it again once the file is repaired or removed (review rounds 9 and 10, 2026-09-09;
+        # rounds 7 and 8 pinned the flips this test denies).
         import subprocess
         sid, name = "abab7777-8888-9999-0000-111111111111", "torn-pane-web"
         reg_path = km.jd.STATE / "sdk" / (sid + ".json")
@@ -2509,15 +2524,14 @@ class UnknownSessionRefused(_RouteServer):
                         with contextlib.redirect_stderr(err):
                             code, resp = self._post(path, body)
                         self.assertEqual(code, 503, (path, body, resp))
-                        self.assertIn("could not read the live session list while resolving '%s'" % name,
-                                      resp.get("error", ""), (path, body))
-                        self.assertIn("try again", resp.get("error", ""), (path, body))
-                        self.assertNotIn("Repair or remove", resp.get("error", ""), (path, body))
-                        self.assertNotIn(km._tilde(str(reg_path)), resp.get("error", ""),
-                                         "no file is named for a name the scan could not route")
-                        self.assertIn("control %s: tmux probe failed while resolving %r; answered 503, nothing done"
-                                      % (path, name), err.getvalue(), (path, body))
-                        self.assertEqual(err.getvalue().count("tmux probe failed"), 1, "logged once")
+                        self.assertIn(record % name, resp.get("error", ""), (path, body))
+                        self.assertIn(km._tilde(str(reg_path)), resp.get("error", ""), (path, body))
+                        self.assertIn("Repair or remove", resp.get("error", ""), (path, body))
+                        self.assertIn("A live session named '%s' is reachable by that name again once the file is "
+                                      "repaired or removed." % name, resp.get("error", ""), (path, body))
+                        self.assertNotIn("try again", resp.get("error", "").lower(), (path, body))
+                        self.assertNotIn("could not read the live session list", resp.get("error", ""), (path, body))
+                        self.assertNotIn("tmux probe failed", err.getvalue(), "by name no scan is made for a torn record either")
                     self.assertNotIn(sid, km._end_on_idle_load(), "a refused deferred end records no wish")
                     del frames[:]
                     err = io.StringIO()
@@ -2541,12 +2555,13 @@ class UnknownSessionRefused(_RouteServer):
                         self.assertTrue(km._drive({"type": "compact", "name": name}, client))
                     errs = [f for f in frames if f.get("type") == "err"]
                     self.assertEqual(len(errs), 1, frames)
-                    self.assertIn("could not read the live session list while resolving '%s'" % name,
-                                  errs[0]["text"].lower())
-                    self.assertIn("try again", errs[0]["text"])
-                    self.assertNotIn(km._tilde(str(reg_path)), errs[0]["text"])
-                    self.assertEqual(errs[0]["sid"], name, "the modal carries the typed name")
-                    self.assertIn("undeliverable compact: tmux probe failed while resolving %r" % name, err.getvalue())
+                    self.assertIn("could not read the record for '%s'" % name, errs[0]["text"].lower())
+                    self.assertIn(km._tilde(str(reg_path)), errs[0]["text"])
+                    self.assertIn("reachable by that name again once the file is repaired or removed", errs[0]["text"])
+                    self.assertNotIn("try again", errs[0]["text"].lower())
+                    self.assertEqual(errs[0]["sid"], sid, "the modal carries the torn record's sid")
+                    self.assertIn("undeliverable compact: the record for session %s will not read" % sid, err.getvalue())
+                    self.assertNotIn("tmux probe failed", err.getvalue())
                     self.assertEqual(fake.method_calls, [], "nothing reached a backend at either door")
                 with mock.patch.object(km._TMUX, "_run", lambda *a, **k: gone):
                     self.assertEqual(km._session_gate(sid)[0], km._GATE_UNREADABLE, "the no-server exit: the record's verdict")
@@ -2778,17 +2793,25 @@ class UnknownSessionRefused(_RouteServer):
         # the cached last good row, an SDK row, overwrote the pane's row in Sessions.live()'s merge and the same
         # request was the record's 503. With the probe down the same flip gave the scan's verdict cold and the
         # record's warm. A verdict must not depend on a cache: a torn reg is the record's verdict at both
-        # warmths, pane or no pane, at every route by id and by name, and with the probe down by id (by name the
-        # probe-down verdict is the miss path's, the scan's, the failed-probe test above). Fails before on the
-        # cold side, 200 with the interrupt delivered (review round 9, 2026-09-09).
+        # warmths, pane or no pane, at every route by id and by name, with the probe up and with it down (round
+        # 9 by id, and by name with the probe up; round 10 by name with the probe down, the doors' resolution
+        # reading the names registry ahead of the map). The same with a live NAMESAKE, a pane carrying another
+        # sid registered under the name (round 10: cold the namesake was reached, 200 with the interrupt
+        # delivered to it; warm the record's 503), and with a second SDK generation of the name that the SDK
+        # backend runs (the same flip, scandir order deciding); the namesake itself stays reachable by id. The
+        # text by name says a live session of the name is reachable by it again once the file is repaired or
+        # removed. Fails before on the cold side (review rounds 9 and 10, 2026-09-09).
         sid, name = "cdcd7777-8888-9999-0000-111111111111", "pair-web"
+        mate = "cdcd7777-8888-9999-0000-222222222222"
         reg_path = km.jd.STATE / "sdk" / (sid + ".json")
+        mate_path = km.jd.STATE / "sdk" / (mate + ".json")
         reg_path.parent.mkdir(parents=True, exist_ok=True)
         _register(sid, name)
         fake = mock.Mock()
         requests = (("/interrupt", {"id": sid}), ("/interrupt", {"name": name}), ("/end", {"id": sid}),
                     ("/end", {"name": name}), ("/send", {"id": sid, "text": "hello"}),
                     ("/send", {"name": name, "text": "hello"}))
+        again = "A live session named '%s' is reachable by that name again once the file is repaired or removed." % name
 
         def verdicts(label, reqs):
             out = []
@@ -2802,53 +2825,89 @@ class UnknownSessionRefused(_RouteServer):
                 self.assertIn(km._tilde(str(reg_path)), resp.get("error", ""), (label, path, body))
                 self.assertNotIn("try again", resp.get("error", "").lower(), (label, path, body))
                 self.assertNotIn("tmux probe failed", err.getvalue(), (label, path, body))
+                if "name" in body:
+                    self.assertIn(again, resp.get("error", ""), (label, path, body))
+                else:
+                    self.assertNotIn("reachable by that name", resp.get("error", ""), (label, path, body))
                 out.append((path, who, code, resp.get("error")))
             return out
+
+        def pair(label, panes, cold_backend):
+            # the same reg bytes at a cold and a warm cache, the probe up (with `panes` listed) and down
+            with mock.patch.object(km._TMUX, "_run", _tmux_server(panes)):
+                self._torn_reg_at(reg_path, sid, name, cold=True)
+                self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), cold_backend, ("the premise, cold", label))
+                self.assertEqual(km._session_gate(sid)[0], km._GATE_UNREADABLE, ("cold", label))
+                cold = verdicts("cold, " + label, requests)
+                self._torn_reg_at(reg_path, sid, name, cold=False)
+                self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), "sdk",
+                                 ("the premise, warm: the cached row stands in the map", label))
+                self.assertEqual(km._session_gate(sid)[0], km._GATE_UNREADABLE, ("warm", label))
+                warm = verdicts("warm, " + label, requests)
+                self.assertEqual(cold, warm, "one verdict for one world, whatever the cache holds: " + label)
+                self.assertNotIn(sid, km._end_on_idle_load(), "a refused deferred end records no wish")
+            with mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
+                down = {}
+                for warmth, cold_cache in (("warm", False), ("cold", True)):
+                    self._torn_reg_at(reg_path, sid, name, cold=cold_cache)
+                    if cold_cache:
+                        self.assertNotIn(sid, km.Sessions.live(), "cold: the map lists no row for the sid")
+                    else:
+                        self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), "sdk", "warm: the cached row")
+                    down[warmth] = (km._session_gate(sid), verdicts("%s, probe down, %s" % (warmth, label), requests))
+                self.assertEqual(down["cold"], down["warm"],
+                                 "the probe down: one verdict by id and by name at both warmths: " + label)
+                self.assertEqual(down["cold"][0][0], km._GATE_UNREADABLE)
 
         try:
             with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda s: fake)), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
                  mock.patch.object(km._TMUX, "available", lambda: True):
-                with mock.patch.object(km._TMUX, "_run", _tmux_server([sid])):
-                    self._torn_reg_at(reg_path, sid, name, cold=True)
-                    self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), "tmux",
-                                     "the premise: cold, the pane's row stands in the map")
-                    self.assertEqual(km._session_gate(sid)[0], km._GATE_UNREADABLE, "cold")
-                    cold = verdicts("cold", requests)
-                    self._torn_reg_at(reg_path, sid, name, cold=False)
-                    self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), "sdk",
-                                     "the premise: warm, the cached row overwrites the pane's in the merge")
-                    self.assertEqual(km._session_gate(sid)[0], km._GATE_UNREADABLE, "warm")
-                    warm = verdicts("warm", requests)
-                    self.assertEqual(cold, warm, "one verdict for one world, whatever the cache holds")
-                    self.assertNotIn(sid, km._end_on_idle_load(), "a refused deferred end records no wish")
-                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
-                    down = {}
-                    for label, cold_cache in (("warm", False), ("cold", True)):
-                        self._torn_reg_at(reg_path, sid, name, cold=cold_cache)
-                        if cold_cache:
-                            self.assertNotIn(sid, km.Sessions.live(), "cold: the map lists no row for the sid")
-                        else:
-                            self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), "sdk", "warm: the cached row")
-                        down[label] = (km._session_gate(sid),
-                                       verdicts(label + ", probe down", (("/interrupt", {"id": sid}), ("/end", {"id": sid}),
-                                                                         ("/send", {"id": sid, "text": "hello"}))))
-                    self.assertEqual(down["cold"], down["warm"], "the probe down: one verdict by id at both warmths")
-                    self.assertEqual(down["cold"][0][0], km._GATE_UNREADABLE)
+                # a live namesake: a pane carrying another sid registered under the same name
+                _register(mate, name)
+                pair("a live namesake pane bears the name", [mate], None)
+                with mock.patch.object(km._TMUX, "_run", _tmux_server([mate])):
+                    self.assertEqual(km._live_names(km.Sessions.live()).get(name), mate,
+                                     "the premise: the live map resolves the name to the namesake, which the doors no longer read for it")
+                    code, resp = self._post("/interrupt", {"id": mate})
+                    self.assertEqual((code, resp), (200, {"ok": True}), "the namesake stays reachable by id")
+                    fake.interrupt.assert_called_once_with(mate)
+                    fake.reset_mock()
+                # no namesake: the pane carries the torn sid itself
+                _unregister(mate)
+                pair("the pane carries the torn sid", [sid], "tmux")
                 self.assertEqual(fake.method_calls, [], "nothing reached a backend in any state")
+                # a second SDK generation of the name that the SDK backend runs: the same one verdict by name
+                _register(mate, name)
+                mate_path.write_text(json.dumps({"sid": mate, "alive": True, "name": name}))
+                km._thread_reg_memo.clear()
+                with mock.patch.object(km, "_sdk", lambda be=_sdk_reporting([mate]): be):
+                    pair("a running SDK generation bears the name", [], None)
+                    self.assertEqual(km.Sessions.live().get(mate, {}).get("backend"), "sdk", "the premise: the running generation is in the map")
+                    self.assertTrue(km._backend_reports_running(mate))
+                    code, resp = self._post("/interrupt", {"id": mate})
+                    self.assertEqual((code, resp), (200, {"ok": True}), "the running generation by id")
+                    fake.interrupt.assert_called_once_with(mate)
+                    fake.reset_mock()
+                self.assertEqual(fake.method_calls, [], "nothing but the namesake by id reached a backend")
         finally:
             km._end_on_idle_save(km._end_on_idle_load() - {sid})
             _unregister(sid)
-            _drop_regs([reg_path])
+            _unregister(mate)
+            _drop_regs([reg_path, mate_path])
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
 
     def test_a_torn_record_a_pane_carries_is_one_verdict_at_a_cold_and_a_warm_cache_at_the_ws_door(self):
-        # the WS door's half of the pair above: interrupt and sendMessage by id and compact by name through
-        # _drive, the err frame naming the record at both warmths with the pane listed, and by id with the probe
-        # down; the frames' text, sid and copy agree across the cache states. Fails before on the cold side (no
-        # err frame, fake.interrupt called) (review round 9, 2026-09-09).
+        # the WS door's half of the pair above: interrupt and sendMessage by id and compact and sendCommand by
+        # name through _drive, the err frame naming the record at both warmths with the pane listed and with the
+        # probe down, without and with a live namesake pane bearing the name; the frames' text, sid and copy
+        # agree across the cache states, the modal carries the torn record's sid by name too, and the by-name
+        # text says a live session of the name is reachable by it again once the file is repaired or removed.
+        # Fails before on the cold side (no err frame, fake.interrupt called; with the namesake, the compact
+        # reached the namesake) (review rounds 9 and 10, 2026-09-09).
         sid, name = "cdcd8888-9999-0000-1111-222222222222", "pair-ws-web"
+        mate = "cdcd8888-9999-0000-1111-333333333333"
         reg_path = km.jd.STATE / "sdk" / (sid + ".json")
         reg_path.parent.mkdir(parents=True, exist_ok=True)
         _register(sid, name)
@@ -2856,7 +2915,8 @@ class UnknownSessionRefused(_RouteServer):
         client = {"send": lambda s: frames.append(json.loads(s))}
         fake = mock.Mock()
         msgs = ({"type": "interrupt", "id": sid}, {"type": "sendMessage", "id": sid, "text": "keep this"},
-                {"type": "compact", "name": name})
+                {"type": "compact", "name": name}, {"type": "sendCommand", "name": name, "cmd": "/model opus"})
+        again = "A live session named '%s' is reachable by that name again once the file is repaired or removed." % name
 
         def verdicts(label, ms):
             out = []
@@ -2875,33 +2935,53 @@ class UnknownSessionRefused(_RouteServer):
                 self.assertIn("undeliverable %s: the record for session %s will not read" % (msg["type"], sid),
                               err.getvalue(), (label, msg))
                 self.assertNotIn("tmux probe failed", err.getvalue(), (label, msg))
+                if "name" in msg:
+                    self.assertIn(again, errs[0]["text"], (label, msg))
+                else:
+                    self.assertNotIn("reachable by that name", errs[0]["text"], (label, msg))
                 out.append((msg["type"], errs[0]["text"], errs[0]["sid"], errs[0].get("copy")))
             return out
 
+        def pair(label, panes, cold_backend):
+            with mock.patch.object(km._TMUX, "_run", _tmux_server(panes)):
+                self._torn_reg_at(reg_path, sid, name, cold=True)
+                self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), cold_backend, ("the premise, cold", label))
+                cold = verdicts("cold, " + label, msgs)
+                self._torn_reg_at(reg_path, sid, name, cold=False)
+                self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), "sdk",
+                                 ("the premise, warm: the cached row stands in the map", label))
+                warm = verdicts("warm, " + label, msgs)
+                self.assertEqual(cold, warm, "one verdict for one world, whatever the cache holds: " + label)
+                self.assertEqual([c[3] for c in cold], ["", "keep this", "", "/model opus"], "the typed text is offered back")
+            with mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
+                down = {}
+                for warmth, cold_cache in (("warm", False), ("cold", True)):
+                    self._torn_reg_at(reg_path, sid, name, cold=cold_cache)
+                    down[warmth] = verdicts("%s, probe down, %s" % (warmth, label), msgs)
+                self.assertEqual(down["cold"], down["warm"],
+                                 "the probe down: one verdict by id and by name at both warmths: " + label)
+
         try:
             with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda s: fake)), \
+                 mock.patch.object(km, "_compact_or_park", lambda be, s: fake.compact(s)), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
                  mock.patch.object(km._TMUX, "available", lambda: True):
-                with mock.patch.object(km._TMUX, "_run", _tmux_server([sid])):
-                    self._torn_reg_at(reg_path, sid, name, cold=True)
-                    self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), "tmux",
-                                     "the premise: cold, the pane's row stands in the map")
-                    cold = verdicts("cold", msgs)
-                    self._torn_reg_at(reg_path, sid, name, cold=False)
-                    self.assertEqual(km.Sessions.live().get(sid, {}).get("backend"), "sdk",
-                                     "the premise: warm, the cached row overwrites the pane's in the merge")
-                    warm = verdicts("warm", msgs)
-                    self.assertEqual(cold, warm, "one verdict for one world, whatever the cache holds")
-                    self.assertEqual([c[3] for c in cold], ["", "keep this", ""], "the typed text is offered back")
-                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
-                    down = {}
-                    for label, cold_cache in (("warm", False), ("cold", True)):
-                        self._torn_reg_at(reg_path, sid, name, cold=cold_cache)
-                        down[label] = verdicts(label + ", probe down", msgs[:2])
-                    self.assertEqual(down["cold"], down["warm"], "the probe down: one verdict by id at both warmths")
+                _register(mate, name)
+                pair("a live namesake pane bears the name", [mate], None)
+                with mock.patch.object(km._TMUX, "_run", _tmux_server([mate])):
+                    self.assertEqual(km._live_names(km.Sessions.live()).get(name), mate,
+                                     "the premise: the live map resolves the name to the namesake, which the door no longer reads for it")
+                    del frames[:]
+                    self.assertTrue(km._drive({"type": "compactSession", "id": mate}, client))
+                    self.assertEqual([f for f in frames if f.get("type") == "err"], [], "the namesake stays reachable by id")
+                    fake.compact.assert_called_once_with(mate)
+                    fake.reset_mock()
+                _unregister(mate)
+                pair("the pane carries the torn sid", [sid], "tmux")
                 self.assertEqual(fake.method_calls, [], "nothing reached a backend in any state")
         finally:
             _unregister(sid)
+            _unregister(mate)
             _drop_regs([reg_path])
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
