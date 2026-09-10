@@ -577,8 +577,10 @@ function landing(src, dst, cwd) {
 
 // cp / mv / install / ln: the last operand is the destination, unless -t DIR names the directory;
 // a destination that is an existing directory receives each source under its own name. A glob
-// operand is expanded first, as the shell expands it before the command sees its operands.
-function copyTargets(args, cwd) {
+// operand is expanded first, as the shell expands it before the command sees its operands. A
+// link is one directory entry whatever it points at: ln names its link and walks no source.
+function copyTargets(args, cwd, verb) {
+  const land = (s, d) => (verb === 'ln' ? [d] : landing(s, d, cwd));
   const operands = [];
   let targetDir = null;
   let noTargetDir = false;
@@ -604,7 +606,7 @@ function copyTargets(args, cwd) {
   if (targetDir) {
     if (targetDir.glob) { const m = expandGlob(targetDir, cwd); targetDir = m && m.length === 1 ? m[0] : word(targetDir.text, false, targetDir.raw); }
     if (!targetDir.literal) return out;
-    for (const s of expanded) out.push(...landing(s, word(path.join(targetDir.text, path.basename(s.text)), s.literal, s.raw), cwd));
+    for (const s of expanded) out.push(...land(s, word(path.join(targetDir.text, path.basename(s.text)), s.literal, s.raw)));
     return out;
   }
   if (expanded.length < 2) return out;
@@ -614,10 +616,10 @@ function copyTargets(args, cwd) {
   let isDir = false;
   if (!noTargetDir && resolved) { try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = /\/$/.test(dst.text); } }
   if (isDir) {
-    for (const s of expanded.slice(0, -1)) out.push(...landing(s, word(path.join(dst.text, path.basename(s.text)), s.literal, s.raw), cwd));
+    for (const s of expanded.slice(0, -1)) out.push(...land(s, word(path.join(dst.text, path.basename(s.text)), s.literal, s.raw)));
     return out;
   }
-  if (expanded.length === 2) return landing(expanded[0], dst, cwd);
+  if (expanded.length === 2) return land(expanded[0], dst);
   // three or more operands and a destination that is no directory: cp, mv, install and ln each stop
   // with "target is not a directory" and write nothing
   return out;
@@ -906,7 +908,7 @@ export function extractWriteTargets(command, cwd) {
       }
       case 'popd': unknownDir = true; movedHere(); break;
       case 'cp': case 'mv': case 'install': case 'ln':
-        for (const w of copyTargets(args, unknownDir ? null : dir)) add(w, name);
+        for (const w of copyTargets(args, unknownDir ? null : dir, name)) add(w, name);
         break;
       case 'tee':
         for (const a of args) if (!(a.text.startsWith('-') && a.text.length > 1)) add(a, 'tee');

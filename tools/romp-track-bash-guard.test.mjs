@@ -132,6 +132,28 @@ test('copy verbs: the last operand, a directory destination, -t, mv, install, ln
   assert.deepEqual(targets('install -d docs/new'), [], 'a directory made is no file written');
 });
 
+test('ln names its link and walks no directory source: a link is one entry, so linking a folder writes none of its files', () => {
+  // cp -r and mv of a folder land its files under the destination, so the source is walked (the test
+  // below); ln -s of the same folder makes one entry, the link, whatever the folder holds. The review's
+  // consolidation (2026-09-10) found the walk run for ln too, naming docs/<folder>/report.md as a write of
+  // a command that writes no file there.
+  fs.mkdirSync(path.join(proj, 'base', 'bundle'));
+  fs.writeFileSync(path.join(proj, 'base', 'bundle', 'report.md'), 'a copy of the report\n');
+  fs.writeFileSync(path.join(proj, 'base', 'bundle', 'notes.md'), 'notes\n');
+  const link = path.join(proj, 'docs', 'bundle');
+  assert.deepEqual(targets('ln -s base/bundle docs/bundle'), [link], 'the link alone, not the files behind it');
+  assert.deepEqual(targets('ln -s base/bundle docs/'), [link], 'into a directory: the link under the source\'s name');
+  assert.deepEqual(targets('ln -s -t docs base/bundle'), [link]);
+  assert.equal(evaluate(payload('ln -s base/bundle docs/bundle')), null, 'a link beside the tracked file passes');
+  // the walk still happens for a copy of the same folder
+  assert.deepEqual(targets('cp -r base/bundle docs/bundle'), [path.join(link, 'notes.md'), path.join(link, 'report.md')]);
+  assert.deepEqual(targets('mv base/bundle docs/bundle'), [path.join(link, 'notes.md'), path.join(link, 'report.md')]);
+  // and a link that replaces a tracked file, or lands under a tracked folder, is still that name
+  assert.deepEqual(targets('ln -sf base/bundle/report.md docs/report.md'), [report]);
+  assert.ok(evaluate(payload('ln -sf base/bundle/report.md docs/report.md')), 'replacing the tracked file with a link is refused');
+  assert.ok(evaluate(payload('ln -s base/bundle notes/bundle')), 'a new entry under a tracked folder is refused, as any new file there is');
+});
+
 test('redirections: >, >>, >|, &>, &>>, >&, <>, 2>, a fd prefix; not <, <<<, <&0, 2>&1 or >&2', () => {
   assert.deepEqual(targets('echo x > docs/report.md'), [report]);
   assert.deepEqual(targets('echo x >> docs/report.md'), [report]);
