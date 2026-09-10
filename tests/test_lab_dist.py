@@ -2195,10 +2195,18 @@ class Packaging(unittest.TestCase):
 
 
 # The text ratchet's allowlists, each a deliberate exemption with its reason. A new module that legitimately
-# names esbuild.js, or copies a tree that is not the extension's dist, is added here on purpose; so is the copy
-# primitive lab_dist adopts when the fold brings upstream's tests/dist_copy.py (its docstring names esbuild.js, and
-# it is the copytree lab_dist then calls) with its test, tests/test_dist_copy_staging.py, unless both are dropped in
-# favour of lab_dist; the ledger entry (upstream/2026-09-09-lab-dist-copy-race.md) states the plan.
+# names esbuild.js, or copies a tree that is not the extension's dist, is added here on purpose. Three files upstream
+# carries trip the ratchet when the inbound fold brings them, and the plan for each is fixed here and in the ledger
+# entry (upstream/2026-09-09-lab-dist-copy-race.md): tests/test_perf_bench.py (romp-on/romp#1057) copies kernel/ into
+# a scratch checkout to plant one line in kernel.py, never dist, and is in _TREE_COPIERS already (the fork's copy calls
+# no copytree, so the entry is a no-op until the fold, which meets that file as an add/add conflict); tests/dist_copy.py
+# (upstream's copy_dist(src, dst), a lock-free copytree ignoring the staging names, whose docstring names esbuild.js)
+# and its guard tests/test_dist_copy_staging.py (a copytree over a scratch tree, never dist) are allowlisted by the fold
+# slice that brings them, in _ESBUILD_TEXT_READERS and _TREE_COPIERS, with the reason "upstream's copy primitive and
+# its guard, called by no fork class, kept side by side so later folds of both merge clean". lab_dist keeps its own
+# copy step (shutil.copytree with copy_ignore, which leaves out the lock and the marker as well as the staging names;
+# upstream's copy_dist takes no ignore and would copy both into every lab) and does not call the twin; a later offer
+# may add an ignore parameter to upstream's copy_dist, after which lab_dist can call it and the twin stops being a twin.
 _ESBUILD_TEXT_READERS = {
     # these two drive the harness, which requires the config under node through lab_dist (the reader writes
     # module.exports to a file; require.main is not the module, so nothing builds): the derivation tests and the
@@ -2210,7 +2218,8 @@ _ESBUILD_TEXT_READERS = {
     # neither runs it
     "test_bundle_build_mode.py", "test_kernel_bundle_vendor_inputs.py",
 }
-_TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py"}            # test_github_repo copies a repo, never dist
+_TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_github_repo copies a repo, never dist
+                 "test_perf_bench.py"}                                  # upstream's copies kernel/ into a scratch checkout, never dist
 _KEY_READERS = {"test_kernel_bundle_staleness.py",                     # imports lab_dist for the input parity pin
                 "test_kernel_bundle_vendor_inputs.py"}                 # and for the BUILD_TIMEOUT pin; neither serves
 
@@ -2274,6 +2283,11 @@ class ServedModulesUseTheHelper(unittest.TestCase):
         self.assertEqual(offences("test_github_repo.py", "shutil.copytree(main, backup, symlinks=True)\n"), [])
         self.assertEqual(offences("test_github_repo.py", "shutil.copytree(os.path.join(EXT, 'dist'), lab)\n"), ["copytree(dist"],
                          "a tree copier is still refused the extension's dist")
+        # upstream's test_perf_bench.py (romp-on/romp#1057: a copytree of kernel/ into a scratch checkout) is allowlisted
+        # ahead of the fold that brings it, and refused the extension's dist like every tree copier
+        self.assertEqual(offences("test_perf_bench.py", 'shutil.copytree(os.path.join(ROOT, "kernel"), os.path.join(scratch, "kernel"), '
+                                                        'ignore=shutil.ignore_patterns("__pycache__"))\n'), [])
+        self.assertEqual(offences("test_perf_bench.py", "shutil.copytree(os.path.join(EXT, 'dist'), lab)\n"), ["copytree(dist"])
 
     def test_every_served_module_calls_copy_dist(self):
         served = []
