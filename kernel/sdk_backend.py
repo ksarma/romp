@@ -6022,10 +6022,15 @@ class SdkSession:
         modePending drop the moment the pick no longer stands, whether the settle then disarms the arm (it stood for
         this pick alone) or the arm stands for another pick. Until round 10 a name left the riding sets only with a
         whole-arm disarm or at a landing, so a fast pick withdrawn beside a bypass pick pulsed its badge and named a
-        fast change through the bypass reload. `standing=True` says the pick STANDS and nothing is withdrawn: a repeat
-        click of the arm's own pick (the launching value, which differs from what the running process has), whose name
-        keeps riding so the flag holds through its reload; only set_mode's already-applying branches pass it. A name
-        found riding counts as withdrawn for the settle's line ("withdrawn", not "repeat")."""
+        fast change through the bypass reload. `standing=True` keeps the RIDING name: the surface is discarded and the
+        settle's line logs the withdrawal either way, but the name stays on the arm so the flag holds through its
+        reload (review round 11 corrected the gloss that said nothing is withdrawn). set_mode computes it once, for
+        the arm-half re-pick (a reconnect in flight with its launching stamp standing and no connect composed yet,
+        and the re-picked mode differing from what the running process has: a repeat click of the arm's own pick),
+        and passes it at every one of its withdraw sites, so it is True only with a connect in flight; set_fast passes
+        `unlocked` in its recorded-pick branch, where a flagged running connection's off is a real change a riding fast
+        name stands for, a branch reached only by a kernel-thread off between the on's ask and the loop thread's arm.
+        A name found riding counts as withdrawn for the settle's line ("withdrawn", not "repeat")."""
         with self._hold_write():
             present = surface in self._reconnect_surfaces
             self._reconnect_surfaces.discard(surface)
