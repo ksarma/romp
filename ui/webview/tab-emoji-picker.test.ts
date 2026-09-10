@@ -120,7 +120,7 @@ test("the grid: real buttons per cell, click-safe by DELEGATION to the card, the
   assert.match(DIALOG, /delegate\(card, \{ pick: \(b\) => pick\(b\.dataset\.emoji \|\| ""\), cat: \(b\) => jumpTo\(b\.dataset\.cat \|\| ""\) \}\);/);
   assert.doesNotMatch(DIALOG, /b\.addEventListener\("click"/, "no per-cell click handler");
   assert.doesNotMatch(DIALOG, /b\.onclick/, "no per-cell click handler");
-  assert.match(RENDER, /import \{ delegate \} from "\.\/actions";/);
+  assert.match(RENDER, /import \{ delegate, pressHold \} from "\.\/actions";/, "the shared helper (the tab menu's pressHold rides the same import since round 5 of its review; click-safe.test pins the line too)");
   // headers + the strip
   assert.match(DIALOG, /const h = el\("div", "emoji-sec-h"\); h\.textContent = sec\.label;/);
   assert.match(DIALOG, /b\.type = "button"; b\.tabIndex = -1; b\.dataset\.act = "cat"; b\.dataset\.cat = c\.id;/);
