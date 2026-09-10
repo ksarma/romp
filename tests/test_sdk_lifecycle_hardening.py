@@ -2624,6 +2624,31 @@ class CrashHeal(unittest.TestCase):
         self.assertFalse(any("died mid-turn" in m for m in logs), logs)
         self.assertFalse(any("Event loop is closed" in m for m in logs), logs)
 
+    def test_a_send_during_the_read_followed_by_a_user_end_keeps_its_text_in_the_reg(self):
+        # round 6 (tests-2): pins the ended-during-the-reads branch of _on_session_gone (the `if cut:` arm of its else
+        # branch; the round-5 `elif cut` arm before round 6): a kill or a shutdown after the cut was detected and
+        # the mirror sealed runs no heal, but the sealed queue still owes the reg its texts, since a send during the
+        # reads persisted nothing. Deleting the branch left CrashHeal green while such a text was lost from the reg.
+        # The kill's alive=False flip survives the write, the text is in the reg with no nudge, no replacement is
+        # spawned and the queue is closed.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.cli_scope = True
+        with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
+            self.assertTrue(be.send(self.SID, "peer text"), "the send during the reads is accepted")
+            self.assertEqual(s.pending(), ["peer text"], "in the dying session's pending, and nowhere else yet")
+            s.client = object()
+            self.assertTrue(be.kill(self.SID))
+            self.assertTrue(s.ended)
+            sent.set()
+            s.thread.join(10)
+        self.assertIsNone(be.sessions.get(self.SID), "no replacement: the session was ended, not cut")
+        reg = sb.read_reg(Path(d), self.SID)
+        self.assertIs(reg.get("alive"), False, "kill's flip survives the write")
+        self.assertEqual([sb._queue_text(e) for e in reg.get("queue") or []], ["peer text"],
+                         "the sealed text reached the reg, with no nudge (no heal ran)")
+        self.assertTrue(s._queue_closed, "the write closed the queue")
+
     def test_every_kernel_thread_entry_point_tolerates_a_closed_loop(self):
         # round 5 (D3): every call the kernel thread can make on a session whose loop asyncio.run has closed returns
         # instead of raising RuntimeError('Event loop is closed'), and the ones that report an outcome report False
