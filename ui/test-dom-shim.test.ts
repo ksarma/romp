@@ -197,7 +197,12 @@ const MODS = "(?:(?:public|private|protected|readonly|declare|override)\\s+)";
 const NOT_KEYWORD = "(?!(?:string|number|boolean|any|unknown|never|void|object|symbol|bigint|true|false|new|typeof|await|function|async|class|yield|delete|in|instanceof)\\b)";   // a type name, a boolean or a keyword is no identifier value
 const NOT_CONTINUED = "\\b(?!\\s*[\\[<|&.(])";   // not a type continuation (Kid[], Map<, | null, & X) and not a member or call
 const IDENT = NOT_KEYWORD + "[A-Za-z_$][\\w$]*" + NOT_CONTINUED;   // a bare name as a value, capitalised or not
-const VALUE = "(?:null\\b|undefined\\b|\\[\\]|this\\b|" + IDENT + ")";   // this\b admits this.host and this.f() too: an edge write whatever it holds
+const VALUE_BASE = "(?:null\\b|undefined\\b|\\[\\]|this\\b|" + IDENT + ")";   // this\b admits this.host and this.f() too: an edge write whatever it holds
+// a conditional whose final operand is such a value and ends the statement, read after its last colon (`framed ? {} : win`,
+// `opts.framed ? {} : win`, `c ? { a: 1 } : kid`); the head and the middle operand carry no parenthesis, and the head does
+// not start with `=` (a comparison, not an assignment)
+const CONDITIONAL = "(?!=)[^;\\n()]*?\\?[^;\\n()]*:\\s*" + VALUE_BASE + "(?=[ \\t]*(?:[;,)\\n]|$))";
+const VALUE = "(?:" + VALUE_BASE + "|" + CONDITIONAL + ")";
 const NOT_PRIM = "(?!\\s*(?:string|number|boolean|bigint|symbol|undefined|void|never)\\b)";   // a field typed as a primitive is no edge
 const NOT_LITERAL = "(?!\\s*(?:[\"'`\\-\\d]|(?:true|false)\\b))";   // a declared-only value that is a string, number or boolean is a payload line
 // a declared-only field's type: a parenthesised type right after the colon (`(N | Txt | string)[]`) or a run with no
@@ -362,6 +367,7 @@ const ALLOWLIST = [
   "webview/feed-keynav-tabscope-covered.test.ts",
   "webview/feed-keynav-typing.test.ts",
   "webview/feed-render-incremental.test.ts",
+  "webview/federation-hidden-hold.test.ts",   // a conditional-valued window parent, read since the sixth review round
   "webview/file-comments-anchors-unsure-rendered.test.ts",
   "webview/file-comments-anchors-unsure.test.ts",
   "webview/file-comments-anchors.test.ts",
@@ -506,11 +512,12 @@ const ALLOWLIST = [
 // The list's exact length on 2026-09-10, after the detector's fourth round: the 148 files whose code initialised an
 // edge when the rule was written, plus the eight class fakes main added between this branch's base and its landing
 // (actions, file-comments-markclick, file-comments-markclick-controls, file-comments-seen-fixes, -seen-review2,
-// -seen-review3, file-comments-send-seen, file-view-notice), listed at the final rebase because they predate the rule.
+// -seen-review3, file-comments-send-seen, file-view-notice), listed at the final rebase because they predate the rule,
+// plus federation-hidden-hold, whose conditional-valued window parent the sixth review round's detector reads.
 // The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
 // alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
 // is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 156;
+const ALLOWLIST_MAX = 157;
 // the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
 // tags-scale test whose shim it grew from
 const SWITCHED = [
@@ -622,6 +629,11 @@ const POSITIVE: Array<[string, string, string]> = [   // [the shape it must trip
   // a slash after a postfix ++ or -- is a division: the code up to the next slash stays code
   ["assignment", "const v = x++ / 2; n.EDGE = null; const w = y / 3;", "parentNode"],
   ["assignment", "const v = x-- / 2; n.EDGE = null; const w = y / 3;", "nextSibling"],
+  // a conditional whose final operand is an admitted value, read after its last colon
+  ["assignment", "win.EDGE = opts.framed ? {} : win;", "parent"],   // the window stand-in of a framed-pane test
+  ["assignment", "win.EDGE = framed ? {} : win;\nwin.postMessage = post;", "parent"],
+  ["assignment", "n.EDGE = x ? { a: 1 } : kid;", "firstChild"],   // a colon inside the middle operand
+  ["class field", "class N {\n  EDGE = flag ? null : this;\n  appendChild() {}\n}", "parentNode"],
 ];
 const NEGATIVE: Array<[string, string, string]> = [   // [what it is, scratch source, edge name]
   ["a comparison, not an assignment", "if (n.EDGE === null) n.appendChild(c); if (m.EDGE == null) return;", "parentNode"],
@@ -673,6 +685,11 @@ const NEGATIVE: Array<[string, string, string]> = [   // [what it is, scratch so
   ["a regex pin on the line after a trailing line comment", "const pins = [\n  /a/,   // one\n  /\\{ EDGE: null \\}/,   // two\n];", "parentNode"],
   ["a cascade of regex pins, one per line, each with a trailing comment", "const pins = [\n  /x/,   // note\n  /class N { EDGE = []; }/,   // a class\n  /\\{ EDGE: undefined \\}/,   // a literal\n];", "children"],
   ["a regex after the semicolon that follows a postfix increment (the ++ rule reads the two characters before the slash)", "i++; /\\{ EDGE: null \\}/.test(s);", "parentNode"],
+  ["a conditional with a member-expression head whose final operand is an object literal (out of scope)", "win.EDGE = opts.framed ? win : {};", "parent"],
+  ["a conditional with a member-expression head whose final operand is a member expression (out of scope)", "win.EDGE = opts.framed ? win : g.top;", "parent"],
+  ["a conditional carrying a call (out of scope)", "n.EDGE = mk(x ? y : kid);", "firstChild"],
+  ["a comparison inside a conditional, not an assignment", "const same = n.EDGE === x ? a : kid;", "parentNode"],
+  ["a logical value (out of scope)", "n.EDGE = p || null; m.EDGE = p && q;", "parentNode"],
 ];
 const INDISTINGUISHABLE: Array<[string, string, string, string]> = [   // [what it is, the shape it reads as, scratch source, edge name]
   // the forms a line start reaches: a destructuring default or a type literal's member on its own line
