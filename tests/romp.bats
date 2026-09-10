@@ -2997,7 +2997,7 @@ PY
     unset ROMP_SERVE_TOKEN
     mkdir -p "$XDG_STATE_HOME/romp"
     mock_service 3                                           # no login service: down goes to the manager's own /stop
-    local case code body mport i t0
+    local case code body mport i
     for case in 401 503 401-none 401-empty; do
         code="${case%%-*}"
         rm -f "$TEST_DIR/mgr-seen"
@@ -3033,10 +3033,11 @@ PY
         MGR_PID=$!
         for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
         export ROMP_MANAGER_PORT=$mport ROMP_MANAGER_BIN="$bin/romp-manager"
-        t0=$SECONDS
         run run_romp down --now
         [ "$status" -eq 1 ]
-        [ $((SECONDS - t0)) -le 3 ]                              # said at once: no seven-second poll
+        # "said at once, no poll" is carried by the request counts below (one POST, no /status read after it)
+        # and the absent "still running" text, not by a wall-clock bound (review round 2, 2026-09-10: a
+        # 3-second bound was a load-sensitive proxy for what those assertions prove structurally)
         # the documented shape: `refused the stop (HTTP <code>: <the manager's words>). <the remedy> The kernel
         # keeps running.` (the "). " placement is the pin: the remedy is outside the parenthesis, as docs/reference.md
         # and the PR body describe it; review round 2, 2026-09-10)
