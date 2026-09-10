@@ -619,8 +619,14 @@ test("a highlight from the paragraph before an author's html block to the paragr
   // (anchor-map.ts skipBlockWs): a node of collapsible white space between two block boxes, or at a block-box parent's edge with
   // no sibling on that side, makes no line box and is skipped; every other blank in the range is painted, and the browser's
   // layout decides afterwards (trimCollapsedMarks: a mark whose text lays out at zero width is unwrapped). The stand-in here has
-  // no layout, so the blank beside an image or a br carries a mark in node; md-config-paint-whitespace-browser.test.ts leg 2
-  // drives the same scenes over the real bundle and holds that no whitespace-only mark stands after the paint. Each range runs
+  // no layout, so the blank beside an image or a br carries a mark in node, and two browser legs decide those blanks over the real
+  // bundle: md-config-paint-whitespace-browser.test.ts leg 2 drives every blank-bearing scene here but the closed details (the
+  // figures, the open details, the center, the br pair, the space beside a br) and holds that no whitespace-only mark stands after
+  // the paint; the blanks under a closed details are md-config-paint-trim-browser.test.ts test 1's, over
+  // anchor-map-fixtures/blank-scenes.json scene 3 (a closed details with a figure around its image): Chromium lays a closed
+  // details' body out hidden with a box of its own, so each blank measures at zero content width and is unwrapped, none kept (the
+  // round 13 probe, Chromium 151). Leg 2's details-body scenes are `<details open>` where these are shut, and the hgroup and dl
+  // shapes are here alone; none of the five paints a blank in node, so nothing there is deferred to the browser. Each range runs
   // from the paragraph before the html block to the paragraph after: the endpoints sit in prose the map places, and wrapBetween
   // wraps every unit between them, the html block's included, so the block's own nodes are painted or skipped by skipBlockWs
   // alone. `blanks` names, per scene, the whitespace-only marks node paints, in order; the rest of the marks are the blocks'

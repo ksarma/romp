@@ -1,14 +1,19 @@
 {
  "note": [
-  "The blank scenes the Slice 4 review collected over its rounds 7 to 12 for the comments painter (anchor-map.ts paintRendered and",
+  "The blank scenes the Slice 4 review collected over its rounds 7 to 13 for the comments painter (anchor-map.ts paintRendered and",
   "its layout-time trim, trimCollapsedMarks): a fold's paragraphs, an author's figure, details, dl and center, badge rows, br pairs,",
   "wrap points at several widths, a nbsp and an ideographic space, U+FEFF and the zero-width and bidi characters, svg icons, audio",
-  "with and without controls, an author pre with br and block children, tables, footnote definitions, list items, a form feed, a",
-  "CRLF, a floated image, a picture without an image, ruby and rp, a space inside a kbd, a table caption, and a plain note. Each",
+  "with and without controls, an author pre with br and block children and with spaces or a tab between its block children (round",
+  "13: rendered under white-space: pre, so painted and kept), tables, footnote definitions, list items, a form feed, a CRLF, a floated",
+  "image, a picture without an image, ruby and rp, a space inside a kbd, a table caption, and a plain note. Each",
   "scene is markdown from the paragraph 'Intro para.' to the paragraph 'After para.' and the width of the prose root it is laid",
   "out at (the range painted runs from the first character of the one to the last of the other). No expected marks are recorded:",
   "md-config-paint-trim-browser.test.ts reads the answer off the browser's layout for every scene (no blank mark of zero width, no",
-  "top-level mark, the trim removing blank marks alone, the unpaint exact). Synthetic prose, no paths."
+  "top-level mark, the trim removing blank marks alone, the unpaint exact). Two scenes are shaped around the pairing's recorded refusal",
+  "(plans/markdown-viewer.md, Slice 4 build note item 10 (d)): the broken-img scene's list item reads **z** so its stripped text differs from",
+  "the html block's bold before it (written **a** it painted nothing past that block); the stripped-comment scene is left hitting the refusal as",
+  "the union's one recorded case. A CR is always the CRLF pair: to marked a lone CR before CRLF is a blank line, which ends an html block",
+  "(md-config-blank-scenes-fixture.test.ts pins it). Synthetic prose, no paths."
  ],
  "scenes": [
   {
@@ -314,7 +319,7 @@
   {
    "name": "CRLF newline inside an html block between inline children",
    "width": 800,
-   "markdown": "Intro para.\r\n\r\n<div>a <b>b</b>\r\r\n<i>c</i></div>\r\n\r\nAfter para."
+   "markdown": "Intro para.\r\n\r\n<div>a <b>b</b>\r\n<i>c</i></div>\r\n\r\nAfter para."
   },
   {
    "name": "block inside an inline splitting the line",
@@ -454,7 +459,7 @@
   {
    "name": "br then space then img then space, p of one space, td of nbsp and space, img of zero size, broken img with empty alt",
    "width": 800,
-   "markdown": "Intro para.\n\n<p>a<br> <img src=\"a.png\" alt=\"a\"> <b>b</b></p>\n\n<p> </p>\n\n<table><tr><td>&nbsp; </td><td>x <b>y</b></td></tr></table>\n\n<p><img src=\"a.png\" alt=\"a\" width=\"0\" height=\"0\"> <b>a</b></p>\n\n- <img src=\"a.png\" alt=\"\"> **a**\n\nAfter para."
+   "markdown": "Intro para.\n\n<p>a<br> <img src=\"a.png\" alt=\"a\"> <b>b</b></p>\n\n<p> </p>\n\n<table><tr><td>&nbsp; </td><td>x <b>y</b></td></tr></table>\n\n<p><img src=\"a.png\" alt=\"a\" width=\"0\" height=\"0\"> <b>a</b></p>\n\n- <img src=\"a.png\" alt=\"\"> **z**\n\nAfter para."
   },
   {
    "name": "video, canvas and audio with the hidden attribute",
@@ -465,6 +470,26 @@
    "name": "plain note: heading, paragraph with inline children, list, quote, fence (the trim unwraps nothing here)",
    "width": 800,
    "markdown": "Intro para.\n\n# A heading\n\nA plain paragraph with **bold**, *emphasis*, a [link](#l) and `code` in it, long enough to wrap once at the page's width, and a second sentence after the first.\n\n- one item\n- two items with *emphasis*\n\n> a quote of one paragraph\n\n```\nfenced code\n```\n\nAfter para."
+  },
+  {
+   "name": "two spaces between two block children of an author pre (rendered under white-space: pre, a line of their own)",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre><div>a</div>  <div>b</div></pre>\n\nAfter para."
+  },
+  {
+   "name": "two spaces before the first block child of an author pre",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre>  <div>a</div></pre>\n\nAfter para."
+  },
+  {
+   "name": "a newline and two spaces between two block children of an author pre",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre><div>a</div>\n  <div>b</div></pre>\n\nAfter para."
+  },
+  {
+   "name": "a tab between two block children of an author pre",
+   "width": 800,
+   "markdown": "Intro para.\n\n<pre><div>a</div>\t<div>b</div></pre>\n\nAfter para."
   }
  ]
 }

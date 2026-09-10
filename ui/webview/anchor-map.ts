@@ -1525,13 +1525,18 @@ function sibling(n: DNode, dir: -1 | 1): DNode | null {
  *     md-config-paint-collapsed-blank.test.ts hold that no mark is a top-level node).
  *  2. The block-neighbour pre-skip. A text node of collapsible white space (isCollapsibleWs) whose nearest non-blank sibling
  *     on BOTH sides is a block-level box (isBlockBox), or whose parent is a block-level box and has no such sibling on that
- *     side, generates no line box at all: CSS 2, section 9.2.2.1, an anonymous inline box that holds only collapsible white
- *     space between block-level boxes is not rendered, and a block's leading and trailing white space is collapsed away. Under
- *     an author's `pre` such a node is a forced line break of zero width instead, the same answer to a width test. The "\n"
- *     marked leaves between a list's items, a quote's paragraphs, a table's rows or a fold's blocks is this shape, hundreds of
- *     nodes in a long note, and the pre-skip saves the mark, the measurement and the unwrap each would cost (the review round 12
- *     prototype: the trim alone gives the same answer on every scene, so the reading is an optimisation, kept because it is
- *     exact).
+ *     side, and that stands under no `pre`, generates no line box at all: CSS 2, section 9.2.2.1, an anonymous inline box that
+ *     holds only collapsible white space between block-level boxes is not rendered, and a block's leading and trailing white
+ *     space is collapsed away. Under an author's `pre` (`white-space: pre`; the one element the sanitizer keeps that preserves
+ *     white space, since an inline style keeps its colours alone, md-sanitize.ts) nothing is collapsible, so the reading does
+ *     not apply and the node is painted and measured like every other blank: two spaces or a tab between two block children
+ *     render a line of their own (16.86 and 67.44 px at 14px sans-serif in Chromium) and keep their mark, a newline alone is a
+ *     forced break of zero width and the trim unwraps it (the Slice 4 review, round 13: round 12's pre-skip read the node as
+ *     collapsible whatever its ancestors and skipped the rendered spaces, a ring gap inside the pre;
+ *     md-config-paint-trim-fixpoint.test.ts and its browser leg). The "\n" marked leaves between a list's items, a quote's
+ *     paragraphs, a table's rows or a fold's blocks is this shape, hundreds of nodes in a long note, and the pre-skip saves the
+ *     mark, the measurement and the unwrap each would cost (the review round 12 prototype: outside a pre the trim alone gives
+ *     the same answer on every scene, so the reading is an optimisation, kept because it is exact where it applies).
  *  Everything else is painted and measured: a space between two inline children, beside an image, an svg, an anchor, an empty
  *  span, an audio element, a `<br>`, a floated image, a block inside an inline, after a neighbour ending in a space, at a wrap
  *  point, a zero-width or bidi character alone, a newline under a pre. The Slice 4 review's rounds 7 to 11 grew a DOM-side
@@ -1562,7 +1567,10 @@ const skipBlockWs = (t: DText, root: DNode): boolean => {
     while (s && isText(s) && isCollapsibleWs(s.data)) s = sibling(s, dir);
     return s ? isBlockBox(s) : isBlockBox(p);
   };
-  return edge(-1) && edge(1);
+  if (!edge(-1) || !edge(1)) return false;
+  // under a pre nothing is collapsible (point 2 above): the node is painted and the trim measures it
+  for (let a: DNode | null = p; a && a !== root; a = a.parentNode) if (isElement(a) && a.tagName.toUpperCase() === "PRE") return false;
+  return true;
 };
 
 /** A formula element (FORMULA_CLASSES) that stands in a line of text: KaTeX's inline layout, its flag on TeX it could not parse,
@@ -1783,9 +1791,15 @@ const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 // line's edge or at the point where the line wraps, one after a neighbour ending in a space or beside an element that renders
 // nothing (an empty anchor, an audio element without controls, a floated image), a zero-width or bidi character, a newline the
 // browser drops. A rendered blank keeps its mark: a no-break or ideographic space, a space between two inline children on one
-// line, the space beside an svg icon, an image or a checkbox. The measurement is the browser's own, a Range over the mark's
-// contents with its client rects' widths summed (a text node split over a wrap counts both fragments); a mark with no client
-// rect of its own (a display:none ancestor) is kept, since its blank may render when the ancestor shows. Blank, to the trim, is
+// line, the space beside an svg icon, an image or a checkbox. The measurement is the browser's own, a Range over each text node
+// under the mark with its client rects' widths summed (a text node split over a wrap counts both fragments), never one Range over
+// the mark's contents: two comments over one passage nest their marks (the later paint wraps the text node where it stands, inside
+// the earlier comment's mark), and a Range over the outer mark's contents reads the inner MARK element's border box, 4 px of
+// padding around a collapsed blank, so a nest of d marks over one wrap point was peeled one level per pass and stood as ringed
+// boxes inside one another at the cap (the Slice 4 review, round 13; md-config-paint-trim-fixpoint.test.ts and the panel leg's
+// overlapping comments); a mark with no client rect of its own (a display:none ancestor) is kept, since its blank may render
+// when the ancestor shows (the panel measures it again in the first frame after the show: file-comments.ts trimBlanks re-arms the
+// layout frame when the body has no box). Blank, to the trim, is
 // text with no letter, digit, punctuation or symbol (`\s`, the format and control characters, a combining mark alone) or the
 // hangul fillers alone (letters to Unicode, blank in most fonts); the alphabet picks what is MEASURED and layout decides, so a
 // candidate that renders (U+093F alone draws a dotted circle, U+000B a glyph) keeps its mark.
@@ -1806,27 +1820,52 @@ const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 //   rather than a saving measured here; md-config-paint-trim-browser.test.ts point 4).
 // - To a fixpoint. A mark's own 2 px side padding is in the layout, so unwrapping a collapsed mark shortens its line and a
 //   later blank on the line may collapse in turn; after a pass that unwrapped something the remaining candidates are measured
-//   again, at most TRIM_PASSES passes, stopping when a pass unwraps nothing. The reverse, a blank unwrapped as collapsed that
-//   renders once a later unwrap moved the wrap point, stays unpainted until the next paint pass: a mark is never re-wrapped,
-//   since a blank at a line's last inch can flip with every pass (plans/markdown-viewer.md, the Slice 4 build note's item 10,
-//   records the shape with the layout-neutral mark as the option that removes it).
+//   again, until a pass unwraps nothing. The loop ends by construction (a mark is only ever removed, so the candidates shrink on
+//   every pass that continues); TRIM_PASSES_MAX is a safety cap, and a call that reaches it with candidates standing is counted in
+//   TRIM_STATS.capped. Round 12 capped the passes at three, and on the paragraph of 5,000 links a fresh paint at 700 px left 366
+//   padding-only marks (the passes unwrap 373, 373, 371, 366, 299, 298, 297 and 0: the 4 px freed per line moves nearly every
+//   wrap point one word, so the paragraph's wrap-point marks collapse again after each pass), at 400 px 406 and at 300 px 271; a
+//   re-trim after a narrowing from 800 to 400 px left 266 (twelve passes to converge) and 800 to 300 px 652 (eleven); 800, 600
+//   and 500 px happened to converge in two passes, and 800 px was the one width the tests pinned (the Slice 4 review, round 13;
+//   md-config-paint-trim-fixpoint-browser.test.ts holds zero padding-only marks at five widths, fresh and after a narrowing).
+//   The reverse, a blank unwrapped as collapsed that renders once a later unwrap moved the wrap point, stays unpainted until the
+//   next paint pass: a mark is never re-wrapped, since a blank at a line's last inch can flip with every pass
+//   (plans/markdown-viewer.md, the Slice 4 build note's item 10, records the shape with the layout-neutral mark as the option
+//   that removes it).
 // Event-based: the measurement is taken at paint time, and the panel runs the trim again over its standing marks when the seam
 // reports a reflow (file-comments.ts, onRendered "reflow": the body's width changed, a text-size step), so a blank that
 // collapses at the new width loses its mark in the frame the cards are re-placed; a blank trimmed at the old width that renders
 // at the new one stays unpainted until the next paint pass (the panel repaints on new nodes, never on a reflow, since 2026-09-09).
+// Since the Slice 4 review's round 13 the panel re-trims on two layout changes the seam never reports as well, the body's captured
+// `load` (a figure's bytes landing) and the document's FontFaceSet `loadingdone` (a face arriving under font-display: swap), each
+// re-wrapping the lines with no width report, folded into its layout frame (one trim per frame); and a trim that finds the body
+// without a box (a display:none pane, where every blank mark measures nothing and is kept) asks for a frame, which a hidden pane
+// gets only after the show, and measures the marks again there, once per event and never per frame (file-comments.ts trimBlanks
+// and scheduleRetrim; md-config-paint-retrim-events-browser.test.ts). The re-trim's price per reflow: realistic shapes under 10 ms
+// (200 comments over 300 paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to 11 ms); one comment across the paragraph of 5,000 links
+// 1.5 to 4.6 s in the real pane (round 13's measurement at a divider release, a text-size step and a window-resize step: the first
+// measurement of each pass after the one before it unwrapped lays the mutated paragraph out again, 1 to 1.5 s a layout), recorded
+// beside the paint's cost and not optimised. The divider's drag itself fires one reflow, at release (the shell moves a ghost line
+// and lays the pane out once); a window-edge resize reflows every frame and pays the price per frame.
 // In node the stand-ins offer no layout, so the trim measures nothing and every blank the DOM-side skips leave is a mark; the
 // node tests pin the DOM shape and the two skips, the browser legs the trimmed result (md-config-paint-trim.test.ts and
-// md-config-paint-trim-browser.test.ts, over anchor-map-fixtures/blank-scenes.json, the scenes the review rounds 7 to 12 collected).
+// md-config-paint-trim-browser.test.ts, over anchor-map-fixtures/blank-scenes.json, the scenes the review rounds 7 to 13 collected).
 
 export type PaintOptions = {
   /** Trim this call's collapsed blank marks (trimCollapsedMarks), the default. The Comments panel passes false and trims once
    *  per paint pass over every mark of the pass: one layout instead of one per call. */
   trim?: boolean;
 };
-/** The measure-then-unwrap passes a trim runs at most (the fixpoint's cap). Over the review's 91 scenes 42 paints took one pass
- *  (nothing collapsed), 34 two (a pass that unwrapped, then the pass that confirmed nothing else had), and one three (the list item
- *  of fourteen links at 220 px); a fourth would only chase a blank that flips with the padding. */
-const TRIM_PASSES = 3;
+/** The safety cap on a trim's measure-then-unwrap passes. The loop stops when a pass unwraps nothing and ends by construction
+ *  before then (each pass that continues removes at least one mark); the cap guards against a cascade that unwraps one mark a pass,
+ *  and a call that reaches it with candidates standing is counted in TRIM_STATS.capped. Over round 12's 91 fixture scenes 42 paints
+ *  took one pass (nothing collapsed), 34 two (a pass that unwrapped, then the pass that confirmed nothing else had) and one three
+ *  (the list item of fourteen links at 220 px); the paragraph of 5,000 links takes up to eight passes fresh and twelve after a
+ *  narrowing (the header), the most measured. Exported for the tests. */
+export const TRIM_PASSES_MAX = 20;
+/** The last trim's pass count and the calls that reached the cap since the module loaded: the record the header names, read by
+ *  the tests and by a devtools probe. */
+export const TRIM_STATS = { passes: 0, capped: 0 };
 /** A mark whose every text node matches this is measured: no letter, digit, punctuation or symbol in it (so `\s`, the Unicode
  *  spaces, the format characters Cf, the controls Cc, a combining mark alone), or the hangul fillers (U+115F, U+1160, U+3164,
  *  U+FFA0: letters to Unicode, blank in most fonts). The alphabet chooses what is measured, never what is unwrapped. */
@@ -1852,16 +1891,27 @@ function measureRange(m: DElement): DRange | null {
   const r = doc.createRange();
   return typeof r.getClientRects === "function" ? r : null;
 }
-/** The rendered width of the mark's contents: its client rects' widths summed, a fragment per line a text node runs over. */
+/** The rendered width of the mark's text: a Range over each text node under it, the client rects' widths summed, a fragment per
+ *  line a node runs over. Per text node and never over the mark's contents: a Range that selects an element whole reports the
+ *  element's border box (CSSOM getClientRects), so over an outer mark holding an inner one (two comments over one passage) the
+ *  inner mark's 4 px of padding around a collapsed blank read as content and the nest was peeled one level per pass (the header). */
 function contentWidth(r: DRange, m: DElement): number {
-  r.selectNodeContents(m);
-  const rects = r.getClientRects();
   let w = 0;
-  for (let i = 0; i < rects.length; i++) w += rects[i].width;
+  const visit = (n: DNode) => {
+    if (isText(n)) {
+      r.selectNodeContents(n);
+      const rects = r.getClientRects();
+      for (let i = 0; i < rects.length; i++) w += rects[i].width;
+      return;
+    }
+    for (let i = 0; i < n.childNodes.length; i++) visit(n.childNodes[i]);
+  };
+  visit(m);
   return w;
 }
-/** The mark's own client rects: none under a display:none ancestor (kept, its blank may render when the ancestor shows); a
- *  collapsed blank in a rendered line gives the mark its padding's rect. A stand-in without the method counts as rendered. */
+/** The mark's own client rects: none under a display:none ancestor (kept, its blank may render when the ancestor shows, and the
+ *  panel measures it again in the first frame after the show, file-comments.ts trimBlanks); a collapsed blank in a rendered line
+ *  gives the mark its padding's rect. A stand-in without the method counts as rendered. */
 const ownRects = (m: DMeasured): number => typeof m.getClientRects === "function" ? m.getClientRects().length : 1;
 /** Unwrap every mark of `marks` whose text is blank (isBlankMark) and lays out at zero width: the browser collapsed the blank, so
  *  the mark was the sheet's padding around nothing. The mark's children go back before it and it is removed, with no normalize
@@ -1872,13 +1922,17 @@ export function trimCollapsedMarks(marks: Element[]): Element[] {
   let kept = marks as unknown as DElement[];
   let cands = kept.filter(isBlankMark);
   const r = cands.length ? measureRange(cands[0]) : null;
+  TRIM_STATS.passes = 0;
   if (!r) return marks;
-  for (let pass = 0; pass < TRIM_PASSES && cands.length; pass++) {
+  let converged = false;
+  while (TRIM_STATS.passes < TRIM_PASSES_MAX && cands.length) {
+    TRIM_STATS.passes++;
     // phase one: every measurement (one layout for the pass), no mutation among them
     const drop = new Set<DElement>();
     for (const m of cands) if (m.parentNode && contentWidth(r, m) === 0 && ownRects(m) > 0) drop.add(m);
-    if (!drop.size) break;
-    // phase two: every unwrap
+    if (!drop.size) { converged = true; break; }
+    // phase two: every unwrap (a nest of marks over one blank is dropped whole: the outer mark's children move up before it,
+    // the inner mark among them, and the inner mark's move then finds its new parent; either order leaves the text in place)
     for (const m of drop) {
       const p = m.parentNode as DElement;
       while (m.childNodes.length) p.insertBefore(m.childNodes[0], m);
@@ -1887,6 +1941,7 @@ export function trimCollapsedMarks(marks: Element[]): Element[] {
     kept = kept.filter((m) => !drop.has(m));
     cands = cands.filter((m) => !drop.has(m));
   }
+  if (!converged && cands.length) TRIM_STATS.capped++;
   return kept as unknown as Element[];
 }
 

@@ -10,7 +10,12 @@
 //    unwraps (the stand-in counts a layout at each measurement taken after a mutation); a measurement per unwrap cost the
 //    prototype 12 s on a paragraph of 5,000 code spans.
 // 3. The fixpoint: after a pass that unwrapped something the remaining candidates are measured again (a stand-in whose widths
-//    depend on which marks stand shows the second pass unwrapping what the first pass's unwraps collapsed), at most three passes.
+//    depend on which marks stand shows the second pass unwrapping what the first pass's unwraps collapsed), until a pass unwraps
+//    nothing or no candidate is left: a cascade of five blanks, each collapsing once the marks before it are gone, is unwrapped
+//    whole, one layout per pass and every pass over the marks the last one kept. The test holds the result, never a count of
+//    passes: round 12 capped the loop at three and pinned the cap here, and the cap left 366 padding-only marks on a paragraph of
+//    5,000 links at 700 px (round 13). TRIM_PASSES_MAX is a safety cap above every cascade measured, pinned as a bound and never as
+//    the mechanism in md-config-paint-trim-fixpoint.test.ts, with TRIM_STATS, the count of the calls that reached it.
 // 4. Batching: paintRendered trims its own marks by default and defers when the caller passes `trim: false`; trimCollapsedMarks over
 //    the marks of several paints measures them in one pass, the Comments panel's call shape (file-comments.ts paintAll).
 // 5. The candidate alphabet picks what is MEASURED and nothing else: a lone bidi mark, soft hyphen, combining mark or hangul filler
@@ -245,22 +250,39 @@ test("a pass measures every candidate first and unwraps afterwards: one layout f
 });
 
 // -- 3. the fixpoint ---------------------------------------------------------------------------------------------------------
-test("after a pass that unwrapped something the remaining candidates are measured again: a blank that collapses once another mark is gone is unwrapped in the second pass; at most three passes, a blank that would flip on the fourth keeps its mark", () => {
-  // five blanks; blank k collapses only once the marks of blanks 0 .. k-1 are gone (each unwrap shortens the line and the next
-  // blank becomes the wrap point): pass 1 unwraps blank 0, pass 2 blank 1, pass 3 blank 2; blanks 3 and 4 keep their marks
-  const src = wrap("<p><b>a</b> <b>b</b> <b>c</b> <b>d</b> <b>e</b> <b>f</b></p>");
+/** A cascade of `n` blanks in a paragraph of `n + tail + 1` bold words: blank k lays out at zero width only once the marks of
+ *  blanks 0 .. k-1 are gone (each unwrap shortens the line by the mark's padding and the next blank becomes the wrap point), so
+ *  pass k + 1 unwraps blank k and no pass unwraps two; the `tail` blanks after the cascade render whatever stands. */
+function cascade(n: number, tail = 0): { doc: FakeDocument; box: FakeElement; src: string; blanks: FakeText[]; inMark: (t: FakeText) => boolean } {
+  const words = Array.from({ length: n + tail + 1 }, (_, i) => "<b>" + String.fromCharCode(97 + i) + "</b>");
+  const src = wrap("<p>" + words.join(" ") + "</p>");
   const { doc, box } = buildRendered(src);
   const blanks = para(box).kids.filter((c) => c.nodeType === 3 && isBlank((c as FakeText).data)) as FakeText[];
-  assert.equal(blanks.length, 5);
+  assert.equal(blanks.length, n + tail, "the scene's blanks");
   const inMark = (t: FakeText): boolean => !!t.parentNode && t.parentNode.tagName === "MARK";
-  doc.measure = (t) => { const k = blanks.indexOf(t); if (k < 0) return 7.8; return blanks.slice(0, k).some(inMark) ? 3.89 : 0; };
+  doc.measure = (t) => { const k = blanks.indexOf(t); if (k < 0) return 7.8; if (k >= n) return 3.89; return blanks.slice(0, k).some(inMark) ? 3.89 : 0; };
   doc.layouts = 0;
-  const marks = paintRendered(El(box), src, acrossRange(src), "fc-hl") as unknown as FakeElement[];
-  assert.deepEqual(blanks.map(inMark), [false, false, false, true, true], "three passes unwrapped blanks 0, 1 and 2 in turn; blank 3, collapsed only once blank 2's mark is gone, would take a fourth pass and keeps its mark");
-  assert.equal(doc.layouts, 3, "three layouts, one per pass");
-  assert.equal(marks.filter((m) => isBlank(m.textContent)).length, 2);
-  // the returned list is the kept marks in the order given
-  assert.deepEqual(texts(marks), ["Intro para.", "a", "b", "c", "d", " ", "e", " ", "f", "After para."]);
+  return { doc, box, src, blanks, inMark };
+}
+
+test("after a pass that unwrapped something the remaining candidates are measured again, until a pass unwraps nothing or no candidate is left: a cascade of five blanks, each collapsing only once the marks before it are gone, is unwrapped whole over five passes (one layout each, every pass over the marks the last one kept); two rendered blanks after it cost one confirming pass and keep their marks", () => {
+  // round 12 stopped after three passes, so blanks 3 and 4 kept their marks: the sheet's padding around nothing, the box the
+  // trim exists to remove (on a paragraph of 5,000 links at 700 px the cap kept 366 of them; round 13 runs the loop to its end)
+  const a = cascade(5);
+  const marks = paintRendered(El(a.box), a.src, acrossRange(a.src), "fc-hl") as unknown as FakeElement[];
+  assert.deepEqual(a.blanks.map(a.inMark), [false, false, false, false, false], "pass k + 1 unwrapped blank k: the whole cascade, blanks 3 and 4 with it");
+  assert.equal(a.doc.layouts, 5, "five layouts, one per unwrapping pass; the candidates ran out with the fifth, so no confirming pass");
+  assert.equal(a.doc.measured.length, 5 + 4 + 3 + 2 + 1, "every pass measures the candidates the last one kept and no other");
+  assert.equal(marks.filter((m) => isBlank(m.textContent)).length, 0, "no blank mark stands");
+  assert.deepEqual(texts(marks), ["Intro para.", "a", "b", "c", "d", "e", "f", "After para."], "the returned list is the kept marks in the order given");
+  // the same cascade before two blanks that render whatever stands: five unwrapping passes, then the pass that measures the two,
+  // unwraps nothing and ends the loop
+  const b = cascade(5, 2);
+  const kept = paintRendered(El(b.box), b.src, acrossRange(b.src), "fc-hl") as unknown as FakeElement[];
+  assert.deepEqual(b.blanks.map(b.inMark), [false, false, false, false, false, true, true], "the cascade unwrapped whole, the two rendered blanks keep their marks");
+  assert.equal(b.doc.layouts, 6, "six layouts: five unwrapping passes and the one that confirmed the fixpoint");
+  assert.equal(b.doc.measured.length, 7 + 6 + 5 + 4 + 3 + 2, "each pass over the marks the last one kept: seven, then six, down to the two of the confirming pass");
+  assert.deepEqual(texts(kept), ["Intro para.", "a", "b", "c", "d", "e", "f", " ", "g", " ", "h", "After para."]);
 });
 
 // -- 4. batching: the panel's call shape -------------------------------------------------------------------------------------

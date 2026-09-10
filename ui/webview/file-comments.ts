@@ -460,6 +460,10 @@ function foldedAway(m: Element): boolean {
   }
   return false;
 }
+/** Whether a mark of a paint pass still stands in the document, read after the pass's trim (anchor-map.ts trimCollapsedMarks
+ *  unwraps a collapsed blank's mark and removes it): isConnected where the DOM offers it; a stand-in without the property (the
+ *  node tests' DOMs) answers by the parent the removal would have cleared, so nothing there is re-filed as unpainted. */
+const standing = (m: Element): boolean => typeof m.isConnected === "boolean" ? m.isConnected : !!m.parentNode;
 const clock = (t: number | string): string => {
   const d = new Date(t);
   if (isNaN(d.getTime())) return "";
@@ -950,6 +954,9 @@ class Panel {
   /** The Rendered marks of the last paint pass (the highlights, the change marks, the pending target), the layout-time trim's
    *  subjects (anchor-map.ts trimCollapsedMarks): trimmed once after the pass, and again on every reflow (trimBlanks). */
   passMarks: Element[] = [];
+  /** The pass's change marks by change id (paintChanges under the deferred trim), read once the pass has trimmed: a change whose
+   *  every mark the trim removed is filed as not shown (paintAll), as the unbatched paint would have filed it. */
+  passChanges: Array<{ id: string; marks: Element[] }> = [];
   open = false;
   pending = new Map<number, Pending>();
   appliedReq = 0;                           // the reqId of the newest ask whose reply is showing (applyStatus)
@@ -1094,6 +1101,7 @@ class Panel {
   bodyPad = 0;                                // the end padding the pass gave the body, in px (padBody): the footer's height plus the last card's overhang
   contentWatched = new Set<Element>();        // the body's element children the size observer holds (watchContent: the content's box, which grows when the body's does not)
   layoutFrame: number | null = null;          // the pass scheduled for the next frame (scheduleLayout: one per frame, however many events ask)
+  retrim = false;                             // the standing Rendered marks are measured again in that frame, before the pass (scheduleRetrim: a figure landed or a font face arrived, and the lines re-wrapped with no width report)
   syncFrom: "body" | "track" | null = null;   // the scroller whose write onto the other is still to echo (mirrorScroll)
   sizer: ResizeObserver | null = null;        // the body, the row and the track (the aside's width and height reach it as the track's): a size change re-runs the pass
   cardSizer: ResizeObserver | null = null;    // the cards of the current render: one growing (a crop, a box inside it) pushes the cards below
@@ -1255,8 +1263,21 @@ class Panel {
     ctx.body().addEventListener("load", this.hideFloatOnScroll, true);
     ctx.body().addEventListener("scroll", this.hideFloatOnScroll, { passive: true });
     ctx.onSelection((sel) => this.onSelection(sel));
-    // a PAINT (new nodes): the whole pass over the body. A REFLOW (the same nodes at a new width or text size, a pane drag's
-    // every frame): the marks stand around the same characters, so only what was MEASURED from the text is redone, the
+    // the layout changes that re-wrap the lines with no width report, so the seam fires no reflow (the width observer's report
+    // is its only source): a figure's bytes landing (the same captured `load`; a gated figure's restored media loads through it
+    // too) and a font face arriving (the document's FontFaceSet `loadingdone`: the sheet's faces load with `font-display: swap`,
+    // so the fallback face shows first and every glyph's width changes when Inter lands). Each re-measures the standing marks'
+    // collapsed blanks in the next frame (scheduleRetrim): a space that rendered before is the wrap point now, and its mark
+    // would be the sheet's padding around nothing, a ringed 4 x 18 px box at the end of the line until the next paint pass or
+    // width change (the Slice 4 review, round 13; md-config-paint-retrim-events-browser.test.ts). Here at the mount and not with
+    // the margin layout's listeners (installLayout, wired at the first open), since the highlights stand while the panel is
+    // closed too. The fonts' listener hangs on the document, which outlives the viewer: dispose removes it.
+    ctx.body().addEventListener("load", this.scheduleRetrim, true);
+    const fonts = typeof document !== "undefined" ? (document as any).fonts : null;
+    if (fonts && typeof fonts.addEventListener === "function") fonts.addEventListener("loadingdone", this.scheduleRetrim);
+    // a PAINT (new nodes): the whole pass over the body. A REFLOW (the same nodes at a new width or text size: the divider's
+    // release, since the shell moves a ghost line during the drag and lays the pane out once; a text-size step; a window
+    // resize's every frame): the marks stand around the same characters, so only what was MEASURED from the text is redone, the
     // cards' places (scheduleLayout, one pass per frame) and the float, which sat by a passage that has moved. Until
     // 2026-09-09 a reflow ran paintAll too, unwrapping and re-wrapping every highlight and change mark and rebuilding the
     // aside, once per frame of a drag: 1.1 s a frame at 3,000 lines with 200 comments and 200 changes (bench
@@ -1698,6 +1719,9 @@ class Panel {
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     this.ctx.body().removeEventListener("load", this.hideFloatOnScroll, true);
     this.ctx.body().removeEventListener("scroll", this.hideFloatOnScroll);
+    this.ctx.body().removeEventListener("load", this.scheduleRetrim, true);
+    const fonts = typeof document !== "undefined" ? (document as any).fonts : null;
+    if (fonts && typeof fonts.removeEventListener === "function") fonts.removeEventListener("loadingdone", this.scheduleRetrim);   // the document outlives the viewer
     document.removeEventListener("keydown", this.escapeReplace, true);
     this.failAll("the file viewer closed");
     if (live === this) live = null;   // …and the window's save-chord claim (claimSaveChord reads `live`) is no longer this box's
@@ -2713,7 +2737,7 @@ class Panel {
     // the pass's Rendered marks, painted with the trim deferred (`trim: false`) and trimmed ONCE after the pass (trimBlanks):
     // the trim measures its marks against the layout, and a measurement after each call's wraps lays the mutated block out
     // again, 0.45 ms a call on a 12k-element note, 90 ms added to a 200-comment pass; batched, the pass pays one layout
-    this.passMarks = [];
+    this.passMarks = []; this.passChanges = [];
     const byCard: Array<{ id: string; marks: Element[] }> = [];
     // the comment highlights — unless the filter shows the changes alone (activeFilter), when the text wears the change
     // marks only; the cards the filter hides are not rendered, so nothing reads `located` for them
@@ -2752,7 +2776,11 @@ class Panel {
     this.trimBlanks();
     // a card whose every mark was a collapsed blank (a passage of one zero-width character) shows nothing: card only, as the
     // unbatched paint would have said (paintRendered returns null once its marks are trimmed)
-    for (const c of byCard) { const l = this.located.get(c.id); if (l && l.painted && !c.marks.some((m) => m.isConnected)) this.located.set(c.id, { ...l, painted: false }); }
+    for (const c of byCard) { const l = this.located.get(c.id); if (l && l.painted && !c.marks.some(standing)) this.located.set(c.id, { ...l, painted: false }); }
+    // ...and a change whose every mark was one (an inserted zero-width space) is filed as not shown the same way, so its card wears
+    // the tag and offers Reveal (renderChangeCard) instead of claiming a mark the body does not hold; a substitution keeps its
+    // deletion point, a span the trim never measures, and stays shown (the Slice 4 review, round 13)
+    for (const c of this.passChanges) if (!c.marks.some(standing)) this.paintedChanges.delete(c.id);
     this.paintRegions();
     if (held) this.refocusMark(held);
     this.render();
@@ -2761,10 +2789,29 @@ class Panel {
    *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every
    *  mark of it in one measurement, and again on the seam's reflow, when a blank that rendered at the old width may be the
    *  wrap point at the new one. A mark the trim or the unpaint already removed is skipped; a blank trimmed at the old width
-   *  that renders at the new one is not re-wrapped, and stays bare until the next paint pass (the trim's header). */
-  private trimBlanks(): void {
-    this.passMarks = this.passMarks.filter((m) => m.isConnected);
-    if (this.passMarks.length) this.passMarks = trimCollapsedMarks(this.passMarks);
+   *  that renders at the new one is not re-wrapped, and stays bare until the next paint pass (the trim's header). The price, on
+   *  the shape the plan accepts the paint's cost for (one comment across a paragraph of 5,000 links, about 4,600 blank marks):
+   *  seconds per reflow in the real pane, 1.5 to 4.6 s measured in the Slice 4 review's round 13 at a divider release, a
+   *  text-size step and a window-resize step, the first measurement of each pass after the one before it unwrapped laying the
+   *  mutated paragraph out again (1 to 1.5 s a layout there); realistic shapes cost under 10 ms (200 comments over 300
+   *  paragraphs 0.6 to 1.2 ms, a 120-link item 0.6 to 11 ms). The divider's drag itself pays nothing: the shell moves a ghost
+   *  line and lays the pane out once, at release; a window-edge resize reflows every frame, and pays this per frame. */
+  private trimBlanks(rearm = true): void {
+    this.passMarks = this.passMarks.filter(standing);
+    if (!this.passMarks.length) return;
+    // the pane hidden (a display:none iframe, the phone shell's every tab switch; the body has no box): every blank mark measures no
+    // width and no box of its own and is kept, its blank one that may render on the show. Whether any observer then reports the
+    // show is the engine's call: in headless Chromium four hides of six ran one lifecycle update in the hidden frame, whose width
+    // observer reported the hide and then the show as reflows (this hook's path), and two ran none, where no observer reports
+    // either and the body's width stays the one last observed. So the trim asks for a frame (scheduleRetrim): a hidden frame
+    // renders none, the frame it gets is the first after the show, and the marks are measured again there. The frame's own trim
+    // never re-arms (rearm false), so a root without a box is measured once per event and never per frame (the Slice 4 review,
+    // round 13; md-config-paint-retrim-events-browser.test.ts leg 4). The box is read BEFORE the trim, with the layout the trim's
+    // first measurement forces anyway; read after its unwraps it would force a second layout of the mutated blocks.
+    const body = this.ctx.body();
+    const boxless = rearm && typeof body.getClientRects === "function" && body.getClientRects().length === 0;
+    this.passMarks = trimCollapsedMarks(this.passMarks);
+    if (boxless) this.scheduleRetrim();
   }
   // The marks in the BODY are controls too (KEY_ACTS: a highlight, a change mark, a rectangle), and every paint pass
   // rebuilds them — so a status landing while the keyboard was on one left it on the body, the way Enter on a card's
@@ -2852,6 +2899,9 @@ class Panel {
       for (const id of r.painted) this.paintedChanges.add(id);
       marks = Array.from(root.querySelectorAll('[data-act="fcchange"]')).filter((m) => !before.has(m));
       this.passMarks.push(...marks);
+      // under the deferred trim the painted ids are provisional: the pass confirms each against the marks that stay once it has
+      // trimmed (paintAll reads passChanges), since paintChangesRendered reports a change painted by its untrimmed marks
+      if (deferTrim) for (const id of r.painted) this.passChanges.push({ id, marks: marks.filter((m) => (m as HTMLElement).dataset.id === id) });
     } else {
       marks = paintChangesRaw(root, src, changes, stylesFor);
       for (const m of marks) { const id = (m as HTMLElement).dataset.id; if (id) this.paintedChanges.add(id); }
@@ -3459,12 +3509,24 @@ class Panel {
     const row = this.ctx.body().parentElement;
     return !!row && getComputedStyle(row).flexDirection !== "column";
   }
-  /** One pass per frame, however many events ask for it (a figure's load, a resize, a card's growth). */
+  /** One pass per frame, however many events ask for it (a figure's load, a resize, a card's growth): the frame runs the re-trim
+   *  the events asked for (retrim), then places the cards (layoutPass). A closed panel gets a frame for a re-trim alone, its
+   *  highlights standing, and the pass then returns at once. */
   private scheduleLayout(): void {
-    if (this.layoutFrame !== null || !this.open) return;
-    if (typeof requestAnimationFrame !== "function") { this.placeCards(false); return; }
-    this.layoutFrame = requestAnimationFrame(() => { this.layoutFrame = null; this.placeCards(false); });
+    if (this.layoutFrame !== null || !(this.open || this.retrim)) return;
+    if (typeof requestAnimationFrame !== "function") { this.layoutPass(); return; }
+    this.layoutFrame = requestAnimationFrame(() => { this.layoutFrame = null; this.layoutPass(); });
   }
+  /** The frame's work: the standing marks' collapsed blanks measured again when an event asked for it (scheduleRetrim), first, so
+   *  the cards are placed over the marks that stay; then the pass (placeCards returns at once when the panel is closed). */
+  private layoutPass(): void {
+    if (this.retrim) { this.retrim = false; this.trimBlanks(false); }
+    this.placeCards(false);
+  }
+  /** The standing Rendered marks measured again (trimBlanks) in the next frame, one trim however many events ask, and the cards
+   *  re-placed after it in the same frame: a figure's bytes landing or a font face arriving re-wraps the lines with no width report,
+   *  so the seam fires no reflow (the mount's listeners say why; md-config-paint-retrim-events-browser.test.ts). */
+  scheduleRetrim = (): void => { this.retrim = true; this.scheduleLayout(); };
   /** After every render: the pass, then the centering a head click asked for — in that order, so the expanded card's
    *  new height has pushed the cards below it before anything scrolls (no jump after the expand). Only a card the
    *  click OPENED is centered: a fold is a dismissal, and the text should not move for it. A mark inside a closed

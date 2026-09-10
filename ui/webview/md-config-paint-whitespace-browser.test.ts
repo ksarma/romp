@@ -1,6 +1,6 @@
 // The whitespace rule of the Rendered paint (anchor-map.ts skipBlockWs and trimCollapsedMarks), over the REAL bundle in headless
 // Chromium: marked with the one configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as
-// the viewer's mdBlock builds it. Four legs (the Slice 4 review, rounds 9 and 12):
+// the viewer's mdBlock builds it. Four legs (the Slice 4 review, rounds 9, 12 and 13):
 // 1. BLOCK_BOXES, the tags a whitespace-only text node between two of which is skipped without a measurement, is DERIVED here and
 //    held equal to the shipped set: every
 //    tag the sanitizer keeps (DOMPurify's allowlist under MD_PURIFY, read off the instance itself through its element hook, less
@@ -29,14 +29,19 @@
 //    catcher. The source table (anchor-map.ts sourceTable) is one entry keyed on the source, and marked's lex of a 5,000-link
 //    paragraph is 300 ms of its own, so each timed paint follows an untimed one over the same source (the table warm, as it is for
 //    the panel, which paints one text many times) and the marks are unwrapped between paints, the DOM built once a size.
-// 4. The trim's shape and cost on the same LARGE paragraph, the pathological case (one comment across 5,000 links; round 12): the
-//    trimmed paint unwraps exactly one blank mark per line break of the painted paragraph (the space the line wraps at, collapsed
-//    as the line's trailing space) and leaves no blank mark of zero width and no rendered blank unmarked; it measures each blank
-//    mark once per pass, at most three passes (Range.getClientRects counted through a wrapper on its prototype: between B + (B -
-//    trimmed) and 3B calls for B blank marks, the second pass being the fixpoint's confirmation, never one measurement per unwrap,
-//    which relaid the block out 373 times and cost 12 s in the prototype); and it costs a bounded multiple of the untrimmed paint
-//    in the same run (TRIM_BOUND; the prototype measured about 8 for one pass, the build box about 16 with the confirming pass),
-//    with an absolute guard. Skips LOUDLY without a playwright browser (CI installs none). Synthetic prose, no paths.
+// 4. The trim's shape and cost on the same LARGE paragraph, the pathological case (one comment across 5,000 links; rounds 12 and
+//    13): at 800 px the trimmed paint unwraps exactly one blank mark per line break of the painted paragraph (the space the line
+//    wraps at, collapsed as the line's trailing space) and leaves no blank mark of zero width and no rendered blank unmarked. Its
+//    passes are read off the DOM calls themselves (Range.getClientRects, one per blank mark measured, and the unwrap's removeChild
+//    of a mark, both counted through wrappers on their prototypes): every measurement of a pass before its first unwrap, the first
+//    pass over every blank mark, each later pass over exactly the marks the last one kept, the loop ending with a pass that
+//    unwrapped nothing or with no candidate left, and the passes as many as the cascade takes. Round 12 capped them at three and
+//    pinned the cap here as `calls <= 3B`; at 700 px, where each unwrap moves the wrap point of a longer cascade, that cap left
+//    366 padding-only marks standing after the trim, so round 13 runs the loop to its fixpoint and this leg paints the paragraph
+//    at 700 px as well and holds no zero-width blank mark there either. Never one measurement per unwrap (which relaid the block
+//    out 373 times and cost 12 s in the prototype). And it costs a bounded multiple of the untrimmed paint in the same run
+//    (TRIM_BOUND; the prototype measured about 8 for one pass, the build box about 16 with the confirming pass), with an absolute
+//    guard. Skips LOUDLY without a playwright browser (CI installs none). Synthetic prose, no paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -296,7 +301,7 @@ const TRIM_BOUND = 60;
 /** The trimmed paint alone, the table warm: about 0.8 s on the build box; the load-independent catcher (12 s per unwrap-relayout). */
 const TRIM_ABSOLUTE_MS = 6000;
 
-test("the trim over one mark across 5,000 links unwraps one blank mark per line break and no other, measures each blank mark once per pass in at most three passes (never once per unwrap), leaves no zero-width blank mark and no rendered blank unmarked, and costs a bounded multiple of the untrimmed paint", async (t) => {
+test("the trim over one mark across 5,000 links at 800 px unwraps one blank mark per line break and no other, leaves no zero-width blank mark and no rendered blank unmarked, and costs a bounded multiple of the untrimmed paint; its passes, read off the DOM calls, each measure before any unwrap and cover exactly the marks the last pass kept, until a pass unwraps nothing or no candidate is left (never once per unwrap, never a fixed count); at 700 px, where the cascade outruns round 12's cap of three passes, no zero-width blank mark stands either", async (t) => {
   await inBrowser(t, async (page) => {
     const r = await page.evaluate(([large, pairs]: [string, number]) => {
       const w = window as any;
@@ -306,48 +311,86 @@ test("the trim over one mark across 5,000 links unwraps one blank mark per line 
       const range = (src: string) => ({ start: src.indexOf("[w0]"), end: src.indexOf("\n\nAfter para.") });
       const blank = (s: string) => /^\s*$/.test(s);
       const width = (n: Node): number => { const rg = document.createRange(); rg.selectNodeContents(n); let x = 0; for (const b of Array.from(rg.getClientRects())) x += b.width; return x; };
-      // Range.getClientRects counted through its prototype: one call per blank mark measured
-      let calls = 0; const proto = Range.prototype as any; const orig = proto.getClientRects;
-      proto.getClientRects = function (this: Range) { calls++; return orig.call(this); };
+      // the trim's passes read off the DOM calls, through wrappers on the prototypes: Range.getClientRects, one per blank mark
+      // measured (M), and the unwrap's removeChild of a mark (U); a run of Ms is a pass's measurements, the run of Us after it
+      // the pass's unwraps, so "M4999 U324 M4675" is two passes, the second confirming the fixpoint
+      let calls = 0; let recording = false; let events: string[] = [];
+      const proto = Range.prototype as any; const orig = proto.getClientRects;
+      proto.getClientRects = function (this: Range) { calls++; if (recording) events.push("M"); return orig.call(this); };
+      const nproto = Node.prototype as any; const origRemove = nproto.removeChild;
+      nproto.removeChild = function (this: Node, n: Node) { if (recording && (n as Element).tagName === "MARK") events.push("U"); return origRemove.call(this, n); };
+      const runs = (ev: string[]): { passes: number[]; unwraps: number[]; order: string } => {
+        const seq: Array<[string, number]> = [];
+        for (const e of ev) { const last = seq[seq.length - 1]; if (last && last[0] === e) last[1]++; else seq.push([e, 1]); }
+        const shown = seq.slice(0, 12).map((x) => x[0] + x[1]).join(" ") + (seq.length > 12 ? " and " + (seq.length - 12) + " more runs" : "");
+        return { passes: seq.filter((x) => x[0] === "M").map((x) => x[1]), unwraps: seq.filter((x) => x[0] === "U").map((x) => x[1]), order: shown };
+      };
       const L = host(); build(L, large);
       const p = L.querySelector("p")!; const lineHeight = parseFloat(getComputedStyle(p).lineHeight);
       const rg = range(large);
-      const paint = (trim: boolean): { ms: number; marks: Element[]; calls: number } => {
-        calls = 0;
+      const paint = (trim: boolean): { ms: number; marks: Element[]; calls: number; events: string[] } => {
+        calls = 0; events = []; recording = true;
         const t0 = performance.now(); const marks = w.__romp.paintRendered(L, large, rg, "fc-hl", { id: "c1" }, { trim }) || []; const t1 = performance.now();
-        return { ms: t1 - t0, marks, calls };
+        recording = false;
+        return { ms: t1 - t0, marks, calls, events };
       };
-      const ratios: number[] = []; const trimmedMs: number[] = []; let shape: any = null;
+      // the trimmed paint's shape at the host's width of the moment: the marks kept and unwrapped, the lines, the blank marks of
+      // zero width left standing, the rendered blanks left bare, and the passes
+      const shapeOf = (tr: { marks: Element[]; calls: number; events: string[] }, uBlank: number) => {
+        const kept = tr.marks.filter((m: Element) => blank(m.textContent || ""));
+        const lines = Math.round(p.getBoundingClientRect().height / lineHeight);
+        const zeroKept = kept.filter((m: Element) => width(m) === 0).length;
+        // every blank text node of the paragraph with a width in the painted layout carries a mark
+        let bareRendered = 0; const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) if (blank((n as Text).data) && width(n) > 0 && !(n.parentElement && n.parentElement.closest("mark"))) bareRendered++;
+        return { tMarks: tr.marks.length, tBlank: kept.length, trimmed: uBlank - kept.length, lines, zeroKept, bareRendered, calls: tr.calls, ...runs(tr.events) };
+      };
+      const ratios: number[] = []; const trimmedMs: number[] = []; let shape: any = null; let untrimmed: any = null;
       for (let i = 0; i < pairs; i++) {
         paint(false); unpaint(L);                                          // the table warm (untimed)
-        const u = paint(false); const uMarks = u.marks.length, uBlank = u.marks.filter((m: Element) => blank(m.textContent || "")).length; const uCalls = u.calls; unpaint(L);
+        const u = paint(false); const uMarks = u.marks.length, uBlank = u.marks.filter((m: Element) => blank(m.textContent || "")).length; const uCalls = u.calls, uUnwraps = u.events.length; unpaint(L);
         const tr = paint(true); trimmedMs.push(tr.ms);
-        if (!shape) {
-          const kept = tr.marks.filter((m: Element) => blank(m.textContent || ""));
-          const lines = Math.round(p.getBoundingClientRect().height / lineHeight);
-          const zeroKept = kept.filter((m: Element) => width(m) === 0).length;
-          // every blank text node of the paragraph with a width in the painted layout carries a mark
-          let bareRendered = 0; const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
-          for (let n = walk.nextNode(); n; n = walk.nextNode()) if (blank((n as Text).data) && width(n) > 0 && !(n.parentElement && n.parentElement.closest("mark"))) bareRendered++;
-          shape = { uMarks, uBlank, uCalls, tMarks: tr.marks.length, tBlank: kept.length, trimmed: uBlank - kept.length, lines, zeroKept, bareRendered, calls: tr.calls };
-        }
+        if (!shape) { untrimmed = { uMarks, uBlank, uCalls, uUnwraps }; shape = shapeOf(tr, uBlank); }
         unpaint(L);
         ratios.push(tr.ms / u.ms);
       }
-      proto.getClientRects = orig;
+      // the second width: the same paragraph at 700 px, where each unwrap moves the wrap point of a longer cascade of blanks
+      L.style.width = "700px";
+      const narrow = shapeOf(paint(true), untrimmed.uBlank);
+      unpaint(L); L.style.width = "800px";
+      proto.getClientRects = orig; nproto.removeChild = origRemove;
       const med = (a: number[]) => { const c = a.slice().sort((x, y) => x - y); return c[Math.floor(c.length / 2)]; };
-      return { ...shape, ratios: ratios.map((x) => Math.round(x * 10) / 10), median: Math.round(med(ratios) * 10) / 10, trimmedMedian: Math.round(med(trimmedMs)) };
+      return { ...untrimmed, ...shape, narrow, ratios: ratios.map((x) => Math.round(x * 10) / 10), median: Math.round(med(ratios) * 10) / 10, trimmedMedian: Math.round(med(trimmedMs)) };
     }, [links(LARGE), PAIRS]);
     assert.equal(r.uMarks, 2 * LARGE - 1, "the untrimmed paint: every link text and every space a mark");
     assert.equal(r.uBlank, LARGE - 1, "the untrimmed paint: every space a blank mark");
     assert.equal(r.uCalls, 0, "the untrimmed paint measures nothing");
+    assert.equal(r.uUnwraps, 0, "the untrimmed paint unwraps nothing");
     assert.ok(r.lines > 100, "the paragraph wraps into many lines at 800 px: " + r.lines);
-    assert.equal(r.trimmed, r.lines - 1, "the trim unwraps one blank mark per line break of the painted paragraph, the space the line wraps at, and no other: " + r.trimmed + " unwrapped, " + r.lines + " lines");
+    assert.equal(r.trimmed, r.lines - 1, "at 800 px the trim unwraps one blank mark per line break of the painted paragraph, the space the line wraps at, and no other: " + r.trimmed + " unwrapped, " + r.lines + " lines");
     assert.equal(r.tMarks, r.uMarks - r.trimmed, "the non-blank marks all stay");
-    assert.equal(r.zeroKept, 0, "no blank mark of zero width stands after the trim");
-    assert.equal(r.bareRendered, 0, "no rendered blank of the paragraph is left without a mark");
+    assert.equal(r.zeroKept, 0, "no blank mark of zero width stands after the trim at 800 px");
+    assert.equal(r.bareRendered, 0, "no rendered blank of the paragraph is left without a mark at 800 px");
     const B = r.uBlank;
-    assert.ok(r.calls >= B + (B - r.trimmed) && r.calls <= 3 * B, "each blank mark measured once per pass, two to three passes (the second confirms the fixpoint): " + r.calls + " Range.getClientRects calls for " + B + " blank marks, " + r.trimmed + " unwrapped");
+    /** The passes, read off the calls: the runs alternate from a measurement run (no unwrap precedes the first measurement), the
+     *  first pass measures every blank mark, each later pass exactly the marks the pass before it kept, and the loop ends with a
+     *  pass that unwrapped nothing (the runs end in M) or with no candidate left (they end in U and the last pass unwrapped every
+     *  mark it measured); a measurement per unwrap reads "M.. U1 M1 U1", a pass cut short by a cap ends in U with marks kept. */
+    const passes = (s: { passes: number[]; unwraps: number[]; order: string; calls: number; trimmed: number }, at: string) => {
+      const why = at + ", the runs " + s.order;
+      assert.equal(s.order[0], "M", why + ": the first call is a measurement");
+      assert.equal(s.passes[0], B, why + ": the first pass measures every blank mark once");
+      for (let i = 1; i < s.passes.length; i++) assert.equal(s.passes[i], s.passes[i - 1] - s.unwraps[i - 1], why + ": pass " + (i + 1) + " measures exactly the marks pass " + i + " kept");
+      const last = s.passes.length - 1;
+      if (s.unwraps.length === s.passes.length) assert.equal(s.passes[last] - s.unwraps[last], 0, why + ": the runs end in an unwrap, so the loop must have run out of candidates; a cap cut it short with marks standing");
+      else assert.equal(s.unwraps.length, s.passes.length - 1, why + ": the runs end in a pass that unwrapped nothing");
+      assert.equal(s.unwraps.reduce((a, b) => a + b, 0), s.trimmed, why + ": the unwraps read are the marks the trim removed");
+      assert.equal(s.passes.reduce((a, b) => a + b, 0), s.calls, why + ": the measurements read are the getClientRects calls");
+    };
+    passes(r, "at 800 px");
+    assert.ok(r.passes.length >= 2, "at 800 px marks were unwrapped and candidates remained, so a pass confirmed the fixpoint: " + r.order);
+    passes(r.narrow, "at 700 px");
+    assert.equal(r.narrow.zeroKept, 0, "no blank mark of zero width stands after the trim at 700 px (round 12's cap of three passes left 366; " + r.narrow.trimmed + " unwrapped over the passes " + r.narrow.order + ", " + r.narrow.lines + " lines, " + r.narrow.bareRendered + " rendered blanks bare, the reverse flip plan item 10 records)");
     assert.ok(r.median <= TRIM_BOUND, "the trimmed paint against the untrimmed one: pair ratios " + r.ratios.join(" ") + ", median " + r.median + " over the bound " + TRIM_BOUND);
     assert.ok(r.trimmedMedian <= TRIM_ABSOLUTE_MS, "the trimmed paint's median " + r.trimmedMedian + " ms is over " + TRIM_ABSOLUTE_MS);
   });
