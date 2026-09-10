@@ -626,7 +626,10 @@ class ThreadRegMemo(_State):
             self.assertEqual(km._thread_reg(SID), {})
         st = km._thread_reg_report()
         self.assertEqual((st["entries"], st["fail"]), (0, 2))
-        self.assertEqual(err.getvalue().count("unreadable"), 1, "one stderr line per failure episode")
+        # the line says the record did not read (round 11 of the unknown-name PR: it claimed a successful stat for
+        # every failed read, false for a failed non-ENOENT stat), once per episode
+        self.assertEqual(err.getvalue().count("thread-reg: %s.json did not read (" % SID), 1, "one stderr line per failure episode")
+        self.assertNotIn("successful stat", err.getvalue())
         self.publish_reg(self.REG)
         self.assertEqual(km._thread_reg(SID), self.REG)
         self.assertEqual(km._thread_reg_report()["entries"], 1)
