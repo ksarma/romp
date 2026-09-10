@@ -18608,7 +18608,11 @@ def _drive(msg, client):
     if t in ID_OPS and msg.get("id"):
         sid = str(msg["id"])
     elif t in ("compact", "sendCommand") and msg.get("name"):
-        sid = _sid_of(str(msg["name"]))                   # the timeline keys these by session NAME
+        # the timeline keys these by session NAME. _sid_of's plain resolution: a LIVE name, else the input
+        # unchanged, which the gate below reads as unknown. The by-name lookup of a dormant session whose
+        # registry entry will not read (the 503 naming the record) is the HTTP control routes' claim alone
+        # (_control_target), not this door's (review round 6, 2026-09-09)
+        sid = _sid_of(str(msg["name"]))
     elif t == "askFollowUp" and (msg.get("itemId") or msg.get("id")) and (msg.get("text") or msg.get("cont")):
         # cont:true is the Continue button (2026-08-08), which deliberately carries NO text — the kernel
         # supplies CONTINUE_TEXT in the handler body below. The old text-only guard turned every Continue
@@ -26887,8 +26891,10 @@ def _unreadable_dormant_named(name):
     """The sid of a names-registered session called `name` whose SDK registry entry exists but will not
     read, or None. A dormant session is addressed by id, so a bare name that no live session answers to
     stays the routes' 404; the one exception is this record, whose failed read must be said (the gate's
-    503) and never reported as a session that does not exist. Read on the resolution's miss path only,
-    after the live map and the thread names, so it costs a would-be 404 one registry walk; sorted, so
+    503) and never reported as a session that does not exist. Read by _control_target on its would-be-404
+    path only, after every local door and the roster by sid missed, so it costs a would-be 404 one registry
+    walk and reaches no other _sid_of caller (round 5 read it inside the resolution, and the PR-watch
+    contact then took a torn older generation for the live session of the name, review round 6); sorted, so
     several generations of the name answer the same sid (review round 5, 2026-09-09)."""
     try:
         for sid, parts in sorted(_names_snapshot().items()):
@@ -26912,9 +26918,13 @@ def _resolve_sid(who):
     plus a walk of the SDK regs), not two: the failed-scan 503 used to be decided by a second list-sessions
     after the gate, so a probe that failed once and answered once turned a live session's name into "no
     live session named", and one that answered once and failed once turned an unknown name into a 503
-    (round 6). When every door misses, a dormant names-registered session whose registry entry will not
-    read is handed back by name (_unreadable_dormant_named), so the gate answers its 503 rather than "no
-    live session named" (review round 5). Every other caller reads _sid_of, which keeps only the sid."""
+    (round 6). When every door misses the sid is the input unchanged, for every caller: the routes' one
+    exception, a dormant names-registered session whose registry entry will not read (the gate's 503, never
+    "no live session named"), is _control_target's own lookup on its would-be-404 path
+    (_unreadable_dormant_named), not this resolution's. Round 5 put it here, and every _sid_of caller (the
+    PR-watch escalation contact, add_pr_watch and add_watch, which store the sid, /deliver, /compact and the
+    WS compact and sendCommand by name) then took a torn older generation of a name for the live session
+    that bears it (round 6). Every other caller reads _sid_of, which keeps only the sid."""
     who = str(who)
     if _name_of(who):
         return who, None, False, False
@@ -26931,18 +26941,18 @@ def _resolve_sid(who):
     th = names.get(who)
     if th:
         return th[0], live, False, failed
-    # every door missed: a dormant session addressed by its registered NAME stays the routes' 404 (a
-    # dormant session is addressed by id), unless its SDK registry entry exists and will not read, where
-    # the sid is handed back so the gate says the read failed (its 503), never "no live session named"
-    # (review round 5, 2026-09-09: the failed-read-as-404 class, closed for threads and by id in round 4,
-    # was still open by name)
-    return (_unreadable_dormant_named(who) or who), live, False, failed
+    return who, live, False, failed           # every door missed: the input unchanged (see the docstring)
 
 
 def _sid_of(who):
     """Resolve an id-or-name to a sid: a sid as-is (the names registry is sid-keyed, so _name_of resolves it
     even when dead), else a LIVE session name → its sid, falling back to the input unchanged. Lets the
-    name-keyed entry points (POST /send, the timeline compact-by-name) route through the sid-keyed backend."""
+    name-keyed entry points (POST /send, the timeline compact-by-name) route through the sid-keyed backend.
+    The fallback is a contract its callers read: _pr_watch_contact_sid takes a changed answer as resolved and
+    asks SdkBackend.sid_for_name only for the unchanged input, so a resolution that handed back a dormant
+    torn-reg generation of the name here sent a PR-watch escalation to that generation, classified "its
+    record could not be read" every tick with no bound (review round 6, 2026-09-09). The control routes'
+    by-name lookup of such a record is _control_target's own."""
     return _resolve_sid(who)[0]
 
 
@@ -26988,10 +26998,13 @@ def _control_target(who):
     entry (_unknown_session_refusal's unreadable verdict). A failed read is never reported as a session
     that does not exist (review rounds 4 and 5, 2026-09-09; the fail-loudly rule). Order: the local doors
     (a local session wins), the roster by sid, the gate with the live map the resolution read (so a refused
-    request scans once), and, when the gate would answer 404: for a BARE name, the failed-scan 503 (with the
-    local scan failed, "a local session wins" cannot be evaluated, so nothing forwards) and the store's 503;
-    then the roster by NAME (_remote_session_named): a session an attached host runs is reached by the name
-    that host lists, with the far sid, as it is by id. A spelling that carries a colon (the roster's
+    request scans once), and, when the gate would answer 404: for a BARE name, a dormant names-registered
+    session of that name whose registry entry will not read (_unreadable_dormant_named: the gate's 503 for
+    it, never "no live session named"; this lookup is the routes' own, so no other _sid_of caller takes a
+    torn generation for a name), the failed-scan 503 (with the local scan failed, "a local session wins"
+    cannot be evaluated, so nothing forwards) and the store's 503; then the roster by NAME
+    (_remote_session_named): a session an attached host runs is reached by the name that host lists, with
+    the far sid, as it is by id. A spelling that carries a colon (the roster's
     host:name, the very spelling the 409 tells the caller to type) is no local name (NAME_RE forbids the
     colon at every name door, and tmux rewrites one) and no thread's, so neither local read can be what
     fails it: it goes to the roster, where a hit forwards and a miss is the accurate 404, while the local
@@ -27006,6 +27019,17 @@ def _control_target(who):
         return sid, None, None
     if refusal["_status"] == 404:
         bare = ":" not in who
+        torn = _unreadable_dormant_named(who) if bare else None
+        if torn:
+            # a dormant session addressed by its registered NAME stays the 404 (a dormant session is addressed
+            # by id), unless its SDK registry entry exists and will not read: then the gate says the read
+            # failed (its 503), never "no live session named" (review round 5, 2026-09-09: the
+            # failed-read-as-404 class, closed for threads and by id in round 4, was still open by name).
+            # Looked up HERE, on the routes' own path, since round 6: inside _resolve_sid it reached every
+            # _sid_of caller, and the PR-watch escalation took a torn older generation for the live session
+            # of the name. Ahead of the failed-scan 503: the record's verdict does not depend on the scan
+            refusal = _unknown_session_refusal(torn, who, live)
+            return torn, None, refusal
         if bare and live is not None and scan_failed:
             # the scan the resolution read failed (an exec error, a timeout, an unrecognised nonzero exit:
             # live_sessions' tmux_failed, the failure alive_sids reads as None), so a name the kernel knows

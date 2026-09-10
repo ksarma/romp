@@ -1917,6 +1917,48 @@ class UnknownSessionRefused(_RouteServer):
             km._thread_reg_memo.clear()
             km._thread_reg_failed.clear()
 
+    def test_sid_of_keeps_its_fallback_for_a_torn_dormant_name_and_the_pr_watch_contact_reads_the_alive_generation(self):
+        # _resolve_sid's round-5 miss path returned _unreadable_dormant_named(who) or who, and _sid_of is its
+        # first field, so every _sid_of caller took a dormant torn-reg generation of a name the live map does
+        # not list while _sid_of's docstring still promised the input unchanged (tests/test_thread_rows.py pins
+        # that for a name nobody holds). _pr_watch_contact_sid takes a changed answer as resolved and never asks
+        # SdkBackend.sid_for_name, so a PR-watch escalation to a name landed on the older same-named generation
+        # with the torn reg and was classified "wait: its record could not be read" every tick with no bound;
+        # add_pr_watch and add_watch store the same answer. The lookup is _control_target's own now (the routes'
+        # 503 by name stands) and _sid_of hands the name back unchanged, so the contact resolves through the
+        # durable record to the alive generation (review round 6, 2026-09-09). Two generations of one name,
+        # both registered: A dormant with its reg torn, B alive by its reg; the live map lists neither.
+        a, b, name = "a0a03333-4444-5555-6666-777777777777", "b0b03333-4444-5555-6666-777777777777", "torn-web"
+        sdir = km.jd.STATE / "sdk"
+        sdir.mkdir(parents=True, exist_ok=True)
+        a_path, b_path = sdir / (a + ".json"), sdir / (b + ".json")
+        _register(a, name)
+        _register(b, name)
+        a_path.write_bytes(b"{not json")
+        b_path.write_text(json.dumps({"sid": b, "alive": True, "name": name}))
+        fake = mock.Mock()
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        try:
+            with mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                self.assertEqual(km._sid_of(name), name, "the documented fallback: the input unchanged")
+                self.assertEqual(km._pr_watch_contact_sid(name), b,
+                                 "the escalation contact is the alive generation, through the durable record")
+                # the routes keep the by-name 503 for the torn record: the lookup is their own
+                code, resp = self._post("/interrupt", {"name": name})
+                self.assertEqual(code, 503, resp)
+                self.assertIn("could not read the record for '%s'" % name, resp.get("error", ""))
+                self.assertIn(km._tilde(str(a_path)), resp.get("error", ""))
+                fake.interrupt.assert_not_called()
+        finally:
+            _unregister(a)
+            _unregister(b)
+            _drop_regs([a_path, b_path])
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
     def test_a_dormant_sessions_record_that_will_not_read_is_a_503_by_name_too(self):
         # the failed-read-as-404 class was closed for threads and by id in round 4 and stayed open by name:
         # a dormant names-registered session's name resolves only through the live map, and list_regs lists
