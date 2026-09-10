@@ -19,6 +19,8 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { LINK_SEL, linkHref, isMarkdownUrl, browserTabClick } from "./md-links";   // what the chat's anchor opener names from its siblings
 import { userContentTarget } from "./md-sanitize";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const requireCjs = createRequire(__filename);
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
@@ -37,7 +39,7 @@ const EV = { kind: "todo", tasks: [], userTodos: [{ id: TID, text: TEXT, detail:
 class TextNode {
   nodeType = 3;
   parentElement: Elm | null = null;
-  constructor(public data: string) {}
+  constructor(public data: string) { hideEdges(this); }
   get textContent(): string { return this.data; }
   replaceWith(frag: Frag): void {
     const p = this.parentElement!;
@@ -47,7 +49,11 @@ class TextNode {
     this.parentElement = null;
   }
 }
-class Frag { childNodes: Kid[] = []; appendChild(c: Kid): Kid { this.childNodes.push(c); return c; } }
+class Frag {
+  childNodes!: Kid[];
+  constructor() { Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true }); hideEdges(this); }
+  appendChild(c: Kid): Kid { this.childNodes.push(c); return c; }
+}
 type Kid = Elm | TextNode;
 type Compound = { tag: string | null; id: string | null; classes: string[]; attrs: { name: string; value: string | null }[] };
 const camel = (s: string) => s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -68,7 +74,7 @@ class Elm {
   className = ""; title = ""; id = ""; role = ""; tabIndex = -1; type = ""; placeholder = ""; rows = 0; value = "";
   dataset: Record<string, string | undefined> = {};
   parentElement: Elm | null = null;
-  childNodes: Kid[] = [];
+  childNodes!: Kid[];
   listeners: Record<string, Array<(ev: unknown) => void>> = {};
   attrs: Record<string, string> = {};
   onkeydown: unknown = null; onmousedown: unknown = null; onmouseup: unknown = null; onmouseleave: unknown = null; oncontextmenu: unknown = null; ondragstart: unknown = null;
@@ -78,7 +84,11 @@ class Elm {
     toggle: (c: string, force?: boolean) => { const s = this.classes(); const on = force === undefined ? !s.has(c) : force; if (on) s.add(c); else s.delete(c); this.className = [...s].join(" "); return on; },
     contains: (c: string) => this.classes().has(c),
   };
-  constructor(tag: string) { this.tagName = tag.toLowerCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toLowerCase();
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   private classes(): Set<string> { return new Set(this.className.split(/\s+/).filter(Boolean)); }
   get offsetWidth(): number { return 0; }
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
@@ -555,4 +565,16 @@ test("render.ts: the todo row carries `link`, the Reply button rides it, the mod
   assert.match(modal, /if \(todoLink\) d\.append\(" ", todoLinkChip\(todoLink\)\);/);
   assert.ok(modal.indexOf("todoFileChip(todoFile, sid)") < modal.indexOf("todoLinkChip(todoLink)"), "the modal's chips in the row's order");
   assert.equal((RENDER.match(/todoLinkChip\(/g) || []).length, 3, "defined once, applied at the two sites");
+});
+
+// The projection rule (ui/test-dom-shim.ts, hideEdges): a stand-in node enumerates its primitives alone, so a failing
+// assertion's dump of one stops at the node instead of walking the whole tree through its edges.
+test("a stand-in node enumerates its primitives alone, and a dump of it names neither parentNode, parentElement nor childNodes", () => {
+  const root = new Elm("div"); const kid = new Elm("span"); root.appendChild(kid); kid.appendChild(new TextNode("x"));
+  const nodes = [root, kid, kid.childNodes[0]];
+  for (const n of nodes) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "every enumerable own key holds a primitive");
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("parentElement") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
 });

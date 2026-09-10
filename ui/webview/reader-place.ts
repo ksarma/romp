@@ -80,7 +80,10 @@
 // with the passage 1395px below the viewport, and the paragraph's Raw row switched to Rendered borrowed the wrapper's
 // box and landed on paragraph 43). So an html block's pairing, to one element or several, is trusted only when its
 // own source, parsed by the browser's HTML parser (DOMParser), yields as many elements with the same text, whitespace
-// apart: that parser is the one the sanitizer read the block with, so entities, inline tags and line breaks decode the
+// and the viewer's own controls apart (a gated figure's placeholder, a fence's Copy button: their text is the viewer's,
+// never the block's, and is skipped as the anchor map skips it; the Slice 4 review found a `<p>` holding a gated picture
+// read "Image from host. Click to load." against a parse reading nothing, and the figure at the edge refused). That
+// parser is the one the sanitizer read the block with, so entities, inline tags and line breaks decode the
 // same on both sides and nothing is decoded by hand (the review round 3: a hand decoder threw on an out-of-range
 // numeric entity, which stopped the Raw click and the text-size step where it stood, and knew six entity names, so a
 // caption hanging on `&mdash;` read as swallowed). Any other block's one element is trusted without a parse (its source
@@ -217,6 +220,31 @@ const placeOf = (source: string, view: View, spans: SourceRange[], b: number, bo
 
 // ── the elements paired to a block: trusted, or a pairing the map got wrong (the header's "what the place refuses") ──
 const stripWs = (s: string): string => s.replace(/\s+/g, "");
+/** The classes of the elements the viewer builds inside the rendered markup, whose text is the viewer's and not the
+ *  note's: the fence's Copy button (code-block.ts), a formula KaTeX rendered (math.ts), a footnote's back link and the
+ *  front matter's fold label (md-config.ts), a gated figure's placeholder (figure-gate.ts). These five are in
+ *  anchor-map.ts's CONTROL_CLASSES, which every text walk there skips (isControl). That list also holds the fill's two
+ *  fallback shapes (`katex-error`, `md-math-src`: the TeX shown as text), which are NOT skipped here on purpose: the
+ *  map's tokens make a formula a zero-text hole, but an html block's fallback can only come from a placeholder the
+ *  author typed, whose TeX the parse of the block's source reads too, so the texts agree and the pairing holds. */
+const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate"];
+const isControl = (n: Node): boolean => {
+  if (n.nodeType !== 1 || typeof (n as Element).getAttribute !== "function") return false;
+  const c = " " + ((n as Element).getAttribute("class") || "") + " ";
+  return CONTROL_CLASSES.some((cls) => c.indexOf(" " + cls + " ") >= 0);
+};
+/** A rendered node's text as the anchor map reads it: its text nodes' data with the viewer's controls skipped, the node
+ *  itself when it is one (a bare `<img>` line on a gated host renders as the placeholder alone). textContent read the
+ *  controls' labels too, so an html block holding a gated picture read "Image from host. Click to load." against a parse
+ *  of its source reading nothing, and its pairing was refused as a wrong one: the Raw switch from the figure at the edge
+ *  seated nothing and the way back landed fourteen paragraphs past it (the Slice 4 review). */
+function noteText(n: Node): string {
+  if (n.nodeType === 3) return (n as Text).data;
+  if (isControl(n)) return "";
+  let s = "";
+  for (let i = 0; i < n.childNodes.length; i++) s += noteText(n.childNodes[i]);
+  return s;
+}
 /** Whether the block is an html block (marked's `html` token), the one kind whose element count the map's pairing
  *  guesses. Every kind of html block opens with `<` after at most three spaces, so a block that does not is none and
  *  costs no lex (every paragraph); one that does is lexed alone, by the lexer the anchor map's block table comes from:
@@ -229,19 +257,19 @@ function isHtmlBlock(source: string, span: SourceRange): boolean {
 /** Block `b`'s elements when the pairing can be trusted, null when it cannot. None always can, and one element of any
  *  block but an html block (every other block renders as exactly one). An html block's, one or several, are trusted
  *  when the block's own source, parsed by the browser's HTML parser, yields as many elements with the same text,
- *  whitespace apart: the parser the sanitizer read the block with, so entities, inline tags and `<br>` decode alike on
- *  both sides and nothing is decoded here. A wrapper's swallowed run (one element parsed, the rest of the document
- *  paired), a wrapper closing at the document's end or never closed (one element parsed, with the block's own text; one
- *  paired, holding every paragraph after it: the review round 4, which found the third round trusting any one element)
- *  and the second of two adjacent html blocks (one parsed, two paired) are not; nor is any such block where DOMParser
- *  is absent (a stand-in). */
+ *  whitespace and the viewer's controls apart (noteText): the parser the sanitizer read the block with, so entities,
+ *  inline tags and `<br>` decode alike on both sides and nothing is decoded here. A wrapper's swallowed run (one
+ *  element parsed, the rest of the document paired), a wrapper closing at the document's end or never closed (one
+ *  element parsed, with the block's own text; one paired, holding every paragraph after it: the review round 4, which
+ *  found the third round trusting any one element) and the second of two adjacent html blocks (one parsed, two paired)
+ *  are not; nor is any such block where DOMParser is absent (a stand-in). */
 function ownedElements(md: Element, source: string, span: SourceRange, b: number): Element[] | null {
   const els = renderedBlockElements(md, source, b);
   if (!els.length || (els.length === 1 && !isHtmlBlock(source, span))) return els;
   if (typeof DOMParser !== "function") return null;
   const parsed = elementsOf(new DOMParser().parseFromString(source.slice(span.start, span.end), "text/html").body);
   if (parsed.length !== els.length) return null;
-  for (let i = 0; i < els.length; i++) if (stripWs(parsed[i].textContent || "") !== stripWs(els[i].textContent || "")) return null;
+  for (let i = 0; i < els.length; i++) if (stripWs(parsed[i].textContent || "") !== stripWs(noteText(els[i]))) return null;
   return els;
 }
 

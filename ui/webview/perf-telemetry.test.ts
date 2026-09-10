@@ -12,6 +12,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import {
   Ring, percentile, histBucket, histQuantileBucket, classifyFrame, scriptKey, sanitizeInvoker, uaClass, attributeScripts,
   createPerfTelemetry, installPerfTelemetry, perfFrameHandler,
@@ -20,6 +22,16 @@ import {
 import { FederationManager, perfCollectorFor } from "./federation";
 
 const PAGE = "http://h:1/feed";
+/** A window stand-in for the install tests: an EventTarget carrying `members` (performance, navigator, location and the
+ *  rest), its own parent (a standalone page; a test that wants a framed one reassigns parent afterwards). The parent
+ *  and the member objects are hidden by hideEdges (ui/test-dom-shim.ts), so a failing assertion over the window dumps
+ *  its primitives, never a cycle through parent; a reassignment to an existing property keeps it hidden. */
+function standIn(members: Record<string, unknown>): any {
+  const win: any = new EventTarget();
+  Object.assign(win, members);
+  win.parent = win;
+  return hideEdges(win);
+}
 
 function harness(over: Partial<PerfDeps> = {}) {
   const clock = { t: 1000, wall: 1_700_000_000_000 };
@@ -654,11 +666,11 @@ test("federation installs the page's collector on the Files pane too (app \"file
   // reviewed note open blocked the main thread for about 20 s and no pane's row said so. The viewer's paint pass
   // times itself through this collector (file-view.ts perfTimed), so the row has something to carry.
   const g: any = globalThis;
-  const win: any = new EventTarget();
-  win.performance = { now: () => 0 };
-  win.navigator = { userAgent: "Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36", maxTouchPoints: 0 };
-  win.location = { href: "http://h:1/files?token=abc" };
-  win.parent = win;
+  const win = standIn({
+    performance: { now: () => 0 },
+    navigator: { userAgent: "Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36", maxTouchPoints: 0 },
+    location: { href: "http://h:1/files?token=abc" },
+  });
   const hadWindow = "window" in g, prevWindow = g.window;
   const hadDoc = "document" in g, prevDoc = g.document;
   g.window = win;
@@ -744,12 +756,12 @@ test("installPerfTelemetry: null without a window or without performance.now; th
 
 test("installPerfTelemetry: one collector per page on window.__rompPerf, wired to the page's rAF, timer, URL and transport", () => {
   const g: any = globalThis;
-  const win: any = new EventTarget();
   let t = 0;
-  win.performance = { now: () => t };
-  win.navigator = { userAgent: "Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36", maxTouchPoints: 0 };
-  win.location = { href: "http://h:1/timeline?token=abc&wid=11111111" };
-  win.parent = win;
+  const win = standIn({
+    performance: { now: () => t },
+    navigator: { userAgent: "Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36", maxTouchPoints: 0 },
+    location: { href: "http://h:1/timeline?token=abc&wid=11111111" },
+  });
   win.innerWidth = 800; win.innerHeight = 600;
   const rafs: Array<(t: number) => void> = [];
   const cancelled: number[] = [];
@@ -814,10 +826,11 @@ test("installPerfTelemetry: hidden_pane is the shim's union, the zero-viewport p
   // the probe alone never saw it (a display:none iframe keeps its size there); in Firefox the viewport goes to
   // zero and the observer does not run, so the probe carries it and a stale word of false must not override it.
   const g: any = globalThis;
-  const win: any = new EventTarget();
-  win.performance = { now: () => 0 };
-  win.navigator = { userAgent: "Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36", maxTouchPoints: 0 };
-  win.location = { href: "http://h:1/chat" };
+  const win = standIn({
+    performance: { now: () => 0 },
+    navigator: { userAgent: "Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36", maxTouchPoints: 0 },
+    location: { href: "http://h:1/chat" },
+  });
   win.parent = {};                                   // framed
   win.innerWidth = 800; win.innerHeight = 600;
   const doc: any = new EventTarget();
@@ -896,4 +909,21 @@ test("federation's start() installs the page collector first: before __rompFed, 
   // nothing else runs before the install: the two lines above it are the window handle and the app name
   const before = body.slice(0, install).split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//"));
   assert.deepEqual(before, ["start(): void {", "const w = window as any;", 'this.app = w.__rompApp || "chat";']);
+});
+
+// ── the window stand-ins are projections (ui/test-dom-shim.ts): a failing assertion over one dumps primitives, never a cycle through parent ──
+test("a window stand-in enumerates its primitives alone; parent stays non-enumerable through the framed and standalone reassignments and still reachable; a dump of it names no edge", () => {
+  const win = standIn({
+    performance: { now: () => 0 },
+    navigator: { userAgent: "Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36", maxTouchPoints: 0 },
+    location: { href: PAGE },
+  });
+  win.innerWidth = 800; win.innerHeight = 600;
+  assert.ok(Object.keys(win).every((k) => staysEnumerable(win[k])), "the stand-in keeps an enumerable edge: " + Object.keys(win).join(","));
+  assert.deepEqual(Object.keys(win).sort(), ["_nid", "innerHeight", "innerWidth"], "the primitives and the serial");
+  win.parent = {}; win.parent = win;   // the hidden_pane test's framed and standalone reassignments: an existing property keeps its attributes
+  assert.equal(Object.getOwnPropertyDescriptor(win, "parent")!.enumerable, false, "parent is an own, non-enumerable property");
+  assert.ok(win.parent === win && win.performance.now() === 0 && win.location.href === PAGE, "parent, performance and location are still reachable");
+  const dump = inspect(win, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+  assert.ok(!/^\s*(parent|location|navigator|performance):/m.test(dump), "the window dumps an edge:\n" + dump);
 });

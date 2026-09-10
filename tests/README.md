@@ -60,10 +60,13 @@ Every bug fix or feature change lands with a test (repo rule). Four suites:
   source, since a test that reads the value cannot tell the floor from
   `test_cli_scope.py`'s own import-time set.
   `conftest.py` also unsets the four `ROMP_CLI_SCOPE_*` limit variables
-  (`ROMP_CLI_SCOPE_MEMORY_MAX` and the others): the kernel hands them to every
+  (`ROMP_CLI_SCOPE_MEMORY_MAX` and the others) and the kernel's
+  `ROMP_CLI_SCOPE_OOM_POLICY_REJECTED` marker: the kernel hands them to every
   session's CLI and a tool shell inherits them, so a suite run from a session on
   a self-hosted install would otherwise see them at every backend construction
-  and in every exact argv pin.
+  and in every exact argv pin. The marker rides every launch (`1` or empty), so a
+  self-hosted tool shell always carries it, unlike the limits, which need
+  `service.env`.
   Any test whose subject binds a loopback port picks it with `load
   free-port` + `free_port VAR...`, never a literal: a literal shared by two
   files collided within one run (`romp-manager-ensure.bats` once used
@@ -147,6 +150,38 @@ assertion message; that report loses pytest's colour and source highlighting.
 One it leaves alone keeps pytest's own rendering.
 `tests/test_env_value_redaction.py` pins the rule, the write-time capture,
 the patterns, the scrub's cost and the hook end to end.
+
+**The file a served lab's relaunch reads from carries a list of names, never
+the runner's whole environment.** Two served modules kill and relaunch their
+hermetic kernel from a browser driver, `tests/test_ship_reship.py` and
+`tests/test_dashboard_reload_served.py`, and both write the relaunch's command,
+environment and log to the lab's `cfg.json` through `relaunch_cfg` in
+`tests/test_ship_reship.py`. The environment in that file is `relaunch_env` of
+the lab kernel's: the `ROMP_*` and `XDG_*` names, `CLAUDE_CONFIG_DIR`, `PATH`,
+`HOME`, `TMPDIR`, `TMUX_TMPDIR`, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`,
+less the `ROMP_TESTS_*` names, which `tests/conftest.py` exports for the run's
+own tests (such as `ROMP_TESTS_SYSTEM_TMPDIR` above) and no kernel reads. A
+copy of `os.environ` in that file would hold, for the run, every API key the
+runner's shell carries. Nothing else in the lab kernel's environment reaches
+the file; each served lab plants a probe name in that environment and checks
+the written file for its absence. To give the relaunched kernel another name
+of the runner's, add it to `RELAUNCH_ENV_NAMES` with its reason beside it.
+`RelaunchEnv` in `tests/test_ship_reship.py` pins the function without a
+kernel; the served legs check the file itself.
+
+On this fork the lab kernel's own environment is still a copy of the runner's
+(2026-09-10). `_ShipLab.kernel_env` in `tests/test_ship_reship.py` is
+`os.environ` with the lab's roots and seams over it and `ROMP_STATE_DIR`
+removed, and nothing outside that module calls it;
+`tests/test_dashboard_reload_served.py` builds its kernel's environment from
+`dict(os.environ, ...)` at its `setUpClass` and imports `relaunch_cfg` only.
+So a name the runner's shell carries from the machine's live romp, such as
+`ROMP_MANAGER_PID` (the kernel's parent-death watchdog), `ROMP_SERVE_HOST`
+(where it binds) or `ROMP_POSTAL_PORT` (the postal bus it dials), reaches both
+lab kernels by process and, as a `ROMP_*` name, the relaunch file. Upstream's
+romp-on/romp#1262 (the served-fixture-env-whitelist ledger entry) builds a lab
+kernel's environment from a list of names instead; the fold that brings it
+replaces these two paragraphs with upstream's.
 
 `fixtures/` must stay SYNTHETIC: invented prompts, placeholder UUIDs, hostname
 `TESTHOST` — never real session data.

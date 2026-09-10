@@ -364,7 +364,7 @@ test("the hover re-arms after a tick: the content moved under a pointer that did
   // what elementFromPoint finds under the tracked pointer; hideEdges, so the one object here that is not a factory node
   // inspects as a projection too (the ratchet in ui/test-dom-shim.test.ts reads the file, not the object)
   const target = hideEdges({ __tlHoverIn: (e: any) => calls.push(e), parentNode: null });
-  assert.deepEqual(Object.keys(target), [], "the hover target inspects as a projection: its handler and its parentNode are non-enumerable");
+  assert.deepEqual(Object.keys(target), ["_nid"], "the hover target inspects as a projection: its handler and its parentNode are non-enumerable, and the serial hideEdges stamps is its one enumerable key");
   panel._ptr = { x: 500, y: 40 };
   panel.svg.ownerDocument = { elementFromPoint: () => target };
   advance(panel, 10);

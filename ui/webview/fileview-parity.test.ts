@@ -50,6 +50,23 @@ const RULES = [
   ".fileview-md table {", ".fileview-md > table {", ".fileview-md th, .fileview-md td {", ".fileview-md th {", ".fileview-md tbody tr:nth-child(even) {",
   '.fileview-md th[align="center"], .fileview-md td[align="center"] {', '.fileview-md th[align="right"], .fileview-md td[align="right"] {', '.fileview-md th[align="left"], .fileview-md td[align="left"] {',
   ".md code.md-math-src, .fileview-md code.md-math-src {",   // the math fill's source fallback, dressed as unrendered source (math.ts MATH_SOURCE_CLASS)
+  // math in every bundle (Slice 4 of plans/markdown-viewer.md, decision 1): the feed sheet imports the KaTeX CSS as styles.css does, and the display box's twin
+  ".katex-display {",
+  // the Obsidian constructs and the figure gate (Slice 4; md-config.ts and figure-gate.ts render them, anchor-map.ts maps them)
+  // (doubled `.md X, .fileview-md X`: the grammar sits on the marked singleton, so the chat's markdown bodies render the constructs too)
+  ".md details.md-frontmatter, .fileview-md details.md-frontmatter {", ".md .md-frontmatter-head, .fileview-md .md-frontmatter-head {", ".md details.md-frontmatter pre, .fileview-md details.md-frontmatter pre {",
+  ".md sup.md-fnref, .fileview-md sup.md-fnref {", ".md sup.md-fnref a, .fileview-md sup.md-fnref a {", ".md .md-footnote, .fileview-md .md-footnote {", ".md .md-footnote p, .fileview-md .md-footnote p {", ".md .md-fnback, .fileview-md .md-fnback {",
+  ".md .md-callout, .fileview-md .md-callout {", ".md .md-callout-title, .fileview-md .md-callout-title {", ".md details.md-callout .md-callout-title, .fileview-md details.md-callout .md-callout-title {",
+  ":where(.md) details.md-callout, :where(.fileview-md) details.md-callout {",   // the folded form's margin, at the blockquote rule's weight (round 6)
+  ".md .md-callout-note, .fileview-md .md-callout-note, .md .md-callout-info, .fileview-md .md-callout-info, .md .md-callout-abstract, .fileview-md .md-callout-abstract, .md .md-callout-summary, .fileview-md .md-callout-summary, .md .md-callout-tldr, .fileview-md .md-callout-tldr, .md .md-callout-todo, .fileview-md .md-callout-todo, .md .md-callout-quote, .fileview-md .md-callout-quote, .md .md-callout-cite, .fileview-md .md-callout-cite, .md .md-callout-example, .fileview-md .md-callout-example {",
+  ".md .md-callout-tip, .fileview-md .md-callout-tip, .md .md-callout-hint, .fileview-md .md-callout-hint, .md .md-callout-success, .fileview-md .md-callout-success, .md .md-callout-check, .fileview-md .md-callout-check, .md .md-callout-done, .fileview-md .md-callout-done {",
+  ".md .md-callout-important, .fileview-md .md-callout-important {",
+  ".md .md-callout-warning, .fileview-md .md-callout-warning, .md .md-callout-attention, .fileview-md .md-callout-attention, .md .md-callout-question, .fileview-md .md-callout-question, .md .md-callout-help, .fileview-md .md-callout-help, .md .md-callout-faq, .fileview-md .md-callout-faq {",
+  ".md .md-callout-caution, .fileview-md .md-callout-caution, .md .md-callout-danger, .fileview-md .md-callout-danger, .md .md-callout-error, .fileview-md .md-callout-error, .md .md-callout-failure, .fileview-md .md-callout-failure, .md .md-callout-fail, .fileview-md .md-callout-fail, .md .md-callout-missing, .fileview-md .md-callout-missing, .md .md-callout-bug, .fileview-md .md-callout-bug {",
+  // the ==mark== rule keys on the renderer's class (a bare `.fileview-md mark` outranked the comment marks; the review round 3), and the gate's
+  // hide rule on the placeholder's data-act, the mark an author cannot write
+  ".md mark.md-mark, .fileview-md mark.md-mark {", ".md .fv-wikilink, .fileview-md .fv-wikilink {", ".fileview-md a.fv-embed {",
+  ".fileview-md .fv-gate {", ".fileview-md .fv-gate:hover, .fileview-md .fv-gate:focus-visible {", '.fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-label]) {',
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file

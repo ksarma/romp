@@ -12,7 +12,9 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { inspect } from "node:util";
 import { fileLinkRoute } from "./file-route";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -358,22 +360,26 @@ test("a viewer whose document has no composer seeds THROUGH the shell: the Files
 });
 
 // executed: composerWindow's ladder, lifted from the source (a hand copy would drift), run against
-// shimmed window/document pairs for each hosting situation
+// shimmed window/document pairs for each hosting situation. The window stand-ins fake no DOM, but a window's parent is an
+// edge to another stand-in (itself when unframed, the shell when framed), so hideEdges (ui/test-dom-shim.ts) hides it: a
+// failing assert.equal over a window dumps the window's own primitives, never the chain
+const unframedWindow = (): any => { const w: any = {}; w.parent = w; return hideEdges(w); };
+const framedWindow = (parent: object): any => hideEdges({ parent });
 test("composerWindow, executed: own composer → the same-origin shell's chat pane → nothing", () => {
   const m = VIEW.match(/function composerWindow\(\): Window \| null \{[\s\S]*?\n\}/);
   assert.ok(m, "composerWindow found");
   const body = m![0].replace(/^function composerWindow\(\): Window \| null /, "");
   const run = new Function("window", "document", "return (function()" + body + ")();") as (w: unknown, d: unknown) => unknown;
   const doc = (ids: string[]) => ({ getElementById: (id: string) => (ids.includes(id) ? {} : null) });
-  const self: any = {}; self.parent = self;
+  const self = unframedWindow();
   assert.equal(run(self, doc(["composer-input"])), self, "the chat document: its own window");
   const shell = { document: doc(["chat-pane"]) };
-  const framed = { parent: shell };
+  const framed = framedWindow(shell);
   assert.equal(run(framed, doc([])), shell, "a pane inside the shell: the shell, which forwards into the chat");
   assert.equal(run(framed, doc(["composer-input"])), framed, "a composer at hand always wins over the relay");
-  assert.equal(run({ parent: { get document() { throw new Error("cross-origin"); } } }, doc([])), null,
+  assert.equal(run(framedWindow({ get document() { throw new Error("cross-origin"); } }), doc([])), null,
     "VS Code's cross-origin parent is not the shell — the gesture stands down");
-  assert.equal(run({ parent: { document: doc([]) } }, doc([])), null, "a same-origin parent that is not the shell");
+  assert.equal(run(framedWindow({ document: doc([]) }), doc([])), null, "a same-origin parent that is not the shell");
   assert.equal(run(self, doc([])), null, "unframed and composer-less: nowhere to seed");
 });
 
@@ -496,10 +502,11 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   // the two buttons are built inside the isMd gate — a .py file shows no Rendered/Raw toggle
   assert.match(VIEW, /if \(isMd\) \{\s*\n\s*for \(const mode of \["rendered", "raw"\] as const\)/);
   assert.match(VIEW, /const rendered = isMd && fmt\.md === "rendered";/, "non-md never renders as prose");
-  assert.match(VIEW, /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
+  assert.match(VIEW, /import \{ sanitizeMd, revealFragmentTarget \} from "\.\/md-sanitize";/);   // the sanitizer, and the shared reveal step scrollToFragment runs before its scroll
   assert.doesNotMatch(VIEW, /from "dompurify"/, "the viewer spells no profile of its own: every option comes through md-sanitize.ts");
-  // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string)
-  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty\)\.childNodes\)\);/);
+  // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string); the heading ids are minted
+  // inside the call, as the caller's own pass, so they are read from the text as written, before the math fill (md-url-view.test.ts)
+  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/);
   // a note's links open a NEW tab rather than navigating the hosting pane's document away. A file on disk hands its
   // anchors to file-view-links.ts (linkMarkdownAnchors, fork PR #347: a web link stamped, a sibling file opened in
   // the viewer); a URL document, or a caller with no location, stamps every link element in mdBlock's own pass. Both
@@ -1123,4 +1130,16 @@ test("the chip's dress is in BOTH sheets: a fixed-width pill that never yields t
     // (~1:1 contrast for a remote session's chip). opacity keeps it quiet without dimming to gray.
     assert.match(css, /\.fileview-sess \.host-prefix \{ color: inherit; opacity: 0\.75; \}/, "the host: token uses the pill's fg, quiet");
   }
+});
+
+// ── the window stand-ins are projections (ui/test-dom-shim.ts): a failing assertion dumps a window's own primitives, never its parent chain ──
+test("a window stand-in enumerates no parent edge, and a dump of it names neither the parent nor its document", () => {
+  const shell = { document: { getElementById: () => null } };
+  for (const n of [unframedWindow(), framedWindow(shell), framedWindow({ get document() { throw new Error("cross-origin"); } })]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable(n[k])), "a window stand-in keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parent") && !dump.includes("document"), "a window stand-in dumps its parent chain:\n" + dump);
+  }
+  const self = unframedWindow();
+  assert.ok(self.parent === self && framedWindow(shell).parent === shell, "the parent is still reachable: itself when unframed, the shell when framed");
 });

@@ -11,6 +11,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const requireCjs = createRequire(__filename);
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
@@ -26,7 +28,7 @@ const OPENS = ["docs/design.md", "/tmp/notes-api/out.png", "/tmp/notes-api/notes
 // names, one class or one data-attribute selector, contains(), classList (flash), click listeners
 class TextNode {
   parentElement: Elm | null = null;
-  constructor(public data: string) {}
+  constructor(public data: string) { hideEdges(this); }
   replaceWith(frag: Frag): void {
     const p = this.parentElement!;
     const i = p.childNodes.indexOf(this);
@@ -35,19 +37,26 @@ class TextNode {
     p.childNodes.splice(i, 1, ...kids);
   }
 }
-class Frag { childNodes: (Elm | TextNode | string)[] = []; appendChild(c: Elm | TextNode | string) { this.childNodes.push(c); } }
+class Frag {
+  childNodes!: (Elm | TextNode | string)[];
+  constructor() { Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true }); hideEdges(this); }
+  appendChild(c: Elm | TextNode | string) { this.childNodes.push(c); }
+}
 class Elm {
   className = ""; title = ""; dataset: Record<string, string> = {}; parentElement: Elm | null = null;
   // the class and the title as attributes, reflected to the properties (markPathLink writes them as attributes, for an SVG <a>'s sake)
   attrs: Record<string, string> = {};
   setAttribute(n: string, v: string): void { if (n === "class") this.className = v; else if (n === "title") this.title = v; else this.attrs[n] = v; }
   getAttribute(n: string): string | null { if (n === "class") return this.className || null; if (n === "title") return this.title || null; return n in this.attrs ? this.attrs[n] : null; }
-  childNodes: (Elm | TextNode)[] = [];
+  childNodes!: (Elm | TextNode)[];
   listeners: Record<string, Array<(ev: unknown) => void>> = {};
   classes = new Set<string>();
   classList = { add: (c: string) => { this.classes.add(c); }, remove: (c: string) => { this.classes.delete(c); }, contains: (c: string) => this.classes.has(c) };
   get offsetWidth(): number { return 0; }
-  constructor(public tagName: string) {}
+  constructor(public tagName: string) {
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   set textContent(s: string) { const t = new TextNode(s); t.parentElement = this; this.childNodes = [t]; }
   get textContent(): string { return this.childNodes.map((c) => (c instanceof TextNode ? c.data : c.textContent)).join(""); }
   appendChild(c: Elm | TextNode): Elm | TextNode { c.parentElement = this; this.childNodes.push(c); return c; }
@@ -148,4 +157,16 @@ test("a marked span with no row around it is a no-op in the list: the row is the
   linkifyPathTokens(stray as unknown as HTMLElement, SID);
   h(stray.spans[0]);                     // sid on the span, but no .ut-item to name the todo
   assert.deepEqual(opened, []);
+});
+
+// The projection rule (ui/test-dom-shim.ts, hideEdges): a stand-in node enumerates its primitives alone, so a failing
+// assertion's dump of one stops at the node instead of walking the whole tree through its edges.
+test("a stand-in node enumerates its primitives alone, and a dump of it names neither parentNode, parentElement nor childNodes", () => {
+  const root = new Elm("div"); const kid = new Elm("span"); root.appendChild(kid); kid.appendChild(new TextNode("x"));
+  const nodes = [root, kid, kid.childNodes[0]];
+  for (const n of nodes) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "every enumerable own key holds a primitive");
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("parentElement") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
 });

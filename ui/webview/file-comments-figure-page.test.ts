@@ -8,10 +8,12 @@
 // Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 
@@ -33,9 +35,14 @@ class Doc {
 }
 class N {
   nodeType = 0;
-  parentNode: N | null = null;
-  childNodes: N[] = [];
-  constructor(public ownerDocument: Doc) {}
+  parentNode!: N | null;
+  childNodes!: N[];
+  // the edges are created hidden and hideEdges hides the rest: a node inspects as its own projection (ui/test-dom-shim.ts)
+  constructor(public ownerDocument: Doc) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get parentElement(): E | null { return this.parentNode instanceof E ? this.parentNode : null; }
   get firstChild(): N | null { return this.childNodes[0] || null; }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as T).data : this.childNodes.map((c) => c.textContent).join(""); }
@@ -49,7 +56,7 @@ class N {
 }
 class T extends N {
   nodeType = 3;
-  constructor(doc: Doc, public data: string) { super(doc); }
+  constructor(doc: Doc, public data: string) { super(doc); hideEdges(this); }
   get length(): number { return this.data.length; }
   splitText(offset: number): T {
     const tail = new T(this.ownerDocument, this.data.slice(offset));
@@ -105,6 +112,7 @@ class E extends N {
       deleteProperty: (_t, k) => { this.attrs.delete("data-" + kebab(k)); return true; },
       has: (_t, k) => this.attrs.has("data-" + kebab(k)),
     });
+    hideEdges(this);
   }
   private classes(): string[] { return (this.attrs.get("class") || "").split(/\s+/).filter(Boolean); }
   private setClasses(c: string[]): void { this.attrs.set("class", [...new Set(c)].join(" ")); }
@@ -122,7 +130,7 @@ class E extends N {
     const i = this.childNodes.indexOf(ref);
     this.childNodes.splice(i, 0, n); n.parentNode = this; return n;
   }
-  replaceChildren(...c: N[]): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes = []; for (const x of c) this.appendChild(x); }
+  replaceChildren(...c: N[]): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
   normalize(): void {
     const out: N[] = [];
     for (const c of this.childNodes) {
@@ -238,6 +246,22 @@ let coarse: boolean | null = null;
 win.matchMedia = (q: string) => { if (coarse === null) throw new TypeError("matchMedia is not a function"); return { matches: q === "(pointer: coarse)" && coarse }; };
 (globalThis as any).window = win;
 (globalThis as any).document = doc;
+
+// The stand-in's nodes inspect as their own projection: hideEdges (ui/test-dom-shim.ts) makes every own property that
+// holds an object, and every accessor, non-enumerable, so a failing assertion's dump of a node is a few lines and not
+// the whole tree (a dump that walked parentNode up to the body grew to tens of GB before the box killed it, 2026-09-09).
+test("stand-in: a node enumerates and inspects as its own projection, never the tree", () => {
+  const root = doc.createElement("div");
+  const kid = root.appendChild(doc.createElement("span"));
+  kid.className = "fc-x"; kid.dataset.id = "k1"; kid.addEventListener("click", () => { /* inert */ });
+  const leaf = kid.appendChild(doc.createTextNode("leaf"));
+  for (const n of [root, kid, leaf]) {
+    const own = n as unknown as Record<string, unknown>;
+    assert.ok(Object.keys(own).every((k) => staysEnumerable(own[k])), "only primitives enumerate on " + n.constructor.name + ": " + Object.keys(own).join(", "));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump is the node's own projection:\n" + dump);
+  }
+});
 (globalThis as any).fetch = async () => ({ status: 404, headers: { get: () => null }, json: async () => [] });
 const realSetInterval = globalThis.setInterval;
 (globalThis as any).setInterval = (fn: () => void, ms: number) => { const t = realSetInterval(fn, ms); (t as any).unref?.(); return t; };

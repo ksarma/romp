@@ -8,11 +8,13 @@
 // and text-size step seating too. Synthetic fixtures only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked } from "marked";
 import { topVisibleIndex, blockIndexAt, followPlace, readPlace, seatPlace, type Place } from "./reader-place";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRowSpan, rawRowForOffset } from "./anchor-map";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = read("file-view.ts");
@@ -20,14 +22,20 @@ const VIEW = read("file-view.ts");
 // ── a DOM stand-in: the anchor-map suite's minimal tree, plus the members reader-place reads ───────────
 class FakeNode {
   nodeType = 0;
-  parentNode: FakeNode | null = null;
-  childNodes: FakeNode[] = [];
-  constructor(public ownerDocument: FakeDocument) {}
+  parentNode!: FakeNode | null;
+  childNodes!: FakeNode[];
+  constructor(public ownerDocument: FakeDocument) {
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as FakeText).data : this.childNodes.map((c) => c.textContent).join(""); }
 }
 class FakeText extends FakeNode {
   nodeType = 3;
-  constructor(doc: FakeDocument, public data: string) { super(doc); }
+  constructor(doc: FakeDocument, public data: string) { super(doc); hideEdges(this); }
   get length(): number { return this.data.length; }
   splitText(offset: number): FakeText {
     const tail = new FakeText(this.ownerDocument, this.data.slice(offset));
@@ -43,7 +51,7 @@ class FakeElement extends FakeNode {
   scrollTop = 0;
   /** the box a test gives the element (top, bottom); none by default, so getBoundingClientRect answers all zeros */
   box: { top: number; bottom: number } | null = null;
-  constructor(doc: FakeDocument, public tagName: string) { super(doc); }
+  constructor(doc: FakeDocument, public tagName: string) { super(doc); hideEdges(this); }
   getAttribute(n: string): string | null { return this.attrs.has(n) ? (this.attrs.get(n) as string) : null; }
   setAttribute(n: string, v: string): void { this.attrs.set(n, v); }
   removeChild(n: FakeNode): FakeNode { const i = this.childNodes.indexOf(n); if (i >= 0) this.childNodes.splice(i, 1); n.parentNode = null; return n; }
@@ -219,7 +227,7 @@ test("sourceBlockSpans / renderedBlockIndex / renderedBlockElements: element k o
   assert.deepEqual(spans[2], { start: src.indexOf("| a |"), end: src.indexOf("| 1 | 2 |") + "| 1 | 2 |".length }, "the table, a refused block, still spans its rows");
   assert.deepEqual(spans[3], { start: src.indexOf("```"), end: src.lastIndexOf("```") + 3 }, "the code block too");
   assert.deepEqual(spans[4], { start: src.indexOf("Last"), end: src.length - 1 });
-  for (let b = 0; b < 5; b++) assert.deepEqual(renderedBlockElements(El(md), src, b), [El(blocks[b])], "block " + b + " renders as element " + b + ", refused or not");
+  for (let b = 0; b < 5; b++) sameNodes(renderedBlockElements(El(md), src, b), [El(blocks[b])], "block " + b + " renders as element " + b + ", refused or not");   // by identity (ui/test-dom-shim.ts sameNodes)
   // whitespace text between blocks is no block
   const ws = md.childNodes.find((n) => n instanceof FakeText);
   assert.ok(ws, "marked leaves newlines between the blocks");
@@ -241,7 +249,8 @@ test("sourceBlockSpans / renderedBlockIndex / renderedBlockElements: element k o
   assert.equal(cs.length, 3, "and is a block of the table");
   assert.equal(blockIndexAt(cs, withComment.indexOf("<!--") + 3), 1, "an offset in the comment: the comment's block");
   assert.deepEqual(renderedBlockElements(El(r2.md), withComment, 1), [], "which has no element");
-  assert.deepEqual([0, 2].map((b) => renderedBlockElements(El(r2.md), withComment, b)), [[El(r2.blocks[0])], [El(r2.blocks[1])]], "the paragraphs before and after it keep their elements");
+  sameNodes(renderedBlockElements(El(r2.md), withComment, 0), [El(r2.blocks[0])], "the paragraph before it keeps its element");
+  sameNodes(renderedBlockElements(El(r2.md), withComment, 2), [El(r2.blocks[1])], "the paragraph after it keeps its element");
 });
 
 test("rawRowSpan: a row answers its line's span in the file (CRLF included), a row not of the view null; rawRowForOffset pairs with it", () => {
@@ -343,8 +352,12 @@ test("seatPlace: scrolls the body by the difference between where the kept block
 // ── the order file-view.ts runs the keeper in ─────────────────────────────────────────────────────
 test("file-view.ts: the place is read before the text swap and seated after the hooks (the selection keeper's order); the width reflow seats the place read at scroll time; a text-size step reads and seats around its reflow; the URL viewer's switch seats too", () => {
   const local = VIEW.split("export function openFileView(")[1].split("\nexport function ")[0];
-  assert.match(local, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
-    "read, swap, the tables' width stamp (no geometry read), hooks, then seat over the new text");
+  // the folds' state is restored right after the swap (foldKeeper; the Slice 4 review: every fold reverted to its authored state
+  // on each paint), before the hooks measure and before the seat, so the heights the seat reads are the ones the place was read at;
+  // the tables' width stamp follows it (no geometry read), then the hooks
+  assert.match(local, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
+    "read, swap, folds, the tables' width stamp, hooks, then seat over the new text");
+  assert.match(local, /folds\.note\(\);\n\s*if \(text === null \|\| editing\) return;/, "the folds are read before the editor's early return: Edit paints nothing and then takes the body itself");
   // a seat reads the place anew after it, unless the browser clamped the write (reader-place.ts seatPlaceOutcome): then the
   // place it was given stands, held while the body stands where the clamp left it, so the swap back seats the reader's own
   // passage and not the block the clamp showed (the Slice 3 review: the round trip from the end of the taller view came back
@@ -371,7 +384,7 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   assert.match(local, /paintedWidth = seenWidth;\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(place\); \}/, "the width reflow seats the tracked place");
   assert.match(local, /const kept = textShowing\(\) \? keptPlace\(\) : null;[^\n]*\n\s*applyTextSize\(\);\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(kept\); \}/, "a text-size step reads before the size changes and seats after the hooks");
   const url = VIEW.split("export function openUrlView(")[1].split("\nexport function ")[0];
-  assert.match(url, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n[^\n]*\n[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/, "the URL viewer reads before its swap and seats after it");
+  assert.match(url, /folds\.note\(\);[^\n]*\n\s*const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n[^\n]*\n[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/, "the URL viewer reads the folds and the place before its swap, restores the folds and seats after it");
   // the URL viewer keeps the held place across a clamped seat as the local viewer does (the Slice 3 review, round 3: with the plain
   // seatPlace its round trip from the end of the taller view came back a paragraph early; file-view-url-place-bottom-browser.test.ts)
   assert.match(url, /const keptPlace = \(\): Place \| null => \(shownText === null \? null : heldPlace && body\.scrollTop === heldScrollTop \? heldPlace : readPlace\(body, shownText\)\);/, "the URL viewer's read hands back the held place while the body stands where the clamp left it");
@@ -402,4 +415,18 @@ test("file-view.ts: the place is read before the text swap and seated after the 
     assert.match(css, /\n\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; \}\n/, f + ": the row without container-type");
     assert.match(css, /\n\.fileview > \.fileview-err \{ flex: 0 0 auto; \}\n/, f + ": the note bar's rule");
   }
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names neither parentNode nor childNodes", () => {
+  const doc = new FakeDocument();
+  const root = doc.createElement("div"), p = doc.createElement("p"), t = doc.createTextNode("alpha");
+  root.appendChild(p); p.appendChild(t); p.setAttribute("class", "row");
+  for (const n of [root, p, t]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(p.parentNode === root && root.childNodes[0] === p && t.parentNode === p, "the edges still hold the tree");
+  assert.equal(root.textContent, "alpha"); assert.equal(p.getAttribute("class"), "row");
 });

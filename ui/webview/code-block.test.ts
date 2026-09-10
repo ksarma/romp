@@ -56,7 +56,7 @@ test("render.ts and file-view.ts import the two functions from the module; rende
   assert.match(BLOCK, /^export function addCopyBtn\(pre: HTMLElement, raw: string\): void/m);
   assert.match(BLOCK, /^export function copyText\(text: string\): Promise<boolean>/m);
   assert.doesNotMatch(BLOCK, /from "\.\/render"|from "\.\/file-view"/, "the module imports neither caller");
-  for (const f of ["file-view.ts", "files.ts", "feed.ts", "code-block.ts", "viewer-grammars.ts", "anchor-map.ts", "reader-place.ts"]) {
+  for (const f of ["file-view.ts", "files.ts", "feed.ts", "code-block.ts", "viewer-grammars.ts", "anchor-map.ts", "reader-place.ts", "md-config.ts", "figure-gate.ts"]) {
     assert.doesNotMatch(read(f), /from "\.\/render"/, f + " imports nothing from the chat (the Files and feed bundles must not carry it)");
   }
 });

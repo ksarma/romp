@@ -7,8 +7,10 @@
 // Synthetic fixtures only: the notes-api world, placeholder ids, TESTHOST.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
+import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in: ancestry, attributes, events with capture and bubbling, selectors, FOCUS ───────
 class Ev {
@@ -18,7 +20,7 @@ class Ev {
   stopped = false;
   key: string;
   ctrlKey: boolean; metaKey: boolean;
-  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; hideEdges(this); }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -27,8 +29,11 @@ type Reg = { type: string; cb: Listener; capture: boolean };
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public data: string) {}
+  parentNode!: El | null;
+  constructor(public data: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.data; }
   get parentElement(): El | null { return this.parentNode; }
 }
@@ -47,15 +52,20 @@ function parseSel(sel: string): Compound[][] {
 class El {
   nodeType = 1;
   tagName: string;
-  parentNode: El | null = null;
-  childNodes: Array<El | Txt> = [];
+  parentNode!: El | null;
+  childNodes!: Array<El | Txt>;
   attrs = new Map<string, string>();
   listeners: Reg[] = [];
   hidden = false; disabled = false; readOnly = false; title = ""; type = ""; value = ""; checked = false; placeholder = "";
   innerHTML = "";
   offsetWidth = 0;
   style: Record<string, string> = {};
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get parentElement(): El | null { return this.parentNode; }
   get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
   get className(): string { return this.attrs.get("class") || ""; }
@@ -644,4 +654,19 @@ test("a send the kernel refuses editing-off runs the consent-then-retry branch e
   assert.equal(lastOf(w3, "fileCommentsSend").reqId, u1.reqId, "a no sends nothing more");
   assert.match(p3.aside.querySelector(".fc-send .fc-err")!.textContent, /^nothing was sent: the send would not be recorded/);
   assert.equal(p3.aside.querySelector('[data-act="fcsend"]')!.disabled, false, "Send is back for another try");
+});
+
+test("the stand-in's nodes inspect as their projection: no enumerable edge, so a failing assertion's dump cannot walk the tree", () => {
+  const root = doc.createElement("div");
+  const kid = doc.createElement("span");
+  root.appendChild(kid);
+  kid.appendChild(doc.createTextNode("leaf"));
+  root.setAttribute("data-x", "1"); root.classList.add("c");
+  for (const n of [root, kid, kid.firstChild as Txt]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as unknown as Record<string, unknown>)[k])), "only primitives stay enumerable on " + n.constructor.name);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump: " + dump);
+  }
+  // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
+  assertHiddenEvent(new Ev("click"), root, kid);
 });

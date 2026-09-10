@@ -290,7 +290,10 @@ def _no_model_catalog_fetch():
 # and in every exact argv pin.
 os.environ["ROMP_CLI_SCOPE"] = "0"
 _CLI_SCOPE_LIMIT_VARS = ("ROMP_CLI_SCOPE_MEMORY_MAX", "ROMP_CLI_SCOPE_MEMORY_HIGH", "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX",
-                         "ROMP_CLI_SCOPE_OOM_SCORE_ADJ")
+                         "ROMP_CLI_SCOPE_OOM_SCORE_ADJ",
+                         # the kernel's marker for a systemd that refuses OOMPolicy= on a scope: sent to every
+                         # session's CLI ("1" or ""), so a tool shell inherits it like the limits
+                         "ROMP_CLI_SCOPE_OOM_POLICY_REJECTED")
 for _v in _CLI_SCOPE_LIMIT_VARS:
     os.environ.pop(_v, None)
 

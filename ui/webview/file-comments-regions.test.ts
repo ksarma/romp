@@ -7,10 +7,12 @@
 // synthesized click) is pinned at source. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 
@@ -32,9 +34,13 @@ class Doc {
 }
 class N {
   nodeType = 0;
-  parentNode: N | null = null;
-  childNodes: N[] = [];
-  constructor(public ownerDocument: Doc) {}
+  parentNode!: N | null;
+  childNodes!: N[];
+  constructor(public ownerDocument: Doc) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get parentElement(): E | null { return this.parentNode instanceof E ? this.parentNode : null; }
   get firstChild(): N | null { return this.childNodes[0] || null; }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as T).data : this.childNodes.map((c) => c.textContent).join(""); }
@@ -48,7 +54,7 @@ class N {
 }
 class T extends N {
   nodeType = 3;
-  constructor(doc: Doc, public data: string) { super(doc); }
+  constructor(doc: Doc, public data: string) { super(doc); hideEdges(this); }
   get length(): number { return this.data.length; }
   splitText(offset: number): T {
     const tail = new T(this.ownerDocument, this.data.slice(offset));
@@ -104,6 +110,7 @@ class E extends N {
       deleteProperty: (_t, k) => { this.attrs.delete("data-" + kebab(k)); return true; },
       has: (_t, k) => this.attrs.has("data-" + kebab(k)),
     });
+    hideEdges(this);
   }
   private classes(): string[] { return (this.attrs.get("class") || "").split(/\s+/).filter(Boolean); }
   private setClasses(c: string[]): void { this.attrs.set("class", [...new Set(c)].join(" ")); }
@@ -121,7 +128,7 @@ class E extends N {
     const i = this.childNodes.indexOf(ref);
     this.childNodes.splice(i, 0, n); n.parentNode = this; return n;
   }
-  replaceChildren(...c: N[]): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes = []; for (const x of c) this.appendChild(x); }
+  replaceChildren(...c: N[]): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
   normalize(): void {
     const out: N[] = [];
     for (const c of this.childNodes) {
@@ -923,8 +930,8 @@ test("source pins: the overlay's wiring (data-act names, the coarse gate, the se
   assert.match(SRC, /this\.regionLayers\.set\(img, layer\);\n\s*this\.mark\(layer\.overlay\);/, "so is the overlay the browser's own click lands on after a handed-on press");
   // the overlay pass runs for a media body (where the text pass has nothing to paint) and after the text pass
   assert.match(SRC, /if \(src === null \|\| !root\) \{ this\.paintRegions\(\); this\.render\(\); return; \}/);
-  assert.match(SRC, /this\.paintPresel\(root, src, rendered\);\n\s*this\.paintRegions\(\);\n\s*if \(held\) this\.refocusMark\(held\);\n\s*this\.render\(\);/,
-    "after the text pass; the mark that held the keyboard is re-found once every pass has painted (heldMark / refocusMark), then the render");
+  assert.match(SRC, /this\.paintPresel\(root, src, rendered\);\n\s*this\.trimBlanks\(\);\n(?:\s*\/\/[^\n]*\n)*\s*for \(const c of byCard\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*for \(const c of this\.passChanges\) if \(!c\.marks\.some\(standing\)\) this\.paintedChanges\.delete\(c\.id\);\n\s*this\.paintRegions\(\);\n\s*if \(held\) this\.refocusMark\(held\);\n\s*this\.render\(\);/,
+    "after the text pass and its one trim of collapsed blanks (trimBlanks, then the cards whose every mark was trimmed re-filed as not painted, and the changes whose every mark was trimmed filed as not shown); the mark that held the keyboard is re-found once every pass has painted (heldMark / refocusMark), then the render");
   // the region card: a region's picture is not ALSO framed; the stale tag from regionState; Reveal scrolls to the picture
   assert.match(SRC, /if \(!painted && rendered && !card\.target\) \{/);
   assert.match(SRC, /const regionSt = c\.target \? regionState\(c\.target, this\.status\) : "current";/);
@@ -946,5 +953,17 @@ test("the sheets: the region rules sit inside the mirrored file-comments block, 
     assert.match(block, /\n\.fc-region\.fc-stale \{ border-style: dashed; \}\n\.fc-region\.fc-unknown \{ border-style: dotted; \}\n/, f);
     assert.match(block, /\n\.fc-region-chip::after \{ content: attr\(data-label\); \}\n/, f + ": the chip's label is generated, never a text node");
     assert.match(block, /\.fc-region-chip \{[^}]*font-size: 0\.72em;/, f + ": the chip size from the ladder");
+  }
+});
+
+// ── the projection: a node's edges are own, non-enumerable properties (ui/test-dom-shim.ts), so a failing
+// assertion's dump of a node stops at the node instead of walking the tree ────────────────────────────
+test("a node of the stand-in enumerates its primitives alone, and its dump names neither its parent nor its children", () => {
+  const root = doc.createElement("div"), row = root.appendChild(doc.createElement("p")), text = row.appendChild(doc.createTextNode("alpha"));
+  row.appendChild(doc.createElement("span")).setAttribute("data-id", "x");
+  for (const n of [root, row, text] as any[]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable(n[k])), "every enumerable own property is a primitive: " + Object.keys(n).join(", "));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump stops at the node");
   }
 });

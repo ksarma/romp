@@ -1,0 +1,33 @@
+{
+  "note": [
+    "The tags the HTML Standard's Rendering section lays out as block-level boxes or as a table or one of its parts: every",
+    "selector in that section's style sheet whose rule sets `display` to block, list-item, table, table-caption,",
+    "table-column, table-column-group, table-header-group, table-row-group, table-footer-group, table-row or table-cell,",
+    "read on 2026-09-09 from https://html.spec.whatwg.org/multipage/rendering.html (15.3.2 The page; 15.3.3 Flow content;",
+    "15.3.6 Sections and headings, whose `:heading` is h1 to h6; 15.3.7 Lists; 15.3.8 Tables; the details and summary",
+    "section; the form controls' sections, fieldset, option and optgroup). The value is the display the rule gives the element (a",
+    "summary first under a details is a list-item by a second rule; a closed dialog is hidden by one). The list is the",
+    "section's, whatever the sanitizer does: dialog, form, fieldset, legend, option and optgroup are on it and",
+    "md-sanitize.ts strips all six; listing, plaintext and xmp are on it and DOMPurify's allowlist lacks them. Two readers:",
+    "md-config-block-boxes.test.ts holds anchor-map.ts BLOCK_BOXES (the tags a whitespace-only text node between two of which is",
+    "skipped without a measurement, skipBlockWs) equal to these tags less the ones the sanitizer strips",
+    "or the parser never places in a fragment (html, body), in node, where CI runs;",
+    "md-config-paint-whitespace-browser.test.ts leg 1 holds this list to Chromium's computed display over the tags the",
+    "sanitizer keeps, where a browser exists."
+  ],
+  "tags": {
+    "html": "block", "body": "block",
+    "address": "block", "blockquote": "block", "center": "block", "dialog": "block", "div": "block", "figure": "block",
+    "figcaption": "block", "footer": "block", "form": "block", "header": "block", "hr": "block", "legend": "block",
+    "listing": "block", "main": "block", "p": "block", "plaintext": "block", "pre": "block", "search": "block", "xmp": "block",
+    "article": "block", "aside": "block", "h1": "block", "h2": "block", "h3": "block", "h4": "block", "h5": "block", "h6": "block",
+    "hgroup": "block", "nav": "block", "section": "block",
+    "dir": "block", "dd": "block", "dl": "block", "dt": "block", "menu": "block", "ol": "block", "ul": "block",
+    "li": "list-item",
+    "table": "table", "caption": "table-caption", "colgroup": "table-column-group", "col": "table-column",
+    "thead": "table-header-group", "tbody": "table-row-group", "tfoot": "table-footer-group", "tr": "table-row",
+    "td": "table-cell", "th": "table-cell",
+    "fieldset": "block", "option": "block", "optgroup": "block",
+    "details": "block", "summary": "block"
+  }
+}

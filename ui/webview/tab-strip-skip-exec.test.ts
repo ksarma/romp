@@ -8,6 +8,7 @@
 // the header's DOM — is what this file tests (tab-groups.test.ts executes the header).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
@@ -15,19 +16,21 @@ import { planStrip, parseTabGroups, headWords } from "./tab-groups";
 import { tabStateClass, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle } from "./tab-state";
 import { newSkeletonState, renderKind } from "./skeleton-tabs";
 import type { TagUnion } from "./session-views";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 
 /** Enough of Element for the strip's paint: children, classList, dataset, style, listeners (fired by hand). */
 class FakeEl {
-  tag: string; className: string; children: FakeEl[] = []; parent: FakeEl | null = null;
+  tag: string; className: string; children!: FakeEl[]; parent: FakeEl | null = null;
   dataset: Record<string, string> = {}; styleProps: Record<string, string> = {}; attrs: Record<string, string> = {};
   listeners: Record<string, Function[]> = {}; textContent = ""; title = ""; tabIndex = -1; draggable = false;
   wipes = 0;   // replaceChildren() calls: the strip's rebuild count when this is #tabs
   style: any; classList: any;
   constructor(tag: string, cls = "") {
     this.tag = tag; this.className = cls;
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
     const self = this;
     this.style = { display: "", color: "", padding: "", height: "", background: "", animationDelay: "", borderColor: "",
                    setProperty(k: string, v: string) { self.styleProps[k] = v; } };
@@ -37,11 +40,14 @@ class FakeEl {
       contains(x: string) { return self.has(x); },
       toggle(x: string, on?: boolean) { if (on) this.add(x); else this.remove(x); },
     };
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    hideEdges(this);
   }
   has(x: string): boolean { return this.className.split(/\s+/).includes(x); }
   appendChild(c: FakeEl): FakeEl { c.parent = this; this.children.push(c); return c; }
   append(...cs: FakeEl[]): void { for (const c of cs) this.appendChild(c); }
-  replaceChildren(...cs: FakeEl[]): void { this.wipes++; this.children = []; this.append(...cs); }
+  replaceChildren(...cs: FakeEl[]): void { this.wipes++; this.children.length = 0; this.append(...cs); }
   get firstChild(): FakeEl | null { return this.children[0] ?? null; }
   get lastElementChild(): FakeEl | null { return this.children[this.children.length - 1] ?? null; }   // the dot's hover title lands on the slot just appended
   contains(n: unknown): boolean { return n === this || this.children.some((c) => c.contains(n)); }
@@ -190,6 +196,7 @@ function repaintsOnce(H: Hooks, api: Api, what: string, change: () => void): voi
   assert.equal(H.bar.wipes, before + 1, what + " unchanged since: no repaint");
 }
 
+
 test("an unchanged strip is not rebuilt, and the aftermath runs on both paths", () => {
   const { H, api } = world();
   api.renderTabs();
@@ -204,7 +211,7 @@ test("an unchanged strip is not rebuilt, and the aftermath runs on both paths", 
   assert.equal(H.bar.wipes, 1, "the second and third render found nothing changed: no wipe");
   assert.equal(H.rowPaints, 1, "no layout read either");
   assert.equal(H.placeholders, 1, "no node minted");
-  assert.deepEqual(H.bar.children, nodes, "the same DOM nodes");
+  sameNodes(H.bar.children, nodes, "the same DOM nodes");   // by identity (ui/test-dom-shim.ts sameNodes)
   assert.equal(H.aftermaths.length, 3, "the no-sessions placeholder reconciles on the skip path too");
 });
 
@@ -253,7 +260,7 @@ test("the sectioned strip: every input a group header paints repaints it, once, 
   assert.equal(headNodes.length, 2);
   api.renderTabs();
   assert.equal(H.bar.wipes, 1, "equal plan, equal tabs: skipped");
-  assert.deepEqual(H.bar.heads(), headNodes, "the header nodes were kept");
+  sameNodes(H.bar.heads(), headNodes, "the header nodes were kept");
   const changes: [string, () => void][] = [
     ["a section folds", () => { H.groupsRaw = groups({ collapsed: ["backend"] }); }],
     ["a hidden member's state (the folded header's pip)", () => { sessions.get("a").status.state = "blocked"; }],
@@ -374,4 +381,16 @@ test("the all-hidden blank lands on the skip path when the active view appears b
   api.renderTabs();
   assert.equal(H.bar.wipes, 2);
   assert.equal(av.el.style.display, "", "restored once anything is visible");
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names neither its children nor its parent", () => {
+  const bar = new FakeEl("div"), t = new FakeEl("div", "tab"); bar.appendChild(t); t.dataset.id = "a"; t.textContent = "alpha"; t.classList.add("active");
+  for (const n of [bar, t]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("children") && !dump.includes("parent"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(t.parent === bar && bar.firstChild === t && bar.contains(t), "the edges still hold the tree"); assert.ok(t.has("active"));
+  const u = new FakeEl("div", "tab"); bar.replaceChildren(u); assert.equal(bar.wipes, 1); assert.ok(bar.children.length === 1 && bar.children[0] === u);
 });

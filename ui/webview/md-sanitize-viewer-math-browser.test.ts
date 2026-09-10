@@ -1,13 +1,15 @@
 // A note's math in the file viewer, in the two bundles that host the viewer, over the REAL bundles in headless Chromium
-// (plans/markdown-viewer.md, Slice 1, review round 1). The viewer's mdBlock parses with the shared marked singleton, and
-// in the chat bundle render.ts arms that singleton with the chat grammar (chat-md.ts: math placeholders KaTeX fills after
-// the sanitize). Round 1's first cut ran the fill by hand in md() and userMd() only, so a note opened from the chat page
-// (a same-origin .md link, openUrlView) showed bare TeX in inert placeholders where main rendered KaTeX. The fill is a
-// sanitizeMd post-pass now, registered by the grammar's module (md-sanitize.ts registerMdPostPass), so every sanitizeMd
-// call in the chat bundle renders math, mdBlock's included. The files bundle has no grammar, no fill and no KaTeX: the
-// same note keeps its `$\frac{a}{b}$` as literal text there, exactly as on main (Slice 4 gives it the grammar, decision
-// 1). Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values only:
-// an invented note, TESTHOST paths, a placeholder sid.
+// (plans/markdown-viewer.md, Slice 1, review round 1; Slice 4, decision 1). The viewer's mdBlock parses with the shared
+// marked singleton, which md-config.ts configures for every bundle (applyMdConfig, called by render.ts, file-view.ts and
+// anchor-map.ts at load): the math placeholders KaTeX fills after the sanitize, the fill registered as a sanitizeMd
+// post-pass (md-sanitize.ts registerMdPostPass) beside the grammar. Round 1 of the Slice 1 review found the first cut
+// running the fill by hand in md() and userMd() only, so a note opened from the chat page (a same-origin .md link,
+// openUrlView) showed bare TeX; the post-pass fixed the chat page. Before Slice 4 the files bundle had no grammar, no fill
+// and no KaTeX, and the same note kept its `$\frac{a}{b}$` as literal text in the Files pane (this leg pinned that as the
+// state of the day); Slice 4 imports the grammar module into the viewer, so files.js and feed.js carry all three and the
+// note renders the same KaTeX on every surface, which is what this leg reads now on both pages. Skips LOUDLY without a
+// playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented note, TESTHOST
+// paths, a placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -81,11 +83,11 @@ async function inBrowser(t: any, body: (browser: any) => Promise<void>): Promise
   try { await body(browser); } finally { await browser.close(); }
 }
 
-test("a note's math renders as KaTeX in the chat page's viewer (the render bundle) and stays literal TeX in the Files pane (the files bundle), as on main", { timeout: 120000 }, async (t) => {
+test("a note's math renders as KaTeX in the chat page's viewer (the render bundle) AND in the Files pane (the files bundle): one grammar, one fill, every surface (Slice 4, decision 1)", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const renderJs = bundle("render.ts"), filesJs = bundle("files.ts");
-    // the files bundle carries neither the grammar's placeholder class nor KaTeX: what the viewer does there cannot be math
-    assert.ok(!filesJs.includes("md-math-inline") && !filesJs.includes("KaTeX parse error"), "files.js is free of the math grammar and of KaTeX (Slice 4 adds both, decision 1)");
+    // both bundles carry the grammar's placeholder class and KaTeX's own text: the viewer's import of md-config.ts brings them
+    assert.ok(filesJs.includes("md-math-inline") && filesJs.includes("KaTeX parse error"), "files.js carries the math grammar and KaTeX (Slice 4, decision 1; before it neither)");
     assert.ok(renderJs.includes("md-math-inline") && renderJs.includes("KaTeX parse error"), "render.js carries both");
 
     // 1. the chat page: a same-origin .md link in a message opens the note in the viewer (openUrlView), and its formulas are KaTeX
@@ -123,7 +125,7 @@ test("a note's math renders as KaTeX in the chat page's viewer (the render bundl
       await page.close();
     }
 
-    // 2. the Files pane: the same note through the files bundle keeps its TeX as the literal text it was on main
+    // 2. the Files pane: the same note through the files bundle renders the same KaTeX (before Slice 4 the TeX stayed literal here)
     {
       const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
       const errors: string[] = [];
@@ -141,9 +143,13 @@ test("a note's math renders as KaTeX in the chat page's viewer (the render bundl
       await page.evaluate(([p, sid]: [string, string]) => { window.postMessage({ romp: "viewFile", path: p, sid }, "*"); }, [FILE_PATH, SID] as [string, string]);
       await page.waitForSelector("#romp-fileview .fileview-body .fileview-md", { timeout: 10000 });
       const f: Facts = await page.evaluate(measure);
-      assert.equal(f.katex, 0, "no KaTeX in the Files pane's viewer");
-      assert.equal(f.placeholders, 0, "and no placeholder element either: the files bundle has no math grammar");
-      assert.ok(f.text.includes("Inline $\\frac{a}{b}$ and root $\\sqrt{x+1}$ in prose.") && f.text.includes("$$\\sum_{i=0}^{n} i$$"), "the TeX is literal text, delimiters included, as on main: " + f.text);
+      assert.equal(f.placeholders, 0, "no placeholder is left in the Files pane's viewer: " + f.firstP);
+      assert.equal(f.katex, 3, "three formulas rendered as KaTeX in the Files pane: " + f.firstP);
+      assert.equal(f.display, 1, "the display sum is a .katex-display block");
+      assert.ok(f.styledInKatex >= 10, "KaTeX's inline layout styles are all there: " + f.styledInKatex);
+      assert.ok(!f.text.includes("\\frac") && !f.text.includes("$"), "no TeX source and no delimiter reads as text: " + f.text);
+      assert.ok(f.aTop !== null && f.bTop !== null && f.aTop < f.bTop - 4, "the fraction's numerator sits above its denominator under styles.css, which the Files page already carried: a@" + f.aTop + " b@" + f.bTop);
+      assert.ok(f.displayH !== null && f.displayH > 30, "the display sum has its limits' height: " + f.displayH);
       assert.deepEqual(errors, [], "no page errors on the Files page");
       await page.close();
     }

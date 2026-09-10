@@ -14,6 +14,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import type { EditorView } from "@codemirror/view";
 import { changeHandlers, pointerDecides, PointerTracker, releaseHover, CLS, type TrackHost } from "./track-decorations";
 
@@ -50,14 +52,19 @@ function matches(el: El, sel: string): boolean {
 }
 class El {
   classes = new Set<string>();
-  parent: El | null = null;
-  ownerDocument: Doc | null = null;
+  parent!: El | null;                 // both edges are defined in the constructor, non-enumerable (ui/test-dom-shim.ts hideEdges):
+  ownerDocument!: Doc | null;         // a node inspects as its primitives, never as the tree or the document it hangs in
   readonly classList = {
     add: (c: string) => { this.classes.add(c); },
     remove: (c: string) => { this.classes.delete(c); },
     contains: (c: string) => this.classes.has(c),
   };
-  constructor(readonly attrs: Record<string, string> = {}, cls: string[] = []) { cls.forEach((c) => this.classes.add(c)); }
+  constructor(readonly attrs: Record<string, string> = {}, cls: string[] = []) {
+    cls.forEach((c) => this.classes.add(c));
+    Object.defineProperty(this, "parent", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "ownerDocument", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);   // classes, classList and attrs hide too
+  }
   getAttribute(n: string): string | null { return n in this.attrs ? this.attrs[n] : null; }
   closest(sel: string): El | null { for (let e: El | null = this; e; e = e.parent) if (matches(e, sel)) return e; return null; }
   contains(other: unknown): boolean { for (let e = other as El | null; e; e = e.parent) if (e === this) return true; return false; }
@@ -280,11 +287,11 @@ test("a redraw that rewrote the mark's class darkens that half; the tracker's do
 test("PointerTracker records the press's pointer type from a capture-phase pointerdown on the editor root and removes it on destroy", () => {
   const listeners: Array<{ type: string; fn: (e: { pointerType: string }) => void; opts: unknown }> = [];
   const removed: Array<{ type: string; fn: unknown; opts: unknown }> = [];
-  const dom = {
+  const dom = hideEdges({   // the root stand-in's ownerDocument is an edge too (ui/test-dom-shim.ts)
     addEventListener: (type: string, fn: (e: { pointerType: string }) => void, opts: unknown) => { listeners.push({ type, fn, opts }); },
     removeEventListener: (type: string, fn: unknown, opts: unknown) => { removed.push({ type, fn, opts }); },
     ownerDocument: new Doc(), contains: () => false,
-  };
+  });
   const t = new PointerTracker({ dom } as unknown as EditorView);
   assert.equal(t.pressType, null, "nothing pressed yet");
   assert.equal(listeners.length, 1);
@@ -476,4 +483,15 @@ test("in Chromium: hover lights both halves; destroyed under the pointer and mou
     assert.deepEqual(errors, []);
     await context.close();
   } finally { await browser.close(); }
+});
+
+// ── the stand-in's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps a node's primitives, never the tree ──
+test("a node of the editor stand-in enumerates its primitives alone, and a dump of it names neither parent nor ownerDocument", () => {
+  const doc = new Doc(); const v = view(doc); const mark = inMark(v); const text = new El({ "data-x": "1" }, ["cm-line"]); text.parent = mark;
+  for (const n of [v.dom, mark, text]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "an El keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parent", "ownerDocument", "attrs", "classes", "els"]) assert.ok(!dump.includes(edge), "an El dumps " + edge + ":\n" + dump);
+  }
+  assert.ok(mark.parent === v.dom && mark.ownerDocument === doc && text.closest(".cm-editor") === v.dom, "the edges are still reachable");
 });

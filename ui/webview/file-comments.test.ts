@@ -6,6 +6,7 @@
 // world, placeholder ids, TESTHOST.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -15,6 +16,7 @@ import {
   type Status, type Hunk, type StoreComment, type MessageOpts, unsentCount, actionLabel, describeComment, sendParts, buildSendMessage, neutralizeRompMarkers,
   cardModel, logRowText, pollBaseline, headVerdict, pollTargets, mtimeMoved, editBlockedReason, lineStartOffset, folderOf, ABSENT,
 } from "./file-comments-model";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -529,7 +531,7 @@ class El {
   href = ""; target = ""; rel = "";
   dataset: Record<string, string> = {};
   style: Record<string, string> = {};
-  childNodes: Array<El | string> = [];
+  childNodes!: Array<El | string>;
   parentElement: El | null = null;
   private attrs = new Map<string, string>();
   private classes = new Set<string>();
@@ -539,7 +541,10 @@ class El {
     toggle: (c: string, on?: boolean) => { if (on === undefined ? !this.classes.has(c) : on) this.classes.add(c); else this.classes.delete(c); },
     contains: (c: string) => this.classes.has(c),
   };
-  constructor(public tagName: string) {}
+  constructor(public tagName: string) {
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get className(): string { return [...this.classes].join(" "); }
   set className(v: string) { this.classes = new Set(v.split(/\s+/).filter(Boolean)); }
   get textContent(): string { return this.childNodes.map((c) => (typeof c === "string" ? c : c.textContent)).join(""); }
@@ -710,7 +715,7 @@ test("the registry entry: exported by file-comments.ts, registered in file-view.
   const fromView = SRC.match(/^import .* from "\.\/file-view";$/gm) || [];
   assert.deepEqual(fromView, ['import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit, CloseAsk } from "./file-view";'], "types only");
   // contract C4: the anchor-map API, imported by name
-  assert.match(SRC, /import \{ mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine \} from "\.\/anchor-map";/);
+  assert.match(SRC, /import \{ mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, trimCollapsedMarks, rawOffsetToLine \} from "\.\/anchor-map";/);
   assert.doesNotMatch(SRC, /vendor\/track-changents/, "the engine is reached through anchor-map, never twice");
 });
 
@@ -798,7 +803,9 @@ test("click-safety: ONE delegate() root for every control (the body row, which a
   assert.match(SRC, /if \(!this\.root\.contains\(head\)\) this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/);
   assert.equal((SRC.match(/this\.root\.replaceChildren\(/g) || []).length, 1, "the aside's children are never rebuilt elsewhere");
   // the highlights carry the delegate's action and the comment id; painted through anchor-map, states located / context / detached
-  assert.match(SRC, /paintRendered\(root, src, loc\.range, cls, \{ act: "fcopen", id: card\.id \}\)/);
+  // the Rendered paint defers the trim of its collapsed blanks to the pass (`trim: false`; anchor-map.ts trimCollapsedMarks runs
+  // once over every mark of the pass, trimBlanks), the Raw paint has none to defer
+  assert.match(SRC, /paintRendered\(root, src, loc\.range, cls, \{ act: "fcopen", id: card\.id \}, \{ trim: false \}\)/);
   assert.match(SRC, /paintRaw\(root, src, loc\.range, cls, \{ act: "fcopen", id: card\.id \}\)/);
   assert.match(SRC, /const cls = "fc-hl" \+ \(loc\.state === "context" \? " fc-hl-context" : ""\);/);
   assert.match(SRC, /if \(c\.anchor && loc && loc\.range && !loc\.painted\) \{\n\s*const rv = btn\("Reveal", "fcreveal"\);/, "an unpainted comment's card never dead-ends");
@@ -857,8 +864,10 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
   // overlays paint after the picture loads) is a third, so the count is a floor and the two text sites are pinned by shape
   assert.ok((VIEW.match(/fireRendered\(\);/g) || []).length >= 2, "the SVG Source view and the text views both fire onRendered");
   assert.match(VIEW, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "the SVG Source view fires it");
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*fireRendered\(\);/,
-    "every text paint fires it, after the fresh tables take the body's width (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts; the stamp: file-view-body-width-browser.test.ts)");
+  // (the folds' restore stands between the swap and the hooks since the Slice 4 review: the hooks measure the folds as the person left them;
+  // the tables' width stamp follows it, before the hooks, and reads no geometry)
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*fireRendered\(\);/,
+    "every text paint fires it, after the folds' restore and the fresh tables' width stamp (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts; the stamp: file-view-body-width-browser.test.ts)");
   assert.match(VIEW, /for \(const cb of savedHooks\) \{ try \{ cb\(\{ mtimeNs: mtNs, logged \}\); \}/);
   assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 3,
     "closeFileView, the replace path, and the URL viewer's replace path (openUrlView is a third way a viewer is replaced, upstream 2026-09-06, folded 2026-09-07; its teardown drains the hooks too)");
@@ -948,4 +957,17 @@ test("docs: the guide covers the panel, the poll, the consent, either view and m
   assert.ok(chat.includes("**Comments**"), "…and point at the panel for anything worth keeping");
   assert.ok(files.includes("folder a session will write into"), "track the folder before the session writes");
   assert.match(ADR, /^Status: accepted \(2026-09-06\), with Slice 1 of `plans\/file-review\.md`$/m);
+});
+
+test("the stand-in's nodes inspect as their projection: no enumerable edge, so a failing assertion's dump cannot walk the tree", () => {
+  const root = new El("div");
+  const kid = new El("span");
+  root.appendChild(kid);
+  kid.textContent = "leaf";
+  root.setAttribute("data-x", "1"); root.classList.add("c");
+  for (const n of [root, kid]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as unknown as Record<string, unknown>)[k])), "only primitives stay enumerable on " + n.constructor.name);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump: " + dump);
+  }
 });

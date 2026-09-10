@@ -6,6 +6,8 @@
 // pending promise is exactly the wait a real open shows.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in: the members openFileView touches while it builds the bar ──────────────────────
 class El {
@@ -13,7 +15,7 @@ class El {
   href = ""; target = ""; rel = ""; spellcheck = true; isConnected = true;
   style: Record<string, string> = {};
   dataset: Record<string, string> = {};      // the viewer's text size rides the root as data-fv-text (applyTextSize)
-  childNodes: Array<El | string> = [];
+  childNodes!: Array<El | string>;
   private attrs = new Map<string, string>();
   private classes = new Set<string>();
   classList = {
@@ -22,13 +24,17 @@ class El {
     toggle: (c: string, on?: boolean) => { if (on ?? !this.classes.has(c)) this.classes.add(c); else this.classes.delete(c); },
     contains: (c: string) => this.classes.has(c),
   };
-  constructor(public tagName: string) {}
+  constructor(public tagName: string) {
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get className(): string { return [...this.classes].join(" "); }
   set className(v: string) { this.classes = new Set(v.split(/\s+/).filter(Boolean)); }
   get textContent(): string { return this.childNodes.map((c) => (typeof c === "string" ? c : c.textContent)).join(""); }
   set textContent(v: string) { this.childNodes = v === "" ? [] : [v]; }
   appendChild<T extends El>(c: T): T { this.childNodes.push(c); return c; }
   replaceChildren(...cs: Array<El | string>): void { this.childNodes = [...cs]; }
+  querySelector(_sel: string): El | null { return null; }   // renderBody notes the folds under .fileview-md before its early return (file-view.ts foldKeeper); a body still loading holds none
   remove(): void { this.isConnected = false; }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   removeAttribute(k: string): void { this.attrs.delete(k); }
@@ -121,4 +127,16 @@ test("no sid, or a resolver that names nothing, means no chip element at all", a
   assert.equal((await openBar("/tmp/notes-api/app.py", "")).sess, null, "an empty sid is no sid");
   fv.setFileViewIdentity(() => null);
   assert.equal((await openBar("/tmp/notes-api/app.py", API)).sess, null, "a resolver with no answer → no chip, never a guess");
+});
+
+// The projection rule (ui/test-dom-shim.ts, hideEdges): a stand-in node enumerates its primitives alone, so a failing
+// assertion's dump of one stops at the node instead of walking the whole tree through its edges.
+test("a stand-in node enumerates its primitives alone, and a dump of it names neither parentNode nor childNodes", () => {
+  const root = new El("div"); const kid = root.appendChild(new El("span")); kid.appendChild(new El("i"));
+  const nodes = [root, kid];
+  for (const n of nodes) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "every enumerable own key holds a primitive");
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
 });

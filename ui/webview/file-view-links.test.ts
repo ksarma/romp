@@ -10,6 +10,8 @@
 // under /tmp/TESTHOST, a placeholder session id.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -40,10 +42,12 @@ function parseSel(sel: string): Compound[][] {
     return { tag: m[1] ? m[1].toUpperCase() : null, classes, attrs };
   }));
 }
+/** Clears a node's parent pointer once its parent's list no longer holds it (replaceWith splices the list itself). */
+const unparent = (n: El | Txt): void => { n.parentNode = null; };
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public data: string) {}
+  parentNode!: El | null;
+  constructor(public data: string) { Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true }); hideEdges(this); }
   get textContent(): string { return this.data; }
   get parentElement(): El | null { return this.parentNode; }
   get ownerDocument(): typeof doc { return doc; }
@@ -60,20 +64,29 @@ class Txt {
     const kids = n instanceof Frag ? n.childNodes.slice() : [n];
     for (const k of kids) { if (k.parentNode) k.parentNode.removeChild(k); k.parentNode = p; }
     p.childNodes.splice(i, 1, ...kids);
-    this.parentNode = null;
+    unparent(this);
   }
 }
-class Frag { childNodes: Array<El | Txt> = []; appendChild(c: El | Txt): void { this.childNodes.push(c); } }
+class Frag {
+  childNodes!: Array<El | Txt>;
+  constructor() { Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true }); hideEdges(this); }
+  appendChild(c: El | Txt): void { this.childNodes.push(c); }
+}
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 class El {
   nodeType = 1;
   tagName: string;
-  parentNode: El | null = null;
-  childNodes: Array<El | Txt> = [];
+  parentNode!: El | null;
+  childNodes!: Array<El | Txt>;
   attrs = new Map<string, string>();
   role: string | null = null;
   onkeydown: unknown = null; onmousedown: unknown = null; onmouseup: unknown = null; onmouseleave: unknown = null; oncontextmenu: unknown = null; ondragstart: unknown = null;
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get ownerDocument(): typeof doc { return doc; }
   get parentElement(): El | null { return this.parentNode; }
   // reflected attributes, as the DOM has them
@@ -91,7 +104,7 @@ class El {
     has: (_, k) => this.attrs.has("data-" + kebab(String(k))),
   });
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; if (v !== "") this.appendChild(new Txt(v)); }
+  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; if (v !== "") this.appendChild(new Txt(v)); }
   private detach(n: El | Txt): void { const p = n.parentNode; if (p) { const i = p.childNodes.indexOf(n); if (i >= 0) p.childNodes.splice(i, 1); n.parentNode = null; } }
   appendChild<T extends El | Txt>(n: T): T { this.detach(n); this.childNodes.push(n); n.parentNode = this; return n; }
   insertBefore<T extends El | Txt>(n: T, ref: El | Txt | null): T {
@@ -511,6 +524,11 @@ test("viewerLinkTarget (marked's walkTokens, before the sanitizer): a same-direc
   for (const n of ["notes.md", "app.test.ts", "archive.tar.gz", "jquery.min.js", "a_b.c.com", "x.y.py", "app.component.vue", "styles.module.less", "report.final.docx", "init.el", "notes.v2.md", "foo.uk", "a.b.uk"]) assert.equal(isHostName(n), false, n);
   const tok = { type: "link", href: "notes.md:7" }; viewerWalkTokens(tok); assert.equal(tok.href, "./notes.md:7");
   const img = { type: "image", href: "notes.md:7" }; viewerWalkTokens(img); assert.equal(img.href, "notes.md:7", "a figure's src is rewriteFigureSrcs's business");
+  // a wikilink token is stamped resolved (Slice 4 of plans/markdown-viewer.md, decision 2): the file kind has a directory for
+  // `[[Note]]` to sit in, so md-config.ts's renderer emits the anchor this pass then turns into a path link; the chat and a
+  // URL document never run this hook and render the dead span
+  const wiki = { type: "wikilink", target: "Note" } as { type: string; target: string; resolved?: boolean }; viewerWalkTokens(wiki); assert.equal(wiki.resolved, true, "stamped");
+  const plain = { type: "text" } as { type: string; resolved?: boolean }; viewerWalkTokens(plain); assert.equal(plain.resolved, undefined, "nothing else is stamped");
 });
 
 test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a path link on the anchor itself (label intact, path normalized), a query alone opens a tab, a fragment alone is the viewer's, a stripped target is a dead link that says why", async () => {
@@ -937,4 +955,17 @@ test("the dress is light, and in both sheets: the token keeps its colour under a
     assert.match(rule(".fileview-md a.file-uri-link:hover {"), /text-decoration: underline;/);
     assert.match(rule(".fileview-md a.fv-dead {"), /cursor: help;/);
   }
+});
+
+// ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────
+test("a stand-in node enumerates its primitives alone, so a failing assertion's dump shows neither parentNode nor childNodes", () => {
+  const root = new El("div"); root.className = "row";
+  const child = root.appendChild(new El("span")); child.appendChild(new Txt("alpha")); root.appendChild(new Txt("beta"));
+  const frag = new Frag(); frag.appendChild(new Txt("gamma"));
+  for (const n of [root, child, root.childNodes[1], frag] as Array<El | Txt | Frag>) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump holds no edge: " + dump);
+  }
+  assert.ok(child.parentNode === root && root.childNodes[0] === child && root.textContent === "alphabeta" && frag.childNodes.length === 1, "the tree is reachable as before");
 });

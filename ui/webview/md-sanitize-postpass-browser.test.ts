@@ -1,5 +1,5 @@
-// The chat's markdown pipeline in headless Chromium over the real modules: marked with the chat grammar (chat-md.ts,
-// math.ts), then sanitizeMd (md-sanitize.ts), which runs renderMathPlaceholders as the post-pass chat-md.ts registers
+// The chat's markdown pipeline in headless Chromium over the real modules: marked with the one grammar (md-config.ts,
+// math.ts), then sanitizeMd (md-sanitize.ts), which runs renderMathPlaceholders as the post-pass md-config.ts registers
 // at load; userMd the same over the breaks:true instance. This is md() and userMd() as render.ts composes them,
 // minus the PR-reference walk (render-math.test.ts and chat-md.test.ts pin render.ts to that order).
 // What a source pin cannot see, and this leg measures:
@@ -38,16 +38,17 @@ const KATEX_CSS = fs.readFileSync(path.join(KATEX_DIST, "katex.min.css"), "utf8"
 const ENTRY = `
 import { marked } from "marked";
 import katex from "katex";
-import { chatMdExtensions, userMdHtml } from "./chat-md";
+import { userMdHtml } from "./chat-md";
+import { applyMdConfig } from "./md-config";
 import { sanitizeMd, registerMdPostPass } from "./md-sanitize";
 import { renderMathPlaceholders } from "./math";
-marked.setOptions({ gfm: true, breaks: false });
-marked.use(...chatMdExtensions);
+applyMdConfig();   // the one grammar on the singleton, as every bundle arms it (Slice 4 of plans/markdown-viewer.md); importing md-config.ts registers the math fill as sanitizeMd's post-pass
 function md(src: string): string { return sanitizeMd(marked.parse(src) as string).innerHTML; }
 function userMd(src: string): string { return sanitizeMd(userMdHtml(src)).innerHTML; }
 function markedOnly(src: string): string { return marked.parse(src) as string; }
 // KaTeX's own output for the same TeX by the same DOM path (katex.render into a fresh element, the browser serializing),
-// under the options the fill uses
+// under the fill's output and trust options (its size and expansion caps and its error ink change nothing for a formula that
+// parses and stays within them; md-sanitize-katex-browser.test.ts compares under the capped call)
 function direct(tex: string, display: boolean): string {
   const el = document.createElement("div"); katex.render(tex, el, { displayMode: display, throwOnError: false, output: "html", trust: false }); return el.innerHTML;
 }

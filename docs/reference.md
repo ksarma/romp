@@ -466,6 +466,34 @@ one of 70, 80, 90, 100, 115, 130, 150, 175 or 200 percent, set by the **A−** /
 its headings, the code and the Raw view together, and the prose measure with
 them; a value outside the table reads as 100.
 
+### Pictures from the web in a viewed file
+
+A markdown file shown in the viewer may carry pictures and clips from the web. The
+gear's **Pictures from the web in files** setting is the list of hosts whose figures load
+when the file opens; a figure from any other host is shown as a box naming the host, makes
+no request, and loads on one click, together with every other figure from that host in the
+file. A host loaded that way stays loaded until the page reloads. The list is kept with the
+other gear settings in the browser's own storage (`figureHosts` under `romp:settings`), one
+host name per entry, exact (`github.com` does not cover `gist.github.com`), and it starts as
+`github.com`, `raw.githubusercontent.com`, `user-images.githubusercontent.com`,
+`camo.githubusercontent.com`, `avatars.githubusercontent.com`,
+`objects.githubusercontent.com`, `private-user-images.githubusercontent.com`,
+`github.githubassets.com`, `localhost` and `127.0.0.1`. The kernel's own address, which
+every figure stored beside the file loads through, needs no entry; a `data:` image makes no
+request and is never gated. An inline `<svg>` whose `fill`, `stroke`, `filter`, `clip-path`,
+`mask`, `marker-start`, `marker-mid` or `marker-end` attribute names another host with
+`url(...)` is a figure from the web too, and is gated the same way. An entry is read as the
+browser reads a host: an address pasted whole (`https://cdn.test/a.png`), a port
+(`cdn.test:8080`) or a path is stored as the host alone (`cdn.test`), an internationalised
+name in its `xn--` form and an IPv4 address without leading zeros, and the gear shows the
+stored form on its next open. A line the browser cannot read as a host is kept, allows
+nothing, and is named under the list in the gear. A change to the list, saved from this tab's
+gear or another tab's, reaches an open file without a reload: a host added to the list
+restores its boxes where the file stands. A host removed from the list takes effect at the
+file's next paint (a re-open, or a switch between Raw and Rendered); a picture already
+fetched stays on the page until then. The setting applies to files shown in the viewer, on
+every surface; a picture in a chat message is not gated.
+
 ### The tab strip's per-browser choices
 
 The chat tab strip keeps its grouping choices in the browser's own storage, under
@@ -1391,7 +1419,11 @@ error center also shows) naming the variable and the rule, and the wrapper
 receives that variable empty, so the value is applied nowhere. The probe at the
 kernel's start, described below, catches a value that passes the rule but that
 systemd refuses (a size past its range; `OOMPolicy=` on a scope before systemd
-253) and reports it the same way, quoting systemd.
+253) and reports it the same way, quoting systemd; the policy refused on such a
+systemd, by a failure that names it, is the plain line described in the
+`OOMPolicy=continue` paragraph below, and the memory limits are then probed
+apart from it, so they stand there when that probe passes; the paragraph on the
+boot probe names the two other outcomes.
 The wrapper checks the same rule on every launch and reports a value it refuses
 on stderr as `romp-cli-scope: ignored: …`, which the kernel logs as a problem
 naming the session and counts in `/api-health` (`cliScope.limitsIgnored`, see
@@ -1408,11 +1440,27 @@ a hardened container). Without a check at the kernel's start, each would be
 refused again on every launch, one `ignored:` line and one problem each, while
 the kernel's boot line and `/api-health` (the `cliScope` block) said the value
 was in force. So with the scopes on, the kernel runs the wrapper's own steps
-once at its start: it starts a probe scope carrying the memory properties, and
-has a throwaway child write the adjustment to its own `oom_score_adj`. A refusal
-there is a problem line at the kernel's start, joins `cliScope.rejected` in
-`/api-health`, and reaches the wrapper as an empty variable, so no launch
-repeats it. The adjustment's problem line quotes the shell and says which step
+once at its start: it starts a probe scope carrying the memory properties and
+`OOMPolicy=continue`, and has a throwaway child write the adjustment to its own
+`oom_score_adj`. A refusal there is a problem line at the kernel's start (a
+plain line when only the policy was refused, by a failure that named it), joins
+`cliScope.rejected` in `/api-health`, and reaches the wrapper as an empty
+variable, or, for the policy, as `ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1`, so no
+launch repeats it. When the combined probe fails and a memory limit is set, the
+kernel probes apart whichever member the deciding failure did not decide for, so
+the verdict is a probe result rather than a guess. When the failure names the
+policy (a systemd before 253), it probes the limits alone once more: if that
+scope starts, only the policy is refused and the limits stand (the
+memory-controller check below then runs with the limits alone); if it fails too,
+the limits are refused with the policy, as one problem line quoting both
+failures; if it does not answer, the policy is refused and the limits are left
+unsettled, as described next. When the failure does NOT name the policy (a memory
+size systemd refuses), it probes the policy alone once more: a pass drops the
+memory limits alone and keeps the policy on every scope (the marker goes down
+empty and `/api-health` reads `continue`), a failure naming the policy refuses it
+with the limits quoting both, and a raise or a failure that does not name it
+leaves the policy unsettled with the limits refused. The
+adjustment's problem line quotes the shell and says which step
 failed: it names the floor only when the file opened and the write was refused;
 otherwise it says the file could not be opened, and why. The wrapper's
 `ignored:` line makes the same distinction. A probe that does not answer (the
@@ -1432,13 +1480,109 @@ limits; the adjustment is still written. On a launch the kernel drove, an
 `ignored:` line quoting a systemd rejection means the machine changed under the
 running kernel.
 
-Whenever a memory limit is set, the wrapper also sets `OOMPolicy=continue` on
-the scope. A scope's default is `stop`: when Linux's OOM killer kills one
-process in it, systemd stops the whole scope, which ends the CLI and every tmux
-server and `setsid` job in it. With `continue`, only the killed process is gone.
-systemd logs each kill to the user journal as `<unit>: A process of this unit
-has been killed by the OOM killer` (`journalctl --user --since today | grep
-'romp-session-'`).
+The wrapper sets `OOMPolicy=continue` on every scope, whether or not a memory
+limit is set. A scope's default is `stop` (the user manager's
+`DefaultOOMPolicy`): when Linux's OOM killer kills one process in the scope, any
+process, over a limit of the scope's or with none set, systemd stops the whole
+scope, which ends the CLI and every tmux server, `setsid` job and background
+task in it. That happened on 2026-09-10: the machine-wide OOM killer took one
+tool child in a session's scope that had no limits, the CLI exited 143, the
+kernel resumed the session, and 41 background tasks died with it. With
+`continue`, only the killed process is gone, and a kill contained in one process
+never becomes a cut turn. The property has to be set when the scope is created:
+`systemctl set-property` takes cgroup properties only, so a limit added to a
+running scope cannot add it. Until 2026-09-10 the wrapper set it only along
+with a memory limit, so a scope started without one kept `stop`. A systemd
+before 253 refuses `OOMPolicy=` on a scope and stops the whole scope on an OOM
+kill inside it, as every scope did before the property went on all of them; the
+kernel's probe at its start (above) settles the refusal once, hands the wrapper
+`ROMP_CLI_SCOPE_OOM_POLICY_REJECTED=1` so that no launch finds it out again, and
+says so in a plain line rather than a problem, since the refusal is the
+machine's systemd version, not a setting to fix. The memory limits are probed
+apart from the policy (above), so on such a systemd they still apply; a problem
+line comes only when a limit is refused. The variable is the kernel's, not a
+setting: the kernel sends it on every launch with an explicit value, `1` or
+empty, so a value inherited from the manager's environment is never read.
+`/api-health` shows the policy as `cliScope.oomPolicy`. When a session's CLI
+dies mid-turn, the kernel names the cause from three signals, primary first:
+the CLI's own exit, the scope's cgroup counter, and systemd's record of the
+scope. The first is the CLI's own exit: the SDK reports how the process ended,
+and a death by SIGKILL (signal 9) is the OOM killer's signature under
+`continue`, the cgroup's own killer and the machine's global one alike. It
+survives the scope's collection: a lone CLI IS the scope's last process, so the
+scope is gone the instant it dies and the counter with it, but the exit is
+always read. The exit is -9 because every layer of the launch chain execs in
+place, so a `claude_bin` wrapper must exec too: a shim that runs the CLI as a
+child reports the child's SIGKILL as its own exit 137, which the kernel reads as
+a plain exit, and such a shim also defeats the interrupt escalation and the
+orphan finder, so it is outside what romp supports. An exit of -1 is the SDK's
+own sentinel for an exit it could not read (a SIGHUP death reports the same) and
+is logged in those words, never as a kill by signal 1. The second is the scope's
+cgroup `memory.events`, whose `oom_kill` count is read against a baseline taken
+at the start of each turn (one file read per turn) and decides what a SIGKILL
+was, since on cgroup v2 the counter counts the memcg killer's and the global
+killer's kills alike. An increase over the baseline with a SIGKILL exit names
+the CLI's death out of memory. A readable counter that did NOT rise with a
+SIGKILL exit excludes the kernel's killers and leaves a kill by hand or a
+userspace killer the counter cannot see (earlyoom), so the kernel names a kill
+by signal 9 with no OOM kill counted, in its log and in the notice the session
+reads, and never says out of memory. A counter that cannot be read on a loaded
+unit (a legacy hierarchy, a `memory.events` that will not open) leaves the
+SIGKILL standing alone as the killer's signature, with the unit's `Result`
+stated beside it; a counter gone with the scope's collection hands the decision
+to the journal (below). One timing race sits between the show and the read: a
+unit the show called loaded whose cgroup systemd collects before `memory.events`
+is opened (about 10 ms after a lone process's death) reads as a loaded unit with
+an unreadable counter, so its SIGKILL is named out of memory from the exit alone,
+with no journal read. An increase WITHOUT a SIGKILL exit is a contained tool-child kill the
+CLI outlived, named as a child and never as the CLI's own death, and only
+against a baseline that was read: the whole-life count without one is context,
+not a verdict. The third is the unit's `Result=oom-kill`, which systemd records
+on a scope WITHOUT the property when it stops the scope over an OOM kill in it:
+a launch on a systemd that refused the property (the marker above), a launch
+whose pre-flight dropped the properties (the `ignored:` line above), or a scope
+started before the property went on every one. The Result survives on the unit
+only while a member outlives the SIGTERM; when every process goes down on it,
+systemd collects the unit within milliseconds of the CLI's exit, before the SDK
+reports that exit, and `systemctl show` finds nothing. For a unit already gone
+the kernel therefore reads the user manager's last journal lines for it,
+whatever the exit (`journalctl --user -n 5 -o cat -t systemd -u <unit>`,
+bounded like the show; `-t systemd` keeps the manager's own lines, since a
+scope member's `logger` lines carry the unit too and would push them out of the
+window), and reads them from the last `Started` line on (whatever the manager's
+`StatusUnitFormat=` puts after the word: the unit, its description, or both), so
+an earlier unit of the same name inside the window is not read as this one. `<unit>:
+Failed with result 'oom-kill'` names the whole-scope stop, with the journal as
+the source. `<unit>: A process of this unit has been killed by the OOM killer`
+is the manager's record of each OOM kill in the scope, written before the unit
+is collected and surviving it; it is whole-life, so with a non-SIGKILL exit it
+names nothing (a contained kill under `continue` leaves it too), and with a
+SIGKILL exit and the scope collected it is what decides, with the stop line and
+the manager's `<unit>: systemd-oomd killed N process(es) in this unit` line (its
+record of a kill by systemd-oomd, the one userspace killer that leaves a line):
+with any of the three the death is out of memory, with none of them the kernel
+names a kill by signal 9 that the journal does not record (a kill by hand, or
+earlyoom, which leaves no line) and never says out of memory, and a journal that
+cannot be read or has no line for the unit reads the same way, since a definite
+verdict needs a definite record. The kernel names the OOM
+kill, with the evidence, in its log line for the resume and in the notice the
+session reads, instead of reporting a bare exit; a memory limit is named beside
+it only when `MemoryMax` is set and the controller is not known to leave it
+unapplied, as context and never as a guess, in the boot line's own words: in
+force when the controller check settled so, set for the scope but not settled
+when that check or the memory-limits probe settled nothing. A non-SIGKILL exit
+with no counter increase reads as no OOM verdict and the bare notice. Every path
+writes one plain log line saying what was read and what was not: a scope
+already collected (the counter gone, and what the journal said), a loaded unit
+whose `memory.events` cannot be read (with its `Result`), a `systemctl show`
+that fails, and a `journalctl` that fails or has no line all say so, and none
+is silent. systemd logs each kill to the user journal as `<unit>: A process of
+this unit has been killed by the OOM killer` (`journalctl --user --since today
+| grep 'romp-session-'`), and a scope it stopped over one as `<unit>: Failed
+with result 'oom-kill'`; without the memory controller delegated to the user
+manager (below) it logs neither. When the kernel's start-time controller check
+settled that verdict (it runs only with a memory limit set) the heal says so
+beside the kill verdict; otherwise the evidence carries no such clause.
 
 The limits need the memory controller delegated to the systemd user manager;
 stock systemd delegates it (`systemctl show user@$(id -u).service -p
@@ -2184,7 +2328,20 @@ label the account digest itself, so a bucket can be matched to the log.
   - `rejected`, the names of the variables whose values were refused, by their
     rule or by this machine at the kernel's start (memory properties systemd
     rejected; an adjustment the process could not write), each also a problem
-    line at the kernel's start.
+    line at the kernel's start; and `OOMPolicy` when this systemd refused the
+    policy on a scope. When the deciding failure named the policy (a systemd
+    before 253) it is a plain line (the machine's systemd version, not a setting)
+    and any memory limits, probed once more without the policy, were taken and
+    stand, or could not be settled (then in `unsettled` as `memoryLimits`). When
+    the deciding failure did NOT name the policy, the memory limits are what was
+    refused and join this list, and the policy is probed alone: if it stands it is
+    kept off this list (`oomPolicy` reads `continue`); if it too is refused it
+    joins this list, the one line quoting both refusals a problem; if that probe
+    cannot be settled the policy is `unsettled` instead. A problem otherwise.
+  - `oomPolicy`, the OOM policy every session scope carries: `"continue"`, or
+    `null` when this systemd refused it or the scopes are off. With `continue`
+    an OOM kill inside a scope ends that process alone; under systemd's default
+    `stop` it ended the whole scope, the CLI and its background tasks included.
   - `memoryControllerDelegated`, the kernel's start-time check of whether a
     probe scope carrying the memory properties had a `memory.max` file in its
     cgroup: `true`, `false` (systemd holds the sizes above and applies nothing;
@@ -2194,22 +2351,31 @@ label the account digest itself, so a bucket can be matched to the log.
     answer, and `unsettled` says which.
   - `unsettled`, the names of the kernel's start-time checks that were due and
     settled nothing: `memoryLimits` (the probe scope carrying the memory
-    properties did not answer, or failed both with and without them),
-    `memoryController` (the check inside it gave no marker), `oomScoreAdj` (the
-    throwaway child's write did not answer). Empty when every due check
-    answered, and when none was due (the scopes off, no limit set). A value
-    listed above whose check is named here is set and handed to the wrapper as
-    read, and whether it applies is not known at the kernel's start; the other
-    fields cannot show this (`oomScoreAdj` present, `rejected` empty and
-    `memoryControllerDelegated` `true` read the same whether the adjustment's
-    check answered or not). Each named check is also a line in the boot log
-    saying why.
+    properties did not answer, or failed both with and without them; or, with
+    the policy refused, the probe with the limits alone did not answer),
+    `oomPolicy` (the same probe, which carries the policy too, so the two are
+    named together when a limit is set and the probe settles nothing; or alone,
+    when the memory limits were refused and the policy, probed by itself, did
+    not answer or failed without naming it, the limits then in `rejected`; or
+    alone when no limit is set, the probe then carrying the policy by itself,
+    and it did not answer or failed both with and without it, `rejected` then
+    empty),
+    `memoryController` (the check inside it
+    gave no marker), `oomScoreAdj` (the throwaway child's write did not answer).
+    Empty when every due check answered, and when none was due (the scopes
+    off). A value listed above whose check is named here is set and handed to
+    the wrapper as read, and whether it applies is not known at the kernel's
+    start; the other fields cannot show this (`oomScoreAdj` present, `rejected`
+    empty and `memoryControllerDelegated` `true` read the same whether the
+    adjustment's check answered or not). Each named check is also a line in the
+    boot log saying why.
   - `limitsIgnored`, wrapper `romp-cli-scope: ignored: …` lines since boot (each
     also a problem line, `cli scope: session <name> (<sid8>) started its CLI
-    without a per-session limit — <line>`). It counts lines, not launches: one
-    launch writes one line for each value the wrapper refuses, one for the
-    memory properties together when systemd rejects them, and one for an
-    adjustment it could not write. `on: true` with a limit set and
+    without one of its scope's settings: <line>`). It counts lines, not
+    launches: one launch writes one line for each value the wrapper refuses,
+    one for the scope properties together (the memory limits and the OOM policy)
+    when systemd rejects them, and one for an adjustment it could not write.
+    `on: true` with a limit set and
     `limitsIgnored > 0` means a value the kernel accepted at its start was
     refused at a launch: the machine changed under the running kernel, or the
     value reached the wrapper outside the kernel's hand-off (see "Per-session

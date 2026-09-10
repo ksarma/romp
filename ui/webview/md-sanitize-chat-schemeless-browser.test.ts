@@ -81,12 +81,11 @@ function probeBundle(): string {
   const contents = [
     'import { marked } from "marked";',
     'import { sanitizeMd } from "./md-sanitize";',
-    'import { chatMdExtensions } from "./chat-md";',
+    'import { applyMdConfig } from "./md-config";',
     'import { openFileView, initFileView } from "./file-view";',
     'import { openLightbox } from "./preview";',
     'import { initFileBrowse, openFileBrowse } from "./file-browse";',
-    "marked.setOptions({ gfm: true, breaks: false });",
-    "marked.use(...chatMdExtensions);",
+    "applyMdConfig();",
     "(window as any).__mdProbe = (s: string) => sanitizeMd(marked.parse(s) as string).innerHTML;",
     "(window as any).__chrome = { openFileView, initFileView, openLightbox, initFileBrowse, openFileBrowse };",
   ].join("\n");

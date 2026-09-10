@@ -11,6 +11,8 @@
 // Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
@@ -28,6 +30,7 @@ class Ev {
   key: string; ctrlKey: boolean; metaKey: boolean;
   constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) {
     this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey;
+    hideEdges(this);
   }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
@@ -39,8 +42,8 @@ const optsOf = (o?: boolean | { capture?: boolean; once?: boolean }) =>
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public data: string) {}
+  parentNode!: El | null;
+  constructor(public data: string) { Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true }); hideEdges(this); }
   get textContent(): string { return this.data; }
   get parentElement(): El | null { return this.parentNode; }
   // the change painters (Slice 2) split a row's text at a change's edges, as the comment painters do
@@ -67,8 +70,8 @@ function parseSel(sel: string): Compound[][] {
 class El {
   nodeType = 1;
   tagName: string;
-  parentNode: El | null = null;
-  childNodes: Array<El | Txt> = [];
+  parentNode!: El | null;
+  childNodes!: Array<El | Txt>;
   attrs = new Map<string, string>();
   listeners: Reg[] = [];
   hidden = false; disabled = false; title = ""; type = ""; value = ""; placeholder = ""; spellcheck = true; wrap = "";
@@ -77,7 +80,12 @@ class El {
   style: Record<string, string> = {};
   onclick: ((ev: Ev) => void) | null = null;
   scrolled = 0;                                  // scrollIntoView calls (scrollToOffset's visible effect)
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get id(): string { return this.attrs.get("id") || ""; }
   set id(v: string) { this.attrs.set("id", v); }
   get isConnected(): boolean { return doc.body.contains(this); }
@@ -100,7 +108,7 @@ class El {
     deleteProperty: (_, k) => { this.attrs.delete("data-" + kebab(String(k))); return true; },
   });
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; if (v !== "") this.appendChild(new Txt(v)); }
+  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; if (v !== "") this.appendChild(new Txt(v)); }
   private detach(n: El | Txt): void { const p = n.parentNode; if (p) { const i = p.childNodes.indexOf(n); if (i >= 0) p.childNodes.splice(i, 1); n.parentNode = null; } }
   appendChild<T extends El | Txt>(n: T): T { this.detach(n); this.childNodes.push(n); n.parentNode = this; return n; }
   prepend(...ns: Array<El | Txt>): void { for (const n of ns.slice().reverse()) { this.detach(n); this.childNodes.unshift(n); n.parentNode = this; } }
@@ -111,7 +119,7 @@ class El {
     this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, n); n.parentNode = this; return n;
   }
   removeChild<T extends El | Txt>(n: T): T { this.detach(n); return n; }
-  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes = []; for (const x of c) this.appendChild(x); }
+  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
   remove(): void { this.detach(this); }
   normalize(): void {   // unpainting a mark leaves adjacent text nodes; join them, as the browser does
     const out: Array<El | Txt> = [];
@@ -705,7 +713,7 @@ test("mediaElement() is null for a text body even when the rendered markdown car
   const f2 = new El("img"); f2.setAttribute("src", "https://example.test/x.png");
   const p3 = new El("p"); const span = new El("span"); const f3 = new El("img"); f3.className = "fileview-img"; f3.setAttribute("src", "data:image/png;base64,iVBORw0KGgo="); span.appendChild(f3); p3.appendChild(span);
   md.appendChild(p1); md.appendChild(f2); md.appendChild(p3);
-  assert.deepEqual(ctx.renderedImages(), [f1, f2, f3], "every figure, document order, whatever its src or class");
+  sameNodes(ctx.renderedImages(), [f1, f2, f3], "every figure, document order, whatever its src or class");   // by identity (ui/test-dom-shim.ts sameNodes)
   assert.equal(ctx.mediaElement(), null, "a rendered body's own <img class=fileview-img> never answers as the media element (the mode gate)");
   o.b.raw.click();
   assert.equal(ctx.mode(), "raw");
@@ -943,17 +951,20 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
     "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  const sanitizeAt = mdFn.indexOf("box.replaceChildren(...Array.from(sanitizeMd(dirty).childNodes));");   // the shared sanitizer, md-sanitize.ts
+  const sanitizeAt = mdFn.indexOf("box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));");   // the shared sanitizer, md-sanitize.ts, with the heading ids as its caller pass (before the fill)
   const fallbackAt = mdFn.indexOf("box.textContent = text;");
   const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
   assert.ok(sanitizeAt >= 0 && fallbackAt > sanitizeAt && rewriteAt > fallbackAt, "sanitize → (fallback) → rewrite, in that order, on `box`");
   assert.ok(mdFn.indexOf("return box;") > rewriteAt);
   const rw = VIEW.split("export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {")[1].split("\n}\n")[0];
-  assert.match(rw, /root\.querySelectorAll\("img\[src\]"\)\.forEach/, "a DOM walk over the sanitized tree");
-  assert.match(rw, /const src = img\.getAttribute\("src"\) \|\| "";/);
-  assert.match(rw, /if \(!src \|\| src\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) \{ img\.removeAttribute\("data-fv-src"\); return; \}/, "untouched: empty, protocol-relative URL, any scheme — an absolute PATH is rewritten");
+  // Slice 4 of plans/markdown-viewer.md widened the walk from `img[src]` to every attribute a figure fetches through
+  // (figure-gate.ts figureRefs: img src and srcset, source, video src and poster, audio, track, an svg image's href); the
+  // path rule is one function applied to each, and only an img's src keeps data-fv-src
+  assert.match(rw, /for \(const ref of figureRefs\(root\)\) \{/, "a DOM walk over the sanitized tree");
+  assert.match(rw, /if \(!src \|\| src\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) return null;/, "untouched: empty, protocol-relative URL, any scheme; an absolute PATH is rewritten");
   assert.match(rw, /try \{ rel = decodeURI\(src\); \} catch \{/, "marked's percent-encoding undone; malformed taken as written");
-  assert.match(rw, /img\.setAttribute\("data-fv-src", src\);\n\s*img\.setAttribute\("src", fileUrl\(rel\.startsWith\("\/"\) \? rel : dir \+ rel, sid\)\);/, "the authored value kept, then the kernel URL: the path itself when absolute, else <dir>/<src>");
+  assert.match(rw, /return fileUrl\(rel\.startsWith\("\/"\) \? rel : dir \+ rel, sid\);/, "the kernel URL: the path itself when absolute, else <dir>/<src>");
+  assert.match(rw, /if \(el\.tagName === "IMG" && ref\.attr === "src"\) \{\n\s*if \(p === null\) \{ el\.removeAttribute\("data-fv-src"\); continue; \}\n\s*el\.setAttribute\("data-fv-src", ref\.value\);\n\s*\}/, "the authored value kept on an img's src (the attribute the comments panel pairs an embed by), removed when the src is not a path");
   assert.doesNotMatch(rw, /innerHTML|outerHTML|\.replace\(|DOMParser/, "never a string rewrite of marked's HTML");
   assert.doesNotMatch(rw, /normalize|\.\.\//, "no client-side path normalization: the kernel resolves and gates `..`");
 });
@@ -1295,4 +1306,18 @@ test("the paint pass runs as one fileview:paint frame of the page's performance 
   assert.equal(rows[0].data.app, "files");
   assert.deepEqual(Object.keys(rows[0].data.frames).sort(), ["fileview:paint", "fileview:reflow"]);
   assert.equal(rows[0].data.dom, 42);
+});
+
+// ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────
+test("a stand-in node enumerates its primitives alone, so a failing assertion's dump shows neither parentNode nor childNodes", () => {
+  const root = new El("div"); root.className = "row";
+  const child = root.appendChild(new El("span")); child.appendChild(new Txt("alpha")); root.appendChild(new Txt("beta"));
+  for (const n of [root, child, root.childNodes[1]] as Array<El | Txt>) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump holds no edge: " + dump);
+  }
+  assert.ok(child.parentNode === root && root.childNodes[0] === child && root.textContent === "alphabeta", "the tree is reachable as before");
+  // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
+  assertHiddenEvent(new Ev("click"), root, child);
 });

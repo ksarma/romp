@@ -10,7 +10,9 @@
 // superscript is raised, the radical has height, and the rendered root is katex.render's own
 // output byte for byte); md-sanitize-katex-browser.test.ts checks the rendered markup is KaTeX's
 // own byte for byte, and md-sanitize-viewer-math-browser.test.ts opens a note with math in the
-// chat page's viewer. The wiring (math.ts, chat-md.ts, render.ts) is source-pinned below. This
+// chat page's viewer. The wiring (math.ts, md-config.ts, chat-md.ts, render.ts, file-view.ts, anchor-map.ts)
+// is source-pinned below, with md-config.ts as the one module that registers the fill (plans/markdown-viewer.md, The
+// Slice 4 build, item 1). This
 // is the ONE node file for the math contract: review round 2 folded md-sanitize-math.test.ts, a
 // near-copy with three of these pins repeated, into it. The sanitizer's own shape (the registry
 // and the loop that runs the passes) is md-sanitize.test.ts's.
@@ -20,7 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Marked } from "marked";
 import katex from "katex";
-import { mathBlock, mathInline, mathPlaceholder, MATH_INLINE_CLASS, MATH_DISPLAY_CLASS, MATH_TEX_MAX_CHARS, MATH_TEX_BUDGET_CHARS, MATH_MAX_SIZE_EM, MATH_EXPANSION_BUDGET_CHARS, MATH_SOURCE_CLASS, macroBounds, maxExpandFor } from "./math";
+import { mathBlock, mathInline, mathPlaceholder, MATH_INLINE_CLASS, MATH_DISPLAY_CLASS, MATH_TEX_MAX_CHARS, MATH_TEX_BUDGET_CHARS, MATH_MAX_SIZE_EM, MATH_EXPANSION_BUDGET_CHARS, MATH_SOURCE_CLASS, MATH_ERROR_COLOR, macroBounds, maxExpandFor } from "./math";
 
 const m = new Marked({ gfm: true, extensions: [mathBlock, mathInline] });
 const html = (src: string) => m.parse(src) as string;
@@ -31,7 +33,7 @@ const formulas = (out: string) => Array.from(out.matchAll(PLACEHOLDER)).map((x) 
 const hasMath = (s: string) => formulas(s).length > 0;
 // the options renderMathPlaceholders hands katex.render (pinned against math.ts below); maxExpand is computed per formula
 // there (maxExpandFor), so the fixed part is spread and a call adds it for the formula at hand
-const KATEX = { throwOnError: false, output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM } as const;
+const KATEX = { throwOnError: false, output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, errorColor: MATH_ERROR_COLOR } as const;
 
 // --- becomes a formula: marked emits the placeholder, KaTeX does not run here ---
 
@@ -140,18 +142,26 @@ test("escaped \\$ never opens math", () => {
 
 const UI = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 
-test("render.ts wires the math extensions into marked, through the shared chat grammar", () => {
-  // chat-md.ts owns the extension list (shared with the breaks:true user-text instance, so a user
-  // message with math renders exactly as before); render.ts applies it to the singleton.
-  const grammar = UI("chat-md.ts");
+test("render.ts wires the math extensions into marked, through the one shared grammar (md-config.ts)", () => {
+  // md-config.ts owns the extension list since Slice 4 of plans/markdown-viewer.md: ONE configuration for the chat's
+  // singleton, the viewer (file-view.ts, so the files and feed bundles carry the grammar), the anchor map and the
+  // breaks:true user-text instance (chat-md.ts), so a user message with math renders exactly as before. The list's
+  // literal is pinned whole: an extension added or dropped changes what every bundle renders, and says so here.
+  const grammar = UI("md-config.ts");
   assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
-  assert.match(grammar, /export const chatMdExtensions: MarkedExtension\[\] = \[delDoubleTilde, \{ extensions: \[mathBlock, mathInline\] \}\];/);
-  const src = UI("render.ts");
-  assert.match(src, /import \{ chatMdExtensions, userMdHtml \} from "\.\/chat-md";/);
-  assert.match(src, /marked\.use\(\.\.\.chatMdExtensions\);/);
+  assert.match(grammar, /export const mdExtensions: MarkedExtension\[\] = \[\n\s*delDoubleTilde,\n\s*\{ extensions: \[mathBlock, mathInline, frontMatter, footnoteDef, footnoteRef, callout, mark, wikilink\] \},\n\];/);
+  assert.match(grammar, /export function applyMdConfig\(\): void \{\n\s*if \(applied\) return;\n\s*applied = true;\n\s*marked\.setOptions\(\{ gfm: true, breaks: false \}\);\n\s*marked\.use\(\.\.\.mdExtensions\);\n\}/, "idempotent: the singleton is configured once however many modules call it");
+  for (const f of ["render.ts", "file-view.ts", "anchor-map.ts"]) {
+    const src = UI(f);
+    assert.match(src, /import \{ applyMdConfig[^}]*\} from "\.\/md-config";/, f + " imports the one configuration");
+    assert.match(src, /^applyMdConfig\(\);/m, f + " applies it at load");
+    assert.doesNotMatch(src, /marked\.(setOptions|use)\(/, f + " configures nothing of its own");
+  }
+  assert.match(UI("chat-md.ts"), /import \{ mdExtensions \} from "\.\/md-config";/, "the user-text instance takes the same list");
+  assert.doesNotMatch(UI("chat-md.ts"), /chatMdExtensions|from "\.\/math"/, "chat-md.ts no longer owns a grammar of its own");
 });
 
-test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md.ts registers renderMathPlaceholders once, and no renderer calls it by hand", () => {
+test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: md-config.ts registers renderMathPlaceholders once, chat-md.ts registers nothing, and no renderer calls it by hand", () => {
   // KaTeX's output is inline styles (height, top, vertical-align on struts and vlist rows) plus inline
   // <svg> for stretchy glyphs, and the shared sanitizer keeps only colour declarations in a style
   // attribute (md-sanitize.ts, decision 6), so KaTeX output run through it collapses. The extension
@@ -164,7 +174,8 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md
   // registers the fill, so a bundle with the grammar has the fill and a bundle without it has neither.
   const math = UI("math.ts");
   assert.match(math, /export function renderMathPlaceholders\(root: ParentNode\): void \{/);
-  assert.match(math, /const KATEX_OPTIONS = \{ output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM \} as const;/, "every call is html-only and untrusted, under KaTeX's size cap");
+  assert.match(math, /const KATEX_OPTIONS = \{ output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, errorColor: MATH_ERROR_COLOR \} as const;/,
+    "every call is html-only and untrusted, under KaTeX's size cap, its flagged text in the theme's error ink (md-config-math-error-colour.test.ts: KaTeX's default read at 2.8:1 on the dark page)");
   assert.match(math, /katex\.render\(tex, el, \{ \.\.\.KATEX_OPTIONS, displayMode: display, throwOnError: true, maxExpand \}\);/,
     "the one katex call on the happy path, under the per-formula expansion count, and thrown at, so the catch can tell KaTeX's expansion stop from a syntax error (review round 5)");
   assert.match(math, /if \(!\(e instanceof katex\.ParseError\)\) throw e;\n\s*if \(\/Too many expansions\/\.test\(e\.message\)\) \{\n\s*showSource\(el, tex, "Not rendered: too many macro expansions; the limit for this formula is " \+ maxExpand \+ ", set by the longest macro body it defines\."\);/,
@@ -173,16 +184,17 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md
     "any other syntax error is rendered again with throwOnError: false, KaTeX's own red text as on main, and the placeholder is unwrapped right after either call: the .katex root stands where marked's output used to");
   assert.equal((math.match(/katex\.render\(/g) || []).length, 2, "two katex.render calls in the file: the happy path and the syntax-error rendering, no third");
   assert.doesNotMatch(math, /renderToString/, "marked's output holds no KaTeX markup: the extension emits placeholders only");
-  const grammar = UI("chat-md.ts");
+  const grammar = UI("md-config.ts");
   assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
   assert.match(grammar, /import \{ registerMdPostPass \} from "\.\/md-sanitize";/);
   assert.equal((grammar.match(/registerMdPostPass\(renderMathPlaceholders\);/g) || []).length, 1, "registered once, at load, beside the extension list");
-  assert.ok(grammar.indexOf("export const chatMdExtensions") < grammar.indexOf("registerMdPostPass(renderMathPlaceholders);"), "the fill is registered where the grammar is defined");
+  assert.ok(grammar.indexOf("export const mdExtensions") < grammar.indexOf("registerMdPostPass(renderMathPlaceholders);"), "the fill is registered where the grammar is defined");
+  assert.doesNotMatch(UI("chat-md.ts"), /registerMdPostPass|renderMathPlaceholders/, "chat-md.ts registers nothing: the grammar module does");
   const render = UI("render.ts");
   assert.doesNotMatch(render, /renderMathPlaceholders\(/, "render.ts calls no fill of its own: sanitizeMd runs it");
   assert.doesNotMatch(render, /from "\.\/math"/, "render.ts imports nothing from math.ts; the grammar module carries it");
   const view = UI("file-view.ts");
-  assert.doesNotMatch(view, /from "\.\/math"|from "katex"|renderMathPlaceholders/, "the viewer imports no KaTeX and no fill: it renders math only where a bundle armed the grammar (Slice 4 gives the files and feed bundles both)");
+  assert.doesNotMatch(view, /from "\.\/math"|from "katex"|renderMathPlaceholders/, "the viewer imports no KaTeX and no fill of its own: the grammar module (md-config.ts) carries both into every bundle the viewer lands in, and the sanitize runs the fill (Slice 4)");
   // match on the two function bodies, not the file, so a failure prints the function and not render.ts
   const mdFn = render.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdFn, "md() must exist");
@@ -206,7 +218,7 @@ test("math.ts renders KaTeX into the placeholders after the sanitizer, html-only
   assert.match(math, /export function renderMathPlaceholders\(root: ParentNode\): void \{/);
   // both katex.render calls spread KATEX_OPTIONS (output: "html", trust: false, and the fork's maxSize cap); the bounded
   // fill's two calls and their order are pinned by the registration test above
-  assert.match(math, /const KATEX_OPTIONS = \{ output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM \} as const;/);
+  assert.match(math, /const KATEX_OPTIONS = \{ output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, errorColor: MATH_ERROR_COLOR \} as const;/);   // Slice 4 of plans/markdown-viewer.md adds the error ink (md-config-math-error-colour.test.ts)
   assert.match(math, /katex\.render\(tex, el, \{ \.\.\.KATEX_OPTIONS, displayMode: display, throwOnError: false, maxExpand \}\);/);
   assert.doesNotMatch(math, /katex\.renderToString\(/, "the string renderer is gone: marked emits placeholders, the fill renders into the DOM");
   assert.match(UI("md-sanitize.ts"), /USE_PROFILES: \{ html: true, svg: true \}/);
@@ -418,8 +430,12 @@ test("executed: \\sqrt really does emit inline svg, the glyph the fill writes in
   assert.ok(out.includes("sqrt"), "KaTeX marks the construct");
 });
 
-test("styles.css imports the KaTeX layout css", () => {
-  assert.match(UI("styles.css"), /@import "katex\/dist\/katex\.min\.css";/);
+test("styles.css and feed.css import the KaTeX layout css (feed.css since Slice 4 of plans/markdown-viewer.md: the feed page hosts the viewer and its bundle carries the grammar)", () => {
+  for (const sheet of ["styles.css", "feed.css"]) {
+    const css = UI(sheet);
+    assert.equal((css.match(/@import "katex\/dist\/katex\.min\.css";/g) || []).length, 1, sheet + " imports the KaTeX sheet once");
+    assert.match(css, /^\.katex-display \{ overflow-x: auto; overflow-y: hidden; \}$/m, sheet + " lets a wide display formula scroll in its own box (byte-equal in both: fileview-parity.test.ts)");
+  }
 });
 
 test("esbuild emits KaTeX woff2 fonts under dist/fonts/", () => {

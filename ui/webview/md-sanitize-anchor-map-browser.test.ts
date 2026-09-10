@@ -48,9 +48,10 @@ function bundleProbe(): string {
   const esbuild = requireCjs("esbuild");
   const contents = [
     'import { marked } from "marked";',
+    'import { applyMdConfig } from "./md-config";',
     'import { sanitizeMd } from "./md-sanitize";',
     'import { mapRenderedSelection } from "./anchor-map";',
-    "marked.setOptions({ gfm: true, breaks: false });",
+    "applyMdConfig();",
     "(window as any).__probe = (source: string, words: string[]) => {",
     "  const body = document.createElement('div');",
     "  const before = document.createElement('div'); before.textContent = 'Rendered · Raw';",

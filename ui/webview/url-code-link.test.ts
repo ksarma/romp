@@ -13,7 +13,9 @@ const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview"
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
 test("bare-URL autolinking stays on (gfm) and the click delegate opens absolute schemes", () => {
-  assert.match(RENDER, /marked\.setOptions\(\{ gfm: true, breaks: false \}\);/);
+  // the singleton's options live in md-config.ts since Slice 4 of plans/markdown-viewer.md; render.ts applies them at load
+  assert.match(fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "md-config.ts"), "utf8"), /marked\.setOptions\(\{ gfm: true, breaks: false \}\);/);
+  assert.match(RENDER, /^applyMdConfig\(\);/m);
   assert.match(RENDER, /window\.open\(href, "_blank", "noopener,noreferrer"\)/);
   assert.match(RENDER, /vscodeApi\.postMessage\(\{ type: "openLink", href \}\);/);
 });

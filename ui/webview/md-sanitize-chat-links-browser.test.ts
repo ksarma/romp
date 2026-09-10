@@ -61,9 +61,8 @@ function probeBundle(): string {
   const contents = [
     'import { marked } from "marked";',
     'import { sanitizeMd } from "./md-sanitize";',
-    'import { chatMdExtensions } from "./chat-md";',
-    "marked.setOptions({ gfm: true, breaks: false });",
-    "marked.use(...chatMdExtensions);",
+    'import { applyMdConfig } from "./md-config";',
+    "applyMdConfig();",
     "(window as any).__mdProbe = (s: string) => sanitizeMd(marked.parse(s) as string).innerHTML;",
   ].join("\n");
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, sourcefile: "md-probe.ts", loader: "ts" } });

@@ -53,6 +53,7 @@ const IMG_INLINE = new RegExp('!\\[(' + LABEL + ')\\]\\([ \\t]*(?:<([^<>\\n]*)>|
 const IMG_FULL_REF = new RegExp('!\\[(' + LABEL + ')\\]\\[(' + LABEL + ')\\]', 'g');
 const IMG_SHORT_REF = new RegExp('!\\[(' + LABEL + ')\\](?![\\[(])', 'g');
 const IMG_HTML = /<img\b[^>]*?\bsrc[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/gi;
+const IMG_WIKI = /!\[\[([^\[\]|\n]+?)(?:\|[^\[\]\n]*)?\]\]/g;   // Obsidian's embed (Slice 4 of plans/markdown-viewer.md)
 const REF_DEF = /^ {0,3}\[((?:\\.|[^\[\]\\])+)\]:[ \t]*<?([^\s>]+)>?/gm;
 const normLabel = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 function fencedRanges(text) {
@@ -81,11 +82,12 @@ function oneRegexEmbeds(text) {
   const push = (start, len, dest) => {
     if (dest !== undefined && !inFence(start)) out.push({ start, end: start + len, dest });
   };
-  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF, IMG_HTML]) re.lastIndex = 0;
+  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF, IMG_HTML, IMG_WIKI]) re.lastIndex = 0;
   while ((m = IMG_INLINE.exec(text))) push(m.index, m[0].length, m[2] ?? m[3] ?? '');
   while ((m = IMG_FULL_REF.exec(text))) push(m.index, m[0].length, defs.get(normLabel(m[2] || m[1])));
   while ((m = IMG_SHORT_REF.exec(text))) push(m.index, m[0].length, defs.get(normLabel(m[1])));
   while ((m = IMG_HTML.exec(text))) push(m.index, m[0].length, m[1] ?? m[2] ?? m[3] ?? '');
+  while ((m = IMG_WIKI.exec(text))) push(m.index, m[0].length, m[1].trim());
   out.sort((a, b) => a.start - b.start);
   return out.filter((e, i) => !i || e.start >= out[i - 1].end);
 }
@@ -109,7 +111,7 @@ const IMG_EDGES = [
 // Fragments of every form the reader knows, assembled at random under a fixed seed: the same
 // corpus on every run, so a disagreement is reproducible by its index.
 const FRAGMENTS = ['<img', '<IMG', ' src=', ' SRC=', '\tsrc =', ' data-src=', ' srcset=', 'src=', '"', "'", '>', '<', ' ', '\n',
-  'a', 'x.png', 'alt="', '\u00a0', '=', '![', ']', '(', ')', '[', ':', '```\n', '~~~\n', '\\', '!', 'ref', ' "t"', '<b>', 'img', '-', '[]'];
+  'a', 'x.png', 'alt="', '\u00a0', '=', '![', ']', '(', ')', '[', ':', '```\n', '~~~\n', '\\', '!', 'ref', ' "t"', '<b>', 'img', '-', '[]', '![[', ']]', '|300'];
 function corpus(n) {
   let seed = 0x5eed;
   const rnd = (k) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % k; };
