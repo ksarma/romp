@@ -150,7 +150,7 @@ class ARefusalConsumesItsRequest(unittest.TestCase):
         self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), note)
 
     def test_two_refusals_consume_two_requests_and_a_third_request_stays(self):
-        first = {"t": self.T - 30, "action": "kernel-asks-manager-restart-all", "reason": "fleet-restart: the local half", "pid": os.getpid()}
+        first = {"t": self.T - 30, "action": "kernel-asks-manager-restart-all", "reason": "self-update", "pid": os.getpid()}
         self._write([first] + self._http_restart_refused(self.T - 20) + self._http_restart_refused(self.T - 1))
         self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), first)
 
