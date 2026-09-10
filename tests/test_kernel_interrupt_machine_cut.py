@@ -575,7 +575,10 @@ class MachineCutStampWiring(unittest.TestCase):
         # the stamp must still follow
         pick = src.index("nudge = CRASH_RESUME_NUDGE_OOM if named else CRASH_RESUME_NUDGE_KILLED if kind == \"sigkill\" "
                          "else CRASH_RESUME_NUDGE")
-        cut = src.index("reg[\"queue\"] = [nudge]", pick)
+        # the anchor is the sealed-queue WRITE itself (round 6, tests-3 and regression-2): the round-5 fold replaced
+        # the inline `reg["queue"] = [nudge]` with this call and the old text survived only as a comment, which a pin
+        # must not read; the call with `nudge` occurs once in the source
+        cut = src.index("self._write_sealed_queue(sess, nudge)", pick)
         self.assertIn('append_machine_cut(self.state_dir, sid, "crash")', src[cut:cut + 1200],
                       "the crash resume must stamp its cut too")
         for form in (sb.CRASH_RESUME_NUDGE_OOM, sb.CRASH_RESUME_NUDGE_KILLED):
