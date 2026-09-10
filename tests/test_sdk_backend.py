@@ -8122,6 +8122,299 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         row = s.backend._live_row(sb.read_reg(s.backend.state_dir, self.SID), self.SID)
         self.assertEqual((row["fastPending"], row["modePending"]), (False, False))
 
+    def test_y4_a_pick_armed_inside_the_spawn_window_keeps_its_pending_flag_until_its_own_reconnect_lands(self):
+        # fastPending and modePending were keyed to the connect in progress, not to the reconnect the arm stands for
+        # (review round 9, correctness-1): a fast or mode pick armed in the composed half of a spawn window went into the
+        # riding set, _connect_landed cleared the whole set at the intermediate landing while _reconnect still stood, and
+        # _disarm_locked never touched it. So the flag dropped for the whole second reload (the badge flat, no reloading
+        # line) and a window pick withdrawn before the landing kept its flag until then. The arm records its names to the
+        # reconnect it stands for now: the next set while a connect is in progress, moved into the riding set at the
+        # landing that does not serve it, and cleared with the arm a disarm retires
+        def flags(s):
+            snap = s.snapshot()
+            return snap["fastPending"], snap["modePending"]
+
+        def composed(s):
+            """The loop top and _options: the connect in progress, composed from the session."""
+            s._reset_reconnect_state()
+            s._launching = s.backend._launch_shape(s); s._connecting = True; s._fast_unlocked = bool(s.fast_opt)
+        # a fast pick armed inside a flagless compose (an effort reload's), through the intermediate landing
+        s = self._sess(effort="high"); s._launched_effort = sb.effort_launch_shape("high")
+        s.fast = "off"; s.thread = mock.Mock(is_alive=lambda: True)
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))       # the idle arm: the window opens
+        composed(s)
+        self.assertEqual(flags(s), (False, False))
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))          # inside the compose: armed after the connect in progress
+        self.assertTrue(s._reconnect)
+        self.assertEqual(flags(s), (True, False), "the fast pick's flag from its arm")
+        s._connect_landed()                                          # the effort connect lands; the fast arm still stands
+        self.assertTrue(s._reconnect)
+        self.assertEqual(flags(s), (True, False), "the landing that did not serve the pick leaves its flag")
+        composed(s)                                                  # the loop top and the flagged compose
+        self.assertEqual(flags(s), (True, False), "still pending through the loop top and the compose")
+        self.assertTrue(s._fast_unlocked)
+        s._connect_landed()
+        self.assertEqual(flags(s), (False, False), "its own landing clears it")
+        # a bypass pick armed inside a default compose, the same
+        s = self._sess(mode="default", effort="high")
+        s.perm_mode = s._launched_mode = "default"; s._launched_effort = sb.effort_launch_shape("high")
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        composed(s)
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        self.assertTrue(s._reconnect)
+        self.assertEqual(flags(s), (False, True))
+        self.assertIsNone(s._connect_landed(), "a pick into bypass is the reconnect's, never the landing's switch")
+        self.assertTrue(s._reconnect)
+        self.assertEqual(flags(s), (False, True), "the intermediate landing leaves the bypass pick's flag")
+        composed(s)
+        self.assertEqual(flags(s), (False, True))
+        s._connect_landed()
+        self.assertEqual(flags(s), (False, False))
+        # a fast pick that rode the composed connect and a bypass pick armed in its window: after the landing only the
+        # bypass pick is pending (skipping the clear while an arm stands, the minimal form, over-reported fastPending)
+        s = self._sess(mode="default", effort="high")
+        s.perm_mode = s._launched_mode = "default"; s._launched_effort = sb.effort_launch_shape("high")
+        s.fast = "off"; s.thread = mock.Mock(is_alive=lambda: True)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))          # the idle opt-in arms at once and rides its connect
+        composed(s)
+        self.assertEqual(flags(s), (True, False))
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        self.assertEqual(flags(s), (True, True))
+        s._connect_landed()
+        self.assertEqual(flags(s), (False, True), "the fast pick landed; the bypass pick rides the arm that stands")
+        composed(s); s._connect_landed()
+        self.assertEqual(flags(s), (False, False))
+        # the disarm: a bypass pick armed in a default compose, re-picked to the launching default before the landing
+        s = self._sess(mode="default", effort="high")
+        s.perm_mode = s._launched_mode = "default"; s._launched_effort = sb.effort_launch_shape("high")
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        composed(s)
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        self.assertEqual(flags(s), (False, True))
+        self.assertTrue(s.backend.set_mode(self.SID, "default"))     # the window disarm (_settle_withdrawal)
+        self.assertFalse(s._reconnect, "the arm stood for the withdrawn pick alone")
+        self.assertEqual(flags(s), (False, False), "nothing pending after the disarm")
+        self.assertTrue(any("the reconnect armed after it is disarmed" in str(m) for m in self.logs), self.logs)
+        s._connect_landed()
+        self.assertEqual(flags(s), (False, False))
+        # control: a fast pick made in the ARM half (after the arm, before the loop top composes) rides the coming connect,
+        # and its flag clears at that landing
+        s = self._sess(effort="high"); s._launched_effort = sb.effort_launch_shape("high")
+        s.fast = "off"; s.thread = mock.Mock(is_alive=lambda: True)
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertFalse(s._connecting); self.assertIsNotNone(s._launching)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertEqual(flags(s), (True, False))
+        composed(s)
+        self.assertEqual(flags(s), (True, False))
+        s._connect_landed()
+        self.assertEqual(flags(s), (False, False), "the arm-half pick rode the connect the loop composed")
+
+    def test_y5_a_picks_own_request_names_its_pick_so_the_landed_process_serves_it_after_the_surface_is_discarded(self):
+        # review round 7 threaded the pick through request_reconnect (pick="mode" and the other setter sites) so the served
+        # check tells a pick's request from a bare one once the landing discarded the pick's surface. No deterministic test
+        # pinned it (review round 9, tests-1): with `pick` dropped, the SettingsPick classes stayed green in 15 of 15 runs
+        # and only test_y's race caught it, about once in 15. The ordering, made deterministic with a queuing loop double:
+        # the connect-time pick's request queued behind the landing, the landing's switch confirming and discarding the
+        # surface, then the request, which the landed process must serve
+        s, rec, live = self._spawning_bypass()
+        q = self._Queue(); s.loop = q
+        self.assertTrue(s.backend.set_mode(self.SID, "default"))       # the connect-time pick; its request waits in the queue
+        self.assertEqual(len(q.queued), 1)
+        self.assertIn("mode", s._reconnect_surfaces)
+        d = s._connect_landed()
+        self.assertEqual(d, ("default", "bypassPermissions", True))
+        self.assertTrue(self._land_switch(s, d))                       # confirmed: the surface goes with the applied pick
+        self.assertEqual(rec.modes, ["default"])
+        self.assertNotIn("mode", s._reconnect_surfaces)
+        q.flush()                                                      # the pick's own request, with no surface to name it
+        self.assertFalse(s._reconnect, "a relaunch of the identical shape was armed")
+        self.assertFalse(s._reconnect_when_idle)
+        self.assertTrue(any("the running process already runs what the pending reconnect asks for; no second reconnect"
+                            in str(m) for m in self.logs), "the request, named by its pick alone: %r" % (self.logs,))
+        self.assertEqual(live, [], "the spawn-window pick never took the live route")
+        # every setter names its pick to the request, in a recording stub's hands
+        s = self._sess(effort="high", mode="default")
+        s.perm_mode = s._launched_mode = "default"; s._launched_effort = sb.effort_launch_shape("high")
+        s.thread = mock.Mock(is_alive=lambda: True)
+        asked = []
+        s.request_reconnect = lambda *a, **k: asked.append(k.get("pick"))
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))            # set_mode's pick-into-bypass site
+        s._launching = dict(s.backend._launch_shape(s), mode="bypassPermissions")     # that connect's spawn window
+        self.assertTrue(s.backend.set_mode(self.SID, "default"))                      # set_mode's spawn-window site
+        s._launching = None
+        s.fast = "off"; s._fast_unlocked = False
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertTrue(s.backend.set_env(self.SID, {"X": "1"}))
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.backend.set_auth(self.SID, "key"))
+        self.assertEqual(asked, ["effort", "mode", "mode", "fast", "env", "auth"])
+        # the refused opt-in's restore names no pick: a restore, not a pick, and the request keeps its plain meaning
+        asked.clear()
+        s.fast_opt = True
+        s._adopt_fast_state({"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"})
+        self.assertEqual(asked, [None])
+        # ...and so do the two rewind sites, which a test cannot drive without a transcript: pinned by the calls' shape.
+        # Every request_reconnect call in the module, by the function that makes it and the pick it names
+        import ast
+        tree = ast.parse(inspect.getsource(sb))
+        calls = {}
+
+        def walk(node, fn):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    walk(child, child.name)
+                    continue
+                if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr == "request_reconnect":
+                    picks = [k.value.value for k in child.keywords if k.arg == "pick" and isinstance(k.value, ast.Constant)]
+                    calls.setdefault(fn, []).append(picks[0] if picks else None)
+                walk(child, fn)
+        walk(tree, None)
+        self.assertEqual(calls, {"set_effort": ["effort"], "set_mode": ["mode", "mode"], "set_fast": ["fast"],
+                                 "set_env": ["env"], "set_auth": ["auth"], "_adopt_fast_state": [None],
+                                 "_arm_rewind": [None], "_complete_rewind_wait": [None]})
+
+    def test_y6_a_pick_the_composed_connect_serves_rides_it_and_keeps_its_flag_until_the_landing(self):
+        # the served check's in-progress branch moves the names it discards into the riding set, so a pick that landed
+        # between the loop top's clear and _options' compose (its surface recorded, the compose reading the session) keeps
+        # fastPending or modePending from the served request to the landing (review round 7); nothing executed that line
+        # (review round 9, tests-3: with it disabled the SettingsPick classes and six neighbour modules stayed green)
+        def flags(s):
+            snap = s.snapshot()
+            return snap["fastPending"], snap["modePending"]
+        s = self._sess(mode="default", effort="high")
+        s.perm_mode = s._launched_mode = "default"; s._launched_effort = sb.effort_launch_shape("high")
+        q = self._Queue(); s.loop = q
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))   # recorded; its request waits in the queue
+        self.assertEqual(s._pick_names(), ["mode"]); self.assertEqual(flags(s), (False, True))
+        s._launching = s.backend._launch_shape(s); s._connecting = True     # _options composed from the session: bypass
+        q.flush()                                                           # the request finds the connect launching it
+        served = [str(m) for m in self.logs if "the connect in progress launches what the pending mode pick asks for" in str(m)]
+        self.assertEqual(len(served), 1, self.logs)
+        self.assertEqual(s._pick_names(), [], "the surface went with the picks the connect serves")
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle, "no arm: served")
+        self.assertEqual(flags(s), (False, True), "the served pick rides the connect: still pending until the landing")
+        s._connect_landed()
+        self.assertEqual(flags(s), (False, False))
+        # fast: the same, with the flip the served check owes the pick
+        s = self._sess(effort="high"); s._launched_effort = sb.effort_launch_shape("high")
+        s.fast = "off"; s._fast_unlocked = False; s.thread = mock.Mock(is_alive=lambda: True)
+        q = self._Queue(); s.loop = q
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertEqual(flags(s), (True, False))
+        s._launching = s.backend._launch_shape(s); s._connecting = True; s._fast_unlocked = True   # composed with the flag
+        q.flush()
+        self.assertTrue(any("the connect in progress launches what the pending fast pick asks for" in str(m) for m in self.logs), self.logs)
+        self.assertEqual(s._pick_names(), []); self.assertFalse(s._reconnect)
+        self.assertEqual(s.fast, "on", "the served check's flip")
+        self.assertEqual(flags(s), (True, False), "the served pick rides the connect: still pending until the landing")
+        s._connect_landed()
+        self.assertEqual(flags(s), (False, False))
+
+    def test_p2_a_fast_pick_in_the_arm_half_of_the_spawn_window_folds_into_the_compose_and_sends_nothing_live(self):
+        # set_fast decided the live-send route from the torn-down connection's flag in the ARM half of the spawn window
+        # (_launching stamped by the arm, _connecting not yet set, no client; review round 9, correctness-4): an off there
+        # on a flagged session queued a literal '/fast off' for a relaunch that composes flagless (the feeder holds the
+        # queue while _reconnect is set, so the next, flagless process got the command and refused it) and logged
+        # "applied live" with no client. Round 7 closed the composed half (the flag stamped at _options' read); the arm
+        # half now folds the pick into the compose the same way: an off takes the spawn-window branch, an on the reconnect
+        s = self._sess(effort="high"); s._launched_effort = sb.effort_launch_shape("high")
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "on"; s._fast_unlocked = True; s.fast_opt = True    # a flagged connection, running fast
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))       # the idle arm: the window opens, the client on its way out
+        self.assertTrue(s._reconnect); self.assertIsNotNone(s._launching); self.assertFalse(s._connecting)
+        self.assertIsNone(s.client)
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertEqual(s.pending(), [], "no literal /fast for a relaunch that composes flagless")
+        self.assertFalse(s.fast_opt, "the compose reads the ask: no flag"); self.assertEqual(s.fast, "off")
+        self.assertFalse(sb.read_reg(s.backend.state_dir, self.SID).get("fast"))
+        self.assertTrue(any("fast (web): set to off; the reconnect in flight launches without the flag" in str(m)
+                            for m in self.logs), self.logs)
+        self.assertFalse(any("applied live" in str(m) for m in self.logs), "never applied live without a client")
+        self.assertTrue(s._reconnect, "the armed reconnect stands and relaunches without the flag")
+        # an on in the same half takes the reconnect route: its request rides the standing arm and the relaunch composes
+        # the flag (_served_by_connect returns False in the arm half, since no connect is composed yet)
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertEqual(s.pending(), [])
+        self.assertTrue(s.fast_opt); self.assertEqual(s.fast, "on", "the arm's flip: the flag rides the coming connect")
+        self.assertTrue(any("fast (web): set to on; reconnecting to apply" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(s.snapshot()["fastPending"])
+        self.assertFalse(any("applied live" in str(m) for m in self.logs))
+        # the composed half keeps the live send (review round 7): the flag is the connection being composed
+        s = self._sess(effort="high"); s._launched_effort = sb.effort_launch_shape("high")
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "on"; s.fast_opt = True
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        s._reset_reconnect_state()
+        s._launching = s.backend._launch_shape(s); s._connecting = True; s._fast_unlocked = True   # a flagged compose
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertEqual(s.pending(), ["/fast off"], "the composed connection takes the send")
+        self.assertTrue(any("fast (web): set to off; applied live" in str(m) for m in self.logs), self.logs)
+
+    def test_z_the_landings_live_re_pick_retires_the_superseded_arm_only_when_every_guard_holds(self):
+        # _retire_arm_for_live_pick (review round 7) retires the reconnect a superseded mode pick armed in the spawn window
+        # when a live pick overtook it during the landing's switch. Every guard other than the bypass check could be deleted
+        # with every module green (review round 9, fresh-1); one case per guard here, each red with that guard removed: no
+        # arm, an ended session, a pick into bypass, a connect composed meanwhile, another surface pending, a pending
+        # rewind, a shape differing in one field (effort: the arm carries a pick the live switch does not apply), the flag,
+        # and the four re-checks under the hold after the shape compute released the lock. The positive case first
+        def armed(**kw):
+            s = self._sess(mode="acceptEdits", effort="high")
+            s._launched_effort = sb.effort_launch_shape("high"); s._launched_mode = "plan"
+            s._launched_auth = "login"; s._launched_env = {}
+            s.perm_mode = "acceptEdits"                                   # the live pick that overtook plan
+            s._reconnect = True; s._reconnect_when_idle = False
+            s._wake = asyncio.Event(); s._wake.set(); s._input_wake = asyncio.Event()
+            for k, v in kw.items():
+                setattr(s, k, v)
+            return s
+
+        def stands(s, why):
+            self.assertFalse(s._retire_arm_for_live_pick(), why)
+            self.assertTrue(s._reconnect, why); self.assertTrue(s._wake.is_set(), why)
+            self.assertFalse(s._input_wake.is_set(), why)
+        s = armed()
+        self.assertTrue(s._retire_arm_for_live_pick(), "the running shape with the newer mode is what the session asks for")
+        self.assertFalse(s._reconnect); self.assertFalse(s._wake.is_set()); self.assertTrue(s._input_wake.is_set())
+        s = armed(_reconnect=False, _reconnect_when_idle=True)
+        self.assertFalse(s._retire_arm_for_live_pick(), "no arm to retire")
+        self.assertTrue(s._reconnect_when_idle, "a deferred request is not this routine's to clear")
+        stands(armed(ended=True), "an ended session")
+        stands(armed(mode="bypassPermissions", perm_mode="bypassPermissions"), "a pick into bypass is the reconnect's")
+        stands(armed(_launching={"effort": sb.effort_launch_shape("high"), "mode": "acceptEdits", "auth": "login", "env": {}}),
+               "a newer arm stamped the connect it will run")
+        s = armed(); s._reconnect_surfaces.add("effort")
+        stands(s, "another pick rides the arm")
+        stands(armed(_rewind_to="5e771e5d-9a1c-4b0f-8d2e-000000000001", _rewind_armed=False), "a pending rewind's reconnect")
+        stands(armed(effort="low"), "the shape differs in the effort alone: the arm carries a pick the switch does not apply")
+        stands(armed(fast_opt=True, _fast_unlocked=False), "the flag rides the arm")
+        # the re-checks under the hold: the state moves while the shape is computed with the lock released
+        def moves():
+            yield (lambda s: setattr(s, "_launching", dict(s._launched_shape(), mode="acceptEdits")), "a connect composed during the compute")
+            yield (lambda s: setattr(s, "mode", "plan"), "the pick moved during the compute")
+            yield (lambda s: setattr(s, "ended", True), "the session ended during the compute")
+        for move, why in moves():
+            s = armed()
+            real = s.backend._launch_shape
+
+            def compute(sess, auth=None, _move=move, _real=real):
+                shape = _real(sess, auth=auth)
+                _move(sess)
+                return shape
+            s.backend._launch_shape = compute
+            stands(s, why)
+        s = armed()
+        real = s.backend._launch_shape
+
+        def disarmed_meanwhile(sess, auth=None):
+            shape = real(sess, auth=auth)
+            sess._reconnect = False; sess._reconnect_when_idle = True   # the arm went, and a request deferred since
+            return shape
+        s.backend._launch_shape = disarmed_meanwhile
+        self.assertFalse(s._retire_arm_for_live_pick(), "the arm went during the compute")
+        self.assertTrue(s._reconnect_when_idle, "the deferred request that landed meanwhile survives")
+
     def test_y3_a_live_mode_picks_lost_answer_or_superseded_pick_never_reverts_and_a_verdict_still_does(self):
         # _do_set_mode's non-landing except reverted perm_mode, self.mode and the reg on ANY exception (review round 7,
         # kernel-2): the SDK raises a bare Exception for the CLI's error response and for a request whose answer never

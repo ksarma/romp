@@ -5134,13 +5134,22 @@ class SdkSession:
         self._reconnect_surfaces: set = set()   # which picks asked for the pending reconnect ("effort", "mode",
         #   "fast", "auth", "env", and "fast-reset" for the refused opt-in's flagless relaunch, _RESTORE_SURFACES):
         #   the line that reports a held pick arming names them; cleared at the arm
-        self._reconnect_riding: set = set()     # the surfaces the reconnect IN FLIGHT carries, from the arm to the
-        #   landing (review round 7, 2026-09-10): the arm moves the names it read here as it clears them from the
-        #   set above (the loop top and the served check do the same for a pick that rode the composed connect),
-        #   and _connect_landed clears it. snapshot's fastPending and modePending read it beside the set above, so
-        #   a held fast or mode pick that ARMS keeps a pending flag through its reload, the way effortPending
-        #   does for effort; until round 7 the badge showed the picked value flat and the chat no reloading line
-        #   between the arm and the landing
+        self._reconnect_riding: set = set()     # the surfaces riding the connect IN PROGRESS, or the connect the
+        #   standing arm will compose (review round 7, 2026-09-10): the arm moves the names it read here as it clears
+        #   them from the set above (the loop top and the served check do the same for a pick that rode the composed
+        #   connect), and _connect_landed clears it. snapshot's fastPending and modePending read it beside the set
+        #   above, so a held fast or mode pick that ARMS keeps a pending flag through its reload, the way
+        #   effortPending does for effort; until round 7 the badge showed the picked value flat and the chat no
+        #   reloading line between the arm and the landing
+        self._reconnect_riding_next: set = set()   # the surfaces riding the arm made WHILE a connect is in progress
+        #   (review round 9, 2026-09-10): a pick armed in the composed half of the spawn window asks for the
+        #   reconnect AFTER the connect in progress lands, so its names are keyed to that arm, not to the connect
+        #   about to land. _arm_reconnect records here when _connecting is set; the landing clears the set above
+        #   (what rode the connect that landed) and moves these into it (they ride the arm's connect from here);
+        #   _disarm_locked clears the set of the arm it disarms (this one while a connect is in progress, the one
+        #   above after the landing). Until round 9 the arm wrote the set above and the landing cleared it whole,
+        #   so a fast or mode pick armed in the window lost its pending flag at a landing that did not serve it,
+        #   for the whole second reload, and a window pick withdrawn before the landing kept its flag
         self._reconnect_held_for_work = False   # the pending reconnect is HELD for live work: set when the hold is
         #   first announced (the setter's line, or the loop's), cleared when the arm fires or the loop top takes
         #   the arm. The status readers' pickHeld rides it (snapshot), so it holds through the delivery turn of
@@ -5627,7 +5636,7 @@ class SdkSession:
         generation counter (_hold_gen) moves as it is released, so a routine that read the hold state, released
         the lock for I/O (_launch_shape reads the operator's settings files) and took it again can tell whether
         any writer landed in between (_arm_now, _served_by_connect). Every writer of the surface set, the riding
-        set, the held flag, the pending-reconnect flags, the fast ask beside them, the launching stamp, the fast
+        set and the next riding set (_reconnect_riding_next, review round 9), the held flag, the pending-reconnect flags, the fast ask beside them, the launching stamp, the fast
         flag stamp and the launched-shape stamps (_launched_effort, _launched_mode, _launched_auth, _launched_env:
         the landing, the confirmed live switch and the init's report; review round 7 moved the landing's four under
         it) takes the lock through this; a reader takes _hold_lock bare."""
@@ -5726,7 +5735,11 @@ class SdkSession:
             # shape whatever a later pick asks, and the landing must stamp it as launched
             self._launching = shape
         names = self._pick_names()
-        self._reconnect_riding.update(names)   # the picks this reconnect carries, until the landing (snapshot's pending flags)
+        # the picks this reconnect carries, until ITS landing (snapshot's pending flags): keyed to the arm (review
+        # round 9). With a connect in progress this arm stands for the reconnect after it lands, so its names go to
+        # the next set and the landing moves them over; with none (the idle arm, the settle's, the arm half of the
+        # window before the loop top composes) they ride the connect the loop composes next
+        (self._reconnect_riding_next if self._connecting else self._reconnect_riding).update(names)
         if self.fast_opt and "fast" in names:
             self.fast = "on"
         if "auth" in names:
@@ -6065,8 +6078,8 @@ class SdkSession:
             self.backend._poke()
 
     def _disarm_locked(self) -> None:
-        """Retire an armed reconnect, both forms (the break, _reconnect, and the deferred request), its waker and
-        the held flag. The CALLER HOLDS the lock through _hold_write and wakes the feeder after releasing it
+        """Retire an armed reconnect, both forms (the break, _reconnect, and the deferred request), its waker, the
+        held flag and the names riding it (review round 9). The CALLER HOLDS the lock through _hold_write and wakes the feeder after releasing it
         (inputs() holds the queue while _reconnect is set). Two callers: _settle_withdrawal's spawn-window
         disarm and the landing's live re-pick (_retire_arm_for_live_pick, review round 7)."""
         self._reconnect = False
@@ -6074,6 +6087,10 @@ class SdkSession:
         if self._wake is not None:
             self._wake.clear()
         self._reconnect_held_for_work = False
+        # the names riding the arm this retires (review round 9): while a connect is in progress the arm stands
+        # for the reconnect after it (the next set); after the landing its names were moved to the riding set.
+        # Left standing, a window pick withdrawn or applied live kept its pending flag until the landing
+        (self._reconnect_riding_next if self._connecting else self._reconnect_riding).clear()
 
     def _retire_arm_for_live_pick(self) -> bool:
         """THE LIVE SWITCH SUPERSEDES THE ARM (review round 7, 2026-09-10; the review's correctness-1): the landing's
@@ -6130,6 +6147,11 @@ class SdkSession:
             self._reconnect_held_for_work = False
             self._reconnect_surfaces.difference_update(names)
             self._reconnect_riding.update(names)   # they ride this connect, until its landing (snapshot's pending flags)
+            # an arm made while a connect was in progress that never landed (the connect failed before the
+            # handshake) rides this one: fold its names in, so the flag holds through the retry (review round 9;
+            # the landing does this move on the normal path and leaves the next set empty here)
+            self._reconnect_riding.update(self._reconnect_riding_next)
+            self._reconnect_riding_next.clear()
         if deferred:
             what = self._picks_phrase(names, "pending", "pending") if names else "the pending reconnect"
             # the verb agrees in number, as the arm's line does (review round 4): two picks ride, one rides, and
@@ -6242,7 +6264,12 @@ class SdkSession:
             # and never reconnected, and every consult then rang the contract problem
             self._launching = None
             self._connecting = False
-            self._reconnect_riding.clear()   # whatever rode this connect has landed (snapshot's pending flags)
+            # whatever rode THIS connect has landed (snapshot's pending flags); the names of an arm made while it
+            # was in progress ride that arm's connect from here (review round 9): until then the clear took them
+            # too, and a fast or mode pick armed in the window showed no pending flag for its own reload
+            self._reconnect_riding.clear()
+            self._reconnect_riding.update(self._reconnect_riding_next)
+            self._reconnect_riding_next.clear()
             pick, prev = self.mode, self._launched_mode
             landing = None
             if pick and pick != prev and pick != "bypassPermissions":
@@ -9382,11 +9409,12 @@ class SdkSession:
         held_of = set(held["surfaces"]) if held else set()
         # a fast or mode pick pending on a reconnect, in any of its forms (review round 7, 2026-09-10): recorded
         # and not yet armed (the surface), riding the reconnect in flight (_reconnect_riding, the arm to the
-        # landing), or being applied by the landing's live switch (_mode_switching). What effortPending is for
+        # landing; _reconnect_riding_next for an arm made while a connect is in progress, review round 9), or
+        # being applied by the landing's live switch (_mode_switching). What effortPending is for
         # effort: the chat's reloading line and the badge's pulse read it once the hold ends, where the badge
         # showed the picked value flat until the landing before
         with self._hold_lock:
-            asked = set(self._reconnect_surfaces) | set(self._reconnect_riding)
+            asked = set(self._reconnect_surfaces) | set(self._reconnect_riding) | set(self._reconnect_riding_next)
             mode_pending = "mode" in asked or self._mode_switching is not None
         # while a pick is HELD the process still runs the value it launched with (or, for the mode, the
         # last one the CLI confirmed live), so that is the value reported: every badge shows the running
@@ -13565,8 +13593,19 @@ class SdkBackend:
             # 2026-09-10; the review's correctness-2): _options stamps both at its one read of the ask, under
             # this lock, so a pick landing inside the compose decides against the connection being composed,
             # never the one being replaced
-            unlocked, launching = s._fast_unlocked, s._launching
-        if unlocked:                           # opted in at connect → the CLI interprets the literal send
+            unlocked, launching, connecting = s._fast_unlocked, s._launching, s._connecting
+        # THE LIVE SEND NEEDS A CONNECTION THE FLAG DESCRIBES (review round 9, 2026-09-10; the review's correctness-4):
+        # with no connect in progress the flag is the running connection's; in the composed half of the spawn window
+        # (_connecting) it is the connection being composed, stamped at _options' read, and the send reaches the new
+        # process through the queue (round 7). In the ARM half (_launching stamped by the arm, _connecting not yet
+        # set, no client) the flag still describes the connection the arm is tearing down, so it decides nothing
+        # here: the pick folds into the compose, which reads fast_opt at its one read. An off there takes the
+        # spawn-window branch below (the relaunch launches without the flag); an on takes the reconnect route (its
+        # request rides the standing arm through _arm_reconnect; _served_by_connect returns False in the arm half,
+        # since no connect is composed yet). Until round 9 an off in the arm half queued a literal '/fast off' for a
+        # relaunch that composes flagless (the feeder holds the queue while _reconnect is set, so it reached the
+        # next process, which refuses it) and logged "applied live" with no client
+        if unlocked and (launching is None or connecting):   # opted in at connect: the CLI interprets the literal send
             if not self.send(sid, "/fast " + value):
                 return False
             # A relaunch pending on this flagged connection (the refusal's restore, _adopt_fast_state, or a
@@ -13884,7 +13923,7 @@ class SdkBackend:
         else:
             # LOCKED read-modify-write (_update_reg), never the bare read→mutate→write this used to do: the
             # loop threads run their own locked RMWs on the same reg (queue/echo mirrors, liveCtx), and an
-            # interleaving could silently drop the effort field — the pick LOOKED applied (in-memory label
+            # interleaving could silently drop the effort field: the pick LOOKED applied (in-memory label
             # right), then reverted at the next respawn when __init__ re-read the reg (the user 2026-08-14,
             # whose ultracode sessions seemed to downgrade at random). Whole setter family fixed alike.
             # effortPending: the applying reconnect hasn't completed yet → dots + "Reloading session…"
@@ -14039,7 +14078,7 @@ class SdkBackend:
                     self._update_reg(sid, authPending=False)
                 self._log("auth (%s): set to %s; unchanged, no reconnect" % (s.name, value))
         else:
-            # authPending: the applying reconnect hasn't completed → badge dots. Locked RMW — see set_effort.
+            # authPending: the applying reconnect hasn't completed → badge dots. Locked RMW; see set_effort.
             # apiKeyAuth=None: the persisted CLI report described the process this reconnect replaces,
             # so a restart must restore "no init has landed yet", never the old side (both readers guard
             # with isinstance(..., bool), so None reads as absent).
