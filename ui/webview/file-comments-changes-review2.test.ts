@@ -11,6 +11,8 @@
 // a reload that can be held until the test lands it. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import type { FileViewActionCtx } from "./file-view";
 import { type Status, type Hunk, type StoreComment, type LogEntry, DETACHED_GROUP_TITLE } from "./file-comments-model";
 
@@ -77,8 +79,11 @@ type Reg = { type: string; cb: Listener; capture: boolean };
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public data: string) {}
+  parentNode!: El | null;
+  constructor(public data: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.data; }
   get length(): number { return this.data.length; }
   get parentElement(): El | null { return this.parentNode; }
@@ -104,15 +109,22 @@ function parseSel(sel: string): Compound[][] {
 class El {
   nodeType = 1;
   tagName: string;
-  parentNode: El | null = null;
-  childNodes: Array<El | Txt> = [];
+  parentNode!: El | null;
+  childNodes!: Array<El | Txt>;
   attrs = new Map<string, string>();
   listeners: Reg[] = [];
   hidden = false; disabled = false; readOnly = false; title = ""; type = ""; value = ""; checked = false; placeholder = "";
   innerHTML = "";
   style: Record<string, string> = {};
   rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    // the tree's edges are non-enumerable, so a node inspects as its own projection and a failing assertion's dump
+    // stays small (ui/test-dom-shim.ts says why); assignments later keep them hidden
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get ownerDocument(): typeof doc { return doc; }
   get parentElement(): El | null { return this.parentNode; }
   get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
@@ -772,4 +784,21 @@ test("Enter on a focused change mark with the panel closed: the panel opens with
   await flush(); await flush();
   assert.equal(marksOf(w, "h1").length, 0, "the accepted change is unmarked");
   assert.notEqual(doc.activeElement, m1, "the old mark, out of the tree, does not keep the keyboard");
+});
+
+// The stand-in's nodes inspect as their own projection, never as the tree: every edge (parentNode, childNodes, the
+// attribute map, the listener table, style, dataset, classList) is non-enumerable, so a failing assertion's dump of a
+// node is a few lines, not the whole document (ui/test-dom-shim.ts says why; ui/test-dom-shim.test.ts keeps the ratchet).
+test("stand-in: a node enumerates its primitives alone and inspects without its edges", () => {
+  const root = doc.createElement("div");
+  const kid = root.appendChild(doc.createElement("span"));
+  kid.appendChild(doc.createTextNode("leaf"));
+  kid.setAttribute("data-id", "k1");
+  for (const n of [root, kid, kid.firstChild!]) {
+    const o = n as unknown as Record<string, unknown>;
+    assert.ok(Object.keys(o).every((k) => staysEnumerable(o[k])), "only primitives enumerate on " + n.constructor.name + ": " + Object.keys(o).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump of " + n.constructor.name);
+  }
+  assert.equal(kid.parentNode, root); assert.equal(root.childNodes.length, 1); assert.equal(kid.textContent, "leaf");
 });

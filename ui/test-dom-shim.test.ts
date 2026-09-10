@@ -390,25 +390,7 @@ const ALLOWLIST = [
   "webview/file-comments-about-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-about-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-anchors-unsure-rendered.test.ts",
-  "webview/file-comments-anchors-unsure.test.ts",
-  "webview/file-comments-anchors.test.ts",
   "webview/file-comments-arrivals-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-arrivals-fixes.test.ts",
-  "webview/file-comments-arrivals-review2.test.ts",
-  "webview/file-comments-arrivals.test.ts",
-  "webview/file-comments-behavior.test.ts",
-  "webview/file-comments-changes-review.test.ts",
-  "webview/file-comments-changes-review2.test.ts",
-  "webview/file-comments-changes-review3.test.ts",
-  "webview/file-comments-changes.test.ts",
-  "webview/file-comments-composer-chat-nav-chord.test.ts",
-  "webview/file-comments-composer-fixes.test.ts",
-  "webview/file-comments-composer-review.test.ts",
-  "webview/file-comments-composer-shell-chord.test.ts",
-  "webview/file-comments-composer.test.ts",
-  "webview/file-comments-crop-keep.test.ts",
-  "webview/file-comments-crop-wait.test.ts",
   "webview/file-comments-editing-cards.test.ts",
   "webview/file-comments-editing-landed.test.ts",
   "webview/file-comments-editing-moved-latch.test.ts",
@@ -548,7 +530,7 @@ const ALLOWLIST = [
 // The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
 // alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
 // is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 167;
+const ALLOWLIST_MAX = 149;
 // the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
 // tags-scale test whose shim it grew from
 const SWITCHED = [
