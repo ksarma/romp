@@ -17,79 +17,16 @@ import * as assert from "node:assert/strict";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { inspect } from "node:util";
+import { nodeFactory, hideEdges } from "./test-dom-shim";
 
-// A shim node INSPECTS AS ITS OWN PROJECTION: tag, attributes, text, style, dataset, value, class list. Its
-// edges (parentNode, children, firstChild), its listener tables and its methods are non-enumerable
-// (hideEdges, below), so nothing that inspects a node (node's assert on a failed strict assertion, the test
-// reporter, console.log) walks the tree. That is what keeps a FAILING assertion from taking the box: on
-// 2026-09-09 the review's mutation runs of this file grew to 100 GB five times before earlyoom killed them.
-// assert/strict's equal and deepEqual build a diff on failure even when given a message, inspecting both
-// sides at depth 1000 with getters on; an enumerable parentNode took that walk up to the body and across
-// the whole dialog, the enumerable firstChild getter re-expanded children[0] at every level (2^depth), and
-// the diff then ran node's Myers algorithm over the two dumps' lines, which clones an Int32Array of
-// 2(N+M)+1 entries per edit-distance level: a 71k-line dump against `null` costs 8N^2 bytes, some 40 GB,
-// allocated outside the V8 heap where --max-old-space-size cannot see it (reproduced under a cgroup cap at
-// 1.2 GB/s). The test below pins the projection. Still compare node identity with `same(a, b, msg)`: a
-// deepEqual of two nodes now compares projections, not trees, and a short message beats a projection diff.
-function makeNode(tag: string): any {
-  const n: any = {
-    tag, _attrs: {}, children: [] as any[], style: {}, dataset: {}, _text: "", parentNode: null, value: "",
-    get textContent() { return this._text; },
-    set textContent(v: any) { this._text = v == null ? "" : String(v); for (const c of this.children) c.parentNode = null; this.children.length = 0; },
-    classList: { _s: new Set<string>(), add(...a: string[]) { a.forEach((c) => this._s.add(c)); },
-      remove(...a: string[]) { a.forEach((c) => this._s.delete(c)); },
-      toggle(c: string, f?: boolean) { f ? this._s.add(c) : this._s.delete(c); }, contains(c: string) { return this._s.has(c); } },
-    setAttribute(k: string, v: any) { this._attrs[k] = v; }, getAttribute(k: string) { return this._attrs[k]; },
-    setAttributeNS(_n: any, k: string, v: any) { this._attrs[k] = v; }, removeAttribute(k: string) { delete this._attrs[k]; },
-    appendChild(c: any) {
-      if (c.parentNode) { const i = c.parentNode.children.indexOf(c); if (i >= 0) c.parentNode.children.splice(i, 1); }
-      c.parentNode = n; this.children.push(c); return c;
-    },
-    insertBefore(c: any, ref: any) { c.parentNode = n; const i = this.children.indexOf(ref); i < 0 ? this.children.push(c) : this.children.splice(i, 0, c); return c; },
-    removeChild(c: any) { const i = this.children.indexOf(c); if (i >= 0) { this.children.splice(i, 1); c.parentNode = null; } return c; },
-    get firstChild() { return this.children[0] || null; },
-    remove() { if (n.parentNode) n.parentNode.removeChild(n); },
-    // `_listeners[t]` is the listener added LAST and still registered; removal is by function, so a listener
-    // hung under another for a while (the drag's scroll re-rank under the popover's scroll closer) gives the
-    // slot back to the one that stays when it comes down
-    _listeners: {} as any, _stacks: {} as any,
-    addEventListener(t: string, fn: any) { (n._stacks[t] = n._stacks[t] || []).push(fn); n._listeners[t] = fn; },
-    removeEventListener(t: string, fn?: any) {
-      const a = n._stacks[t] || []; const i = fn ? a.indexOf(fn) : a.length - 1;
-      if (i >= 0) a.splice(i, 1);
-      if (a.length) n._listeners[t] = a[a.length - 1]; else delete n._listeners[t];
-    },
-    setPointerCapture() {}, releasePointerCapture() {},
-    querySelector() { return null; }, querySelectorAll() { return []; },
-    // geometry is a test input: a node's own `_rect`, else the module-level `g.__rectOf(node)` hook (so a
-    // test can move a dot or a row without holding the node the rebuild will create), else one flat rect
-    getBoundingClientRect() { return n._rect || (g.__rectOf ? g.__rectOf(n) : null) || { width: 200, height: 20, left: 0, top: 0, right: 200, bottom: 20 }; },
-    // scrollTop clamps to `g.__scrollMax` (Infinity unless a test says the box no longer scrolls), as a
-    // browser clamps a write on a box whose content fits
-    _scrollTop: 0,
-    get scrollTop() { return this._scrollTop; },
-    set scrollTop(v: any) { const max = g.__scrollMax == null ? Infinity : g.__scrollMax; this._scrollTop = Math.max(0, Math.min(Number(v) || 0, max)); },
-    closest() { return null; },
-    // focus is OBSERVABLE: it records the active element on the fake document (the popover focuses the
-    // current swatch on open and the dot again on close)
-    focus() { g.document.activeElement = n; }, select() {},
-    setSelectionRange() {}, selectionStart: 0, selectionEnd: 0,
-    createEl(t: string, o: any) { const e = makeNode(t); if (o && o.cls) e.classList.add(o.cls); if (o && o.text) e.textContent = o.text; this.appendChild(e); return e; },
-    createDiv(o: any) { return this.createEl("div", o); }, createSpan(o: any) { return this.createEl("span", o); },
-  };
-  hideEdges(n);
-  return n;
-}
-// the shim's edges, listener tables and methods, hidden from enumeration (see the note above makeNode): a
-// node assigned a new parentNode keeps the property non-enumerable, and the tree is still reachable through
-// the same properties for the code that walks it
-const HIDDEN_KEYS = new Set(["children", "parentNode", "firstChild", "_listeners", "_stacks", "_scrollTop"]);
-function hideEdges(n: any) {
-  for (const k of Object.keys(n)) {
-    const d = Object.getOwnPropertyDescriptor(n, k)!;
-    if (typeof d.value === "function" || HIDDEN_KEYS.has(k)) Object.defineProperty(n, k, { enumerable: false });
-  }
-}
+// The fake DOM is ui/test-dom-shim.ts, shared with the other timeline tests. A node INSPECTS AS ITS OWN PROJECTION
+// (its primitives), never as the tree: on 2026-09-09 the review's mutation runs of this file grew to 100 GB five
+// times before earlyoom killed them, because a failing strict assertion with a node on one side dumps both sides at
+// depth 1000 with getters on and then diffs the dumps with node's Myers algorithm, whose Int32Array trace costs
+// 8N^2 bytes outside the V8 heap (the module's header has the full account). The first test below pins the
+// projection over the dialog at scale. Still compare node identity with `same(a, b, msg)`: a deepEqual of two
+// nodes compares projections, not trees, and a short message beats a projection diff.
+const makeNode = nodeFactory();
 const g: any = global;
 g.document = {
   createElement(t: string) { return t === "canvas" ? { getContext() { return { font: "", measureText(s: string) { return { width: (s ? s.length : 0) * 6 }; } }; } } : makeNode(t); },
@@ -196,26 +133,45 @@ function openDialog(views: any = THREE, sessions: any[] = THREE_SESSIONS) {
 // node's assert inspects the two sides of a failed strict assertion with these options
 // (lib/internal/assert/assertion_error.js, inspectValue) before it diffs them line by line
 const ASSERT_INSPECT = { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true };
+// the edges a dump would walk: the shared shim's, and the two members upstream's copy of the shim adds
+const EDGE_NAMES = ["parentNode", "children", "firstChild", "ownerDocument", "_ownerDoc"];
 test("executed: a shim node inspects as its own projection, never as the tree, so a failing assertion's diff stays small (the 100 GB runs of 2026-09-09)", () => {
   const panel = openDialog(THIRTY, FORTY_SESSIONS);
   try {
     dotFor(panel, "g1")._listeners.click();
     const pop = panel._tagColorPop;
     assert.ok(pop, "the popover is open, the shape the review's mutations failed in");
+    // the swatch is taken explicitly and focus checked against it, so a focus regression fails here instead of
+    // handing the projection leg a null that inspects in one line (review round 1)
+    const sw = swatches(pop).find((s) => s._attrs["aria-checked"] === "true");
+    assert.ok(sw, "the current swatch");
+    same(g.document.activeElement, sw, "the popover focused the current swatch on open");
+    // upstream's variant of the shim (their copy of this file): every node carries an enumerable _ownerDoc and an
+    // ownerDocument accessor, which a key list of edges missed and the structural rule hides. Built here on a
+    // shared node, hung in the card with a child of its own, and shown to drag the document into its dump BEFORE
+    // the rule runs, so the leg below is known to bite
+    const up: any = makeNode("div");
+    Object.defineProperty(up, "_ownerDoc", { value: null, writable: true, enumerable: true, configurable: true });
+    Object.defineProperty(up, "ownerDocument", { get() { return this._ownerDoc || g.document; }, set(d: any) { this._ownerDoc = d; }, enumerable: true, configurable: true });
+    cardOf(panel).appendChild(up); up.ownerDocument = g.document; up.appendChild(makeNode("span"));
+    const raw = inspect(up, ASSERT_INSPECT);
+    assert.ok(raw.includes("ownerDocument") && raw.includes("_ownerDoc") && raw.includes("createElement"), "before the rule, the variant's members put the document in its dump: " + raw.split("\n").length + " lines");
+    hideEdges(up);
     // the projection: a few lines, no edge, whatever the node's place in the tree (the dialog root would
     // otherwise carry every row; a dot would climb to the body and back down through every row)
-    for (const [what, n] of [["a dot", dotFor(panel, "g1")], ["the dialog", panel._viewsDialog], ["the card", cardOf(panel)], ["the body", g.document.body], ["a swatch", g.document.activeElement]] as const) {
+    for (const [what, n] of [["a dot", dotFor(panel, "g1")], ["the dialog", panel._viewsDialog], ["the card", cardOf(panel)], ["the body", g.document.body], ["a swatch", sw], ["upstream's variant node", up]] as const) {
+      assert.ok(n && typeof n === "object", what + " is a node");
       const dump = inspect(n, ASSERT_INSPECT);
       const lines = dump.split("\n").length;
       assert.ok(lines <= 60, what + " inspects in " + lines + " lines; the dump must not walk the tree: " + dump.slice(0, 300));
-      assert.ok(!dump.includes("parentNode") && !dump.includes("children") && !dump.includes("firstChild"), what + "'s dump names no edge");
+      for (const e of EDGE_NAMES) assert.ok(!dump.includes(e), what + "'s dump names no edge, found " + e);
     }
     // and node's own failing diff, the two shapes the review's mutations produced (a node against null, the
-    // focused swatch against a dot): a short message, at once. Before hideEdges each was a 40 GB allocation.
+    // focused swatch against a dot): a short message, at once. Before the projection each was a 40 GB allocation.
     const failing = (a: any, b: any) => { try { assert.equal(a, b, "the shape of a failing mutation"); } catch (e: any) { return String(e.message); } return ""; };
     const m1 = failing(pop, null);
     assert.ok(m1 && m1.split("\n").length <= 400, "node against null: a short diff, got " + m1.split("\n").length + " lines");
-    const m2 = failing(g.document.activeElement, dotFor(panel, "g2"));
+    const m2 = failing(sw, dotFor(panel, "g2"));
     assert.ok(m2 && m2.split("\n").length <= 120, "swatch against dot: a short diff, got " + m2.split("\n").length + " lines");
   } finally {
     panel._closeViewsDialog();   // takes the popover with it: the body is shared, and the next test expects it empty
