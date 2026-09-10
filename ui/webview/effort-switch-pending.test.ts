@@ -36,7 +36,7 @@ test("renderReconnecting draws the accent loader dots + a 'Reloading session' li
   assert.match(RENDER, /function renderReconnecting\(ev: Extract<ChatEvent, \{ kind: "reconnecting" \}>\)/);
   assert.match(RENDER, /el\("div", "turn turn-reconnecting"\)/);
   assert.match(RENDER, /line\.appendChild\(metaDots\(\)\);/);   // the SAME pulsing accent dots as the badge
-  assert.match(RENDER, /Reloading session — applying \$\{ev\.effort\} effort…/);
+  assert.match(RENDER, /Reloading session: applying \$\{ev\.effort\} effort…/);   // a colon, not an em dash (review round 10)
   assert.match(RENDER, /"Reloading session…"/);                // effort-less fallback
   assert.match(CSS, /\.turn-reconnecting \.dot \{[^}]*background: var\(--accent\)/);   // accent (loading), not a status color
 });
@@ -226,7 +226,7 @@ test("executed: the reloading line's hover title names the change the reload app
   const tail = ": reloading the session (it re-reads the transcript); any message you send lands once it's back";
   const effort = line({ kind: "reconnecting", effort: "max", held: null, picks: ["effort"] });
   assert.equal(effort.title, "applying the effort change" + tail);
-  assert.equal(effort.textContent, "Reloading session \u2014 applying max effort\u2026");   // the inherited visible text, pinned above
+  assert.equal(effort.textContent, "Reloading session: applying max effort\u2026");   // the visible text, pinned above (a colon since round 10)
   const fast = line({ kind: "reconnecting", effort: "", held: null, picks: ["fast"] });
   assert.equal(fast.title, "applying the fast mode change" + tail, "a fast reload names fast mode, not effort");
   assert.equal(fast.textContent, "Reloading session…");

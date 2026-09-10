@@ -4008,7 +4008,7 @@ function renderCompacting(): HTMLElement {
 
 // LIVE session reconnect (the user 2026-07-06): an /effort switch has no SDK runtime control, so romp applies
 // it by RECONNECTING the session (resume = the CLI re-reads the transcript) — otherwise invisible in the chat.
-// While the reconnect is pending, an animated "Reloading session — applying <effort> effort…" element shows
+// While the reconnect is pending, an animated "Reloading session: applying <effort> effort…" element shows
 // (the romp-accent pulsing dots, the loader motif), so the user sees the "rereading transcript" step the TUI
 // narrates; it clears the instant the new client connects (kernel drops effortPending). Sibling of the
 // compacting element; appended before the queued bubble.
@@ -4030,7 +4030,7 @@ function renderReconnecting(ev: Extract<ChatEvent, { kind: "reconnecting" }>): H
     line.title = pickHeldTitle(ev.held);
   } else {
     line.appendChild(metaDots());   // the same pulsing accent-blue dots as the switching-dots badge: "it's romp, working"
-    txt.textContent = ev.effort ? `Reloading session — applying ${ev.effort} effort…` : "Reloading session…";
+    txt.textContent = ev.effort ? `Reloading session: applying ${ev.effort} effort…` : "Reloading session…";
     // the title names the change the reload applies (ev.picks: effort, permission mode, fast mode; review round 9),
     // since the element shows for a fast or mode reload too (round 7's gate) and said "effort" for all of them
     line.title = reloadingTitle(ev.picks, ev.effort);
