@@ -124,7 +124,7 @@ CENSUS = {
     "_queued_romp_flags": ("pure", "over a queued text"),
     "_read_task_store": ("sig", "tasks"),
     "_reconnect_pending": ("pure", "over the live row's effortPending, fastPending, modePending and pickHeld (row)"),
-    "_reconnecting_event": ("pure", "over the live row's effortPending and pickHeld (row)"),
+    "_reconnecting_event": ("pure", "over the live row's effortPending, fastPending, modePending, effort and pickHeld (row)"),
     "_retry_gate_state": ("sig", "retry"),
     "_retry_gaveups": ("sig", "states"),
     "_retry_recoveries": ("sig", "states"),

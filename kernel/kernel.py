@@ -49972,11 +49972,17 @@ def _reconnecting_event(tm0):
     held effort, mode, fast or billing pick), since a held mode, fast or billing pick reached no chat surface
     before. `effort` names the pick only for the armed effort reconnect: a live row's effort is never empty,
     the renderer took any effort text as the effort pick's, and while a pick is held the row's effort is the
-    value the session RUNS, not the pick; a fast or mode reload renders the plain reloading line."""
+    value the session RUNS, not the pick; a fast or mode reload renders the plain reloading line. `picks` names
+    the kinds whose reload this is (review round 9, 2026-09-10; "effort", "mode", "fast", from the pending flags,
+    in _pick_names' order), so the renderer's hover title can name the change it applies: round 8's gate emitted the
+    element for a fast or mode reload with the effort reload's title. Empty while a pick is held (the hold names
+    its own surfaces)."""
     tm0 = tm0 or {}
     held = tm0.get("pickHeld") or None
     effort = (tm0.get("effort") or "") if (tm0.get("effortPending") and not held) else ""
-    return {"kind": "reconnecting", "effort": effort, "held": held}
+    picks = [] if held else [k for k, flag in (("effort", "effortPending"), ("mode", "modePending"), ("fast", "fastPending"))
+                             if tm0.get(flag)]
+    return {"kind": "reconnecting", "effort": effort, "held": held, "picks": picks}
 
 
 def _row_items_sig(rows):

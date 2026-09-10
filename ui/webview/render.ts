@@ -88,7 +88,7 @@ import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle } from "./billing-label";
-import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows and the menus' marks (pick-held.ts)
+import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows and the menus' marks (pick-held.ts)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
 import { setTip, pruneTip } from "./tip";
@@ -242,7 +242,7 @@ type ChatEvent = (
   // LIVE session reconnect in progress (kernel-driven): an /effort switch reconnects the session to apply
   // (--effort is connect-time), so an animated "Reloading session…" element shows while it re-reads the
   // transcript, clearing when the new client connects (the user 2026-07-06). No ts → off the rail (transient).
-  | { kind: "reconnecting"; effort?: string; held?: PickHeld | null; ts?: string; uuid?: string }
+  | { kind: "reconnecting"; effort?: string; held?: PickHeld | null; picks?: string[]; ts?: string; uuid?: string }
   // LIVE api_retry in progress (kernel-driven, event-based, SDK-only): the API returned a retryable error
   // (rate-limit / overload) and the CLI is backing off + retrying, so the turn stalls. An animated "API
   // retrying…" element (the amber retrying status color) with the live attempt count; clears the instant
@@ -4029,9 +4029,11 @@ function renderReconnecting(ev: Extract<ChatEvent, { kind: "reconnecting" }>): H
     txt.textContent = pickHeldLine(ev.held);
     line.title = pickHeldTitle(ev.held);
   } else {
-    line.appendChild(metaDots());   // the same pulsing accent-blue dots as the switching-dots badge — "it's romp, working"
+    line.appendChild(metaDots());   // the same pulsing accent-blue dots as the switching-dots badge: "it's romp, working"
     txt.textContent = ev.effort ? `Reloading session — applying ${ev.effort} effort…` : "Reloading session…";
-    line.title = "applying the effort change — reloading the session (it re-reads the transcript); any message you send lands once it's back";
+    // the title names the change the reload applies (ev.picks: effort, permission mode, fast mode; review round 9),
+    // since the element shows for a fast or mode reload too (round 7's gate) and said "effort" for all of them
+    line.title = reloadingTitle(ev.picks, ev.effort);
   }
   line.appendChild(txt);
   turn.appendChild(line);
@@ -14695,10 +14697,11 @@ function armMetaPending(opSid: string, kind: MetaKind, btn: HTMLElement, was: st
 // "<sessionId>:<kind>" → the kind was held on the last statusline sync for that session (syncMetaControls).
 // The frame where the hold ENDS is the event that retires any local loader a pick armed during the hold (a
 // re-pick, or a pick the hold then withdrew): the loader was hidden while held and would otherwise run from
-// that frame to its 20 s timer with nothing reloading. An effort reload that follows the hold's end drives
-// the dots from the server (st.effortPending); a mode or fast pick that ARMS at the hold's end shows no local
-// pulse between the arm and its landing, where the value changes (review round 6, 2026-09-10: the reg
-// reflecting the pick should replace the timer altogether).
+// that frame to its 20 s timer with nothing reloading. After the hold the server drives each badge: an effort
+// reload's dots from st.effortPending, and a mode or fast pick's dim pulse from st.modePending and st.fastPending
+// (review round 7), from the arm to the landing. The LOCAL loader (armMetaPending's 20 s timer) covers only the
+// sub-second before the first push on a no-hold pick; a pick made during a hold never shows it, and this retires
+// it at the hold-end frame (review round 6). The timer itself is a recorded follow-up.
 const metaHeldLast = new Set<string>();
 function settleMetaHold(sid: string, kind: MetaKind, held: boolean): void {
   const key = `${sid}:${kind}`;

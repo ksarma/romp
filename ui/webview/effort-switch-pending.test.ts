@@ -8,7 +8,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { heldMenuMarks, badgeHeldTip, RUNNING_TAG } from "./pick-held";
+import { heldMenuMarks, badgeHeldTip, pickHeldLine, pickHeldTitle, reloadingTitle, RUNNING_TAG } from "./pick-held";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
@@ -46,7 +46,7 @@ test("a pick HELD for live work renders a waiting line, not the reloading animat
   // kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the element then
   // says which pick waits and on what, with no loader dots. The words come from pick-held.ts (executed
   // in pick-held.test.ts, per kind and per state); render.ts is pinned to take them from there
-  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
+  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
   assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null;/);
   assert.match(RENDER, /effortPending\?: boolean; pickHeld\?: PickHeld \| null;/);
   assert.match(RENDER, /if \(ev\.held\) \{/);
@@ -116,7 +116,7 @@ test("the badge menus and the Billing flyout mark a held pick the same way: the 
   // toggleMetaMenu never read pickHeld) while the tab menu's Billing flyout check-marked the PICKED side (review
   // round 5, ui-2). One convention now, pick-held.ts's heldMenuMarks (executed in pick-held.test.ts): the check on the
   // pick, the running value tagged. render.ts's rows are pinned here and metaRowMarks is executed below
-  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
+  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
   assert.match(RENDER, /function matchesMeta\(kind: MetaKind, current: string, value: string\): boolean \{/);
   assert.match(RENDER, /function isCurrentMeta\(kind: MetaKind, st: Status, value: string\): boolean \{\n\s+if \(kind === "model"\) return \(st\.model \|\| ""\)\.toLowerCase\(\)\.startsWith\(value\);\n\s+return matchesMeta\(kind, metaCurrent\(kind, st\), value\);\n\}/);
   assert.match(RENDER, /function metaRowMarks\(kind: MetaKind, st: Status, value: string\): \{ current: boolean; running: boolean \} \{\n\s+const held = heldMenuMarks\(kind, st\.pickHeld, metaCurrent\(kind, st\)\);/);
@@ -208,6 +208,45 @@ class FakeEl {
   querySelectorAll(sel: string): FakeEl[] { return this.descendants().filter((d) => d.classes().includes(sel.slice(1))); }
   querySelector(sel: string): FakeEl | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
+
+test("executed: the reloading line's hover title names the change the reload applies, per kind", () => {
+  // round 7's gate emits the reloading element for a fast or mode reload too, and its title said "applying the effort
+  // change" for all of them (review round 9, correctness-2 and ui-2). The kernel's event carries the pending kinds
+  // (picks: effort, mode, fast) and pick-held.ts words the title from them (reloadingTitle, executed per kind in
+  // pick-held.test.ts); renderReconnecting is lifted here and run against one event per variant
+  const requireCjs = createRequire(__filename);
+  const start = RENDER.indexOf("function renderReconnecting(");
+  const end = RENDER.indexOf("\n}\n", start) + 3;
+  assert.ok(start > 0 && end > start, "the slice anchors moved; re-anchor");
+  const js = requireCjs("esbuild").transformSync(RENDER.slice(start, end), { loader: "ts" }).code;
+  const mk = (tag: string, cls?: string) => new FakeEl(tag, cls);
+  const render = new Function("el", "dot", "metaDots", "pickHeldLine", "pickHeldTitle", "reloadingTitle", js + "\nreturn renderReconnecting;")(
+    mk, () => mk("span", "dot"), () => mk("span", "meta-dots"), pickHeldLine, pickHeldTitle, reloadingTitle);
+  const line = (ev: object) => render(ev).querySelector(".reconnecting-line") as FakeEl & { title?: string };
+  const tail = ": reloading the session (it re-reads the transcript); any message you send lands once it's back";
+  const effort = line({ kind: "reconnecting", effort: "max", held: null, picks: ["effort"] });
+  assert.equal(effort.title, "applying the effort change" + tail);
+  assert.equal(effort.textContent, "Reloading session \u2014 applying max effort\u2026");   // the inherited visible text, pinned above
+  const fast = line({ kind: "reconnecting", effort: "", held: null, picks: ["fast"] });
+  assert.equal(fast.title, "applying the fast mode change" + tail, "a fast reload names fast mode, not effort");
+  assert.equal(fast.textContent, "Reloading session…");
+  const mode = line({ kind: "reconnecting", effort: "", held: null, picks: ["mode"] });
+  assert.equal(mode.title, "applying the permission mode change" + tail, "a mode reload names the permission mode");
+  assert.equal(line({ kind: "reconnecting", effort: "max", held: null, picks: ["effort", "fast"] }).title,
+    "applying the effort and fast mode changes" + tail, "two picks riding one reload");
+  // an older kernel's event carries no picks: its effort text still names effort; otherwise the change is unnamed
+  assert.equal(line({ kind: "reconnecting", effort: "max", held: null }).title, "applying the effort change" + tail);
+  assert.equal(line({ kind: "reconnecting", effort: "", held: null }).title, "applying the settings change" + tail);
+  // held: the hold's own words, no reload claim
+  const hold = { surfaces: ["fast"], subagents: 1, tasks: 0 };
+  const held = line({ kind: "reconnecting", effort: "", held: hold, picks: [] });
+  assert.equal(held.title, pickHeldTitle(hold));
+  assert.equal(held.textContent, pickHeldLine(hold));
+  assert.doesNotMatch(held.title!, /reloading the session/);
+  assert.match(RENDER, /line\.title = reloadingTitle\(ev\.picks, ev\.effort\);/);
+  assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null; picks\?: string\[\];/);
+  assert.doesNotMatch(RENDER, /applying the effort change \u2014 reloading/, "the round-8 title, one sentence for every kind");
+});
 
 // render.ts's statusline slice, metaCurrent through syncMetaControls (the menu-row rule, the local loader's arm and
 // its hold-end retirement, the badge builder), lifted and run with the chat's helpers stubbed to their identities

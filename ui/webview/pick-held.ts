@@ -79,6 +79,18 @@ export function pickKindName(kind: string): string {
   return KIND_NAMES[kind] ?? kind;
 }
 
+// The reloading line's hover title, naming the change the reload applies (review round 9, 2026-09-10): the kernel's
+// event carries the pending kinds (`picks`: effort, permission mode, fast mode; two when two picks ride one reload).
+// An older kernel's event carries none: its effort text still says effort, and otherwise the change is unnamed.
+// Until round 9 every reloading line, a fast or mode reload's included, said it was applying the effort change.
+export function reloadingTitle(picks: string[] | undefined, effort: string | undefined): string {
+  const names = (picks && picks.length ? picks : effort ? ["effort"] : []).map(pickKindName);
+  const what = names.length === 0 ? "the settings change"
+    : names.length === 1 ? `the ${names[0]} change`
+    : `the ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} changes`;
+  return `applying ${what}: reloading the session (it re-reads the transcript); any message you send lands once it's back`;
+}
+
 export function workPhrase(n: number, m: number): string {
   return `${n} subagent${n === 1 ? "" : "s"} and ${m} background task${m === 1 ? "" : "s"}`;
 }

@@ -8,7 +8,21 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { pickHeldLine, pickHeldTitle, pickHeldSubject, badgeHeldTip, workPhrase, pickKindName, heldUntil, heldRowValue, heldMenuMarks, RUNNING_TAG } from "./pick-held";
+import { pickHeldLine, pickHeldTitle, pickHeldSubject, badgeHeldTip, workPhrase, pickKindName, heldUntil, heldRowValue, heldMenuMarks, reloadingTitle, RUNNING_TAG } from "./pick-held";
+
+test("the reloading line's title names the change the reload applies, per kind and for two at once", () => {
+  // the chat's reloading element shows for an effort, fast or mode reload (the kernel's pending flags); its title said
+  // "applying the effort change" for all three until review round 9. The event's picks name the kinds
+  const tail = ": reloading the session (it re-reads the transcript); any message you send lands once it's back";
+  assert.equal(reloadingTitle(["effort"], "max"), "applying the effort change" + tail);
+  assert.equal(reloadingTitle(["fast"], ""), "applying the fast mode change" + tail);
+  assert.equal(reloadingTitle(["mode"], ""), "applying the permission mode change" + tail);
+  assert.equal(reloadingTitle(["effort", "mode", "fast"], "max"), "applying the effort, permission mode and fast mode changes" + tail);
+  // an older kernel's event (no picks): the effort text names effort, and nothing else is claimed
+  assert.equal(reloadingTitle(undefined, "max"), "applying the effort change" + tail);
+  assert.equal(reloadingTitle([], ""), "applying the settings change" + tail);
+  assert.doesNotMatch(reloadingTitle(["fast"], ""), /\u2014/, "no em dash in the title");
+});
 
 const WEBVIEW = path.resolve(process.cwd(), "..", "ui", "webview");
 
