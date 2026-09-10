@@ -172,42 +172,64 @@ _IMPORT_SHAPE = re.compile(r"""(?:\bfrom|\bimport|\brequire\s*\(|@import(?:\s+ur
 # name). A module.exports that is not an object (a bare function) drops out whole, and esbuild_exports reads that as
 # null, the exports-nothing error in esbuild_roots. One require error is classified here, so esbuild_exports can
 # tell the environment from the config (review round 7, decision 2; narrowed in round 9; the chains computed from
-# realpaths and the core modules in round 11): a MODULE_NOT_FOUND for a BARE package name (`esbuild`, `@scope/pkg`;
-# not `./x`, not an absolute path) that the CONFIG ITSELF required (the error's requireStack starts at the config)
-# and whose package ROOT is nowhere on the config's lookup chain (its node_modules chain plus node's global folders,
-# the list `require.resolve.paths` reports, computed from the config's REALPATH: node resolved the config to its
-# realpath and searched from there, so a config reached through a symlinked directory whose real ancestors hold a
-# node_modules is judged by that chain, where the textual path's chain filed a subpath typo into an installed
-# package as the environment) is the shape of a checkout without the extension's node_modules, the precondition the
-# build half skips on, so the reader records the package name in the file and exits 0. Every other error propagates
-# and exits 1 with node's diagnosis on stderr: a syntax error, a throw at load, a missing relative module, and four
-# bare misses that are NOT the environment, each rethrown after a line on stderr saying why: a subpath into one of
-# node's core modules (`fs/nope`; `resolve.paths` answers null for a core module's name, what Module.isBuiltin
-# reports, and a core module is present in every node, so the miss is a typo in the requirer, whichever module that
-# is), a bare miss inside an installed package (its dependency is missing, a broken install, and its optional-require
-# probe must see the real error), a bare miss inside a module the config loaded that is not installed (a helper the
-# config requires relatively: only the config's own requires are the environment, so the line says to move the
-# require to esbuild.js or install the package; round 10, before which every non-config requirer was called an
-# installed package and told to run npm ci), and a subpath into a package that IS installed (`esbuild/lib/nope` with
-# esbuild present: a config typo, or an install at a version without that file). The requirer is installed when its
-# realpath is, or lies under, the realpath of an entry of the lookup chain of ANY module above it in the
-# requireStack, the config included (round 11; round 10 read the config's chain alone, and a package installed in a
-# helper's own node_modules, beside a helper of the checkout, was called a module of the checkout and told to move
-# its require), every chain computed from its module's realpath and holding node's global folders too, so a
-# requirer under a global folder is installed; node reports the requireStack as realpaths, and a node_modules
-# reached by symlink whose target directory is not itself named node_modules keeps the classification a
-# path-segment test would lose. The same tests, requirer, root and bare shape, gate the stand-in in
+# realpaths and the core modules in round 11; the order of the evidence, the config's chain added to the requirer's
+# and the package-imports specifiers in round 12): a MODULE_NOT_FOUND for a BARE package name (`esbuild`,
+# `@scope/pkg`; not `./x`, not an absolute path, and not `#x`, a package-imports specifier the nearest package.json
+# resolves, which npm ci cannot install, so node's error stays for it whatever the requirer) that the CONFIG ITSELF
+# required (the error's requireStack starts at the config), whose package ROOT is nowhere on the config's lookup
+# chain (its node_modules chain plus node's global folders, the list `require.resolve.paths` reports, computed from
+# the config's REALPATH: node resolved the config to its realpath and searched from there, so a config reached
+# through a symlinked directory whose real ancestors hold a node_modules is judged by that chain, where the textual
+# path's chain filed a subpath typo into an installed package as the environment) and whose name is not a core
+# module's is the shape of a checkout without the extension's node_modules, the precondition the build half skips
+# on, so the reader records the package name in the file and exits 0. Every other error propagates and exits 1 with
+# node's diagnosis on stderr: a syntax error, a throw at load, a missing relative module, and four bare misses that
+# are NOT the environment, each rethrown after a line on stderr saying why, judged in the order of the evidence:
+# first a subpath into a package that IS installed, its root on the requirer's chain (`esbuild/lib/nope` with
+# esbuild present: a config typo, or an install at a version without that file; a userland package named like a
+# core module, punycode, events, buffer, is judged here too, since node resolved its sibling subpaths from the chain
+# and the package is installed), then a subpath into one of node's core modules whose name no package on the chain
+# carries (`fs/nope`; what Module.isBuiltin reports; a core module is present in every node, so the miss is a typo in
+# the requirer, whichever module that is; round 12, before which the core-module test came first, on `resolve.paths`
+# answering null for the name, and a subpath typo into an installed punycode was called a typo into the core
+# module), then, for a requirer that is not the config, a bare miss inside an installed package (its dependency is
+# missing, a broken install, and its optional-require probe must see the real error) or inside a module the config
+# loaded that is not installed (a helper the config requires relatively: only the config's own requires are the
+# environment, so the line says to move the require to esbuild.js or install the package; round 10, before which
+# every non-config requirer was called an installed package and told to run npm ci). The requirer is installed when
+# its realpath is, or lies under, the realpath of an entry of the lookup chain of ANY module above it in the
+# requireStack, the config's chain ADDED to those (round 10 read the config's chain alone, and a package installed in
+# a helper's own node_modules, beside a helper of the checkout, was called a module of the checkout and told to move
+# its require; round 11 read the chains of the modules above the requirer in the stack, the config among them;
+# round 12 adds the config's chain outright, because node fills the requireStack with each module's FIRST loader, so
+# a package a NODE_OPTIONS `--require` module loaded before the config and the config later called into has a stack
+# of the package, that module and node's internal/preload, with the config absent, and was told to move its
+# require where the fix is npm ci), every chain computed from its module's realpath for a fixed probe name (the
+# chain `resolve.paths` reports is the module's, the same for every bare request that is not a core module's name,
+# and a scoped probe name can never be one) and holding node's global folders too, so a requirer under a global
+# folder is installed; node reports the requireStack as realpaths, and a node_modules reached by symlink whose
+# target directory is not itself named node_modules keeps the classification a path-segment test would lose. The
+# chains assume node's default symlink mode: under `--preserve-symlinks` node searches from a module's textual path,
+# so a package present on the textual chain and not on the realpath's, or the reverse, is judged differently here and
+# in the stand-in (a residual, stated in tests/lab_dist_stub.py too; the config's own miss, a package on neither
+# chain, is judged alike). The same tests, requirer, root and bare shape, in the same order, gate the stand-in in
 # tests/lab_dist_stub.py, so a miss the reader files as the environment is one the stand-in covers.
 _EXPORTS_READER = """
 const fs = require("fs"), path = require("path"), Module = require("module");
 const [config, out] = process.argv.slice(1);
-const bare = (r) => !r.startsWith(".") && !path.isAbsolute(r);
+// a bare package name: never `./x`, never an absolute path, never `#x` (a package-imports specifier the nearest
+// package.json resolves, which npm ci cannot install: node's error stays, whatever the requirer)
+const bare = (r) => !r.startsWith(".") && !r.startsWith("#") && !path.isAbsolute(r);
 const packageName = (r) => (r.startsWith("@") ? r.split("/").slice(0, 2) : r.split("/").slice(0, 1)).join("/");
 const same = (a, b) => { try { return fs.realpathSync(a) === fs.realpathSync(b); } catch (_) { return false; } };
 const under = (file, dir) => { try { const f = fs.realpathSync(file), d = fs.realpathSync(dir); return f === d || f.startsWith(d + path.sep); } catch (_) { return false; } };
-// the lookup chain of the module at `file` for `request`, from the module's realpath, where node searched: null for
-// a core module's name, [] for an entry the file system does not know (the reader's own [eval] ends the requireStack)
-const lookup = (file, request) => { try { return Module.createRequire(fs.realpathSync(file)).resolve.paths(request); } catch (_) { return []; } };
+// the lookup chain of the module at `file`, from the module's realpath, where node searched (its node_modules chain
+// plus node's global folders): the list resolve.paths reports for every bare request that is not a core module's
+// name, read for a fixed probe so the chain is the module's and never the request's (a scoped name is never a core
+// module's, so the read is never the null resolve.paths answers for one); [] for an entry the file system does not
+// know (the reader's own [eval] and node's internal/preload end a requireStack)
+const PROBE = "@lab-dist/probe";
+const chain = (file) => { try { return Module.createRequire(fs.realpathSync(file)).resolve.paths(PROBE) || []; } catch (_) { return []; } };
 let m;
 try {
   m = require(config);
@@ -215,33 +237,37 @@ try {
   const hit = e && e.code === "MODULE_NOT_FOUND" && /^Cannot find module '([^']+)'/.exec(String(e.message));
   const stack = hit && bare(hit[1]) && Array.isArray(e.requireStack) && e.requireStack.length ? e.requireStack : null;
   if (stack) {
-    const from = stack[0], name = packageName(hit[1]);
-    const paths = lookup(config, name);
-    if (paths === null) {
-      // a core module is present in every node, so the miss is a typo in the requirer, whichever module that is
+    const from = stack[0], name = packageName(hit[1]), fromConfig = same(from, config);
+    // the evidence, in order: the package's root on the requirer's chain, where node searched (a root present means
+    // a subpath the installed package does not have, whatever the package is named: a userland punycode or events
+    // shadows the core module of that name for subpaths); else a core module's name (present in every node, so a
+    // typo in the requirer, whichever module that is); else the environment, for the config, or the requirer
+    // wording below
+    const root = chain(from).map((p) => path.join(p, name)).find((p) => fs.existsSync(p));
+    if (root) {
+      if (fromConfig) {
+        console.error(e);
+        console.error(config + " requires '" + hit[1] + "'" + (hit[1] === name ? ", a package that IS installed (" + root +
+                      ") and does not load: a broken install, run npm ci" : ", a subpath of a package that IS installed (" +
+                      root + "): a config typo, or an install at a version without that file") +
+                      "; not a checkout without node_modules, so not the environment");
+        process.exit(1);
+      }
+    } else if (Module.isBuiltin(name)) {
       console.error(e);
       console.error(from + " requires '" + hit[1] + "', a subpath that node's core module " + name + " does not have: a typo in " +
                     from + ", not a checkout without node_modules, so not the environment");
       process.exit(1);
+    } else if (fromConfig) {
+      fs.writeFileSync(out, JSON.stringify({ missing: hit[1] }));
+      process.exit(0);
     }
-    if (same(from, config)) {
-      const root = paths.map((p) => path.join(p, name)).find((p) => fs.existsSync(p));
-      if (!root) {
-        fs.writeFileSync(out, JSON.stringify({ missing: hit[1] }));
-        process.exit(0);
-      }
-      console.error(e);
-      console.error(config + " requires '" + hit[1] + "'" + (hit[1] === name ? ", a package that IS installed (" + root +
-                    ") and does not load: a broken install, run npm ci" : ", a subpath of a package that IS installed (" +
-                    root + "): a config typo, or an install at a version without that file") +
-                    "; not a checkout without node_modules, so not the environment");
-      process.exit(1);
-    }
-    // an installed requirer lies under an entry of the lookup chain of a module above it in the requireStack (the
-    // config included), by realpath; the chains are looked up for the request that missed, which is never a core
-    // module's name here (that case exited above); any other requirer is a module the config loaded from the
-    // checkout, where npm ci changes nothing
-    const installed = stack.slice(1).some((above) => (lookup(above, hit[1]) || []).some((p) => under(from, p)));
+    // an installed requirer lies under an entry of the lookup chain of a module above it in the requireStack, or of
+    // the config's chain, added because node fills the stack with each module's FIRST loader and the config can be
+    // absent from it (a package a NODE_OPTIONS --require module loaded before the config and the config later called
+    // into has a stack of the package, that module and node's internal/preload), by realpath; any other requirer is
+    // a module the config loaded from the checkout, where npm ci changes nothing
+    const installed = [...stack.slice(1), config].some((above) => chain(above).some((p) => under(from, p)));
     console.error(e);
     console.error(from + " requires '" + hit[1] + "', which node cannot find: " + (installed ?
                   "a dependency of an installed package is missing (a broken install, run npm ci), not the config's environment" :
@@ -258,7 +284,8 @@ fs.writeFileSync(out, JSON.stringify({ exports: m }));
 # how it tells the config's own requires from every other module's exactly, without inferring the config from the
 # depth or the order of the loads (tests/lab_dist_stub.py's stand-in reads it, and stands in for nothing when it is
 # absent; the reader itself never reads it). node names a loaded module by its realpath, so the value is the realpath
-# and the requirer test on the other side is one string comparison, `parent.filename === process.env[CONFIG_ENV]`.
+# and the requirer test on the other side compares the requirer's filename, realpathed, with it (round 12; the
+# realpath because an inherited `--preserve-symlinks` on NODE_OPTIONS makes node keep a module's textual path).
 CONFIG_ENV = "ROMP_LAB_DIST_CONFIG"
 # The bound on the require, in seconds: the kernel's bound for running this same file (BUILD_TIMEOUT above; a require
 # runs the file's top level, a prefix of what the build runs, so the build's bound holds it too). The two move
@@ -327,20 +354,24 @@ def esbuild_exports(ext=EXT):
     the process before module.exports was written); and the require does not finish inside _EXPORTS_TIMEOUT. The
     last three ran node and carry its stderr (head and tail) and stdout head; the first two are raised before node
     runs, name the directory or node, and carry no stream. One require failure is a skip instead (review round 7,
-    decision 2; narrowed in round 9): a MODULE_NOT_FOUND for a bare package name that the config itself required and
-    whose package root is nowhere on the config's lookup chain, computed from the config's realpath (`require("esbuild")`
-    on a checkout without the extension's node_modules) is the environment, not the config, and the precondition the
-    build half skips on, so it raises unittest.SkipTest naming the package and the config, as the build half does
-    when the build fails. A subpath into one of node's core modules (`fs/nope`: present in every node, so a typo in
-    the requirer), a bare miss inside an installed package (a dependency of a dependency is missing: a broken
-    install), a bare miss inside a module the config loaded that is not installed (a helper the config requires
-    relatively: only the config's own requires are the environment) and a subpath into a package that is installed
-    (`esbuild/lib/nope`) are errors, node's diagnosis plus the reader's line saying why on stderr. The reader tells
-    these apart by the require error's code, request and requireStack and by what is on disk along the lookup
-    chains (a requirer is installed when its realpath lies under an entry of the chain of any module above it in the
-    requireStack, the config included; every chain is computed from its module's realpath), never by reading the
-    config's text. The node run's environment carries CONFIG_ENV, the config's realpath, for a preload on
-    NODE_OPTIONS to read; the reader itself does not."""
+    decision 2; narrowed in round 9): a MODULE_NOT_FOUND for a bare package name (never `./x`, an absolute path or a
+    `#x` package-imports specifier, which npm ci cannot install) that the config itself required, whose package root
+    is nowhere on the config's lookup chain, computed from the config's realpath, and whose name is not a core
+    module's (`require("esbuild")` on a checkout without the extension's node_modules) is the environment, not the
+    config, and the precondition the build half skips on, so it raises unittest.SkipTest naming the package and the
+    config, as the build half does when the build fails. The rest are errors, node's diagnosis plus the reader's
+    line saying why on stderr, judged in the order of the evidence: a subpath into a package that is installed, its
+    root on the requirer's chain (`esbuild/lib/nope`; a userland package named like a core module, punycode, is
+    judged here, since node resolved its subpaths from the chain); else a subpath into one of node's core modules
+    (`fs/nope`: present in every node, so a typo in the requirer); else, from a requirer that is not the config, a
+    bare miss inside an installed package (a dependency of a dependency is missing: a broken install) or inside a
+    module the config loaded that is not installed (a helper the config requires relatively: only the config's own
+    requires are the environment). The reader tells these apart by the require error's code, request and
+    requireStack and by what is on disk along the lookup chains (a requirer is installed when its realpath lies
+    under an entry of the chain of any module above it in the requireStack or of the config's chain, added because
+    the stack holds each module's first loader and can lack the config; every chain is computed from its module's
+    realpath), never by reading the config's text. The node run's environment carries CONFIG_ENV, the config's
+    realpath, for a preload on NODE_OPTIONS to read; the reader itself does not."""
     ext = os.path.abspath(ext)
     config = os.path.join(ext, "esbuild.js")
     if not os.path.isdir(ext):

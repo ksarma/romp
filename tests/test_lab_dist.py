@@ -457,7 +457,12 @@ class InputsDeriveFromEsbuild(unittest.TestCase):
     requirer test exact (the harness names the config's realpath to the preload in `lab_dist.CONFIG_ENV`, where
     round 10 inferred it from the loads), computed every lookup chain from its module's realpath and judged an
     installed requirer against the chain of every module above it in the require stack, and took a subpath into
-    one of node's core modules out of the environment in the reader and the preload alike."""
+    one of node's core modules out of the environment in the reader and the preload alike; round 12 ordered the
+    evidence in both (the package's root on the requirer's chain first, then a core module's name, so a userland
+    package named like one, punycode, keeps the install wording), added the config's chain to the requirer's whatever
+    the require stack holds (node fills it with each module's first loader), took package-imports specifiers (`#x`)
+    out of the environment, and had the preload realpath the requirer's filename before comparing it with the
+    config's (an inherited `--preserve-symlinks` on NODE_OPTIONS makes node keep the textual path)."""
 
     def setUp(self):
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="lab-dist-inputs-"))
@@ -1252,9 +1257,10 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
 
     def test_an_installed_requirer_reached_through_a_symlinked_node_modules_keeps_the_install_wording(self):
         """The discriminator behind the test above is the realpath: a requirer is installed when its realpath lies
-        under the realpath of an entry of the lookup chain of a module above it in the require stack, the config
-        included (the list `require.resolve.paths` reports for each, from its realpath; round 10 read the config's
-        chain alone, and the helper-sibling test below is the shape that needed the others). A
+        under the realpath of an entry of the lookup chain of a module above it in the require stack, the config's
+        chain added (the list `require.resolve.paths` reports for each, from its realpath; round 10 read the config's
+        chain alone, and the helper-sibling test below is the shape that needed the others; round 12 adds the config's
+        chain outright, since the stack holds each module's first loader and can lack the config). A
         node_modules that is a symlink to a store whose directory is not itself named node_modules (this checkout's
         own layout, with the store renamed) keeps the installed wording, which a node_modules path-segment test over
         node's realpath would lose; the requiring file is named by its realpath, as node reports it."""
@@ -1531,18 +1537,30 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
     def test_the_harness_names_the_config_to_the_preload_and_without_the_name_it_stands_in_for_nothing(self):
         """The contract between the two files, executed: the reader's node run carries the config's REALPATH in the
         environment variable lab_dist.CONFIG_ENV names, plain and under the stand-in (a config that exports the
-        variable's value shows it). The reader run by hand inside the block with the variable removed gets no
-        stand-in for the config's bare miss and fails from the preload's own refusal, which names this file and the
-        variable, so a harness that stopped setting it, or a node the block never meant to cover, fails loudly; the
-        same command with the variable set is the block's normal run and writes the exports."""
+        variable's value shows it). The extension dir is reached through a symlink here, so the realpath and the path
+        the harness was given differ and a textual publish fails the assertions (round 12; before, the fixture's config
+        was its own realpath and a publish of the path as given passed). The reader run by hand inside the block with
+        the variable removed gets no stand-in for the config's bare miss and fails from the preload's own refusal,
+        which names this file and the variable, so a harness that stopped setting it, or a node the block never meant
+        to cover, fails loudly; the same command with the variable set is the block's normal run and writes the
+        exports."""
         self.no_install()
+        store = os.path.join(self.base, "store")
+        real_ext = os.path.join(store, "ext")
+        os.makedirs(store)
+        shutil.move(self.ext, real_ext)
+        os.symlink(real_ext, self.ext)
+        real = os.path.realpath(self.config)
+        self.assertNotEqual(real, self.config, "the fixture holds: the config's realpath is not the path the harness is given")
         _write(self.config, 'module.exports = { x: { entryPoints: ["src/extension.ts"] }, named: process.env[%s] || null };\n'
                             % json.dumps(lab_dist.CONFIG_ENV))
         _, exports = lab_dist.esbuild_exports(self.ext)
-        self.assertEqual(exports["named"], os.path.realpath(self.config), "plain: the run carries the config's realpath")
+        self.assertEqual(exports["named"], real, "plain: the run carries the config's realpath")
+        self.assertNotEqual(exports["named"], self.config, "the realpath, not the path the harness was given")
         with lab_dist_stub.bare_package_stub():
             _, exports = lab_dist.esbuild_exports(self.ext)
-        self.assertEqual(exports["named"], os.path.realpath(self.config), "and under the stand-in")
+        self.assertEqual(exports["named"], real, "and under the stand-in")
+        self.assertNotEqual(exports["named"], self.config, "the realpath under the stand-in too")
         _write(self.config, 'const g = require("ghost");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
         out = os.path.join(self.base, "by-hand.json")
         with lab_dist_stub.bare_package_stub():
@@ -1555,7 +1573,7 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
             self.assertIn("'ghost'", r.stderr)
             self.assertNotIn("Cannot find module", r.stderr, "the preload's refusal, not node's error")
             self.assertFalse(os.path.exists(out), "nothing was derived")
-            env[lab_dist.CONFIG_ENV] = os.path.realpath(self.config)
+            env[lab_dist.CONFIG_ENV] = real
             r = subprocess.run(cmd, cwd=self.ext, capture_output=True, text=True, env=env, timeout=60)
             self.assertEqual(r.returncode, 0, r.stderr)
         with open(out, encoding="utf-8") as f:
@@ -1567,7 +1585,9 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         the reader filed the typo as the environment (a skip naming `fs/nope` as a package npm ci would install) and
         the preload stood in for it (the derivation went through in silence on a checkout without node_modules).
         Now a core module's name is never the environment and never stood in: node's error stays, with the reader's
-        line naming the core module, plain and under the stand-in. `require("node:fs/nope")` is a different code
+        line naming the core module, plain and under the stand-in (round 12 tests the package's root on the chain
+        first, so this wording is for a core module no installed package shadows; the shadowed one is the round-12
+        test below). `require("node:fs/nope")` is a different code
         (ERR_UNKNOWN_BUILTIN_MODULE) and was node's error already; pinned beside it. From an installed requirer the
         line is the same, naming the package's file, never `npm ci`."""
         self.no_install()
@@ -1590,6 +1610,165 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
             self.assertIn(a + " requires 'fs/nope', a subpath that node's core module fs does not have", msg, under_stub)
             self.assertNotIn("npm ci", msg, under_stub)
             self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+
+    # Round 12: the reader and the preload judge a miss by the evidence in order (the package's root on the requirer's
+    # chain, then a core module's name), the config's chain is added to the requirer's whatever the require stack
+    # holds, a package-imports specifier is never the environment, and the preload realpaths the requirer's filename.
+    def test_a_subpath_into_an_installed_package_named_like_a_core_module_keeps_the_install_wording(self):
+        """`punycode`, `events`, `buffer`, `util`, `url` and `assert` are core modules AND real npm packages. With
+        node_modules/punycode installed, node resolves `punycode/sub` from the chain, and `punycode/nope` is a subpath
+        the installed package does not have; the round-11 reader tested the core module's name first (`resolve.paths`
+        answers null for it) and called the typo a subpath into node's core module although the package is installed,
+        so the installed-subpath line was unreachable for these names. Now the root on the requirer's chain is the
+        first evidence: the config gets the installed-subpath wording naming the root, and an installed requirer keeps
+        the install wording, plain and under the stand-in, with the core module named nowhere and nothing skipped or
+        stood in. The control: `fs/nope` with no `fs` package on the chain keeps the core-module wording. The judgment
+        call, stated: `require("punycode/")` with nothing installed is a core-module typo (no root, a core module's
+        name), in the reader and the preload alike, so no skip is hidden."""
+        root = os.path.join(self.ext, "node_modules", "punycode")
+        _write(os.path.join(root, "package.json"), '{"name": "punycode", "main": "index.js"}\n')
+        _write(os.path.join(root, "index.js"), "module.exports = { v: 1 };\n")
+        _write(os.path.join(root, "sub.js"), "module.exports = { s: 1 };\n")
+        _write(self.config, 'const s = require("punycode/sub");\nconst n = require("punycode/nope");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        for under_stub in (False, True):
+            msg = self.derivation_error(under_stub)
+            self.assertIn("Cannot find module 'punycode/nope'", msg, under_stub)
+            self.assertIn(self.config + " requires 'punycode/nope', a subpath of a package that IS installed (%s)" % root, msg, under_stub)
+            self.assertNotIn("core module", msg, under_stub)
+            self.assertNotIn("npm ci", msg, under_stub)
+            self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+        a = os.path.join(self.ext, "node_modules", "a", "index.js")
+        _write(a, 'const n = require("punycode/nope");\nmodule.exports = {};\n')
+        _write(self.config, 'const a = require("a");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        for under_stub in (False, True):
+            msg = self.derivation_error(under_stub)
+            self.assertIn("Cannot find module 'punycode/nope'", msg, under_stub)
+            self.assertIn(a + " requires 'punycode/nope', which node cannot find: a dependency of an installed package is missing",
+                          msg, under_stub)
+            self.assertNotIn("core module", msg, under_stub)
+            self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+        _write(self.config, 'const s = require("fs/nope");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        for under_stub in (False, True):
+            msg = self.derivation_error(under_stub)
+            self.assertIn(self.config + " requires 'fs/nope', a subpath that node's core module fs does not have", msg, under_stub)
+            self.assertNotIn("IS installed", msg, under_stub)
+            self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+
+    def test_a_package_a_pre_existing_require_loaded_first_and_the_config_called_into_keeps_the_install_wording(self):
+        """node fills a MODULE_NOT_FOUND's requireStack with each module's FIRST loader. A `--require <file>` already on
+        NODE_OPTIONS loads the installed package `a` by absolute path before the reader runs; the config then requires
+        `a` (the cached module) and calls a function of it that requires a missing `b`. The stack is `a`, the
+        pre-required file and node's internal/preload, with the config absent, so the round-11 reader, judging `a`
+        against the chains of the modules above it in the stack alone, found none holding `a` and said `a` is a module
+        the config loaded and to move the require, where the same disk state without the pre-require says a dependency
+        of an installed package is missing, run npm ci. The config's chain is now added to the stack's, so the wording
+        is the install's both ways, plain and under the stand-in (which rethrows the miss: `a` is not the config)."""
+        a = os.path.join(self.ext, "node_modules", "a", "index.js")
+        _write(a, 'module.exports = { version() { return require("b").version; } };\n')
+        pre = os.path.join(self.base, "pre.js")
+        _write(pre, "require(%s);\n" % json.dumps(os.path.join(self.ext, "node_modules", "a")))
+        _write(self.config, 'const a = require("a");\n'
+                            'module.exports = { x: { entryPoints: ["src/extension.ts", "../tools/" + a.version() + ".ts"] } };\n')
+        with patch.dict(os.environ, {"NODE_OPTIONS": '--require "%s"' % pre}):
+            for under_stub in (False, True):
+                msg = self.derivation_error(under_stub)
+                self.assertIn("Cannot find module 'b'", msg, under_stub)
+                self.assertIn(a + " requires 'b'", msg, under_stub)
+                self.assertIn("a dependency of an installed package is missing", msg, under_stub)
+                self.assertNotIn("is a module the config loaded", msg, under_stub)
+                self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+
+    def test_a_package_imports_specifier_is_never_the_environment_and_never_stood_in(self):
+        """`require("#missing/thing")` is a package-imports specifier, which the nearest package.json's `imports` map
+        resolves and npm ci cannot install. The round-11 bare test accepted it (not `./x`, not absolute), so with no
+        imports map the reader filed the miss as the environment (a skip naming `#missing/thing` as a package npm ci
+        would install) and the preload stood in for it; with an imports map sending it to a package that is not
+        installed node's error carries no requireStack, so the reader rethrew while the preload still stood in, and the
+        two rules disagreed. Now a request starting with `#` is node's error, plain and under the stand-in, in every
+        shape: no package.json, one mapping it to a missing package, and an imports map lacking the entry (a different
+        code, ERR_PACKAGE_IMPORT_NOT_DEFINED, and node's error already; pinned beside the others)."""
+        self.no_install()
+        _write(self.config, 'const t = require("#missing/thing");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        package_json = os.path.join(self.ext, "package.json")
+        for shape, headline in ((None, "Cannot find module '#missing/thing'"),
+                                ({"imports": {"#missing/thing": "ghost-target"}}, "Cannot find module '#missing/thing'"),
+                                ({"imports": {"#other": "./esbuild.js"}}, 'Package import specifier "#missing/thing" is not defined')):
+            if shape is None:
+                self.assertFalse(os.path.exists(package_json), "the fixture holds: no package.json beside the config")
+            else:
+                _write(package_json, json.dumps(shape) + "\n")
+            for under_stub in (False, True):
+                msg = self.derivation_error(under_stub)
+                self.assertIn(headline, msg, (shape, under_stub))
+                self.assertNotIn("npm ci", msg, (shape, under_stub))
+                self.assertNotIn("tests/lab_dist_stub.py", msg, (shape, under_stub))
+
+    def test_the_stand_in_covers_the_config_through_a_symlinked_extension_dir_under_preserve_symlinks(self):
+        """NODE_OPTIONS already carries `--preserve-symlinks` when the block starts (the block keeps it): node then
+        names a module by the path it was reached through, so a config reached through a symlinked extension dir has
+        the textual path as its filename while the harness publishes its realpath. The round-11 preload compared the
+        two as strings, found them unequal and rethrew the config's own bare miss: the reader filed it as the
+        environment and the block failed with its AssertionError, none of whose causes was the flag. The preload now
+        realpaths the requirer's filename before the compare, so the config's miss is stood in through the link under
+        the flag, and a helper's miss (not the config, by realpath either) stays node's error with the stand-in named
+        nowhere. The default symlink mode's twin is the symlinked-extension-dir test above."""
+        self.no_install()
+        store = os.path.join(self.base, "store")
+        real_ext = os.path.join(store, "ext")
+        os.makedirs(store)
+        shutil.move(self.ext, real_ext)
+        os.symlink(real_ext, self.ext)
+        _write(self.config, 'const g = require("ghost");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+        with patch.dict(os.environ, {"NODE_OPTIONS": "--preserve-symlinks"}):
+            with lab_dist_stub.bare_package_stub():
+                try:
+                    roots = self.roots()
+                except unittest.SkipTest as e:
+                    self.fail("the config's own miss through the link was filed as the environment under the flag: %r" % e)
+            self.assertEqual(roots, ["ext"], "the stand-in covers the config through the link under --preserve-symlinks")
+            helper = os.path.join(self.root, "tools", "helper.js")
+            _write(helper, 'const g = require("ghost3");\nmodule.exports = { version: g.version };\n')
+            _write(self.config, 'const h = require("../tools/helper.js");\n'
+                                'module.exports = { x: { entryPoints: ["src/extension.ts"], banner: { js: "// " + h.version } } };\n')
+            for under_stub in (False, True):
+                msg = self.derivation_error(under_stub)
+                self.assertIn("Cannot find module 'ghost3'", msg, under_stub)
+                self.assertIn(helper + " requires 'ghost3'", msg, under_stub)
+                self.assertNotIn("tests/lab_dist_stub.py", msg, under_stub)
+
+    def test_without_the_variable_a_miss_whose_root_is_present_is_nodes_error_and_a_bare_miss_the_refusal(self):
+        """The order of the preload's tests, pinned: with the variable absent, the refusal fires only for a miss the
+        preload would otherwise have judged, after the root and core-module test and before the requirer test. The
+        reader run by hand inside the block with the variable removed, on `fs/nope` (a core module's subpath) and on
+        `pkg/nope` (a subpath into the package setUp installs), exits 1 with node's headline and the reader's own line
+        and never the refusal, so node's error reached the reader; the same run on a bare miss with no root, `ghost`
+        on a checkout without node_modules, is the refusal naming the variable and this file. A preload that tested
+        the variable first would refuse all three and hide the reader's classification behind its own message. The
+        shipped order was already this one; the pin is what was missing."""
+        out = os.path.join(self.base, "by-hand.json")
+        with lab_dist_stub.bare_package_stub():
+            env = {k: v for k, v in os.environ.items() if k != lab_dist.CONFIG_ENV}
+            cmd = ["node", "-e", lab_dist._EXPORTS_READER, self.config, out]
+            for request, line in (("fs/nope", "a subpath that node's core module fs does not have"),
+                                  ("pkg/nope", "a subpath of a package that IS installed (%s)" % os.path.join(self.ext, "node_modules", "pkg"))):
+                _write(self.config, 'const s = require(%s);\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n'
+                                    % json.dumps(request))
+                r = subprocess.run(cmd, cwd=self.ext, capture_output=True, text=True, env=env, timeout=60)
+                self.assertEqual(r.returncode, 1, (request, r.stderr))
+                self.assertIn("Cannot find module '%s'" % request, r.stderr, request)
+                self.assertIn(self.config + " requires '%s', %s" % (request, line), r.stderr, request)
+                self.assertNotIn("tests/lab_dist_stub.py", r.stderr, request)
+                self.assertNotIn("is not set", r.stderr, request)
+                self.assertFalse(os.path.exists(out), request)
+            self.no_install()
+            _write(self.config, 'const g = require("ghost");\nmodule.exports = { x: { entryPoints: ["src/extension.ts"] } };\n')
+            r = subprocess.run(cmd, cwd=self.ext, capture_output=True, text=True, env=env, timeout=60)
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("tests/lab_dist_stub.py", r.stderr)
+            self.assertIn(lab_dist.CONFIG_ENV + " is not set", r.stderr)
+            self.assertNotIn("Cannot find module", r.stderr, "the preload's refusal, not node's error")
+            self.assertFalse(os.path.exists(out), "nothing was derived")
 
     def test_a_missing_node_is_an_error(self):
         """Without node on PATH nothing is derived: the error names node and the config."""
