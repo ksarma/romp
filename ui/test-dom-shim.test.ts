@@ -6,17 +6,21 @@
 // the detector below reads (comments and the contents of string, template and regex literals are blanked first, so a
 // source pin or a comment is not code), either CALLS hideEdges( or nodeFactory( imported from the shared shim (a named
 // or a namespace import, either quote style on the specifier, with or without .js; an import without a call in code
-// is not switched) or is named on the allowlist below, the files that predate the rule, whose
-// length ALLOWLIST_MAX pins exactly: a renamed file replaces its entry, a file that comes off lowers the constant in
-// the same commit, a new file may not join. There is no vocabulary gate: a window stand-in's parent, a goal
-// fixture's children and a class's parentNode are the same kind of property, a failing dump walks each, and the
-// cure for a fake is the same one-line call. The rule hides the edges at CREATION: a property product code hangs on a node
-// later enumerates, whatever its type, and a node-valued one re-opens a path for a failing dump to walk; the
-// projection pins here and in the tags-scale test, plus the runner's cgroup cap, are the backstop for that. Source
-// pins over ui/**/*.test.ts, the repo convention. Why both: on 2026-09-09 a failing strict assertion with a fake
-// node on one side allocated tens of GB (node's assert dumps both sides at depth 1000 with getters on, then diffs
-// the dumps with a Myers trace that costs 8N^2 bytes outside the V8 heap); the projection is what stops it, and the
-// class-based shims still can do it (a feed card in ui/webview/feed-keynav-covered.test.ts dumps as 318,835 lines).
+// is not switched), or is named on one of the two lists below, each pinned to its exact length by a constant:
+// ALLOWLIST, the unmigrated fakes that predate the rule, never to grow (a renamed file replaces its entry, a file that
+// comes off lowers the constant in the same commit, a new file may not join), and NON_DOM_EDGES, the files whose
+// edge-named key is a documented non-DOM use (a data fixture, a list model), each with its reason. There is no
+// vocabulary gate: a window stand-in's parent, a goal fixture's children and a class's parentNode are the same kind
+// of property to a regex, a failing dump walks each, and the cure for a fake is the same one-line call. The rule hides
+// the edges at CREATION: a property product code hangs on a node later enumerates, whatever its type, and a
+// node-valued one re-opens a path for a failing dump to walk; the projection pins here and in the tags-scale test,
+// plus the runner's cgroup cap, are the backstop for that. Source pins over ui/**/*.test.ts, the repo convention. Why
+// both: on 2026-09-09 a failing strict assertion with a fake node on one side allocated tens of GB (node's assert
+// dumps both sides at depth 1000 with getters on, then diffs the dumps with a Myers trace that costs 8N^2 bytes
+// outside the V8 heap); the projection is what stops it, and until 2026-09-10 every other enumerable-edge fake in the
+// tree could still do it (a feed card in ui/webview/feed-keynav-covered.test.ts dumped as 318,835 lines; at this head
+// it dumps in about 1,300, bounded by feed.ts's hung references, and the five feed tests pin the bound under 3,000).
+// The paragraph above ALLOWLIST is the one account of the migration.
 // Synthetic only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -257,7 +261,7 @@ const src = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
  *  identifier on the right) reads as a class field, since a class body and a function body are the same brace to a
  *  regex, so the remedy is to rename the local; a class whose first member is an edge getter reads as an
  *  object-literal accessor. INDISTINGUISHABLE below pins each; a file that carries one renames the local or the
- *  parameter, or is carried on the documented non-DOM list (the newcomer paths in the ratchet's first message). */
+ *  parameter, or is carried on NON_DOM_EDGES with its reason (the newcomer paths in the ratchet's first message). */
 const KEY = "(parentNode|parentElement|parent|childNodes|children|firstChild|lastChild|nextSibling|previousSibling|ownerDocument|host)";
 const KEY_NOT_HOST = KEY.replace("|host", "");
 const MODS = "(?:(?:public|private|protected|readonly|declare|override)\\s+)";
@@ -413,20 +417,30 @@ const switched = (s: string): boolean => {
 /** True when `s` must be on the allowlist: it initialises an edge and is not switched. */
 const needsListing = (s: string) => initsEdge(s) && !switched(s);
 
-// The test files whose code initialised an edge on 2026-09-10 without calling the shared module, each named: the
-// files that predate the rule, for the stacked migration PR to switch. ALLOWLIST_MAX is the list's exact length: a
-// file that switches (a hideEdges call on its object, at the end of each constructor for a class, or nodeFactory for
-// its nodes, plus a projection test) comes off and the constant comes down in the same commit; a renamed file
-// replaces its entry; a new file may not join. Most are class-based webview shims (El and Txt, FakeNode, E, FakeEl,
-// Elm) with a prototype firstChild, so no 2^depth term, but the whole-tree walk through parentNode or parentElement
-// (parent in several, an ownerDocument beside it in the two track-decorations files) remains, and feed.ts hangs node
-// references on cards. Others hold a window stand-in (a parent that is the stand-in itself, or a record) or a goal
-// fixture with a children list: dumps of a few lines today, listed because the rule is uniform and the cure is the
-// same call on the object.
+// ALLOWLIST: the test files whose code initialises an edge-named property without calling the shared module and are
+// not a documented non-DOM use below, each named, so a newcomer has a rule to read and a place it may not go.
+// ALLOWLIST_MAX is the list's exact length: a file that switches (a hideEdges call on its object, at the end of each
+// constructor for a class, or nodeFactory for its nodes, plus a projection test) comes off and the constant comes down
+// in the same commit; a renamed file replaces its entry; a new file may not join. On 2026-09-10 the list held 150
+// ui/webview test files: from the detector's first two rounds, 135 class-based fake DOMs (El and Txt, FakeNode, E,
+// FakeEl, Elm, with a prototype firstChild, so no 2^depth term, but the whole-tree walk through parentNode, parent or
+// ownerDocument remained, and feed.ts hangs node references on cards), four literal node factories
+// (anchor-map-wrapped-code, pdf-chunk-refused-open, setting-stale-fold, timeline-boot; the last now takes nodeFactory
+// outright) and two window stand-ins whose parent is another stand-in (file-view, pdf-new-tab); from its third, once
+// the vocabulary gate came off, nine more: two window stand-ins whose parent is the stand-in itself (perf-telemetry,
+// shell-perf), element and node literals (thread-selection-scope, timeline-rehover), one more class
+// (track-decorations-hover-cost), the two non-DOM uses listed below and two source pins (feed-absorb, setting-stale)
+// whose quoted product text the fourth round's lexer blanks, so they read as nothing now. The same day every fake hid
+// its edges (a non-enumerable define of the edge fields in the constructors, hideEdges from the shared module at the
+// end of each or on the literal, plus a projection test; the file-comments Ev classes end in hideEdges too, so an
+// event's target and currentTarget hide with the nodes). What the list holds at this commit is the eight class fakes
+// main added between this branch's base and its landing, which predate the rule, and the eleven PR 523 listed at its
+// final rebase: the seven file-comments-about and file-comments-resolve-answered class fakes, the tab-hide and
+// preview-retry-pace class fakes, federation-hidden-hold's conditional-valued window parent and the fold's
+// timeline-tag-chips node literal.
 const ALLOWLIST = [
   "timeline-tag-chips.test.ts",   // an object-literal fake the upstream fold added after this branch's base, listed at the final rebase
   "webview/actions.test.ts",
-  "webview/card-subgoals.test.ts",
   "webview/federation-hidden-hold.test.ts",   // a conditional-valued window parent, read since the sixth review round
   "webview/file-comments-about-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
   "webview/file-comments-about-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
@@ -442,29 +456,32 @@ const ALLOWLIST = [
   "webview/file-comments-seen-review3.test.ts",
   "webview/file-comments-send-seen.test.ts",
   "webview/file-view-notice.test.ts",
-  "webview/perf-telemetry.test.ts",
   "webview/preview-retry-pace.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/shell-perf.test.ts",
   "webview/tab-hide.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/tab-snapshot-view.test.ts",
-  "webview/thread-selection-scope.test.ts",
-  "webview/timeline-rehover.test.ts",
-  "webview/track-decorations-hover-cost.test.ts",
 ];
-// The list's exact length on 2026-09-10, after the detector's fourth round: the 148 files whose code initialised an
-// edge when the rule was written, plus the eight class fakes main added between this branch's base and its landing
-// (actions, file-comments-markclick, file-comments-markclick-controls, file-comments-seen-fixes, -seen-review2,
-// -seen-review3, file-comments-send-seen, file-view-notice), listed at the final rebase because they predate the rule,
-// plus federation-hidden-hold, whose conditional-valued window parent the sixth review round's detector reads, plus the
-// seven file-comments-about and file-comments-resolve-answered class fakes main added before the sixth round's rebase,
-// plus the three main added before the seventh round's rebase: the tab-hide and preview-retry-pace class fakes, and
-// the fold's timeline-tag-chips object-literal fake, the shape the shared module replaced in the other timeline tests.
-// The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
-// alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
-// is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 26;
-// the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
-// tags-scale test whose shim it grew from
+// The list's exact length. The ratchet pins it by equality, so a file that comes off lowers this in the same commit,
+// a renamed file leaves it alone, and a new file may not join: neither the list nor this number goes up. A same-commit
+// swap (one off, one on) is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is
+// what names the newcomer.
+const ALLOWLIST_MAX = 19;
+// NON_DOM_EDGES: the test files whose edge-named key the detector reads but which fake no DOM, each with its reason. A
+// listed file is a DOCUMENTED NON-DOM USE of an edge-named key, never an unmigrated fake: the detector reads shape, not
+// meaning, and a goal fixture's children or a list model's children initialise no edge a failing dump could walk (a
+// dump of each is the fixture's own few lines). NON_DOM_EDGES_MAX is this list's exact length too: a file that joins
+// raises it in the same commit, with its reason; one that stops reading as a shape, calls the module or is gone comes
+// off and lowers it.
+const NON_DOM_EDGES: Array<[string, string]> = [   // [file, why its edge-named key is no DOM edge]
+  ["webview/card-subgoals.test.ts", "a goal fixture's children array holds ids (strings): a data tree the card renders, not a DOM"],
+  ["webview/tab-snapshot-view.test.ts", "a list model's children are plain rows of an id and a text with no edge back, so a dump is the rows"],
+];
+const NON_DOM_EDGES_MAX = 2;
+const NON_DOM = NON_DOM_EDGES.map(([f]) => f);
+// SWITCHED: the sixteen files whose own copies of the node factory the shared module REPLACED (2026-09-10): the fifteen
+// near-copies (fourteen ui/timeline-*.test.ts siblings and ui/webview/tab-color-picker.test.ts) and the tags-scale test
+// the shim grew from. They keep no makeNode of their own. The other ui/webview test files that fake a DOM are not listed
+// here: each keeps its own node classes, window stand-ins or literals and hides their edges through hideEdges
+// (ui/webview/timeline-boot.test.ts takes nodeFactory outright); the call is the credential the ratchet reads, and each
+// file's projection test is the executed check on its edges.
 const SWITCHED = [
   "timeline-hidden-hold.test.ts", "timeline-hidden-stub.test.ts", "timeline-kernel-post.test.ts", "timeline-live-tick.test.ts",
   "timeline-nan-window.test.ts", "timeline-open-interval.test.ts", "timeline-pending-hosts.test.ts", "timeline-render.test.ts",
@@ -472,27 +489,33 @@ const SWITCHED = [
   "timeline-transform-tick.test.ts", "timeline-views-ack.test.ts", "timeline-zoom-anchor.test.ts", "webview/tab-color-picker.test.ts",
 ];
 
-test("ratchet: every UI test file that initialises an edge calls the shared module or is on the allowlist, every allowlisted file still needs it, and the list's length is its pinned count", () => {
+test("ratchet: every UI test file that initialises an edge calls the shared module, is on the allowlist or is a documented non-DOM use; every listed file still reads as one; each list's length is its pinned count", () => {
   const files = testFiles();
   assert.ok(files.includes("test-dom-shim.test.ts") && files.includes("webview/tab-color-picker.test.ts"), "the sweep covers ui/ and ui/webview/");
   const matching = files.filter((f) => needsListing(src(f)));
-  assert.deepEqual(matching.filter((f) => !ALLOWLIST.includes(f)), [],
+  assert.deepEqual(matching.filter((f) => !ALLOWLIST.includes(f) && !NON_DOM.includes(f)), [],
     "a UI test file's code initialises an edge-named property (parentNode, parentElement, parent, children, childNodes, a child or sibling pointer, " +
     "ownerDocument or host) without calling the shared module; a failing assertion on such an object can allocate tens of GB. Three paths, one import and " +
     "one line each: (1) a fake DOM: build its nodes with nodeFactory(, or call hideEdges(this) at the end of the class's constructor (hideEdges(obj) on an " +
     "object literal), imported from ui/test-dom-shim.ts as a named import or a namespace import (shim.hideEdges(); a .js suffix on the specifier is read " +
-    "too). The import alone is not enough, and a call token in a comment or a string is not a call: the call in code is what counts. (2) A non-DOM use of an " +
-    "edge name (a local reassigned at line start, a typed parameter after a comma, a type literal's member, a fixture's field): rename it, or carry the file " +
-    "on the documented non-DOM list with its reason (that list lands with the stacked migration PR; until then ask the reviewer). (3) The allowlist below is " +
+    "too), and add a projection test. The import alone is not enough, and a call token in a comment or a string is not a call: the call in code is what " +
+    "counts. (2) A non-DOM use of an edge name (a local reassigned at line start, a typed parameter after a comma, a type literal's member, a fixture's " +
+    "field): rename it, or add the file to NON_DOM_EDGES with its reason and raise NON_DOM_EDGES_MAX in the same commit. (3) The allowlist below is " +
     "closed: it names the files that predate the rule, a renamed listed file replaces its entry, and neither the list nor ALLOWLIST_MAX goes up");
   assert.deepEqual(ALLOWLIST.filter((f) => !matching.includes(f)), [],
     "an allowlisted file no longer initialises an edge in code, calls the shared module now, is gone, or was renamed (its new name replaces this entry and " +
     "ALLOWLIST_MAX stands); otherwise take it off the list and set ALLOWLIST_MAX to the list's new length in the same commit");
+  assert.deepEqual(NON_DOM.filter((f) => !matching.includes(f)), [],
+    "a file listed in NON_DOM_EDGES no longer initialises an edge-named key in code, calls the shared module now, or is gone: take it off and lower NON_DOM_EDGES_MAX to the new length in the same commit");
   assert.equal(ALLOWLIST.length, ALLOWLIST_MAX,
     "the allowlist holds " + ALLOWLIST.length + " files, not its pinned count of " + ALLOWLIST_MAX + ". ALLOWLIST_MAX is the list's exact length: a renamed file " +
     "replaces its entry and the count stands; a file that comes off lowers the constant in the same commit; a new file may not join, so neither the list nor the constant goes up");
+  assert.equal(NON_DOM_EDGES.length, NON_DOM_EDGES_MAX,
+    "NON_DOM_EDGES holds " + NON_DOM_EDGES.length + " files, not its pinned count of " + NON_DOM_EDGES_MAX + ": a file that joins or leaves moves the constant in the same commit");
+  for (const [f, why] of NON_DOM_EDGES) assert.ok(why.trim().length >= 40, f + " carries a one-line reason its edge-named key is no DOM edge");
   assert.deepEqual(ALLOWLIST, ALLOWLIST.slice().sort(), "the allowlist is sorted, so a change to it reads as one line");
-  assert.equal(new Set(ALLOWLIST).size, ALLOWLIST.length, "no name twice");
+  assert.deepEqual(NON_DOM, NON_DOM.slice().sort(), "NON_DOM_EDGES is sorted by file, so a change to it reads as one line");
+  assert.equal(new Set([...ALLOWLIST, ...NON_DOM]).size, ALLOWLIST.length + NON_DOM.length, "no name twice, within or across the two lists");
 });
 
 test("the files that carried the shim's copies import nodeFactory or hideEdges, call it, and keep no node factory of their own; this file's own code initialises no edge", () => {
