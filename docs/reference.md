@@ -1793,9 +1793,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stderr names the file once per episode), `evict` (entries dropped for
   sessions that left the alive set), and `entries`. `thread_reg` is the SDK
   registry reader's memo, keyed like `caps`, with the same `hit`, `miss`,
-  `fail` and `entries` (its `fail` is defined as the caps memo's, and its
-  stderr line names the stat's error when the stat failed too); its `evict`
-  counts the 512-entry bound and the pop of an absent file's entry.
+  `fail` and `entries` (its `fail` counts a read that did not succeed, as the
+  caps memo's does, and also a body that is not JSON or not a JSON object,
+  answered as a failed read and not memoized; its stderr line names the
+  stat's error when the stat failed too); its `evict` counts the 512-entry
+  bound and the pop of an absent file's entry.
   `feed_segs` is the feed build's per-session memo of the values that are pure
   functions of a session's parse and goal store (the seam maps, the tree shape
   and each top goal's flattened tree), keyed on the parse object, the served

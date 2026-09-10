@@ -718,12 +718,22 @@ class PerfWiring(_State):
 
     def test_the_reference_names_the_three_memos(self):
         doc = Path(os.path.join(ROOT, "docs", "reference.md")).read_text()
+        flat = " ".join(doc.split())   # whitespace-normalised: a phrase the doc wraps across lines cannot slip past a pin
         for name in ("`caps`", "`states_overlay`", "`thread_reg`"):   # the fork's memo row is `caps` (A2)
             self.assertIn(name, doc)
+        # the row's own sentence names the key, not the parenthetical about the old `captions` name
+        self.assertIn("`caps` is the memo behind the captioner-store reader", flat)
+        self.assertIn("keyed like `caps`", flat)
         # the /perf memo doc's `fail` covers a read after a failed stat too, and says the stat's error is named
-        # (round 12 of the unknown-name PR: it defined fail as a read after a successful stat)
-        self.assertNotIn("after a successful stat", doc)
-        self.assertIn("the stat's error when the stat failed", doc)
+        # (round 12 of the unknown-name PR: it defined fail as a read after a successful stat; round 13: the pins
+        # read the normalised text, since the old wording wrapped as "after a / successful stat" on main and on
+        # the PR's base, which a line-bound pin could not see)
+        self.assertNotIn("successful stat", flat)
+        self.assertIn("`fail` (a read that did not succeed on a file that exists", flat)
+        self.assertIn("the stat's error when the stat failed", flat)
+        # the thread_reg memo's `fail` also counts a body that is not JSON or not a JSON object, which the
+        # captions memo skips line by line (round 13; round 12 said the two were defined alike)
+        self.assertIn("also a body that is not JSON or not a JSON object", flat)
 
     def test_the_bench_empties_the_new_memos_for_its_cold_rows(self):
         src = Path(os.path.join(ROOT, "tools", "perf-bench.py")).read_text()
