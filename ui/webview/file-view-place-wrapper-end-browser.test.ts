@@ -1,21 +1,26 @@
 // The reader's place under an html WRAPPER THAT ENCLOSES THE REST OF THE DOCUMENT, in headless Chromium over the REAL
-// module (plans/markdown-viewer.md Slice 2; reader-place.ts ownedElements; the Slice 2 review's fourth round). An html
-// block that opens a wrapper the browser nests the following markdown into (`<div align="center">`, `<details>` with a
-// blank line after its summary) is paired, as the anchor map stands, to every top-level element after it, and the third
-// round refused that pairing because the block's own source parses to one element where the map paired many. When the
-// wrapper's closing tag is the document's last block, or is missing, nothing follows the wrapper at the top level: the
-// map pairs the block to exactly ONE element, the wrapper itself, whose box holds every swallowed paragraph, and the
-// third round trusted any one-element pairing without the parse. So from a swallowed paragraph the place read was the
-// wrapper's block, hundreds of pixels deep, and the seat mapped that depth as a fraction onto the wrapper's one Raw row:
-// the Raw switch from paragraph 60 landed on the `<div align="center">` row with the passage 1395px below the viewport
-// (paragraph 60 came back 42px off), and the Raw row of a swallowed paragraph switched to Rendered borrowed the
-// wrapper's box and landed on paragraph 43. The rule now parses an html block paired to one element too, so the
-// wrapper's pairing is refused from either side and the viewer seats nothing; where the body lands is the browser's
-// own (the html leg's setter-trap idiom: a refusal is no scrollTop written by the viewer). The scenes, Files pane 900px:
+// module (plans/markdown-viewer.md Slices 2 and 5; reader-place.ts readRendered and ownedElements; the Slice 2 review's
+// fourth round, rewritten for Slice 5's flattened walk). An html block that opens a wrapper the browser nests the
+// following markdown into (`<div align="center">`, `<details>` with a blank line after its summary) was paired, as the
+// anchor map stood, to every top-level element after it, and the third round refused that pairing because the block's
+// own source parses to one element where the map paired many. When the wrapper's closing tag is the document's last
+// block, or is missing, nothing follows the wrapper at the top level: the map paired the block to exactly ONE element,
+// the wrapper itself, whose box holds every swallowed paragraph, and the third round trusted any one-element pairing
+// without the parse. So from a swallowed paragraph the place read was the wrapper's block, hundreds of pixels deep, and
+// the seat mapped that depth as a fraction onto the wrapper's one Raw row: the Raw switch from paragraph 60 landed on
+// the `<div align="center">` row with the passage 1395px below the viewport (paragraph 60 came back 42px off), and the
+// Raw row of a swallowed paragraph switched to Rendered borrowed the wrapper's box and landed on paragraph 43. The fourth
+// round parsed an html block paired to one element too, so the wrapper's pairing was refused from either side and the
+// viewer seated nothing. Slice 5's flattened walk (anchor-map.ts: the tag scan over the block's raw, the open element's
+// children taken into the block table) pairs the wrapper's block to the wrapper alone and every paragraph nested in it to
+// its own element, and the reader's place descends into the wrapper (readRendered), so the round trip from a nested
+// paragraph is exact both ways, while a Raw row of the wrapper's own still seats nothing (the owner's ruling 2: the
+// block's source parses to one element whose text is not the nested paragraphs'). The scenes, Files pane 900px:
 //   - a centred `<div>` closed as the document's last block, the same `<div>` never closed, and `<details open>` closed
-//     at the end (the README changelog shape), paragraph 60 nested in each: the Raw switch writes no scrollTop and the
-//     top Raw row is not the wrapper's tag row; the return to Rendered puts a paragraph on top without error;
-//   - the Raw row of nested paragraph 60 switched to Rendered writes no scrollTop;
+//     at the end (the README changelog shape), paragraph 60 nested in each: the Raw switch lands on paragraph 60's own
+//     row and the return puts it back where it was (before Slice 5: no scrollTop written, the browser's own landing);
+//   - the Raw row of nested paragraph 60 switched to Rendered seats paragraph 60's own element at the row's depth,
+//     scaled by the paragraph's height over the row's (before Slice 5: nothing seated);
 //   - the controls the widened rule must keep: a one-tag html block (`<p align="center">`), a paragraph that opens
 //     with an inline tag (`<b>Note:</b> ...`) and one that opens with an autolink read as their own blocks, the Raw
 //     switch landing on their own row and the return within 1.5px.
@@ -23,7 +28,7 @@
 // Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, frames, topBlock, PARA, REPORT } from "./real-viewer-leg";
+import { inBrowser, openViewer, frames, PARA, REPORT } from "./real-viewer-leg";
 
 const near = (a: number, b: number, what: string, tol = 1.5) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
 const paras = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => PARA(a + i)).join("\n\n");
@@ -68,17 +73,8 @@ const wrapperShape = (page: any) => page.evaluate(() => {
   const p60 = Array.from(md.querySelectorAll("p")).find((p) => (p.textContent || "").startsWith("Paragraph 60:"))!;
   return { topLevel: kids.length, lastTag: last.tagName.toLowerCase(), lastKids: last.children.length, nested: last.contains(p60) && p60.parentElement !== md };
 });
-/** Trap every script write of the body's scrollTop from now on (the viewer's seat is one; the browser's own scrolls are not
- *  writes), so a switch can be shown to have seated nothing. Installed after the scene's own scroll. */
-const trapWrites = (page: any) => page.evaluate(() => {
-  const body = document.querySelector(".fileview-body") as HTMLElement;
-  const proto = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!;
-  (window as any).__writes = [];
-  Object.defineProperty(body, "scrollTop", { get() { return proto.get!.call(this); }, set(v) { (window as any).__writes.push(v); proto.set!.call(this, v); }, configurable: true });
-});
-const writes = (page: any): Promise<number[]> => page.evaluate(() => (window as any).__writes as number[]);
 
-test("in a browser, the real module: a wrapper that encloses the rest of the document (a centred div closed as the last block or never closed, details closed at the end) is paired to its one element, and that pairing is refused: from a nested paragraph the Raw switch writes no scrollTop and the top Raw row is not the wrapper's (the third round trusted the one element and landed on the `<div align=\"center\">` row, the passage 1395px below)", { timeout: 180000 }, async (t) => {
+test("in a browser, the real module: a wrapper that encloses the rest of the document (a centred div closed as the last block or never closed, details closed at the end) is paired to its one element and the paragraphs nested in it to their own (Slice 5's flattened walk; before it the one element held every paragraph after it, its pairing was refused and the Raw switch wrote no scrollTop; the third round trusted the one element and landed on the `<div align=\"center\">` row, the passage 1395px below): from nested paragraph 60 the Raw switch lands on paragraph 60's own row and the return puts it back where it was", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     for (const [what, DOC, tag] of SHAPES) {
       const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: DOC } });
@@ -88,33 +84,35 @@ test("in a browser, the real module: a wrapper that encloses the rest of the doc
       await scrollInto(page, ".fileview-md p", "Paragraph 60:", 3); await frames(page, 2);
       const before = (await box(page, ".fileview-md p", "Paragraph 60:"))!;
       near(before.top, -3, what + ": the scene starts with paragraph 60 3px past the edge", 1);
-      await trapWrites(page);
       await click(page, "Raw");
       const row = (await rowAtTop(page))!;
       assert.ok(row, what + ": the Raw view painted");
-      assert.deepEqual(await writes(page), [], what + `: the viewer wrote no scrollTop across the switch, the wrapper's one-element pairing refused (the Raw top row is ${JSON.stringify(row.text)} at ${row.scrollTop} for ${before.scrollTop}, the browser's own landing; the third round wrote the wrapper's row at the depth's fraction)`);
+      assert.ok(row.text.startsWith("Paragraph 60:"), what + `: the Raw top row is paragraph 60's own (got ${JSON.stringify(row.text)} at ${row.scrollTop} for ${before.scrollTop}; before Slice 5 the wrapper's one-element pairing was refused and the viewer wrote nothing, the browser's own landing; the third round wrote the wrapper's row at the depth's fraction)`);
       assert.ok(!WRAP_ROW.test(row.text), what + `: the Raw top row is not the wrapper's tag row (got ${JSON.stringify(row.text)})`);
       await click(page, "Rendered");
-      const back = (await topBlock(page))!;
-      // the top-level element on top is a paragraph before the wrapper or the wrapper itself (its text opens with its first paragraph's, or the summary's)
-      assert.ok(back && /^(Paragraph \d+:|Changelog)/.test(back.text), what + `: back in Rendered the view painted, a paragraph or the wrapper on top (got ${JSON.stringify(back && back.text)})`);
+      const back = (await box(page, ".fileview-md p", "Paragraph 60:"))!;
+      near(back.top, before.top, what + ": back in Rendered paragraph 60 is where it was (the third round: 42px off; before Slice 5: the browser's own landing)");
       assert.deepEqual(errors, [], what + ": no script error");
       await page.close();
     }
   });
 });
 
-test("in a browser, the real module: the Raw row of a paragraph nested in a wrapper that encloses the rest of the document, switched to Rendered, seats nothing: the paragraph's block has no element of its own and the block before it with one is the wrapper, whose pairing is refused (the third round borrowed the wrapper's box and landed on paragraph 43)", { timeout: 180000 }, async (t) => {
+test("in a browser, the real module: the Raw row of a paragraph nested in a wrapper that encloses the rest of the document, switched to Rendered, seats the paragraph's own element at the row's depth scaled by the paragraph's height over the row's (Slice 5's flattened walk; before it the paragraph's block had no element of its own and the block before it with one was the wrapper, refused, so nothing was seated; the third round borrowed the wrapper's box and landed on paragraph 43)", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     for (const [what, DOC] of SHAPES) {
       const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: DOC }, raw: true });
       await rowToEdge(page, "Paragraph 60:", 3); await frames(page, 2);
       const row = (await rowAtTop(page))!;
       assert.ok(row.text.startsWith("Paragraph 60:"), what + `: the scene starts on paragraph 60's row (got ${JSON.stringify(row.text)})`);
-      await trapWrites(page);
+      const rowBox = (await box(page, "code.hljs .fv-cl", "Paragraph 60:"))!;
+      near(rowBox.top, -3, what + ": 3px above the edge", 1);
       await click(page, "Rendered");
-      const back = (await topBlock(page))!;
-      assert.deepEqual(await writes(page), [], what + `: the viewer wrote no scrollTop across the switch (the top block is ${JSON.stringify(back.text)} at ${back.scrollTop} for ${row.scrollTop}, the browser's own landing)`);
+      const back = (await box(page, ".fileview-md p", "Paragraph 60:"))!;
+      // the depth as a fraction: 3px of the row's height becomes the same fraction of the paragraph's (reader-place.ts seatedTop)
+      const want = rowBox.top * (back.bottom - back.top) / (rowBox.bottom - rowBox.top);
+      near(back.top, want, what + `: paragraph 60's element seated at the row's depth (row ${rowBox.top} of ${rowBox.bottom - rowBox.top}px, paragraph ${back.bottom - back.top}px; before Slice 5 nothing was seated and the top block was the browser's own landing)`);
+      assert.ok(back.top < 0 && back.bottom > 0, what + ": paragraph 60 straddles the edge");
       assert.deepEqual(errors, [], what + ": no script error");
       await page.close();
     }

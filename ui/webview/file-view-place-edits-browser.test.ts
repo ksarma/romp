@@ -2,11 +2,13 @@
 // Chromium over the REAL module (plans/markdown-viewer.md Slice 2; reader-place.ts; the Slice 2 review's second round).
 // Each scene puts the reader somewhere the first round's rules lost them and reads where they land:
 //   - an html block that opens a wrapper the browser nests the following markdown into (`<details>` with a blank line
-//     after its summary, the same on one line, a centred `<div>` around a heading): the anchor map, as it stands,
-//     pairs every later element to the wrapper's block, and the place read from paragraph 80 was the wrapper: the Raw
-//     switch landed on `<summary>`, 3500px up. Now an element the wrapper swallowed reads as no place (the numeric
-//     scrollTop stands), so the Raw view opens after the wrapper and the return lands after it too. Once the map pairs
-//     the wrapper right (anchor-map.ts), the round trip is exact, and these assertions still hold;
+//     after its summary, the same on one line, a centred `<div>` around a heading): the anchor map, as it stood, paired
+//     every later element to the wrapper's block, and the place read from paragraph 80 was the wrapper: the Raw switch
+//     landed on `<summary>`, 3500px up. The Slice 2 review then read an element the wrapper swallowed as no place (the
+//     numeric scrollTop stood), so the Raw view opened after the wrapper and the return landed after it too, not on
+//     paragraph 80. Since Slice 5's flattened walk (anchor-map.ts pairs the wrapper's block to the wrapper and every
+//     block after it to its own element) the round trip from paragraph 80 is exact, as the same document without the
+//     wrapper always was;
 //   - the Raw row at the edge, `return x + 50` of a 120-line code block: five lines inserted above it inside the block,
 //     forty inserted, five deleted below it (the first round kept the block's top edge or its loss in pixels, so line
 //     45 stood at the edge after the insertion, and the inserted line after forty); and the row itself rewritten with
@@ -96,7 +98,7 @@ const WRAPPERS: Record<string, string> = {
   "a centred div around a heading and a tagline": "<div align=\"center\">\n\n# Project\n\nA tagline sentence.\n\n</div>",
 };
 
-test("in a browser, the real module: from paragraph 80 below an html wrapper the browser nests markdown into, the Raw switch lands after the wrapper and the return lands after it too; the same document without the wrapper round-trips exactly", { timeout: 180000 }, async (t) => {
+test("in a browser, the real module: from paragraph 80 below an html wrapper the browser nests markdown into, the Rendered, Raw, Rendered round trip is exact, paragraph 80's own row on top and paragraph 80 back at its height (Slice 5's flattened walk pairs paragraph 80 to its own element; the Slice 2 review's place read it as the wrapper's swallowed run and landed after the wrapper by the numeric scrollTop alone; the first round landed on the wrapper, 3500px up); the same document without the wrapper round-trips exactly, as ever", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     for (const [shape, html] of Object.entries(WRAPPERS)) {
       const DOC = "# Report\n\n" + paras(1, 4) + "\n\n" + html + "\n\n" + paras(5, 100) + "\n";
@@ -110,12 +112,11 @@ test("in a browser, the real module: from paragraph 80 below an html wrapper the
       const row = (await rowAtTop(page))!;
       const wrapperRow = /^<(details|summary|div|\/details|\/div)|^# Project|^A tagline|^Hidden details/.test(row.text);
       assert.ok(!wrapperRow, shape + `: the Raw top row is not the wrapper's (got ${JSON.stringify(row.text)} at scrollTop ${row.scrollTop}: the first round landed on the wrapper, 3500px up)`);
-      const m = /^Paragraph (\d+):/.exec(row.text);
-      assert.ok(m && Number(m[1]) >= 5, shape + `: the Raw top row is a paragraph after the wrapper (got ${JSON.stringify(row.text)})`);
+      assert.match(row.text, /^Paragraph 80:/, shape + `: the Raw top row is paragraph 80's own (got ${JSON.stringify(row.text)}; before Slice 5 a paragraph after the wrapper by the numeric scrollTop, the place refused)`);
       await click(page, "Rendered");
       const back = (await topBlock(page))!;
-      const mb = /^Paragraph (\d+):/.exec(back.text);
-      assert.ok(mb && Number(mb[1]) >= 5, shape + `: back in Rendered, a paragraph after the wrapper (got ${JSON.stringify(back.text)})`);
+      assert.equal(back.text, "Paragraph 80:", shape + `: back in Rendered paragraph 80 is on top (got ${JSON.stringify(back.text)})`);
+      near(back.top, before.top, shape + ": at the same height");
       assert.deepEqual(errors, [], shape + ": no script error");
       await page.close();
     }

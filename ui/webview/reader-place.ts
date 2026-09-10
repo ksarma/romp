@@ -8,7 +8,8 @@
 // blocks the markdown lexer finds in the file (anchor-map.ts sourceBlockSpans: a paragraph, a heading, a code block, a
 // table, an html block), the first whose box ends below the body's top edge, as its source span, plus how far its top
 // edge sits from the body's top and how tall its box is. Both views show the same blocks. In Rendered a block is a
-// top-level element (an html block of sibling tags several, whose boxes are read together); in Raw it is the run of
+// top-level element (an html block of sibling tags several, whose boxes are read together; a block the browser nested
+// inside an html wrapper its own element inside the wrapper, read through the wrapper: "what the place refuses" below); in Raw it is the run of
 // rows from its first line to its last, so a blank row between two paragraphs belongs to neither and the block after
 // it is the place (the Slice 2 review: read as its own place, a blank top row seated the paragraph BEFORE the first
 // text the reader saw), while a blank row inside a fenced code block belongs to the code block. When the reader is
@@ -66,44 +67,61 @@
 // to where the edit begins, the top of the document; now the paragraph after the deleted three); only with no block
 // standing on either side does the place fall to where the edit begins.
 //
-// What the place refuses. The anchor map pairs the Rendered elements to the blocks. Every block but an html block
-// renders as one element; an html block of sibling tags renders as several, and the map's pairing across one is a
-// resync on the blocks after it, which the map as it stands gets wrong two ways (Slice 5's flattened walk takes them
-// up): an html block that opens a wrapper the browser nests the following markdown into (`<details>` with a blank line
-// after its summary, a centred `<div>` around a heading) is paired to every element after it, since no later top-level
-// element carries the nested block's text (the review round 2, and the plan's defect "an unclosed HTML wrapper
-// swallows later blocks"; read as that block, a Raw switch from paragraph 80 landed on `<summary>`, 3500px up); and
-// two html blocks a blank line apart (`<p>Alpha</p>` over `<p>Beta</p>`, a README's centred heading over its tagline)
-// pair the first to nothing and the second to both elements; and a wrapper whose closing tag is the document's last
-// block, or is missing, is paired to exactly ONE element, itself, holding every paragraph after it (the review round
-// 4: trusted as any one element was, the Raw switch from a nested paragraph landed on the `<div align="center">` row
-// with the passage 1395px below the viewport, and the paragraph's Raw row switched to Rendered borrowed the wrapper's
-// box and landed on paragraph 43). So an html block's pairing, to one element or several, is trusted only when its
-// own source, parsed by the browser's HTML parser (DOMParser), yields as many elements with the same text, whitespace
-// and the viewer's own controls apart (a gated figure's placeholder, a fence's Copy button: their text is the viewer's,
-// never the block's, and is skipped as the anchor map skips it; the Slice 4 review found a `<p>` holding a gated picture
-// read "Image from host. Click to load." against a parse reading nothing, and the figure at the edge refused). That
-// parser is the one the sanitizer read the block with, so entities, inline tags and line breaks decode the
-// same on both sides and nothing is decoded by hand (the review round 3: a hand decoder threw on an out-of-range
-// numeric entity, which stopped the Raw click and the text-size step where it stood, and knew six entity names, so a
-// caption hanging on `&mdash;` read as swallowed). Any other block's one element is trusted without a parse (its source
-// is markdown, not html); an html block is told from the rest by marked's lexer over its own text, the lexer the map's
-// table comes from, asked only for a block that opens with `<`. A pairing the parse does not confirm reads as NO place
-// from whichever element is at the edge (a swallowed paragraph, the wrapper itself, a picture or a rule inside the run,
-// either of two adjacent html blocks), so the numeric scrollTop stands, as it did before the slice; and a seat that
-// would borrow such a block's box for a block with no element of its own (the swallowed paragraph read from Raw, a Raw
-// row of the wrapper's own) declines the same way, the body unmoved (the review round 3: a Raw row of `<summary>`
-// seated the whole swallowed run, 3200px, in Rendered). An html block of sibling tags, each in its source, is read as
-// one block still. Where DOMParser is absent (a stand-in) such a block reads as no place too. Two shapes the parse
-// reads as no place though the pairing is right, both malformed input and each recorded in the plan's Slice 2 build
-// note: an html block holding a tag the sanitizer removes, when the removal changes the block's text (a `<script>` or
-// `<style>` inside a tag goes with its text) or its element count (a `<style>`, an `<iframe>` or a form control between
-// two `<p>`s goes, the control's text staying as a text node), parses to other elements or other text than the
-// sanitizer kept (a removed tag nested inside a tag, its text kept as a `<label>`'s is or none as an `<iframe>`'s, is
-// trusted as ever); and a hex character reference with no digits (`&#x;`), which Chromium decodes to U+FFFD
-// when its fast-path parser reads a short string of simple tags (the block's source alone) and keeps as the literal
-// text when its full parser reads it, which the sanitizer's whole-document parse is whenever the note holds a tag
-// outside that path's subset (a heading, a code block, emphasis, a picture), so the two sides disagree on that one
+// What the place refuses, and what it descends into. The anchor map pairs the Rendered elements to the blocks. Every
+// block but an html block renders as one element; an html block of sibling tags renders as several, and the map's
+// pairing across one is a resync on the blocks after it. An html block that opens a wrapper the browser nests the
+// following markdown into (`<details>` with a blank line after its summary, a centred `<div>` around a heading, one
+// whose closing tag is the document's last block or is missing) is paired to the wrapper itself (and, through the
+// resync, to the wrapper's own children in the raw: its `<summary>`), each block nested in it to its own element inside
+// the wrapper, and two html blocks a blank line apart (`<p>Alpha</p>` over `<p>Beta</p>`, a README's centred heading
+// over its tagline) to one element each; anchor-map.ts renderedBlockWrappers names the wrapper (Slice 5 of the plan, the
+// flattened walk: the tag scan over the block's raw says which tags it leaves open, and the pairing takes the open
+// element's children into the block table right after it). Before that walk the wrapper's block took every element after
+// it, since no later top-level element carried a nested block's text (the Slice 2 review, round 2, and the plan's defect
+// "an unclosed HTML wrapper swallows later blocks": read as that block, a Raw switch from paragraph 80 landed on
+// `<summary>`, 3500px up), a wrapper closing last or never took exactly one element, itself, holding every paragraph
+// after it (round 4: the Raw switch from a nested paragraph 60 landed on the `<div align="center">` row with the passage
+// 1395px below the viewport, and the paragraph's Raw row switched to Rendered borrowed the wrapper's box and landed on
+// paragraph 43), and the two adjacent html blocks paired as nothing and both; this module refused every element of such
+// a run and every seat into one. Now the Rendered view is read through the root's element children and DESCENDS: an
+// element the map names as a wrapper stands for the blocks nested in it, so its element children are read in its place,
+// in order and recursively (a wrapper inside a wrapper); an element paired to a wrapper's block that is not itself one
+// of the block's wrappers (the summary; a tag the block closed before opening the wrapper) is a row of the block's own,
+// never the place, and is passed over for the block after it, so the wrapper's box at the edge reads the first nested
+// block (the owner's rulings for Slice 5: the wrapper's own rows are never the place in either direction, and the edge
+// inside a wrapper reads what is nested there; a closed `<details>`, whose nested content has no layout, reads the block
+// after it). Each level is searched on its own (topVisibleIndex over that level's children, then the descent into the
+// child the search lands on), not over one flattened list: the map's index checks the root's shape, every child by
+// identity, on each read, so a read per top-level child would cost the square of the document on every scroll frame.
+// An html block's pairing to one element or several is trusted only when its own source, parsed by the browser's HTML
+// parser (DOMParser), yields as many elements with the same text, whitespace and the viewer's own controls apart (a
+// gated figure's placeholder, a fence's Copy button: their text is the viewer's, never the block's, and is skipped as
+// the anchor map skips it; the Slice 4 review found a `<p>` holding a gated picture read "Image from host. Click to
+// load." against a parse reading nothing, and the figure at the edge refused). That parser is the one the sanitizer
+// read the block with, so entities, inline tags and line breaks decode the same on both sides and nothing is decoded by
+// hand (the review round 3: a hand decoder threw on an out-of-range numeric entity, which stopped the Raw click and the
+// text-size step where it stood, and knew six entity names, so a caption hanging on `&mdash;` read as swallowed). Any
+// other block's one element is trusted without a parse (its source is markdown, not html; a paragraph nested in a
+// wrapper is such a block); an html block is told from the rest by marked's lexer over its own text, the lexer the
+// map's table comes from, asked only for a block that opens with `<`. A pairing the parse does not confirm reads as NO
+// place from whichever element is at the edge, so the numeric scrollTop stands, as it did before the slice; and a seat
+// that would borrow such a block's box for a block with no element of its own declines the same way, the body unmoved.
+// The wrapper's own block is one such pairing in the SEAT direction: its source parses to one element, the wrapper with
+// the summary's text or with none, against the wrapper holding the nested paragraphs' text (and its summary beside it),
+// so a Raw row of the wrapper's own (`<div align="center">`, `<summary>`) switched to Rendered seats nothing (the review
+// round 3: a Raw row of `<summary>` seated the whole swallowed run, 3200px, in Rendered; kept under Slice 5, ruling 2),
+// where a Raw row of a nested paragraph seats at the paragraph's own element and a Raw row of the closing tag, which
+// owns no element, at the nearest block before it with one, the last nested paragraph. An html block of sibling tags,
+// each in its source, is read as one block still. Where DOMParser is absent (a stand-in) such a block reads as no place
+// too. Two shapes the parse reads as no place though the pairing is right, both malformed input and each recorded in
+// the plan's Slice 2 build note: an html block holding a tag the sanitizer removes, when the removal changes the block's
+// text (a `<script>` or `<style>` inside a tag goes with its text) or its element count (a `<style>`, an `<iframe>` or a
+// form control between two `<p>`s goes, the control's text staying as a text node), parses to other elements or other
+// text than the sanitizer kept (a removed tag nested inside a tag, its text kept as a `<label>`'s is or none as an
+// `<iframe>`'s, is trusted as ever); and a hex character reference with no digits (`&#x;`), which Chromium decodes to
+// U+FFFD when its fast-path parser reads a short string of simple tags (the block's source alone) and keeps as the
+// literal text when its full parser reads it, which the sanitizer's whole-document parse is whenever the note holds a
+// tag outside that path's subset (a heading, a code block, emphasis, a picture), so the two sides disagree on that one
 // form in nearly every note. Every other entity form, valid or not, decodes alike on both sides.
 //
 // Written over the DOM the viewer builds and nothing else (querySelector, childNodes, getBoundingClientRect,
@@ -113,7 +131,7 @@
 // file-view-place-wrapper-end-browser.test.ts) measure the real thing.
 import { Lexer } from "marked";
 import { followPassage } from "./file-comments";
-import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRows, rawRowForOffset, rawRowSpan, type SourceRange } from "./anchor-map";
+import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, renderedBlockWrappers, rawRows, rawRowForOffset, rawRowSpan, type SourceRange } from "./anchor-map";
 
 export type View = "rendered" | "raw";
 /** A line of the kept block at the body's top edge: the span of its text in the file (before its line ending) and its
@@ -255,14 +273,18 @@ function isHtmlBlock(source: string, span: SourceRange): boolean {
   try { const t = Lexer.lex(source.slice(span.start, span.end))[0]; return !!t && t.type === "html"; } catch { return false; }
 }
 /** Block `b`'s elements when the pairing can be trusted, null when it cannot. None always can, and one element of any
- *  block but an html block (every other block renders as exactly one). An html block's, one or several, are trusted
- *  when the block's own source, parsed by the browser's HTML parser, yields as many elements with the same text,
- *  whitespace and the viewer's controls apart (noteText): the parser the sanitizer read the block with, so entities,
- *  inline tags and `<br>` decode alike on both sides and nothing is decoded here. A wrapper's swallowed run (one
- *  element parsed, the rest of the document paired), a wrapper closing at the document's end or never closed (one
- *  element parsed, with the block's own text; one paired, holding every paragraph after it: the review round 4, which
- *  found the third round trusting any one element) and the second of two adjacent html blocks (one parsed, two paired)
- *  are not; nor is any such block where DOMParser is absent (a stand-in). */
+ *  block but an html block (every other block renders as exactly one, a paragraph nested in an html wrapper included).
+ *  An html block's, one or several, are trusted when the block's own source, parsed by the browser's HTML parser,
+ *  yields as many elements with the same text, whitespace and the viewer's controls apart (noteText): the parser the
+ *  sanitizer read the block with, so entities, inline tags and `<br>` decode alike on both sides and nothing is decoded
+ *  here. A wrapper's own block is not (one element parsed, the wrapper with its summary's text or none, against the
+ *  wrapper holding the nested paragraphs' text, and its summary beside it: the seat direction's refusal of the
+ *  wrapper's own rows, the header), nor an html block a sanitizer drop reshaped, nor any such block where DOMParser is
+ *  absent (a stand-in). Before Slice 5's walk the wrapper's swallowed run (one element parsed, the rest of the document
+ *  paired), a wrapper closing last or never (one parsed with the block's own text, one paired holding every paragraph
+ *  after it: the review round 4, which found the third round trusting any one element) and the second of two adjacent
+ *  html blocks (one parsed, two paired) were refused here too; the map pairs those right now, and readPlace reads a
+ *  wrapper's nested blocks through it (readRendered). */
 function ownedElements(md: Element, source: string, span: SourceRange, b: number): Element[] | null {
   const els = renderedBlockElements(md, source, b);
   if (!els.length || (els.length === 1 && !isHtmlBlock(source, span))) return els;
@@ -352,15 +374,16 @@ function rawLineTop(code: Element, source: string, span: SourceRange, lineStart:
 }
 
 /** The reader's place in `body` as it stands: the top-visible block of the Rendered view (`.fileview-md`'s children,
- *  read to their blocks) or of the Raw view (the block holding the top row of `code.hljs .fv-cl`, or the one after a
- *  blank row between blocks), read against `source`, the text that view was painted from, with the line at the edge
- *  when the reader is partway into a block that shows lines. null when the body shows neither view, when nothing is in
- *  view (a stand-in with no layout), when no element at or below the top edge is a block's (whitespace between
- *  blocks, an html block's leftover node: the next is read), when the top element is one an html wrapper swallowed
- *  (the header), or when the Raw rows disagree with the source. An element showing under a pixel below the edge is
- *  not the top one, here and in the code rows: the browser snaps scrollTop to whole pixels, so a seat lands a block up
- *  to half a pixel from where it asked (the Slice 3 review, round 2: at the chat's end, a paragraph's last line seated
- *  0.525px under the edge landed at 0.64 and was read back as the top block, so the round trip came back 11px off). */
+ *  read to their blocks, an html wrapper's descended into: readRendered) or of the Raw view (the block holding the top
+ *  row of `code.hljs .fv-cl`, or the one after a blank row between blocks), read against `source`, the text that view
+ *  was painted from, with the line at the edge when the reader is partway into a block that shows lines. null when the
+ *  body shows neither view, when nothing is in view (a stand-in with no layout), when no element at or below the top
+ *  edge is a block's (whitespace between blocks, an html block's leftover node, a row of a wrapper's block's own: the
+ *  next is read), when the top element's pairing is one the map got wrong (the header), or when the Raw rows disagree
+ *  with the source. An element showing under a pixel below the edge is not the top one, here and in the code rows: the
+ *  browser snaps scrollTop to whole pixels, so a seat lands a block up to half a pixel from where it asked (the Slice 3
+ *  review, round 2: at the chat's end, a paragraph's last line seated 0.525px under the edge landed at 0.64 and was
+ *  read back as the top block, so the round trip came back 11px off). */
 export function readPlace(body: HTMLElement, source: string): Place | null {
   if (!hasBox(body)) return null;
   const edge = body.getBoundingClientRect().top;
@@ -368,17 +391,8 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
   const spans = sourceBlockSpans(source);
   const md = body.querySelector(".fileview-md");
   if (md) {
-    const kids = elementsOf(md);
-    for (let i = topVisibleIndex(kids.length, (k) => bottomOrNaN(kids[k]), edge + 1); i < kids.length; i++) {
-      const b = renderedBlockIndex(md, source, kids[i]);
-      if (b < 0 || b >= spans.length) continue;
-      const els = ownedElements(md, source, spans[b], b);
-      if (!els) return null;   // a pairing the map got wrong (a wrapper's swallowed run, adjacent html blocks): no place
-      const box = union(els.map(boxOf));
-      if (!box) continue;
-      return placeOf(source, "rendered", spans, b, box, edge, atTop, box.top < edge ? renderedLineAt(source, spans[b], els, edge) : null);
-    }
-    return null;
+    const found = readRendered(md, source, spans, elementsOf(md), edge, atTop);
+    return found === undefined ? null : found;
   }
   const code = body.querySelector("code.hljs");
   const rows = code ? rawRows(code, source) : null;
@@ -397,6 +411,35 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
     return placeOf(source, "raw", spans, b, box, edge, atTop, box.top < edge ? { start: span.start, end: span.end, top: rowBox.top - edge } : null);
   }
   return null;
+}
+/** The reader's place among `kids`, one level of the Rendered view (the root's element children, or an html wrapper's):
+ *  the first at or below the edge that is a block's, read as its block with its box; `undefined` when the level holds
+ *  none (every child ends above the edge, or is no block's, or is a row of a wrapper's block's own, or has no layout),
+ *  so the caller reads on after the level's parent; null for a pairing the map got wrong (ownedElements), which is no
+ *  place from any element of it. A child the map names as a wrapper of its block (renderedBlockWrappers) stands for
+ *  the blocks the browser nested in it, and its element children are read in its place the same way, recursively; a
+ *  child paired to a wrapper's block that is not itself one of the block's wrappers (a `<details>`' summary, a tag the
+ *  block closed before opening the wrapper) is a row of the block's own and is passed over for the block after it, so
+ *  the wrapper's box at the edge reads the first nested block (the header). The search runs per level, on that level's
+ *  boxes alone (the header: the map's index is a whole-shape check per read). */
+function readRendered(md: Element, source: string, spans: SourceRange[], kids: Element[], edge: number, atTop: boolean): Place | null | undefined {
+  for (let i = topVisibleIndex(kids.length, (k) => bottomOrNaN(kids[k]), edge + 1); i < kids.length; i++) {
+    const b = renderedBlockIndex(md, source, kids[i]);
+    if (b < 0 || b >= spans.length) continue;
+    const wrappers = renderedBlockWrappers(md, source, b);
+    if (wrappers.length) {
+      if (wrappers.indexOf(kids[i]) < 0) continue;   // a row of the wrapper's block's own (its summary): the blocks nested after it are read
+      const inner = readRendered(md, source, spans, elementsOf(kids[i]), edge, atTop);
+      if (inner !== undefined) return inner;
+      continue;   // nothing nested in the wrapper ends below the edge with a layout (a closed details' content): the element after it
+    }
+    const els = ownedElements(md, source, spans[b], b);
+    if (!els) return null;   // a pairing the map got wrong (an html block a sanitizer drop reshaped): no place
+    const box = union(els.map(boxOf));
+    if (!box) continue;
+    return placeOf(source, "rendered", spans, b, box, edge, atTop, box.top < edge ? renderedLineAt(source, spans[b], els, edge) : null);
+  }
+  return undefined;
 }
 
 // ── following spans through an edit ─────────────────────────────────────────────────────────────────
@@ -564,11 +607,12 @@ export function seatPlaceOutcome(body: HTMLElement, source: string, place: Place
   return outcome(true);
 }
 /** Block `b`'s box in the Rendered view, or, when it has no element with a layout (a comment, a hidden element, a block
- *  the sanitizer dropped, a block nested inside an html wrapper), the nearest block's before it, else after it. null
- *  when block `b`'s own pairing, or the nearest before it with elements, is one the map got wrong (a wrapper's swallowed
- *  run, which may hold block `b`'s very element; the wrapper's own rows read from Raw): its box is the rest of the
- *  document's, and no seat is better than that one (the review round 3: a Raw row of `<summary>` seated the run's
- *  union, 3200px, in Rendered). */
+ *  the sanitizer dropped, a wrapper's closing tag, a paragraph nested in a closed `<details>`), the nearest block's
+ *  before it, else after it. null when block `b`'s own pairing, or the nearest before it with elements, is one the map
+ *  got wrong or the wrapper's own (the wrapper's own rows read from Raw; a paragraph nested in a wrapper has its own
+ *  element since Slice 5's walk and never reaches the wrapper here): the wrapper's box is the rest of the document's,
+ *  and no seat is better than that one (the review round 3: a Raw row of `<summary>` seated the run's union, 3200px,
+ *  in Rendered). */
 function renderedBoxNear(md: Element, source: string, spans: SourceRange[], b: number): Box | null {
   const own = ownedElements(md, source, spans[b], b);
   if (!own) return null;

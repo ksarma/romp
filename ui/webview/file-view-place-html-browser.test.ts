@@ -14,15 +14,20 @@
 //     entities beyond the six the decoder knew, an entity with no semicolon: round 2 read the tag as swallowed and kept
 //     the numeric scrollTop (the Raw view opened on paragraph 28, the return on paragraph 28 again); now the tag's own
 //     row and the return to the tag;
-//   - a textless element inside a wrapper's swallowed run (a picture the reader is 100px into, a rule at the edge):
-//     round 2 took a textless element for the wrapper's own and read the run's union box, so the Raw switch jumped
-//     1750px up to `<details>`; now the run's pairing is refused from any element, the viewer seats nothing, and a
-//     paragraph is on top both ways;
+//   - a textless element after a `<details>` wrapper (a picture the reader is 100px into, a rule at the edge): round 2
+//     took a textless element for the wrapper's own and read the run's union box, so the Raw switch jumped 1750px up to
+//     `<details>`; the third round refused the run's pairing from any element and seated nothing; since Slice 5's
+//     flattened walk (anchor-map.ts pairs the wrapper's block to the wrapper and its summary, and every block after it
+//     to its own element) the picture and the rule are their own blocks, so the Raw switch lands on the picture's own row
+//     and the return puts the picture back at its depth, within the Raw row's whole-pixel snap scaled by the picture's
+//     height over the row's, and the rule at the edge round-trips exactly;
 //   - a Raw row of the wrapper's own (`<summary>`) switched to Rendered: round 2 seated the whole swallowed run at the
-//     row's fraction (paragraph 74 at scrollTop 3585 for 360); now no seat;
-//   - two html blocks a blank line apart: the map pairs the first to nothing and the second to both elements; round 2
-//     read the second element as its block and put the Raw view one row off; now neither element is a place and the
-//     Raw click seats nothing (the anchor-map half is Slice 5's);
+//     row's fraction (paragraph 74 at scrollTop 3585 for 360); now no seat, and still none under Slice 5 (the owner's
+//     ruling 2: the wrapper's own rows are never the place);
+//   - two html blocks a blank line apart: the map paired the first to nothing and the second to both elements; round 2
+//     read the second element as its block and put the Raw view one row off, the third round read neither as a place
+//     and seated nothing; since Slice 5's walk each is its own block, so from either element the Raw switch lands on the
+//     block's own row and the return puts it back where it was;
 //   - an html `<pre>` of forty lines with the Raw row `html line 10` near the edge: round 2's line rule mapped the row to
 //     the code's line of the same index, one off (the block's first line is the tag), and seated line 11 at the edge;
 //     the block keeps the depth rule now, line 10 at the edge within a line, where a markdown code block stays exact;
@@ -55,7 +60,6 @@ const WRAP_ROW = /^<(details|summary|\/details)|^Hidden details/;
 const SVG = "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="600"><rect width="900" height="600" fill="steelblue"/></svg>');
 
 const click = async (page: any, label: string) => { await page.locator("#romp-fileview .fileview-btn", { hasText: new RegExp("^" + label + "$") }).click(); await frames(page, 3); };
-const scrollTopOf = (page: any): Promise<number> => page.evaluate(() => document.querySelector(".fileview-body")!.scrollTop);
 /** The first Raw row ending below the body's top edge: its text, its top and the body's scrollTop; null when no Raw view shows. */
 const rowAtTop = (page: any) => page.evaluate(() => {
   const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
@@ -91,6 +95,19 @@ const trapWrites = (page: any) => page.evaluate(() => {
 });
 const writes = (page: any): Promise<number[]> => page.evaluate(() => (window as any).__writes as number[]);
 const fontSizeOf = (page: any): Promise<number> => page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".fileview-md > p")!).fontSize));
+/** The box of the element `sel` names (for an `img`, its parent `<p>`, the block's element), from the body's top edge. */
+const targetBox = (page: any, sel: string) => page.evaluate((s: string) => {
+  const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
+  const el = document.querySelector(s)!; const target = s.endsWith("img") ? el.parentElement! : el;
+  const r = target.getBoundingClientRect();
+  return { top: Math.round((r.top - br.top) * 10) / 10, height: Math.round(r.height * 10) / 10, scrollTop: body.scrollTop };
+}, sel);
+/** The first top-level element of the Rendered view ending below the body's top edge: its tag, whether it holds a picture, its top. */
+const topElement = (page: any) => page.evaluate(() => {
+  const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
+  for (const e of Array.from(body.querySelectorAll(".fileview-md > *"))) { const r = e.getBoundingClientRect(); if (r.bottom > br.top + 0.5) return { tag: e.tagName, hasImg: !!e.querySelector("img"), top: Math.round((r.top - br.top) * 10) / 10 }; }
+  return null;
+});
 
 test("in a browser, the real module: a two-tag html block whose first tag hangs on an entity past U+10FFFF is read without a throw: the Raw switch lands on the tag's own row and returns to the tag, and a text-size step paints (the second round's decoder threw a RangeError inside both clicks)", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
@@ -170,11 +187,14 @@ test("in a browser, the real module: a two-tag html block whose first tag carrie
   });
 });
 
-test("in a browser, the real module: inside a wrapper's swallowed run, a picture the reader is 100px into or a rule at the edge reads as no place, so the Raw switch seats nothing and a paragraph is on top both ways (the second round took a textless element for the wrapper's own and the Raw switch jumped 1750px up to <details>); a Raw row of the wrapper's own switched to Rendered seats nothing (the second round seated the run, paragraph 74 at 3585 for 360)", { timeout: 180000 }, async (t) => {
+test("in a browser, the real module: after a <details> wrapper the browser nests markdown into, a picture the reader is 100px into and a rule at the edge are their own blocks (Slice 5's flattened walk; before it the wrapper's block took every element after it, the place refused the run and the Raw switch seated nothing; the second round took a textless element for the wrapper's own and the switch jumped 1750px up to <details>): the Raw switch lands on the picture's own row and the return puts the picture back at its depth, within the row's snap scaled by the picture's height; the rule round-trips exactly, the rule's row at the edge in Raw; a Raw row of the wrapper's own switched to Rendered still seats nothing (ruling 2; the second round seated the run, paragraph 74 at 3585 for 360)", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const DOC = "# Report\n\n" + paras(1, 4) + "\n\n" + WRAP + "\n\n" + paras(5, 40) + "\n\n" + `![a picture](${SVG})` + "\n\n" + paras(41, 60) + "\n\n---\n\n" + paras(61, 80) + "\n";
     // the fixture: the browser nests the inner paragraph inside <details>, the paragraphs after </details> are siblings
-    for (const [what, sel, extra] of [["the picture, 100px in", ".fileview-md > p > img", 100], ["the rule at the edge", ".fileview-md > hr", 0]] as const) {
+    // the rule sits 2px BELOW the edge, not on it: a 1px hairline whose top is at the edge ends at the edge plus a pixel, the very
+    // bound the place reads a box against, so which block the place keeps (the rule, or the paragraph after it) would turn on the
+    // browser's sub-pixel snap; both round-trip the rule to where it was, but only one puts the rule's own row at a known place
+    for (const [what, sel, extra] of [["the picture, 100px in", ".fileview-md > p > img", 100], ["the rule 2px below the edge", ".fileview-md > hr", -2]] as const) {
       const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: DOC } });
       await imagesDone(page);
       const nested = await page.evaluate(() => { const w = document.querySelector(".fileview-md > details")!; return { kids: w.children.length, tall: (document.querySelector(".fileview-md > p > img") as HTMLElement).getBoundingClientRect().height }; });
@@ -186,21 +206,29 @@ test("in a browser, the real module: inside a wrapper's swallowed run, a picture
         body.scrollTop += target.getBoundingClientRect().top - body.getBoundingClientRect().top + x;
       }, [sel, extra]);
       await frames(page, 2);
-      const st0 = await scrollTopOf(page);
-      const topEl = await page.evaluate((s: string) => {
-        const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
-        const el = document.querySelector(s)!; const target = s.endsWith("img") ? el.parentElement! : el;
-        return Math.round((target.getBoundingClientRect().top - br.top) * 10) / 10;
-      }, sel);
-      near(topEl, -extra, what + ": the scene starts with the element at its depth", 1);
-      await trapWrites(page);
+      const before = await targetBox(page, sel);
+      near(before.top, -extra, what + ": the scene starts with the element at its depth", 1);
       await click(page, "Raw");
       const row = (await rowAtTop(page))!;
       assert.ok(!WRAP_ROW.test(row.text), what + `: the Raw top row is not the wrapper's (got ${JSON.stringify(row.text)} at scrollTop ${row.scrollTop}; the second round: <details>, 1750px up)`);
-      assert.deepEqual(await writes(page), [], what + `: the viewer wrote no scrollTop across the switch (no place read, so no seat; the body's landing, ${row.scrollTop} for ${st0}, is the browser's own)`);
+      let tol = 1.5;
+      if (what === "the picture, 100px in") {
+        // the picture's block is one Raw row (its data: URI, wrapped): the seat puts it 100px of the picture's height into the row, the
+        // browser snaps that to a whole pixel, and the way back scales the snap by the picture's height over the row's
+        assert.ok(row.text.startsWith("![a picture]("), what + `: the Raw top row is the picture's own (got ${JSON.stringify(row.text)}; before Slice 5 no seat, the browser's own landing)`);
+        const rowBox = (await box(page, "code.hljs .fv-cl", "![a picture]("))!;
+        tol = Math.max(1.5, 0.5 * before.height / (rowBox.bottom - rowBox.top) + 1);
+      } else {
+        // the rule started below the edge, so its row keeps that distance: the rule's own row 2px below the edge, the blank row before
+        // it the top row
+        const hrRow = (await box(page, "code.hljs .fv-cl", "---"))!;
+        near(hrRow.top, 2, what + `: the rule's own row 2px below the edge (the top row is ${JSON.stringify(row.text)}; before Slice 5 no seat, the browser's own landing at ${row.scrollTop})`, 1);
+      }
       await click(page, "Rendered");
-      const back = (await topBlock(page))!;
-      assert.ok(/^Paragraph \d+:/.test(back.text), what + `: back in Rendered a paragraph is on top (got ${JSON.stringify(back.text)})`);
+      const back = await targetBox(page, sel);
+      near(back.top, before.top, what + `: back in Rendered the element is where it was (before Slice 5: no seat either way, a paragraph on top by the browser's own landing)`, tol);
+      const top = (await topElement(page))!;
+      assert.ok(what === "the picture, 100px in" ? top.tag === "P" && top.hasImg : top.tag === "HR", what + `: the element is the top block again (got ${JSON.stringify(top)})`);
       assert.deepEqual(errors, [], what + ": no script error");
       await page.close();
     }
@@ -221,7 +249,7 @@ test("in a browser, the real module: inside a wrapper's swallowed run, a picture
   });
 });
 
-test("in a browser, the real module: two html blocks a blank line apart read as no place from either element, so the Raw click seats nothing (the second round read the second element as its block and put the Raw view one row off)", { timeout: 180000 }, async (t) => {
+test("in a browser, the real module: two html blocks a blank line apart are their own blocks (Slice 5's flattened walk; before it the map paired the first to nothing and the second to both, the place refused both elements and the Raw click seated nothing; the second round read the second element as its block and put the Raw view one row off): from either element the Raw switch lands on the block's own row and the return puts it back where it was", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const DOC = "# Report\n\n" + paras(1, 40) + "\n\n<p>Alpha: the first of two adjacent html blocks.</p>\n\n<p>Beta: the second, a blank line after the first.</p>\n\n" + paras(41, 80) + "\n";
     for (const who of ["Alpha:", "Beta:"]) {
@@ -229,12 +257,12 @@ test("in a browser, the real module: two html blocks a blank line apart read as 
       await scrollInto(page, ".fileview-md > p", who, 3); await frames(page, 2);
       const before = (await box(page, ".fileview-md > p", who))!;
       near(before.top, -3, who + " the scene starts with the element 3px past the edge", 1);
-      await trapWrites(page);
       await click(page, "Raw");
       const row = (await rowAtTop(page))!;
-      assert.deepEqual(await writes(page), [], who + ` the viewer wrote no scrollTop across the switch, the pairing refused (the Raw top row is ${JSON.stringify(row.text)} at ${row.scrollTop} for ${before.scrollTop}, the browser's own landing; the second round seated ${who === "Beta:" ? "Beta's block, one row off" : "nothing here either"})`);
+      assert.ok(row.text.startsWith("<p>" + who), who + ` the Raw top row is the block's own (got ${JSON.stringify(row.text)} at ${row.scrollTop} for ${before.scrollTop}; before Slice 5 the pairing was refused and the viewer seated nothing, the browser's own landing; the second round seated ${who === "Beta:" ? "Beta's block, one row off" : "nothing here"})`);
       await click(page, "Rendered");
-      assert.ok(/^Paragraph \d+:|^Alpha|^Beta/.test((await topBlock(page))!.text), who + " back in Rendered without error");
+      const back = (await box(page, ".fileview-md > p", who))!;
+      near(back.top, before.top, who + " back in Rendered the element is where it was");
       assert.deepEqual(errors, [], who + " no script error");
       await page.close();
     }
