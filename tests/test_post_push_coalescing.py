@@ -116,12 +116,17 @@ class ControlRouteLatency(unittest.TestCase):
         return out
 
     def test_end_answers_fast_while_builds_run(self):
+        # the target is a session the kernel KNOWS (registered, not live): /end refuses an unknown name
+        # with a 404 before any of the work this test times, so a phantom would measure nothing
+        km.NAMES.mkdir(parents=True, exist_ok=True)
+        (km.NAMES / "probe-session").write_text("probe-session\t\n")
+        self.addCleanup(lambda: (km.NAMES / "probe-session").unlink())
         # simulate the pile: three threads stuck in the (patched, slow) fleet build
         for _ in range(3):
             threading.Thread(target=km._push_all, daemon=True).start()
         km._pusher_wake.clear()
         t0 = time.time()
-        status, _ = self._post("/end", {"name": "nonexistent-session-probe"})
+        status, _ = self._post("/end", {"name": "probe-session"})
         took = time.time() - t0
         self.assertLess(took, 1.5, "the control route sat behind push work — the wedge shape")
         self.assertEqual(status, 200)

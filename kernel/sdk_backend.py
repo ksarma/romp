@@ -2638,10 +2638,16 @@ class ApiHealth:
 
 
 def read_reg(state_dir: Path, sid: str) -> dict | None:
+    """The reg as parsed, or None when the file is absent, will not read, or holds JSON that is not an
+    object (a list, a string, null). A non-object body is the failed read that read_reg_for_rmw's
+    contract and the kernel's _thread_reg partition already name it; handed through as parsed, it made
+    owns() memoize True for a list and a caller's `.update` raise instead of skipping its write (review
+    round 6, 2026-09-09)."""
     try:
-        return json.loads(_reg_path(state_dir, sid).read_text())
+        reg = json.loads(_reg_path(state_dir, sid).read_text())
     except (OSError, ValueError):
         return None
+    return reg if isinstance(reg, dict) else None
 
 
 def read_reg_for_rmw(state_dir: Path, sid: str) -> "dict | None":
@@ -3582,6 +3588,14 @@ def list_regs(state_dir: Path) -> list[dict]:
         #                                                nothing (review find 2026-09-01)
         try:
             r = json.loads(Path(de.path).read_text())
+            if not isinstance(r, dict):
+                # JSON, but not an object (a list, a string, null): no writer produces this, so it is a
+                # broken record like the torn body below and takes the same arm (the cached last good row
+                # if any, else skipped, one line per incident). It used to reach setdefault and raise out
+                # of the scan; the kernel's live merge caught that around the WHOLE SDK half, so one such
+                # file dropped every SDK row from the live map (every other live SDK session unresolvable
+                # by name), and a first backend build read it and failed (review round 6, 2026-09-09)
+                raise ValueError("not a JSON object (%s)" % type(r).__name__)
         except (OSError, ValueError) as e:
             if de.path not in _REG_SERVE_WARNED:   # once per incident, not per scan (scans run
                 _REG_SERVE_WARNED.add(de.path)     # several times a second — review find)

@@ -242,10 +242,38 @@ class CaptionsMemo(_State):
             st = km._caps_memo_report()
             self.assertEqual(st["entries"], 0, "a read that failed after a successful stat is never memoized")
             self.assertEqual(st["fail"], 2)
-            self.assertEqual(err.getvalue().count("unreadable"), 1, "one stderr line per failure episode")
+            # the line says the file did not read, once per episode, and names no stat failure: the stat succeeded
+            # here (round 12 of the unknown-name PR: it claimed a successful stat for every failed read, false for
+            # a failed non-ENOENT stat; the thread-reg line was corrected in round 11)
+            self.assertEqual(err.getvalue().count("captions: %s.jsonl did not read (" % SID), 1, "one stderr line per failure episode")
+            self.assertNotIn("successful stat", err.getvalue())
+            self.assertNotIn("its stat failed", err.getvalue(), "the stat succeeded: no stat error to name")
         finally:
             os.chmod(self.cap_path(), 0o644)
         self.assertEqual(dict(km._captions(SID)), ref_captions(SID), "readable again: read and memoized")
+        self.assertEqual(km._caps_memo_report()["entries"], 1)
+
+    def test_a_read_after_a_failed_stat_is_counted_and_names_the_stats_error(self):
+        # a symlink loop where the store file should be: the stat fails (ELOOP), jd._file_key answers a _StatFailed
+        # carrying the error, the open fails with the same error, and the read is a `fail` that is not memoized,
+        # its one stderr line naming the read's error and the stat's (round 12; the chmod-0 case above is the
+        # successful-stat case and cannot tell the wordings apart)
+        jd.CAPDIR.mkdir(parents=True, exist_ok=True)
+        os.symlink(self.cap_path().name, self.cap_path())
+        self.assertIsInstance(jd._file_key(str(self.cap_path())), jd._StatFailed, "the premise: the stat fails")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            a = km._captions(SID)
+            b = km._captions(SID)
+        self.assertEqual((dict(a), dict(b)), ({}, {}))
+        st = km._caps_memo_report()
+        self.assertEqual((st["entries"], st["fail"]), (0, 2), "a read after a failed stat is a fail and is never memoized")
+        self.assertEqual(err.getvalue().count("captions: %s.jsonl did not read (" % SID), 1, "one stderr line per failure episode")
+        self.assertIn("; its stat failed (", err.getvalue(), "the stat's error is named beside the read's")
+        self.assertNotIn("successful stat", err.getvalue())
+        os.unlink(self.cap_path())
+        self.write_caps(self.ROWS)
+        self.assertEqual(dict(km._captions(SID)), ref_captions(SID), "a real file again: read and memoized")
         self.assertEqual(km._caps_memo_report()["entries"], 1)
 
     def test_the_fork_seed_publishes_a_new_inode_so_a_memoized_read_of_the_child_is_not_served(self):
@@ -626,7 +654,10 @@ class ThreadRegMemo(_State):
             self.assertEqual(km._thread_reg(SID), {})
         st = km._thread_reg_report()
         self.assertEqual((st["entries"], st["fail"]), (0, 2))
-        self.assertEqual(err.getvalue().count("unreadable"), 1, "one stderr line per failure episode")
+        # the line says the record did not read (round 11 of the unknown-name PR: it claimed a successful stat for
+        # every failed read, false for a failed non-ENOENT stat), once per episode
+        self.assertEqual(err.getvalue().count("thread-reg: %s.json did not read (" % SID), 1, "one stderr line per failure episode")
+        self.assertNotIn("successful stat", err.getvalue())
         self.publish_reg(self.REG)
         self.assertEqual(km._thread_reg(SID), self.REG)
         self.assertEqual(km._thread_reg_report()["entries"], 1)
@@ -687,8 +718,22 @@ class PerfWiring(_State):
 
     def test_the_reference_names_the_three_memos(self):
         doc = Path(os.path.join(ROOT, "docs", "reference.md")).read_text()
+        flat = " ".join(doc.split())   # whitespace-normalised: a phrase the doc wraps across lines cannot slip past a pin
         for name in ("`caps`", "`states_overlay`", "`thread_reg`"):   # the fork's memo row is `caps` (A2)
             self.assertIn(name, doc)
+        # the row's own sentence names the key, not the parenthetical about the old `captions` name
+        self.assertIn("`caps` is the memo behind the captioner-store reader", flat)
+        self.assertIn("keyed like `caps`", flat)
+        # the /perf memo doc's `fail` covers a read after a failed stat too, and says the stat's error is named
+        # (round 12 of the unknown-name PR: it defined fail as a read after a successful stat; round 13: the pins
+        # read the normalised text, since the old wording wrapped as "after a / successful stat" on main and on
+        # the PR's base, which a line-bound pin could not see)
+        self.assertNotIn("successful stat", flat)
+        self.assertIn("`fail` (a read that did not succeed on a file that exists", flat)
+        self.assertIn("the stat's error when the stat failed", flat)
+        # the thread_reg memo's `fail` also counts a body that is not JSON or not a JSON object, which the
+        # captions memo skips line by line (round 13; round 12 said the two were defined alike)
+        self.assertIn("also a body that is not JSON or not a JSON object", flat)
 
     def test_the_bench_empties_the_new_memos_for_its_cold_rows(self):
         src = Path(os.path.join(ROOT, "tools", "perf-bench.py")).read_text()

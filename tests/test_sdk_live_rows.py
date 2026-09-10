@@ -5,9 +5,13 @@ from an otherwise-successful listing — and absence from a listing reads as dea
 postal bus refused sends to live peers over exactly this class of gap). One bad row now keeps its
 other sessions listed, and the failing session itself stays visible as a minimal waiting row.
 Synthetic; hermetic state."""
+import io
+import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from pathlib import Path
 from unittest import mock
 from romp_load import load_source
 
@@ -148,6 +152,58 @@ class ListingCompleteness(unittest.TestCase):
         self.assertIsNotNone(reg, "the flip rewrote a whole readable reg from the cached base")
         self.assertFalse(reg.get("alive"))
         self.assertEqual(reg.get("name"), "web", "the cached base carried the full row, not a gut")
+
+    def test_a_reg_that_is_a_json_list_is_a_failed_read_never_a_raise(self):
+        # a body that is valid JSON but not an object (a list, a string, null) reached setdefault and RAISED
+        # out of the scan; the kernel's live merge caught that around the WHOLE SDK half, so one such file
+        # dropped every SDK row from the live map, and by-name resolution of every other live SDK session
+        # answered "no live session named" (review round 6, 2026-09-09). It takes the torn-body arm: an
+        # uncached one is skipped, loudly and once per incident; a cached one serves its last good row.
+        sid2 = "dddddddd-2222-3333-4444-cccccccccccc"
+        p2 = sb._reg_path(self.be.state_dir, sid2)
+        p2.write_bytes(json.dumps([1, 2]).encode())
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rows = {r["sid"] for r in sb.list_regs(self.be.state_dir)}
+            again = {r["sid"] for r in sb.list_regs(self.be.state_dir)}
+        self.assertEqual((rows, again), ({self.SID}, {self.SID}),
+                         "the good row is returned and the list-bodied one skipped, on every scan")
+        lines = [ln for ln in err.getvalue().splitlines() if "list_regs: read failed for %s.json" % sid2 in ln]
+        self.assertEqual(len(lines), 1, "one line per incident, not per scan: %r" % err.getvalue())
+        self.assertIn("(ValueError)", lines[0])
+        self.assertIn("no prior row to serve", lines[0])
+        # seen readable first: the last good row is served, exactly as for a torn body
+        sb.write_reg(self.be.state_dir, sid2, {"sid": sid2, "name": "api", "alive": True})
+        self.assertIn(sid2, {r["sid"] for r in sb.list_regs(self.be.state_dir)}, "cache warmed")
+        p2.write_bytes(b"null")
+        served = {r["sid"]: r for r in sb.list_regs(self.be.state_dir)}
+        self.assertIn(sid2, served, "absence reads as death downstream: the last good row is served")
+        self.assertEqual(served[sid2].get("name"), "api")
+
+    def test_a_backend_builds_with_a_json_list_reg_on_disk(self):
+        # SdkBackend.__init__ walks list_regs for the stale-awaiting heal; the raise above made a first build
+        # fail, and the kernel then records "no SDK backend" for the process lifetime (review round 6)
+        root = Path(tempfile.mkdtemp())
+        sb.write_reg(root, self.SID, {"sid": self.SID, "name": "web", "alive": True})
+        sb._reg_path(root, "dddddddd-2222-3333-4444-cccccccccccc").write_bytes(b"[1, 2]")
+        with redirect_stderr(io.StringIO()):
+            be = sb.SdkBackend(root, "/bin/true", lambda *a, **k: None)
+        self.assertEqual(set(be.live_sessions()), {self.SID},
+                         "the good session is listed; the broken file hides nothing and stops nothing")
+
+    def test_read_reg_answers_none_for_a_non_object_body_so_a_write_skips_not_raises(self):
+        # read_reg handed a list through as parsed: owns() memoized True for it, and _update_reg's
+        # reg.update raised instead of skipping the write the unreadable-reg guard promises (review round 6)
+        self.path.write_bytes(b"[1, 2]")
+        self.assertIsNone(sb.read_reg(self.be.state_dir, self.SID))
+        self.assertIsNone(sb.read_reg_for_rmw(self.be.state_dir, self.SID), "exists but will not read, never {}")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.be._update_reg(self.SID, queue=["x"])        # raised AttributeError before
+        self.assertEqual(self.path.read_bytes(), b"[1, 2]", "the write was skipped and the file left for a person")
+        self.assertIn("skipping a queue write", err.getvalue())
+        self.assertFalse(self.be.owns(self.SID), "a record that will not read is no positive answer")
+        self.assertNotIn(self.SID, self.be._owns_memo, "and is not memoized as one")
 
     def test_the_alive_flip_never_loses_to_an_rmw_snapshot(self):
         import threading
