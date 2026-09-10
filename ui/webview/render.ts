@@ -7212,7 +7212,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       // waits for the release, and the two checks here run INSIDE that parked run, since the hover close can take the flyout off
       // while a run is parked and a later frame can change the signature again
       rebuildFly = () => { if (!sub.isConnected || flySig() === builtSig) return; build(); };
-      if (focusInput) (sub.querySelector(".ctx-tag-input") as HTMLInputElement | null)?.focus();
+      // the click-open's focus does not scroll the flyout (round 9): a plain focus() scrolled the capped box to the input at its foot, so
+      // from 24 tags on the flyout opened with the session's own rows and their x above the fold, where the hover-open showed them at the
+      // top. The input keeps the keyboard; the first keystroke scrolls the caret into view, as the browser does for the field that holds it
+      if (focusInput) (sub.querySelector(".ctx-tag-input") as HTMLInputElement | null)?.focus({ preventScroll: true });
       // leave-tolerance: entering either surface cancels the pending close; leaving both arms it
       sub.addEventListener("pointerenter", cancelHoverTimers);
       sub.addEventListener("pointerleave", armHoverClose);
@@ -7283,8 +7286,8 @@ window.addEventListener("mousedown", (e) => { if (emojiPrompt && !emojiPrompt.ca
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && emojiPrompt) { e.stopPropagation(); e.preventDefault(); closeEmojiPrompt(); } }, true);
 // The menu leaves when the page moves under it, and not when it scrolls within itself (round 8 of the tab menu review): the
 // Tags flyout is capped at the pane's height and scrolls its own rows (.ctx-sub-tags), and a capture listener on the window
-// sees that scroll too, so from 23 tags on a click on the Tags row closed the menu as the flyout opened (openTagsFly focuses
-// the New tag input, which scrolls the capped box to it) and a wheel over a hover-opened flyout closed it on the first tick.
+// sees that scroll too, so a wheel over the open flyout closed the menu on the first tick, as did a click's scroll into view
+// (and, until round 9 made the click-open's focus a preventScroll one, the click on the Tags row itself from 24 tags on).
 // A scroll whose target the menu contains is the menu's own and is left alone; the document's scroll is not contained, and a
 // scroll in any other box on the page still dismisses. The selection menu shares this listener and the same rule
 window.addEventListener("scroll", (e) => { if (ctxMenuEl && e.target instanceof Node && ctxMenuEl.contains(e.target)) return; dismissTabMenu(); }, true);

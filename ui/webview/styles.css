@@ -753,8 +753,9 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    foot scrolls with the rows (the flat structure the rows' insertBefore(nrow) scheme relies on); place() reads the flyout's height
    after layout, so the capped box is what it seats. The capped box is usable because the window's scroll listener that dismisses
    the menu when the page moves under it ignores a scroll whose target the menu contains (render.ts, beside dismissTabMenu's other
-   listeners; round 8): without that exemption the flyout's own scroll closed the menu, on the click that opened it (the New tag
-   input's focus scrolls the box) and on the first wheel tick. tab-hide-browser.test measures the thirty-tag flyout inside the pane,
+   listeners; round 8): without that exemption the flyout's own scroll closed the menu on the first wheel tick and on a click's
+   scroll into view. The click that opens the flyout focuses the New tag input without scrolling the box (round 9), so the flyout
+   opens at its top with the session's own rows in view. tab-hide-browser.test measures the thirty-tag flyout inside the pane,
    reaches Configure tags by scrolling, and drives the scroll through render.ts's own listeners in both engines. No structural rule
    (nothing holds the box open; the rows size its width, as before). */
 .ctx-sub-tags { max-height: calc(100dvh - 8px); overflow-y: auto; overscroll-behavior: contain; }
