@@ -44,5 +44,24 @@ must live in the second file.
   by older readers, and written back whole by the other editors. romp never writes the format's own `suggestionId`, the key the other
   editors set on a comment their change answers, and reads one it finds as the change that answered
   the comment.
+- Since 2026-09-11 one transient file sits beside a sidecar, or beside `config.json`, for the length
+  of a write: `<name>.lock`, holding the writer's pid and a timestamp (and, from a pid namespace
+  other than the initial one, a second line naming that namespace). The vendored CLIs and romp's
+  host take it around their load-to-rename, so a writer arriving mid-write waits for the other's
+  rename instead of erasing its write (vendor patch 0008; decision 49 in `plans/file-review.md`).
+  It is broken when its writer is dead or it is older than fifteen seconds, or its stamp is that far
+  ahead of the reader's clock, and it is removed when the write ends. The pid is judged only by a
+  reader in the pid namespace that stamped it (pids are per namespace); any other lock is judged by
+  its stamp's age alone. Breaking it leaves a second transient name while the break runs,
+  `<name>.lock.break`: the claim its waiters serialize on, so that one of them removes the dead lock
+  and none removes the fresh lock that replaces it. The breaker removes its claim when the break
+  ends; a claim whose breaker died is removed by the next waiter, under the same dead-or-stale test
+  as the lock. The lock also makes the `.trackchanges/` folder when a first write finds none, and
+  removes it again when nothing else landed in it. A maker whose release finds only other writers'
+  locks or claims in the folder appends one line, `made-dir`, to each of them: their holders (or,
+  should a holder die, the breaker of its lock) take the folder away at their own release. That
+  line is the one thing the lock writes into a file it did not create. Both names are outside the
+  format (neither ends in `.json`, so no host reads them as a sidecar), and the two names and the
+  line are everything the lock leaves under `.trackchanges/`.
 - A romp-only field is read defensively wherever it is read: the sidecar is JSON anyone can edit,
   and a field of the wrong shape must claim nothing rather than fail the panel.

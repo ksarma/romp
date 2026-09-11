@@ -4,13 +4,12 @@ auto-retries" to calm the auto-retry + judge storm during an API / usage-limit o
 tier is gated on `not _retry_paused_on()`, so a pause that never clears silently kills EVERY judge for
 hours (the user 2026-06-30, who noted none of the judges were running and called it an API problem that should
 clear the second a successful non-API-error response arrives on any session). _auto_resume_retry
-clears it event-based, one rule per reason (review round 2, 2026-09-07): a MANUAL pause lifts on the first
-live session that is NOT blocked on an API error AND wrote fresh output since the pause began (mtime past
-the pause floor); a LIMIT pause lifts when the usage report stops naming an account-wide window at 100%
-(the same reading that engaged it); a SPEND pause lifts on fresh assistant output from a session on the
-billing the cap is on. The lift leaves the capped session's own record standing (only a human prompt clears
-a spend record), so the un-pause records its instant and the spend engage stands down on records older than
-it (review round 3, 2026-09-07); a new record engages again.
+clears it event-based, one rule per reason: a MANUAL pause lifts on the first live session that is NOT
+blocked on an API error AND wrote fresh output since the pause began (mtime past the pause floor); a LIMIT
+pause lifts when the usage report stops naming an account-wide window at 100% (the same reading that engaged
+it); a SPEND pause lifts on fresh assistant output from a session on the billing the cap is on. The lift
+leaves the capped session's own record standing (only a human prompt clears a spend record), so the un-pause
+records its instant and the spend engage stands down on records older than it; a new record engages again.
 """
 import contextlib
 import inspect
@@ -134,6 +133,7 @@ class RetryPauseAutoResume(unittest.TestCase):
     def test_a_re_arm_marks_the_views_dirty(self):
         # the ONE write on this path the feed shows: a given-up card's summary sentinel goes back to None
         self._recovered()
+        km._pusher_wake.clear()                         # the setup write's own wake (ruling K1, Q1 = A): the wake asserted below is the lift's, not the setup's
         km.jd.rearm_failed_summaries = lambda now, **k: 2
         floor = km._views_dirty[0]
         km._auto_resume_retry(int(time.time()), {})
@@ -143,9 +143,11 @@ class RetryPauseAutoResume(unittest.TestCase):
     def test_the_no_op_paths_neither_wake_nor_dirty(self):
         floor = km._views_dirty[0]
         km._set_retry_paused(False)
+        km._pusher_wake.clear()                         # the setup write's own wake (ruling K1, Q1 = A): the path under test starts clean
         km._auto_resume_retry(int(time.time()), {})
         self.assertFalse(km._pusher_wake.is_set(), "not paused: nothing to deliver")
         km._set_retry_paused(True)
+        km._pusher_wake.clear()                         # the same for the second setup write; the assertions below are about the resume check's paths
         pfloor = km._retry_pause_ts()
         path = self._transcript("stale.jsonl", pfloor - 60)
         km._alive_sessions = lambda now, tmux: [{"sid": "s1", "path": path}]
@@ -155,8 +157,18 @@ class RetryPauseAutoResume(unittest.TestCase):
         self.assertFalse(km._pusher_wake.is_set(), "still paused: nothing to deliver")
         self.assertEqual(km._views_dirty[0], floor)
 
+    def test_the_writer_itself_wakes_the_pusher_and_leaves_the_views_clean(self):
+        # ruling K1 (variant): the writer's tail is _push_soon(), not upstream's _mark_views_dirty(): a wake per write, no dirty mark
+        floor = km._views_dirty[0]
+        km._set_retry_paused(True)
+        self.assertTrue(km._pusher_wake.is_set(), "the write itself wakes the pusher; the flip rides its next globalRetryPaused frame")
+        self.assertEqual(km._views_dirty[0], floor, "no view reads the flag: the writer stamps no dirty mark")
+        km._pusher_wake.clear()
+        km._set_retry_paused(False)
+        self.assertTrue(km._pusher_wake.is_set(), "the clear is a write too: one wake per write")
+        self.assertEqual(km._views_dirty[0], floor)
 
-    # --- review round 3 (2026-09-07): a spend record older than the last spend lift is already ruled on ---
+    # --- a spend record older than the last spend lift is already ruled on ---
     def test_the_capped_session_lookup_skips_records_older_than_the_lift_and_keeps_the_rest(self):
         sess = [{"sid": "s%d" % i, "path": str(self.dir / ("s%d.jsonl" % i))} for i in range(4)]
         errs = {sess[0]["path"]: {"spendLimit": True, "t": 1000},        # a second before the lift's evidence: stale
@@ -166,7 +178,7 @@ class RetryPauseAutoResume(unittest.TestCase):
         km._alive_sessions = lambda now, tmux: sess
         km._api_error = lambda p: errs.get(p)
         self.assertEqual(km._spend_capped_session(0, {})["sid"], "s0", "no lift on record: the first capped session")
-        # `after` is the lifting output's own stamp, whole seconds like the record's (review round 4)
+        # `after` is the lifting output's own stamp, whole seconds like the record's
         self.assertEqual(km._spend_capped_session(0, {}, after=1001)["sid"], "s2", "1000 < 1001 is stale, 0 is unknown")
         del errs[sess[2]["path"]]
         self.assertEqual(km._spend_capped_session(0, {}, after=1001)["sid"], "s3", "a record in the evidence's second counts")
@@ -175,7 +187,7 @@ class RetryPauseAutoResume(unittest.TestCase):
         self.assertIsNone(km._spend_capped_session(0, {}, after=1001), "every remaining record predates the lift")
         self.assertEqual(km._retry_pause_lifted_at(), 0.0, "no file: nothing on record")
 
-    # --- the bottom bar's API health cell (2026-09-07) reads the pause and its lift off this same file ---
+    # --- the bottom bar's API health cell reads the pause and its lift off this same file ---
     def test_the_api_health_frame_reads_paused_limit_then_ok_after_the_clear(self):
         km._set_retry_paused(True, reason="limit")
         floor = km._retry_pause_ts()
@@ -185,23 +197,28 @@ class RetryPauseAutoResume(unittest.TestCase):
         live = {"s1": {"state": "idle", "auth": "login", "backend": "sdk"}}
         km._alive_sessions = lambda now, tmux: [{"sid": "s1", "name": "web", "path": path}]
         km._api_error = lambda p: None
-        saved = km.Sessions.__dict__["backend_for"]
+        saved_backend, saved_usage = km.Sessions.__dict__["backend_for"], km._usage_limits
         km.Sessions.backend_for = staticmethod(lambda sid: object())
+        km._usage_limits = lambda: {"limited": {"fiveHour": True}}
         km._api_last_failed_cache.clear()
         try:
             f = km._api_health_frame(int(time.time()), live)
-            self.assertEqual((f["state"], f["reason"], f["text"]), ("paused", "limit", "paused \u00b7 usage limit"))
+            self.assertEqual((f["state"], f["reason"], f["text"]), ("paused", "limit", "paused · usage limit"))
             self.assertEqual(f["since"], int(floor), "the pause's own t, not the clock")
+            km._auto_resume_retry(int(time.time()), live)
+            self.assertTrue(km._retry_paused_on(), "the report still names the window: the output lifts nothing")
+            km._usage_limits = lambda: {"limited": {}}
             km._auto_resume_retry(int(time.time()), live)
             self.assertFalse(km._retry_paused_on())
             f = km._api_health_frame(int(time.time()), live)
             self.assertEqual((f["state"], f["reason"], f["text"], f["since"]), ("ok", "", "ok", 0))
         finally:
-            km.Sessions.backend_for = saved
+            km.Sessions.backend_for = saved_backend
+            km._usage_limits = saved_usage
             km._api_last_failed_cache.clear()
 
 
-# ── a usage-limit pause lifts on a LOGIN-billed session's fresh ASSISTANT output only (review round 1, 2026-09-07) ──
+# ── the lift rules, per reason, over real synthetic transcripts ──────────────────────────────────────
 def _iso(t):
     return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
@@ -258,13 +275,13 @@ class _PauseFixture(unittest.TestCase):
         self.clock = _KernelClock()
         km.time = self.clock
         km.jd.STATE = self.dir
-        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
+        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline; it should wake the pusher")
         km.jd.rearm_failed_summaries = lambda now, **k: 0
         km._usage_limits = lambda: {"limited": {"fiveHour": True}}    # the login account's window is at 100%
         self.sent = []
         km._send_to_app = lambda app, m: self.sent.append((app, m))
         km.Sessions.backend_for = staticmethod(lambda sid: object())
-        km._auth_key_present = lambda: True                    # a key exists on this box
+        km._auth_key_present = lambda: True                    # an apiKeyHelper is configured on this machine
         km._APIH_LAST[0] = None
         km._api_err_cache.clear()
         km._api_last_failed_cache.clear()
@@ -312,15 +329,15 @@ class _PauseFixture(unittest.TestCase):
 
 class LimitPauseLift(_PauseFixture):
     """A usage-limit pause lifts on the same reading that engaged it: the usage report (_account_limited).
-    Round 0 lifted it on ANY alive session's transcript mtime past the floor (a key-billed session's
+    The mtime rule lifted it on ANY alive session's transcript mtime past the floor (a key-billed session's
     streaming or a human prompt), and _auto_pause_on_limit re-engaged the next cycle while the window held:
-    the pause file, and the bottom bar's API cell, flipped every cycle. Round 1 narrowed the lift to a
-    login-billed session's fresh assistant output, which could never fire after the reset (the login
-    sessions the limit blocked are the ones the pause gates), so the pause held until a human acted.
-    Round 2: one authority for both edges. No session's output lifts it while the report reads limited."""
+    the pause file, and the bottom bar's API cell, flipped every cycle. A rule keyed on a login-billed
+    session's fresh assistant output could never fire after the reset (the login sessions the limit blocked
+    are the ones the pause gates), so the pause would hold until a human acted. One authority for both edges:
+    no session's output lifts it while the report reads limited."""
 
     def test_a_key_billed_session_s_output_during_a_limit_leaves_the_pause_and_the_frame_stable(self):
-        # the round-1 probe: a limited window, one key-billed session appending an answer every other cycle
+        # a limited window, one key-billed session appending an answer every other cycle
         now = time.time()
         path, row = self._session(SID_KEY, "web", "key", _out_line(now - 60))
         live = {SID_KEY: row}
@@ -334,9 +351,9 @@ class LimitPauseLift(_PauseFixture):
         self.assertEqual(km._retry_pause_reason(), "limit")
 
     def test_the_window_reset_lifts_it_once_with_no_login_output_while_a_key_session_streams(self):
-        # the round-2 HIGH finding: after the window rolls, nothing but a human could lift the round-1 rule.
-        # A login session blocked on the limit cannot serve (its auto-retry is gated on this very pause), the
-        # key session is rightly skipped; the report clearing by its own clock must be the lift.
+        # after the window rolls, nothing but a human could lift an output-keyed rule: a login session blocked on
+        # the limit cannot serve (its auto-retry is gated on this very pause), the key session is rightly skipped;
+        # the report clearing by its own clock must be the lift
         now = time.time()
         api_path, api_row = self._session(SID_LOGIN, "api", "login",
                                           _out_line(now - 120), _err_line(now - 90, "API Error: 429 rate limited", 429, "rate_limit"))
@@ -358,9 +375,9 @@ class LimitPauseLift(_PauseFixture):
         self.assertTrue(km._pusher_wake.is_set(), "the clear wakes the pusher; globalRetryPaused rides its push")
 
     def test_login_output_under_a_still_limited_report_holds_the_pause_and_the_frame(self):
-        # the round-2 LOW finding (extra usage: the login account is served at 100%): round 1 lifted on each
-        # output record and the limit re-engaged the next cycle, the pause file flipping at the output cadence.
-        # One authority: the report. A login turn's end refreshes it, and that is the edge that lifts.
+        # with extra usage on, the login account is served at 100%: a lift on each output record would be
+        # re-engaged the next cycle, the pause file flipping at the output cadence. One authority: the report.
+        # A login turn's end refreshes it, and that is the edge that lifts.
         now = time.time()
         path, row = self._session(SID_LOGIN, "api", "login", _out_line(now - 60))
         live = {SID_LOGIN: row}
@@ -376,8 +393,8 @@ class LimitPauseLift(_PauseFixture):
         self.assertEqual(self._states(), ["paused", "ok"])
 
     def test_a_login_billed_session_s_fresh_assistant_output_lifts_it_once(self):
-        # the round-1 shape: the login account serves a request and its usage report catches up (a login
-        # turn's end refreshes it); the lift lands once, on the report
+        # the login account serves a request and its usage report catches up (a login turn's end refreshes it);
+        # the lift lands once, on the report
         now = time.time()
         path, row = self._session(SID_LOGIN, "api", "login", _out_line(now - 60))
         live = {SID_LOGIN: row}
@@ -429,42 +446,35 @@ class LimitPauseLift(_PauseFixture):
         km._auto_resume_retry(int(now), {SID_KEY: row})
         self.assertFalse(km._retry_paused_on(), "the user's own stop: the mtime rule is unchanged")
 
-    def test_a_session_of_unknown_auth_bills_the_login_only_when_this_box_holds_no_key(self):
-        # the box declares nothing here (the declared cases, on a real backend, are test_expected_auth's), so
-        # the backend's rule (new_session_auth, which _bills_login's fallback calls directly) is the key test
-        # alone: the stub answers what sdk_backend.unpicked_auth answers with nothing declared and no pick
-        real_sdk = km._sdk
-
-        def world(key):
-            km._sdk = lambda: type("B", (), {"key_available": key,
-                                             "new_session_auth": lambda self: "key" if key else "login"})()
-        try:
-            world(True)
-            self.assertFalse(km._bills_login({"state": "idle"}), "a key on the box: this session may be billing it")
-            self.assertFalse(km._bills_login(None))
-            world(False)
-            self.assertTrue(km._bills_login({"state": "idle"}), "no key and nothing declared: the login")
-            self.assertTrue(km._bills_login({"auth": "key", "authLive": "login"}), "the CLI's own live report wins")
-            self.assertFalse(km._bills_login({"auth": "key"}))
-        finally:
-            km._sdk = real_sdk
+    def test_a_session_of_unknown_auth_bills_the_login_only_when_this_machine_holds_no_key(self):
+        km._auth_key_present = lambda: True
+        self.assertFalse(km._bills_login({"state": "idle"}), "a key on the machine: this session may be billing it")
+        self.assertFalse(km._bills_login(None))
+        km._auth_key_present = lambda: False
+        self.assertTrue(km._bills_login({"state": "idle"}), "no key anywhere: the login is the only account it can bill")
+        self.assertTrue(km._bills_login({"auth": "key", "authLive": "login"}), "the CLI's own live report wins")
+        self.assertFalse(km._bills_login({"auth": "key"}))
 
 
-class SpendPauseLift(_PauseFixture):
-    """A spend pause lifts on fresh assistant output from a session on the billing the cap is on (recorded
-    at the engage: _retry_pause_bills), never from the other billing. The mtime rule it replaced counted a
-    session on the OTHER account streaming past the cap; _auto_pause_on_spend_limit re-engaged the next
-    cycle while the capped session sat on its record, and the pause file, so the cell, flipped every cycle
-    (review round 2, 2026-09-07). The capped session itself qualifies once it serves again."""
+class _SpendWorld(_PauseFixture):
+    """The spend classes' world: no usage window; 'web' bills the key and sits on its cap record, 'api' bills the
+    login and streams. A base with no tests of its own, so each class below is collected once."""
 
     def setUp(self):
         super().setUp()
         km._usage_limits = lambda: {"limited": None}                  # no usage window is involved
         self.now = time.time()
-        # the probe's two sessions: 'web' bills the key and sits on the cap; 'api' bills the login and streams
         self.web, web_row = self._session(SID_KEY, "web", "key", _out_line(self.now - 120), _err_line(self.now - 90, SPEND_TEXT))
         self.api, api_row = self._session(SID_LOGIN, "api", "login", _out_line(self.now - 60))
         self.live = {SID_KEY: web_row, SID_LOGIN: api_row}
+
+
+class SpendPauseLift(_SpendWorld):
+    """A spend pause lifts on fresh assistant output from a session on the billing the cap is on (recorded
+    at the engage: _retry_pause_bills), never from the other billing. The mtime rule it replaces counted a
+    session on the OTHER account streaming past the cap; _auto_pause_on_spend_limit re-engaged the next
+    cycle while the capped session sat on its record, and the pause file, so the cell, flipped every cycle.
+    The capped session itself qualifies once it serves again."""
 
     def test_the_other_billing_s_output_leaves_the_pause_and_the_frame_stable(self):
         states = []
@@ -473,7 +483,7 @@ class SpendPauseLift(_PauseFixture):
             states.append(self._cycle(int(self.now) + i, self.live))
         self.assertEqual(states, ["paused"] * 8, "a login session's output says nothing about the key's cap")
         self.assertEqual([(m["state"], m["text"]) for a, m in self.sent],
-                         [("paused", "paused \u00b7 spend cap \u00b7 1 waiting")], "one frame across eight cycles")
+                         [("paused", "paused · spend cap · 1 waiting")], "one frame across eight cycles")
         self.assertEqual((km._retry_pause_reason(), km._retry_pause_bills()), ("spend", "key"))
 
     def test_the_capped_session_s_own_output_lifts_it_once(self):
@@ -512,8 +522,8 @@ class SpendPauseLift(_PauseFixture):
         self._append(api, _out_line(floor + 9), floor + 9)
         self.assertEqual(self._cycle(int(self.now) + 4, live), "ok")
 
-    def test_an_older_kernel_s_pause_file_takes_any_session_s_fresh_output_but_not_a_bare_mtime(self):
-        km._set_retry_paused(True, reason="spend")             # no billing recorded
+    def test_a_pause_file_with_no_billing_takes_any_session_s_fresh_output_but_not_a_bare_mtime(self):
+        km._set_retry_paused(True, reason="spend")             # no billing recorded (a file another kernel wrote)
         floor = km._retry_pause_ts()
         os.utime(self.api, (floor + 1, floor + 1))
         km._auto_resume_retry(int(self.now), self.live)
@@ -533,13 +543,13 @@ class SpendPauseLift(_PauseFixture):
         self.assertEqual(km._retry_pause_bills(), "")
 
 
-class SpendPauseStandDown(SpendPauseLift):
+class SpendPauseStandDown(_SpendWorld):
     """The lift leaves the capped session's own record standing: a spend cap is on-you, so romp sends it no
-    retry and only a human prompt to that session clears _api_error. Round 2's rule then re-engaged on that
-    record the cycle after every lift, so the pause alternated at the streaming session's output cadence and
-    settled ON once it idled, gating the judges and the idle-queue drives until someone prompted the capped
-    session (review round 3, 2026-09-07). The un-pause of a spend pause now records liftedAt and the floor it
-    superseded, the memory rides every later write, and the engage skips records older than it."""
+    retry and only a human prompt to that session clears _api_error. An engage that read that record again
+    would put the pause back the cycle after every lift, so it alternated at the streaming session's output
+    cadence and settled ON once it idled, gating the judges and the idle-queue drives until someone prompted
+    the capped session. The un-pause of a spend pause records liftedAt and the floor it superseded, the memory
+    rides every later write, and the engage skips records older than it."""
 
     SID_TESTS = "88888888-aaaa-4bbb-8ccc-000000000003"
     SID_DOCS = "88888888-aaaa-4bbb-8ccc-000000000004"
@@ -552,10 +562,10 @@ class SpendPauseStandDown(SpendPauseLift):
     def _file(self):
         return json.loads((self.dir / "retry-paused.json").read_text())
 
-    def test_the_harness_scenario_one_lift_no_re_engage_and_the_pause_off_once_the_streamer_idles(self):
-        # the round-3 HIGH finding's harness: 'web' (key) sits on its cap record, 'tests' (key) streams one
-        # answer per cycle for six cycles after the lift, then idles for three. Before the fix the states
-        # alternated paused/degraded at the output cadence (four engages, three lifts) and were paused at the end.
+    def test_one_lift_no_re_engage_and_the_pause_off_once_the_streamer_idles(self):
+        # 'web' (key) sits on its cap record, 'tests' (key) streams one answer per cycle for six cycles after the
+        # lift, then idles for three. Without the stand-down the states alternated paused/degraded at the output
+        # cadence (four engages, three lifts) and were paused at the end.
         tests = self._tests_session()
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
@@ -598,11 +608,10 @@ class SpendPauseStandDown(SpendPauseLift):
         self.assertEqual(self._states(), ["paused", "degraded", "paused", "degraded"])
 
     def test_a_second_session_s_record_from_the_second_before_the_lift_cycle_engages(self):
-        # review round 4 (2026-09-07): liftedAt is the lifting OUTPUT's own time, not the lift cycle's clock.
-        # The probe's timeline: 'web' (key) sits on its cap; 'tests' (key) serves at T+0.1 (the evidence);
-        # 'docs' (key) hits the cap at T+0.6; the pusher's lift cycle runs at T+1.2. The CLI stamps both
-        # records T, and a liftedAt of T+1.2 read in whole seconds (T+1) skipped docs' record, written after
-        # the evidence, until that session's next attempt.
+        # liftedAt is the lifting OUTPUT's own time, not the lift cycle's clock. The timeline: 'web' (key) sits on
+        # its cap; 'tests' (key) serves at T+0.1 (the evidence); 'docs' (key) hits the cap at T+0.6; the pusher's
+        # lift cycle runs at T+1.2. The CLI stamps both records T, and a liftedAt of T+1.2 read in whole seconds
+        # (T+1) would skip docs' record, written after the evidence, until that session's next attempt.
         tests = self._tests_session()
         docs, docs_row = self._session(self.SID_DOCS, "docs", "key", _out_line(self.now - 60))
         self.live[self.SID_DOCS] = docs_row
@@ -655,8 +664,8 @@ class SpendPauseStandDown(SpendPauseLift):
         self.assertEqual((km._retry_pause_reason(), km._retry_pause_bills()), ("spend", "key"))
 
     def test_the_user_s_resume_over_a_spend_pause_stands_until_a_new_record(self):
-        # the same stale record undid the detail's Resume the next cycle (the setGlobalRetryPaused route writes
-        # the same un-pause): a user gesture is new information too
+        # the same stale record would undo the detail's Resume the next cycle (the setGlobalRetryPaused route
+        # writes the same un-pause): a user gesture is new information too
         self.assertEqual(self._cycle(int(self.now), self.live), "paused")
         floor = km._retry_pause_ts()
         km._set_retry_paused(False)
@@ -674,7 +683,7 @@ class SpendPauseStandDown(SpendPauseLift):
         self.assertEqual(set(d), {"paused", "liftedAt", "supersedes"})
         self.assertEqual((d["paused"], d["supersedes"]), (False, floor), "supersedes: the floor of the pause it cleared")
         lifted = d["liftedAt"]
-        self.assertEqual(lifted, int(floor + 1), "the lifting output's own time (review round 4)")
+        self.assertEqual(lifted, int(floor + 1), "the lifting output's own time")
         self.assertEqual(km._retry_pause_lifted_at(), lifted)
         self.assertEqual((km._retry_pause_ts(), km._retry_pause_reason(), km._retry_pause_bills()), (0.0, "", ""))
         km._set_retry_paused(False)                            # a Resume over an unpaused file keeps what it finds
@@ -696,11 +705,11 @@ class SpendPauseStandDown(SpendPauseLift):
 
 
 class PauseWriteSeq(_PauseFixture):
-    """The apiHealth frame's `seq` counts pause-file writes (review round 2, 2026-09-07): the detail's pause
-    button writes the file on a press, and the frame that follows must differ from every frame before it
-    even when the cycle's auto-pause put the same state back, so the shell can clear its acknowledgment on
-    the frame that answers the press and read the truth (paused again) instead of holding a disabled,
-    mislabeled button for the rest of the window."""
+    """The apiHealth frame's `seq` counts pause-file writes: the detail's pause button writes the file on a
+    press, and the frame that follows must differ from every frame before it even when the cycle's auto-pause
+    put the same state back, so the shell can clear its acknowledgment on the frame that answers the press
+    and read the truth (paused again) instead of holding a disabled, mislabeled button for the rest of the
+    window."""
 
     def test_a_write_that_puts_the_same_state_back_still_yields_a_new_frame(self):
         now = time.time()

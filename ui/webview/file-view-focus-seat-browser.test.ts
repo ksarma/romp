@@ -4,7 +4,7 @@
 // (file-comments-focus-browser.test.ts, file-comments-margin-fixes-browser.test.ts) mount the panel over a body they paint
 // themselves, with a seam whose setMode, reload and scrollToOffset do nothing and whose onRendered hooks the test fires by
 // hand; none of them drives the viewer's own order of events around a focused card — the pass inside fireRendered, then the
-// seat that puts the reader's top block back (renderBody, setTextSize, the width repaint), the landing pressHold parks
+// seat that puts the reader's top block back (renderBody, textSizeControl's step, the width repaint), the landing pressHold parks
 // while a pointer is pressed over the body — and the merge audit of 2026-09-09 named the gap (its F4). This leg opens the
 // panel, arms the focus with a click on a comment's highlight, and after each of Raw and Rendered, one A+, a session's
 // write landing through the poll and a reload run under a held press asserts the card level with its mark within a pixel,
@@ -135,7 +135,7 @@ test("in a browser, the real viewer, pane 1000x600: a comment's card made the fo
     n = s.paints;
     await clickView(page, "Rendered"); await paintsReach(page, n + 1); await frames(page, 3);
     s = await scene(page); assert.equal(s.view, "rendered", "(a) the Rendered view"); seated(s, "a", "(a) after Rendered", true);
-    // (b) A+: setTextSize's repaint, then its seat
+    // (b) A+: textSizeControl's set runs the step bracket: its repaint, then its seat
     n = s.paints;
     await page.click('button[aria-label="Larger text"]'); await paintsReach(page, n + 1); await frames(page, 3);
     s = await scene(page); assert.notEqual(s.size, "100", "(b) the text size stepped: " + s.size); seated(s, "a", "(b) after A+", false);

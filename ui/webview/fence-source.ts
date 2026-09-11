@@ -1,10 +1,10 @@
-// A fence's text as the NOTE holds it, for the viewer's Copy button (Slice 3 of plans/markdown-viewer.md; the slice's review,
-// round 1). marked's lexer rewrites the source before it tokenizes anything: CR and CRLF become LF (Lexer.lex), and every run
-// of tabs that begins a line, after any spaces, becomes four spaces a tab (Lexer.blockTokens, `^( *)(\t+)`, marked 12), fences
-// included. So a code token's `text`, the code element's textContent and the `raw` string mdBlock captures from it all carry
-// spaces where the note has tabs, and Copy on a Makefile recipe or a tab-indented Go fence pasted back as spaces (make: "missing
-// separator"); the Raw view of the same note shows the tabs. The lexer keeps no offsets, so this module finds each code token's
-// lines in marked's own view of the source and reads them back through the rewrite:
+// A fence's text as the FILE holds it, for the viewer's Copy button. marked's lexer rewrites the source before it tokenizes
+// anything: CR and CRLF become LF (Lexer.lex), and every run of tabs that begins a line, after any spaces, becomes four
+// spaces a tab (Lexer.blockTokens, `^( *)(\t+)`), fences included. So a code token's `text`, the code element's textContent
+// and the `raw` string mdBlock captures from it all carry spaces where the file has tabs, and Copy on a Makefile recipe or a
+// tab-indented Go fence pasted back as spaces (make: "missing separator"); the Raw view of the same file shows the tabs. The
+// lexer keeps no offsets, so this module finds each code token's lines in marked's own view of the source and reads them
+// back through the rewrite:
 //   - an expanded tab whose four spaces all lie in the fence's content is a tab again;
 //   - one a container's indentation consumed part of (a tab-indented line inside a two-space list item: marked slices the
 //     item's indent off the expanded line) is the spaces that remain, which is what CommonMark makes of a partially consumed
@@ -16,9 +16,9 @@
 // and is matched by its lines alone); a fence whose text is empty by its opener and closer, since marked's text is empty for
 // a fence of no lines and for one of a single blank line alike; fences are searched in document order, each from past the one
 // before. A fence not found (an author's construction this reading does not follow) is null, and the caller copies the
-// rendered text as before. Nothing here changes the parse: the source reaches marked untouched (the plan's Slice 4 rule,
-// extensions over string preprocessing), and the rendered text is untouched too; the display's four spaces measure a tab at
-// the sheet's `tab-size: 4`.
+// rendered text as before. Nothing here changes the parse: the source reaches marked untouched, and the rendered text is
+// untouched too; the display's four spaces measure a tab at the sheet's `tab-size: 4`. file-view-fence-source.test.ts runs
+// it over the real marked.
 
 /** marked's code token, as mdBlock collects it from walkTokens: the text, and whether it is an indented block (no fence lines). */
 export type Fence = { text: string; indented: boolean };
@@ -103,11 +103,11 @@ export function fenceSources(source: string, fences: Fence[]): (string | null)[]
   for (const f of fences) {
     if (f.text === "") {
       // marked's text is "" for a fence of no lines and for one of a single blank line alike (its content match is lazy, and
-      // the renderer's dropped newline is the lexer's too), and for an opener the note ends on (an unclosed fence runs to
-      // the end). Read as one blank content line, a fence of no lines was searched past its own closer, and the first
-      // blank line after any opener-shaped line matched: the blank first line inside the next fence, whose lines then lay
-      // behind `from` and made it null, so its Copy pasted marked's spaces. So the empty text is matched as its lines are:
-      // an opener, then a closer, or a blank line and a closer, or a blank line the note ends on. (An indented block's
+      // the renderer's dropped newline is the lexer's too), and for an opener the file ends on (an unclosed fence runs to
+      // the end). Read as one blank content line, a fence of no lines would be searched past its own closer, and the first
+      // blank line after any opener-shaped line would match: the blank first line inside the next fence, whose lines then
+      // lay behind `from` and made it null, so its Copy pasted marked's spaces. So the empty text is matched as its lines
+      // are: an opener, then a closer, or a blank line and a closer, or a blank line the file ends on. (An indented block's
       // text is never empty: the lexer takes blank lines as space before its code rule sees them.)
       let end = -1;
       for (let j = from; j < lines.length && end < 0; j++) {
@@ -142,7 +142,7 @@ export function fenceSources(source: string, fences: Fence[]): (string | null)[]
 /** What mdBlock's fence pass consumes: for each rendered text (a code element's textContent before the highlight), the source
  *  texts of the code tokens that render as it, in document order, null for one not found, so a code element takes the next
  *  entry under its own text and identical fences stay in step. Empty when the source holds no tab and no CR: marked's view is
- *  then the source itself and every token's text is already the note's. */
+ *  then the source itself and every token's text is already the file's. */
 export function fenceCopyQueue(source: string, fences: Fence[]): Map<string, (string | null)[]> {
   const queue = new Map<string, (string | null)[]>();
   if (!fences.length || !/[\t\r]/.test(source)) return queue;

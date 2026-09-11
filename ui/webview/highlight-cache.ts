@@ -9,10 +9,10 @@
 // Bounded: at most CAP entries and about BUDGET characters of output, oldest out first (a Map keeps
 // insertion order; a hit is re-inserted so it counts as newest). Very large sources are not cached at all.
 //
-// Auto-detection guesses among AUTO_LANGUAGES, the ten grammars the chat registers (render.ts), not among every
-// grammar on the core: the viewer registers six more (viewer-grammars.ts, decision 5 of plans/markdown-viewer.md) and
-// the chat bundle carries them through file-view.ts, so without the subset an unlabeled fence would be tokenized
-// against sixteen grammars, a slower tail and different guesses (Slice 3 of plans/markdown-viewer.md, 2026-09-08).
+// Auto-detection guesses among AUTO_LANGUAGES, the ten grammars the chat registers (render.ts), not among every grammar
+// on the core: the file viewer registers six more (viewer-grammars.ts) and the chat bundle carries them through
+// file-view.ts, so without the subset an unlabeled fence would be tokenized against sixteen grammars, a slower tail and
+// different guesses.
 export interface Highlighter {
   getLanguage(name: string): unknown;
   highlight(raw: string, opts: { language: string }): { value: string };

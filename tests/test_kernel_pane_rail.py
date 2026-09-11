@@ -238,16 +238,16 @@ class PaneRailTest(unittest.TestCase):
 
 
 class ApiHealthCell(unittest.TestCase):
-    """The bottom bar's API health cell (the user 2026-09-07): a sibling of #rail-usage, painted from the
-    kernel's apiHealth push by _LANDING_APIH_JS (tests/test_api_health_rail.py covers the frame and the
-    detail's content). Source-level placement and styling pins against km._landing()."""
+    """The bottom bar's API health cell: a sibling of #rail-usage, painted from the kernel's apiHealth push by
+    _LANDING_APIH_JS (tests/test_api_health_rail.py covers the frame and the detail's content). Source-level
+    placement and styling pins against km._landing()."""
 
     def setUp(self):
         self.html = km._landing()
 
     def test_the_cell_follows_the_usage_cell_inside_the_scroll_group(self):
         i_usage, i_api, i_acts = (self.html.index(k) for k in ("id=rail-usage", "id=rail-api", "class=rail-acts"))
-        self.assertLess(i_usage, i_api, "right of the spend cell")
+        self.assertLess(i_usage, i_api, "right of the usage cell")
         self.assertLess(i_api, i_acts, "inside .rail-scroll, before the pinned actions")
         self.assertGreater(i_api, self.html.index("<div class=rail-scroll>"))
 
@@ -257,16 +257,16 @@ class ApiHealthCell(unittest.TestCase):
         self.assertTrue(tag in self.html, "the cell's markup: hidden, a keyboard button, its own label, a dot, the word")
         tag = re.search(r"<div id=rail-api[^>]*>", self.html).group(0)
         self.assertNotIn("title", tag, "the rail's no-title rule: the detail is the one hover surface")
-        self.assertNotIn("data-keycmd", tag, "no palette command in v1")
+        self.assertNotIn("data-keycmd", tag, "no palette command yet")
 
     def test_the_hidden_attribute_beats_the_rail_s_own_display_rule(self):
         # The UA's [hidden]{display:none} loses to ANY author display rule, and .ru-w{display:flex} is one, so
-        # without this author rule the cell showed a gray 'API ok' from page load and forever on an older
-        # kernel that never sends a frame (the #mtabs button[hidden] idiom in the same stylesheet).
+        # without this author rule the cell would show a gray 'API ok' from page load, and forever on a kernel
+        # that never sends a frame (the #mtabs button[hidden] idiom in the same stylesheet).
         self.assertTrue(".ru-w{display:flex;" in self.html, "the author display rule the attribute must beat")
         self.assertTrue("#rail-api[hidden]{display:none}" in self.html, "no author [hidden] rule for #rail-api")
 
-    def test_the_word_wears_the_spend_cell_s_exact_font(self):
+    def test_the_word_wears_the_usage_cell_s_exact_font(self):
         pct = re.search(r"\.ru-pct\{([^}]*)\}", self.html).group(1)
         txt = re.search(r"\.ah-text\{([^}]*)\}", self.html).group(1)
         self.assertEqual(pct, txt, "byte for byte: no new font size on the rail")
@@ -283,11 +283,11 @@ class ApiHealthCell(unittest.TestCase):
             self.assertNotIn("var(--accent)", rule, "status colors keep their own meaning")
 
     def test_the_light_theme_keeps_the_ok_dot_visible_and_the_state_dots_their_colors(self):
-        # the dark label gray at .55 blended into the light rail; the light label color keeps the glyph. Scoped to
-        # the ok state (review round 2, 2026-09-07): the bare `body.theme-light .ah-dot` (0,2,1) outranked the
-        # detail's `.ah-dot[data-state=…]` rules (0,2,0), so the card's headline dot lost its amber and red. The
-        # hover history's History head shows the signal's quiet states (healthy, unknown) with the same glyph, so
-        # its round 1 added them to this rule (the base gray fell to about 1.6:1 on the white tip too)
+        # the dark label gray at .55 blends into the light rail; the light label color keeps the glyph. Scoped to
+        # the ok state: a bare `body.theme-light .ah-dot` (0,2,1) would outrank the detail's `.ah-dot[data-state=…]`
+        # rules (0,2,0), and the card's headline dot would lose its amber and red. The History head shows the signal's
+        # quiet states (healthy, unknown) with the same glyph, so the rule names them too (the base gray falls to
+        # about 1.6:1 on the white tip)
         self.assertTrue("body.theme-light #rail-api[data-state=ok] .ah-dot,body.theme-light .ah-dot[data-state=ok],"
                         "body.theme-light .ah-dot[data-state=healthy],body.theme-light .ah-dot[data-state=unknown]{background:#5D574E}" in self.html,
                         "the light override names the ok state and the History head's quiet states")
@@ -295,11 +295,8 @@ class ApiHealthCell(unittest.TestCase):
         self.assertNotIn("body.theme-light .ah-dot[data-state=degraded]", self.html, "the state rules are not restated per theme")
 
     def test_the_shell_socket_carries_the_dashboard_s_wid_minted_before_it_connects(self):
-        # review round 2 (2026-09-07): the detail's openSession rode a shell socket with no wid, so the kernel's
-        # reveal fell to _send_to_view's broadcast and every open dashboard's chat switched.
-        # Re-aimed in the 2026-09-09 fold (upstream #1127): the connect reads the script's wid() helper, defined
-        # above it, and the id is minted once, by the HEAD script _landing() emits before any pane or the shell
-        # script parses (it was minted by the settings script, after the iframes, until then)
+        # the detail's openSession rides the shell socket; with no wid on it the kernel's reveal would fall to the
+        # broadcast and every open dashboard's chat would switch (_reveal_chat_for)
         js = km._LANDING_MOBILE_JS
         helper = "function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){return '';}}"
         connect = "var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));"
@@ -312,7 +309,7 @@ class ApiHealthCell(unittest.TestCase):
         self.assertIn("'/ws?app=shell&wid='", self.html)
 
     def test_an_emptied_usage_cell_collapses_its_gap(self):
-        # renderRows empties #rail-usage on a login-only machine; as a zero-width flex item it still paid the
+        # renderRows empties #rail-usage on a login-only machine; as a zero-width flex item it would still pay the
         # scroll group's gap on both sides (28px to the API cell instead of 16px)
         self.assertTrue("#rail-usage:empty{display:none}" in self.html, "the emptied cell must leave the flex flow")
 
@@ -330,14 +327,28 @@ class ApiHealthCell(unittest.TestCase):
         self.assertLess(esc.index("__rompApiClose"), esc.index("__rompUsageClose"), "both ride #ru-back; the detail's hook is checked first")
         self.assertIn("if(ru&&ru.classList.contains('on')&&window.__rompApiClose){window.__rompApiClose();closed=true;}", esc)
 
+    def test_the_page_binds_the_shell_send_hook_once_to_the_shell_socket_reader(self):
+        # one binding, upstream's module-level reader over shellSock (which each dial's onopen replaces); the fork's
+        # pre-offer closure inside shellWS() rebound the hook on every dial with the same behaviour in every socket
+        # state, and retired with the 4d-4 fold (R1). A second assignment is an auto-merge duplicate, not a feature.
+        reader = ("window.__rompShellSend=function(o){try{if(shellSock&&shellSock.readyState===1)"
+                  "{shellSock.send(JSON.stringify(o));return true;}}catch(e){}return false;};")
+        self.assertEqual(self.html.count("window.__rompShellSend="), 1,
+                         "one binding: the shellSock reader; shellWS rebinds nothing")
+        js = km._LANDING_MOBILE_JS
+        self.assertIn(reader, js)
+        self.assertLess(js.index(reader), js.index("function shellWS()"), "bound at load, before the first dial")
+        shell_ws = js[js.index("function shellWS()"):]
+        self.assertNotIn("__rompShellSend=", shell_ws, "the dial's closure never rebinds it")
+
     def test_the_cell_s_script_loads_after_the_usage_script_it_borrows_the_backdrop_from(self):
         self.assertLess(self.html.index("getElementById('rail-usage')"), self.html.index("getElementById('rail-api')"))
 
 
 class ShellSocketIdentity(unittest.TestCase):
     """A reveal the kernel answers to the shell's own op (the API detail's openSession) reaches the asking
-    dashboard alone once the shell client carries its wid, the way a feed pane's does (review round 2,
-    2026-09-07). Synthetic clients; no sockets."""
+    dashboard alone, since the shell client carries its wid the way a feed pane's does. Synthetic clients; no
+    sockets."""
 
     def _client(self, app, wid):
         return {"app": app, "wid": wid, "alive": True, "send": lambda s, w=wid, a=app: self.sink.append((a, w))}

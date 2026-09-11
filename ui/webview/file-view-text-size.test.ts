@@ -1,239 +1,202 @@
-// The viewer's text size and its fluid measure (the user 2026-09-07: the rendered markdown had to be zoomable, and
-// a table did not follow the Files pane when the pane was resized). The size is a fixed table of steps (TEXT_SIZES,
-// file-view.ts) that the A− / A+ buttons, the percentage readout (the reset) and Ctrl/Cmd + wheel over the body all
-// land on; the chosen step rides the viewer root as `data-fv-text`, and the sheets turn it into the one property the
-// text views read (--fv-scale). It persists per browser like the Rendered/Raw choice. Every reflow of a text view with
-// its text unchanged (a step, the body's width changing) fires the seam's onRendered, the event the comments panel
-// re-measures on; the stand-in's ResizeObserver plays the layout's report and its requestAnimationFrame the frame the
-// reports fold into. Executable over the seam test's DOM stand-in against the REAL module, plus source and sheet pins,
-// and two browser legs (headless Chromium, skipped loudly without one): the sheets over a static page, laying out a
-// wide table, a long code line, an unbreakable string and a bare picture at two pane widths and two sizes, and the
-// real module bundled into a page (the bar's geometry with a kernel-answered row, the fixed readout slot, the dimmed
-// end, the kept focus, the selection guard), and the page's own inlining of a note holding `</script>` (scriptLiteral,
-// the shared leg page's escape; the Slice 2 review, round 3: a bare JSON.stringify here would let such a note end the
-// harness script before the fetch stub). Synthetic fixtures only: the notes-api world, placeholder ids.
+// The viewer's text size, and a rendered-markdown layout that follows the viewer's width. A− and A+ in the title
+// bar step every text view through a fixed table of sizes (70 to 200 percent): a markdown file's Rendered and Raw
+// views, every other text file's code view, the SVG Source view, and a document opened from a link on the
+// dashboard's own address. The percentage between them, shown once the size is off the default, is the reset;
+// Ctrl/Cmd + wheel over the body steps the same table. The chosen step rides the viewer root as data-fv-text and
+// the sheets turn it into the one property every text size reads (--fv-scale); it persists per browser like the
+// Rendered/Raw choice. Run FOR REAL over openFileView and openUrlView against a DOM stand-in (a tree, attributes
+// and dataset, bubbling events, a small selector matcher, localStorage, a fetch answering the kernel's headers),
+// plus pins over both sheets and an optional browser leg (headless Chromium through a child driver, skipped where
+// no browser is installed; CI installs none). Synthetic fixtures only.
+// This fork carries more than the offer landed: the seam's reflow contract (a step and the body's width fire onRendered as a
+// reflow through the stand-in's ResizeObserver and requestAnimationFrame), the Files pane's Recent row, and the real module
+// bundled into a page (the bar's geometry with a kernel-answered row, the readout's fixed slot, the kept focus, the selection
+// guard, a selection across the comments panel's highlight, the page's escape of a note holding `</script>`: scriptLiteral),
+// plus the stand-in's projection (ui/test-dom-shim.ts). The stand-in hides its edges with the shared rule (hideEdges).
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
-import { inspect } from "node:util";
-import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { marked } from "marked";   // the browser leg renders a synthetic task list through the real marked for mdBlock's task stamp
+import { inspect } from "node:util";
+import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import type { FileViewActionCtx } from "./file-view";
 import { scriptLiteral } from "./real-viewer-leg";
 
 const requireCjs = createRequire(__filename);
+
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
 const PANEL = web("file-comments.ts");
 const SHEETS: ReadonlyArray<readonly [string, string]> = [["styles.css", web("styles.css")], ["feed.css", web("feed.css")]];
 
-// ── a DOM stand-in: the seam test's (file-view-seam.test.ts), verbatim: ancestry, ids, attributes, events with
-// capture and bubbling, a small selector engine. Each suite inlines its own (the repo's idiom). ──
+// ── a DOM stand-in: the members the viewer touches, with a tree and bubbling events ─────────────────
 class Ev {
-  target: El | Txt | null = null;
+  target: El | null = null;
   currentTarget: El | null = null;
   defaultPrevented = false;
   stopped = false;
-  key: string; ctrlKey: boolean; metaKey: boolean;
-  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) {
-    this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey;
+  ctrlKey: boolean; metaKey: boolean; deltaY: number; deltaMode: number; key: string;
+  constructor(public type: string, init: { ctrlKey?: boolean; metaKey?: boolean; deltaY?: number; deltaMode?: number; key?: string } = {}) {
+    this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey;
+    this.deltaY = init.deltaY ?? 0; this.deltaMode = init.deltaMode ?? 0; this.key = init.key ?? "";
     hideEdges(this);
   }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
 type Listener = (ev: Ev) => void;
-type Reg = { type: string; cb: Listener; capture: boolean; once: boolean };
-const optsOf = (o?: boolean | { capture?: boolean; once?: boolean }) =>
-  typeof o === "boolean" ? { capture: o, once: false } : { capture: !!(o && o.capture), once: !!(o && o.once) };
+type Part = { tag: string; id: string; classes: string[]; attrs: Array<[string, string | null]>; known: boolean };
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
-class Txt {
-  nodeType = 3;
-  parentNode!: El | null;
-  constructor(public data: string) { Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true }); hideEdges(this); }
-  get textContent(): string { return this.data; }
-  get parentElement(): El | null { return this.parentNode; }
-  // the change painters (Slice 2) split a row's text at a change's edges, as the comment painters do
-  splitText(off: number): Txt {
-    const tail = new Txt(this.data.slice(off));
-    this.data = this.data.slice(0, off);
-    const p = this.parentNode;
-    if (p) { const i = p.childNodes.indexOf(this); p.childNodes.splice(i + 1, 0, tail); tail.parentNode = p; }
-    return tail;
+/** One compound selector (`tag#id.class[attr="v"]`); a shape the matcher does not know fits nothing. */
+function part(s: string): Part {
+  const m = /^([a-zA-Z][\w-]*|\*)?(#[\w-]+)?((?:\.[\w-]+)*)((?:\[[^\]]+\])*)$/.exec(s);
+  if (!m) return { tag: "", id: "", classes: [], attrs: [], known: false };
+  const attrs: Array<[string, string | null]> = [];
+  let known = true;
+  for (const a of m[4].match(/\[[^\]]+\]/g) || []) {
+    const am = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(a);
+    if (am) attrs.push([am[1], am[2] ?? null]); else known = false;
   }
-}
-type Compound = { tag: string | null; id: string | null; classes: string[]; attrs: Array<[string, string | null]> };
-/** Comma groups of descendant chains (`A B`), each link a compound `tag#id.class[attr="v"]`. */
-function parseSel(sel: string): Compound[][] {
-  return sel.split(",").map((g) => g.trim()).filter(Boolean).map((g) => g.split(/\s+/).map((s) => {
-    const m = /^([a-zA-Z][\w-]*)?(#[\w-]+)?((?:\.[\w-]+)*)((?:\[[\w-]+(?:="[^"]*")?\])*)$/.exec(s);
-    if (!m) throw new Error("stand-in: unsupported selector " + s);
-    const classes = (m[3].match(/\.[\w-]+/g) || []).map((c) => c.slice(1));
-    const attrs: Array<[string, string | null]> = [];
-    for (const a of m[4].match(/\[[^\]]+\]/g) || []) { const am = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(a)!; attrs.push([am[1], am[2] ?? null]); }
-    return { tag: m[1] ? m[1].toUpperCase() : null, id: m[2] ? m[2].slice(1) : null, classes, attrs };
-  }));
+  return { tag: (m[1] || "").toLowerCase(), id: m[2] ? m[2].slice(1) : "", classes: (m[3].match(/\.[\w-]+/g) || []).map((c) => c.slice(1)), attrs, known };
 }
 class El {
-  nodeType = 1;
-  tagName: string;
-  parentNode!: El | null;
-  childNodes!: Array<El | Txt>;
-  attrs = new Map<string, string>();
-  listeners: Reg[] = [];
-  hidden = false; disabled = false; title = ""; type = ""; value = ""; placeholder = ""; spellcheck = true; wrap = "";
-  src = ""; alt = ""; href = ""; download = ""; target = ""; rel = "";
-  innerHTML = "";
-  style: Record<string, any> = { setProperty: (k: string, v: string) => { this.style[k] = v; } };   // CSSOM's write, for the tables' --fv-body-w
+  parentNode: El | null = null;
+  childNodes: Array<El | string> = [];
+  title = ""; hidden = false; type = ""; disabled = false; tabIndex = -1; innerHTML = "";
+  href = ""; target = ""; rel = ""; spellcheck = true; value = ""; src = ""; alt = ""; download = "";
+  style: Record<string, string> = {};
   onclick: ((ev: Ev) => void) | null = null;
-  scrolled = 0;                                  // scrollIntoView calls (scrollToOffset's visible effect)
-  constructor(tag: string) {
-    this.tagName = tag.toUpperCase();
-    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
-    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
-    hideEdges(this);
-  }
-  get id(): string { return this.attrs.get("id") || ""; }
+  private attrs = new Map<string, string>();
+  private listeners: Array<{ type: string; fn: Listener; once: boolean; passive: boolean | undefined }> = [];
+  constructor(public tagName: string) { hideEdges(this); }   // the edges (parentNode, childNodes, the listener table) hide with the shared rule
+  get id(): string { return this.attrs.get("id") ?? ""; }
   set id(v: string) { this.attrs.set("id", v); }
-  get isConnected(): boolean { return doc.body.contains(this); }
-  get ownerDocument(): typeof doc { return doc; }
-  get parentElement(): El | null { return this.parentNode; }
-  get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
-  get className(): string { return this.attrs.get("class") || ""; }
-  set className(v: string) { this.attrs.set("class", v); }
-  get classes(): string[] { return this.className.split(/\s+/).filter(Boolean); }
+  get className(): string { return this.attrs.get("class") ?? ""; }
+  set className(v: string) { this.attrs.set("class", v.trim()); }
+  private get classes(): string[] { return this.className.split(/\s+/).filter(Boolean); }
   classList = {
     add: (...c: string[]) => { const s = new Set(this.classes); for (const x of c) s.add(x); this.className = [...s].join(" "); },
     remove: (...c: string[]) => { const s = new Set(this.classes); for (const x of c) s.delete(x); this.className = [...s].join(" "); },
-    toggle: (c: string, on?: boolean) => { const want = on === undefined ? !this.classes.includes(c) : on; if (want) this.classList.add(c); else this.classList.remove(c); },
+    toggle: (c: string, on?: boolean): boolean => { const want = on ?? !this.classes.includes(c); if (want) this.classList.add(c); else this.classList.remove(c); return want; },
     contains: (c: string) => this.classes.includes(c),
   };
-  dataset: Record<string, string> = new Proxy({} as Record<string, string>, {
-    get: (_, k) => this.attrs.get("data-" + kebab(String(k))) as string,
+  /** data-* through dataset, the way the viewer writes its root attribute (camelCase to kebab-case, as the DOM does). */
+  dataset: Record<string, string | undefined> = new Proxy({} as Record<string, string | undefined>, {
+    get: (_, k) => this.attrs.get("data-" + kebab(String(k))),
     set: (_, k, v) => { this.attrs.set("data-" + kebab(String(k)), String(v)); return true; },
     has: (_, k) => this.attrs.has("data-" + kebab(String(k))),
     deleteProperty: (_, k) => { this.attrs.delete("data-" + kebab(String(k))); return true; },
   });
-  get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; if (v !== "") this.appendChild(new Txt(v)); }
-  private detach(n: El | Txt): void { const p = n.parentNode; if (p) { const i = p.childNodes.indexOf(n); if (i >= 0) p.childNodes.splice(i, 1); n.parentNode = null; } }
-  appendChild<T extends El | Txt>(n: T): T { this.detach(n); this.childNodes.push(n); n.parentNode = this; return n; }
-  prepend(...ns: Array<El | Txt>): void { for (const n of ns.slice().reverse()) { this.detach(n); this.childNodes.unshift(n); n.parentNode = this; } }
-  insertBefore<T extends El | Txt>(n: T, ref: El | Txt | null): T {
-    if (!ref) return this.appendChild(n);
-    this.detach(n);
-    const i = this.childNodes.indexOf(ref);
-    this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, n); n.parentNode = this; return n;
+  get textContent(): string { return this.childNodes.map((c) => (typeof c === "string" ? c : c.textContent)).join(""); }
+  set textContent(v: string) { this.replaceChildren(...(v === "" ? [] : [v])); }
+  /** Element children only, in order. */
+  get children(): El[] { return this.childNodes.filter((c): c is El => c instanceof El); }
+  get isConnected(): boolean { let n: El = this; while (n.parentNode) n = n.parentNode; return n === docBody; }
+  private adopt(c: El | string): void { if (c instanceof El) { c.remove(); c.parentNode = this; } }
+  appendChild<T extends El>(c: T): T { this.adopt(c); this.childNodes.push(c); return c; }
+  prepend(...cs: Array<El | string>): void { for (const c of cs) this.adopt(c); this.childNodes.unshift(...cs); }
+  insertBefore<T extends El>(c: T, ref: El | null): T {
+    if (ref && !this.childNodes.includes(ref)) throw new Error("insertBefore: the reference node is not a child of this node");
+    this.adopt(c);
+    const i = ref ? this.childNodes.indexOf(ref) : -1;
+    if (i < 0) this.childNodes.push(c); else this.childNodes.splice(i, 0, c);
+    return c;
   }
-  removeChild<T extends El | Txt>(n: T): T { this.detach(n); return n; }
-  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
-  remove(): void { this.detach(this); }
-  normalize(): void {   // unpainting a mark leaves adjacent text nodes; join them, as the browser does
-    const out: Array<El | Txt> = [];
-    for (const c of this.childNodes) {
-      if (c instanceof Txt) { if (!c.data) { c.parentNode = null; continue; } const last = out[out.length - 1]; if (last instanceof Txt) { last.data += c.data; c.parentNode = null; continue; } }
-      else c.normalize();
-      out.push(c);
-    }
-    this.childNodes = out;
+  replaceChildren(...cs: Array<El | string>): void {
+    for (const c of this.childNodes) if (c instanceof El) c.parentNode = null;
+    this.childNodes = [];
+    for (const c of cs) this.adopt(c);
+    this.childNodes = [...cs];
   }
+  remove(): void {
+    const p = this.parentNode;
+    if (!p) return;
+    const i = p.childNodes.indexOf(this);
+    if (i >= 0) p.childNodes.splice(i, 1);
+    this.parentNode = null;
+  }
+  contains(n: El | null): boolean { for (let x: El | null = n; x; x = x.parentNode) if (x === this) return true; return false; }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
-  getAttribute(k: string): string | null { return this.attrs.has(k) ? (this.attrs.get(k) as string) : null; }
-  hasAttribute(k: string): boolean { return this.attrs.has(k); }
   removeAttribute(k: string): void { this.attrs.delete(k); }
-  contains(n: El | Txt | null): boolean { for (let x: El | Txt | null = n; x; x = x.parentNode) if (x === this) return true; return false; }
-  private fits(c: Compound): boolean {
-    return (!c.tag || c.tag === this.tagName) && (!c.id || c.id === this.id) && c.classes.every((k) => this.classes.includes(k))
-      && c.attrs.every(([a, v]) => this.attrs.has(a) && (v === null || this.attrs.get(a) === v));
+  getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }
+  hasAttribute(k: string): boolean { return this.attrs.has(k); }
+  addEventListener(type: string, fn: Listener, opts?: boolean | { once?: boolean; passive?: boolean; capture?: boolean }): void {
+    this.listeners.push({ type, fn, once: typeof opts === "object" && !!opts.once, passive: typeof opts === "object" ? opts.passive : undefined });
   }
+  /** The `passive` option each listener of `type` on this element was registered with (undefined where none was given). */
+  passiveOf(type: string): Array<boolean | undefined> { return this.listeners.filter((l) => l.type === type).map((l) => l.passive); }
+  removeEventListener(type: string, fn: Listener): void { this.listeners = this.listeners.filter((l) => !(l.type === type && l.fn === fn)); }
+  /** Bubble `ev` from this element to the root: each element's listeners in registration order, then its onclick for a click. */
+  dispatchEvent(ev: Ev): boolean {
+    ev.target = this;
+    for (let n: El | null = this; n && !ev.stopped; n = n.parentNode) {
+      ev.currentTarget = n;
+      for (const l of n.listeners.slice()) {
+        if (l.type !== ev.type) continue;
+        if (l.once) n.listeners = n.listeners.filter((x) => x !== l);
+        l.fn.call(n, ev);
+      }
+      if (ev.type === "click" && n.onclick) n.onclick(ev);
+    }
+    return !ev.defaultPrevented;
+  }
+  click(): void { this.dispatchEvent(new Ev("click")); }
+  focus(): void { doc.activeElement = this; }
+  scrollIntoView(): void { /* inert */ }
+  private fits(p: Part): boolean {
+    if (!p.known) return false;
+    if (p.tag && p.tag !== "*" && p.tag !== this.tagName.toLowerCase()) return false;
+    if (p.id && p.id !== this.id) return false;
+    if (!p.classes.every((c) => this.classes.includes(c))) return false;
+    return p.attrs.every(([a, v]) => this.attrs.has(a) && (v === null || this.attrs.get(a) === v));
+  }
+  /** Comma groups of descendant chains, each link a compound. */
   matches(sel: string): boolean {
-    return parseSel(sel).some((chain) => {
-      if (!this.fits(chain[chain.length - 1])) return false;
+    return sel.split(",").some((group) => {
+      const chain = group.trim().split(/\s+/).filter(Boolean).map(part);
+      if (!chain.length || !this.fits(chain[chain.length - 1])) return false;
       let k = chain.length - 2;
-      for (let a: El | null = this.parentNode; a && k >= 0; a = a.parentNode) if (a.fits(chain[k])) k--;
+      for (let a = this.parentNode; a && k >= 0; a = a.parentNode) if (a.fits(chain[k])) k--;
       return k < 0;
     });
   }
-  closest(sel: string): El | null { for (let x: El | null = this; x; x = x.parentNode) if (x.matches(sel)) return x; return null; }
+  closest(sel: string): El | null { for (let n: El | null = this; n; n = n.parentNode) if (n.matches(sel)) return n; return null; }
   querySelectorAll(sel: string): El[] {
     const out: El[] = [];
-    const visit = (n: El) => { for (const c of n.childNodes) if (c instanceof El) { if (c.matches(sel)) out.push(c); visit(c); } };
-    visit(this);
+    const walk = (n: El) => { for (const c of n.children) { if (c.matches(sel)) out.push(c); walk(c); } };
+    walk(this);
     return out;
   }
-  querySelector(sel: string): El | null { return this.querySelectorAll(sel)[0] || null; }
-  addEventListener(type: string, cb: Listener, o?: boolean | { capture?: boolean; once?: boolean }): void { this.listeners.push({ type, cb, ...optsOf(o) }); }
-  removeEventListener(type: string, cb: Listener, o?: boolean | { capture?: boolean }): void {
-    const cap = optsOf(o).capture;
-    this.listeners = this.listeners.filter((l) => !(l.type === type && l.cb === cb && l.capture === cap));
-  }
-  dispatchEvent(ev: Ev): boolean { return dispatch(this, ev); }
-  click(): void { this.dispatchEvent(new Ev("click")); }
-  focus(): void { doc.activeElement = this; }
-  blur(): void { if (doc.activeElement === this) doc.activeElement = null; }
-  scrollIntoView(): void { this.scrolled++; }
-  getBoundingClientRect(): { left: number; top: number; right: number; bottom: number; width: number; height: number } { return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; }
-  get offsetWidth(): number { return 0; }
+  querySelector(sel: string): El | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
+const docBody = new El("body");
+const docKeys: Listener[] = [];                  // the viewer's document keydown handlers, one per open
 const doc = {
-  listeners: [] as Reg[],
-  body: null as unknown as El,
-  head: null as unknown as El,
-  hidden: false,
+  body: docBody,
   activeElement: null as El | null,
   createElement: (tag: string) => new El(tag),
-  createTextNode: (s: string) => new Txt(s),
-  getElementById: (id: string): El | null => doc.body.querySelector("#" + id),
-  querySelectorAll: (sel: string): El[] => doc.body.querySelectorAll(sel),
-  addEventListener(type: string, cb: Listener, o?: boolean | { capture?: boolean; once?: boolean }): void { doc.listeners.push({ type, cb, ...optsOf(o) }); },
-  removeEventListener(type: string, cb: Listener, o?: boolean | { capture?: boolean }): void {
-    const cap = optsOf(o).capture;
-    doc.listeners = doc.listeners.filter((l) => !(l.type === type && l.cb === cb && l.capture === cap));
-  },
-  contains: (n: El | Txt | null) => doc.body.contains(n),
+  createTextNode: (s: string) => s,
+  getElementById: (id: string): El | null => docBody.querySelector("#" + id),
+  querySelectorAll: (sel: string): El[] => docBody.querySelectorAll(sel),   // no bundle <script src>: the editor chunk cannot load
+  addEventListener: (type: string, fn: Listener) => { if (type === "keydown") docKeys.push(fn); },
+  removeEventListener: (type: string, fn: Listener) => { const i = docKeys.indexOf(fn); if (i >= 0) docKeys.splice(i, 1); },
 };
-doc.body = new El("body"); doc.head = new El("head");
-/** The DOM event path: document capture, ancestors' capture root→target, target and ancestors' bubble, document bubble. */
-function dispatch(target: El | Txt, ev: Ev): boolean {
-  ev.target = target;
-  const chain: El[] = [];
-  for (let n: El | null = target instanceof El ? target : target.parentNode; n; n = n.parentNode) chain.push(n);
-  const run = (owner: { listeners: Reg[] }, capture: boolean, node: El | null): boolean => {
-    for (const l of owner.listeners.slice()) {
-      if (l.type !== ev.type || l.capture !== capture) continue;
-      if (l.once) owner.listeners = owner.listeners.filter((x) => x !== l);
-      ev.currentTarget = node; l.cb.call(node, ev);
-      if (ev.stopped) return true;
-    }
-    if (node && !capture && ev.type === "click" && node.onclick) node.onclick(ev);
-    return false;
-  };
-  if (run(doc, true, null)) return !ev.defaultPrevented;
-  for (let i = chain.length - 1; i >= 0; i--) if (run(chain[i], true, chain[i])) return !ev.defaultPrevented;
-  for (const n of chain) if (run(n, false, n)) return !ev.defaultPrevented;
-  run(doc, false, null);
-  return !ev.defaultPrevented;
-}
 const win: any = new EventTarget();
-win.parent = win; win.innerWidth = 1200; win.innerHeight = 800;
+win.parent = win;
+win.confirm = () => true;                       // the discard ask, when a dirty buffer is about to go
 win.getSelection = () => null;
-win.confirm = () => true;
-win.postMessage = () => { /* our own window: nothing listens here */ };
+const posted: unknown[] = [];                   // what the viewer posts to its own window: the quote seed
+win.postMessage = (m: unknown) => { posted.push(m); };
 (globalThis as any).window = win;
 (globalThis as any).document = doc;
 const store = new Map<string, string>();
+const writes: Array<[string, string]> = [];     // every localStorage write, so a no-op press is shown to store nothing
 (globalThis as any).localStorage = {
   getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
-  setItem: (k: string, v: string) => { store.set(k, String(v)); },
+  setItem: (k: string, v: string) => { store.set(k, String(v)); writes.push([k, String(v)]); },
   removeItem: (k: string) => { store.delete(k); },
-};
-// The editing substrate the viewer's editorChunk() resolves from: a buffer with the two callbacks the viewer wires.
-win.__rompEditor = {
-  mount(host: El, opts: { text: string; onChange: () => void; onSave: () => void }) {
-    host.appendChild(new Txt(opts.text));
-    return { value: () => opts.text, focus() { /* inert */ }, destroy() { /* inert */ } };
-  },
 };
 // The layout's report of a size change, as the viewer hears it: a ResizeObserver stand-in that records what each
 // observer watches and lets a test deliver a report with a width. The figure layer (file-comments-regions.ts) builds
@@ -257,115 +220,138 @@ const frames = new Map<number, () => void>();
 (globalThis as any).cancelAnimationFrame = (id: number): void => { frames.delete(id); };
 const frame = (): void => { const run = [...frames.values()]; frames.clear(); for (const cb of run) cb(); };
 
-// ── the kernel's /file, /version and /sessions, as the viewer fetches them ──────────────────────────
-type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string };
-const disk: Record<string, Served> = {};
-(globalThis as any).fetch = async (url: string) => {
-  if (url.startsWith("/version")) return { json: async () => ({ fileEditing: true }) };   // consent already given
-  if (url.startsWith("/sessions")) return { json: async () => [{ id: SID, name: "api", bg: "#123456", fg: "#ffffff" }] };
-  const p = decodeURIComponent((/[?&]path=([^&]*)/.exec(url) || [])[1] || "");
-  const f = disk[p];
-  const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? f.mtimeNs : h === "X-Romp-Text-Utf8" ? "1" : null) : null) };
-  if (!f) return { ok: false, status: 404, headers, text: async () => "no such file: " + p };
-  return {
-    ok: true, status: 200, headers,
-    text: async () => String(f.bytes),
-    blob: async () => new Blob([f.bytes as unknown as BlobPart], { type: f.type }),
-  };
-};
-
-// ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
-const SID = "11111111-2222-3333-4444-555555555555";
-const ROOT = "/repo/notes-api";
+// ── fixtures: a notes-api world, synthetic throughout ──────────────────────────────────────────────
+const SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb";
+const ROOT = "/tmp/notes-api";
 const REPORT = ROOT + "/docs/report.md";
 const APP = ROOT + "/src/app.py";
 const PLOT = ROOT + "/docs/plot.png";
+const PAPER = ROOT + "/docs/paper.pdf";
+const FIG = ROOT + "/docs/fig.svg";
 const DOC = "# Report\n\n## Findings\nThe api session cut p95 latency by 40%.\n\n| run | p95 |\n| --- | --- |\n| a | 120 |\n";
 const PY = "def main():\n    return 0\n";
-const MT = "1757145600000000001";
+const SVG_XML = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>';
+const HREF = "http://notes-api.test/reports/run-1/evidence.md";
+const URL_DOC = "# Evidence\n\nThe web session's report.\n";
+const MT = "1700000000000000000";
 const SIZE_KEY = "romp:fileviewTextSize";
+type Served = { bytes: string | Uint8Array; type: string };
+const disk: Record<string, Served> = {
+  [REPORT]: { bytes: DOC, type: "text/plain; charset=utf-8" },
+  [APP]: { bytes: PY, type: "text/plain; charset=utf-8" },
+  [PLOT]: { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), type: "image/png" },
+  [PAPER]: { bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), type: "application/pdf" },
+  [FIG]: { bytes: SVG_XML, type: "image/svg+xml" },
+};
+const fileReads: string[] = [];                 // every /file fetch by path: the quote seed's fresh read shows up here
+// The fetches the viewer makes: the kernel's /file (Content-Type is its verdict: text, a picture, a PDF, an SVG),
+// its /version (editing already allowed, so no consent popup), and a same-origin document for the URL viewer,
+// answered as a real Response so the streamed, capped read runs as it does in a browser.
+(globalThis as any).fetch = (url: string) => {
+  if (url.startsWith("/version")) return Promise.resolve({ json: () => Promise.resolve({ fileEditing: true }) });
+  if (/^https?:/.test(url)) return Promise.resolve(new Response(URL_DOC, { status: 200, headers: { "Content-Type": "text/markdown; charset=utf-8" } }));
+  const p = decodeURIComponent((/[?&]path=([^&]*)/.exec(url) || [])[1] || "");
+  fileReads.push(p);
+  const f = disk[p];
+  const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? MT : h === "X-Romp-Text-Utf8" ? "1" : null) : null) };
+  if (!f) return Promise.resolve({ ok: false, status: 404, headers, text: () => Promise.resolve("no such file: " + p) });
+  return Promise.resolve({
+    ok: true, status: 200, headers,
+    text: () => Promise.resolve(String(f.bytes)),
+    blob: () => Promise.resolve(new Blob([f.bytes as unknown as BlobPart], { type: f.type })),
+  });
+};
+/** Let every pending promise chain run: the fetch settles, a blob decodes, the editor chunk's rejection reaches its catch. */
+const settle = async () => { for (let i = 0; i < 8; i++) await new Promise<void>((r) => setImmediate(r)); };
 
-// ── the probe: an action whose only job is to keep the ctx the viewer hands it and count its paints ──
+// the probe: an action whose only job is to keep the ctx the viewer hands it and count the seam's paints (onRendered)
 let seam: FileViewActionCtx | null = null;
 let paints = 0;
-let fvMod: typeof import("./file-view") | null = null;
-async function mod(): Promise<typeof import("./file-view")> {
-  if (fvMod) return fvMod;
-  fvMod = await import("./file-view");
-  fvMod.initFileView(() => { /* the WS poster: the panel's asks go nowhere here */ });
-  fvMod.registerFileViewAction({ id: "size-probe", mount(ctx) { seam = ctx; ctx.onRendered(() => { paints++; }); return null; } });
-  return fvMod;
+let bound: Promise<typeof import("./file-view")> | null = null;
+function view(): Promise<typeof import("./file-view")> {
+  if (!bound) bound = import("./file-view").then((fv) => {
+    fv.initFileView(() => { /* the WS poster: nothing asks the kernel here */ });
+    fv.registerFileViewAction({ id: "size-probe", mount(ctx) { seam = ctx; ctx.onRendered(() => { paints++; }); return null; } });
+    return fv;
+  });
+  return bound;
 }
-const settle = async () => { for (let i = 0; i < 8; i++) await new Promise<void>((r) => setImmediate(r)); };
-type Open = { fv: typeof import("./file-view"); ctx: FileViewActionCtx; wrap: El; root: El; body: El; down: El; up: El; reset: El; btn: (label: string) => El };
-/** Open `p` and wait for the fetch; the stored size is the caller's (set before the call), the format the default. */
-async function open(p: string, t: TestContext, wait = true): Promise<Open> {
-  const fv = await mod();
-  disk[REPORT] = { bytes: DOC, type: "text/plain; charset=utf-8", mtimeNs: MT };
-  disk[APP] = { bytes: PY, type: "text/plain; charset=utf-8", mtimeNs: MT };
-  disk[PLOT] = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), type: "image/png", mtimeNs: MT };
-  store.delete("romp:fileviewFmt");
+type Card = { fv: typeof import("./file-view"); ctx?: FileViewActionCtx; wrap: El; root: El; bar: El; acts: El; body: El; down: El; reset: El; up: El; btn: (label: string) => El };
+/** The card up now, with the control's three buttons held by reference (they are built once per open). */
+function card(fv: typeof import("./file-view")): Card {
+  const wrap = doc.getElementById("romp-fileview");
+  assert.ok(wrap, "a viewer is up");
+  const root = wrap!.children[0];
+  assert.equal(root.className, "fileview");
+  const bar = root.children[0];
+  assert.equal(bar.className, "fileview-bar");
+  const body = root.querySelector(".fileview-body")!;   // inside .fileview-main beside the comments aside in the local viewer; the root's child in the URL viewer
+  assert.ok(body, "the body");
+  const acts = bar.children.find((c) => c.classList.contains("fileview-acts"))!;
+  const btn = (label: string) => { const b = acts.children.find((c) => c.tagName === "button" && c.textContent === label); assert.ok(b, "the " + label + " button"); return b!; };
+  const reset = acts.children.find((c) => c.classList.contains("fileview-size-reset"));
+  assert.ok(reset, "the readout between A− and A+ (the reset)");
+  return { fv, wrap: wrap!, root, bar, acts, body, down: btn("A−"), reset: reset!, up: btn("A+"), btn };
+}
+/** Open `p` for the fixture session; `wait` lets the bytes land. The stored size is the caller's, set before the call. */
+async function openFile(t: TestContext, p: string, wait = true): Promise<Card> {
+  const fv = await view();
   paints = 0; seam = null;
-  assert.equal(fv.openFileView(p, SID), true, "the open happened");
-  t.after(() => { fv.closeFileView(); store.delete(SIZE_KEY); });
+  fv.openFileView(p, SID);
+  t.after(() => { fv.closeFileView(); store.clear(); });
   if (wait) await settle();
-  const wrap = doc.getElementById("romp-fileview")!;
-  const root = wrap.querySelector(".fileview")!;
-  const body = wrap.querySelector(".fileview-body")!;
-  const acts = wrap.querySelector(".fileview-acts")!;
-  const btn = (label: string) => { const b = acts.querySelectorAll("button").find((x) => x.textContent === label); assert.ok(b, "the " + label + " button"); return b!; };
-  const reset = acts.querySelector(".fileview-size-reset")!;
-  assert.ok(reset, "the readout / reset button");
   assert.ok(seam, "the probe action was mounted with the ctx");
-  return { fv, ctx: seam!, wrap, root, body, down: btn("A−"), up: btn("A+"), reset, btn };
+  return { ...card(fv), ctx: seam! };
 }
-const size = (o: Open): string | null => o.root.getAttribute("data-fv-text");
-/** The readout's slot is empty at the default (the sheet's visibility: hidden on this class): nothing to reset, nothing said. */
-const blank = (o: Open): boolean => o.reset.classes.includes("fileview-size-default");
+const size = (o: Card): string | null => o.root.getAttribute("data-fv-text");
+/** The readout's slot is empty at the default (the sheet hides this class by visibility): nothing to reset, nothing said. */
+const blank = (o: Card): boolean => o.reset.classList.contains("fileview-size-default");
 /** An end of the table: aria-disabled (dimmed by the sheet, focus kept), never the disabled property. */
 const atEnd = (b: El): boolean => b.getAttribute("aria-disabled") === "true";
 const wheel = (init: { dy: number; ctrl?: boolean; meta?: boolean; mode?: number }): Ev =>
-  Object.assign(new Ev("wheel", { ctrlKey: !!init.ctrl, metaKey: !!init.meta }), { deltaY: init.dy, deltaMode: init.mode ?? 0 });
+  new Ev("wheel", { ctrlKey: !!init.ctrl, metaKey: !!init.meta, deltaY: init.dy, deltaMode: init.mode ?? 0 });
+const labels = (acts: El): string[] => acts.children.map((c) => c.textContent);
 
 // ── the pure table ─────────────────────────────────────────────────────────────────────────────────
 
-test("TEXT_SIZES: a bounded, ascending table of percentages holding the default; stepTextSize walks it and clamps at both ends", async () => {
-  const { TEXT_SIZES, TEXT_SIZE_DEFAULT, stepTextSize } = await mod();
+test("TEXT_SIZES is a bounded, ascending table of percentages holding the default; stepTextSize walks it and clamps at both ends", async () => {
+  const { TEXT_SIZES, TEXT_SIZE_DEFAULT, stepTextSize } = await view();
   assert.equal(TEXT_SIZES[0], 70); assert.equal(TEXT_SIZES[TEXT_SIZES.length - 1], 200);
-  assert.ok(TEXT_SIZES.includes(TEXT_SIZE_DEFAULT) && TEXT_SIZE_DEFAULT === 100, "100 is a step and the default");
+  assert.equal(TEXT_SIZE_DEFAULT, 100); assert.ok(TEXT_SIZES.includes(100), "the default is a step of the table");
   for (let i = 1; i < TEXT_SIZES.length; i++) assert.ok(TEXT_SIZES[i] > TEXT_SIZES[i - 1], "ascending");
   assert.equal(stepTextSize(100, 1), 115); assert.equal(stepTextSize(100, -1), 90);
   assert.equal(stepTextSize(200, 1), 200, "the top clamps"); assert.equal(stepTextSize(70, -1), 70, "the bottom clamps");
   assert.equal(stepTextSize(175, 1), 200); assert.equal(stepTextSize(80, -1), 70);
   assert.equal(stepTextSize(123, 1), 115, "a value off the table steps from the default");
-  // every step is reachable from the default by clicks, and the walk never leaves the table
+  assert.equal(stepTextSize(123, -1), 90);
+  // every step is reachable from the default by presses, and the walk never leaves the table
   let at = 100; const seen = new Set<number>([at]);
   for (let i = 0; i < 20; i++) { at = stepTextSize(at, 1); seen.add(at); assert.ok(TEXT_SIZES.includes(at)); }
   for (let i = 0; i < 20; i++) { at = stepTextSize(at, -1); seen.add(at); assert.ok(TEXT_SIZES.includes(at)); }
   assert.equal(seen.size, TEXT_SIZES.length);
 });
 
-test("parseTextSize: a stored step comes back; absent, garbage, a number off the table, or a multiplier read as the default (parseFmt's contract)", async () => {
-  const { parseTextSize } = await mod();
+test("parseTextSize returns a stored step; absent, garbage, a size off the table or a multiplier read as the default", async () => {
+  const { parseTextSize } = await view();
   assert.equal(parseTextSize("115"), 115); assert.equal(parseTextSize(" 200 "), 200); assert.equal(parseTextSize("70"), 70);
   assert.equal(parseTextSize(null), 100); assert.equal(parseTextSize(undefined), 100); assert.equal(parseTextSize(""), 100);
-  assert.equal(parseTextSize("huge"), 100); assert.equal(parseTextSize("{\"pct\":115}"), 100);
+  assert.equal(parseTextSize("huge"), 100); assert.equal(parseTextSize('{"pct":115}'), 100);
   assert.equal(parseTextSize("110"), 100, "a size the table does not hold is not invented");
   assert.equal(parseTextSize("1.15"), 100, "a multiplier is not a percentage");
   assert.equal(parseTextSize("-100"), 100); assert.equal(parseTextSize("1e9"), 100);
 });
 
-test("foldWheel: a notch is a step, a pinch's small deltas fold up to one, a reversal starts over, lines and pages are normalized, up is larger", async () => {
-  const { foldWheel, WHEEL_STEP_PX } = await mod();
-  assert.deepEqual(foldWheel({ deltaY: -100, deltaMode: 0 }, 0), { acc: 0, dir: 1 }, "a Chrome notch up: larger at once");
+test("foldWheel: a notch is one step, a pinch's small deltas add up to one, a reversal starts over, lines and pages are normalized, wheel-up is larger", async () => {
+  const { foldWheel, WHEEL_STEP_PX } = await view();
+  assert.deepEqual(foldWheel({ deltaY: -100, deltaMode: 0 }, 0), { acc: 0, dir: 1 }, "a notch up (Chrome, about 100 pixels): larger at once");
   assert.deepEqual(foldWheel({ deltaY: 100, deltaMode: 0 }, 0), { acc: 0, dir: -1 }, "a notch down: smaller");
-  assert.deepEqual(foldWheel({ deltaY: -3, deltaMode: 1 }, 0), { acc: 0, dir: 1 }, "three lines (Firefox) is a notch");
-  assert.deepEqual(foldWheel({ deltaY: 1, deltaMode: 2 }, 0), { acc: 0, dir: -1 }, "a page is more than a notch");
-  // a pinch: -15 px per event; the third crosses the threshold, and the sum clears
+  assert.deepEqual(foldWheel({ deltaY: -3, deltaMode: 1 }, 0), { acc: 0, dir: 1 }, "three lines (deltaMode 1) is a notch");
+  assert.deepEqual(foldWheel({ deltaY: 1, deltaMode: 2 }, 0), { acc: 0, dir: -1 }, "a page (deltaMode 2) is more than a notch");
+  // a pinch reports as a burst of ctrlKey wheel events a few pixels each: the third crosses the threshold and the sum clears
   let r = foldWheel({ deltaY: -15, deltaMode: 0 }, 0); assert.deepEqual(r, { acc: -15, dir: 0 });
   r = foldWheel({ deltaY: -15, deltaMode: 0 }, r.acc); assert.deepEqual(r, { acc: -30, dir: 0 });
   r = foldWheel({ deltaY: -15, deltaMode: 0 }, r.acc); assert.deepEqual(r, { acc: 0, dir: 1 });
-  assert.ok(WHEEL_STEP_PX > 30 && WHEEL_STEP_PX <= 100, "a notch (about 100 px) is at least one step, a pinch's event (a few px) is not");
+  assert.ok(WHEEL_STEP_PX > 30 && WHEEL_STEP_PX <= 100, "a notch is at least one step; a pinch's single event is not");
   // a reversal does not pay off the other way's remainder first
   r = foldWheel({ deltaY: -30, deltaMode: 0 }, 0); assert.equal(r.acc, -30);
   r = foldWheel({ deltaY: 10, deltaMode: 0 }, r.acc); assert.deepEqual(r, { acc: 10, dir: 0 });
@@ -374,14 +360,18 @@ test("foldWheel: a notch is a step, a pinch's small deltas fold up to one, a rev
 
 // ── the control over the real openFileView ─────────────────────────────────────────────────────────
 
-test("a markdown file opens at the default: A− / A+ up, the readout's slot empty, the root at 100; each click steps, stores, and acknowledges in the same tick; the ends dim and go inert", async (t) => {
-  const { TEXT_SIZES } = await mod();
-  const o = await open(REPORT, t);
+test("a markdown file opens at the default: A− and A+ after the format toggles, the readout slot empty, the root at 100; each press steps, stores and acknowledges in the same tick; an end reads as reached and a press there changes nothing", async (t) => {
+  const { TEXT_SIZES } = await view();
+  const o = await openFile(t, REPORT);
   assert.equal(size(o), "100", "the root carries the step the sheets read");
   assert.equal(o.down.hidden, false); assert.equal(o.up.hidden, false);
   assert.equal(o.reset.hidden, false, "the readout's slot is in the row from the start, so A− never moves when it fills");
   assert.equal(blank(o), true, "nothing to reset at the default, so nothing is said: the slot is empty");
   assert.equal(o.down.getAttribute("aria-label"), "Smaller text"); assert.equal(o.up.getAttribute("aria-label"), "Larger text");
+  const row = labels(o.acts);
+  assert.ok(row.indexOf("Raw") < row.indexOf("A−") && row.indexOf("A−") < row.indexOf("A+") && row.indexOf("A+") < row.indexOf("Edit"),
+    "the control sits after Rendered and Raw and before Edit: " + row.join(" | "));
+  assert.equal(o.acts.children.indexOf(o.reset), o.acts.children.indexOf(o.down) + 1, "the readout sits between A− and A+");
   o.up.click();
   assert.equal(size(o), "115", "one step, synchronously");
   assert.equal(blank(o), false); assert.equal(o.reset.textContent, "115%", "the readout is the acknowledgement");
@@ -389,63 +379,65 @@ test("a markdown file opens at the default: A− / A+ up, the readout's slot emp
   o.down.click(); o.down.click();
   assert.equal(size(o), "90"); assert.equal(o.reset.textContent, "90%"); assert.equal(store.get(SIZE_KEY), "90");
   for (let i = 0; i < 12; i++) o.up.click();
-  assert.equal(size(o), "200", "clamped at the top however many clicks");
+  assert.equal(size(o), "200", "clamped at the top however many presses");
   assert.equal(atEnd(o.up), true, "the top end reads as reached: aria-disabled, which the sheet dims"); assert.equal(atEnd(o.down), false);
   assert.equal(o.up.disabled, false, "never the disabled property: a button that disables under keyboard focus drops the focus");
-  let at = paints;
+  let n = writes.length;
   o.up.click();
-  assert.equal(size(o), "200"); assert.equal(paints, at, "a press on the end is the no-op it looks: no step, no paint");
+  assert.equal(size(o), "200"); assert.equal(writes.length, n, "a press on the end changes nothing and stores nothing");
   for (let i = 0; i < 12; i++) o.down.click();
   assert.equal(size(o), "70"); assert.equal(atEnd(o.down), true); assert.equal(atEnd(o.up), false); assert.equal(o.down.disabled, false);
-  at = paints;
+  n = writes.length;
   o.down.click();
-  assert.equal(size(o), "70"); assert.equal(paints, at);
+  assert.equal(size(o), "70"); assert.equal(writes.length, n);
   assert.equal(store.get(SIZE_KEY), String(TEXT_SIZES[0]));
-  assert.deepEqual(o.down.classes, ["fileview-btn", "fileview-size"], "wears the row's one button treatment");
-  assert.ok(o.reset.classes.includes("fileview-btn"), "the readout is a button, the reset");
+  assert.equal(o.down.className, "fileview-btn fileview-size", "wears the row's one button treatment");
+  assert.ok(o.reset.classList.contains("fileview-btn"), "the readout is a button: the reset");
 });
 
-test("the readout resets to the default and hides; a reset at the default is a no-op that repaints nothing", async (t) => {
-  const o = await open(REPORT, t);
+test("the readout resets to the default and empties; a reset at the default stores nothing", async (t) => {
+  const o = await openFile(t, REPORT);
   o.up.click(); o.up.click();
-  assert.equal(size(o), "130"); assert.equal(paints, 3, "the open's paint and two reflows");
+  assert.equal(size(o), "130");
   o.reset.click();
   assert.equal(size(o), "100"); assert.equal(blank(o), true, "back at the default the slot empties"); assert.equal(store.get(SIZE_KEY), "100");
-  assert.equal(paints, 4, "the reset is a reflow too");
   assert.equal(atEnd(o.up), false); assert.equal(atEnd(o.down), false);
-  const before = paints;
+  const n = writes.length;
   o.reset.click();
-  assert.equal(paints, before, "nothing changed, nothing fired");
+  assert.equal(writes.length, n, "nothing changed, nothing stored");
 });
 
-test("persistence: the size survives a close and a fresh open, is applied before the bytes land, and a foreign stored value opens at the default", async (t) => {
-  const first = await open(REPORT, t);
+test("persistence: the size survives a close and a fresh open, is on the root before the bytes land, and a foreign stored value opens at the default", async (t) => {
+  const first = await openFile(t, REPORT);
   first.up.click(); first.up.click(); first.up.click();
   assert.equal(size(first), "150");
   first.fv.closeFileView();
   assert.equal(doc.getElementById("romp-fileview"), null);
-  const again = await open(REPORT, t, false);                        // no settle: the loader still holds the body
+  const again = await openFile(t, REPORT, false);                    // no settle: the loader still holds the body
   assert.equal(size(again), "150", "the stored step is on the root at open, before the fetch, so the first paint is at size");
   assert.equal(again.reset.textContent, "150%");
-  assert.equal(again.down.hidden, true); assert.equal(again.reset.hidden, true, "the control waits for the bytes: whether this is a text file is the kernel's verdict, in the fetch's headers");
+  assert.equal(again.down.hidden, true); assert.equal(again.reset.hidden, true); assert.equal(again.up.hidden, true,
+    "the control waits for the bytes: whether this is a text file is the kernel's verdict, in the fetch's headers");
   await settle();
   assert.equal(size(again), "150", "the paint keeps it");
   assert.equal(again.down.hidden, false); assert.equal(again.reset.hidden, false); assert.equal(blank(again), false);
   again.fv.closeFileView();
   store.set(SIZE_KEY, "purple");
-  const third = await open(REPORT, t);
+  const third = await openFile(t, REPORT);
   assert.equal(size(third), "100", "a corrupt entry costs the preference, never the viewer");
   assert.equal(blank(third), true);
   third.fv.closeFileView();
   store.set(SIZE_KEY, "80");
-  const fourth = await open(APP, t);
+  const fourth = await openFile(t, APP);
   assert.equal(size(fourth), "80", "one size for every file this browser opens, a .py included");
-  assert.equal(fourth.down.hidden, false, "a non-markdown text file has the control: the Raw view scales too");
+  assert.equal(fourth.down.hidden, false, "a non-markdown text file has the control: its code view scales too");
+  assert.equal(fourth.reset.textContent, "80%");
 });
 
-test("Ctrl/Cmd + wheel over the body steps the size and takes the gesture from the page zoom; a plain wheel scrolls; small deltas fold; a media body leaves the browser its zoom", async (t) => {
-  const o = await open(REPORT, t);
+test("Ctrl/Cmd + wheel over the body steps the size and takes the gesture from the page zoom; a plain wheel scrolls; a pinch's deltas add up; the bar is not the text; a picture leaves the browser its zoom", async (t) => {
+  const o = await openFile(t, REPORT);
   const md = o.body.querySelector(".fileview-md")!;
+  assert.ok(md, "the rendered body");
   let ev = wheel({ dy: -100, ctrl: true });
   md.dispatchEvent(ev);
   assert.equal(size(o), "115", "a notch up with Ctrl: larger");
@@ -455,139 +447,167 @@ test("Ctrl/Cmd + wheel over the body steps the size and takes the gesture from t
   assert.equal(size(o), "100", "Cmd works the same"); assert.equal(ev.defaultPrevented, true);
   ev = wheel({ dy: -100 });
   md.dispatchEvent(ev);
-  assert.equal(size(o), "100", "no modifier: not the gesture"); assert.equal(ev.defaultPrevented, false, "…and the wheel scrolls as ever");
+  assert.equal(size(o), "100", "no modifier: not the gesture"); assert.equal(ev.defaultPrevented, false, "and the wheel scrolls as ever");
   for (const dy of [-15, -15]) md.dispatchEvent(wheel({ dy, ctrl: true }));
-  assert.equal(size(o), "100", "a pinch's first events fold");
+  assert.equal(size(o), "100", "a pinch's first events add up");
   md.dispatchEvent(wheel({ dy: -15, ctrl: true }));
-  assert.equal(size(o), "115", "…and the third crosses the threshold");
+  assert.equal(size(o), "115", "and the third crosses the threshold");
   md.dispatchEvent(wheel({ dy: -3, ctrl: true, mode: 1 }));
   assert.equal(size(o), "130", "three lines is a notch");
   assert.equal(store.get(SIZE_KEY), "130", "the wheel stores like the buttons");
-  // the bar is not the text: a wheel over the action row is not the gesture
-  const acts = o.wrap.querySelector(".fileview-acts")!;
-  ev = wheel({ dy: -100, ctrl: true }); acts.dispatchEvent(ev);
-  assert.equal(size(o), "130"); assert.equal(ev.defaultPrevented, false);
+  assert.equal(o.reset.textContent, "130%", "and the readout follows");
+  ev = wheel({ dy: -100, ctrl: true });
+  o.acts.dispatchEvent(ev);
+  assert.equal(size(o), "130", "a wheel over the action row is not the gesture"); assert.equal(ev.defaultPrevented, false);
   o.fv.closeFileView(); store.delete(SIZE_KEY);
-  // an image body: nothing reads the property, so the browser keeps its zoom
-  const pic = await open(PLOT, t);
-  assert.equal(pic.ctx.mode(), "media");
-  ev = wheel({ dy: -100, ctrl: true }); pic.body.dispatchEvent(ev);
-  assert.equal(size(pic), "100"); assert.equal(ev.defaultPrevented, false, "not prevented: the page zoom stays the browser's");
+  const pic = await openFile(t, PLOT);
+  ev = wheel({ dy: -100, ctrl: true });
+  pic.body.dispatchEvent(ev);
+  assert.equal(size(pic), "100", "a picture: nothing there reads the property");
+  assert.equal(ev.defaultPrevented, false, "not prevented: the page zoom stays the browser's");
 });
 
-test("click-safe: the three buttons are built once per open, never rebuilt by a paint; a Raw/Rendered flip and a step keep the same nodes", async (t) => {
-  const o = await open(REPORT, t);
+test("click-safe: the three buttons are built once per open and never rebuilt by a paint; a Rendered/Raw flip and a step keep the same nodes", async (t) => {
+  const o = await openFile(t, REPORT);
   const nodes = [o.down, o.reset, o.up];
   o.btn("Raw").click();
-  assert.equal(o.ctx.mode(), "raw");
-  sameNodes([o.btn("A−"), o.wrap.querySelector(".fileview-size-reset"), o.btn("A+")], nodes, "the same elements after the Raw paint");   // by identity (ui/test-dom-shim.ts sameNodes)
+  assert.equal(o.body.children[0].className, "fileview-code", "the Raw paint");
+  sameNodes([o.btn("A−"), o.acts.querySelector(".fileview-size-reset"), o.btn("A+")], nodes, "the same elements after the Raw paint");   // by identity (ui/test-dom-shim.ts sameNodes)
   o.up.click();
-  sameNodes([o.btn("A−"), o.wrap.querySelector(".fileview-size-reset"), o.btn("A+")], nodes, "…and after a step");
+  sameNodes([o.btn("A−"), o.acts.querySelector(".fileview-size-reset"), o.btn("A+")], nodes, "and after a step");
   assert.equal(size(o), "115", "the Raw view is scaled by the same property (.fileview-pre reads it)");
   o.btn("Rendered").click();
   assert.equal(size(o), "115", "the flip back keeps the size");
   // source: the control is declared before renderBody, outside it, with direct listeners (the format toggles' idiom)
   const at = (s: string) => { const i = VIEW.indexOf(s); assert.ok(i >= 0, s); return i; };
-  assert.ok(at('const sizeDown = el("button", "fileview-btn fileview-size")') < at("const renderBody = () => {"), "built once per open, before the paint function");
-  assert.equal((VIEW.match(/sizeDown\.addEventListener\("click", \(\) => setTextSize\(stepTextSize\(sizePct, -1\)\)\);/g) || []).length, 1, "the listener hangs on the node built once");
-  const paint = VIEW.slice(at("const renderBody = () => {"), VIEW.indexOf("\n  };", at("const renderBody = () => {")));
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  assert.ok(openFn.indexOf("textSizeControl(") >= 0 && openFn.indexOf("textSizeControl(") < openFn.indexOf("const renderBody = () => {"), "built once per open, before the paint function");
+  const paint = openFn.slice(openFn.indexOf("const renderBody = () => {"), openFn.indexOf("\n  };", openFn.indexOf("const renderBody = () => {")));
   assert.doesNotMatch(paint, /addEventListener/, "the paint function wires nothing: it only syncs the control's hidden state");
-  assert.match(paint, /sizeDown\.hidden = sizeHidden; sizeUp\.hidden = sizeHidden;/, "…which it does, every paint");
-  assert.match(VIEW, /sizeUp\.addEventListener\("click", \(\) => setTextSize\(stepTextSize\(sizePct, 1\)\)\);/);
-  assert.match(VIEW, /sizeReset\.addEventListener\("click", \(\) => setTextSize\(TEXT_SIZE_DEFAULT\)\);/);
-  assert.match(VIEW, /body\.addEventListener\("wheel", \(e: WheelEvent\) => \{[\s\S]*?\}, \{ passive: false \}\);/, "the wheel listener is non-passive so the page zoom can be prevented");
+  assert.match(paint, /\.sync\(\);/, "which it does, every paint");
+  assert.deepEqual(o.body.passiveOf("wheel").filter((p) => p === false), [false], "the size gesture's wheel listener is the body's one non-passive wheel listener, so the page zoom can be prevented (the comments panel's margin layout adds a passive one, file-comments.ts installLayout)");
   assert.doesNotMatch(VIEW, /e\.key === "\+"|e\.key === "-"|e\.key === "="/, "no keyboard zoom chord: Ctrl+plus/minus stay the browser's");
+  assert.ok(at("function textSizeControl(") < at("export function openFileView"), "one builder, declared once, for both viewers");
 });
 
-test("the control hides over a media body and in edit mode, and comes back with the read view", async (t) => {
-  const pic = await open(PLOT, t);
-  assert.equal(pic.down.hidden, true); assert.equal(pic.up.hidden, true); assert.equal(pic.reset.hidden, true);
+test("the control is absent for a picture and a PDF, present for the SVG Source view, hidden in edit mode and back on exit", async (t) => {
+  const pic = await openFile(t, PLOT);
+  assert.equal(pic.down.hidden, true); assert.equal(pic.up.hidden, true); assert.equal(pic.reset.hidden, true, "a picture has no text to size");
   pic.fv.closeFileView();
+  const pdf = await openFile(t, PAPER);
+  assert.equal(pdf.down.hidden, true); assert.equal(pdf.up.hidden, true); assert.equal(pdf.reset.hidden, true, "a PDF: the browser's viewer owns its text");
+  pdf.fv.closeFileView();
+  const svg = await openFile(t, FIG);
+  assert.equal(svg.down.hidden, true, "an SVG shown as a picture: no text yet");
+  svg.btn("Source").click();
+  await settle();
+  assert.equal(svg.body.children[0].className, "fileview-code", "the Source view is up");
+  assert.equal(svg.down.hidden, false); assert.equal(svg.up.hidden, false); assert.equal(svg.reset.hidden, false, "the Source view is a text view and has the control");
+  const ev = wheel({ dy: -100, ctrl: true });
+  svg.body.dispatchEvent(ev);
+  assert.equal(size(svg), "115", "and the wheel steps it"); assert.equal(ev.defaultPrevented, true);
+  svg.fv.closeFileView(); store.delete(SIZE_KEY);
   store.set(SIZE_KEY, "115");
-  const o = await open(REPORT, t);
-  assert.equal(o.down.hidden, false); assert.equal(o.reset.hidden, false); assert.equal(blank(o), false, "off the default, the readout says the size");
+  const o = await openFile(t, REPORT);
+  assert.equal(o.down.hidden, false); assert.equal(blank(o), false, "off the default, the readout says the size");
   o.btn("Edit").click();
   await settle();
-  assert.equal(o.ctx.editing(), true, "edit mode");
+  assert.equal(o.btn("Cancel").hidden, false, "edit mode");
   assert.equal(o.down.hidden, true); assert.equal(o.up.hidden, true); assert.equal(o.reset.hidden, true, "the editor keeps its own size");
-  const md = o.body;
-  const ev = wheel({ dy: -100, ctrl: true }); md.dispatchEvent(ev);
-  assert.equal(size(o), "115", "the wheel stands down in edit mode"); assert.equal(ev.defaultPrevented, false);
+  const ev2 = wheel({ dy: -100, ctrl: true });
+  o.body.dispatchEvent(ev2);
+  assert.equal(size(o), "115", "the wheel stands down in edit mode"); assert.equal(ev2.defaultPrevented, false);
   o.btn("Cancel").click();
-  assert.equal(o.ctx.editing(), false);
-  assert.equal(o.down.hidden, false); assert.equal(o.reset.hidden, false); assert.equal(blank(o), false, "back with the read view");
+  assert.equal(o.btn("Cancel").hidden, true);
+  assert.equal(o.down.hidden, false); assert.equal(o.reset.hidden, false); assert.equal(o.up.hidden, false); assert.equal(blank(o), false, "back with the read view");
 });
 
-test("the control shows only once a text body is KNOWN: hidden beside the loader, shown when a text file's bytes land, never shown for a picture", async (t) => {
-  // the kernel's Content-Type is the verdict, and it lands with the bytes (fetchFile applies both in one step); before
-  // that a .png opened over a slow link showed A−, 130% and A+ beside the loader and took them away when the picture came
+test("the control shows only once a text body is KNOWN: hidden beside the loader, shown when a text file's bytes land, never for a picture", async (t) => {
   store.set(SIZE_KEY, "130");
-  const o = await open(REPORT, t, false);
+  const o = await openFile(t, REPORT, false);
   assert.equal(o.down.hidden, true); assert.equal(o.up.hidden, true); assert.equal(o.reset.hidden, true, "the loader holds the body: not yet a text view");
   assert.equal(size(o), "130", "the step is on the root already, so the first paint is at size");
   await settle();
   assert.equal(o.down.hidden, false); assert.equal(o.up.hidden, false); assert.equal(o.reset.hidden, false); assert.equal(o.reset.textContent, "130%");
   o.fv.closeFileView();
-  const pic = await open(PLOT, t, false);
+  const pic = await openFile(t, PLOT, false);
   assert.equal(pic.down.hidden, true, "a picture: hidden for the load");
   await settle();
-  assert.equal(pic.ctx.mode(), "media");
-  assert.equal(pic.down.hidden, true); assert.equal(pic.up.hidden, true); assert.equal(pic.reset.hidden, true, "...and after it: nothing there reads the property");
-  assert.match(VIEW, /const sizeHidden = !textShowing\(\);/, "one gate for the control and for the reflow triggers: a text view showing");
-  assert.match(VIEW, /sizeDown\.hidden = true; sizeReset\.hidden = true; sizeUp\.hidden = true;\s*\/\/ until renderBody knows a text body/);
+  assert.equal(pic.body.children[0].className, "fileview-imgbox", "the picture landed");
+  assert.equal(pic.down.hidden, true); assert.equal(pic.up.hidden, true); assert.equal(pic.reset.hidden, true, "and after it: nothing there reads the property");
 });
 
-test("an end of the table keeps the keyboard focus: the button is aria-disabled, never `disabled`; its press is the no-op it looks", async (t) => {
-  // Chromium moves document.activeElement to the body when the focused element disables: the ring vanished on the third
-  // Enter and a fourth did nothing with no visible reason (review 2026-09-07). The browser leg below presses the real keys.
-  const o = await open(REPORT, t);
-  o.down.focus();
-  o.down.click(); o.down.click(); o.down.click();
-  assert.equal(size(o), "70"); assert.equal(atEnd(o.down), true);
-  assert.equal(o.down.disabled, false, "focusable still"); assert.equal(doc.activeElement, o.down, "focus where the person left it");
-  const at = paints;
-  o.down.click();
-  assert.equal(size(o), "70"); assert.equal(paints, at, "the fourth press changes nothing and paints nothing");
-  o.up.click();
-  assert.equal(size(o), "80"); assert.equal(atEnd(o.down), false, "one step up and A− is live again");
-  assert.doesNotMatch(VIEW, /sizeDown\.disabled = |sizeUp\.disabled = /, "never the disabled property");
-  assert.match(VIEW, /const atEnd = \(b: HTMLButtonElement, end: boolean\) => \{ if \(end\) b\.setAttribute\("aria-disabled", "true"\); else b\.removeAttribute\("aria-disabled"\); \};/);
-});
-
-test("a press on the title bar settles no selection: with a passage selected in the body, a click on A+ steps the size and runs no selection hook (no re-seed of the quote chip, no re-fetch for its label)", async (t) => {
-  const o = await open(REPORT, t);
-  let hooked = 0;
-  o.ctx.onSelection(() => { hooked++; });
+test("a press on a bar control settles no selection: with a passage selected in the body, A+ steps the size and neither re-reads the file nor re-seeds the quote chip; a lift on the bar's path or padding still settles", async (t) => {
+  const composer = new El("textarea");             // this document holds the composer, so a selection seeds its chip
+  composer.id = "composer-input";
+  docBody.appendChild(composer);
+  t.after(() => { composer.remove(); win.getSelection = () => null; });
+  const o = await openFile(t, REPORT);
   const md = o.body.querySelector(".fileview-md")!;
   win.getSelection = () => ({ isCollapsed: false, anchorNode: md, toString: () => "cut p95 latency" });
-  t.after(() => { win.getSelection = () => null; });
+  const reads = () => fileReads.filter((p) => p === REPORT).length;
+  const seeds = () => posted.filter((m) => (m as { type?: string }).type === "editorSelection").length;
+  let r = reads(), s = seeds();
   md.dispatchEvent(new Ev("mouseup"));
-  assert.equal(hooked, 1, "a lift over the body settles the selection: the hooks run");
+  await settle();
+  assert.equal(reads(), r + 1, "a lift over the body settles the selection: the label's line is minted against a fresh read");
+  assert.equal(seeds(), s + 1, "and the quote chip is seeded");
+  r = reads(); s = seeds();
   o.up.dispatchEvent(new Ev("mouseup")); o.up.click();
-  assert.equal(size(o), "115", "the step happened"); assert.equal(hooked, 1, "...and the press on A+ ran no hook");
+  await settle();
+  assert.equal(size(o), "115", "the step happened");
+  assert.equal(reads(), r, "and the press on A+ read nothing"); assert.equal(seeds(), s, "and seeded nothing");
   o.reset.dispatchEvent(new Ev("mouseup")); o.reset.click();
-  assert.equal(size(o), "100"); assert.equal(hooked, 1);
+  await settle();
+  assert.equal(size(o), "100"); assert.equal(reads(), r); assert.equal(seeds(), s);
   o.btn("Raw").dispatchEvent(new Ev("mouseup"));
-  assert.equal(hooked, 1, "the guard is the bar's: every button in it (the selection listener predates the control)");
-  o.wrap.querySelector(".fileview-main")!.dispatchEvent(new Ev("mouseup"));
-  assert.equal(hooked, 2, "a drag that ends over the viewer's margins or the aside still settles: the listener stays on the viewer root");
-  md.dispatchEvent(new Ev("touchend"));
-  assert.equal(hooked, 3, "the phone's lift too");
-  // the overshoot (round 2): a drag that starts in the body and is released over the bar's path, or its padding, is a
-  // selection like any other; the round-1 guard read the whole bar and swallowed it (no Comment button, no chip)
-  o.wrap.querySelector(".fileview-name")!.dispatchEvent(new Ev("mouseup"));
-  assert.equal(hooked, 4, "released over the bar's path, the drag settles: the gate is the control under the lift, not the bar");
-  o.wrap.querySelector(".fileview-dir")!.dispatchEvent(new Ev("mouseup"));
-  assert.equal(hooked, 5, "...the directory link is a span, not a control");
-  o.wrap.querySelector(".fileview-bar")!.dispatchEvent(new Ev("mouseup"));
-  assert.equal(hooked, 6, "...and the bar's own padding");
-  assert.match(VIEW, /const onSelect = \(ev: Event\) => \{\n\s*if \(editing\) return;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const at = ev\.target as Element \| null;\n\s*if \(at && bar\.contains\(at\) && typeof at\.closest === "function" && at\.closest\("button, a"\)\) return;/, "the gate: a control (a button, the GitHub anchor) inside the bar");
+  await settle();
+  assert.equal(reads(), r, "every button in the bar: the format toggles too");
+  // the overshoot: a drag that starts in the body and is released over the bar's path or its padding is a selection like any other
+  o.bar.children.find((c) => c.classList.contains("fileview-name"))!.dispatchEvent(new Ev("mouseup"));
+  await settle();
+  assert.equal(reads(), r + 1, "released over the bar's path, the drag settles: the gate is the control under the lift, not the bar");
+  assert.equal(seeds(), s + 1);
+  o.bar.dispatchEvent(new Ev("mouseup"));
+  await settle();
+  assert.equal(reads(), r + 2, "and the bar's own padding");
+  assert.equal(seeds(), s + 2);
 });
 
-// ── the re-measure: every reflow of a text view fires the seam's onRendered ────────────────────────
+// Fork-only, beside upstream's twin above (which settles by mouseup over the body and the bar alone): the two settle points
+// the fork wired and upstream never received. The phone's selection ends in a touchend with no mouseup, and a drag that
+// starts in the body can be released over the aside or the margins beside the body, the `.fileview-main` row, where
+// only a listener on the viewer root hears it. Executed, not pinned: the first assertion goes red when the touchend
+// binding is removed, the second when the mouseup listener moves from the root to the body (file-view.test.ts pins the
+// two addEventListener lines, which is a pin, not a test). Re-added in the 4d-3 fold's fixer round 2 (review round 1,
+// tests-1) after the fold retired the fork's pre-offer body of this subject with these two steps inside it.
+test("a lift settles a selection wherever it ends inside the viewer: a touchend over the body (the phone's lift, no mouseup) and a mouseup released over the body row (the aside, the margins) each re-read the file and re-seed the quote chip", async (t) => {
+  const composer = new El("textarea");             // this document holds the composer, so a selection seeds its chip
+  composer.id = "composer-input";
+  docBody.appendChild(composer);
+  t.after(() => { composer.remove(); win.getSelection = () => null; });
+  const o = await openFile(t, REPORT);
+  const md = o.body.querySelector(".fileview-md")!;
+  win.getSelection = () => ({ isCollapsed: false, anchorNode: md, toString: () => "cut p95 latency" });
+  const reads = () => fileReads.filter((p) => p === REPORT).length;
+  const seeds = () => posted.filter((m) => (m as { type?: string }).type === "editorSelection").length;
+  const r = reads(), s = seeds();
+  md.dispatchEvent(new Ev("touchend"));
+  await settle();
+  assert.equal(reads(), r + 1, "the phone's lift: a touchend over the body settles the selection (a touch ends with no mouseup), so the label's line is minted against a fresh read");
+  assert.equal(seeds(), s + 1, "and the quote chip is seeded");
+  const main = o.root.querySelector(".fileview-main")!;
+  assert.ok(main && main.contains(o.body), "the body row holds the body (and the aside, when the comments panel asks for one)");
+  main.dispatchEvent(new Ev("mouseup"));
+  await settle();
+  assert.equal(reads(), r + 2, "released over the row itself, beside the body: the listener sits on the viewer root, not the body, so the drag settles");
+  assert.equal(seeds(), s + 2, "and the chip is seeded again");
+});
+
+// ── the re-measure: every reflow of a text view fires the seam's onRendered (the comments panel re-places its cards) ──
 
 test("a size step fires onRendered once, as a reflow (the panel re-places its cards over the moved text and keeps its marks); a clamped step fires nothing", async (t) => {
-  const o = await open(REPORT, t);
+  const o = await openFile(t, REPORT);
   assert.equal(paints, 1, "the open's paint");
   o.up.click();
   assert.equal(paints, 2, "the step is a reflow: one paint event, at once");
@@ -630,7 +650,7 @@ test("a size step fires onRendered once, as a reflow (the panel re-places its ca
 });
 
 test("the body's width: a ResizeObserver on the body fires onRendered once per animation frame when the width changed; not for its first report, a same-width report, a width back where it was, or a media body; it leaves with the viewer", async (t) => {
-  const o = await open(REPORT, t);
+  const o = await openFile(t, REPORT);
   assert.equal(watching(o.body).length, 2, "two observers on the body, each a size's own event (never a timer): the viewer's width observer here, and the comments panel's margin sizer (file-comments.ts installLayout), which re-places the cards when the body's box changes");
   assert.equal(paints, 1);
   report(o.body, 900); frame();
@@ -665,153 +685,497 @@ test("the body's width: a ResizeObserver on the body fires onRendered once per a
   assert.equal(watching(body).length, 0, "disconnected with the viewer (the seam's onClose)");
   assert.equal(frames.size, 0, "...and its pending frame cancelled with it");
   store.delete(SIZE_KEY);
-  const pic = await open(PLOT, t);
+  const pic = await openFile(t, PLOT);
   const before = paints;
   report(pic.body, 500); report(pic.body, 300); frame();
   assert.equal(paints, before, "a media body has its own observers (the figure layer's, the chunk's)");
-  assert.match(VIEW, /if \(typeof ResizeObserver !== "undefined"\) \{\n\s*let paintedWidth = -1;/, "guarded like the figure layer's sizer: no observer, no width event");
+  assert.match(VIEW, /let paintedWidth = -1;[^\n]*\n\s*let seenWidth = -1;/, "the frame's bookkeeping sits beside the watch it hangs on (watchBodyWidth's onWidth)");
+  assert.match(VIEW, /if \(typeof ResizeObserver === "function"\) \{/, "guarded like the figure layer's sizer, inside watchBodyWidth: no observer, no width event");
   assert.match(VIEW, /if \(typeof requestAnimationFrame === "function"\) frame = requestAnimationFrame\(repaint\); else repaint\(\);/, "the frame is the fold; without one the report is the frame");
   assert.doesNotMatch(VIEW, /setTimeout\([^)]*fireRendered|debounce/, "no timer approximates the resize");
 });
 
-// ── the sheets: one property, read by every text size; the fluid measure ───────────────────────────
+// ── the URL viewer: the same size for a document opened from a link on the dashboard's own address ──
 
-const ruleOf = (css: string, head: string): string => { const at = css.indexOf(head); assert.ok(at >= 0, head + " present"); return css.slice(at, css.indexOf("}", at) + 1); };
+test("openUrlView carries the stored step on its root and mounts the same control; a step there is the one size every document honours", async (t) => {
+  const fv = await view();
+  store.set(SIZE_KEY, "130");
+  fv.openUrlView(HREF);
+  t.after(() => { fv.closeFileView(); store.clear(); });
+  const o = card(fv);
+  assert.equal(size(o), "130", "the stored step is on the root before the document lands");
+  assert.equal(o.down.hidden, true); assert.equal(o.reset.hidden, true); assert.equal(o.up.hidden, true, "hidden beside the loader");
+  const row = labels(o.acts);
+  assert.ok(row.indexOf("Raw") < row.indexOf("A−") && row.indexOf("A+") < row.indexOf("Open ↗"), "after Rendered and Raw, before the link out: " + row.join(" | "));
+  await settle();
+  assert.equal(o.body.children[0].className, "fileview-md", "the document rendered");
+  assert.equal(o.down.hidden, false); assert.equal(o.reset.hidden, false); assert.equal(o.up.hidden, false);
+  assert.equal(o.reset.textContent, "130%"); assert.equal(blank(o), false);
+  o.up.click();
+  assert.equal(size(o), "150"); assert.equal(store.get(SIZE_KEY), "150", "stored under the same key as a local file's");
+  const ev = wheel({ dy: -100, ctrl: true });
+  o.body.querySelector(".fileview-md")!.dispatchEvent(ev);
+  assert.equal(size(o), "175", "Ctrl + wheel steps here too"); assert.equal(ev.defaultPrevented, true);
+  assert.deepEqual(o.body.passiveOf("wheel"), [false], "non-passive here too: the page zoom can be prevented");
+  const plain = wheel({ dy: -100 });
+  o.body.dispatchEvent(plain);
+  assert.equal(size(o), "175"); assert.equal(plain.defaultPrevented, false, "a plain wheel scrolls");
+  o.btn("Raw").click();
+  assert.equal(o.body.children[0].className, "fileview-code");
+  assert.deepEqual([o.btn("A−"), o.acts.querySelector(".fileview-size-reset"), o.btn("A+")], [o.down, o.reset, o.up], "the same nodes across the Raw paint");
+  fv.closeFileView();
+  const local = await openFile(t, REPORT);
+  assert.equal(size(local), "175", "a local file opened next honours the size the document set");
+});
+
+// ── the sheets: one property, read by every text size; the measure that follows the size ────────────
+
+/** The rule whose selector opens a line as `head`. */
+const ruleOf = (css: string, head: string): string => { const at = css.indexOf("\n" + head); assert.ok(at >= 0, head + " present"); return css.slice(at + 1, css.indexOf("}", at) + 1); };
 const decls = (rule: string): string[] => rule.slice(rule.indexOf("{") + 1, -1).split(";").map((d) => d.trim()).filter(Boolean);
 
-test("both sheets: the step table maps every TEXT_SIZES entry to --fv-scale on the viewer root, and nothing else; the text views read the one property", async () => {
-  const { TEXT_SIZES } = await mod();
+test("both sheets: the step table maps every TEXT_SIZES entry to --fv-scale on the viewer root and nothing else; exactly the text views read the one property", async () => {
+  const { TEXT_SIZES } = await view();
   for (const [name, css] of SHEETS) {
     for (const n of TEXT_SIZES) {
-      const rule = ruleOf(css, `.fileview[data-fv-text="${n}"] {`);
-      assert.deepEqual(decls(rule), [`--fv-scale: ${n / 100}`], name + ": step " + n + " is exactly the property");
+      assert.deepEqual(decls(ruleOf(css, `.fileview[data-fv-text="${n}"] {`)), [`--fv-scale: ${n / 100}`], name + ": step " + n + " is exactly the property");
     }
-    const steps = css.match(/\.fileview\[data-fv-text="\d+"\]/g) || [];
-    assert.equal(steps.length, TEXT_SIZES.length, name + ": no step the table does not hold");
-    // the readers: the prose (1.15 times the page's size, times the scale: 15px at the 13px default, Slice 3 of
-    // plans/markdown-viewer.md), its code, the Raw view's rows and gutter
-    assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("font-size: calc(var(--fs) * 1.15 * var(--fv-scale, 1))"), name + ": the prose reads it, at the document size over the page's");
-    assert.ok(!decls(ruleOf(css, ".fileview-md {")).some((d) => d.startsWith("max-width")), name + ": the root is fluid to the pane (the measure is its inline padding)");
+    assert.equal((css.match(/\.fileview\[data-fv-text="\d+"\]/g) || []).length, TEXT_SIZES.length, name + ": no step the table does not hold");
+    assert.equal((css.match(/--fv-scale:/g) || []).length, TEXT_SIZES.length, name + ": nothing else sets the property");
+    // the readers: the prose (the page's size times the document's 1.15, times the scale), fenced code, the Raw view's rows and gutter
+    const root = decls(ruleOf(css, ".fileview-md {"));
+    assert.ok(root.includes("font-size: calc(var(--fs) * 1.15 * var(--fv-scale, 1))"), name + ": the prose reads it");
+    assert.ok(!root.some((d) => d.startsWith("max-width")), name + ": the root is fluid to the viewer (the measure is its inline padding)");
+    assert.ok(root.includes("padding-inline: max(18px, round(down, calc((100% - 80ch) / 2), 1px))"), name + ": the measure is 80 of the root's own ch, centred as whole-pixel padding, never under 18px");
+    const plain = root.indexOf("padding-inline: max(18px, calc((100% - 80ch) / 2))"), rounded = root.findIndex((d) => d.startsWith("padding-inline: max(18px, round("));
+    assert.ok(plain >= 0 && plain < rounded, name + ": a plain calc() fallback is declared first, for an engine without round()");
+    assert.ok(root.includes("line-height: 1.5") && root.includes("font-family: var(--font-doc)") && root.includes("contain: layout"), name + ": the leading and the face are the document's own, and nothing inside can widen the body");
     assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("font-size: calc(12px * var(--fv-scale, 1))"), name + ": fenced code reads it");
     assert.ok(decls(ruleOf(css, ".fileview-pre {")).includes("font-size: calc(12px * var(--fv-scale, 1))"), name + ": the Raw rows read it");
     assert.ok(decls(ruleOf(css, ".fileview-gutter {")).includes("font-size: calc(12px * var(--fv-scale, 1))"), name + ": the gutter reads it, in lockstep with the rows");
-    assert.ok(decls(ruleOf(css, ".fileview-md h1 {")).includes("font-size: 2em"), name + ": headings stay em of the prose, so they scale with it (GitHub's 2em h1 since Slice 3 of plans/markdown-viewer.md)");
+    assert.ok(decls(ruleOf(css, ".fileview-md h1 {")).includes("font-size: 2em"), name + ": headings stay em of the prose, so they scale with it");
+    assert.ok(decls(ruleOf(css, ".fileview-md h2 {")).includes("font-size: 1.5em") && decls(ruleOf(css, ".fileview-md h3 {")).includes("font-size: 1.25em"), name + ": the ladder is 2 / 1.5 / 1.25 / 1em");
     assert.ok(decls(ruleOf(css, ".fileview-md :not(pre) > code {")).includes("font-size: 0.92em"), name + ": inline code stays em of the prose");
     assert.ok(decls(ruleOf(css, ".fileview-md .fc-overlay {")).includes("font-size: var(--fs)"), name + ": a figure's region chip keeps the page's size, not the text's");
-    // no other rule reads the property: the bar, the aside, the editor keep the page's size
+    assert.ok(decls(ruleOf(css, ".fileview-editor {")).includes("font-size: 12px"), name + ": the editor keeps the page's size");
+    assert.ok(decls(ruleOf(css, ".fileview-btn {")).includes("font-size: 0.82em"), name + ": the bar's buttons keep the page's size");
+    // no other rule reads the property: the title bar, its buttons and the editor keep the page's size
     const readers = (css.match(/^[^\n{]*\{[^}]*var\(--fv-scale[^}]*\}/gm) || []).map((r) => r.slice(0, r.indexOf("{")).trim());
-    assert.deepEqual(readers.sort(), [".fileview-gutter", ".fileview-md", ".fileview-md pre code", ".fileview-pre"].sort(), name + ": the readers, exactly (the 860px measure rule and the direct-child media cap that scaled it went with Slice 3 of plans/markdown-viewer.md: the measure is 80ch of the root's own font, which the scale moves)");
+    assert.deepEqual(readers.sort(), [".fileview-gutter", ".fileview-md", ".fileview-md pre code", ".fileview-pre"].sort(), name + ": the readers, exactly");
   }
 });
 
-test("both sheets: the measure is the root's inline padding, a centred column of 80ch that scales with the text; a table may leave the column up to the body's inset and scrolls in its own box with whole words; a picture always fits its column; the new rules are byte-equal across the sheets", () => {
+test("both sheets: the measure is the root's own inline padding; a table takes the body's width and scrolls on its own with whole words; a picture fits the column; byte-equal across the sheets", () => {
   for (const [name, css] of SHEETS) {
-    // Slice 3 of plans/markdown-viewer.md (decision 4): the 860px cap on every block became the root's own inline padding,
-    // at least 18px a side and half of what the body is wider than 80ch beyond that; ch is the root's own zero glyph, so
-    // the column is eighty characters at every --fv-scale and in either face, and every child sits in it
-    const root = decls(ruleOf(css, ".fileview-md {"));
-    assert.ok(root.includes("padding-inline: max(18px, round(down, calc((100% - 80ch) / 2), 1px))"), name + ": the measure, the root's inline padding, in whole pixels (a fractional edge met a Chromium drag-selection quirk)");
-    assert.ok(root.indexOf("padding: 14px 18px") >= 0 && root.indexOf("padding: 14px 18px") < root.findIndex((d) => d.startsWith("padding-inline")), name + ": the plain 18px stands first, the fallback for a browser without round()");
-    const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.doesNotMatch(bare, /\.fileview-md > :where\(:not\(table\)\)|860px/, name + ": no per-block cap and no 860px constant in any rule (the comments may tell the history)");
-    assert.doesNotMatch(css, /\.fileview-md > :not\(/, name + ": no block-cap rule at any specificity");
-    assert.deepEqual(decls(ruleOf(css, ".fileview-md img {")), ["max-width: 100%"], name + ": a picture shrinks to its column");
-    assert.doesNotMatch(css, /\.fileview-md > img, \.fileview-md > svg/, name + ": the direct-child media cap went with the constant (100% of the column is the measure for a direct child too)");
-    assert.deepEqual(decls(ruleOf(css, ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {")), ["max-width: 100%"], name + ": media a note draws itself shrinks to its column like a picture, at zero class specificity so KaTeX's own svg rule wins (md-sanitize-wide-media-browser.test.ts lays it out)");
+    assert.doesNotMatch(css, /\.fileview-md > :where\(/, name + ": no per-child measure rule remains (the root's padding is the measure)");
+    assert.doesNotMatch(css, /\.fileview-md > :not\(/, name + ": nor a specificity-bearing one");
+    assert.doesNotMatch(css, /860px/, name + ": the fixed cap is gone");
+    assert.deepEqual(decls(ruleOf(css, ".fileview-md img {")), ["max-width: 100%"], name + ": a picture shrinks to its column (the root's content box)");
+    assert.deepEqual(decls(ruleOf(css, ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {")), ["max-width: 100%"], name + ": the media a file draws itself (svg, canvas, video) shrink to the column too, at element specificity");
     assert.deepEqual(decls(ruleOf(css, ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {')), ["height: auto"], name + ": a pixel-sized one keeps its ratio as it shrinks (a sized <img> too, since Slice 2 of plans/markdown-viewer.md); a percentage-width one keeps the author's height (the cap never shrinks it), and the whole selector sits inside :where so its two attribute tests add no specificity over KaTeX's svg rule");
-    // the table's cap is the BODY's width less the root's 18px inset (--fv-body-w: the body's content width, written on each
-    // top-level table by the viewer's ResizeObserver; registered non-inherited, so a write restyles the tables alone), and a
-    // table wider than the column is moved left by half the excess (a percentage in
-    // translate is of the table's own width; half the body less the padding is half the column), so it grows out of the column
-    // evenly, into both gutters, and a table no wider than the column is not moved at all (the min); with the property unset
-    // the cap falls back to the column and the shift to none. file-view-typescale-browser.test.ts lays the three widths out
+    // with the column the root's own content box there is no measure for a top-level medium's cap to outrank: the general
+    // caps above hold a bare <img> line or an inline <svg> block, direct children of the root, to the column by themselves
+    assert.equal(css.indexOf("\n.fileview-md > img {"), -1, name + ": a bare top-level picture needs no rule of its own now that the column is the root's box");
+    assert.doesNotMatch(css, /\.fileview-md > :is\(img/, name + ": nor does a top-level svg, canvas or video block");
     assert.deepEqual(decls(ruleOf(css, ".fileview-md table {")),
       ["border-collapse: collapse", "margin: 0.6em 0", "display: block", "width: max-content", "max-width: 100%", "overflow-x: auto", "overflow-wrap: normal"],
-      name + ": a table is a block as wide as its content up to its container, scrolling inside beyond it, whole words kept (a table in a quote or a list item stays in it)");
-    assert.deepEqual(decls(ruleOf(css, ".fileview-md > table {")),
-      ["max-width: calc(var(--fv-body-w, calc(100% + 36px)) - 36px)", "translate: min(0px, round(calc(var(--fv-body-w, calc(100% + 36px)) / 2 - max(18px, round(down, (var(--fv-body-w, calc(100% + 36px)) - 80ch) / 2, 1px)) - 50%), 1px))"],
-      name + ": a table of the page's own is capped at the body's inset and centred on the column once wider than it (with the property unset both read the stand-in: the cap is the column and the shift none)");
+      name + ": a table is a block as wide as its columns need up to its container, scrolling inside beyond it, whole words kept");
+    // a table of the page's own may grow out of the column, evenly into both gutters, up to the body's content width less
+    // the root's 18px inset (--fv-body-w, written by the viewer's width observer on each top-level table); unset, both
+    // declarations read the column and the shift is none
+    const top = decls(ruleOf(css, ".fileview-md > table {"));
+    assert.equal(top[0], "max-width: calc(var(--fv-body-w, calc(100% + 36px)) - 36px)", name + ": the cap is the body less the inset, the column before the first report");
+    assert.equal(top[1], "translate: min(0px, round(calc(var(--fv-body-w, calc(100% + 36px)) / 2 - max(18px, round(down, (var(--fv-body-w, calc(100% + 36px)) - 80ch) / 2, 1px)) - 50%), 1px))", name + ": the shift left is half of what the table exceeds the column by, whole pixels, never right");
+    assert.equal(top.length, 2);
+    assert.match(css, /^@property --fv-body-w \{ syntax: "\*"; inherits: false; \}$/m, name + ": the property is registered non-inherited, so a write restyles the tables alone");
     assert.deepEqual(decls(ruleOf(css, ".fileview-body {")), ["flex: 1 1 auto", "min-height: 0", "overflow: auto"], name + ": the body reserves no scrollbar gutter and is no size container (review round 2 of Slice 3 of plans/markdown-viewer.md: the gutter was a blank strip beside every body that does not scroll; the cap reads the observer's width instead)");
-    assert.deepEqual(decls(ruleOf(css, "@property --fv-body-w {")), ['syntax: "*"', "inherits: false"], name + ": the width property is registered non-inherited with no initial value: written on a table it reaches nothing under it (on the body, inherited, every node under the body was restyled per write, 2026-09-09), and unset it is the guaranteed-invalid value, so the var() fallbacks hold (file-view-body-width-browser.test.ts)");
     assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("overflow-wrap: anywhere"), name + ": prose still breaks an unbreakable string");
-    assert.ok(decls(ruleOf(css, ".fileview-md pre {")).includes("overflow-x: auto"), name + ": a code block scrolls in its own box");
-    assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("white-space: pre-wrap"), name + ": …and wraps first");
+    assert.ok(decls(ruleOf(css, ".fileview-md pre {")).includes("overflow-x: auto"), name + ": a code block scrolls on its own");
+    assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("white-space: pre-wrap"), name + ": and wraps first");
   }
   const [chat, feed] = SHEETS.map(([, css]) => css);
-  for (const head of [".fileview-md {", ".fileview-md table {", ".fileview-md > table {", ".fileview-md pre code {", ".fileview-pre {", ".fileview-gutter {", ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {", ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {', ".fileview-body {"]) {
+  for (const head of [".fileview-md {", ".fileview-md table {", ".fileview-md > table {", ".fileview-md pre code {", ".fileview-pre {", ".fileview-gutter {", ".fileview-md img {"]) {
     assert.equal(ruleOf(chat, head), ruleOf(feed, head), head + " mirrors exactly (the viewer mounts in both documents)");
   }
-  const block = (css: string) => css.slice(css.indexOf("/* ── text size and measure"), css.indexOf("/* Rendered markdown ("));
+  const block = (css: string) => { const a = css.indexOf("/* ── text size and measure"); const b = css.indexOf("/* Rendered markdown ("); assert.ok(a >= 0 && b > a, "the step-table block precedes the prose block"); return css.slice(a, b); };
   assert.ok(block(chat).length > 200, "the block with its rationale");
   assert.equal(block(chat), block(feed), "the step table and its comment mirror exactly");
 });
 
-test("both sheets: the title bar wraps and the action row shrinks and wraps to the right edge; a disabled or aria-disabled bar button is dimmed with an inert hover; the readout is a fixed slot, empty at the default", () => {
+test("both sheets: the title bar wraps and its action row shrinks and wraps to the right edge while the bare classes stay as they were; a disabled or aria-disabled bar button is dimmed with an inert hover; the readout is a fixed slot, empty at the default", () => {
   for (const [name, css] of SHEETS) {
-    // the modal's one-line bar clipped Download, Copy path and the close button off the card below about 600px once the
-    // control's three buttons joined the row (.fileview is overflow: hidden); the pane variant had wrapped already
     const bar = decls(ruleOf(css, ".fileview-bar {"));
     assert.ok(bar.includes("flex-wrap: wrap") && bar.includes("gap: 6px 10px"), name + ": the bar wraps, 6px between its lines");
-    // the wrap is the BAR's (round 2): the Files pane's Recent rows wear .fileview-name and the file browser's action row
-    // .fileview-acts outside any bar, and the base rules keep the plain flex they had before the control
     assert.deepEqual(decls(ruleOf(css, ".fileview-bar .fileview-name {")), ["flex: 1 1 0", "min-width: 12em"], name + ": in the bar the path keeps 12em and takes the rest of a wide bar");
     const nm = decls(ruleOf(css, ".fileview-name {"));
-    assert.ok(nm.includes("flex: 1 1 auto") && nm.includes("min-width: 0"), name + ": the class alone shrinks freely (a Recent row in a 200px pane)");
+    assert.ok(nm.includes("flex: 1 1 auto") && nm.includes("min-width: 0"), name + ": the class alone shrinks freely");
     const barActs = decls(ruleOf(css, ".fileview-bar .fileview-acts {"));
     for (const d of ["flex: 0 1 auto", "min-width: 0", "margin-left: auto", "flex-wrap: wrap", "justify-content: flex-end"]) assert.ok(barActs.includes(d), name + ": in the bar the action row " + d);
-    assert.deepEqual(decls(ruleOf(css, ".fileview-acts {")), ["flex: 0 0 auto", "display: flex", "align-items: center", "gap: 6px"], name + ": the class alone is one rigid row (the browser's bar never wraps)");
+    assert.deepEqual(decls(ruleOf(css, ".fileview-acts {")), ["flex: 0 0 auto", "display: flex", "align-items: center", "gap: 6px"], name + ": the class alone is one rigid row (the file browser's bar wears it outside any title bar)");
     assert.ok(!decls(ruleOf(css, ".fb-bar {")).some((d) => d.startsWith("flex-wrap")), name + ": .fb-bar has no wrap of its own");
     // one disabled dress for every bar button: the GitHub unit's no-link state (disabled) and the control's ends (aria-disabled)
     assert.deepEqual(decls(ruleOf(css, '.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] {')), ["opacity: 0.55", "cursor: default"], name + ": dimmed, default cursor");
     assert.deepEqual(decls(ruleOf(css, '.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover {')), ["border-color: var(--card-border)", "color: var(--fg)", "background: transparent"], name + ": the hover is inert (the rest colours, not the accent)");
     assert.deepEqual(decls(ruleOf(css, '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {')), ["transform: none"], name + ": no press pulse");
     assert.doesNotMatch(css, /\.fileview-gh \.fileview-btn:disabled/, name + ": the GitHub unit's disabled rules are the bar's now, not its own");
-    // the readout: one width whatever it says, and an empty box (not none) at the default
+    // the readout: one width whatever it says, and an empty slot (not none) at the default
     assert.deepEqual(decls(ruleOf(css, ".fileview-size-reset {")), ["min-width: 5.5em", "box-sizing: border-box", "text-align: center", "font-variant-numeric: tabular-nums"], name + ": a slot of one width");
-    assert.deepEqual(decls(ruleOf(css, ".fileview-size-reset.fileview-size-default {")), ["visibility: hidden"], name + ": the empty slot keeps its box and leaves the tab order");
+    assert.deepEqual(decls(ruleOf(css, ".fileview-size-reset.fileview-size-default {")), ["visibility: hidden"], name + ": the empty slot keeps its width and leaves the tab order");
   }
   const [chat, feed] = SHEETS.map(([, css]) => css);
-  for (const head of [".fileview-bar {", ".fileview-name {", ".fileview-acts {", ".fileview-bar .fileview-name {", ".fileview-bar .fileview-acts {", ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {"]) assert.equal(ruleOf(chat, head), ruleOf(feed, head), head + " mirrors exactly");
-  const pane = web("files-pane.css").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.doesNotMatch(pane, /\.fileview-bar|\.fileview-acts|\.fileview-name/, "the pane sheet adds nothing to the bar: the wrap is the base rules' (browse-route.test.ts measures the pane at 320 and 360px)");
+  for (const head of [".fileview-bar {", ".fileview-name {", ".fileview-acts {", ".fileview-bar .fileview-name {", ".fileview-bar .fileview-acts {",
+    '.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] {', ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {"]) {
+    assert.equal(ruleOf(chat, head), ruleOf(feed, head), head + " mirrors exactly");
+  }
 });
 
-// ── the browser legs ──────────────────────────────────────────────────────────────────────────────
-// (1) the sheets over a static page: a real layout at two pane widths and two sizes, both sheets; (2) the REAL module
-// bundled into a page (esbuild, as browse-route.test.ts bundles the Files pane): the bar's geometry with the row a
-// kernel-answered markdown file shows, a bare <img> line, the code block's measure, the dimmed end, the fixed slot,
-// the kept focus, the selection guard. Both skip loudly without playwright or a browser (CI installs none).
+// ── the browser leg: a real layout over each sheet, through a child driver ─────────────────────────
+// The layout claims the sheet pins cannot show (the page never widens, a wide table scrolls on its own, a table in a
+// quote or a list item keeps the prose width, the action row drops below the path and the close button stays on the
+// card, A− and A+ hold still when the readout fills, the file browser's bar keeps one line) are
+// measured in headless Chromium. The measurement runs in a standalone driver (the test bundle is CommonJS without
+// top-level await, and esbuild must never try to bundle playwright); the driver exits 3 without playwright or a
+// browser, and the leg skips loudly there.
+const LONG = "unbreakable".repeat(5);   // wide enough to push the table past the column at 1000px, narrow enough that the body still holds it
+const SVG = (w: number) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="120"><rect width="${w}" height="120" fill="#369"/></svg>`)}`;
+const ROWS = Array.from({ length: 3 }, (_, i) => `<tr><td>row ${i} alpha beta gamma delta</td><td>a fairly long cell of prose that keeps going on for a while</td><td>${LONG}</td><td>another long cell with many words in it to widen the table</td><td>five</td><td>six more text here</td></tr>`).join("");
+/** A six-column table whose columns want more than the prose measure: at the top level, inside a quote and inside a list item. */
+const TABLE = (id: string) => `<table id="${id}"><thead><tr><th>one</th><th>two</th><th>three</th><th>four</th><th>five</th><th>six</th></tr></thead><tbody>${ROWS}</tbody></table>`;
+const ROW = (t: string) => `<span class="cl"><span class="ct">${t}</span></span>`;
+const MD = `<h1 id="h1">Report</h1><h2 id="h2">Findings</h2><h3 id="h3">Detail</h3><p id="p">Prose ${"lorem ipsum ".repeat(40)}</p>
+${TABLE("t")}
+<blockquote id="bq"><p>A quoted note with a table of its own.</p>${TABLE("tq")}</blockquote>
+<ul><li>A first item.</li><li id="li">An item with a table of its own.${TABLE("tl")}</li></ul>
+<pre id="pre"><code>${"const x = 1; ".repeat(30)}</code></pre>
+<pre id="pre2"><code>const y = 2;</code></pre>
+<pre id="pre3"><code style="--ln-digits: 1">${ROW("a")}${ROW("")}${ROW("b")}</code></pre>
+<pre id="pre4"><code style="--ln-digits: 5">${ROW("a")}</code></pre>
+<pre id="pre5" class="has-copy"><code>z</code><button class="code-copy" id="copy">Copy</button></pre>
+<ul><li id="task" class="task-list-item"><input type="checkbox" disabled> A task</li></ul>
+<p id="lw">${"x".repeat(140)}</p>
+<p><img id="im" width="900" height="120" src="${SVG(900)}"></p>
+<img id="im2" width="1600" height="120" src="${SVG(1600)}">
+<svg id="sv" xmlns="http://www.w3.org/2000/svg" width="1600" height="120" viewBox="0 0 1600 120"><rect width="1600" height="120" fill="#693"/></svg>`;
+const sheet = (css: string) => `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style></head>`;
+/** The modal as openFileView builds it, over a rendered markdown body. */
+const LAYOUT_PAGE = (css: string) => sheet(css) + `<body class="fileview-open"><div id="romp-fileview"><div class="fileview" id="root"><div class="fileview-bar"><div class="fileview-name"><span class="fileview-dir">/tmp/notes-api/docs/</span><span class="fileview-base">report.md</span></div><div class="fileview-acts"><button class="fileview-btn on">Rendered</button><button class="fileview-btn">Raw</button><button class="fileview-btn fileview-size">A−</button><button class="fileview-btn fileview-size fileview-size-reset fileview-size-default">100%</button><button class="fileview-btn fileview-size">A+</button><button class="fileview-btn fileview-close">✕</button></div></div>
+<div class="fileview-body" id="body"><div class="fileview-md" id="md">${MD}</div></div></div></div></body></html>`;
+const LAYOUT_MEASURE = `(() => {
+  const q = (s) => document.querySelector(s);
+  const w = (s) => q(s).getBoundingClientRect().width;
+  const fz = (s) => parseFloat(getComputedStyle(q(s)).fontSize);
+  const body = q("#body"), t = q("#t"), tq = q("#tq"), tl = q("#tl"), pre = q("#pre"), md = q("#md"), cs = getComputedStyle(md);
+  const probe = document.createElement("span"); probe.textContent = "0".repeat(80); probe.style.whiteSpace = "nowrap"; probe.style.position = "absolute";
+  md.appendChild(probe); const ch80 = probe.getBoundingClientRect().width; probe.remove();
+  const rows = Array.from(q("#pre3 code").children).map((r) => r.getBoundingClientRect().height);
+  const ctOff = (s) => q(s + " .ct").getBoundingClientRect().left - q(s + " code").getBoundingClientRect().left;
+  const r = (s) => q(s).getBoundingClientRect();
+  return { win: innerWidth, docScroll: document.documentElement.scrollWidth, bodyClient: body.clientWidth, bodyScroll: body.scrollWidth,
+    padL: parseFloat(cs.paddingLeft), padR: parseFloat(cs.paddingRight), ch80, pLeft: r("#p").left, pRight: r("#p").right, tLeft: r("#t").left, tRight: r("#t").right,
+    h2Font: fz("#h2"), h3Font: fz("#h3"), rows, ct1: ctOff("#pre3"), ct5: ctOff("#pre4"),
+    taskStyle: getComputedStyle(q("#task")).listStyleType, taskScheme: getComputedStyle(q("#task input")).colorScheme,
+    md: w("#md"), p: w("#p"), t: w("#t"), tClient: t.clientWidth, tScroll: t.scrollWidth, pre: w("#pre"), preClient: pre.clientWidth, preScroll: pre.scrollWidth,
+    bq: w("#bq"), tq: w("#tq"), tqClient: tq.clientWidth, tqScroll: tq.scrollWidth, li: w("#li"), tl: w("#tl"), tlClient: tl.clientWidth, tlScroll: tl.scrollWidth,
+    pre2: w("#pre2"), lw: w("#lw"), img: w("#im"), img2: w("#im2"), svg: w("#sv"), mdFont: fz("#md"), h1Font: fz("#h1"), codeFont: fz("#pre code") };
+})()`;
+/** The print sheet over the same page: what leaves, what turns black, what a table becomes. */
+const PRINT_MEASURE = `(() => {
+  const q = (s) => document.querySelector(s); const cs = (s) => getComputedStyle(q(s));
+  return { bar: cs(".fileview-bar").display, copy: cs("#copy").display, md: cs("#md").color, h1: cs("#h1").color, code: cs("#pre code").color, dim: cs("#h1").borderBottomColor,
+    table: cs("#t").display, bodyBg: getComputedStyle(document.body).backgroundColor, rootBg: getComputedStyle(document.documentElement).backgroundColor,
+    bodyOverflow: cs("#body").overflowY, scheme: cs("#task input").colorScheme, tWidth: q("#t").getBoundingClientRect().width, bodyW: q("#body").clientWidth, docH: document.documentElement.scrollHeight, winH: innerHeight };
+})()`;
+/** The bar a kernel-answered markdown file shows: the format toggles, the control, Edit, the GitHub unit with its caption,
+ *  Download, Copy path and the close button, behind a deep path and a session chip. */
+const BAR_PAGE = (css: string) => sheet(css) + `<body class="fileview-open"><div id="romp-fileview"><div class="fileview" id="root"><div class="fileview-bar" id="bar"><div class="fileview-name" id="name"><span class="fileview-dir">/tmp/notes-api/services/api/internal/handlers/</span><span class="fileview-base">report.md</span></div><span class="fileview-sess">api</span><div class="fileview-acts" id="acts"><button class="fileview-btn on">Rendered</button><button class="fileview-btn">Raw</button><button class="fileview-btn fileview-size" id="down">A−</button><button class="fileview-btn fileview-size fileview-size-reset fileview-size-default" id="reset">100%</button><button class="fileview-btn fileview-size" id="up">A+</button><button class="fileview-btn">Edit</button><span class="fileview-gh"><span class="fileview-gh-why">not committed (staged only)</span><button class="fileview-btn" disabled>GitHub ↗</button></span><button class="fileview-btn">Download</button><button class="fileview-btn">Copy path</button><button class="fileview-btn fileview-close" id="close">✕</button></div></div>
+<div class="fileview-body" id="body"><div class="fileview-md"><p>Prose.</p></div></div></div></div></body></html>`;
+const BAR_MEASURE = `(() => {
+  const r = (id) => { const b = document.getElementById(id).getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width }; };
+  const cs = (id) => getComputedStyle(document.getElementById(id));
+  return { win: innerWidth, card: r("root"), bar: r("bar"), name: r("name"), acts: r("acts"), close: r("close"), down: r("down"), up: r("up"), reset: r("reset"),
+    resetVis: cs("reset").visibility, nameFont: parseFloat(cs("name").fontSize), barPadRight: parseFloat(cs("bar").paddingRight) };
+})()`;
+const READOUT_ON = `(() => { const b = document.getElementById("reset"); b.classList.remove("fileview-size-default"); b.textContent = "115%"; })()`;
+const READOUT_OFF = `(() => { const b = document.getElementById("reset"); b.classList.add("fileview-size-default"); b.textContent = "100%"; })()`;
+/** The file browser's bar (file-browse.ts): the crumb trail and, wearing .fileview-acts outside any title bar, Hidden and the close button. */
+const CRUMBS = ["/", "tmp", "notes-api", "services", "api", "internal", "handlers", "v2", "tests", "fixtures", "golden"];
+const FB_PAGE = (css: string) => sheet(css) + `<body class="filebrowse-open"><div id="romp-filebrowse"><div class="filebrowse"><div class="fb-bar" id="fbbar"><div class="fb-crumbs" id="fb-crumbs">${CRUMBS.map((c, i) => (i ? '<span class="fb-crumb-sep">/</span>' : "") + '<span class="fb-crumb">' + c + "</span>").join("")}</div><div class="fileview-acts" id="acts"><button class="fileview-btn" id="hid">Hidden</button><button class="fileview-btn fileview-close" id="fbclose">✕</button></div></div><div class="fb-list"></div></div></div></body></html>`;
+const FB_MEASURE = `(() => {
+  const g = (id) => document.getElementById(id);
+  const bar = g("fbbar"), crumbs = g("fb-crumbs"), acts = g("acts"), hid = g("hid").getBoundingClientRect(), close = g("fbclose").getBoundingClientRect();
+  return { win: innerWidth, barH: bar.getBoundingClientRect().height, barOver: bar.scrollWidth - bar.clientWidth, hidTop: hid.top, closeTop: close.top, closeLeft: close.left, closeRight: close.right,
+    acts: acts.getBoundingClientRect().width, wrap: getComputedStyle(acts).flexWrap, crumbsClient: crumbs.clientWidth, crumbsScroll: crumbs.scrollWidth };
+})()`;
+// mdBlock's task stamp, run in the page over marked's own output for a synthetic document, sanitized as mdBlock sanitizes
+// it (the shared sanitizer, md-sanitize.ts, bundled from the source with esbuild and added to the page as a script; the
+// body it returns is adopted the way mdBlock adopts it) and then stamped by the statement lifted from mdBlock. marked
+// emits a task item's checkbox as the li's first node (inside its first paragraph in a loose list); a checkbox an author's
+// raw HTML puts after the item's text matches the stamp's :first-child selector (elements alone count) and must not make a
+// task item of the item. A tight list, a numbered one, a loose one (every item of a loose list is a paragraph, the mid-item
+// case included), an enabled box (the sanitizer makes it disabled before the stamp sees it, so it opens its item like
+// marked's own), a raw disabled box that opens its item, and an author's own class.
+const STAMP_MD = [
+  "- [ ] open task", "- [x] done task", "- plain item", '- text then <input type="checkbox" disabled> mid-item',
+  '- **bold** then <input type="checkbox" disabled> after bold', '- <input type="checkbox"> enabled first', '- <input type="checkbox" disabled> raw first',
+  "", "1. [ ] numbered task", "", "- [ ] loose task", "", "  with a second paragraph", "", '- loose text then <input type="checkbox" disabled> loose mid-item',
+  "", '<ul><li class="task-list-item"><input type="checkbox" disabled> an author item</li></ul>', "",
+].join("\n");
+/** The real sanitizer for the page: md-sanitize.ts and the DOMPurify under it, bundled from the source (esbuild and the
+ *  packages resolve from the extension package, as the test bundle itself was built), exposing sanitizeMd on the window. */
+function sanitizerJs(): string {
+  const requireExt = createRequire(path.resolve(process.cwd(), "package.json"));
+  const esbuild = requireExt("esbuild");
+  const r = esbuild.buildSync({
+    stdin: { contents: 'import { sanitizeMd } from "./md-sanitize"; (window as any).sanitizeMd = sanitizeMd;', resolveDir: path.resolve(process.cwd(), "..", "ui", "webview"), loader: "ts", sourcefile: "fv-textsize-sanitizer-entry.ts" },
+    bundle: true, write: false, format: "iife", platform: "browser", target: "es2020", nodePaths: [path.resolve(process.cwd(), "node_modules")], logLevel: "silent",
+  });
+  return r.outputFiles[0].text as string;
+}
+const STAMP_CODE = (() => { const at = VIEW.indexOf("box.querySelectorAll('li > input"); return at < 0 ? "" : VIEW.slice(at, VIEW.indexOf("\n  });", at) + 6); })();
+const STAMP_PAGE = (css: string) => sheet(css) + `<body class="fileview-open"><div id="romp-fileview"><div class="fileview" id="root"><div class="fileview-body" id="body"><div class="fileview-md" id="md"></div></div></div></div></body></html>`;
+const STAMP_PREP = `(() => { const box = document.getElementById("md"); box.replaceChildren(...Array.from(sanitizeMd(${JSON.stringify(marked.parse(STAMP_MD) as string)}).childNodes)); ${STAMP_CODE} })()`;
+const STAMP_MEASURE = `(() => Array.from(document.querySelectorAll("#md li")).map((li) => {
+  const input = li.querySelector("input"), lr = li.getBoundingClientRect();
+  return { text: (li.textContent || "").replace(/\\s+/g, " ").trim(), stamped: li.classList.contains("task-list-item"), bullet: getComputedStyle(li).listStyleType,
+    input: input ? { disabled: input.disabled, checked: input.checked, marginLeft: parseFloat(getComputedStyle(input).marginLeft), left: input.getBoundingClientRect().left - lr.left, scheme: getComputedStyle(input).colorScheme } : null };
+}))()`;
+type Step = { width?: number; size?: number; prep?: string; media?: string; measure?: string; tag: string };
+type Case = { name: string; html: string; width: number; measure: string; steps: Step[]; inline?: string[] };   // inline: script text added to the page after its HTML
+type Rows = Record<string, { rows: Array<{ step: Step; got: any }>; errors: string[] }>;
+/** A step, and the body's content width written on each top-level table the way the viewer's width observer writes it
+ *  (file-view.ts watchBodyWidth: --fv-body-w on the tables themselves, after every paint and every width change); the
+ *  page here carries no script, so the prep stands in for the observer. */
+const step = (n: number) => `(() => { document.getElementById("root").dataset.fvText = "${n}"; const w = document.getElementById("body").clientWidth + "px"; for (const t of document.querySelectorAll("#md > table")) t.style.setProperty("--fv-body-w", w); })()`;
+function cases(): Case[] {
+  const out: Case[] = [];
+  const sanitizer = sanitizerJs();
+  for (const [name, css] of SHEETS) {
+    out.push({ name: "layout/" + name, html: LAYOUT_PAGE(css), width: 1000, measure: LAYOUT_MEASURE, steps: [
+      { size: 100, prep: step(100), tag: "@1000/100" }, { size: 150, prep: step(150), tag: "@1000/150" },
+      { width: 420, size: 100, prep: step(100), tag: "@420/100" }, { size: 150, prep: step(150), tag: "@420/150" },
+      { width: 1000, size: 100, prep: step(100), media: "print", measure: PRINT_MEASURE, tag: "@1000 print" },
+    ] });
+    const bar: Step[] = [];
+    for (const w of [380, 420, 480, 600, 1000, 1400]) { bar.push({ width: w, prep: READOUT_OFF, tag: "@" + w + " default" }); bar.push({ prep: READOUT_ON, tag: "@" + w + " readout" }); }
+    out.push({ name: "bar/" + name, html: BAR_PAGE(css), width: 1000, measure: BAR_MEASURE, steps: bar });
+    out.push({ name: "fb/" + name, html: FB_PAGE(css), width: 1000, measure: FB_MEASURE, steps: [1000, 480, 360, 320].map((w) => ({ width: w, tag: "@" + w })) });
+    out.push({ name: "stamp/" + name, html: STAMP_PAGE(css), width: 1000, measure: STAMP_MEASURE, inline: [sanitizer], steps: [{ prep: STAMP_PREP, tag: "stamp" }] });
+  }
+  return out;
+}
+// The driver: playwright out of the extension package's node_modules, exit 3 when it or a browser is missing.
+const DRIVER = `
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+let chromium;
+try { chromium = require("playwright").chromium; } catch (e) { process.exit(3); }
+let browser;
+try { browser = await chromium.launch(); } catch (e) { process.exit(3); }
+const spec = JSON.parse(fs.readFileSync(process.env.SPEC_PATH, "utf8"));
+const out = {};
+for (const c of spec) {
+  const page = await browser.newPage({ viewport: { width: c.width, height: 900 } });
+  const errors = [];
+  page.on("pageerror", (e) => { errors.push(e.message); });
+  await page.setContent(c.html);
+  for (const s of c.inline || []) await page.addScriptTag({ content: s });
+  const rows = [];
+  for (const s of c.steps) {
+    if (s.width) await page.setViewportSize({ width: s.width, height: 900 });
+    if (s.prep) await page.evaluate(s.prep);
+    if (s.media) await page.emulateMedia({ media: s.media });
+    rows.push({ step: s, got: await page.evaluate(s.measure || c.measure) });
+  }
+  out[c.name] = { rows, errors };
+  await page.close();
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\\n");
+await browser.close();
+process.exit(0);
+`;
+function measure(): Rows | null {
+  const os = require("node:os");
+  const cp = require("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fv-textsize-"));
+  const driver = path.join(dir, "driver.mjs"); fs.writeFileSync(driver, DRIVER);
+  const specPath = path.join(dir, "spec.json"); fs.writeFileSync(specPath, JSON.stringify(cases()));
+  try {
+    const p = cp.spawnSync(process.execPath, [driver], { encoding: "utf8", timeout: 180000, maxBuffer: 64 * 1024 * 1024,   // the running node, never PATH
+      env: { ...process.env, EXT_PKG: path.resolve(process.cwd(), "package.json"), SPEC_PATH: specPath } });
+    if (p.status === 3) return null;                                  // no playwright / no browser here
+    if (p.status !== 0) throw new Error("layout driver failed: " + String(p.stderr || p.stdout || p.error || "").slice(-800));
+    const line = (p.stdout || "").split("\n").find((l: string) => l.startsWith("RESULT:"));
+    if (!line) throw new Error("layout driver printed no result: " + (p.stdout || "").slice(-400));
+    return JSON.parse(line.slice("RESULT:".length));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+const m = measure();
+const skip = m ? false : "no Playwright browser here (CI installs none); the layout claims rest on the sheet pins above";
+const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) < 1, what + ": " + a + " vs " + b);
+
+test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, in both sheets; prose and code keep the measure (80 of the root's ch, centred, whole pixels) and a table grows evenly out of the column up to the body while a table in a quote or a list item keeps the prose width; the heading ladder and the fence rows measure; at 150% every text size and the measure grow together; narrow, a table scrolls on its own; in print the file alone prints black on white", { skip }, () => {
+  for (const [name] of SHEETS) {
+    const c = m!["layout/" + name];
+    assert.deepEqual(c.errors, [], name + ": no script error in the page");
+    const at = (tag: string) => c.rows.find((r) => r.step.tag === tag)!.got;
+    for (const r of c.rows.filter((x) => !x.step.media)) {
+      const l = r.got, cell = name + " " + r.step.tag;
+      assert.equal(l.bodyScroll, l.bodyClient, cell + ": the body does not scroll sideways");
+      assert.equal(l.docScroll, l.win, cell + ": the page is the window");
+      const col = l.bodyClient - 36 + 0.5;                            // the root's 18px padding a side
+      assert.ok(l.pre <= col && l.pre2 <= col && l.lw <= col && l.img <= col, cell + ": code, the long string and the image paragraph fit the column");
+      assert.ok(l.img2 <= col, cell + ": the bare <img> line fits the column too (" + l.img2 + " in " + (l.bodyClient - 36) + "): its own cap outranks the measure");
+      assert.ok(l.svg <= col, cell + ": a wide inline svg block, a direct child of the root, fits the column too (" + l.svg + " in " + (l.bodyClient - 36) + "): the element-level media cap holds it to the root's content box");
+      assert.ok(l.preScroll <= l.preClient + 1, cell + ": the long code line wraps inside its block");
+      near(l.md, l.bodyClient, cell + ": the root is the body's width");
+      assert.ok(l.bq <= l.p + 0.5 && l.tq <= l.bq + 0.5 && l.li <= l.p + 0.5 && l.tl <= l.li + 0.5,
+        cell + ": a quote and a list item keep the prose width and the table inside each keeps to it (quote " + l.bq + ", its table " + l.tq + "; item " + l.li + ", its table " + l.tl + "; prose " + l.p + ")");
+    }
+    const base = at("@1000/100"), big = at("@1000/150");
+    for (const r of c.rows.filter((x) => !x.step.media)) {
+      const l = r.got, cell = name + " " + r.step.tag;
+      // the measure: 80 of the root's own ch, centred as inline padding rounded down to whole pixels, never under 18px; when the
+      // column cannot hold 80ch the padding is its 18px floor and the prose follows the viewer
+      const want = Math.min(l.ch80, l.bodyClient - 36);
+      assert.ok(l.p >= want - 0.5 && l.p <= want + 2.5, cell + ": the prose measure is 80ch or the column (" + l.p + ", 80ch " + l.ch80 + ", column " + (l.bodyClient - 36) + ")");
+      near(l.p, l.bodyClient - l.padL - l.padR, cell + ": the measure is the root's content box, laid as its inline padding");
+      assert.equal(l.padL, l.padR, cell + ": centred (" + l.padL + " / " + l.padR + ")");
+      assert.ok(Number.isInteger(l.padL) && l.padL >= 18, cell + ": whole pixels, never under 18px (" + l.padL + ")");
+      near(l.pre, l.p, cell + ": a code block keeps the measure"); near(l.pre2, l.p, cell + ": a two-line snippet too, no viewer-wide block");
+      assert.ok(l.tq <= l.p + 0.5 && l.tl <= l.p + 0.5, cell + ": the same table in a quote (" + l.tq + ") or a list item (" + l.tl + ") keeps the prose measure");
+      assert.ok(l.img <= l.p + 0.5 && l.lw <= l.p + 0.5 && l.img2 <= l.p + 0.5 && l.svg <= l.p + 0.5, cell + ": both pictures, the inline svg and an unbreakable string stay in the measure");
+      // the ladder, em of the prose: 2 / 1.5 / 1.25
+      near(l.h1Font, l.mdFont * 2, cell + ": h1 is 2em of the prose"); near(l.h2Font, l.mdFont * 1.5, cell + ": h2 is 1.5em"); near(l.h3Font, l.mdFont * 1.25, cell + ": h3 is 1.25em");
+      // the fence rows: a text row, a blank row and the last row are each one line-height of the code; the gutter's basis
+      // follows the fence's digit count (2.5em of the gutter's own 0.92em for one digit, plus the 0.85em gap)
+      assert.equal(l.rows.length, 3);
+      for (const h of l.rows) near(h, l.codeFont * 1.5, cell + ": a row is the code's line-height (" + l.rows.join(", ") + ")");
+      near(l.ct1, l.codeFont * 0.92 * 3.35, cell + ": the one-digit gutter is 2.5em plus the gap (" + l.ct1 + ")");
+      assert.ok(l.ct5 > l.ct1 + 3, cell + ": a five-digit fence's gutter is wider than a one-digit fence's (" + l.ct5 + " vs " + l.ct1 + ")");
+      // a task item: no bullet beside the box, the box drawn for the page's scheme (no theme class here: dark)
+      assert.equal(l.taskStyle, "none", cell + ": a task item has no bullet"); assert.equal(l.taskScheme, "dark", cell + ": the box follows the page's scheme");
+    }
+    // at 1000px and 100% the column holds 80ch with room to spare, and a table wider than the column grows out of it evenly
+    assert.ok(base.padL > 18, name + " @1000/100: room to spare (" + base.padL + "px a side)");
+    assert.ok(base.t > base.p + 1 && base.t <= base.bodyClient - 36 + 0.5, name + " @1000/100: the table grows out of the column (" + base.t + " past " + base.p + "), inside the body's inset");
+    assert.equal(base.tScroll, base.tClient, name + " @1000/100: room enough, so the table does not scroll");
+    assert.ok(Math.abs((base.pLeft - base.tLeft) - (base.tRight - base.pRight)) <= 1.5, name + " @1000/100: evenly into both gutters (" + (base.pLeft - base.tLeft) + " left, " + (base.tRight - base.pRight) + " right)");
+    assert.ok(Math.abs(base.mdFont - 13 * 1.15) < 0.05, name + " @100%: the prose is 1.15 times the page's 13px (" + base.mdFont + ")");
+    assert.equal(base.codeFont, 12, name + " @100%: fenced code at 12px, the size it had");
+    near(big.mdFont, base.mdFont * 1.5, name + " @150%: the prose"); assert.equal(big.codeFont, 18, name + " @150%: fenced code");
+    assert.ok(big.ch80 > base.ch80 * 1.4, name + " @150%: the measure's unit grows with the text (" + big.ch80 + " from " + base.ch80 + ")");
+    for (const tag of ["@420/100", "@420/150"]) {
+      const l = at(tag), cell = name + " " + tag;
+      assert.equal(l.padL, 18, cell + ": the inset floor holds when the column cannot hold 80ch");
+      near(l.t, l.bodyClient - 36, cell + ": the table is the column");
+      assert.ok(l.tScroll > l.tClient + 100, cell + ": the unbreakable cell scrolls inside the table (" + l.tScroll + " in " + l.tClient + ")");
+      near(l.p, l.bodyClient - 36, cell + ": the prose follows the viewer below its measure");
+      near(l.img2, l.bodyClient - 36, cell + ": the wide banner is the column");
+      near(l.svg, l.bodyClient - 36, cell + ": the wide inline svg is the column");
+    }
+    for (const tag of ["@1000/150", "@420/100", "@420/150"]) {
+      const l = at(tag), cell = name + " " + tag;
+      assert.ok(l.tqScroll > l.tqClient + 100 && l.tlScroll > l.tlClient + 100,
+        cell + ": a nested table its quote or item cannot hold scrolls inside itself (" + l.tqScroll + " in " + l.tqClient + "; " + l.tlScroll + " in " + l.tlClient + ")");
+    }
+    // print: the file alone, black on white, as many pages as it needs
+    const print = at("@1000 print"), cell = name + " print";
+    assert.equal(print.bar, "none", cell + ": the title bar leaves"); assert.equal(print.copy, "none", cell + ": the Copy buttons leave");
+    for (const [k, v] of Object.entries({ md: print.md, h1: print.h1, code: print.code, rule: print.dim })) assert.equal(v, "rgb(0, 0, 0)", cell + ": " + k + " in black");
+    assert.equal(print.bodyBg, "rgb(255, 255, 255)", cell + ": the page is white"); assert.equal(print.rootBg, "rgb(255, 255, 255)", cell + ": the canvas too");
+    assert.equal(print.table, "table", cell + ": a table is a table again"); assert.equal(print.scheme, "light", cell + ": the task box is drawn light");
+    assert.equal(print.bodyOverflow, "visible", cell + ": the body does not clip to one screen"); assert.ok(print.docH > print.winH, cell + ": the document runs past one window's height (" + print.docH + " over " + print.winH + ")");
+    assert.ok(print.tWidth > 0 && print.tWidth <= print.bodyW - 36 + 0.5, cell + ": the wide table keeps the body's room less the inset (" + print.tWidth + " in " + print.bodyW + ")");
+  }
+});
+
+test("in a browser: from 380 to 1400px in both modals the close button and every action stay on the card; the path keeps 12em and the action row ends at the bar's edge; up to 600px the row drops to the line below the path and at 1400 the two share a line; A− and A+ hold still when the readout fills after the first press", { skip }, () => {
+  for (const [name] of SHEETS) {
+    const c = m!["bar/" + name];
+    assert.deepEqual(c.errors, [], name + ": no script error in the page");
+    for (let i = 0; i < c.rows.length; i += 2) {
+      const off = c.rows[i].got, on = c.rows[i + 1].got, cell = name + " " + c.rows[i].step.tag.split(" ")[0];
+      for (const [g, what] of [[off, "at the default"], [on, "with the readout showing"]] as Array<[any, string]>) {
+        const inside = g.close.l >= g.card.l - 0.5 && g.close.r <= g.card.r + 0.5 && g.close.t >= g.card.t - 0.5 && g.close.b <= g.card.b + 0.5;
+        assert.ok(inside, cell + " " + what + ": the close button lies inside the card (close " + JSON.stringify(g.close) + ", card " + JSON.stringify(g.card) + ")");
+        assert.ok(g.name.w >= 12 * g.nameFont - 0.5, cell + " " + what + ": the path keeps 12em (" + g.name.w + "px at " + g.nameFont + "px)");
+        near(g.acts.r, g.bar.r - g.barPadRight, cell + " " + what + ": the action row ends at the bar's right edge");
+        // the bar's own wrap: three more buttons no longer fit beside a deep path below about 600px, so the row drops to
+        // the line below (the row's own wrap alone would keep it beside the path, squeezed into a column); wide, one line
+        if (g.win <= 600) assert.ok(g.acts.t >= g.name.b - 0.5, cell + " " + what + ": the action row is the line below the path (row top " + g.acts.t + ", path bottom " + g.name.b + ")");
+        if (g.win >= 1400) assert.ok(g.acts.t < g.name.b - 0.5 && g.acts.b > g.name.t + 0.5, cell + " " + what + ": room for both, so the path and the action row share a line");
+      }
+      assert.equal(off.resetVis, "hidden", cell + ": at the default the readout's slot is empty by visibility");
+      assert.ok(off.reset.w > 20, cell + ": and keeps its width (" + off.reset.w + "px)");
+      assert.equal(on.resetVis, "visible", cell + ": off the default the readout shows");
+      near(off.down.l, on.down.l, cell + ": A− does not move when the readout fills"); near(off.down.t, on.down.t, cell + ": A− stays on its line");
+      near(off.up.l, on.up.l, cell + ": A+ does not move when the readout fills"); near(off.up.t, on.up.t, cell + ": A+ stays on its line");
+    }
+  }
+});
+
+test("in a browser: the file browser's bar stays one line at 320, 360, 480 and 1000px in both sheets, its two buttons holding their width while the crumb trail gives up room", { skip }, () => {
+  for (const [name] of SHEETS) {
+    const c = m!["fb/" + name];
+    assert.deepEqual(c.errors, [], name + ": no script error in the page");
+    const wide = c.rows[0].got;
+    assert.equal(wide.win, 1000);
+    for (const r of c.rows) {
+      const g = r.got, cell = name + " " + r.step.tag;
+      assert.equal(g.hidTop, g.closeTop, cell + ": Hidden and the close button share a line");
+      near(g.barH, wide.barH, cell + ": the bar is the height it has at 1000px (one line, not two)");
+      near(g.acts, wide.acts, cell + ": the action row holds its width");
+      assert.equal(g.wrap, "nowrap", cell + ": the row does not wrap");
+      assert.ok(g.closeLeft >= 0 && g.closeRight <= g.win + 0.5, cell + ": the close button lies inside the window: x " + g.closeLeft + " to " + g.closeRight);
+      assert.equal(g.barOver, 0, cell + ": the bar overflows nothing");
+      if (g.win < 1000) assert.ok(g.crumbsScroll > g.crumbsClient, cell + ": the crumb trail is what gives up room (" + g.crumbsScroll + " in " + g.crumbsClient + ")");
+    }
+  }
+});
+
+test("in a browser: mdBlock's task stamp over marked's own output, sanitized as mdBlock sanitizes it, in both sheets: a disabled checkbox that opens its item (a tight list, a numbered one, a loose one's first paragraph, an author's raw box) makes a task item with no bullet and the box pulled into the gutter; an author's enabled box is made inert by the sanitizer and opens its item too; a box after the item's text leaves the item and its bullet as the file wrote them; an author's own class is kept", { skip }, () => {
+  assert.ok(STAMP_CODE, "the stamp statement is lifted from the source");
+  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/, "mdBlock adopts the shared sanitizer's body, as the page here does (the heading ids minted inside the call, before the math fill)");
+  type Row = { text: string; stamped: boolean; bullet: string; input: { disabled: boolean; checked: boolean; marginLeft: number; left: number; scheme: string } | null };
+  for (const [name] of SHEETS) {
+    const c = m!["stamp/" + name];
+    assert.deepEqual(c.errors, [], name + ": no script error in the page");
+    const rows = c.rows[0].got as Row[];
+    assert.equal(rows.length, 11, name + ": every item of the document is in the page (" + rows.map((r) => r.text).join(" | ") + ")");
+    const item = (start: string) => { const r = rows.find((x) => x.text.startsWith(start)); assert.ok(r, name + ": an item starting " + JSON.stringify(start)); return r!; };
+    for (const start of ["open task", "done task", "numbered task", "loose task", "enabled first", "raw first", "an author item"]) {
+      const r = item(start), cell = name + " " + JSON.stringify(start);
+      assert.equal(r.stamped, true, cell + ": a task item");
+      assert.equal(r.bullet, "none", cell + ": no bullet beside the box");
+      assert.ok(r.input && r.input.disabled, cell + ": the disabled box survived the sanitize");
+      assert.ok(r.input!.marginLeft < -13, cell + ": the box is pulled into the gutter (" + r.input!.marginLeft + ")");
+      assert.ok(r.input!.left < 0, cell + ": the box sits before the item's edge, where the bullet was (" + r.input!.left + ")");
+      assert.equal(r.input!.scheme, "dark", cell + ": drawn for the page's scheme (no theme class here: dark)");
+    }
+    assert.equal(item("done task").input!.checked, true, name + ": a checked box stays checked");
+    // an author's enabled box is made inert by the sanitizer (md-sanitize.ts keeps marked's checkbox as the one control a note
+    // carries, disabled), so by the time the stamp runs it is a disabled box opening its item, and a task item like the rest
+    assert.equal(item("enabled first").input!.disabled, true, name + ": the sanitizer disabled the author's enabled box before the stamp");
+    for (const start of ["plain item", "text then", "bold then", "loose text then"]) {
+      const r = item(start), cell = name + " " + JSON.stringify(start);
+      assert.equal(r.stamped, false, cell + ": not a task item");
+      assert.equal(r.bullet, "disc", cell + ": the bullet stays");
+      if (start !== "plain item") {
+        assert.ok(r.input, cell + ": the sanitize kept the author's box");
+        assert.ok(r.input!.marginLeft >= 0 && r.input!.left >= 0, cell + ": the box keeps the control's own margin, inside the item, not pulled into the gutter (" + r.input!.marginLeft + ", " + r.input!.left + ")");
+        assert.ok(r.input!.left > 20, cell + ": the box sits after the item's text, where the file put it (" + r.input!.left + ")");
+      }
+    }
+  }
+});
+
+
+// ── the fork's browser legs: the sheets over a static page in every document (the Files pane's Recent row among them), then the
+// REAL module bundled into a page. Playwright out of the extension's node_modules; skipped LOUDLY without a browser (CI installs none). ──
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
-
 const PANE_CSS = web("files-pane.css");
-const LONG = "unbreakable".repeat(5);
-const SVG = (w: number) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="200"><rect width="${w}" height="200" fill="#369"/></svg>`)}`;
-const ROWS = Array.from({ length: 3 }, (_, i) => `<tr><td>row ${i} alpha beta gamma delta</td><td>a fairly long cell of prose that keeps going on for a while</td><td>${LONG}</td><td>another long cell with many words in it to widen the table</td><td>five</td><td>six more text here</td></tr>`).join("");
-const MD = `<h1 id=h1>Report</h1><p id=p>Prose ${"lorem ipsum ".repeat(40)}</p>
-<table id=t><thead><tr><th>one</th><th>two</th><th>three</th><th>four</th><th>five</th><th>six</th></tr></thead><tbody>${ROWS}</tbody></table>
-<pre id=pre><code>${"const x = 1; ".repeat(30)}</code></pre>
-<pre id=pre2><code>const y = 2;</code></pre>
-<p id=lw>${"x".repeat(140)}</p>
-<p><img id=im width=900 height=200 src="${SVG(900)}"></p>
-<img id=im2 width=1600 height=200 src="${SVG(1600)}">`;
-/** The viewer as openFileView builds it, in pane mode (the /files page: styles.css then files-pane.css) or as the modal
- *  over the feed (feed.css alone, the browser over the feed's document). */
-const PAGE = (mode: "pane" | "feed") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("feed.css")}</style></head>
-<body class="${mode === "pane" ? "fileview-pane" : "fileview-open"}"><div id="romp-fileview"><div class="fileview" id="root"><div class="fileview-bar"><div class="fileview-name"><span class="fileview-dir">/repo/notes-api/docs/</span><span class="fileview-base">report.md</span></div><div class="fileview-acts"><button class="fileview-btn">Rendered</button><button class="fileview-btn">Raw</button><button class="fileview-btn">A−</button><button class="fileview-btn">A+</button><button class="fileview-btn">✕</button></div></div>
-<div class="fileview-main"><div class="fileview-body" id="body"><div class="fileview-md" id="md">${MD}</div></div></div></div></div>
-<script>/* the viewer's one write (file-view.ts, the width observer, stampBodyWidth): the body's content width, on each top-level table, for the pane-wide table's cap */
-new ResizeObserver(function (es) { var v = es[es.length - 1].contentRect.width + "px"; for (var t of document.querySelectorAll("#md > table")) t.style.setProperty("--fv-body-w", v); }).observe(document.getElementById("body"));</script></body></html>`;
-type Lay = { bodyClient: number; gutter: number; bodyScroll: number; docScroll: number; win: number; md: number; p: number; t: number; tClient: number; tScroll: number; pre: number; preScroll: number; preClient: number; pre2: number; lw: number; img: number; img2: number; mdFont: string; h1Font: string; preFont: string };
-const layout = (page: any): Promise<Lay> => page.evaluate(async () => {
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));   // the width observer's report lands before a frame paints
-  const q = (s: string) => document.querySelector(s) as HTMLElement;
-  const w = (s: string) => q(s).getBoundingClientRect().width;
-  const body = q("#body");
-  return { bodyClient: body.clientWidth, gutter: body.offsetWidth - body.clientWidth, bodyScroll: body.scrollWidth, docScroll: document.documentElement.scrollWidth, win: innerWidth,
-    md: w("#md"), p: w("#p"), t: w("#t"), tClient: q("#t").clientWidth, tScroll: q("#t").scrollWidth, pre: w("#pre"), preScroll: q("#pre").scrollWidth, preClient: q("#pre").clientWidth, pre2: w("#pre2"), lw: w("#lw"), img: w("#im"), img2: w("#im2"),
-    mdFont: getComputedStyle(q("#md")).fontSize, h1Font: getComputedStyle(q("#h1")).fontSize, preFont: getComputedStyle(q("#pre code")).fontSize };
-});
 async function inBrowser(t: any, body: (browser: any) => Promise<void>): Promise<void> {
   if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser leg needs it (CI installs no browsers)"); return; }
   let browser: any;
@@ -819,93 +1183,10 @@ async function inBrowser(t: any, body: (browser: any) => Promise<void>): Promise
   catch (e) { t.skip("no playwright browser on this box, and the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
   try { await body(browser); } finally { await browser.close(); }
 }
-const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) < 1, what + ": " + a + " vs " + b);
-/** What every cell of the static leg requires: the page is the window, the body does not scroll sideways, and every block
- *  that could widen it (code, the unbreakable string, both pictures) lies inside the column (the root's 18px padding a side). */
-const fits = (l: Lay, cell: string) => {
-  assert.equal(l.bodyScroll, l.bodyClient, cell + ": the body does not scroll sideways");
-  assert.equal(l.docScroll, l.win, cell + ": the page is the window");
-  const col = l.bodyClient - 36 + 0.5;
-  assert.ok(l.pre <= col && l.pre2 <= col && l.lw <= col && l.img <= col, cell + ": code, the long string and the image paragraph fit the column");
-  assert.ok(l.img2 <= col, cell + ": the bare <img> line fits the column too (" + l.img2 + " in " + (l.bodyClient - 36) + "): its own cap outranks the measure");
-  assert.ok(l.preScroll <= l.preClient + 1, cell + ": the long code line wraps inside its block");
-};
-
-/** The column's width in the root's own ch, and where it sits: the root's content box (its padding is the measure). */
-const column = (page: any) => page.evaluate(() => {
-  const md = document.getElementById("md")!; const cs = getComputedStyle(md); const r = md.getBoundingClientRect();
-  const sp = document.createElement("span"); sp.style.whiteSpace = "nowrap"; sp.textContent = "0".repeat(40); md.appendChild(sp);
-  const ch = sp.getBoundingClientRect().width / 40; sp.remove();
-  const body = document.getElementById("body")!.getBoundingClientRect();
-  const p = document.getElementById("p")!.getBoundingClientRect();
-  return { ch, chars: p.width / ch, leftGap: p.left - body.left, rightGap: body.right - p.right - (document.getElementById("body")!.offsetWidth - document.getElementById("body")!.clientWidth), padL: parseFloat(cs.paddingLeft), padR: parseFloat(cs.paddingRight), fontDoc: cs.fontFamily };
-});
-
-test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, in both sheets; the prose and the code blocks keep the measure, an 80ch column centred in the body, and a wide table leaves it evenly up to the body's inset; at 150% the measure and every text size grow together; narrow, the table scrolls in its own box", async (t) => {
-  await inBrowser(t, async (browser) => {
-    for (const mode of ["pane", "feed"] as const) {
-      const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
-      const errors: string[] = [];
-      page.on("pageerror", (e: Error) => { errors.push(e.message); });
-      await page.setContent(PAGE(mode));
-      const inset = mode === "pane" ? 0 : 1000 * 0.05 + 2;                 // the modal is 95% of the pane inside a 1px border
-      const step = (n: number) => page.evaluate((n: number) => { document.getElementById("root")!.dataset.fvText = String(n); }, n);
-      // 1000px wide, the default size
-      let l = await layout(page);
-      // the body reserves nothing beside its content: round 1's `scrollbar-gutter: stable` (a table's 100cqi against the column's
-      // 100%) was a blank strip beside every body that does not scroll, and went in round 2; the cap reads the body's width off
-      // its ResizeObserver instead (file-view-scrollbar-browser.test.ts measures it with the scrollbar drawn; this page runs
-      // under playwright's --hide-scrollbars, where a scrollbar takes no room either)
-      assert.equal(l.gutter, 0, mode + " @1000: no scrollbar gutter is reserved");
-      near(l.bodyClient, 1000 - inset, mode + " @1000: the body is the pane, less the modal's inset");
-      fits(l, mode + " @1000/100");
-      // the document size: 1.15 times the page's 13px, GitHub's 2em h1 of it, fenced code at 12px (Slice 3 of plans/markdown-viewer.md)
-      assert.equal(l.mdFont, "14.95px", mode + ": the document size at 100%, byte for byte"); assert.equal(l.preFont, "12px"); assert.equal(l.h1Font, "29.9px");
-      let c = await column(page);
-      assert.ok(Math.abs(c.chars - 80) < 0.5, mode + " @1000: the prose measure is 80ch of the root's own font at 100% (" + c.chars.toFixed(1) + "ch of " + c.ch.toFixed(2) + "px)");
-      assert.ok(l.p >= 80 * c.ch - 0.5 && l.p < 80 * c.ch + 2, mode + " @1000: ...in pixels, eighty zero glyphs, at most the two pixels the padding's rounding down leaves (" + l.p + " vs " + (80 * c.ch).toFixed(1) + ")");
-      assert.ok(Math.abs(c.leftGap - c.rightGap) < 1, mode + " @1000: the column is centred in the body (gaps " + c.leftGap.toFixed(1) + " / " + c.rightGap.toFixed(1) + ")");
-      near(c.padL, c.padR, mode + " @1000: the root's inline padding is the measure, both sides alike");
-      near(l.pre, l.p, mode + " @1000: a code block keeps the measure"); near(l.pre2, l.p, mode + " @1000: ...a two-line snippet too, no pane-wide box");
-      assert.ok(l.t > l.p + 20 && l.t <= l.bodyClient - 36 + 0.5, mode + " @1000: the table leaves the column (" + l.t + " vs " + l.p + "), inside the body's 18px inset");
-      // a max-content table is as wide as its content to the layout unit; scrollWidth and clientWidth snap a fractional width
-      // two ways (913 vs 912 at the document size, when the unbreakable cell was 66 characters), so the pixel of slack the code
-      // block's check has applies here too. The unbreakable cell is 55 characters: the table's min-content (the unbreakable cell
-      // plus each column's longest word) has to fit the body less its 36px inset
-      assert.ok(l.tScroll <= l.tClient + 1, mode + " @1000: room enough, so the table does not scroll (" + l.tScroll + " in " + l.tClient + ")");
-      near(l.md, l.bodyClient, mode + " @1000: the root is the body's width");
-      assert.ok(l.img <= l.p + 0.5 && l.lw <= l.p + 0.5 && l.img2 <= l.p + 0.5, mode + ": both pictures and an unbreakable string stay in the measure");
-      // 150%: the one property, read by every text size and the measure
-      await step(150);
-      l = await layout(page);
-      fits(l, mode + " @1000/150");
-      assert.equal(l.mdFont, "22.425px", mode + " @150%: the prose"); assert.equal(l.h1Font, "44.85px", mode + " @150%: the heading, 2em of it"); assert.equal(l.preFont, "18px", mode + " @150%: fenced code");
-      c = await column(page);
-      assert.ok(l.p >= Math.min(80 * c.ch, l.bodyClient - 36) - 0.5 && l.p < Math.min(80 * c.ch, l.bodyClient - 36) + 2, mode + " @150%: the measure is 80ch of the grown glyph, capped by the pane (" + l.p + ")");
-      assert.ok(Math.abs(c.leftGap - c.rightGap) < 1, mode + " @150%: still centred");
-      near(l.pre, l.p, mode + " @150%: the code block's measure grows with the prose's");
-      // 420px, a phone-wide pane, at BOTH sizes (the leg once shrank the pane at 150% only)
-      await page.setViewportSize({ width: 420, height: 900 });
-      for (const n of [100, 150]) {
-        await step(n);
-        l = await layout(page);
-        fits(l, mode + " @420/" + n);
-        near(l.bodyClient, 420 - (mode === "pane" ? 0 : 420 * 0.05 + 2), mode + " @420/" + n + ": the body is the pane, less the modal's inset");
-        near(l.t, l.bodyClient - 36, mode + " @420/" + n + ": the table is the column");
-        assert.ok(l.tScroll > l.tClient + 100, mode + " @420/" + n + ": the unbreakable cell scrolls inside the table's own box (" + l.tScroll + " in " + l.tClient + ")");
-        near(l.p, l.bodyClient - 36, mode + " @420/" + n + ": the prose follows the pane below its measure");
-        near(l.img2, l.bodyClient - 36, mode + " @420/" + n + ": the 1600px banner is the column");
-      }
-      assert.deepEqual(errors, [], "no script error in the page");
-      await page.close();
-    }
-  });
-});
 
 /** The two surfaces that wear the bar's classes OUTSIDE a bar, as their modules build them: the file browser's bar
  *  (file-browse.ts: #romp-filebrowse, the backdrop > .filebrowse, the card > fb-bar > fb-crumbs + fileview-acts > [Hidden, close];
  *  the id and the class are two elements since the 2026-09-04 redress) under a deep crumb trail, in each document's sheets; and, in the pane document, the Files pane's Recent row (files.ts: fs-row > fileview-name + fileview-sess). */
-const CRUMBS = ["/", "repo", "notes-api", "services", "api", "internal", "handlers", "v2", "tests", "fixtures", "golden"];
 const OUTSIDE_PAGE = (mode: "pane" | "chat" | "feed") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("styles.css")}</style></head>
 <body class="filebrowse-open${mode === "pane" ? " fileview-pane" : ""}"><div id="romp-filebrowse"><div class="filebrowse"><div class="fb-bar"><div class="fb-crumbs" id="fb-crumbs">${CRUMBS.map((c, i) => (i ? '<span class="fb-crumb-sep">/</span>' : "") + '<span class="fb-crumb">' + c + "</span>").join("")}</div><div class="fileview-acts"><button class="fileview-btn" id="hid">Hidden</button><button class="fileview-btn fileview-close" id="close">✕</button></div></div><div class="fb-list"></div></div></div>
 ${mode === "pane" ? '<div id="files-empty"><div class="fs-recent"><div class="fs-row" id="row"><div class="fileview-name"><span class="fileview-dir">/repo/notes-api/services/api/docs/</span><span class="fileview-base">report.md</span></div><span class="fileview-sess" id="sess">web</span></div></div></div>' : ""}</body></html>`;
@@ -962,6 +1243,7 @@ test("in a browser: the file browser's bar stays one line at 320, 360, 480 and 1
   });
 });
 
+const TALL_SVG = (w: number) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="200"><rect width="${w}" height="200" fill="#369"/></svg>`)}`;   // the README's pictures (the static leg's SVG above is 120px tall)
 // ── the real module in a page ──────────────────────────────────────────────────────────────────────
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 let viewerBundle: string | null = null;
@@ -990,7 +1272,7 @@ const BREAK_MD = "# Notes\n\nfirst line  \nsecond line of prose here\n\nDone.\n"
 // shared leg page does; file-view-leg-page-browser.test.ts pins the shared page's escape)
 const SCRIPTED = ROOT + "/docs/scripted.md";
 const SCRIPTED_MD = "# Report\n\nA paragraph before the script.\n\n<script>alert(1)</script>\n\n`</script>` inside a code span, and `<!--` before it.\n\nAfter the script.\n";
-const README = `<img src="${SVG(1600)}" width="1600" height="200">\n\n# Report\n\nProse ${"lorem ipsum ".repeat(60)}\n\n![plot](${SVG(1600)})\n\n<div align="center"><img src="${SVG(1600)}" width="1600" height="200"></div>\n\n\`\`\`\nconst x = 1;\nconst y = 2;\n\`\`\`\n\n\`\`\`\n${"const z = 1; ".repeat(20)}\n\`\`\`\n\n| run | p95 |\n| --- | --- |\n| a | 120 |\n`;
+const README = `<img src="${TALL_SVG(1600)}" width="1600" height="200">\n\n# Report\n\nProse ${"lorem ipsum ".repeat(60)}\n\n![plot](${TALL_SVG(1600)})\n\n<div align="center"><img src="${TALL_SVG(1600)}" width="1600" height="200"></div>\n\n\`\`\`\nconst x = 1;\nconst y = 2;\n\`\`\`\n\n\`\`\`\n${"const z = 1; ".repeat(20)}\n\`\`\`\n\n| run | p95 |\n| --- | --- |\n| a | 120 |\n`;
 /** The file table the page inlines (scriptLiteral: `<` as `\u003c`, so SCRIPTED's `</script>` cannot end the script). */
 const DOCS: Record<string, string> = { [REPORT]: README, [SNIPPET]: SNIPPET_MD, [BREAK]: BREAK_MD, [SCRIPTED]: SCRIPTED_MD };
 /** The page a viewer surface is: the chat modal (styles.css), the feed modal (feed.css) or the Files pane (styles.css +
@@ -1601,8 +1883,8 @@ test("in a browser, the real module: an end on a text-less line boundary keeps i
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────
 test("a stand-in node enumerates its primitives alone, so a failing assertion's dump shows neither parentNode nor childNodes", () => {
   const root = new El("div"); root.className = "row";
-  const child = root.appendChild(new El("span")); child.appendChild(new Txt("alpha")); root.appendChild(new Txt("beta"));
-  for (const n of [root, child, root.childNodes[1]] as Array<El | Txt>) {
+  const child = root.appendChild(new El("span")); child.textContent = "alpha"; const tail = root.appendChild(new El("span")); tail.textContent = "beta";
+  for (const n of [root, child, tail]) {
     for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
     const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
     assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump holds no edge: " + dump);
