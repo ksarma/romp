@@ -172,7 +172,11 @@
 //     prune (underStoreLock), so no CLI write lands between a verb's load and its rename to be erased
 //     by it, and no track-edit lands its file under a reject's or a save's. A lock still held after
 //     the wait refuses `busy` with nothing changed. The mtime fences stay: they catch the panel's
-//     stale copy, the lock the concurrent writer.
+//     stale copy, the lock the concurrent writer;
+//   * the clocks a reply carries (`storeMtimeNs`, `configMtimeNs`) are taken BEFORE the bytes they
+//     describe are read (decision 50: loadOrRefuse, loadFile, configStatus; clockOf), never stat'ed at
+//     reply time, so the panel's poll baseline is never newer than the store it holds, and a write in
+//     the gap makes the next poll refresh or the next write refuse.
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
@@ -718,7 +722,8 @@ function vetoEntryFor(root, rel) {
 //   unsupported  a `v` above CONFIG_VERSION
 //   unreadable   an I/O error other than ENOENT
 //   ok           readable; a missing `tracked` list means nothing tracked, as store-io reads it
-function configStatus(paths) {
+function configStatus(ctx, paths) {
+  ctx.configClock = statNs(paths.configPath);   // the clock BEFORE the read (decision 50; clockOf says why)
   let raw;
   try {
     raw = fs.readFileSync(paths.configPath, 'utf8');
@@ -749,7 +754,7 @@ function refuseConfig(ctx, paths, status) {
       throw new Refusal('unreadable', `cannot read the tracking list for ${ctx.shown} (${cp})`);
   }
 }
-function checkConfig(ctx, paths) { refuseConfig(ctx, paths, configStatus(paths)); }
+function checkConfig(ctx, paths) { refuseConfig(ctx, paths, configStatus(ctx, paths)); }
 
 // ── the file ────────────────────────────────────────────────────────
 
@@ -1492,6 +1497,7 @@ function underStoreLock(ctx, lockedPath, fn) {
 // Load through loadStoreStatus, the only loader that says WHY there is no store. Returns the
 // normalized store (rebased against the current text), or null when absent; refuses the rest.
 function loadOrRefuse(ctx, paths, text) {
+  ctx.storeClock = statNs(paths.storePath);   // the clock BEFORE the read (decision 50; clockOf says why)
   const { store, status } = loadStoreStatus(paths.storePath, text);
   const sp = tilde(paths.storePath);
   switch (status) {
@@ -1514,7 +1520,8 @@ function loadOrRefuse(ctx, paths, text) {
 // exists to rebase against (or the caller asked for the baseline, which is the text itself when
 // there is none); otherwise the file is stat'ed. `store` is null when there is no sidecar.
 function loadFile(ctx, paths) {
-  const read = ctx.args.baseline === true || (paths != null && exists(paths.storePath));
+  if (paths) ctx.storeClock = statNs(paths.storePath);   // the clock BEFORE the read, and the reply's when there is nothing to read (decision 50)
+  const read = ctx.args.baseline === true || (paths != null && ctx.storeClock != null);
   const file = read ? readFile(ctx) : statFile(ctx);
   const store = read && paths ? loadOrRefuse(ctx, paths, file.text) : null;
   return { ...file, store };
@@ -2192,8 +2199,8 @@ function reply(ctx, state, extra, opts) {
     // The panel has no other authoritative source for it, since the viewer never sees the byte (the review,
     // 2026-09-08). A media file (no text) carries false.
     bom: typeof text === 'string' && text.charCodeAt(0) === 0xFEFF,
-    storeMtimeNs: paths ? statNs(paths.storePath) : null,
-    configMtimeNs: paths ? statNs(paths.configPath) : null,
+    storeMtimeNs: paths ? clockOf(ctx, 'storeClock', paths.storePath) : null,
+    configMtimeNs: paths ? clockOf(ctx, 'configClock', paths.configPath) : null,
     store,
     hunks: store ? engine.toHunks(store.suggestions) : [],
     unsent: deriveUnsent(store, entries),
@@ -2230,6 +2237,20 @@ function reply(ctx, state, extra, opts) {
   Object.assign(out, extra || {});
   if (o.landed && o.landed.problems.length) out.logWarning = `${o.landed.did}, but ${o.landed.problems.join('; and ')}`;
   return out;
+}
+
+// The clock a reply carries for the sidecar or config.json (decision 50): the mtime taken BEFORE the
+// bytes it describes were read, by the one reader of each (loadOrRefuse and loadFile for the sidecar,
+// configStatus for the config; the prune sets the sidecar's to null, set-tracked's write sets the
+// config's to its own), never a stat at reply time. Read first and stat'ed after, a write landing
+// between the two gave the reply the writer's clock over the earlier bytes, so the panel baselined
+// its poll on a write it had not seen and never refreshed for it (the blind poll, 11 misses in 147
+// rounds of the probe, 2026-09-09). Taken first, the clock is never newer than the bytes: a write in
+// the gap makes the next poll refresh once, or the next write refuse `store-moved`. A verb that
+// reaches the reply without a clock is a program error, not a case for a stat now.
+function clockOf(ctx, key, p) {
+  if (!(key in ctx)) throw new Error(`${ctx.verb}: no ${key} was taken before the read of ${tilde(p)}`);
+  return ctx[key];
 }
 
 // Re-read what was just written so the reply carries the sidecar as every later load sees it.
@@ -2341,9 +2362,9 @@ function withSidecar(ctx, create, plan) {
     const file = readFile(ctx);
     requireFence(ctx, 'storeMtimeNs', paths ? statNs(paths.storePath) : null, 'store-moved',
       `the comments for ${ctx.shown}`);
-    if (paths) checkConfig(ctx, paths);
+    if (paths) checkConfig(ctx, paths); else ctx.configClock = null;   // no root: no config, no sidecar (decision 50)
     let store = null;
-    if (root) store = loadOrRefuse(ctx, paths, file.text);
+    if (root) store = loadOrRefuse(ctx, paths, file.text); else ctx.storeClock = null;
     if (!store && !create) {
       throw new Refusal('no-comment', `comment ${String(ctx.args.commentId)} is not among the comments for ${ctx.shown} — reload and retry`);
     }
@@ -2572,7 +2593,10 @@ function changesOf(hunks) {
 // deleted, so the file returns to the absent state and the client renders it as such; a comment,
 // resolved or not, keeps the sidecar, as does a detached op the person has not dealt with.
 function afterDecision(ctx, paths, store, text) {
-  if (pruneIfClean(paths.storePath, store)) return null;
+  if (pruneIfClean(paths.storePath, store)) {
+    ctx.storeClock = null;   // absent, as of the prune: the store the reply carries is null, and so is its clock (decision 50)
+    return null;
+  }
   return reloadSaved(ctx, paths, text);
 }
 
@@ -3366,7 +3390,11 @@ function doSetTracked(ctx) {
     // the file by a click that answered folder-is-root.
     const loose = !root;
     const newRoot = root || path.dirname(ctx.abs);
-    if (!paths) paths = pathsFor(newRoot, ctx.abs);
+    if (!paths) {
+      paths = pathsFor(newRoot, ctx.abs);
+      ctx.storeClock = null;    // no landmark yet: no sidecar and no config exist to clock (decision 50); the
+      ctx.configClock = null;   // write below stamps the config's own once it lands
+    }
     let entry;
     let kind;
     if (on) {
@@ -3391,6 +3419,7 @@ function doSetTracked(ctx) {
     }
     const write = () => {
       writeConfigAtomic(root, entry, on);
+      ctx.configClock = statNs(paths.configPath);   // the write's own clock, under the lock: the reply's tracking verdict reads these bytes or later ones (decision 50)
       const landed = landedState('the tracking setting was written');
       const logged = appendLanded(ctx, paths, [logEntry('set-tracked', { on, scope: kind, entry })], landed);
       return [{ root, paths, ...file }, { logged }, { landed }];
@@ -3427,7 +3456,7 @@ function doLogEdit(ctx) {
   try {
     if (paths) {
       checkTrackDir(ctx, paths);
-      const cfg = configStatus(paths);
+      const cfg = configStatus(ctx, paths);
       const own = !underTrackchanges(ctx.abs);
       if (own && (exists(paths.storePath) || exists(paths.logPath) || (cfg === 'ok' && isTrackedFile(root, ctx.abs)))) {
         const fields = {};
