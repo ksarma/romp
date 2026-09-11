@@ -249,7 +249,7 @@ class TheDeclarationRuleIsOneSentence(unittest.TestCase):
                       "session is *taken* to bill: the Billing row's fallback before the CLI has reported and the "
                       "picker's written-out choice both read the declared side, where they read the login before. "
                       "The spend pause's reading of a session that reports nothing, a Claude Code (tmux) session or "
-                      "an SDK session before its init has landed, reads only whether a helper is configured, never "
+                      "a Claude Code session before its init has landed, reads only whether a helper is configured, never "
                       "the declaration: such a session is taken to bill the key on a box with a helper and the login "
                       "on a box without one.", REFERENCE)
 

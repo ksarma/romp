@@ -676,10 +676,10 @@ keeps billing the key); without a helper, the declaration seeds what an
 unpicked session is *taken* to bill: the Billing row's fallback before the CLI
 has reported and the picker's written-out choice both read the declared side,
 where they read the login before. The spend pause's reading of a session that
-reports nothing, a Claude Code (tmux) session or an SDK session before its init
-has landed, reads only whether a helper is configured, never the declaration:
-such a session is taken to bill the key on a box with a helper and the login on
-a box without one. One explicit gear **Billing** pick supersedes
+reports nothing, a Claude Code (tmux) session or a Claude Code session before
+its init has landed, reads only whether a helper is configured, never the
+declaration: such a session is taken to bill the key on a box with a helper and
+the login on a box without one. One explicit gear **Billing** pick supersedes
 the declaration from then on: the remembered pick becomes the box's expectation
 and the env var goes inert (it described the unpicked design), so re-seeded
 spawns are judged against your pick, never against stale doctrine. The one
@@ -2556,7 +2556,8 @@ the kernel owns directly:
 
 - Each alive session's newest transcript API-error record, latched until the
   session produces assistant output again (a user prompt does not clear it,
-  romp's own retry included), plus the live retrying state of SDK sessions.
+  romp's own retry included), plus the live retrying state of Claude Code
+  sessions.
 - The retry-pause file (`retry-paused.json` under the state directory). A
   pause writes `paused`, `t` (when it began, the auto-resume floor) and its
   `reason`: `limit`, `spend`, or none for a manual stop. A spend pause adds
