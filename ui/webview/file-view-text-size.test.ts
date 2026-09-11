@@ -574,6 +574,36 @@ test("a press on a bar control settles no selection: with a passage selected in 
   assert.equal(seeds(), s + 2);
 });
 
+// Fork-only, beside upstream's twin above (which settles by mouseup over the body and the bar alone): the two settle points
+// the fork wired and upstream never received. The phone's selection ends in a touchend with no mouseup, and a drag that
+// starts in the body can be released over the aside or the margins beside the body, the `.fileview-main` row, where
+// only a listener on the viewer root hears it. Executed, not pinned: the first assertion goes red when the touchend
+// binding is removed, the second when the mouseup listener moves from the root to the body (file-view.test.ts pins the
+// two addEventListener lines, which is a pin, not a test). Re-added in the 4d-3 fold's fixer round 2 (review round 1,
+// tests-1) after the fold retired the fork's pre-offer body of this subject with these two steps inside it.
+test("a lift settles a selection wherever it ends inside the viewer: a touchend over the body (the phone's lift, no mouseup) and a mouseup released over the body row (the aside, the margins) each re-read the file and re-seed the quote chip", async (t) => {
+  const composer = new El("textarea");             // this document holds the composer, so a selection seeds its chip
+  composer.id = "composer-input";
+  docBody.appendChild(composer);
+  t.after(() => { composer.remove(); win.getSelection = () => null; });
+  const o = await openFile(t, REPORT);
+  const md = o.body.querySelector(".fileview-md")!;
+  win.getSelection = () => ({ isCollapsed: false, anchorNode: md, toString: () => "cut p95 latency" });
+  const reads = () => fileReads.filter((p) => p === REPORT).length;
+  const seeds = () => posted.filter((m) => (m as { type?: string }).type === "editorSelection").length;
+  const r = reads(), s = seeds();
+  md.dispatchEvent(new Ev("touchend"));
+  await settle();
+  assert.equal(reads(), r + 1, "the phone's lift: a touchend over the body settles the selection (a touch ends with no mouseup), so the label's line is minted against a fresh read");
+  assert.equal(seeds(), s + 1, "and the quote chip is seeded");
+  const main = o.root.querySelector(".fileview-main")!;
+  assert.ok(main && main.contains(o.body), "the body row holds the body (and the aside, when the comments panel asks for one)");
+  main.dispatchEvent(new Ev("mouseup"));
+  await settle();
+  assert.equal(reads(), r + 2, "released over the row itself, beside the body: the listener sits on the viewer root, not the body, so the drag settles");
+  assert.equal(seeds(), s + 2, "and the chip is seeded again");
+});
+
 // ── the re-measure: every reflow of a text view fires the seam's onRendered (the comments panel re-places its cards) ──
 
 test("a size step fires onRendered once, as a reflow (the panel re-places its cards over the moved text and keeps its marks); a clamped step fires nothing", async (t) => {
