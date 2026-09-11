@@ -22,11 +22,13 @@ import textwrap
 import hashlib
 import json
 import os
+import pathlib
 import stat
 import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1413,16 +1415,30 @@ class StateFile(unittest.TestCase):
         p = os.path.join(d, "api-health.jsonl")
         with open(p, "w") as f:
             f.write(blob)
-        # every open the boot makes, by either door (builtins.open, and io.open for Path.read_text)
+        # every open the boot makes, by any door: builtins.open, io.open, and pathlib.Path.open and Path.read_text
+        # on the class. The two module functions alone miss a Path.read_text on Python 3.10, whose pathlib binds
+        # io.open into its accessor at import time (_NormalAccessor.open), so the class methods are spied too;
+        # from 3.11 on Path.open calls io.open by name and the class spies see the same open a second time.
         opened, real_open = [], builtins.open
+        real_path_open, real_read_text = pathlib.Path.open, pathlib.Path.read_text
 
         def spy(file, *a, **kw):
             opened.append(os.fspath(file))
             return real_open(file, *a, **kw)
+
+        def spy_path_open(self_, *a, **kw):
+            opened.append(os.fspath(self_))
+            return real_path_open(self_, *a, **kw)
+
+        def spy_read_text(self_, *a, **kw):
+            opened.append(os.fspath(self_))
+            return real_read_text(self_, *a, **kw)
         builtins.open, io.open = spy, spy
         try:
-            lines = []
-            ah = sb.ApiHealth(d, log=lines.append, boot_at=T0 + 10)
+            with mock.patch.object(pathlib.Path, "open", spy_path_open), \
+                    mock.patch.object(pathlib.Path, "read_text", spy_read_text):
+                lines = []
+                ah = sb.ApiHealth(d, log=lines.append, boot_at=T0 + 10)
         finally:
             builtins.open, io.open = real_open, real_open
         self.assertNotIn(p, opened, "the ledger is never opened")
