@@ -21,9 +21,11 @@ the per-init apiKeySource mismatch line was a permanent false alarm. The mechani
     default_auth read the declared side (unpicked_auth); a pick, explicit or remembered, still wins,
     and nothing is written to the reg (authPicked stays False). A remembered KEY pick on a box with no
     key source is one spawn sets aside, and under it the declaration speaks again (review round 1,
-    2026-09-09). The kernel's readers of a row that reports nothing (_bills_login's fallback,
-    _auth_avail's default) call the backend's new_session_auth directly, one rule and one order with
-    the backend (the key romp holds before the declaration), executed here on a REAL backend; and the
+    2026-09-09). The kernel's picker default (_auth_avail) calls the backend's new_session_auth
+    directly, one rule and one order with the backend (the box's key before the declaration), executed
+    here on a REAL backend; _bills_login's fallback for a row that reports nothing reads the key's
+    presence instead, not _auth_key_present() (the 2026-09-10 fold, ruling K2; pinned in
+    tests/test_retry_pause_autoresume.py), and a row that reports outranks the declaration; and the
     live merge forwards authLive and authPicked, which it had dropped since the field was born. The
     defaults file behind the declaration read is parsed once per file identity, since the read is per
     row.
@@ -563,12 +565,15 @@ class _KeyToggleBackend(sb.SdkBackend):
 
 
 class KernelReadersShareTheBackendsRule(unittest.TestCase):
-    """_bills_login's fallback for a row that reports nothing and _auth_avail's picker default read the
-    backend's ONE rule (SdkBackend.new_session_auth, called directly) on a REAL backend. Review round 1
-    (2026-09-09) found the two kernel readers consulting the declaration before the key while the backend
-    consulted it after, so a keyed box declaring login seeded the picker on Login for sessions that
-    launched keyed; and found no test executing the backend method the kernel reached through a getattr
-    guard, so a rename restored the pre-fix readers with every test green. The matrix below runs every
+    """_auth_avail's picker default reads the backend's ONE rule (SdkBackend.new_session_auth, called
+    directly) on a REAL backend; _bills_login's fallback for a row that reports nothing reads the key's
+    presence, not _auth_key_present(), since the 2026-09-10 fold (ruling K2; its pin is LimitPauseLift's
+    ..._this_machine_holds_no_key in tests/test_retry_pause_autoresume.py), and a row that reports
+    outranks the declaration. Review round 1 (2026-09-09) found the kernel's two readers of the time
+    consulting the declaration before the key while the backend consulted it after, so a keyed box
+    declaring login seeded the picker on Login for sessions that launched keyed; and found no test
+    executing the backend method the kernel reached through a getattr guard, so a rename restored the
+    pre-fix readers with every test green. The matrix below runs every
     reader over a key available or not, declaration key/login/unset and pick none/login/key, and states the
     one answer for each of the two questions: what an UNPICKED reg bills (unpicked_auth: the key first) and
     what a session SPAWNED NOW bills (new_session_auth: the seed a spawn writes first). They differ in one
@@ -620,12 +625,13 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
                     live = sb.SdkSession(self.be, {"sid": "11111111-2222-3333-4444-%012d" % n, "name": "u", "cwd": "/tmp"})
                     self.assertEqual(live.effective_auth(), unpicked, tag)
                     # a session SPAWNED NOW: the seed a spawn writes (a login pick; a key pick when the key is
-                    # held), else the unpicked rule. The kernel's two readers take this one.
+                    # held), else the unpicked rule. The kernel's picker default takes this one.
                     fresh = "login" if pick == "login" else ("key" if key else (declared or "login"))
                     self.assertEqual(self.be.new_session_auth(), fresh, tag)
                     self.assertEqual(km._auth_avail()["default"], fresh, tag)
-                    self.assertEqual(km._bills_login({"state": "idle"}), fresh == "login", tag)
-                    self.assertEqual(km._bills_login(None), fresh == "login", tag)
+                    # _bills_login's fallback for a row that reports nothing left this rule at the 2026-09-10 fold
+                    # (ruling K2): it reads `not _auth_key_present()`, pinned by LimitPauseLift's
+                    # ..._this_machine_holds_no_key in tests/test_retry_pause_autoresume.py; the two pins retired
                     sid = self.be.spawn("n", "/tmp")
                     self.assertEqual(self.be.default_auth(sb.read_reg(self.be.state_dir, sid)), fresh,
                                      tag + ": the picker default IS what a spawn without a pick bills")
@@ -638,7 +644,7 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
         self.assertEqual(sb.unpicked_auth(Path(self.d), True), "key")
         self.assertEqual(self.be.new_session_auth(), "key")
         self.assertEqual(km._auth_avail()["default"], "key")
-        self.assertFalse(km._bills_login({"state": "idle"}))
+        # _bills_login's fallback pin retired (the 2026-09-10 fold, ruling K2): its fallback is `not _auth_key_present()`
 
     def test_a_row_that_reports_still_wins(self):
         self._world("key")
@@ -665,7 +671,8 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
         self._world("key")
         self.assertEqual(self.be.new_session_auth(), "key")
         self.assertEqual(km._unpicked_default(), "key")
-        self.assertFalse(km._bills_login({"state": "idle"}))
+        # the _bills_login pin retired here too (the 2026-09-10 fold, ruling K2): its fallback is `not _auth_key_present()`,
+        # True on this world's keyless backend, not the declaration's key; the binding under test is _unpicked_default's
         self.assertEqual(km._auth_avail()["default"], "key")
         km._sdk = lambda: type("B", (), {"key_available": False})()   # a backend without the method
         with self.assertRaises(AttributeError):

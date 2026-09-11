@@ -10713,11 +10713,11 @@ def _retry_paused_on():
         return False
 
 
-# How many times this kernel wrote the pause file since boot: the apiHealth frame's `seq` (review round 2,
-# 2026-09-07). A press on the detail's pause button writes the file, and the frame that follows carries a
-# moved seq even when the cycle's auto-pause re-engaged the same state within the same second, so the
-# shell can tell the frame that answers its press from one that predates it (_LANDING_APIH_JS pendSeq).
-# An event counter, never a clock: two cycles over an unwritten file read the same seq.
+# How many times this kernel wrote the pause file since boot: the apiHealth frame's `seq`. A press on the
+# bottom bar's detail pause button writes the file, and the frame that follows carries a moved seq even when
+# the cycle's auto-pause re-engaged the same state within the same second, so the shell can tell the frame
+# that answers its press from one that predates it (_LANDING_APIH_JS pendSeq). An event counter, never a
+# clock: two cycles over an unwritten file read the same seq.
 _RETRY_PAUSE_SEQ = [0]
 
 
@@ -10725,31 +10725,31 @@ def _set_retry_paused(paused, reason="", bills="", lifted_at=None):
     # Record WHEN a pause began: the auto-resume floor. Only a successful response AFTER this instant proves
     # the API recovered (an old success from before the outage doesn't). No `t` when un-pausing.
     # `reason` (the user 2026-07-14): "spend" when a monthly spend cap auto-engaged the pause, so the card
-    # shows "raise your cap" instead of a reset countdown; "limit" (2026-09-07) when an account-wide usage
-    # window did, so the rail can name it without a clock comparison; "" for a manual Stop.
-    # `bills` (review round 2, 2026-09-07): for a spend pause, the billing the capped session was on,
-    # "login" or "key" (_bills_login of its live row). The lift rule reads it (_auto_resume_retry): a cap
-    # is on ONE account, so only a session on that billing can show it serving again.
-    # `liftedAt` / `supersedes` (review round 3, 2026-09-07): un-pausing a SPEND pause, by the lift rule or
-    # by the user's Resume, records the time of the EVIDENCE that lifted it and the floor (`t`) of the pause
-    # it cleared. That is the spend engage's stand-down rule (_spend_capped_session): a spendLimit record
-    # older than liftedAt was already outranked by the evidence that lifted the pause, and romp never clears
-    # such a record on its own (a spend cap is on-you: _fire_api_retry sends no retry; only a human prompt to
-    # the capped session clears _api_error), so re-engaging on it put the pause back the cycle after every
-    # lift, alternating at the streaming session's output cadence and settling ON once it idled. The memory
-    # rides every later write, paused or not, until a newer spend ruling replaces it: a limit pause that
-    # engages and lifts in between must not forget it. A limit or manual pause's un-pause records nothing
-    # (its evidence, the usage report or a transcript mtime, says nothing about a spend record), and an
-    # un-pause over an already-unpaused file keeps what it finds (the write moves seq only).
-    # `lifted_at` (review round 4, 2026-09-07) is the evidence's own time: for the lift rule, the `t` of the
-    # assistant output record that lifted the pause (_api_last_output_t), NOT the lift cycle's clock. The
-    # cycle runs up to a pusher period after the output, and a record from a SECOND capped session written
-    # in that gap (after the output, before the cycle) is new information the lift never saw; stamped with
-    # the cycle's time, the floor would have skipped it until that session's next attempt. The user's Resume
-    # passes none and records its own instant: the gesture is the evidence, and a record stamped in the same
-    # second reads as older (the CLI stamps whole seconds) and waits for that session's next attempt, since
-    # re-engaging over the gesture would be the worse error. `supersedes` is informational (the Log and a
-    # hand read of the file): nothing reads it.
+    # shows "raise your cap" instead of a reset countdown; "limit" when an account-wide usage window did, so
+    # the bottom bar's API cell can name it without a clock comparison; "" for a manual Stop.
+    # `bills`: for a spend pause, the billing the capped session was on, "login" or "key" (_bills_login of its
+    # live row). The lift rule reads it (_auto_resume_retry): a cap is on ONE account, so only a session on
+    # that billing can show it serving again.
+    # `liftedAt` / `supersedes`: un-pausing a SPEND pause, by the lift rule or by the user's Resume, records
+    # the time of the EVIDENCE that lifted it and the floor (`t`) of the pause it cleared. That is the spend
+    # engage's stand-down rule (_spend_capped_session): a spendLimit record older than liftedAt was already
+    # outranked by the evidence that lifted the pause, and romp never clears such a record on its own (a spend
+    # cap is on-you: _fire_api_retry sends no retry; only a human prompt to the capped session clears
+    # _api_error), so re-engaging on it put the pause back the cycle after every lift, alternating at the
+    # streaming session's output cadence and settling ON once it idled. The memory rides every later write,
+    # paused or not, until a newer spend ruling replaces it: a limit pause that engages and lifts in between
+    # must not forget it. A limit or manual pause's un-pause records nothing (its evidence, the usage report
+    # or a transcript mtime, says nothing about a spend record), and an un-pause over an already-unpaused
+    # file keeps what it finds (the write moves seq only).
+    # `lifted_at` is the evidence's own time: for the lift rule, the `t` of the assistant output record that
+    # lifted the pause (_api_last_output_t), NOT the lift cycle's clock. The cycle runs up to a pusher period
+    # after the output, and a record from a SECOND capped session written in that gap (after the output,
+    # before the cycle) is new information the lift never saw; stamped with the cycle's time, the floor would
+    # have skipped it until that session's next attempt. The user's Resume passes none and records its own
+    # instant: the gesture is the evidence, and a record stamped in the same second reads as older (the CLI
+    # stamps whole seconds) and waits for that session's next attempt, since re-engaging over the gesture
+    # would be the worse error. `supersedes` is informational (the Log and a hand read of the file): nothing
+    # reads it.
     try:
         prev = json.loads((jd.STATE / "retry-paused.json").read_text())
         if not isinstance(prev, dict):
@@ -10771,20 +10771,21 @@ def _set_retry_paused(paused, reason="", bills="", lifted_at=None):
         d["supersedes"] = prev.get("supersedes", 0)
     _RETRY_PAUSE_SEQ[0] += 1
     _atomic_write(jd.STATE / "retry-paused.json", json.dumps(d))
-    # No dirty mark and no wake HERE (perf batch 2 P1, 2026-09-06; kept at the 2026-09-07 upmerge over
-    # upstream's writer-side _mark_views_dirty of review 2026-09-05): every caller publishes the flip
-    # itself. The auto paths (_auto_pause_on_limit, _auto_pause_on_spend_limit, _lift_retry_pause) wake
-    # the pusher with _push_soon, the setGlobalRetryPaused gesture marks the views dirty, and the active
-    # tab's key stats this file (_chat_build_sig's limit component), so the queued bubble follows on that push. Neither
-    # build_feed nor build_timeline reads the flag, so a dirty mark here rebuilt both for nothing; and a
-    # bare write (a Resume landing on an already-unpaused file) delivers nothing, as the idempotent
-    # engage does (tests/test_kernel_usage_limit.py, tests/test_retry_pause_autoresume.py).
+    _push_soon()          # the retry-pause writer's one diverging line (perf batch 2 P1, 2026-09-06; kept under ruling K1
+    #                       of the 2026-09-10 fold): upstream's writer ends in _mark_views_dirty() here; this one wakes the
+    #                       pusher and stamps no dirty mark. No view reads this file (neither build_feed nor build_timeline),
+    #                       so a dirty mark rebuilt both for nothing; the flip rides the next push's globalRetryPaused frame,
+    #                       and the active tab's key stats this file (_chat_build_sig's limit component). Every caller
+    #                       (_auto_pause_on_limit, _auto_pause_on_spend_limit, _lift_retry_pause, the setGlobalRetryPaused
+    #                       gesture, which also marks the views dirty for the bubble) inherits the wake and pushes nothing
+    #                       inline (tests/test_kernel_usage_limit.py, tests/test_retry_pause_autoresume.py).
 
 
 def _retry_pause_reason():
     """Why the current global pause engaged ("spend" for a monthly spend cap, "limit" for a usage window),
     or "" (manual). Rides the globalRetryPaused push so the card can name the cause; the API health frame
-    reads it too. A pause file written by an older kernel for a limit carries no reason and reads manual."""
+    reads it too. A pause file written for a limit before the reason was recorded carries none and reads
+    manual."""
     try:
         return str(json.loads((jd.STATE / "retry-paused.json").read_text()).get("reason") or "")
     except Exception:
@@ -10801,8 +10802,8 @@ def _retry_pause_ts():
 
 def _retry_pause_bills():
     """Which billing the session that engaged the current SPEND pause was on, "login" or "key", or "" when
-    the file records none (an older kernel's pause, a limit or manual pause). _auto_resume_retry's spend
-    rule reads it; "" there takes any session's fresh output."""
+    the file records none (a limit or manual pause, or a spend pause written before the billing was
+    recorded). _auto_resume_retry's spend rule reads it; "" there takes any session's fresh output."""
     try:
         return str(json.loads((jd.STATE / "retry-paused.json").read_text()).get("bills") or "")
     except Exception:
@@ -10813,12 +10814,12 @@ def _retry_pause_lifted_at():
     """The time of the evidence that last un-paused a SPEND pause (the output record that lifted it, or the
     user's Resume), or 0 when none is on record. The spend engage's stand-down floor: a spendLimit record
     older than this was already outranked (_spend_capped_session). Survives later pauses and lifts of other
-    reasons (_set_retry_paused carries it). Assumes a monotone wall clock, as the pause floor `t` does (review
-    round 4, 2026-09-07): after a backward clock step a record stamped in the corrected clock reads as older
-    than the lift until the clock passes it, and the lift rule's own `out_t > t` is suppressed the same way.
-    Clamping this to now would not help: every record's stamp is at or before now, so a record is older than
-    min(liftedAt, now) exactly when it is older than liftedAt. Only the record's identity, not its stamp,
-    could order it against the lift across a step."""
+    reasons (_set_retry_paused carries it). Assumes a monotone wall clock, as the pause floor `t` does: after
+    a backward clock step a record stamped in the corrected clock reads as older than the lift until the
+    clock passes it, and the lift rule's own `out_t > t` is suppressed the same way. Clamping this to now
+    would not help: every record's stamp is at or before now, so a record is older than min(liftedAt, now)
+    exactly when it is older than liftedAt. Only the record's identity, not its stamp, could order it against
+    the lift across a step."""
     try:
         return float(json.loads((jd.STATE / "retry-paused.json").read_text()).get("liftedAt") or 0)
     except Exception:
@@ -10827,13 +10828,12 @@ def _retry_pause_lifted_at():
 
 def _account_limited():
     """The ACCOUNT-WIDE usage windows the report says are at 100% with their reset still ahead: the 5h and
-    7d keys of _usage_limits()["limited"], never fable (model-scoped). The ONE authority for the limit
-    pause's two edges (review round 2, 2026-09-07): _auto_pause_on_limit engages while this is non-empty
-    and _auto_resume_retry lifts once it is empty, so the pause holds exactly as long as the report says
-    the limit does and lifts at the reset with no session having to serve first. Reads the limits half
-    only: `limited` derives from usage.json and the clock, and the spend ledger _usage() parses for the
-    rail is not an input (perf round 4 P18, 2026-09-07). Raises what _usage_limits raises; both callers
-    treat no reading as no change."""
+    7d keys of _usage_limits()["limited"], never fable (model-scoped). The ONE authority for the limit pause's
+    two edges: _auto_pause_on_limit engages while this is non-empty and _auto_resume_retry lifts once it is
+    empty, so the pause holds exactly as long as the report says the limit does and lifts at the reset with
+    no session having to serve first. Reads the limits half only: `limited` derives from usage.json and the
+    clock, and the spend ledger _usage() parses for the bottom bar is not an input (perf round 4 P18). Raises
+    what _usage_limits raises; both callers treat no reading as no change."""
     lim = (_usage_limits() or {}).get("limited") or {}
     return [k for k, v in lim.items() if v and k != "fable"]
 
@@ -10884,8 +10884,8 @@ def _auto_pause_on_limit():
     (the user 2026-07-01): retrying into a rate-limited account just burns failed requests, so stop the
     auto-retry AND the judges (both gate on this flag) until the window resets. _auto_resume_retry clears it the
     cycle the same report stops naming a limited window (the reset passed, or a fresh reading came in under
-    100%: _account_limited is the one authority for both edges, review round 2, 2026-09-07), so the pause
-    holds exactly as long as the report says the limit does. Idempotent: only writes when it isn't already paused.
+    100%: _account_limited is the one authority for both edges), so the pause holds exactly as long as the
+    report says the limit does. Idempotent: only writes when it isn't already paused.
 
     Fable-5 is DELIBERATELY excluded (the user 2026-07-03): its window is MODEL-scoped (the included Fable-5
     weekly allowance), not account-wide, so exhausting it does NOT stop the account from serving the models romp
@@ -10898,36 +10898,35 @@ def _auto_pause_on_limit():
     banner either (the user 2026-07-04: it popped every refresh for the 7-day window and wasn't actionable) —
     only the rail's passive third bar shows it (see _usage().limited); it pauses nothing and warns nothing.
 
-    No stand-down is needed on this edge (review round 3, 2026-09-07): both edges read the report, so a
-    re-engage after a lift needs a reading that names a window again, never a record the lift already
-    outranked. The spend twin acts on a transcript record that outlives its lift, and stands down on it
-    (_spend_capped_session's `after`)."""
+    No stand-down is needed on this edge: both edges read the report, so a re-engage after a lift needs a
+    reading that names a window again, never a record the lift already outranked. The spend twin acts on a
+    transcript record that outlives its lift, and stands down on it (_spend_capped_session's `after`)."""
     try:
-        account = _account_limited()                     # 5h / 7d only — fable is model-scoped
+        account = _account_limited()                     # 5h / 7d only: fable is model-scoped
     except Exception:
         return
     if account and not _retry_paused_on():
-        _set_retry_paused(True, reason="limit")     # latched at the event: the rail's 'paused · usage limit'
+        _set_retry_paused(True, reason="limit")     # latched at the event: the API cell's 'paused, usage limit'
         #                                               (not re-derived from _retry_resume_at's clock compare)
         sys.stderr.write("retry-pause: auto-engaged — usage limit reached (%s) → auto-retry + judges paused until reset\n"
                          % ",".join(account))
-        _push_soon()                                     # the flag rides the next push's globalRetryPaused frame
-        #                                                  (see _auto_resume_retry: no view reads it, so no dirty mark)
+        # no inline push: _set_retry_paused woke the pusher (_push_soon, its last line), whose next cycle
+        # carries the flip in its globalRetryPaused frame (see _auto_resume_retry)
 
 
 def _spend_capped_session(now, tmux, after=0):
     """The first alive session sitting blocked on a MONTHLY SPEND CAP error whose record is not older than
     `after`, or None. Account-wide by nature (the cap is on the account, so every session hits it), so one is
-    enough to pause everything. `after` is the last spend lift's instant (_retry_pause_lifted_at, review
-    round 3, 2026-09-07): a record written before it was already outranked by the output that lifted the
-    pause (or by the user's Resume), and a writer whose evidence predates the ruling stands down. A record
-    at or after it is new information and engages again. Compared as they are, no truncation (review round
-    4): `after` is the lifting output's own `t` for the lift rule (whole seconds, the CLI's stamp, like the
-    record's), so a record in the same second as that output reads as new, and the record that engaged the
-    pause never ties (it predates the pause floor, which the output postdates). Round 3 truncated both sides
-    to whole seconds against a liftedAt stamped with the lift CYCLE's clock, and a second capped session's
-    record from the second before that cycle read as stale though it postdated the lift's evidence. A record
-    with no readable time (t 0) is not proof of staleness and counts."""
+    enough to pause everything. `after` is the last spend lift's instant (_retry_pause_lifted_at): a record
+    written before it was already outranked by the output that lifted the pause (or by the user's Resume), and
+    a writer whose evidence predates the ruling stands down. A record at or after it is new information and
+    engages again. Compared as they are, no truncation: `after` is the lifting output's own `t` for the lift
+    rule (whole seconds, the CLI's stamp, like the record's), so a record in the same second as that output
+    reads as new, and the record that engaged the pause never ties (it predates the pause floor, which the
+    output postdates). Truncating both sides to whole seconds against a liftedAt stamped with the lift
+    CYCLE's clock would read a second capped session's record from the second before that cycle as stale
+    though it postdated the lift's evidence. A record with no readable time (t 0) is not proof of staleness
+    and counts."""
     floor = float(after or 0)
     for s in _alive_sessions(now, tmux):
         p = s.get("path")
@@ -10953,46 +10952,41 @@ def _auto_pause_on_spend_limit(now, tmux):
     holds exactly as long as the cap does. reason='spend' → the card shows 'raise your cap', not a reset
     countdown. Idempotent.
 
-    Stand-down (review round 3, 2026-09-07): the capped session's record outlives the lift. A spend cap is
-    on-you, so romp sends it no retry and only a human prompt to that session clears _api_error; the lift
-    reads another session's output on the same billing and leaves the record standing. Engaging on it again
-    the next cycle put the pause back after every lift (alternating at the streaming session's output
-    cadence, then stuck ON once it idled, gating the judges and the idle-queue drives until someone prompted
-    the capped session). So the engage reads the last spend lift's instant off the pause file
-    (_retry_pause_lifted_at) and skips records older than it; a NEW spendLimit record, written after the
-    lift, engages with a new floor."""
+    Stand-down: the capped session's record outlives the lift. A spend cap is on-you, so romp sends it no
+    retry and only a human prompt to that session clears _api_error; the lift reads another session's output
+    on the same billing and leaves the record standing. Engaging on it again the next cycle put the pause
+    back after every lift (alternating at the streaming session's output cadence, then stuck ON once it
+    idled, gating the judges and the idle-queue drives until someone prompted the capped session). So the
+    engage reads the last spend lift's instant off the pause file (_retry_pause_lifted_at) and skips records
+    older than it; a NEW spendLimit record, written after the lift, engages with a new floor."""
     if _retry_paused_on():
         return
     capped = _spend_capped_session(now, tmux, after=_retry_pause_lifted_at())
     if capped is not None:
-        # which billing the cap is on, from the capped session's live row (review round 2, 2026-09-07): the
-        # lift rule accepts fresh output from that billing only, so a session on the other account cannot
-        # lift a cap it never hit and re-engage it here the next cycle (the pause file flapped every cycle
-        # in a login-plus-key install while one session streamed past the other's cap)
+        # which billing the cap is on, from the capped session's live row: the lift rule accepts fresh output
+        # from that billing only, so a session on the other account cannot lift a cap it never hit and
+        # re-engage it here the next cycle (the pause file flapped every cycle in a login-plus-key install
+        # while one session streamed past the other's cap)
         live = tmux if isinstance(tmux, dict) else {}
         bills = "login" if _bills_login(live.get(str(capped.get("sid") or ""))) else "key"
         _set_retry_paused(True, reason="spend", bills=bills)
-        sys.stderr.write("retry-pause: auto-engaged — monthly spend limit reached (%s billing) → auto-retry + judges "
+        sys.stderr.write("retry-pause: auto-engaged: monthly spend limit reached (%s billing); auto-retry + judges "
                          "paused until the cap is raised (claude.ai/settings/usage)\n" % bills)
-        _push_soon()                                     # the flag rides the next push's globalRetryPaused frame
-        #                                                  (see _auto_resume_retry: no view reads it, so no dirty mark)
+        # no inline push: _set_retry_paused woke the pusher (_push_soon, its last line), whose next cycle
+        # carries the flip in its globalRetryPaused frame (see _auto_resume_retry)
 
 
 def _bills_login(tm):
     """Whether a live-map row's session bills the machine LOGIN (the account a usage limit is on): the CLI's
     own authLive report first, the registry's auth next; a row with neither (a tmux session, an SDK session
-    whose row failed to build) is taken to bill what a session on this box bills absent a pick of its own
-    (_unpicked_default: the backend's one rule, the API key when Claude Code's settings carry an
-    apiKeyHelper (SdkBackend.key_available; romp holds no key of its own), else the side the box
-    declares through ROMP_EXPECTED_AUTH when no gear pick has made it inert, else the login). The key
-    comes before the declaration because a configured helper bills every unpicked session whatever the
-    box declares; the declaration decides only on a box with no helper. The spend pause reads it at
-    both edges (_auto_pause_on_spend_limit records the capped session's billing; _auto_resume_retry's
-    spend rule compares a candidate's against it)."""
+    before its init landed) can only be billing the login when this machine holds no key at all
+    (_auth_key_present: an apiKeyHelper is configured), and is taken as billing a key otherwise. The spend
+    pause reads it at both edges (_auto_pause_on_spend_limit records the capped session's billing;
+    _auto_resume_retry's spend rule compares a candidate's against it)."""
     a = str((tm or {}).get("authLive") or (tm or {}).get("auth") or "")
     if a:
         return a == "login"
-    return _unpicked_default() == "login"
+    return not _auth_key_present()
 
 
 def _auto_resume_retry(now, tmux):
@@ -11003,47 +10997,48 @@ def _auto_resume_retry(now, tmux):
     killed EVERY judge (the tier is gated on `not _retry_paused_on()`), turning the storm's fix into a
     permanent outage the user had to infer.
 
-    Three lift rules, one per reason, each keyed on the event that engaged it (review round 2, 2026-09-07):
+    Three lift rules, one per reason, each keyed on the event that engaged it:
 
     - limit: the usage REPORT, the same reading that engaged it (_account_limited). The pause holds while
       the report names a 5h/7d window at 100% with its reset ahead, and lifts the cycle it stops: the
       reset passed, or a fresh reading came in under it. No session's output lifts it while the report
-      still reads limited. Round 1 lifted it on a login-billed session's fresh assistant output instead,
-      and that could never fire after the reset: the login sessions the limit blocked are the ones whose
-      auto-retry this pause gates (_fire_api_retry), key-billed sessions are rightly skipped, so the pause,
-      the judges and the idle-queue drives stayed off until a human prompted or clicked Resume. Output
-      under a still-limited report is not a lift either: with extra usage on, the login account is served
-      at 100%, and a lift on that output was re-engaged the next cycle, the pause file (so the bottom
-      bar's API cell) flipping at the output cadence. A login turn's END refreshes the report (get_usage
-      rides turn ends; _usage_poll_tick every 15 min), which is how a served account reaches this edge.
-      A still-limited account whose reading was stale re-engages through its next error record and the
-      refreshed report, with a new floor.
+      still reads limited. The mtime rule lifted it on any session's fresh transcript, and a key-billed
+      session's streaming (or a human prompt) flipped the file every cycle while the window held; a rule
+      keyed on a login-billed session's fresh assistant output could never fire after the reset: the login
+      sessions the limit blocked are the ones whose auto-retry this pause gates (_fire_api_retry), key-billed
+      sessions are rightly skipped, so the pause, the judges and the idle-queue drives stayed off until a
+      human prompted or clicked Resume. Output under a still-limited report is not a lift either: with extra
+      usage on, the login account is served at 100%, and a lift on that output was re-engaged the next
+      cycle, the pause file (so the bottom bar's API cell) flipping at the output cadence. A login turn's
+      END refreshes the report (get_usage rides turn ends; _usage_poll_tick every 15 min), which is how a
+      served account reaches this edge. A still-limited account whose reading was stale re-engages through
+      its next error record and the refreshed report, with a new floor.
     - spend: fresh ASSISTANT output (_api_last_output_t, never the mtime a prompt moves too) from a live
       session on the SAME billing the capped session was on (_retry_pause_bills, recorded at the engage;
       the capped session itself qualifies once it serves). A cap is on one account, and in a login-plus-key
       install a session on the other account streams straight through it: the old mtime rule counted that,
       _auto_pause_on_spend_limit re-engaged the pause the next cycle while the capped session sat on its
-      record, and the file flipped every cycle. A file with no billing recorded (an older kernel's pause)
-      takes any session's fresh output. The lift leaves the capped session's record standing (nothing but a
-      human prompt clears a spend record), so the un-pause records the lifting output's own time as
-      liftedAt (review round 4: the evidence, not the cycle's clock, so a record written between the two
-      counts as new) and the engage stands down on records older than it (review round 3): one lift, no
-      re-engage, until a NEW record.
+      record, and the file flipped every cycle. A file with no billing recorded takes any session's fresh
+      output. The lift leaves the capped session's record standing (nothing but a human prompt clears a
+      spend record), so the un-pause records the lifting output's own time as liftedAt (the evidence, not
+      the cycle's clock, so a record written between the two counts as new) and the engage stands down on
+      records older than it: one lift, no re-engage, until a NEW record.
     - manual: any live session, not blocked on an API error, whose transcript mtime passed the pause floor
       (the user's own words above, unchanged).
 
     Clearing re-enables both auto-retry and the judges together.
 
-    Delivery (perf batch 2 P1, 2026-09-06; the two auto-pause siblings above do the same): the flip
-    WAKES the pusher (_push_soon) instead of building a push inline on this thread. retry-paused.json is
-    in no view signature and neither build_feed nor build_timeline reads it — its readers on the wire are
-    the per-push globalRetryPaused frame, sent to every chat client on every push, and build_session's
-    queued-hold reason on the ACTIVE tab, which rebuilds every push — so the next cycle delivers the
-    flip with no view rebuild, one cycle start after the write (sub-second). A dirty mark here would
-    force a full feed and timeline rebuild for a change the views do not display. A BACKGROUND chat
-    tab's queued-hold reason follows at the next push (its _chat_build_sig folds the hold; before P4 it waited for the next _judge_gen bump, folding no
-    dirty input): pre-existing, unchanged. The re-arm below is the one write the feed DOES show (a
-    given-up card's summary sentinel goes back to None), so that branch marks the views dirty — the
+    Delivery (perf batch 2 P1, 2026-09-06; the two auto-pause siblings above inherit it): the flip WAKES the
+    pusher and stamps no dirty mark. _set_retry_paused ends in _push_soon (upstream's ends in
+    _mark_views_dirty), so no caller pushes inline or wakes on its own. retry-paused.json is in no view
+    signature and neither build_feed nor build_timeline reads it: its readers on the wire are the per-push
+    globalRetryPaused frame, sent to every chat client on every push, and build_session's queued-hold reason
+    on the ACTIVE tab, which rebuilds every push, so the next cycle delivers the flip with no view rebuild,
+    one cycle start after the write (sub-second). A dirty mark at the writer would force a full feed and
+    timeline rebuild for a change the views do not display. A BACKGROUND chat tab's queued-hold reason
+    follows at the next push (its _chat_build_sig folds the hold; before P4 it waited for the next _judge_gen
+    bump, folding no dirty input): pre-existing, unchanged. The re-arm below is the one write the feed DOES
+    show (a given-up card's summary sentinel goes back to None), so that branch marks the views dirty: the
     store write is the new information, the flag flip is not."""
     if not _retry_paused_on():
         return
@@ -11081,20 +11076,20 @@ def _auto_resume_retry(now, tmux):
 
 
 def _lift_retry_pause(now, why, lifted_at=None):
-    """Clear the global retry-pause on a recovery edge (_auto_resume_retry's three rules land here): the
-    flag flip, the re-arm of the cards the judges gave up on while degraded, and the pusher wake that
-    delivers globalRetryPaused=false (see the caller's docstring for why no dirty mark). `lifted_at` is the
-    spend rule's evidence time, recorded as the file's liftedAt (_set_retry_paused); the other rules pass none."""
+    """Clear the global retry-pause on a recovery edge (_auto_resume_retry's three rules land here): the flag
+    flip and the re-arm of the cards the judges gave up on while degraded. No inline push and no wake of its
+    own: _set_retry_paused ends in _push_soon, which wakes the pusher, and its next cycle carries
+    globalRetryPaused=false (the caller's docstring). `lifted_at` is the spend rule's evidence time, recorded
+    as the file's liftedAt (_set_retry_paused); the other rules pass none."""
     _set_retry_paused(False, lifted_at=lifted_at)
-    sys.stderr.write("retry-pause: auto-cleared — %s → judges + auto-retry resume\n" % why)
+    sys.stderr.write("retry-pause: auto-cleared (%s): judges + auto-retry resume\n" % why)
     try:                                                 # recovery edge → re-arm cards the judges gave up on
         rearmed = jd.rearm_failed_summaries(now)         # while degraded, so their summaries/briefs retry now
         if rearmed:
             sys.stderr.write("distiller: re-armed %d given-up card(s) after recovery\n" % rearmed)
-            _mark_views_dirty()                          # store writes the cards show → rebuild past the sig
+            _mark_views_dirty()                          # a store write the cards show: the one dirty mark on this path
     except Exception:
         sys.stderr.write("rearm-failed-summaries: %s\n" % traceback.format_exc())
-    _push_soon()                                         # globalRetryPaused=false rides the next push (docstring)
 
 
 # ── Per-session auto-retry suppression (the user 2026-07-06) ───────────────────────────────────────
@@ -17903,12 +17898,12 @@ def _sdk_locked():
                 # the API-health aggregator's boot clock: this kernel's own _STARTED, which the aggregator
                 # truncates to the millisecond (the precision of every stamp in the payload) and serves as
                 # /api-health's bootAt, so a bucket the boot seeded is unknown since the kernel's own start
-                # and the hover's head, divider and restart row name one time (the aggregator's own clock ran
-                # seconds later: this backend is built after the boot's imports, migrations and warm-up). The
-                # float, never int(): truncated to the second boundary BEFORE the process started, the seed
-                # sorted under a row the previous kernel filed in that same second, and the tail read the old
-                # kernel's last state as current above the restart row (review round 3). /version's `started`
-                # is the same start in whole seconds.
+                # and the hover's head, divider and restart row name one time (the aggregator's own clock would
+                # run seconds later: this backend is built after the boot's imports, migrations and warm-up).
+                # The float, never int(): truncated to the second boundary BEFORE the process started, the seed
+                # would sort under a row the previous kernel filed in that same second, and the tail would read
+                # the old kernel's last state as current above the restart row. /version's `started` is the
+                # same start in whole seconds.
                 boot_at=_STARTED)
             # a limit-shaped judge error envelope pokes ONE exact usage poll (get_usage rides turn
             # ends, so an idle fleet's usage.json goes stale — measured ~15h — and the rate gate is
@@ -18076,8 +18071,10 @@ def _auth_key_present():
     Claude Code's settings (the SDK backend's key_available: read, never run). A bool on purpose: romp holds
     no key since 2026-09-08, and before that no fragment of one ever left the kernel for a label (the user
     2026-08-08). Cheap: four stats behind the backend singleton, safe per-push.
-    Readers that need the side a session BILLS take the CLI's own report (authLive) first and the backend's
-    unpicked rule (_unpicked_default) for a row with none (fork, review round 1, 2026-09-09)."""
+    Readers that need the side a session BILLS take the CLI's own report (authLive) first and the registry's
+    auth next; a row with none bills the login only when this is false (_bills_login, the spend pause's
+    reader). The backend's unpicked rule (_unpicked_default) has one kernel reader, _auth_avail's picker
+    default (fork, review round 1, 2026-09-09; the 2026-09-10 fold, ruling K2)."""
     be = _sdk()
     return bool(getattr(be, "key_available", False)) if be else False
 
@@ -18087,12 +18084,13 @@ def _unpicked_default():
     one rule (SdkBackend.new_session_auth: the remembered gear pick a spawn would seed, a pick this box cannot
     bill set aside (pick_unavailable, upstream #1147's both-ways fall), else
     sdk_backend.unpicked_auth: the API key when the box's apiKeyHelper is configured, else the box
-    declaration when no pick has made it inert, else the login). The kernel's two readers of a row that
-    reports nothing take it (_bills_login's
-    fallback, _auth_avail's picker default), so the kernel cannot order the tests differently from the
-    backend again (review round 1, 2026-09-09: the two read the declaration before the key, the backend
-    after it, and a keyed box declaring login seeded the picker on Login for sessions that launched
-    keyed). A direct call, not a getattr guard: a backend without the method is a bug to surface (the
+    declaration when no pick has made it inert, else the login). The kernel's one reader of a row that
+    reports nothing takes it (_auth_avail's picker default), so the kernel cannot order the tests
+    differently from the backend again (review round 1, 2026-09-09: the kernel read the declaration before
+    the key, the backend after it, and a keyed box declaring login seeded the picker on Login for sessions
+    that launched keyed). _bills_login, the spend pause's reader of such a row, does not take it: a row
+    that reports nothing bills the login only when this machine holds no key (not _auth_key_present()).
+    A direct call, not a getattr guard: a backend without the method is a bug to surface (the
     kernel-to-backend binding is pinned by an executed test), not a login box. No backend at all (the
     module failed to load, a boot problem said aloud elsewhere) reads the login: nothing of romp's is
     injected then."""
@@ -30354,22 +30352,23 @@ _API_ERR_TAIL_WINDOW = int(os.environ.get("ROMP_API_ERR_TAIL_WINDOW", "262144"))
 
 
 def _api_error_pass(path, start):
-    """One pass from byte `start` to EOF answering BOTH transcript readers at once (review round 1,
-    2026-09-07) -> (err, decided, latched, decided_latched, out_t).
+    """One pass from byte `start` to EOF answering BOTH transcript readers at once
+    -> (err, decided, latched, decided_latched, out_t).
 
-    err / decided are _api_error's. The loop is _api_error's original whole-file scan, UNCHANGED (one dedent)
-    except that each of its three `err = ...` sites also sets `decided`. That flag is the window's own proof
-    of sufficiency: True iff this pass saw a record that ASSIGNS the verdict (an isApiErrorMessage assistant
-    record, fresh assistant output, or a genuine user prompt), exactly the record the whole-file scan's
-    result depends on, since everything before it is overwritten. False means the window started too late
-    and the caller must widen; True means this window's answer IS the whole file's answer.
+    err / decided are _api_error's. The loop is _api_error's original whole-file scan, changed only at its three
+    `err = ...` sites (each also sets `decided`, and the two assistant sites set `latched`, `decided_latched` and
+    `out_t`) and at the refusal branch, which marks both dicts. `decided` is the window's own proof of
+    sufficiency: True iff this pass saw a record that ASSIGNS the verdict (an isApiErrorMessage assistant
+    record, fresh assistant output, or a genuine user prompt), exactly the record the whole-file scan's result
+    depends on, since everything before it is overwritten. False means the window started too late and the
+    caller must widen; True means this window's answer IS the whole file's answer.
 
-    latched / decided_latched are _api_last_failed's (the API health cell): the same verdict with the user
-    branch inert, so a genuine prompt neither clears nor decides it and an error record holds until fresh
-    ASSISTANT output, through romp's own injected RETRY_MSG and through a human prompt alike (neither is
+    latched / decided_latched are _api_last_failed's (the bottom bar's API health cell): the same verdict with
+    the user branch inert, so a genuine prompt neither clears nor decides it and an error record holds until
+    fresh ASSISTANT output, through romp's own injected RETRY_MSG and through a human prompt alike (neither is
     information about the API; the API's answer is). An assistant record decides both, so decided_latched
-    implies decided. out_t is the newest assistant OUTPUT record's timestamp while that record is the
-    newest assistant record, else 0: the spend pause's recovery signal (_auto_resume_retry).
+    implies decided. out_t is the newest assistant OUTPUT record's timestamp while that record is the newest
+    assistant record, else 0: the spend pause's recovery signal (_auto_resume_retry).
 
     A non-zero `start` lands mid-line, so the first partial line is dropped. model_refusal_* records land a
     few records AFTER the error they annotate and only mutate an err already set, so they need no special
@@ -30377,12 +30376,12 @@ def _api_error_pass(path, start):
     err = None
     decided = False
     latched = None
-    decided_l = False
+    decided_latched = False
     out_t = 0
     with open(path, errors="replace") as f:
         if start > 0:
             f.seek(start)
-            f.readline()                          # the window cut this line in half: drop it
+            f.readline()                          # the window cut this line in half — drop it
         for line in f:
             if '"type"' not in line:
                 continue
@@ -30399,33 +30398,33 @@ def _api_error_pass(path, start):
                                      if isinstance(b, dict) and b.get("type") == "text").strip()
                             if isinstance(c, list) else (c.strip() if isinstance(c, str) else ""))
                     # "prompt is too long" is NOT a transient API error (the user 2026-06-29): it means the
-                    # context needs compacting, so it's on YOU. Flag it so it (and only it) blocks; other API
+                    # context needs compacting → it's on YOU. Flag it so it (and only it) blocks; other API
                     # errors are transient (auto-retry recovers them) and stay in Working.
-                    decided = decided_l = True
+                    decided = decided_latched = True
                     out_t = 0                             # the newest assistant record is a failure again
                     err = latched = {"text": text, "status": o.get("apiErrorStatus"),
                                      "category": o.get("error") or "unknown",
-                                     # the error RECORD's identity: a new failed attempt writes a new record,
+                                     # the error RECORD's identity — a new failed attempt writes a new record,
                                      # so this uuid IS the error episode (one auto-retry per episode, apiRetry)
                                      "uuid": o.get("uuid"),
                                      # the record's own time, the event stamp the API health frame's `since`
                                      # carries (never the clock, so an unchanged world serializes identically)
                                      "t": int(em.parse_z(o.get("timestamp")) or 0),
                                      "tooLong": "too long" in text.lower(),
-                                     # a spend cap is on YOU (raise it), like tooLong, but ALSO stops the
+                                     # a spend cap is on YOU (raise it), like tooLong — but ALSO stops the
                                      # auto-retry entirely (no reset to wait out); see _auto_pause_on_spend_limit
                                      "spendLimit": _is_spend_limit(text),
-                                     # a model's own allowance is spent: on YOU too (switch model / add
+                                     # a model's own allowance is spent — on YOU too (switch model / add
                                      # credits), and the auto-retry keeps running only because the window does
                                      # eventually reset; see _is_model_limit
                                      "modelLimit": _is_model_limit(text),
-                                     # a dead credential (no login / refused key): on YOU, never auto-retried;
+                                     # a dead credential (no login / refused key) — on YOU, never auto-retried;
                                      # see _is_auth_error (per-session auth, the user 2026-08-08)
                                      "authErr": _is_auth_error(text),
-                                     # the error's parent = the refused/failed USER message, kept so the
+                                     # the error's parent = the refused/failed USER message — kept so the
                                      # system model_refusal_* record below can link itself to THIS episode
                                      "parentUuid": o.get("parentUuid"),
-                                     # a safeguards refusal is deterministic on the same input: on YOU
+                                     # a safeguards refusal is deterministic on the same input — on YOU
                                      # (rewrite the ask or drop the thread), never auto-retried; see
                                      # _is_refusal_text, and the system-record event path below (the user
                                      # 2026-08-15, after one refused prompt drew 12 auto-retries in ~6min)
@@ -30433,8 +30432,8 @@ def _api_error_pass(path, start):
                 elif (isinstance(c, list) and any(isinstance(b, dict)
                         and b.get("type") in ("text", "tool_use", "thinking") for b in c)) \
                         or (isinstance(c, str) and c.strip()):
-                    decided = decided_l = True
-                    err = latched = None                  # fresh assistant output: recovered
+                    decided = decided_latched = True
+                    err = latched = None                  # fresh assistant output → recovered
                     out_t = int(em.parse_z(o.get("timestamp")) or 0)
             elif t == "user":
                 c = (o.get("message") or {}).get("content")
@@ -30445,26 +30444,26 @@ def _api_error_pass(path, start):
                     err = None
             elif t == "system" and o.get("subtype") in ("model_refusal_no_fallback",
                                                         "model_refusal_fallback"):
-                # The CLI's structured refusal record, the EXACT event behind _is_refusal_text's
+                # The CLI's structured refusal record — the EXACT event behind _is_refusal_text's
                 # wording check (so a future CLI rephrase still classifies). It lands a few records
                 # AFTER the assistant error it explains (queue-operation / file-history-snapshot
                 # lines sit between; none of those clears err), linked by parentUuid: the refusal
                 # record and the error BOTH carry the refused user message's uuid as parentUuid.
-                # Deliberately NOT refusedUserMessageUuid (observed diverging from the episode's
-                # parent in 2 of 13 refusal records of one storm) and deliberately not
+                # Deliberately NOT refusedUserMessageUuid — observed diverging from the episode's
+                # parent in 2 of 13 refusal records of one storm — and deliberately not
                 # record-alone: the CLI also omits this record for some refusal errors, which is
                 # why the text signature above stays co-equal rather than a legacy fallback.
                 for d in (err, latched):                  # the same dict when both still hold the episode
                     if d is not None and o.get("parentUuid") == d.get("parentUuid"):
                         d["refusal"] = True
-    return err, decided, latched, decided_l, out_t
+    return err, decided, latched, decided_latched, out_t
 
 
 def _api_error_scan(path, start, user_clears=True):
     """_api_error_pass for ONE reader -> (err, decided): _api_error's verdict by default, the latch's with
     user_clears=False. The differential tests read the scan through this name; the kernel reads the pass."""
-    err, decided, latched, decided_l, _ = _api_error_pass(path, start)
-    return (err, decided) if user_clears else (latched, decided_l)
+    err, decided, latched, decided_latched, _ = _api_error_pass(path, start)
+    return (err, decided) if user_clears else (latched, decided_latched)
 
 
 def _api_stat_key(path):
@@ -30480,30 +30479,30 @@ _API_UNDECIDED = object()   # _api_error_read's latch slot when the read stopped
 
 
 def _api_error_read(path, key, latch):
-    """The tail-first widening read behind BOTH readers, filling both caches from ONE pass (review round 1,
-    2026-09-07: before it, _api_last_failed re-read and re-parsed the same tail _api_error had just scanned,
-    for every active session, every cycle). `latch` names the verdict the caller needs decided: _api_error's
-    decides at the newest prompt or assistant record and keeps exactly the offsets it always read; the
-    latch's needs an assistant record. Whatever this read settled (or proved by reaching byte 0) is cached
-    for both, so the pusher's second question about the same transcript in the same cycle is a cache hit.
+    """The tail-first widening read behind BOTH readers, filling both caches from ONE pass: without it,
+    _api_last_failed would re-read and re-parse the same tail _api_error had just scanned, for every active
+    session, every cycle. `latch` names the verdict the caller needs decided: _api_error's decides at the
+    newest prompt or assistant record and keeps exactly the offsets it always read; the latch's needs an
+    assistant record. Whatever this read settled (or proved by reaching byte 0) is cached for both, so the
+    pusher's second question about the same transcript in the same cycle is a cache hit.
     -> (err, latched, out_t); latched is _API_UNDECIDED when a non-latch read stopped before an assistant
     record (the latch's own read then widens, rarely: a tail of prompts longer than the window)."""
     size = key[1]
     # TAIL-FIRST: the pusher calls this per session per push, and the old whole-file read cost
-    # O(transcript) on EVERY append, the same unamortized shape the assembly fold retired for the
+    # O(transcript) on EVERY append — the same unamortized shape the assembly fold retired for the
     # event-model parse, left behind here. Widen 4x until a pass reports it saw the deciding record.
     win = max(1, _API_ERR_TAIL_WINDOW)   # a knob of 0 or less would never widen (0*4 stays 0): clamp, don't spin
     while True:
         start = size - win if win < size else 0
-        err, decided, latched, decided_l, out_t = _api_error_pass(path, start)
+        err, decided, latched, decided_latched, out_t = _api_error_pass(path, start)
         whole = start <= 0
-        if whole or decided_l or (decided and not latch):
+        if whole or decided_latched or (decided and not latch):
             break
         win *= 4
     if len(_api_err_cache) > 256:
         _api_err_cache.clear()
     _api_err_cache[path] = (key, err)                     # decided, or the whole file: final either way
-    if decided_l or whole:
+    if decided_latched or whole:
         if len(_api_last_failed_cache) > 256:
             _api_last_failed_cache.clear()
         _api_last_failed_cache[path] = (key, latched, out_t)
@@ -30515,7 +30514,7 @@ def _api_error_read(path, key, latch):
 def _api_error(path):
     """If the session is sitting BLOCKED on an API error right now, the error; else None. Claude Code
     writes every API failure to the transcript as an assistant record with top-level
-    isApiErrorMessage:true; the human text varies (500 server_error, 'Request timed out', 404
+    isApiErrorMessage:true — the human text varies (500 server_error, 'Request timed out', 404
     model_not_found) but that flag is the invariant, so detection is exact, not a text heuristic (the
     user 2026-06-16). The session is blocked iff such a record is the LAST productive thing in the
     transcript: a later genuine user prompt (a retry) or fresh assistant output (an internal retry that
@@ -30536,7 +30535,7 @@ def _api_error(path):
 
 def _api_last_failed(path):
     """The session's newest API error record if no ASSISTANT OUTPUT has followed it, else None: _api_error's
-    latched sibling (the API health cell, 2026-09-07). Same tail-first widening, its own (mtime, size)
+    latched sibling (the bottom bar's API health cell). Same tail-first widening, its own (mtime, size)
     cache, one difference: a user prompt does not clear the record. _api_error answers 'is this session
     blocked right now', and a retry prompt rightly un-blocks it; but romp's own auto-retry IS a user prompt
     (RETRY_MSG), so a count keyed on _api_error read '1 waiting', 'ok', '1 waiting' on every rung of
@@ -50848,13 +50847,13 @@ def _badge_push(n):
     _send_to_app("shell", {"type": "badge", "n": n})
 
 
-# ── The bottom bar's API health cell (the user 2026-09-07): one glance answers 'is the API serving my
-# sessions', beside the spend cell. Built from what the kernel already owns: the merged live map's
-# retrying state (the SDK api_retry storm), each alive transcript's LATCHED newest API error
-# (_api_last_failed) and the global retry-pause file, never from the /api-health ratio machine
-# (threshold-and-hold transitions evaluated at read time) and never from a clock: every field moves on
-# one named event (a retry frame, an isApiErrorMessage record, fresh assistant output, a pause set or
-# lifted, a session leaving the roster), so an unchanged world serializes identically and sends nothing.
+# ── The bottom bar's API health cell: one glance answers 'is the API serving my sessions', beside the usage
+# readout. Built from what the kernel already owns: the merged live map's retrying state (the SDK api_retry
+# storm), each alive transcript's LATCHED newest API error (_api_last_failed) and the global retry-pause
+# file, never from the /api-health ratio machine (threshold-and-hold transitions evaluated at read time) and
+# never from a clock: every field moves on one named event (a retry frame, an isApiErrorMessage record,
+# fresh assistant output, a pause set or lifted, a session leaving the roster), so an unchanged world
+# serializes identically and sends nothing.
 #
 # States: ok; degraded, with a class word by plurality over the affected sessions, 429 rate limited /
 # 529 overloaded / offline (this machine cannot reach the API) / errors, and the count waiting
@@ -50862,17 +50861,17 @@ def _badge_push(n):
 # manual), outranking every degraded reading since nothing retries and the judges are gated too.
 # On-you failures (tooLong / modelLimit / authErr / refusal) do NOT count: they already wear red on that
 # session's tab and card, and the cell answers for the API, not for the session. A spend cap counts,
-# and engages the spend pause in the same cycle anyway. Web rail only in v1; the VS Code strip twin
-# (strip.ts apiCell's sibling, with a --st-retrying token) and the phone's Usage-modal section (no rail
-# on the phone) are named follow-ups.
+# and engages the spend pause in the same cycle anyway. The web shell's rail only, for now; the VS Code
+# strip twin (strip.ts apiCell's sibling, with a --st-retrying token) and the phone's Usage-modal section
+# (no rail on the phone) are named follow-ups.
 _APIH_TEXT = {                 # the ONE table of rail words: the rail, the detail header and the tests read `text`
     "ok": "ok",
     "429": "rate limited",
     "529": "overloaded",
     "offline": "offline",
     "errors": "errors",
-    "limit": "paused \u00b7 usage limit",
-    "spend": "paused \u00b7 spend cap",
+    "limit": "paused · usage limit",
+    "spend": "paused · spend cap",
     "manual": "paused by you",
 }
 _APIH_ORDER = ("429", "529", "offline", "errors")   # the fixed tie order for the plurality class
@@ -50893,8 +50892,8 @@ def _apih_class(status, category="", network_down=None):
     """One affected session's class for the rail: "429" | "529" | "offline" | "errors". A kernel-local
     twin of sdk_backend.api_health_status_class collapsed to the four rail words (tests pin agreement on the
     shared statuses): its 5xx / other / none all read "errors" here, except a no-status attempt the CLI
-    flagged is_network_down, which is this box's connectivity, not the API: "offline". Only a retrying row
-    can say offline: a transcript error record carries no network flag."""
+    flagged is_network_down, which is this machine's connectivity, not the API: "offline". Only a retrying
+    row can say offline: a transcript error record carries no network flag."""
     st = _apih_status(status)
     if st is not None:
         if st == 429:
@@ -50948,9 +50947,9 @@ def _api_health_frame(now, tmux):
             if not e or e.get("tooLong") or e.get("modelLimit") or e.get("authErr") or e.get("refusal"):
                 continue                               # nothing latched, or an on-you failure (the session's own)
             status = e.get("status")
-            # The word follows the LIVE state (review round 1, 2026-09-07): a turn open on the retry prompt
-            # (romp's own, or a human's) with no api_retry frame yet, or a tmux session's whole internal retry,
-            # reads 'retrying', not 'stopped'. The latch only keeps the row counted; since stays the record's time.
+            # The word follows the LIVE state: a turn open on the retry prompt (romp's own, or a human's) with
+            # no api_retry frame yet, or a tmux session's whole internal retry, reads 'retrying', not
+            # 'stopped'. The latch only keeps the row counted; since stays the record's time.
             kind = "retrying" if tm.get("state") == "working" else "blocked"
             row = {"kind": kind, "cls": _apih_class(status, e.get("category"), None),
                    "since": int(e.get("t") or 0)}
@@ -50967,11 +50966,11 @@ def _api_health_frame(now, tmux):
     n = len(rows)
     if paused:
         state = "paused"
-        text = _APIH_TEXT[reason] + (" \u00b7 %d waiting" % n if n else "")
+        text = _APIH_TEXT[reason] + (" · %d waiting" % n if n else "")
         since = pause_t
     elif rows:
         state = "degraded"
-        text = "%s \u00b7 %d waiting" % (_APIH_TEXT[cls], n)
+        text = "%s · %d waiting" % (_APIH_TEXT[cls], n)
         since = min((r["since"] for r in rows if r["since"]), default=0)
     else:
         state, text, since = "ok", _APIH_TEXT["ok"], 0
@@ -54360,29 +54359,28 @@ window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='usage
 """
 
 
-# The bottom bar's API health cell (the user 2026-09-07): one dot and one word beside the spend cell,
-# painted from the kernel's apiHealth shell push (_api_health_frame), the reading on hover, the detail
-# with its actions pinned on click (or Enter / Space: the cell is a keyboard button). The cell and the
-# frame's reading render ONLY from the last pushed frame, no fetch, no timer: the frame moves on events, and
-# the cell repaints only when its state or text changed, so the ready re-send of an identical frame cannot
-# pulse it. The hover's History section (the user 2026-09-08, who wanted the cell's hover to carry some
-# history the way the spend hover does) is the ONE read: GET /api-health, the designed signal
-# (docs/reference.md "The API-health signal"), fetched when the hover or the detail opens and again when a
-# frame lands on an open one. The signal derives its state at read time by design, so the read is the
-# observation; the frame stays byte-identical and its dedupe untouched. The detail card is
-# built in the usage tip's grammar and shares its skin (#ah-tip sits beside #ru-tip in every selector) and
-# its backdrop (#ru-back, one modal at a time). Web rail only in v1; the VS Code strip twin (strip.ts
-# apiCell's sibling, with a --st-retrying token) and the phone's Usage-modal section (no rail on the
-# phone) are named follow-ups.
+# The bottom bar's API health cell: one dot and one word beside the usage readout, painted from the kernel's
+# apiHealth shell push (_api_health_frame), the reading on hover, the detail with its actions pinned on click
+# (or Enter / Space: the cell is a keyboard button). The cell and the frame's reading render ONLY from the last
+# pushed frame, no fetch, no timer: the frame moves on events, and the cell repaints only when its state or text
+# changed, so the ready re-send of an identical frame cannot pulse it. The hover's History section (the user
+# 2026-09-08, who wanted the cell's hover to carry some history the way the spend hover does) is the ONE read:
+# GET /api-health, the designed signal (docs/reference.md "The API-health signal"), fetched when the hover or the
+# detail opens and again when a frame lands on an open one. The signal derives its state at read time by design,
+# so the read is the observation; the frame stays byte-identical and its dedupe untouched. The detail card is
+# built in the usage tip's grammar and shares its skin (#ah-tip sits beside #ru-tip in every selector) and its
+# backdrop (#ru-back, one modal at a time).
+# The web shell's rail only, for now; the VS Code strip twin (strip.ts apiCell's sibling, with a --st-retrying
+# token) and the phone's Usage-modal section (no rail on the phone) are named follow-ups.
 _LANDING_APIH_JS = """
 (function(){var el=document.getElementById('rail-api');if(!el)return;
 var txt=el.querySelector('.ah-text');
 var tip=document.createElement('div');tip.id='ah-tip';tip.style.display='none';
 tip.setAttribute('role','tooltip');tip.setAttribute('aria-label','API health');tip.tabIndex=-1;document.body.appendChild(tip);
-// what the cell is described by while the hover shows (aria-describedby): a SHORT visually-hidden summary, updated
-// when the read lands, never the tip's whole text (review round 2: the tip ran to some 600 characters of rows, and
-// at focus time, when assistive tech reads the description, it was the loader's markup); Enter reaches the rest
-var desc=document.createElement('span');desc.id='ah-desc';desc.className='ah-vh';document.body.appendChild(desc);
+// what the cell is described by while the hover shows (aria-describedby): a SHORT visually-hidden summary, refreshed
+// when the read lands, never the tip's whole text (the tip runs to hundreds of characters of rows, and at focus time,
+// when assistive tech reads the description, it would be the loader's markup); Enter reaches the rest
+var desc=document.createElement('span');desc.id='ah-summary';desc.className='ah-vh';document.body.appendChild(desc);
 var back=document.getElementById('ru-back');
 if(!back){back=document.createElement('div');back.id='ru-back';document.body.appendChild(back);}
 // LAST: the newest frame. pinned: the detail is the modal. held / dirty: a PRIMARY pointer is down over the detail
@@ -54400,8 +54398,8 @@ var LAST=null,pinned=false,held=false,dirty=false,pending=null,pendSeq=null,hint
 // design), which is not the user reaching for the cell: the cell's focus is skipped only when the cell WAS that
 // element. Chromium fires the same window event whenever the focused FRAME changes, and the shell's panes are
 // iframes, so a Tab out of a pane onto the cell (its keyboard path here) arrives under the mark too; the recorded
-// element is then the document's body (the pane's host is cleared before the event fires; Chromium 151), never the
-// cell, and the hover shows (review round 2). No timer anywhere: the show is the event.
+// element is then the document's body (the pane's host is cleared before the event fires), never the cell, and the
+// hover shows. No timer anywhere: the show is the event.
 var HIST=null,histSeq=0,skipFocus=false,winFocusEl=null;
 window.addEventListener('focus',function(){winFocusEl=document.activeElement;requestAnimationFrame(function(){winFocusEl=null;});});
 var RESTART_WHY='kernel restarted: the event ring is empty';   // sdk_backend.API_HEALTH_RESTART_WHY: the row the boot files
@@ -54437,11 +54435,13 @@ return '<div class="ru-tip-row ah-row'+(full?'':' ah-ro')+'"'+(full?' role=butto
 +(bg?'<i class=ah-sw style="background:'+bg+'"></i><span class=ah-nm style="color:'+bg+'">':'<i class=ah-sw></i><span class=ah-nm>')+esc(r.name)+'</span>'
 +'<span class=ah-desc>'+(r.kind==='retrying'?'retrying':'stopped')+' · '+clsWords(r)+(r.since?' · since '+hm(r.since):'')
 +(r.suppressed?' · auto-retry off for this session (you interrupted it)':'')+'</span></div>';}
-// ── History: GET /api-health at show time. The shell authenticates the way its other fetches do (the romp_token
+// -- History: GET /api-health at show time. The shell authenticates the way its other fetches do (the romp_token
 // cookie; a same-origin GET sends no Origin, which _origin_ok accepts). A failed read is said in the section, in
 // place of the rows: never stale numbers, never silence. Painted through the same held / dirty gate as a frame.
 // fresh=true (a show) drops the last answer first, so a hover never paints an earlier hover's numbers while its
-// own read is in flight; the open and a frame on an open card re-read behind the stamped answer they already show.
+// own read is in flight. A frame on an open card re-reads behind the stamped answer the card shows, and a pin from
+// hidden behind the last hover's answer (its as-of says when it was read; the dots only before the first answer):
+// the card the user opened is not blanked for the read's duration, on purpose.
 function load(fresh){var n=++histSeq;if(fresh)HIST=null;
 fetch('/api-health',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
 .then(function(d){if(n!==histSeq)return;HIST=(d&&d.buckets)?d:{error:'malformed answer'};
@@ -54457,10 +54457,9 @@ return dup?fam+' · '+(b.auth||key.split('|')[0]):fam;}
 // said in the window's tense ('retried', never 'retrying': the live set is the Sessions waiting list above).
 // `requests` counts attempts WITH a status and the shares are over it; a connection-level failure has none
 // (`noStatus`, outside that sum), so a window is quiet only when every count is zero, and its no-status attempts
-// are named when there are any (an offline window used to read 'no attempts' and hide its give-ups). A mixed window
-// counts every attempt once and says how many of them had no status, with the shares' base named beside them:
-// '15 attempts, 7 of them without a status · 25% 429 · 0% 5xx of the other 8' (review round 2: '8 attempts · ... ·
-// 7 without a status' read as seven of the eight, and they were seven more).
+// are named when there are any (an offline window would otherwise read 'no attempts' and hide its give-ups). A mixed
+// window counts every attempt once and says how many of them had no status, with the shares' base named beside them:
+// '15 attempts, 7 of them without a status · 25% 429 · 0% 5xx of the other 8'.
 function winRow(w,c,up){var lab=(w%60===0?(w/60)+' min':w+' s');if(c&&c.complete===false&&typeof up==='number')lab+=' · kernel up '+dur(up);
 var v,rq=(c&&c.requests)||0,ns=(c&&c.noStatus)||0;if(!c||!(rq||ns||c.gaveUp||c.sessionsRetrying))v='no attempts';
 else{v=rq?(pl(rq+ns,'attempt')+(ns?', '+ns+' of them without a status':'')+' · '+pct(c.rate429)+' 429 · '+pct(c.rate5xx)+' 5xx'+(ns?' of the other '+(rq===1?'one':rq):'')):(pl(ns,'attempt')+' without a status');
@@ -54472,12 +54471,11 @@ return '<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+esc(lab)+'</span>
 // state it closed must not read 'so far' beside it). A row the boot filed says so; where the tail crosses this
 // kernel's bootAt with no such row shown above the crossing (the bucket was already unknown at shutdown, so the boot
 // filed nothing), a divider names the restart, and takes no slot: the cap counts transitions. Any restart row above
-// suppresses it, not only the one right above, so one restart is one mark whatever sits between (review round 3).
-// bootAt is the backend's own seed stamp (the start to the millisecond, or one millisecond past a row the previous
-// kernel filed at or after it), so every restored row is before it and the restart rows sit at it (review round 4).
-// Every bucket comes back unknown at a restart, so a hold from before the boot ends at the boot and
-// is never 'so far'; a bucket the boot seeded carries that same boot clock as its stateSince, so the head and the
-// tail name one time. Never hidden.
+// suppresses it, not only the one right above, so one restart is one mark whatever sits between. bootAt is the
+// backend's own seed stamp (the start to the millisecond, or one millisecond past a row the previous kernel filed at
+// or after it), so every restored row is before it and the restart rows sit at it. Every bucket comes back unknown
+// at a restart, so a hold from before the boot ends at the boot and is never 'so far'; a bucket the boot seeded
+// carries that same boot clock as its stateSince, so the head and the tail name one time. Never hidden.
 function transRows(d){var rows=(d.transitions||[]).slice().sort(function(a,b){return b.t-a.t;});
 var multi=Object.keys(d.buckets||{}).length>1,now=d.asOf,boot=d.bootAt,hasBoot=typeof boot==='number',out='',crossed=false,sawRestart=false,shown=0;
 for(var i=0;i<rows.length&&shown<HIST_ROWS;i++){var r=rows[i],restart=r.why===RESTART_WHY,pre=hasBoot&&r.t<boot;
@@ -54495,8 +54493,8 @@ if(!HIST)return h+'<div class="rl-dots ah-wait"><i></i><i></i><i></i></div></div
 if(HIST.error)return h+'<div class="ah-line ah-err">Could not read the API history: '+esc(HIST.error)+'</div></div>';
 var d=HIST,ov=d.overall||{},key=ov.worstBucket,b=key?(d.buckets||{})[key]:null,nb=Object.keys(d.buckets||{}).length,st=ov.state||'unknown';
 // since is the bucket's stateSince as the backend files it: a bucket the boot seeded is unknown since the kernel's
-// own start (SdkBackend seeds the aggregator with the boot clock the route stamps as bootAt), so the head, the
-// tail's divider and the boot's row name one time with no branch here (review round 2)
+// own start (SdkBackend seeds the aggregator with the boot clock the payload serves as bootAt), so the head, the
+// tail's divider and the boot's row name one time with no branch here
 var since=b?b.stateSince:0;
 h+='<div class="ru-tip-row ah-head"><i class=ah-dot data-state='+esc(st)+'></i><span class=ah-word>'+esc(st)+'</span>'
 +((nb>1&&b)?'<span class=ah-hsub>'+esc(bname(d,key))+' · worst of '+nb+' buckets</span>':'')
@@ -54509,8 +54507,8 @@ return h+'</div>';}
 // the cell's description while the hover shows: the state word and its since, then how to reach the rest. Before the
 // answer lands it carries the state word the frame already put on the cell (assistive tech reads the description once,
 // at focus time, and the landed text replaces it with nothing to announce the change: a loading line with no state
-// word left a screen-reader user with none; review round 3) and says the read is in flight; the landed line adds the
-// since; a failed read says so in the same words as the section's line
+// word would leave a screen-reader user with none) and says the read is in flight; the landed line adds the since; a
+// failed read says so in the same words as the section's line
 function descText(){var tail=' Press Enter to open it.';if(!HIST)return 'History: '+((LAST&&LAST.text)||'unknown')+'. Reading the details.'+tail;
 if(HIST.error)return 'Could not read the API history: '+HIST.error+'.'+tail;
 var ov=HIST.overall||{},key=ov.worstBucket,b=key?(HIST.buckets||{})[key]:null;
@@ -54534,11 +54532,11 @@ if(full)h+='<div class="ru-tip-row ah-foot"><span class=ah-link role=button tabi
 return h;}
 // The hover anchors above the rail, centered on the cursor, as the usage tip's showTip does; a re-render re-anchors
 // from the same x, since new rows change the height and the tip hangs ABOVE the rail. Measured AFTER a reset: a
-// fixed element's shrink-to-fit width is taken against where it last sat, so a tip measured at its old left came
-// out narrower than its rows and sat flush with the viewport's edge (review round 1: 830 px wide, a wrapped row and
-// no margin). The height is capped to the room above the rail (6 px margin, 8 px gap; #ah-tip clips), so a short
-// window clips the section's oldest rows instead of clamping the top to 6 and spilling over the rail and the cell
-// (1200x330 in the probe); open() clears the cap, and the pinned card keeps .ru-modal's own scroll pane.
+// fixed element's shrink-to-fit width is taken against where it last sat, so a tip measured at its old left comes
+// out narrower than its rows and sits flush with the viewport's edge (at 830 px wide: a wrapped row and no margin).
+// The height is capped to the room above the rail (6 px margin, 8 px gap; #ah-tip clips), so a short window clips
+// the section's oldest rows instead of clamping the top to 6 and spilling over the rail and the cell; open() clears
+// the cap, and the pinned card keeps .ru-modal's own scroll pane.
 function anchor(){var r=el.getBoundingClientRect();var x=(typeof lastX==='number')?lastX:(r.left+r.width/2);
 tip.style.left='0px';tip.style.top='0px';tip.style.maxHeight=Math.max(0,r.top-14)+'px';
 var w=tip.offsetWidth,h=tip.offsetHeight;
@@ -54555,7 +54553,7 @@ try{if(n)n.focus();if(!n||document.activeElement!==n)tip.focus();}catch(e){}}}
 // user who Tabs onto the cell must not meet a modal dialog their focus sits outside of. open() makes it the dialog.
 function show(ev){if(!LAST)return;lastX=(ev&&typeof ev.clientX==='number')?ev.clientX:null;
 tip.classList.remove('ru-modal');tip.setAttribute('role','tooltip');tip.removeAttribute('aria-modal');
-tip.style.display='block';el.setAttribute('aria-describedby','ah-desc');load(true);render();}
+tip.style.display='block';el.setAttribute('aria-describedby','ah-summary');load(true);render();}
 function hide(){tip.style.display='none';el.removeAttribute('aria-describedby');}
 function close(){hide();tip.classList.remove('ru-modal');back.classList.remove('on');pinned=false;
 window.__rompApiClose=null;if(back.onclick===close)back.onclick=null;
@@ -54567,7 +54565,7 @@ var fb=focusBack;focusBack=null;skipFocus=true;try{(fb&&fb.focus?fb:el).focus();
 // usage modal is closed FIRST, explicitly: the two share #ru-back, and its one handler must belong to one modal.
 // Focus moves into the detail and comes back to the cell (or wherever it was) on close. A pin reads only when the
 // tip was hidden: a hover's read, landed or in flight, is this same document, so a click after the pointer's
-// mouseenter (or a tap after its compat mouseenter) costs one read and keeps its answer (review round 1).
+// mouseenter (or a tap after its compat mouseenter) costs one read and keeps its answer.
 function open(){if(!LAST)return;try{window.__rompUsageClose&&window.__rompUsageClose();}catch(e){}
 var was=tip.style.display==='block';
 focusBack=document.activeElement;pinned=true;tip.classList.add('ru-modal');tip.style.left='';tip.style.top='';tip.style.maxHeight='';
@@ -54576,7 +54574,7 @@ tip.style.display='block';render();back.classList.add('on');
 window.__rompApiClose=close;back.onclick=close;try{tip.focus();}catch(e){}if(!was)load();}
 // The listeners sit on the STABLE #rail-api cell; __rompApiHealth writes its children, never the cell.
 // a pointer arriving on a tip that focus already shows re-anchors it from the pointer and keeps its rows: the
-// document did not change, so no re-read and no flash to the loader's dots (review round 1)
+// document did not change, so no re-read and no flash to the loader's dots
 el.addEventListener('mouseenter',function(ev){if(pinned)return;
 if(tip.style.display==='block'){if(typeof ev.clientX==='number')lastX=ev.clientX;anchor();return;}show(ev);});
 el.addEventListener('mouseleave',function(){if(!pinned)hide();});
@@ -54594,8 +54592,8 @@ if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();if(pinned)close();else op
 // on release, never under the press, so the pressed button survives to its click. A PRIMARY release inside the
 // detail is followed by the click, so the flush waits for it (a swap between mouseup and click would detach the
 // target); a release anywhere else flushes at once. Only a primary press arms the defer: no click follows a right
-// or middle button (auxclick and contextmenu do), so a frame deferred under one stayed unpainted until the next
-// frame changed something while the cell already showed the new world. Event-based, no timer.
+// or middle button (auxclick and contextmenu do), so a frame deferred under one would stay unpainted until the
+// next frame changed something while the cell already showed the new world. Event-based, no timer.
 tip.addEventListener('pointerdown',function(ev){if(ev.button===0)held=true;});
 function flush(){if(dirty){dirty=false;if(tip.style.display==='block')render();}}
 function release(ev){if(!held)return;held=false;if(ev&&ev.type==='pointerup'&&ev.button===0&&ev.target&&tip.contains(ev.target))return;flush();}
@@ -54606,9 +54604,9 @@ document.addEventListener('pointercancel',release);
 function actOf(n){while(n&&n!==tip&&!(n.getAttribute&&n.getAttribute('data-act')))n=n.parentNode;return (n&&n!==tip)?n:null;}
 function run(t){var act=t.getAttribute('data-act');
 if(act==='pause'){var v=t.getAttribute('data-val')==='1';
-// focus moves to the dialog BEFORE the button is disabled (review round 3): a disabled element cannot hold focus, so
-// it fell to the page body, where the Tab trap below (a listener on the card) no longer saw the keys and a Shift+Tab
-// walked out of the aria-modal dialog. The card is where open() lands focus too; the answering frame's re-render
+// focus moves to the dialog BEFORE the button is disabled: a disabled element cannot hold focus, so it would fall
+// to the page body, where the Tab trap below (a listener on the card) no longer sees the keys and a Shift+Tab
+// walks out of the aria-modal dialog. The card is where open() lands focus too; the answering frame's re-render
 // leaves it there (render restores a focused CONTROL only), and the first Tab reaches the first control.
 try{tip.focus();}catch(e){}
 t.disabled=true;t.textContent=v?RESUME:STOP;t.classList.add('romp-acted');pending=v?1:0;pendSeq=LAST?LAST.seq:null;hint='';   // acknowledged before any round trip
@@ -54640,19 +54638,18 @@ ev.preventDefault();run(t);flush();});
 // The shell socket closed (shellWS's onclose, before its redial). A press acknowledged on that socket can no longer be
 // answered: its frame would have come on the socket that died. The redial's ready handler re-sends the last frame
 // VERBATIM (_apih_resend), so a press the kernel never received would otherwise keep the button disabled and relabeled
-// across the reconnect, through closing and reopening the detail, until some unrelated pause write moved the seq
-// (review round 3). So the acknowledgment clears here, with the reason under the button; if the kernel DID take the
-// press, the re-sent frame's seq has moved and it repaints the truth either way. Painted on release under a held
-// pointer, like a frame.
+// across the reconnect, through closing and reopening the detail, until some unrelated pause write moved the seq.
+// So the acknowledgment clears here, with the reason under the button; if the kernel DID take the press, the re-sent
+// frame's seq has moved and it repaints the truth either way. Painted on release under a held pointer, like a frame.
 window.__rompApiSocketLost=function(){if(pending===null)return;pending=null;pendSeq=null;hint=LOST;
 if(tip.style.display!=='block')return;if(held){dirty=true;return;}render();};
 window.__rompApiHealth=function(m){if(!m||!m.state)return;LAST=m;hint='';   // a frame means the socket is alive
 // the frame that answers a press: the press wrote the pause file, so the kernel's seq moved past the one we saw (a
 // frame from before the press carries that one and keeps the acknowledgment). Whatever state it brings is the
-// truth the button reads, paused again included: a limit or spend pause re-engages within the cycle, and the old
-// rule (cleared only on a frame whose state matched the press) left a Resume disabled and mislabeled for the window.
+// truth the button reads, paused again included: a limit or spend pause re-engages within the cycle, and a rule
+// that cleared only on a frame whose state matched the press would leave a Resume disabled and mislabeled for the window.
 if(pending!==null&&(m.seq==null||m.seq!==pendSeq))pending=null;
-if(el.hidden)el.hidden=false;   // the first frame reveals the cell (an older kernel never sends one: nothing shows)
+if(el.hidden)el.hidden=false;   // the first frame reveals the cell (a kernel that sends none shows nothing)
 if(el.getAttribute('data-state')!==m.state||txt.textContent!==m.text){el.setAttribute('data-state',m.state);txt.textContent=m.text;el.setAttribute('aria-label','API '+m.text);}
 if(tip.style.display!=='block')return;   // an open detail re-renders from the new frame, nothing else does
 load();   // and re-reads the history: the world changed
@@ -55521,6 +55518,10 @@ function shellDiag(what,data){var m={type:'clientDiag',surface:'shell',what:what
 if(shellSock&&shellSock.readyState===1){try{shellSock.send(JSON.stringify(m));}catch(e){}}
 else if(diagQ.length<DIAGQ_MAX)diagQ.push(m);}
 window.__rompShellDiag=shellDiag;
+// the bottom bar's API health detail sends its ops (the pause button's setGlobalRetryPaused, a row's openSession)
+// on the shell socket, whose wid aims a reveal at THIS dashboard; false when no socket is open, so the button can
+// say so instead of dropping the op (_LANDING_APIH_JS). Reads shellSock, which each dial replaces.
+window.__rompShellSend=function(o){try{if(shellSock&&shellSock.readyState===1){shellSock.send(JSON.stringify(o));return true;}}catch(e){}return false;};
 function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){return '';}}
 // Pin the shell to the TRUE visible viewport. body{height:100dvh} alone left a dead slab below the
 // Chat/Feed/Timeline bar on real Android Chrome — dvh didn't track the painted area (the user 2026-06-19).
@@ -55643,9 +55644,6 @@ function shellWS(){try{var proto=location.protocol==='https:'?'wss://':'ws://';
 // detail's openSession) then lands on THIS dashboard's chat alone (_reveal_chat_for), the way the feed's own session
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
 var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));
-// the API health detail's pause button sends on THIS socket (the setGlobalRetryPaused handler is
-// app-agnostic); false when the socket is not open, so the button can say so instead of dropping the op
-window.__rompShellSend=function(o){try{if(ws.readyState===1){ws.send(JSON.stringify(o));return true;}}catch(e){}return false;};
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
 ws.onopen=function(){try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}
@@ -55660,15 +55658,15 @@ else if(m&&m.type==='badge'&&'setAppBadge' in navigator){
 try{(m.n?navigator.setAppBadge(m.n):navigator.clearAppBadge())['catch'](function(e){});}catch(e){}}
 // the master bell toggled somewhere (this tab included) — repaint ours from the kernel's word
 else if(m&&m.type==='notifyAll'&&window.__rompNotifyAllPaint)window.__rompNotifyAllPaint(!!m.on);
+else if(m&&m.type==='notifyTurns'&&window.__rompNotifyTurnsPaint)window.__rompNotifyTurnsPaint(!!m.on);
 // the bottom bar's API health cell: one frame, painted by _LANDING_APIH_JS (sent on change + on ready)
 else if(m&&m.type==='apiHealth'&&window.__rompApiHealth)window.__rompApiHealth(m);
-else if(m&&m.type==='notifyTurns'&&window.__rompNotifyTurnsPaint)window.__rompNotifyTurnsPaint(!!m.on);
 // the boot check found a newer romp release: raise the update banner on every open dashboard (the running
 // push's manager field rides along: false when no manager started the kernel, so the wait names no restart)
 else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'',m.manager);};
 // the API health detail's pause acknowledgment rides this socket: a press it carried cannot be answered now (the
 // redial's ready re-sends the last frame verbatim), so the detail is told before the redial (_LANDING_APIH_JS)
-ws.onclose=function(){if(shellSock===ws)shellSock=null;try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}setTimeout(shellWS,2000);};}catch(e){}}
+ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}if(shellSock===ws)shellSock=null;setTimeout(shellWS,2000);};}catch(e){}}
 shellWS();
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
@@ -57173,7 +57171,7 @@ def _landing():
             "#rail-usage{flex:0 0 auto;display:flex;flex-direction:row;align-items:center;gap:16px}"
             # renderRows empties the cell on a login-only machine (no bars, no spend); as a zero-width flex
             # item it still paid .rail-scroll's gap on both sides, so the API cell beside it sat 28px from
-            # the pane buttons instead of 16px (review round 1, 2026-09-07). Empty means gone.
+            # the pane buttons instead of 16px. Empty means gone.
             "#rail-usage:empty{display:none}"
             ".ru-w{display:flex;flex-direction:row;align-items:center;gap:7px;cursor:default}"
             ".ru-name{font:600 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#9aa4ad;letter-spacing:.02em;white-space:nowrap}"
@@ -57185,15 +57183,15 @@ def _landing():
             # the tooltip, labelled "last known" and faded, which is honest because it says what it is.
             ".ru-tip-row.ru-unk i{opacity:.3}.ru-tip-row.ru-unk .ru-tip-k,.ru-tip-row.ru-unk .ru-tip-v{color:#8a97a6}"
             ".ru-pct{font:600 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfe6ff;font-variant-numeric:tabular-nums;white-space:nowrap}"
-            # the API health cell (the user 2026-09-07). The dot wears STATUS hexes, never var(--accent): the
-            # label gray at .55 for ok (a healthy API costs no attention), the tab-retrying amber for degraded,
-            # the API-error red (--st-blocked-bg) for paused. The word is .ru-pct's declaration byte for byte
-            # (no new font size), in the label gray when ok and the bright value color otherwise. The same
-            # dot, keyed by its own data-state, heads the detail card.
+            # the API health cell. The dot wears STATUS hexes, never var(--accent): the label gray at .55 for
+            # ok (a healthy API costs no attention), the tab-retrying amber for degraded, the API-error red
+            # (--st-blocked-bg) for paused. The word is .ru-pct's declaration byte for byte (no new font
+            # size), in the label gray when ok and the bright value color otherwise. The same dot, keyed by
+            # its own data-state, heads the detail card.
             # The cell ships with the hidden attribute and shows on its first frame (the markup below). The UA's
             # [hidden]{display:none} loses to ANY author display rule, and .ru-w{display:flex} above is one, so
-            # without this author rule the rail showed a gray 'API ok' from page load, and forever on an older
-            # kernel that never sends a frame (review round 1, 2026-09-07; the #mtabs button[hidden] idiom).
+            # without this author rule the rail would show a gray 'API ok' from page load, and forever on a
+            # kernel that never sends a frame (the #mtabs button[hidden] idiom).
             "#rail-api[hidden]{display:none}"
             ".ah-dot{width:7px;height:7px;border-radius:50%;background:#9aa4ad;opacity:.55;flex:0 0 auto}"
             "#rail-api[data-state=degraded] .ah-dot,.ah-dot[data-state=degraded]{background:#e67e22;opacity:1}"
@@ -57215,19 +57213,19 @@ def _landing():
             # a failed send's reason, under the button it restored; the hover's rows carry no action (.ah-ro),
             # so no pointer and no hover wash; the pinned detail takes focus as a dialog without a ring on the card
             ".ah-hint{margin-top:4px;opacity:.75;max-width:340px}"
-            # the History section (the user 2026-09-08): the signal's state dot in status hexes (never the accent),
-            # the transition rows' state word, the restart divider in italics, a failed read in a red that reads
-            # (#ef6b6f, about 5.5:1 on the tip: the API-error red #e5484d is 4.3:1 there, under the 4.5:1 text floor,
-            # review round 1), and the loader's dots (.rl-dots, _LOADER_CSS) while the first answer is in flight.
-            # The hover clips at the height anchor() caps it to (the room above the rail): border-box, so the
-            # cap is the box the user sees and not the content plus 18 px of padding and border; .ru-modal's own
-            # overflow-y:auto outranks the clip on the pinned card, which scrolls as before.
+            # the History section: the signal's state dot in status hexes (never the accent), the transition rows'
+            # state word, the restart divider in italics, a failed read in a red that reads (#ef6b6f, about 5.5:1 on
+            # the tip: the API-error red #e5484d is 4.3:1 there, under the 4.5:1 text floor), and the loader's dots
+            # (.rl-dots, _LOADER_CSS) while the first answer is in flight. The hover clips at the height anchor()
+            # caps it to (the room above the rail): border-box, so the cap is the outline the user sees and not the
+            # content plus 18 px of padding and border; .ru-modal's own overflow-y:auto outranks the clip on the
+            # pinned card, which scrolls as before.
             ".ah-dot[data-state=thrashing]{background:#e5484d;opacity:1}.ah-dot[data-state=recovering]{background:#e67e22;opacity:.7}"
             ".ah-hword{opacity:.8}.ah-hsub{opacity:.55}.ah-boot .ah-hword{font-style:italic;opacity:.6}"
             ".ah-hname{margin-top:6px}.ah-err{color:#ef6b6f}.ah-wait{margin:5px 0 2px}"
             ".ah-row.ah-ro{cursor:default}.ah-row.ah-ro:hover{background:transparent}"
             "#ah-tip:focus{outline:none}#ah-tip{overflow:hidden;box-sizing:border-box}"
-            # the cell's short description for assistive tech (#ah-desc): present in the tree, off the screen
+            # the cell's short description for assistive tech (#ah-summary): present in the tree, off the screen
             ".ah-vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}"
             # ONE shared hover panel for BOTH windows (the user 2026-06-26): it reproduces exactly the used/
             # elapsed bars that used to sit under the timeline — per window, a "used" bar (selected colormap)
@@ -57643,13 +57641,13 @@ def _landing():
             "body.theme-light .ru-name{color:#5D574E}"
             "body.theme-light .ru-pct{color:#1F1E1D}"
             "body.theme-light .ah-text{color:#1F1E1D}"
-            # the ok dot: the dark label gray at .55 blended into the light rail (about 1.4:1, review round 1,
-            # 2026-09-07); the light label color at the same opacity keeps the glyph where the eye expects it.
-            # Scoped to the ok state (review round 2): a bare `body.theme-light .ah-dot` (0,2,1) outranked the
-            # detail's `.ah-dot[data-state=…]` state rules (0,2,0), so the card's headline dot lost its amber
-            # and red in the light theme while the rail's id-scoped dot kept them
+            # the ok dot: the dark label gray at .55 blends into the light rail (about 1.4:1); the light label
+            # color at the same opacity keeps the glyph where the eye expects it. Scoped to the ok state: a
+            # bare `body.theme-light .ah-dot` (0,2,1) would outrank the detail's `.ah-dot[data-state=...]`
+            # state rules (0,2,0), and the card's headline dot would lose its amber and red in the light
+            # theme while the rail's id-scoped dot kept them
             # and the History head's dot for the signal's quiet states (healthy, unknown) is the same glyph: the base
-            # gray fell to about 1.6:1 on the white tip too (review round 1 of the hover history)
+            # gray falls to about 1.6:1 on the white tip too
             "body.theme-light #rail-api[data-state=ok] .ah-dot,body.theme-light .ah-dot[data-state=ok],"
             "body.theme-light .ah-dot[data-state=healthy],body.theme-light .ah-dot[data-state=unknown]{background:#5D574E}"
             # the failure line in the light theme's error-text red (styles.css --err #B02A1C, about 6.6:1 on white;
@@ -57738,12 +57736,12 @@ def _landing():
             # the Claude /usage rate-limit bars (Pro/Max): three compact vertical bar-pairs (used % colored +
             # elapsed % slate), %-label, full detail on hover — side-by-side in the bottom bar.
             "<div id=rail-usage data-keycmd=usage.open></div>"
-            # the API health cell (the user 2026-09-07): its own label, a 7px dot, one word, painted by
-            # _LANDING_APIH_JS from the kernel's apiHealth push. Ships HIDDEN: it shows on its first frame,
-            # so an older kernel that never sends one shows nothing rather than a false ok. Its own element,
-            # not a child of #rail-usage (renderRows empties that one when there are no bars and no spend).
-            # No title (the rail's no-title rule); no data-keycmd in v1. role=button + tabindex=0 make it a
-            # keyboard control (Enter / Space open the detail); aria-label follows the frame's text.
+            # the API health cell: its own label, a 7px dot, one word, painted by _LANDING_APIH_JS from the
+            # kernel's apiHealth push. Ships HIDDEN: it shows on its first frame, so a kernel that never sends
+            # one shows nothing rather than a false ok. Its own element, not a child of #rail-usage (renderRows
+            # empties that one when there are no bars and no spend). No title (the rail's no-title rule); no
+            # data-keycmd yet. role=button + tabindex=0 make it a keyboard control (Enter / Space open the
+            # detail); aria-label follows the frame's text.
             "<div id=rail-api class=\"ru-w ru-ah\" hidden role=button tabindex=0 aria-label=\"API ok\" data-state=ok>"
             "<span class=ru-name>API</span>"
             "<i class=ah-dot></i><span class=ah-text>ok</span></div>"
@@ -58836,9 +58834,8 @@ class Handler(BaseHTTPRequestHandler):
                 # in the payload (asOf, transitions[].t, stateSince), or one millisecond past the newest
                 # transition the previous kernel left when that overlaps the start. The aggregator owns the
                 # number, so a bucket the boot seeded carries it as its stateSince and the restart row's t in
-                # every case, clamp or not (review round 4: a round(_STARTED, 3) stamped here was a second
-                # number whenever the clamp fired, and named the next second when the start's fraction
-                # rounded up). /version's `started` is int(_STARTED), the same start in whole seconds:
+                # every case, clamp or not (a stamp made here would be a second number whenever the clamp
+                # fired). /version's `started` is int(_STARTED), the same start in whole seconds:
                 # int(bootAt) == started unless the clamp moved the stamp.
                 # coverage's kernel half: tmux-backed sessions have no SDK stream and sit outside
                 # the signal — the count says how much of the machine the signal does not see. A null
@@ -61255,7 +61252,7 @@ class Handler(BaseHTTPRequestHandler):
                     client["send"](json.dumps({"type": "badge", "n": _BADGE_LAST[0]}))
                 except Exception:
                     pass
-            _apih_resend(client)          # …and the bottom bar's API cell, from the last frame (same reason)
+            _apih_resend(client)          # and the bottom bar's API cell, from the last frame (same reason)
         elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and msg.get("flag"):
             # timeline lane gear → toggle a per-session view flag (e.g. hideFromFeed). Persisted +
             # re-broadcast so the feed drops/restores that session's cards immediately. The notify

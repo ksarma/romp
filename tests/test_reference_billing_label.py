@@ -246,16 +246,24 @@ class TheDeclarationRuleIsOneSentence(unittest.TestCase):
                       "(`ROMP_EXPECTED_AUTH=key` describes such a box truthfully and stays quiet; "
                       "`ROMP_EXPECTED_AUTH=login` flags every unpicked session's keyed landing in the Log panel, and "
                       "the session keeps billing the key); without a helper, the declaration seeds what an unpicked "
-                      "session is *taken* to bill: the Billing row's fallback before the CLI has reported, the "
-                      "picker's written-out choice, and the spend pause's reading of a session that reports nothing "
-                      "all read the declared side, where they read the login before.", REFERENCE)
+                      "session is *taken* to bill: the Billing row's fallback before the CLI has reported and the "
+                      "picker's written-out choice both read the declared side, where they read the login before. "
+                      "The spend pause's reading of a session that reports nothing, a Claude Code (tmux) session or "
+                      "a Claude Code session before its init has landed, reads only whether a helper is configured, never "
+                      "the declaration: such a session is taken to bill the key on a box with a helper and the login "
+                      "on a box without one.", REFERENCE)
 
     def test_the_seeding_claim_is_made_once(self):
         # the fork's restored "The declaration also decides what an unpicked session is *taken* to bill when no
         # helper is configured" and upstream's "On a box with a helper every session without a login pick bills
         # the key, so `ROMP_EXPECTED_AUTH=key` describes such a box truthfully" were two claims over the halves
         # of one rule; the paragraph carries the rule once
-        self.assertEqual(REFERENCE.count("all read the declared side"), 1)
+        self.assertEqual(REFERENCE.count("both read the declared side"), 1)
+        # the spend pause's reading left that list with the 4d-4 fold (ruling K2): its fallback for a session
+        # that reports nothing is whether a helper is configured, never the declaration, so the sentence that
+        # counted it among the declaration's readers is retired wording
+        self.assertNotIn("the spend pause's reading of a session that reports nothing all read the declared side",
+                         REFERENCE)
         self.assertEqual(REFERENCE.count("describes such a box truthfully"), 1)
         self.assertNotIn("The declaration also decides what an unpicked session", REFERENCE)
 

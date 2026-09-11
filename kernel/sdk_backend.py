@@ -1925,7 +1925,6 @@ def acct_digest() -> str:
 
 API_HEALTH_SCHEMA = 1
 API_HEALTH_STATE_FILE = "api-health.json"   # STATE/… — per-bucket (state, stateSince, …) + the transition tail; rewritten whole on each transition
-API_HEALTH_LEGACY_LEDGER = "api-health.jsonl"   # STATE/… — the first cut's append-only ledger: read ONCE to seed a missing state file, never written
 API_HEALTH_SALT_FILE = "api-health-salt"    # STATE/… — the per-install label salt (0600); EMPTY file = unsalted
 API_HEALTH_TRANSITIONS_KEEP = 50            # transitions kept, newest last
 
@@ -2364,7 +2363,7 @@ class ApiHealth:
         # the boot's stamp in the signal: boot_at truncated to the millisecond, or one millisecond past the newest
         # restored transition when that is not before it. Set by _seed; served as the payload's bootAt, and the
         # stateSince of every bucket the boot seeded and the t of every row the boot filed carry the same number
-        # (review round 4: the route stamped its own round(_STARTED, 3), a second number whenever the clamp fired)
+        # (a route stamping its own number would be a second one whenever the clamp fired)
         self.boot_stamp = None
         self._seed(time.time() if boot_at is None else float(boot_at))
 
@@ -2505,11 +2504,11 @@ class ApiHealth:
     def _row_ok(r) -> bool:
         """A persisted transition row: a dict with a non-empty string `bucket` and `to` and a finite numeric `t`.
         A `t` that is missing, null, a bool, a string, not finite, or an int no float can hold fails the row, so
-        the seed's max over the restored stamps never meets one (review round 4: `float(r.get("t") or 0)` passed
-        a null t, the max then raised on it, and the outer guard dropped EVERY restored row and bucket, not the
-        one; round 5: math.isfinite converts an int to float first and RAISES OverflowError past about 309 digits
-        instead of answering, and json.loads reads a 400-digit integer literal as such an int, so the raise left
-        this check for the same outer guard, with the same loss)."""
+        the seed's max over the restored stamps never meets one (`float(r.get("t") or 0)` passed a null t, the max
+        then raised on it, and the outer guard dropped EVERY restored row and bucket, not the one; math.isfinite
+        converts an int to float first and RAISES OverflowError past about 309 digits instead of answering, and
+        json.loads reads a 400-digit integer literal as such an int, so the raise would leave this check for the
+        same outer guard, with the same loss)."""
         if not isinstance(r, dict):
             return False
         b, to, t = r.get("bucket"), r.get("to"), r.get("t")
@@ -2524,25 +2523,20 @@ class ApiHealth:
 
     def _seed(self, boot_at: float):
         """Restore the per-bucket (state, stateSince, why, evidence) and the transition tail from
-        STATE/api-health.json — or, when there is none yet, from the tail of the first cut's append-only
-        STATE/api-health.jsonl — and set EVERY persisted bucket to `unknown` as of `boot_at`: the ring
+        STATE/api-health.json and set EVERY persisted bucket to `unknown` as of `boot_at`: the ring
         is empty, so there is no evidence for any other state and no held pre-restart state.
         `<state> -> unknown` is filed for each bucket that was not already unknown, so the transitions
         list is continuous across the restart and the first read with enough evidence records
-        `unknown -> <state>` after it. What the boot filed is written, and so is a legacy seed, so the
-        old ledger is read once: the state file exists from the first boot that found one.
+        `unknown -> <state>` after it. What the boot filed is written.
 
         The seed is stamped at `boot_at` truncated to the millisecond (math.floor, never round: a start at
-        X.9996 rounded to (X+1).000 while /version's `started` is int(X.9996) = X), or one millisecond past
+        X.9996 would round to (X+1).000 while /version's `started` is int(X.9996) = X), or one millisecond past
         the newest transition the file carries when that is not before it: a transition the previous kernel
         filed after this one's start (the two overlapped, or the clock stepped) would otherwise sort ABOVE
         the restart row in the tail and read as the current state, with the head saying unknown since the
         boot. The clamp is logged once. The stamp is kept as `boot_stamp` and served as the payload's bootAt,
         so bootAt, the stateSince of every bucket the boot seeded and the restart rows are one number in
-        every case, clamp or not (review round 3: an int seed sat on the second boundary before the process
-        started, under a row the previous kernel filed in that same second; round 4: the route stamped its
-        own round(_STARTED, 3), a second number whenever the clamp fired, and one that named the next
-        second when the start's fraction rounded up).
+        every case, clamp or not.
 
         Never raises: this runs inside SdkBackend.__init__, and an exception here pinned the SDK backend
         unavailable for the kernel's whole life. A row that is not JSON, lacks its fields, or carries a
@@ -2553,60 +2547,38 @@ class ApiHealth:
         base = math.floor(boot_at * 1000) / 1000.0
         self.boot_stamp = base
         try:
-            rows, per, recs, bad, legacy = [], {}, {}, 0, False
+            rows, per, recs, bad = [], {}, {}, 0
             try:
                 doc = json.loads(self._state_path().read_text())
             except FileNotFoundError:
-                doc = None
-            if doc is None:
-                lines = self._read_legacy_tail()
-                if lines is None:
-                    return
-                legacy = True
-                for ln in lines:
-                    if not ln.strip():
-                        continue
-                    try:
-                        r = json.loads(ln)
-                    except ValueError:
-                        bad += 1
-                        continue
-                    if not self._row_ok(r):
-                        bad += 1
-                        continue
+                return
+            if not isinstance(doc, dict):
+                raise ValueError("not a JSON object")
+            for r in doc.get("transitions") or []:
+                if self._row_ok(r):
                     rows.append(r)
-                    per.setdefault(r["bucket"], []).append(r)
-                    recs[r["bucket"]] = {"state": r["to"], "since": float(r["t"]), "why": r.get("why") or "",
-                                         "evidence": r.get("evidence"), "auth": r.get("auth"), "family": r.get("family")}
-            else:
-                if not isinstance(doc, dict):
-                    raise ValueError("not a JSON object")
-                for r in doc.get("transitions") or []:
+                else:
+                    bad += 1
+            for key, rec in (doc.get("buckets") or {}).items():
+                st = rec.get("state") if isinstance(rec, dict) else None
+                if not (isinstance(key, str) and key and isinstance(st, str) and st):
+                    bad += 1
+                    continue
+                try:
+                    since = float(rec.get("stateSince") or 0)
+                except (TypeError, ValueError):
+                    bad += 1
+                    continue
+                recs[key] = {"state": st, "since": since, "why": rec.get("why") or "", "evidence": rec.get("evidence"),
+                             "auth": rec.get("auth"), "family": rec.get("family")}
+                per[key] = []
+                for r in rec.get("transitions") or []:
                     if self._row_ok(r):
-                        rows.append(r)
+                        per[key].append(r)
                     else:
                         bad += 1
-                for key, rec in (doc.get("buckets") or {}).items():
-                    st = rec.get("state") if isinstance(rec, dict) else None
-                    if not (isinstance(key, str) and key and isinstance(st, str) and st):
-                        bad += 1
-                        continue
-                    try:
-                        since = float(rec.get("stateSince") or 0)
-                    except (TypeError, ValueError):
-                        bad += 1
-                        continue
-                    recs[key] = {"state": st, "since": since, "why": rec.get("why") or "", "evidence": rec.get("evidence"),
-                                 "auth": rec.get("auth"), "family": rec.get("family")}
-                    per[key] = []
-                    for r in rec.get("transitions") or []:
-                        if self._row_ok(r):
-                            per[key].append(r)
-                        else:
-                            bad += 1
             if bad and self._log:
-                self._log("api-health: %d malformed row(s) skipped at boot (%s)"
-                          % (bad, API_HEALTH_LEGACY_LEDGER if legacy else API_HEALTH_STATE_FILE))
+                self._log("api-health: %d malformed row(s) skipped at boot (%s)" % (bad, API_HEALTH_STATE_FILE))
             # one stamp, at the tail's millisecond precision, for the restart rows, the seeded since and the payload's
             # bootAt: the boot itself, or one millisecond past the newest restored transition when that is not before
             # the boot (every row passed _row_ok, so every t here is a finite number)
@@ -2635,33 +2607,13 @@ class ApiHealth:
                         filed = True
                     self._last_state[key] = {"state": "unknown", "since": at, "why": API_HEALTH_RESTART_WHY,
                                              "evidence": ev, "auth": auth, "family": fam}
-                if filed or legacy:
+                if filed:
                     self._write_state_locked()
         except Exception as e:   # loud, and the backend still comes up
             if self._log:
                 self._log("api-health: state file unreadable (%s) — starting with no history" % e)
             self._last_state, self._transitions, self._by_bucket = {}, deque(maxlen=API_HEALTH_TRANSITIONS_KEEP), {}
             self.boot_stamp = base           # nothing restored, so nothing to clamp past
-
-    def _read_legacy_tail(self):
-        """The last 64 KB of the first cut's STATE/api-health.jsonl as lines, or None when there is no
-        such file. The read starts at the first row boundary AT OR AFTER the 64 KB mark: it seeks one
-        byte short of the mark and drops through the first newline, so a row that begins exactly at the
-        mark is kept. (The first cut sought to the mark and dropped its first LINE, a complete row
-        whenever the mark fell on a boundary — one invisible transition per boot once the file passed
-        64 KB, and a bucket whose newest row it was fell out of the seed.) The file is left as it is:
-        never written, never removed."""
-        try:
-            with open(self.state_dir / API_HEALTH_LEGACY_LEDGER, "rb") as f:
-                try:
-                    pos = f.seek(-65537, os.SEEK_END)
-                except OSError:
-                    pos = f.seek(0)
-                if pos > 0:
-                    f.readline()
-                return f.read().decode("utf-8", "replace").splitlines()
-        except OSError:
-            return None
 
     def _file_locked(self, row: dict):
         """Record one transition in both tails: the global one and its bucket's own. The bucket's tail is
@@ -4563,11 +4515,13 @@ def seeded_auth(defaults: dict, key: bool, unavailable=None) -> str:
 
 def new_session_auth(state_dir, key: bool, unavailable=None) -> str:
     """The side a session spawned now with no explicit pick would bill: the seed spawn would write
-    (seeded_auth), else the unpicked rule (unpicked_auth). The kernel's readers of a row that reports
-    nothing take this (_bills_login's fallback, _auth_avail's picker default), one function, one order
-    (review round 1, 2026-09-09: the two kernel readers read the declaration before the key while the
-    backend read it after, so a keyed box declaring login seeded the picker on Login for sessions that
-    launched keyed). `unavailable`: the backend's pick_unavailable when the caller has one (seeded_auth)."""
+    (seeded_auth), else the unpicked rule (unpicked_auth). The kernel's one reader of a row that reports
+    nothing takes this (_auth_avail's picker default), one function, one order (review round 1, 2026-09-09:
+    the two kernel readers of the time read the declaration before the key while the backend read it after,
+    so a keyed box declaring login seeded the picker on Login for sessions that launched keyed);
+    _bills_login, the spend pause's reader of such a row, reads not _auth_key_present() instead (the
+    2026-09-10 fold, ruling K2). `unavailable`: the backend's pick_unavailable when the caller has one
+    (seeded_auth)."""
     return seeded_auth(read_sdk_defaults(Path(state_dir)), key, unavailable) or unpicked_auth(state_dir, key)
 
 
@@ -9927,8 +9881,8 @@ class SdkBackend:
         # session's thread, read by the kernel's route; the salt is minted lazily at the first label.
         # Seeded as of `boot_at`, the kernel's own start when the kernel passes it (the aggregator truncates
         # it to the millisecond and serves the stamp as the payload's bootAt), else this construction's
-        # clock: the two ran seconds apart, and the hover's head said one minute for a bucket the boot
-        # seeded while its divider said another.
+        # clock: the two run seconds apart, and a hover head naming one for a bucket the boot seeded while
+        # the tail's divider named the other would name two different minutes for one boot.
         self.api_health = ApiHealth(self.state_dir, log=self._log, boot_at=boot_at)
         # The dependency check, done ONCE here: absent → every session this backend owns reports the same
         # launch error (launch_error), instead of each one silently dying at its own lazy import.
@@ -14294,10 +14248,10 @@ class SdkBackend:
 
     def new_session_auth(self) -> str:
         """new_session_auth over this backend's state dir, key availability (key_available) and availability check
-        (pick_unavailable): the side a session spawned now with no explicit pick would bill, for the kernel's
-        readers of a row that reports nothing (_bills_login's fallback, _auth_avail's picker default). Called
-        directly there, never through a getattr guard: a backend without this method is a bug to surface, not a
-        login box."""
+        (pick_unavailable): the side a session spawned now with no explicit pick would bill, for the kernel's one
+        reader of a row that reports nothing (_auth_avail's picker default; _bills_login's fallback reads not
+        _auth_key_present() instead). Called directly there, never through a getattr guard: a backend without
+        this method is a bug to surface, not a login box."""
         return new_session_auth(self.state_dir, self.key_available, self.pick_unavailable)
 
     def auth_unavailable_why(self, side: str) -> str:

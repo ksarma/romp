@@ -24,7 +24,7 @@ km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
 class ApiErrorWorking(unittest.TestCase):
     def test_api_error_carries_a_tooLong_flag(self):
         # the classification lives in _api_error_pass, the one-pass scanner both _api_error and the latched
-        # _api_last_failed read through (review round 1, 2026-09-07), so the pin reads that function
+        # _api_last_failed read through, so the pin reads that function
         src = inspect.getsource(km._api_error_pass)
         self.assertIn('"tooLong": "too long" in text.lower()', src)
 
