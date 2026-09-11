@@ -470,6 +470,40 @@ class SkeletonFromCache(unittest.TestCase):
         self.assertNotEqual(sig(1000, {"S": {**row, "bgTasks": [{"toolUseId": "t1"}]}}),
                             sig(1000, {"S": {**row, "bgTasks": [{"toolUseId": "t2"}]}}),
                             "…and a swapped task with the same count busts it")
+        # a settings pick HELD for live work (pickHeld, 2026-09-09): the hold starting while effortPending
+        # was already set, a count falling, a surface joining and the hold clearing all repaint the lane;
+        # the counts otherwise co-move with the keyed subagent rows and task ids, but not these four
+        pend = {**row, "effortPending": True}
+        held1 = {**pend, "pickHeld": {"surfaces": ["effort"], "subagents": 1, "tasks": 0}}
+        self.assertNotEqual(sig(1000, {"S": pend}), sig(1000, {"S": held1}), "pickHeld must bust the view sig")
+        self.assertEqual(sig(1000, {"S": held1}), sig(1000, {"S": dict(held1)}), "stable on an identical hold")
+        self.assertNotEqual(sig(1000, {"S": held1}),
+                            sig(1000, {"S": {**pend, "pickHeld": {"surfaces": ["effort"], "subagents": 0, "tasks": 0}}}),
+                            "a count falling with the same surfaces busts it")
+        self.assertNotEqual(sig(1000, {"S": held1}),
+                            sig(1000, {"S": {**pend, "pickHeld": {"surfaces": ["effort", "mode"], "subagents": 1, "tasks": 0}}}),
+                            "a surface joining the hold busts it")
+        self.assertNotEqual(sig(1000, {"S": held1}), sig(1000, {"S": {**pend, "pickHeld": None}}),
+                            "the hold clearing while effortPending stays busts it")
+        # a fast or mode pick's own reload (fastPending, modePending; review round 7, 2026-09-10): the badge's pulse and
+        # the chat's reloading line read them, so each flipping repaints the lane, and both flipping is one repaint
+        for flag in ("fastPending", "modePending"):
+            self.assertNotEqual(base, sig(1000, {"S": {**row, flag: True}}), "%s must bust the view sig" % flag)
+            self.assertEqual(sig(1000, {"S": {**row, flag: True}}), sig(1000, {"S": {**row, flag: True}}), "stable on %s" % flag)
+        self.assertNotEqual(sig(1000, {"S": {**row, "fastPending": True}}), sig(1000, {"S": {**row, "modePending": True}}),
+                            "the two flags are distinct inputs")
+        # the landing's live switch (modeSwitching; review round 10): modePending holds through it, and the chat's line
+        # changes its words when the switch starts and when it confirms, so the bit is a lane fact of its own
+        pend_mode = {**row, "modePending": True}
+        self.assertNotEqual(sig(1000, {"S": pend_mode}), sig(1000, {"S": {**pend_mode, "modeSwitching": True}}),
+                            "modeSwitching must bust the view sig with modePending unchanged")
+        # a re-pick DURING the hold changes the picked value the menus check-mark and the tooltip rows name
+        # (pickHeld.picked, review round 5, 2026-09-10): same surfaces, same counts, a different pick repaints
+        pk1 = {**pend, "pickHeld": {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "picked": {"effort": "max"}}}
+        pk2 = {**pend, "pickHeld": {"surfaces": ["effort"], "subagents": 1, "tasks": 0, "picked": {"effort": "low"}}}
+        self.assertNotEqual(sig(1000, {"S": pk1}), sig(1000, {"S": pk2}), "a re-pick during the hold busts it")
+        self.assertEqual(sig(1000, {"S": pk1}), sig(1000, {"S": {**pend, "pickHeld": dict(pk1["pickHeld"])}}), "stable on the same pick")
+        self.assertNotEqual(sig(1000, {"S": held1}), sig(1000, {"S": pk1}), "a payload gaining the picked value busts it once")
         self.assertEqual(base, sig(1000, {"S": {**row, "snapT": 123456.0}}), "the snapshot's clock stays out")
         self.assertEqual(base, sig(1000, {"S": {**row, "interrupting": True}}),
                          "`interrupting` is not keyed: the merged liveness row never carries it (the SDK merge copies "

@@ -115,6 +115,15 @@ everything else to the subprocess. The default is no CPU throttling,
 a desktop; `--cpu-throttle 4` emulates a machine four times slower. `--iters 3`
 pools three runs. `--fast` sends the frames back-to-back instead of at their
 recorded pacing; settle times then overlap, handler and dispatch times do not.
+`--hidden` replays into a page that reports itself hidden (a dashboard tab in
+the background: the panes hold their paint and the timeline stops its live
+tick), shows it again after the last frame, and the report adds the return's
+synchronous cost (the catch-up paint plus the pane shim's and federation's
+return handlers); with `--cpu-profile` the profile runs through that return. A
+timeline replay also reports how many wire bars and judging entries the view
+expanded during the replay, and under `--hidden` how many the return expanded.
+`--compare` names each report's regime and refuses a hidden report against a
+visible one, since the two measure different work.
 
 A recording holds real session data. `--record` connects to the running kernel
 as one more pane (the same URL and capabilities, the token as the page's
@@ -130,7 +139,8 @@ keepalives and op replies).
 `tests/ui-bench.test.mjs` (`node --test tests/ui-bench.test.mjs`) covers the
 tool, including the recording client against a local WebSocket server and the
 Handler subprocess's isolation, and replays synthetic feed and timeline streams
-in a real browser. The browser tests skip, saying why, when no Chromium, no
+in a real browser, the timeline once more with the page hidden. The browser
+tests skip, saying why, when no Chromium, no
 `python3` or no built `dist/` is available; with `ROMP_UI_BENCH_REQUIRE=1` in
 the environment (CI sets it) that skip is a failure instead.
 

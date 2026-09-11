@@ -81,9 +81,12 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   assert.ok(panel.includes('const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);'), 'asked of a located comment, at the copy the engine returned, with the stored position in the view\'s coordinates');
   // the position the engine and copyUnsure read is the stored one mapped into the view's coordinates (viewAt): the
   // host keeps a BOM the fetch strips, and the status says whether it does (bom), the host's own word on its text
-  // ...or the sequential hint for a card with no position whose anchor an earlier card of the pass shares (plans/markdown-viewer.md
-  // Slice 5, item 7: nextCopyHint), the stored position still being what copyUnsure judges the copy by (below)
-  assert.ok(panel.includes('const at = this.viewAt(card);') && panel.includes('const hint = at !== undefined || !prev ? at : this.nextCopyHint(src, card.anchor, prev);') && panel.includes('const loc = locateComment(src, card.anchor, hint);'), 'the hint is the mapped position, or the sequential one for a card with none');
+  // ...the copy the host's tie-break confirmed leading it (placedAt, the tie-break, 2026-09-11), and, for a card with neither
+  // whose anchor an earlier card of the pass shares, the sequential hint last (plans/markdown-viewer.md Slice 5, item 7:
+  // nextCopyHint), `at`, the confirmed or stored position, still being what copyUnsure judges the copy by (below)
+  assert.ok(panel.includes('const at = this.placedAt(card) ?? this.viewAt(card);') && panel.includes('const hint = at !== undefined || !prev ? at : this.nextCopyHint(src, card.anchor, prev);') && panel.includes('const loc = locateComment(src, card.anchor, hint);'), 'the hint is the copy the host\'s tie-break confirmed, else the mapped position, else the sequential one for a card with neither');
+  const placed = method(panel, 'placedAt');
+  assert.ok(placed.includes('p.confirmed !== true') && placed.includes("return this.status!.bom ? p.at - 1 : p.at;"), 'placedAt: a confirmed verdict alone, mapped past a BOM like anchorAt');
   const view = method(panel, 'viewAt');
   assert.ok(view.includes('if (card.anchorAt === null) return undefined;') && view.includes('return this.status && this.status.bom ? card.anchorAt - 1 : card.anchorAt;'), 'one character on a BOM file, as the status says; 0 is a position');
   assert.ok(read('ui', 'webview', 'file-comments-model.ts').includes('bom?: boolean;'), 'the status type carries the bit');
@@ -96,16 +99,19 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   for (const sheet of ['styles.css', 'feed.css']) {
     assert.ok(read('ui', 'webview', sheet).replace(/\s+/g, ' ').includes('wears a dashed ring, and so does a located copy the panel cannot confirm as the one chosen (file-comments.ts copyUnsure: the passage recurs and the stored position names none of the copies)'), `${sheet} names the guessed copy as a wearer of fc-hl-context`);
   }
-  assert.ok(panel.includes('const title = unsure ? unsureMarkTitle(card, hinted) : "Open the comment on this passage";'), 'the mark says it is not confirmed');
+  assert.ok(panel.includes('const title = unsure ? unsureMarkTitle({ ...card, hintedCopy: hinted }) : "Open the comment on this passage";'), 'the mark says it is not confirmed, and which copy this is rides on the card it is titled for (PanelCard.hintedCopy)');
   // the title branches on whether a position is stored, on the same test as the card's words (the third review: the
   // title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none), and on whether the
   // sequential hint placed the copy (the Slice 5 review, round 1: a hinted card's words named the first copy while its highlight
   // sat on the second)
   const markTitle = fn(panel, 'unsureMarkTitle');
   assert.ok(markTitle.includes('"Open the comment; this passage recurs, and "') && markTitle.includes('c.anchorAt === null'), 'the same branch as copyUnsureWords');
+  assert.ok(markTitle.includes('c.confirmedAt !== undefined') && markTitle.includes('"this copy is the nearest to where the comment\'s copy was last confirmed"'), 'the confirmed place the view moved past, judged first (the tie-break, 2026-09-11)');
   assert.ok(markTitle.includes('"the comment stores no position to tell the copies apart, so this is the first copy"'), 'no position: the first copy');
   assert.ok(markTitle.includes('"the comment stores no position to tell the copies apart, so this is the copy after the previous comment\'s on this passage"'), 'no position, the sequential hint: the copy after the previous comment\'s');
   assert.ok(panel.includes('const hinted = at === undefined && hint !== undefined;') && panel.includes('if (hinted) this.hintedCopies.add(card.id);'), 'the hint\'s cards are remembered for the words');
+  assert.ok(panel.includes('const c: WordedCard = { ...given, hintedCopy: this.hintedCopies.has(given.id), shown: { editing, pictured: !!picture, draws: this.drawsRegions() } };') && panel.includes('type PanelCard = Card & { confirmedAt?: number; hintedCopy?: boolean };'), 'and ride on the card the words are handed, as the confirmed place does (PanelCard.hintedCopy)');
+  assert.ok(markTitle.includes('c.hintedCopy') && fn(panel, 'copyUnsureWords').includes('c.hintedCopy'), 'both readers branch on it');
   assert.ok(markTitle.includes('"this copy is the nearest to the comment\'s stored position"') && markTitle.includes('", not a confirmed one"'), 'a position naming none: the nearest, and never a confirmed one');
   assert.ok(panel.includes('if (img) { frameImage(img, unsure ? cls + " fc-hl-context" : cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }'), 'a framed figure too');
   // copyUnsure: a position that names the copy is the choice; a tie is the anchor's earliest and latest best hits differing
@@ -114,13 +120,13 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   assert.ok(unsure.includes('const first = locateComment(src, card.anchor, 0);') && unsure.includes('const last = locateComment(src, card.anchor, src.length);'), 'the host\'s own test for a tie');
   assert.ok(unsure.includes('return last.state === "located" && !!last.range && last.range.start !== first.range.start;'), 'one best hit is the anchor\'s own answer');
   // the card: a "passage recurs" tag with the words as its title, and the words on the open card
-  assert.ok(panel.includes('if (this.unsureCopies.has(c.id)) { const t = el("span", "fc-tag", "passage recurs"); t.title = copyUnsureWords(c, this.hintedCopies.has(c.id)); head.appendChild(t); }'), 'the tag');
-  assert.ok(panel.includes('if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c, this.hintedCopies.has(c.id))));'), 'the line on the open card');
+  assert.ok(panel.includes('if (this.unsureCopies.has(c.id)) { const t = el("span", "fc-tag", "passage recurs"); t.title = copyUnsureWords(c); head.appendChild(t); }'), 'the tag');
+  assert.ok(panel.includes('if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c)));'), 'the line on the open card');
   const words = fn(panel, 'copyUnsureWords');
   assert.ok(words.includes('"the comment stores no position to tell the copies apart, so the first copy is highlighted"'), 'no position: the first copy');
   assert.ok(words.includes('"the comment stores no position to tell the copies apart, so the copy after the previous comment\'s on this passage is highlighted"'), 'no position, the sequential hint: the copy after the previous comment\'s');
   assert.ok(words.includes('"the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted"'), 'a position naming none: the nearest');
-  assert.ok(words.includes('" — not a confirmed one."'), 'and never a confirmed one');
+  assert.ok(words.includes('", not a confirmed one. Reveal it and save again from the right copy to confirm."'), 'and never a confirmed one, ending with how to confirm it (the tie-break, 2026-09-11)');
 });
 
 // ── the contract and the follow-on note: the tie-break holds while the position names a copy ──

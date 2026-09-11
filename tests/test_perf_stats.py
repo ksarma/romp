@@ -741,8 +741,8 @@ class PusherRecords(unittest.TestCase):
             "_auto_pause_on_limit", "_usage_poll_tick", "_auto_pause_on_spend_limit", "_auto_resume_retry",
             "_auto_resume_session_retry", "_auto_retry_tick", "_idle_queue_drive_tick",
             "_clear_done_working_notes", "_push_all", "_tab_list_tmux",
-            "_api_health_frame", "_api_health_push",   # the bottom bar's API cell (2026-09-07)
-            "_turn_notify_tick")                       # upstream's turn-end notification pass (fold 2026-09-07)
+            "_api_health_frame", "_api_health_push",   # the bottom bar's API cell
+            "_turn_notify_tick")                       # upstream's turn-end notification pass
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()

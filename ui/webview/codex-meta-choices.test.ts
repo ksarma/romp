@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { inspect } from "node:util";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { heldMenuMarks, RUNNING_TAG } from "./pick-held";   // the menu rows' held marks, which the lifted metaRowMarks calls (review round 5)
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -261,7 +262,7 @@ class FakeEl {
   querySelector(sel: string): FakeEl | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
 
-// The menu's world: the loader, `el`, `metaDots`, `metaButton`, `metaAnchor`, `closeMetaMenu`,
+// The menu's world: the loader, `el`, `metaDots`, `metaButton`, `metaTip`, `metaAnchor`, `closeMetaMenu`,
 // `toggleMetaMenu` and `liveSession` lifted from render.ts, over the stand-in and stubs for what they read
 // of the rest of the module (the session map, the skeleton set, the thread helpers, the pick memory, the
 // vscode bridge, the tints). The chat's status read goes through render.ts's own `liveSession` (upstream's
@@ -291,6 +292,12 @@ function liftMenu(opts: { thread?: { th: unknown; status: any } } = {}) {
     slice("function metaDots(): HTMLElement {"),
     slice("const MODEL_CHOICES: {", "function loadModelChoices(): void {"),
     slice("function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLElement {"),
+    slice("function metaTip(kind: MetaKind): string {"),   // the badge's plain tip, which metaButton takes from the helper syncMetaControls swaps against badgeHeldTip (2026-09-09)
+    // the rows' marks (review round 5): the check on the current value, or during a hold on the picked one with the
+    // running value tagged; metaRowMarks reads heldMenuMarks (supplied from pick-held.ts) and the stubs below
+    slice("function matchesMeta(kind: MetaKind, current: string, value: string): boolean {"),
+    slice("function metaRowMarks(kind: MetaKind, st: Status, value: string): { current: boolean; running: boolean } {"),
+    slice("function runningTag(): HTMLElement {"),
     slice("let metaMenuEl: HTMLElement | null = null;", "function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null) {"),
     "return { metaButton, toggleMetaMenu, closeMetaMenu, loadModelChoices, CODEX_MODEL_CHOICES,",
     "  get menu() { return metaMenuEl; }, set active(id) { activeId = id; }, get error() { return CODEX_MODELS_ERROR; } };",
@@ -300,11 +307,11 @@ function liftMenu(opts: { thread?: { th: unknown; status: any } } = {}) {
   const skeletonTabs = { ids: new Set<string>() };   // what liveSession reads of skeleton-tabs.ts's state
   const fn = new Function("document", "window", "kernelUrl", "fetch", "adoptCommentDefaults", "sessions", "skeletonTabs",
     "openCommentThread", "threadMetaStatus", "metaCurrent", "metaPending", "vscodeApi", "isCurrentMeta",
-    "modeIconSvg", "riskyMode", "nonClassicChoiceTone", "setTip", js);
+    "modeIconSvg", "riskyMode", "nonClassicChoiceTone", "setTip", "heldMenuMarks", "RUNNING_TAG", js);
   const api = fn(doc, win, (p: string) => p, stub.fetch, () => {}, sessions, skeletonTabs,
     () => (opts.thread ? { th: opts.thread.th } : null),
     () => { if (!opts.thread) throw new Error("no thread here"); return opts.thread.status; },
-    () => "", new Map(), null, () => false, () => "", () => false, () => undefined, () => {});
+    () => "", new Map(), null, () => false, () => "", () => false, () => undefined, () => {}, heldMenuMarks, RUNNING_TAG);
   return { api, sessions, skeleton: skeletonTabs.ids, body: BODY, win, pending: stub.pending, failing: stub.failing, rectReads };
 }
 const SID = "11111111-2222-4333-8444-555555555555";

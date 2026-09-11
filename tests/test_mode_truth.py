@@ -98,7 +98,10 @@ class DeclaredIntentGuard(_Harness):
 class RefusedSwitchReverts(_Harness):
     class _RefusingClient:
         async def set_permission_mode(self, mode):
-            raise RuntimeError("control request rejected")
+            # the CLI's error response, as the SDK raises it: a bare Exception with no cause. The revert is gated
+            # on that verdict since the settings-pick change's round 7 (_cli_refusal): a typed error or a timeout
+            # is a lost answer, which reverts nothing
+            raise Exception("Cannot set permission mode to %s: auto mode unavailable for this model" % mode)
 
     class _AckingClient:
         async def set_permission_mode(self, mode):
@@ -129,7 +132,7 @@ class RefusedSwitchReverts(_Harness):
         self.s.perm_mode = "acceptEdits"
         calls = []
         self.s.set_mode_live = lambda mode, prev="default": calls.append(("live", mode))
-        self.s.request_reconnect = lambda: calls.append(("reconnect",))
+        self.s.request_reconnect = lambda *a, **k: calls.append(("reconnect",))
         self.assertTrue(self.be.set_mode(SID, "bypassPermissions"))
         self.assertEqual(calls, [("reconnect",)], "bypass = reconnect, never the refused live call")
         self.assertEqual(self.s.perm_mode, "bypassPermissions")

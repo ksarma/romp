@@ -78,8 +78,9 @@ test('on the fixture, a passage unique at 24 characters keeps addComment\'s anch
   assert.deepEqual(u.anchor, want.anchor, 'the stored anchor is the CLI\'s 24 characters of context');
   assert.equal(u.anchor.prefix.length, ANCHOR_CTX);
   assert.deepEqual(Object.keys(want), ['id', 'author', 'ts', 'anchor', 'body', 'replies', 'resolved'], 'addComment writes no anchorAt');
-  // the one field the host adds, right after the anchor (the object it builds otherwise takes addComment's shape)
-  assert.ok(/anchor: uniqueAnchor\(text, loc\.from, loc\.to\)\.anchor,\s*\n\s*anchorAt: loc\.from,/.test(host), 'the host stores anchorAt beside the anchor, and nothing else beyond addComment\'s keys');
+  // the fields the host adds, right after the anchor: the position, then the copy fields (the tie-break, 2026-09-11);
+  // the object it builds otherwise takes addComment's shape
+  assert.ok(/anchor: stored\.anchor,\s*\n\s*anchorAt: loc\.from,\s*\n\s*\.\.\.copy,/.test(host), 'the host stores anchorAt and the copy fields beside the anchor, and nothing else beyond addComment\'s keys');
   assert.ok(!/authorId/.test(host.slice(host.indexOf('function buildComment('), host.indexOf('\n}\n', host.indexOf('function buildComment(')))), 'no authorId, as addComment with none');
 });
 

@@ -12,6 +12,7 @@ restart itself is a no-op), invented tokens.
 """
 import json
 import os
+import re
 import time
 import threading
 import unittest
@@ -33,9 +34,13 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 os.environ["ROMP_MANAGER_PORT"] = "1"   # dead port → _restart_this_kernel audits, then its dial is
 #   refused (its except: pass). NEVER pop: pytest imports this module at COLLECTION, so a pop here
-#   would erase conftest's suite-wide floor before any test runs — and an ABSENT var is the one
-#   unsafe state (_run_main_update maps absent to the DEFAULT port: the live manager).
+#   would erase conftest's suite-wide floor before any test runs. Every kernel door (_manager_port:
+#   _manager_kernels, _run_main_update, _restart_this_kernel, _run_update) treats an absent variable as
+#   no manager since 2026-09-10; the dead value "1" stays as the floor because it is the one state safe
+#   against every consumer, present (bin/romp-manager and bin/romp's down path still default to 7432)
+#   and future.
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+KERNEL_SRC = open(os.path.join(os.path.dirname(BIN), "kernel", "kernel.py")).read()
 
 def _audit_path():
     return jd.STATE / "restart-audit.jsonl"   # at CALL time — peer test modules rebind jd.STATE
@@ -98,6 +103,158 @@ class RestartAudit(unittest.TestCase):
         self.assertEqual(recs[0]["action"], "kernel-asks-manager-restart-all")
         self.assertEqual(recs[0]["reason"], "unit-test reason")
         self.assertEqual(recs[0]["pid"], os.getpid())
+
+
+class ARefusalConsumesItsRequest(unittest.TestCase):
+    """The manager answered a hop 4xx or 5xx (review round 2, 2026-09-10). The request row written before
+    the hop (http-restart and kernel-asks-manager-restart-all for the dashboard's Restart, main-converge for
+    the converge) stayed live for the 90 s window: the refusal row was walked past, but it did not
+    supersede the request beneath it, so a later SIGTERM from another source was attributed to a request
+    the manager had refused. The walk now lets a refusal consume the one request it was written for,
+    keyed on action and timestamp (two of the three request rows carry no reason), and no more."""
+    T = 1_800_000_000
+
+    def setUp(self):
+        try:
+            _audit_path().unlink()
+        except OSError:
+            pass
+
+    def _write(self, rows):
+        _audit_path().parent.mkdir(parents=True, exist_ok=True)
+        with open(_audit_path(), "w") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+
+    def _http_restart_refused(self, t):
+        return [{"t": t, "action": "http-restart", "addr": "127.0.0.1", "ua": "test-agent/1.0"},
+                {"t": t, "action": "kernel-asks-manager-restart-all", "reason": "http /restart (local-only)", "pid": os.getpid()},
+                {"t": t, "action": km._MANAGER_REFUSED_ACTION, "door": "/restart-all", "status": 401,
+                 "reason": "http /restart (local-only)", "tokenSrc": "ROMP_SERVE_TOKEN"}]
+
+    def test_the_three_row_ledger_of_a_refused_dashboard_restart_names_no_request(self):
+        self._write(self._http_restart_refused(self.T - 1))
+        self.assertIsNone(km._recent_restart_audit(now=self.T, started=self.T - 1000),
+                          "the request the manager refused restarted nothing, so a signal now is anonymous")
+
+    def test_a_refused_converge_row_names_no_request(self):
+        self._write([{"t": self.T - 2, "action": "main-converge", "tag": "pull", "when": "now", "sha": "abcdef12"},
+                     {"t": self.T - 1, "action": km._MANAGER_REFUSED_ACTION, "door": "/restart-all", "status": 503,
+                      "reason": "main-converge: pull"}])
+        self.assertIsNone(km._recent_restart_audit(now=self.T, started=self.T - 1000))
+
+    def test_a_parked_quiet_converge_under_an_unrelated_refusal_stays_visible(self):
+        parked = {"t": self.T - 100, "action": "main-converge", "tag": "pull", "when": "quiet", "sha": "abcdef12"}
+        self._write([parked] + self._http_restart_refused(self.T - 1))
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), parked,
+                         "one request per refusal: the older parked request beneath was not the one refused")
+
+    def test_a_managers_note_above_a_refused_request_still_answers(self):
+        note = {"t": self.T, "action": "manager-sigterm", "trigger": "restart-all", "pid": os.getpid()}
+        self._write(self._http_restart_refused(self.T - 1) + [note])
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), note)
+
+    def test_two_refusals_consume_two_requests_and_a_third_request_stays(self):
+        first = {"t": self.T - 30, "action": "kernel-asks-manager-restart-all", "reason": "self-update", "pid": os.getpid()}
+        self._write([first] + self._http_restart_refused(self.T - 20) + self._http_restart_refused(self.T - 1))
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), first)
+
+    # The far-host apply script's REFUSED branch (review round 3, 2026-09-10): on a peer the apply writes a
+    # p2p-update row, hops to that host's manager through the control client, and on the client's exit 3
+    # writes a manager-refused-restart-all row over it. The p2p-update action was not among the request
+    # rows a refusal consumes, so the far kernel kept the refused request as the live one for the 90 s
+    # window, and a SIGTERM from another source there was attributed to a deploy the manager refused.
+    def _far_host_refused(self, t):
+        return [{"t": t, "action": "p2p-update", "reason": "from abcdef12 to 12abcdef"},
+                {"t": t, "action": km._MANAGER_REFUSED_ACTION, "door": "/restart-all", "status": 401,
+                 "reason": "p2p-update from abcdef12 to 12abcdef"}]
+
+    def test_a_refused_far_host_apply_names_no_request(self):
+        self._write(self._far_host_refused(self.T - 1))
+        self.assertIsNone(km._recent_restart_audit(now=self.T, started=self.T - 1000),
+                          "the manager on this host refused the deploy's hop: a signal now is anonymous")
+
+    def test_a_parked_quiet_converge_under_a_refused_far_host_apply_stays_visible(self):
+        parked = {"t": self.T - 100, "action": "main-converge", "tag": "pull", "when": "quiet", "sha": "abcdef12"}
+        self._write([parked] + self._far_host_refused(self.T - 1))
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), parked)
+
+    def test_a_managers_note_above_a_refused_far_host_apply_still_answers(self):
+        note = {"t": self.T, "action": "manager-sigterm", "trigger": "restart-all", "pid": os.getpid()}
+        self._write(self._far_host_refused(self.T - 1) + [note])
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), note)
+
+
+class ABroadRestartsRowIsConsumedByItsOwnRefusal(unittest.TestCase):
+    """The /restart door's two writers (review round 3, 2026-09-10). A local-only click writes http-restart
+    and, in the same handler, kernel-asks-manager-restart-all; a click for every kernel writes http-restart,
+    runs the remote half for seconds of network, and only then writes its kernel-asks row for the local
+    half. The pairing that took the http-restart row along with a consumed kernel-asks row read only the
+    row directly beneath, so a local click refused in that gap left the broad click's own http-restart row
+    live for the 90 s window once its local half was refused too, and a later SIGTERM from another source
+    was attributed to a restart the manager refused. Each consumed kernel-asks row the door wrote now owes
+    one http-restart row, the next one beneath it however many rows apart, and no more."""
+    T = 1_800_000_000
+    # the two reasons the door files, read from the source so the pin follows a rename of either
+    DOOR_REASONS = re.findall(r'_restart_this_kernel\("([^"]+)"', KERNEL_SRC)
+
+    def setUp(self):
+        try:
+            _audit_path().unlink()
+        except OSError:
+            pass
+        self.assertEqual(len(self.DOOR_REASONS), 2, self.DOOR_REASONS)
+        self.local = [r for r in self.DOOR_REASONS if "local-only" in r][0]
+        self.broad = [r for r in self.DOOR_REASONS if "local-only" not in r][0]
+
+    def _write(self, rows):
+        _audit_path().parent.mkdir(parents=True, exist_ok=True)
+        with open(_audit_path(), "w") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+
+    def _click(self, t):
+        return {"t": t, "action": "http-restart", "addr": "127.0.0.1", "ua": "test-agent/1.0"}
+
+    def _asked(self, t, reason):
+        return {"t": t, "action": "kernel-asks-manager-restart-all", "reason": reason, "pid": os.getpid()}
+
+    def _refused(self, t, reason):
+        return {"t": t, "action": km._MANAGER_REFUSED_ACTION, "door": "/restart-all", "status": 401, "reason": reason}
+
+    def _interleaved(self):
+        # the broad click at T-12; a local click at T-6 refused inside its remote half; its own local half
+        # refused at T-1
+        return [self._click(self.T - 12),
+                self._click(self.T - 6), self._asked(self.T - 6, self.local), self._refused(self.T - 6, self.local),
+                self._asked(self.T - 1, self.broad), self._refused(self.T - 1, self.broad)]
+
+    def test_a_local_click_refused_inside_the_broad_clicks_remote_half_leaves_no_request(self):
+        self._write(self._interleaved())
+        self.assertIsNone(km._recent_restart_audit(now=self.T, started=self.T - 1000),
+                          "both clicks were refused: neither http-restart row is the request for a signal now")
+
+    def test_a_request_beneath_the_two_refused_clicks_stays_visible(self):
+        parked = {"t": self.T - 100, "action": "main-converge", "tag": "pull", "when": "quiet", "sha": "abcdef12"}
+        self._write([parked] + self._interleaved())
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), parked,
+                         "two refusals consume two clicks' rows and nothing older")
+
+    def test_the_broad_clicks_row_is_live_until_its_own_local_half_is_refused(self):
+        # the local click refused inside the remote half, the broad click's local half not yet written: the
+        # broad click's row is the live request (a restart of this kernel is still coming)
+        rows = self._interleaved()[:4]
+        self._write(rows)
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), rows[0])
+
+    def test_a_refused_row_beneath_the_refusals_beneath_is_not_taken_for_a_click(self):
+        # two refused local clicks back to back, then a third click whose ask is still out: only the third
+        # click's row is live, and the two consumed pairs take exactly their own http-restart rows
+        rows = [self._click(self.T - 9), self._asked(self.T - 9, self.local), self._refused(self.T - 9, self.local),
+                self._click(self.T - 5), self._asked(self.T - 5, self.local), self._refused(self.T - 5, self.local),
+                self._click(self.T - 1)]
+        self._write(rows)
+        self.assertEqual(km._recent_restart_audit(now=self.T, started=self.T - 1000), rows[-1])
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,13 +2,15 @@
 // loads styles.css alone and the feed page feed.css alone — so its dress is declared in BOTH sheets
 // (the .romp-acted / filebrowse precedent). The copies had already drifted once (feed.css lacked the
 // a.fileview-btn anchor rules, so the GitHub link rendered hrefless-underlined there, 2026-08-26).
-// This pins the shared chrome byte-equal so it cannot drift again. Rules that are deliberately
-// pane-specific (wrap mode, the pane's own load cue `.fileview-load {`) are not pinned. The md body's
-// own rule IS (since Slice 1 of plans/markdown-viewer.md): its `contain: layout` is what keeps a note's
+// This pins the shared chrome byte-equal so it cannot drift again, and with it the rendered document's
+// type scale (the .fileview-md heads below): every occurrence of a head, read at a line start, so a
+// head two rules share (the heading list carries the scale and, later, the landing margin) is compared
+// rule for rule, and a rule present in one sheet only is a failure, not a skip. The md body's root rule
+// is among them for more than its typography: its `contain: layout` is what keeps a file's
 // fixed-positioned element inside the note, and it has to hold in both documents, as do the width caps
 // on the media a file draws itself (svg, canvas, video), which under containment would otherwise be
-// clipped and unreachable, and the table rules that give a wide table its pane-wide break-out and a
-// horizontal scroll of its own for the same reason.
+// clipped and unreachable, and the table rules that give a wide table a horizontal scroll of its own
+// for the same reason. Rules that are deliberately pane-specific (wrap mode, load cue) are not pinned.
 // The reader (`rulesOf`) matches a head at a LINE START only, and pins every rule declared under it. A shorter head
 // can end a longer one (`.fileview-md h5, .fileview-md h6 {` is the tail of the six-heading head), and a plain
 // indexOf read the longer rule's body twice and never the h5/h6 dim rule (Slice 3 of plans/markdown-viewer.md,
@@ -30,21 +32,24 @@ const RULES = [
   ".fileview-bar .fileview-name {", ".fileview-bar .fileview-acts {",   // the bar's own wrap (scoped: the browser's row and the pane's Recent rows wear the classes too)
   ".fileview-btn {", ".fileview-btn:hover {",
   "a.fileview-btn {", ".fileview-gh {", ".fileview-gh-why {", ".fileview-gh-dots {",
+  // one disabled dress for every bar button: the GitHub unit's no-link state and the text-size control's ends
   '.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] {', '.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover {',
   '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {', ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {",
-  "a.fileview-gh-note {", ".fileview-body {", ".fileview-md {",
+  "a.fileview-gh-note {", ".fileview-body {", "@property --fv-body-w {", ".fileview-md {",
   ".fileview > .fileview-err {",   // the notice bar above the body row (Slice 2 of plans/markdown-viewer.md)
   // the width caps on a note's pictures and on the media it draws itself (svg, canvas, video): under the md box's
   // contain: layout an uncapped one is clipped and unreachable, so the cap has to hold on both pages
   ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {",
   ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {',   // the ratio-keeping half, pixel-sized media only (a sized <img> since Slice 2 of plans/markdown-viewer.md)
-  // the document type scale (Slice 3 of plans/markdown-viewer.md): the headings, the list gutter and the task item, kbd, the
-  // fences' rows and Copy button, the table's fill, striping, alignment and pane-wide break-out
+  // the rendered document's type scale: the root (the face, the size, the leading, the measure), the heading ladder, the
+  // list gutter, a task item, kbd, fenced code with its rows and Copy, a table's fill, striping, alignment and break-out,
+  // and the caps on the media a file draws itself
   ".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6 {", ".fileview-md h1 {", ".fileview-md h2 {", ".fileview-md h3 {",
   ".fileview-md h4 {", ".fileview-md h5, .fileview-md h6 {", ".fileview-md h1, .fileview-md h2 {",
-  ".fileview-md ul, .fileview-md ol {", ".fileview-md li.task-list-item {", ".fileview-md li.task-list-item input {",
+  ".fileview-md ul, .fileview-md ol {", ".fileview-md li {", ".fileview-md li.task-list-item {", ".fileview-md li.task-list-item input {",
   '.fileview-md li.task-list-item > input[type="checkbox"], .fileview-md li.task-list-item > p:first-child > input[type="checkbox"] {',
-  ".fileview-md kbd {", ".fileview-md pre code {", ".fileview-md pre code .cl {", ".fileview-md pre code .cl::before {", ".fileview-md pre code .ct {", ".fileview-md pre code .ct::before {",
+  ".fileview-md kbd {", ".fileview-md :not(pre) > code {", ".fileview-md pre {", ".fileview-md pre code {",
+  ".fileview-md pre code .cl {", ".fileview-md pre code .cl::before {", ".fileview-md pre code .ct {", ".fileview-md pre code .ct::before {",
   ".fileview-md pre.has-copy {", ".fileview-md .code-copy {", ".fileview-md pre.has-copy:hover .code-copy, .fileview-md .code-copy:focus-visible {",
   ".fileview-md .code-copy:hover {", ".fileview-md .code-copy.copied {",
   ".fileview-md table {", ".fileview-md > table {", ".fileview-md th, .fileview-md td {", ".fileview-md th {", ".fileview-md tbody tr:nth-child(even) {",
@@ -90,16 +95,21 @@ const RULES = [
   ".tc-diff-del-kept-embed {", ".tc-diff-del-kept-embed::after {",
 ];
 
-// Every rule declared under `head` in `css`, in sheet order: each occurrence of the head at a line start, read
-// through its first `}`. Line-start only, so a head that is the tail of a longer head resolves to its own rule.
+/** Every rule whose selector opens a line as `head`, in sheet order; at least one, or the head is missing. The sheet is searched
+ *  with a leading newline, so a head on its first line is found like any other; a body runs to its first `}`. */
 function rulesOf(css: string, head: string): string[] {
-  const text = "\n" + css;   // a head on the sheet's first line is found the same way as any other
+  const text = "\n" + css;
   const key = "\n" + head;
   const out: string[] = [];
-  for (let at = text.indexOf(key); at >= 0; at = text.indexOf(key, at + 1)) {
-    out.push(text.slice(at + 1, text.indexOf("}", at) + 1));
-  }
+  for (let at = text.indexOf(key); at >= 0; at = text.indexOf(key, at + 1)) out.push(text.slice(at + 1, text.indexOf("}", at) + 1));
+  assert.ok(out.length > 0, head + " present");
   return out;
+}
+/** A block at-rule (`@media print {`), whole: from its head to the first close brace at a line start. */
+function blockOf(css: string, head: string): string {
+  const at = css.indexOf("\n" + head);
+  assert.ok(at >= 0, head + " present");
+  return css.slice(at + 1, css.indexOf("\n}", at) + 2);
 }
 
 test("the rule reader anchors a head at a line start and reads every rule declared under it", () => {
@@ -114,15 +124,30 @@ test("the rule reader anchors a head at a line start and reads every rule declar
   ].join("\n");
   assert.deepEqual(rulesOf(css, ".fv-b {"), [".fv-b { color: var(--dim); }"], "the tail of a longer head resolves to its own rule");
   assert.deepEqual(rulesOf(css, ".fv-a, .fv-b {"), [".fv-a, .fv-b {\n  color: var(--fg); }", ".fv-a, .fv-b { margin: 0; }"], "a head declared twice yields both rules");
-  assert.deepEqual(rulesOf(css, ".fv-c {"), [], "an absent head yields nothing");
+  assert.throws(() => rulesOf(css, ".fv-c {"), /present/, "an absent head is a failure, not a skip");
   assert.deepEqual(rulesOf(".fv-a { top: 0; }\n.fv-a { left: 0; }", ".fv-a {"), [".fv-a { top: 0; }", ".fv-a { left: 0; }"], "a head on the first line counts");
 });
 
-test("the viewer's shared chrome exists in BOTH sheets, byte-equal", () => {
+test("the viewer's shared chrome and the document's type scale exist in BOTH sheets, byte-equal, every occurrence of every head", () => {
   for (const head of RULES) {
-    const chat = rulesOf(CHAT, head), feed = rulesOf(FEED, head);
-    assert.ok(chat.length > 0, head + " present in styles.css");
-    assert.ok(feed.length > 0, head + " present in feed.css");
-    assert.deepEqual(chat, feed, head + " mirrors exactly");
+    assert.deepEqual(rulesOf(CHAT, head), rulesOf(FEED, head), head + " mirrors exactly");
   }
+});
+
+test("the print sheet is one block in both sheets, byte-equal: the file alone, black on white", () => {
+  const print = blockOf(CHAT, "@media print {");
+  assert.equal(print, blockOf(FEED, "@media print {"), "@media print mirrors exactly");
+  assert.ok(print.length > 500, "the block with its rules");
+  assert.equal((CHAT.match(/^@media print \{/gm) || []).length, 1, "one print block in styles.css");
+  assert.equal((FEED.match(/^@media print \{/gm) || []).length, 1, "one print block in feed.css");
+  // the file alone: the title bar and the Copy buttons leave, the page and the card go white on black
+  assert.match(print, /\.fileview-bar, \.fileview-aside, \.fileview-fc, \.fileview > \.fileview-err, \.fc-float, \.fileview-md \.code-copy \{ display: none; \}/);
+  assert.match(print, /:root, body\.fileview-open \{ height: auto; overflow: visible; background: white; color: black; \}/);
+  assert.match(print, /body\.fileview-open > :not\(#romp-fileview\) \{ display: none; \}/);
+  // the task box is drawn in the light scheme whatever the page's theme, and a table is a table again
+  assert.match(print, /\.fileview-md li\.task-list-item input\[type="checkbox"\] \{ color-scheme: light; \}/);
+  assert.match(print, /\.fileview-md table \{ display: table; width: max-content; overflow: visible; overflow-wrap: anywhere; \}/);
+  // the Raw view's gutter and tokens print in full black too
+  assert.match(print, /\.fileview-gutter/);
+  assert.match(print, /\.fileview-body code\.hljs, \.fileview-body code\.hljs span/);
 });

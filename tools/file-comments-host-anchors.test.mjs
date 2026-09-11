@@ -202,7 +202,7 @@ test('a comment on the second copy of a sentence lands there with the hint, stor
   const c = readSidecar(r.storePath).comments[0];
   assert.equal(c.id, `${c.ts}-${second.idx}`);
   assert.equal(c.anchorAt, second.idx);
-  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'body', 'replies', 'resolved']);
+  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'ordinal', 'copies', 'section', 'body', 'replies', 'resolved'], 'the position, then the copy fields (the tie-break, 2026-09-11)');
   assert.equal(c.anchor.quote, 'Ship it.');
   assert.deepEqual(c.anchor, engine.makeAnchor(w.text, second.idx, second.idx + 8, 48), 'widened one step: the browser\'s 24 tied, 48 does not');
   assert.equal(locatesOnlyAt(w.text, c.anchor, second.idx), true, 'unique from both ends');
@@ -460,7 +460,8 @@ function commentOnPassage(w, quote, note) {
   assert.deepEqual(c.anchor, browser, 'unique at 24: the browser\'s anchor is stored as it came');
   assert.equal(c.anchorAt, at);
   assert.equal(c.id, `${c.ts}-${at}`);
-  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'body', 'replies', 'resolved']);
+  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'ordinal', 'copies', 'section', 'body', 'replies', 'resolved'], 'the position, then the copy fields (the tie-break, 2026-09-11)');
+  assert.deepEqual([c.ordinal, c.copies, c.section], [1, 1, 'Painted'], 'the copy fields: 1 of 1 under the note\'s one heading (the fixture holds the quote once, asserted above; the fence\'s `# trailing comment` is code, not a heading)');
   assert.equal(PAINTED.slice(c.anchorAt, c.anchorAt + c.anchor.quote.length), quote, 'the position names the slice');
   assert.equal(engine.locateAnchor(PAINTED, c.anchor).from, at, 'a hintless reader lands on it too');
   assert.deepEqual(r.store.comments[r.store.comments.length - 1], c, 'the reply carries the stored comment as written');

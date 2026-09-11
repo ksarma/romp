@@ -128,7 +128,7 @@ test('comment {anchor, changeIds}: a passage comment about the changes its selec
   const sel = anchorAt(cur, 'reduced p95 latency');
   const r = comment(w, w.report, st, { anchor: sel.anchor, hintOffset: sel.hintOffset, changeIds: [a.id, b.id, a.id], note: '  Both of these read as one claim.  ' });
   const c = readSidecar(r.storePath).comments[0];
-  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'changeIds', 'body', 'replies', 'resolved'], 'the third additive field, after the anchor and its position');
+  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'ordinal', 'copies', 'section', 'changeIds', 'body', 'replies', 'resolved'], 'changeIds after the anchor, its position and the copy fields (the tie-break, 2026-09-11)');
   assert.deepEqual(c.changeIds, [String(a.id), String(b.id)], 'as strings, once each, in the order named');
   assert.equal(c.anchorAt, sel.idx);
   assert.equal(c.id, `${c.ts}-${sel.idx}`, 'a passage comment keeps the passage id rule');

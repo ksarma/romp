@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""The API cell's hover History section, driven in a real browser (the user 2026-09-08).
+"""The API cell's hover History section, driven in a real browser.
 
-The shell page is kernel-served HTML with inline CSS and JS, so it has no jsdom harness: the source pins
-(ui/webview/api-health-hover.test.ts) hold the SHAPE and this module holds the BEHAVIOR. A scratch copy of
+The shell page is kernel-served HTML with inline CSS and JS, so it has no jsdom harness: the source pins in
+tests/test_api_health_hover.py hold the SHAPE and this module holds the BEHAVIOR. A scratch copy of
 km._landing() is served from a temp directory over plain HTTP by a handler that also answers GET /api-health
 with a synthetic signal (switchable between variants through /variant/<name>, so one page load exercises a
 storm, a quiet tail across a restart, an empty signal, two buckets of one family and of two, an offline
@@ -12,25 +12,25 @@ is handed to window.__rompApiHealth, the hover is opened by mouseenter / focus /
 reports what the DOM did and how many reads the page made. Skips LOUDLY without the extension's node deps or
 a browser (CI installs none).
 
-Review round 1 added the executed cases the PR had pinned by source only: the newest read wins a race, a fresh
-show drops the last answer, a pin after the hover reads once, the answer waits under a held pointer, the
-section's place between the sessions and the tmux line, the family-only bucket name, the dated stamp and the
-hour and day durations; and the fixes: Escape dismisses the focus-shown hover, tooltip and dialog roles by
-mode, a window-refocus does not pop the hover, and the geometry at 830 px wide and on a short window. The
-window-refocus trigger itself cannot be produced headless (bringToFront fires no window focus in Playwright's
-chromium), so that case drives the mechanism with synthetic window and cell focus events in one task.
-
-Review round 2: a real Tab out of an iframe onto the cell (the cell's keyboard path on the dashboard, where every pane
-is an iframe; Chromium fires focus on the top window for the frame change, in the cell's own task) shows the hover;
-the cell is described by a short summary, not the tip; a transition filed at asOf (the hover's own read) closes the
-state before it; a bucket the boot seeded reads one time in the head, the divider and the boot's row; a mixed window
-counts every attempt once and says how many had no status.
-
-Review round 3: the previous kernel's last row filed in the same second as this kernel's start sits UNDER the restart
-row (the boot is the kernel's start to the millisecond, the row seeded at it); a row filed after the start sits under
-the clamped restart row with one restart mark, not a row and a divider; the cell's description at focus time, in the
-focus's own task, carries the state word the frame put on the cell, and the landed one its since. Round 4: bootAt is
-the clamped stamp itself (the backend serves its own seed stamp), so that row is the first pre-boot row.
+Executed here, beyond the rendering: the newest read wins a race, a fresh show drops the last answer, a pin
+after the hover reads once, the answer waits under a held pointer, the section's place between the sessions
+and the tmux line, the family-only bucket name, the dated stamp and the hour and day durations; Escape
+dismisses the focus-shown hover, tooltip and dialog roles by mode, a window-refocus does not pop the hover,
+and the geometry at 830 px wide and on a short window. The window-refocus trigger itself cannot be produced
+headless (bringToFront fires no window focus in Playwright's chromium), so that case drives the mechanism with
+synthetic window and cell focus events in one task. A real Tab out of an iframe onto the cell (the cell's
+keyboard path on the dashboard, where every pane is an iframe; Chromium fires focus on the top window for the
+frame change, in the cell's own task) shows the hover; the cell is described by a short summary, not the tip;
+a transition filed at asOf (the hover's own read) closes the state before it; a bucket the boot seeded reads
+one time in the head, the divider and the boot's row; a mixed window counts every attempt once and says how
+many had no status; the previous kernel's last row filed in the same second as this kernel's start sits UNDER
+the restart row; a row filed after the start sits under the clamped restart row with one restart mark, not a
+row and a divider; the cell's description at focus time, in the focus's own task, carries the state word the
+frame put on the cell, and the landed one its since; a hover after the pinned dialog closed is a tooltip again, not
+a dialog left over; the light theme's head dot and failure line are read from the computed style; the answer under a
+held pointer is waited for by the page's own count of parsed answers, never by a pause; the hover on a narrow window
+is first anchored flush at the right edge, so the measurement after the rows land is against the edge (the reset
+before it is what keeps the rows from wrapping).
 
 Synthetic only: invented bucket labels, a fixed shape, times relative to the run so the same-day clock words
 apply; no real data."""
@@ -60,7 +60,7 @@ sb = load_source("romp_sdk_backend_apih_hover_browser", os.path.join(BIN, "romp_
 
 NOW = int(time.time())
 BOOT = NOW - 600
-BOOT_M = BOOT - (BOOT % 60) - 2     # a boot at :58 of a minute: the second-straddling case the two clocks used to split on
+BOOT_M = BOOT - (BOOT % 60) - 2     # a boot at :58 of a minute: the second-straddling case two clocks would split on
 RESTART = sb.API_HEALTH_RESTART_WHY
 # invented labels in the digest form (12 hex characters), never real material: low-entropy digits, so nothing
 # credential-shaped sits in this file, and every expected string below is built from these, never written out
@@ -136,8 +136,8 @@ PAYLOADS = {
                     buckets={KEY: _bucket(KEY, "thrashing", NOW - 300, WHY, STORM_WINS),
                              OTHER: _bucket(OTHER, "healthy", NOW - 500, None, {"60": _win(11, 0.0, 0.0, 0, 0), "300": _win(11, 0.0, 0.0, 0, 0), "900": _win(11, 0.0, 0.0, 0, 0, complete=False)})},
                     transitions=[_tr(NOW - 500, OTHER, "unknown", "healthy"), _tr(NOW - 300, KEY, "unknown", "thrashing")]),
-    # the box cannot reach the API: every attempt fails at the connection level, so `requests` (attempts WITH a
-    # status) is 0 while noStatus, gaveUp and sessionsRetrying are not; the 5 min window mixes both kinds; the
+    # this machine cannot reach the API: every attempt fails at the connection level, so `requests` (attempts WITH
+    # a status) is 0 while noStatus, gaveUp and sessionsRetrying are not; the 5 min window mixes both kinds; the
     # 15 min window is quiet
     "offline": _base(overall={"state": "unknown", "worstBucket": KEY},
                      buckets={KEY: _bucket(KEY, "unknown", NOW - 200, FEW, {"60": _win(0, None, None, 1, 2, no_status=5),
@@ -154,7 +154,6 @@ PAYLOADS = {
                    transitions=_chain(KEY, [(NOW - 190000, "healthy"), (NOW - 183000, "degraded"), (NOW - 100000, "unknown")])),
     # the bucket had traffic when the previous kernel stopped, so the boot filed its restart row; a boot at :58 of a
     # minute, and nothing since: head since, the restart row's stamp and the pre-boot hold's end are one clock
-    # (review round 2: seeded from the aggregator's own clock, seconds later, the head named the next minute)
     "minute": _base(bootAt=BOOT_M, uptimeS=float(NOW - BOOT_M), overall={"state": "unknown", "worstBucket": KEY},
                     buckets={KEY: _bucket(KEY, "unknown", BOOT_M, FEW, QUIET_WINS)},
                     transitions=[_tr(NOW - 3000, KEY, "unknown", "healthy"), _tr(NOW - 1500, KEY, "healthy", "thrashing"),
@@ -162,22 +161,21 @@ PAYLOADS = {
     # the previous kernel's last read filed a transition 0.2 s before this kernel's start (it drains under SIGTERM
     # while still serving; the manager respawns at once), so the two sit in one second. bootAt is the start to the
     # millisecond and the restart row is seeded at it: the row is the newest, the old row's hold ends at it, no
-    # divider (review round 3: an int boot sat before the old row, which then read as the current state)
+    # divider (an int boot would sit before the old row, which would then read as the current state)
     "inversion": _base(bootAt=BOOT + 0.9, uptimeS=float(NOW - (BOOT + 0.9)), overall={"state": "unknown", "worstBucket": KEY},
                        buckets={KEY: _bucket(KEY, "unknown", BOOT + 0.9, FEW, QUIET_WINS)},
                        transitions=[_tr(NOW - 3000, KEY, "unknown", "healthy"), _tr(NOW - 1500, KEY, "healthy", "thrashing"),
                                     _tr(BOOT + 0.7, KEY, "thrashing", "healthy"), _tr(BOOT + 0.9, KEY, "healthy", "unknown", RESTART)]),
     # the previous kernel filed AFTER this one's start (the two overlapped, or the clock stepped): the backend seeds
-    # the restart row one millisecond past that row and serves that stamp as bootAt (review round 4: the route's own
-    # round(_STARTED, 3) sat before the row, so head and divider could name different minutes), so the old row is the
-    # first pre-boot row, its hold ending at the restart row; one restart, one mark: the restart row above suppresses
-    # the divider at the crossing. uptimeS stays the kernel's own (_STARTED at BOOT + 0.9)
+    # the restart row one millisecond past that row and serves that stamp as bootAt, so the old row is the first
+    # pre-boot row, its hold ending at the restart row; one restart, one mark: the restart row above suppresses the
+    # divider at the crossing. uptimeS stays the kernel's own (_STARTED at BOOT + 0.9)
     "clamped": _base(bootAt=BOOT + 0.951, uptimeS=float(NOW - (BOOT + 0.9)), overall={"state": "unknown", "worstBucket": KEY},
                      buckets={KEY: _bucket(KEY, "unknown", BOOT + 0.951, FEW, QUIET_WINS)},
                      transitions=[_tr(NOW - 3000, KEY, "unknown", "healthy"), _tr(NOW - 1500, KEY, "healthy", "thrashing"),
                                   _tr(BOOT + 0.95, KEY, "thrashing", "healthy"), _tr(BOOT + 0.951, KEY, "healthy", "unknown", RESTART)]),
     # the hover's own read filed a transition, so its t is asOf: the state it closed reads its duration, closed, and
-    # the new state is the one 'so far' (a flag, never a stamp comparison; review round 2 asked for it executed)
+    # the new state is the one 'so far' (a flag, never a stamp comparison)
     "ownread": _base(overall={"state": "thrashing", "worstBucket": KEY},
                      buckets={KEY: _bucket(KEY, "thrashing", NOW, WHY, STORM_WINS)},
                      transitions=[_tr(NOW - 500, KEY, "unknown", "healthy"), _tr(NOW, KEY, "healthy", "thrashing", WHY)]),
@@ -211,7 +209,7 @@ def _dur(s):
 
 
 def _hmd(t):
-    """The section's stamp: HH:MM today, else 'MM-DD HH:MM' (the browser runs on this box's clock and zone)."""
+    """The section's stamp: HH:MM today, else 'MM-DD HH:MM' (the browser runs on this machine's clock and zone)."""
     lt, today = time.localtime(t), time.localtime(NOW)
     hm = _hm(t)
     return hm if (lt.tm_year, lt.tm_yday) == (today.tm_year, today.tm_yday) else time.strftime("%m-%d ", lt) + hm
@@ -252,21 +250,24 @@ const head = () => ev(() => { const h = document.querySelector("#ah-tip .ah-hist
            line: q(".ah-line:not(.ru-tip-reset):not(.ah-err)"), err: q(".ah-err"), wait: !!(h && h.querySelector(".ah-wait")),
            names: Array.from(h ? h.querySelectorAll(".ru-tip-name span:first-child") : []).map((n) => n.textContent) }; });
 const shown = () => ev(() => document.getElementById("ah-tip").style.display === "block");
+// the colours the theme resolves to, read from the computed style of the head's dot and of the failure line
+const dotColor = () => ev(() => getComputedStyle(document.querySelector("#ah-tip .ah-hist .ah-head .ah-dot")).backgroundColor);
+const errColor = () => ev(() => getComputedStyle(document.querySelector("#ah-tip .ah-hist .ah-err")).color);
 const described = () => ev(() => document.getElementById("rail-api").getAttribute("aria-describedby"));
 // the tip's role and modal flag, whether focus sits inside it, and whether it is the centered card
-// #ah-desc is read null-safe so a page without it fails the description assertions alone, not every step
-const mode = () => ev(() => { const t = document.getElementById("ah-tip"), d = document.getElementById("ah-desc"), b = d ? d.getBoundingClientRect() : null;
+// #ah-summary is read null-safe so a page without it fails the description assertions alone, not every step
+const mode = () => ev(() => { const t = document.getElementById("ah-tip"), d = document.getElementById("ah-summary"), b = d ? d.getBoundingClientRect() : null;
   return { role: t.getAttribute("role"), modal: t.getAttribute("aria-modal"),
   focusInside: t.contains(document.activeElement), modalClass: t.classList.contains("ru-modal"), shown: t.style.display === "block",
   described: document.getElementById("rail-api").getAttribute("aria-describedby"), activeIsCell: document.activeElement === document.getElementById("rail-api"),
   descText: d ? d.textContent : null, descBox: b ? [b.width, b.height] : null, descInTree: !!d && document.body.contains(d) }; });
-const descOf = () => ev(() => { const d = document.getElementById("ah-desc"); return d ? d.textContent : null; });
+const descOf = () => ev(() => { const d = document.getElementById("ah-summary"); return d ? d.textContent : null; });
 // the mouseenter and the look at what it painted are ONE task: the read fires on the show, so its answer cannot land
 // before this returns, and the loader state read here is what the user sees before the answer (a separate round trip
-// let the local server answer in between, and the dots were already rows)
+// lets the local server answer in between, and the dots are already rows)
 const enter = () => ev(() => { const el = document.getElementById("rail-api"); el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, clientX: el.getBoundingClientRect().left + 10 }));
   return { wait: !!document.querySelector("#ah-tip .ah-hist .ah-wait"), described: el.getAttribute("aria-describedby"), fetchN: window.__fetchN,
-           rows: document.querySelectorAll("#ah-tip .ah-hist .ah-hrow").length, desc: (document.getElementById("ah-desc") || {}).textContent }; });
+           rows: document.querySelectorAll("#ah-tip .ah-hist .ah-hrow").length, desc: (document.getElementById("ah-summary") || {}).textContent }; });
 const leave = () => ev(() => { document.getElementById("rail-api").dispatchEvent(new MouseEvent("mouseleave")); });
 const waitRows = () => page.waitForFunction(() => document.querySelectorAll("#ah-tip .ah-hist .ah-hrow").length > 0, null, { timeout: 8000 });
 const waitSel = (s) => page.waitForFunction((s) => !!document.querySelector(s), s, { timeout: 8000 });
@@ -279,10 +280,14 @@ const geo = () => ev(() => { const tip = document.getElementById("ah-tip"), t = 
   return { l: t.left, r: t.right, t: t.top, b: t.bottom, h: t.height, cellTop: c.top, iw: window.innerWidth, ih: window.innerHeight,
            rowH: Array.from(document.querySelectorAll("#ah-tip .ah-hist .ah-hrow")).map((n) => n.getBoundingClientRect().height),
            clipped: tip.scrollHeight > tip.clientHeight, maxH: tip.style.maxHeight }; });
-// the reads are counted through a wrapper on the page's fetch; the real fetch still runs, so the count is of
-// reads the server answered. __restoreFetch puts the wrapper back after a step swapped fetch out.
-await ev(() => { const real = window.fetch; window.__fetchN = 0; window.__realFetch = real;
-  window.__restoreFetch = function () { window.fetch = function (u) { if (String(u).indexOf("/api-health") === 0) window.__fetchN++; return real.apply(window, arguments); }; };
+// the reads are counted through a wrapper on the page's fetch; the real fetch still runs. __fetchN counts reads at call
+// time; __doneN counts answers the page has PARSED (its r.json() settled, one microtask before the script files the
+// answer), so a step can wait for an answer to have landed in the script rather than for a fetch to have started.
+// __restoreFetch puts the wrapper back after a step swapped fetch out.
+await ev(() => { const real = window.fetch; window.__fetchN = 0; window.__doneN = 0; window.__realFetch = real;
+  window.__restoreFetch = function () { window.fetch = function (u) { const api = String(u).indexOf("/api-health") === 0; if (api) window.__fetchN++;
+    const p = real.apply(window, arguments);
+    return api ? p.then((r) => { const j = r.json.bind(r); r.json = () => j().then((d) => { window.__doneN++; return d; }); return r; }) : p; }; };
   window.__restoreFetch(); });
 await ev((f) => { window.__rompApiHealth(f); }, frame());
 await step("storm", async () => {
@@ -368,7 +373,7 @@ await step("fail", async () => {
   // 9. a failed read is one loud line in place of the rows: a non-2xx, a rejected fetch, a malformed answer
   await ev(() => { window.fetch = () => Promise.resolve({ ok: false, status: 503 }); });
   await enter(); await waitSel("#ah-tip .ah-err");
-  R.fail503 = { head: await head(), rows: await rows(), desc: await descOf() };
+  R.fail503 = { head: await head(), rows: await rows(), desc: await descOf(), errColor: await errColor() };
   await leave();
   await ev(() => { window.fetch = () => Promise.reject(new Error("Failed to fetch")); });
   await enter(); await page.waitForFunction(() => /Failed to fetch/.test((document.querySelector("#ah-tip .ah-err") || {}).textContent || ""), null, { timeout: 8000 });
@@ -383,6 +388,18 @@ await step("fail", async () => {
   await variant("storm"); await enter(); await waitRows();
   R.recovered = { head: await head(), rows: await rows() };
   await leave();
+});
+await step("theme", async () => {
+  // 9b. the light theme (body.theme-light, which the shell's theme reader toggles): the head's dot for the signal's
+  //     quiet states wears the light rail's dark gray, and the failure line the light error red, both read from the
+  //     COMPUTED style, so a dropped rule shows here and not only in a source pin
+  await ev(() => { document.body.classList.add("theme-light"); });
+  await show("quiet"); await waitRows(); R.lightHealthyDot = { word: (await head()).word, color: await dotColor() }; await leave();
+  await show("stale"); await waitRows(); R.lightUnknownDot = { word: (await head()).word, color: await dotColor() }; await leave();
+  await ev(() => { window.fetch = () => Promise.resolve({ ok: false, status: 503 }); });
+  await enter(); await waitSel("#ah-tip .ah-err"); R.lightErr = await errColor(); await leave();
+  await ev(() => { window.__restoreFetch(); document.body.classList.remove("theme-light"); });
+  await variant("storm");
 });
 await step("race", async () => {
   // 10. two reads in flight (enter, leave, enter): the older answer landing first is dropped, the dots stay until
@@ -416,10 +433,10 @@ await step("order", async () => {
 await step("focus", async () => {
   // 12. keyboard focus shows the hover as the pointer does; blur hides it. The focus and the look at the description
   //     are ONE task: assistive tech reads the description at focus time, and what is there then is what the user
-  //     hears (review round 3: a loading line with no state word). A frame with a distinctive text stands on the cell
-  //     first, so the word the description carries is provably the frame's; frame() is put back after.
+  //     hears. A frame with a distinctive text stands on the cell first, so the word the description carries is
+  //     provably the frame's; frame() is put back after.
   await ev((f) => { window.__rompApiHealth(f); }, frame({ state: "degraded", cls: "429", text: "rate limited · 1 waiting", waiting: 1, since: NOW_PLACEHOLDER }));
-  R.focusDesc0 = await ev(() => { document.getElementById("rail-api").focus(); return (document.getElementById("ah-desc") || {}).textContent; });
+  R.focusDesc0 = await ev(() => { document.getElementById("rail-api").focus(); return (document.getElementById("ah-summary") || {}).textContent; });
   R.focusShown = await shown(); R.focusDescribed = await described(); R.focusMode = await mode();
   await waitRows();
   R.focusDesc = await descOf();
@@ -454,9 +471,9 @@ await step("focus", async () => {
 await step("frameTab", async () => {
   // 15b. the cell's keyboard path on the dashboard, where every pane is an iframe: focus in a pane, Tab onto the cell.
   //      Chromium fires focus on the TOP window for the frame change, in the same task as the cell's focus, so the
-  //      mark is set; the element it recorded is the body (the host is cleared before the event; Chromium 151), not
-  //      the cell, and the hover shows and reads once (review round 2: the mark alone swallowed this path). A scratch
-  //      iframe with an input stands in for the pane, inserted right before the cell so the Tab lands on it; removed after.
+  //      mark is set; the element it recorded is the body (the host is cleared before the event), not the cell, and
+  //      the hover shows and reads once. A scratch iframe with an input stands in for the pane, inserted right before
+  //      the cell so the Tab lands on it; removed after.
   await ev(() => new Promise((res) => { const el = document.getElementById("rail-api"), f = document.createElement("iframe");
     f.id = "lab-pane"; f.style.cssText = "width:1px;height:1px;border:0"; f.srcdoc = "<input id=lab-in>"; f.onload = () => res();
     el.parentNode.insertBefore(f, el); }));
@@ -504,17 +521,26 @@ await step("pin", async () => {
   R.pinAfterHover = { read: (await fetchN()) - n0, mode: await mode(), rows: (await rows()).length, wait: (await head()).wait };
   await page.keyboard.press("Escape");
   R.pinClosed = await mode();
+  // 18b. the hover after the dialog: close() leaves the hidden tip's role alone, so show() must put the tooltip role
+  //      back and drop aria-modal, or a keyboard user's next hover is announced as a modal dialog their focus sits outside
+  //      of. Focus is taken off whatever holds it first (the close's return to the body is a no-op focus() call, and the
+  //      browser moves focus off the hidden tip only at its next rendering update), so the hover starts from the body.
+  await ev(() => { const a = document.activeElement; if (a && a !== document.body && a.blur) a.blur(); });
+  await enter(); await waitRows();
+  R.hoverAfterDialog = await mode();
+  await leave();
   const n1 = await fetchN();
   await ev(() => { document.getElementById("rail-api").click(); });
   R.pinFromHidden = { read: (await fetchN()) - n1, mode: await mode(), wait: (await head()).wait };
   await waitRows();
-  // 19. an answer landing under a held primary pointer waits for the release
+  // 19. an answer landing under a held primary pointer waits for the release. The wait is for the answer to have been
+  //     parsed by the page (__doneN), not for the fetch to have started: a slow answer would otherwise be read before
+  //     it landed, and the release would have nothing to paint
   await ev(() => { document.getElementById("ah-tip").dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true })); });
   await variant("quiet");
-  const n2 = await fetchN();
+  const d0 = await ev(() => window.__doneN);
   await ev((f) => { window.__rompApiHealth(f); }, frame({ seq: 3 }));
-  await page.waitForFunction((n) => window.__fetchN > n, n2, { timeout: 8000 });
-  await pause(150);
+  await page.waitForFunction((n) => window.__doneN > n, d0, { timeout: 8000 });
   R.heldWord = (await head()).word;
   await ev(() => { document.body.dispatchEvent(new PointerEvent("pointerup", { button: 0, bubbles: true })); });
   R.releasedWord = (await head()).word;
@@ -526,10 +552,14 @@ await step("geometry", async () => {
   // 20. the hover measures after a reset and is capped to the room above the rail: at 830 px wide it keeps its
   //     margin and no row wraps; on a 280 px tall window it stays above the rail and clips instead of spilling.
   //     Each size is a FRESH page: the shell lays the rail out once at load, so a resized viewport does not move it.
+  //     On the narrow page the pointer enters near the RIGHT edge, so the first anchor (the loader's narrow tip) sits
+  //     flush at the right margin and the re-render after the rows land is measured against that edge: without the
+  //     reset a fixed element's shrink-to-fit width is taken from where it last sat, and the rows wrap. The first
+  //     anchor's rectangle is recorded so the test can check that premise.
   await enter(); await waitRows();
   R.geoWide = await geo();
   await leave();
-  const fresh = async (width, height) => {
+  const fresh = async (width, height, atEdge) => {
     const p = await browser.newPage({ viewport: { width, height } });
     await p.addInitScript(() => {
       function Fake(url) { this.url = String(url); this.readyState = 0; this.onopen = this.onmessage = this.onclose = this.onerror = null; }
@@ -538,17 +568,20 @@ await step("geometry", async () => {
     await p.goto(cfg.url);
     await p.waitForFunction(() => typeof window.__rompApiHealth === "function", null, { timeout: 20000 });
     await p.evaluate((f) => { window.__rompApiHealth(f); }, frame());
-    await p.evaluate(() => { const el = document.getElementById("rail-api"); el.dispatchEvent(new MouseEvent("mouseenter", { clientX: el.getBoundingClientRect().left + 10 })); });
+    const first = await p.evaluate((atEdge) => { const el = document.getElementById("rail-api"), x = atEdge ? window.innerWidth - 10 : el.getBoundingClientRect().left + 10;
+      el.dispatchEvent(new MouseEvent("mouseenter", { clientX: x })); const t = document.getElementById("ah-tip").getBoundingClientRect();
+      return { x, l: t.left, r: t.right, w: t.width }; }, atEdge);
     await p.waitForFunction(() => document.querySelectorAll("#ah-tip .ah-hist .ah-hrow").length > 0, null, { timeout: 8000 });
     const g = await p.evaluate(() => { const tip = document.getElementById("ah-tip"), t = tip.getBoundingClientRect(), c = document.getElementById("rail-api").getBoundingClientRect();
-      return { l: t.left, r: t.right, t: t.top, b: t.bottom, h: t.height, cellTop: c.top, iw: window.innerWidth, ih: window.innerHeight,
+      return { l: t.left, r: t.right, t: t.top, b: t.bottom, h: t.height, w: t.width, cellTop: c.top, iw: window.innerWidth, ih: window.innerHeight,
                rowH: Array.from(document.querySelectorAll("#ah-tip .ah-hist .ah-hrow")).map((n) => n.getBoundingClientRect().height),
                clipped: tip.scrollHeight > tip.clientHeight, maxH: tip.style.maxHeight }; });
     await p.close();
+    g.first = first;
     return g;
   };
-  R.geo830 = await fresh(830, 600);
-  R.geoShort = await fresh(1200, 280);
+  R.geo830 = await fresh(830, 600, true);
+  R.geoShort = await fresh(1200, 280, false);
 });
 if (cfg.shots) await page.screenshot({ path: cfg.shots });
 fs.writeSync(1, "RESULT:" + JSON.stringify(R) + "\n");
@@ -612,7 +645,7 @@ class ServedHistory(unittest.TestCase):
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         cls.srv.shutdown()
         if p.returncode == 3:
-            raise unittest.SkipTest("no playwright browser on this box: the served hover needs one (CI installs none)")
+            raise unittest.SkipTest("no playwright browser on this machine: the served hover needs one (CI installs none)")
         if p.returncode != 0:
             raise AssertionError("driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
@@ -623,14 +656,14 @@ class ServedHistory(unittest.TestCase):
     def test_the_driver_hit_no_script_error(self):
         self.assertEqual(self.R["err"], {})
         # every page exception counts: a render-path TypeError names no 'api', and a step with no DOM wait after its
-        # read would otherwise pass over it (review round 1)
+        # read would otherwise pass over it
         self.assertEqual(self.R["pageErrors"], [])
 
     def test_the_hover_reads_the_route_once_shows_the_loader_first_and_describes_the_cell(self):
         R = self.R
         self.assertTrue(R["stormWaitFirst"], "the loader's dots stand in until the answer lands")
         self.assertEqual(R["stormFetchN0"], 1, "one read per show, fired on the show")
-        self.assertEqual(R["stormDescribed"], "ah-desc", "described by the short summary, not the tip")
+        self.assertEqual(R["stormDescribed"], "ah-summary", "described by the short summary, not the tip")
         self.assertEqual(R["storm"]["fetchN"], 1)
         self.assertTrue(R["storm"]["shown"])
         self.assertFalse(R["storm"]["head"]["wait"], "the dots go when the rows arrive")
@@ -823,7 +856,7 @@ class ServedHistory(unittest.TestCase):
     def test_focus_shows_the_hover_and_blur_hides_it(self):
         R = self.R
         self.assertTrue(R["focusShown"])
-        self.assertEqual(R["focusDescribed"], "ah-desc")
+        self.assertEqual(R["focusDescribed"], "ah-summary")
         self.assertTrue(R["blurHidden"])
         self.assertIsNone(R["blurDescribed"])
 
@@ -857,16 +890,19 @@ class ServedHistory(unittest.TestCase):
                                 "was set on this path, and it must not swallow the show")
         self.assertNotIn("rail-api", t["winLog"], "the cell was not the active element at the window's event (the body is)")
         self.assertTrue(t["shown"], "the hover shows: the recorded element was not the cell")
-        self.assertEqual(t["described"], "ah-desc")
+        self.assertEqual(t["described"], "ah-summary")
         self.assertEqual(t["read"], 1, "and reads once")
         self.assertGreater(R["frameTabRows"], 3)
 
     def test_the_shown_tip_is_a_tooltip_and_the_pinned_card_the_dialog(self):
         R = self.R
-        for m in (R["storm"]["mode"], R["focusMode"]):
-            self.assertEqual((m["role"], m["modal"], m["modalClass"]), ("tooltip", None, False))
-            self.assertEqual(m["described"], "ah-desc")
+        for m in (R["storm"]["mode"], R["focusMode"], R["hoverAfterDialog"]):
+            self.assertEqual((m["role"], m["modal"], m["modalClass"]), ("tooltip", None, False),
+                             "a tooltip on every show, the hover after a pinned dialog closed included: the close leaves the "
+                             "hidden tip's role alone, so the show must put the tooltip role back and drop aria-modal")
+            self.assertEqual(m["described"], "ah-summary")
             self.assertFalse(m["focusInside"])
+        self.assertTrue(R["hoverAfterDialog"]["shown"])
         m = R["kbMode"]
         self.assertEqual((m["role"], m["modal"], m["modalClass"]), ("dialog", "true", True))
         self.assertTrue(m["focusInside"], "focus moves into the dialog")
@@ -886,8 +922,7 @@ class ServedHistory(unittest.TestCase):
         self.assertLessEqual(max(m["descBox"]), 1.0, "visually hidden: one pixel or less each way")
         self.assertEqual(R["fail503"]["desc"], "Could not read the API history: HTTP 503. Press Enter to open it.")
         # at focus time, in the focus's own task (where assistive tech reads it), the description carries the state
-        # word the frame already put on the cell; the landed one carries the since (review round 3: the loading line
-        # had no state word, and nothing announces the landed text)
+        # word the frame already put on the cell; the landed one carries the since
         self.assertEqual(R["focusDesc0"], "History: rate limited · 1 waiting. Reading the details. Press Enter to open it.")
         self.assertIn("rate limited", R["focusDesc0"], "the frame's own words, before any read")
         self.assertEqual(R["focusDesc"], "History: thrashing since %s. Press Enter to open it." % _hmd(NOW - 300))
@@ -923,10 +958,26 @@ class ServedHistory(unittest.TestCase):
         self.assertEqual(R["heldWord"], "thrashing", "the frame's re-read landed under the held pointer: not painted")
         self.assertEqual(R["releasedWord"], "healthy", "the release paints it")
 
+    def test_the_light_theme_colours_the_quiet_head_dot_and_the_failure_line(self):
+        R = self.R
+        # the ok state's #5D574E on the head's dot for the signal's quiet states (the base gray #9aa4ad is about 1.6:1
+        # on the white tip), and the light error red #B02A1C on the failure line; the dark line keeps #ef6b6f
+        self.assertEqual((R["lightHealthyDot"]["word"], R["lightHealthyDot"]["color"]), ("healthy", "rgb(93, 87, 78)"))
+        self.assertEqual((R["lightUnknownDot"]["word"], R["lightUnknownDot"]["color"]), ("unknown", "rgb(93, 87, 78)"))
+        self.assertEqual(R["lightErr"], "rgb(176, 42, 28)", "the light theme's error-text red")
+        self.assertEqual(R["fail503"]["errColor"], "rgb(239, 107, 111)", "the dark tip's status red")
+
     def test_the_hover_keeps_its_margin_at_830_wide_and_stays_above_the_rail_on_a_short_window(self):
         g = self.R["geo830"]
         self.assertEqual(g["iw"], 830)
-        self.assertLessEqual(g["r"], g["iw"] - 6 + 0.5, "the right margin holds (it used to sit flush at the edge)")
+        # the premise: the pointer entered near the right edge and the loader's tip was first anchored flush at the right
+        # margin, so the measurement after the rows landed was taken against that edge
+        self.assertEqual(g["first"]["x"], 820)
+        self.assertGreaterEqual(g["first"]["r"], g["iw"] - 6 - 0.5, "the first anchor sat at the right margin")
+        self.assertGreater(g["first"]["l"], g["iw"] / 2, "in the right half of the window")
+        self.assertGreater(g["first"]["l"] + g["w"], g["iw"], "the tip's natural width did not fit to the right of where the first "
+                           "anchor sat, so a measurement taken there (no reset) would have been constrained and the rows wrapped")
+        self.assertLessEqual(g["r"], g["iw"] - 6 + 0.5, "the right margin holds")
         self.assertGreaterEqual(g["l"], 5.5)
         self.assertLessEqual(max(g["rowH"]), min(g["rowH"]) * 1.5, "no row wraps: the width was measured after the reset")
         self.assertLessEqual(g["b"], g["cellTop"] - 8 + 0.5)

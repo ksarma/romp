@@ -91,6 +91,111 @@ class RestartReloadRaceTest(unittest.TestCase):
         self.assertIn('"restarting": True, "boot": _BOOT_ID', src)
 
 
+# window.__rompRestart run for real under node's vm module (the shape of tests/test_inline_js_parses.py: the
+# RUNTIME value of the blob, not its source text), with a stub document, a stub fetch and a recording
+# __rompNotify. `scenario` is what the kernel answers POST /restart: refused (502, the manager's refusal in the
+# body) or taken (200). The probe reports after 1.2 s, past the poll's first 500 ms tick.
+_RESTART_PROBE_JS = r"""
+const vm = require('node:vm');
+const blob = require('node:fs').readFileSync(process.argv[2], 'utf8');
+const scenario = process.argv[3];
+const log = { healthz: 0, notices: [], reloads: 0, restarts: 0 };
+function el(id) {
+  const cls = new Set();
+  return { id, tag: '', style: {}, innerHTML: '', children: [], onclick: null, _cls: cls,
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c),
+                 toggle: (c, on) => (on ? cls.add(c) : cls.delete(c)) },
+    appendChild(x) { this.children.push(x); }, remove() {}, addEventListener() {},
+    getAttribute() { return null; }, setAttribute() {} };
+}
+const rail = el('rail-refresh');
+rail.title = 'Restart the romp kernel';
+const byId = { 'rail-refresh': rail };
+const body = el('body');
+body.appendChild = function (x) { this.children.push(x); if (x.id) byId[x.id] = x; };
+const document = { body, getElementById: (id) => byId[id] || null,
+  createElement: (tag) => { const e = el(''); e.tag = tag; return e; }, addEventListener() {} };
+const restartAnswer = scenario === 'refused'
+  ? { ok: false, status: 502, json: () => Promise.resolve({ ok: false, restarting: false, error: 'The restart did not happen: the manager refused (HTTP 401): it does not hold the serve token this kernel sent. Run romp refresh from a shell whose state root (ROMP_STATE_DIR or XDG_STATE_HOME) is the manager\'s.' }) }
+  : { ok: true, status: 200, json: () => Promise.resolve({ ok: true, restarting: true }) };
+const sandbox = { console, setTimeout, clearTimeout, JSON, Math, Date, String, Number, Array, Object, Error, Promise,
+  document, addEventListener() {},
+  localStorage: { getItem: () => null, setItem() {} }, sessionStorage: { getItem: () => null, setItem() {} },
+  location: { reload() { log.reloads++; } },
+  __ROMP_LOADER__: '<i>loader</i>', __ROMP_BOOT__: 'boot-old',
+  __rompNotify: (kind, text) => log.notices.push({ kind, text }),
+  fetch(url) {
+    if (url === '/fleet-restart') return Promise.resolve({ ok: true, json: () => Promise.resolve({ rows: [] }) });
+    if (url === '/healthz') { log.healthz++; return Promise.resolve({ ok: true, headers: { get: () => 'boot-old' } }); }
+    if (url === '/restart') { log.restarts++; return Promise.resolve(restartAnswer); }
+    return Promise.reject(new Error('unexpected fetch ' + url));
+  } };
+sandbox.window = sandbox;
+sandbox.globalThis = sandbox;
+vm.createContext(sandbox);
+vm.runInContext(blob, sandbox);
+rail.onclick();                       // the rail button's click: dims itself, then window.__rompRestart()
+setTimeout(() => {
+  const boot = byId['romp-boot'];
+  console.log(JSON.stringify({ healthz: log.healthz, notices: log.notices, reloads: log.reloads, restarts: log.restarts,
+    bootGone: boot ? boot._cls.has('gone') : null, railPointer: rail.style.pointerEvents, railOpacity: rail.style.opacity,
+    railTitle: rail.title }));
+  process.exit(0);
+}, 1200);
+"""
+
+
+class RestartRefusalProbeTest(unittest.TestCase):
+    """The web shell's Restart discarded the kernel's answer (review round 2, 2026-09-10): a 502 (the manager
+    refused the restart) left the boot splash up for the two-minute backstop and then reloaded onto the same
+    kernel, hiding the dashboard and the bell the whole time. Now a not-ok answer skips the /healthz poll,
+    drops the splash and restores the rail button, which wears the kernel's words as its title until the
+    next click; a 2xx polls as before. The page files NO notice of its own (review round 3, 2026-09-10): the
+    kernel's /restart handler filed the refusal under the refused kind before it answered, and the feed pane
+    mirrors that into the same bell, so a page-side copy of the text made one refused click read as two
+    rows."""
+
+    def _probe(self, scenario):
+        import json
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed on this machine")
+        with tempfile.TemporaryDirectory() as tmp:
+            blob = os.path.join(tmp, "landing-settings.js")
+            probe = os.path.join(tmp, "probe.js")
+            with open(blob, "w") as f:
+                f.write(km._LANDING_SETTINGS_JS)
+            with open(probe, "w") as f:
+                f.write(_RESTART_PROBE_JS)
+            r = subprocess.run([node, probe, blob, scenario], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[:2000])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_a_refused_restart_polls_nothing_drops_the_splash_restores_the_button_and_files_no_notice_of_its_own(self):
+        got = self._probe("refused")
+        self.assertEqual(got["restarts"], 1)
+        self.assertEqual(got["healthz"], 0, "nothing is restarting: no poll for a new boot id")
+        self.assertEqual(got["reloads"], 0)
+        self.assertIs(got["bootGone"], True, "the splash comes down")
+        self.assertEqual((got["railPointer"], got["railOpacity"]), ("", ""), "the rail button is back")
+        self.assertEqual(got["notices"], [], "the kernel's own notice is the one row in the bell, through the feed mirror")
+        self.assertNotIn("__rompNotify('refused'", km._LANDING_SETTINGS_JS, "no page-side copy of the kernel's text")
+        self.assertIn("the manager refused (HTTP 401)", got["railTitle"], "the button shows the refusal: the kernel's words as its title")
+        self.assertIn("Run romp refresh", got["railTitle"], "with the way out")
+
+    def test_a_taken_restart_polls_for_the_new_boot_id_under_the_splash_as_before(self):
+        got = self._probe("taken")
+        self.assertEqual(got["restarts"], 1)
+        self.assertGreaterEqual(got["healthz"], 1, "the poll runs")
+        self.assertEqual(got["reloads"], 0, "the same boot id: no reload yet")
+        self.assertIs(got["bootGone"], False, "the splash stays up while the restart lands")
+        self.assertEqual((got["railPointer"], got["railOpacity"]), ("none", "0.5"), "the button stays dimmed")
+        self.assertEqual(got["railTitle"], "Restart the romp kernel", "its own title")
+        self.assertEqual(got["notices"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
 

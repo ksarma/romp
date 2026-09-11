@@ -75,7 +75,8 @@ class TheGuideSaysSo(unittest.TestCase):
         self.assertIn("the panel says so, keeps your comment, and offers the Raw view with the passage selected",
                       self.paragraph)
         self.assertIn("a comment on text that occurs more than once stays on the occurrence you chose. When the file has "
-                      "changed around that occurrence and the panel can no longer tell which copy the comment meant, its "
+                      "changed around that occurrence, the comment's own record of where it was, which copy it is and the "
+                      "heading above it places it again. When none of those can tell which copy the comment meant, its "
                       "highlight is dashed and the card carries a **passage recurs** tag: the copy shown is a guess, and "
                       "the card says so.", self.paragraph)
         # the overlap clause sits after the guess sentence and before Reveal's, the fold clause after Reveal's

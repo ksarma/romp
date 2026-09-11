@@ -2,8 +2,14 @@
 """The guide's commenting paragraph promises that a comment on text which occurs more than once stays on
 the occurrence you chose (the anchors follow-on, 2026-09-07), says what the panel shows when the file has
 changed around that occurrence and it can no longer tell which copy was meant (a dashed highlight and a
-"passage recurs" tag: the copy shown is a guess; the review's fourth painted state), and the ADR's
-Consequences name the two additive sidecar fields that make it so, `target` and `anchorAt`.
+"passage recurs" tag: the copy shown is a guess; the review's fourth painted state), says what places a
+comment again once the file changes around its occurrence (its position, its copy and the heading above it:
+the tie-break, 2026-09-11, decision 51), and the ADR's Consequences name the additive sidecar fields that
+make it so. The sentence after that one, what a person does about a guessed copy (saving the comment again
+from the right copy adds a new card and the old one keeps its tag), is pinned ONCE, in
+tests/test_guide_files_comments_confirm.py, which also walks it on the real host; this module stops where that
+one starts. The review of the tie-break (2026-09-11) reworded that sentence and both modules had pinned it, so
+one of them was red whichever way the guide read.
 
 This module pins the prose and proves the promise by behaviour: the real host's `uniqueAnchor` and the
 vendored engine's `locateAnchor` run under node on a synthetic text, the way tests/test_file_comments_e2e.py
@@ -85,8 +91,11 @@ class GuideAnchors(unittest.TestCase):
     def test_the_guide_says_a_comment_on_repeated_text_stays_where_it_was_put(self):
         guide = _flat(_read("docs", "guide.md"))
         self.assertIn("a comment on text that occurs more than once stays on the occurrence you chose", guide)
-        # ...and qualifies it with the one case the panel cannot keep it, said in the panel's own terms (the tag's text)
-        self.assertIn("When the file has changed around that occurrence and the panel can no longer tell which copy the "
+        # ...and qualifies it with the one case the panel cannot keep it, said in the panel's own terms (the tag's text).
+        # The pin ends where the guide turns to what the person does about the guess: that sentence is pinned in
+        # tests/test_guide_files_comments_confirm.py alone (see the module docstring).
+        self.assertIn("When the file has changed around that occurrence, the comment's own record of where it was, which "
+                      "copy it is and the heading above it places it again. When none of those can tell which copy the "
                       "comment meant, its highlight is dashed and the card carries a **passage recurs** tag: the copy "
                       "shown is a guess, and the card says so.", guide)
         panel = _read("ui", "webview", "file-comments.ts")
@@ -94,20 +103,24 @@ class GuideAnchors(unittest.TestCase):
 
     def test_the_adr_names_the_additive_fields(self):
         adr = _flat(_read("docs", "adr", "0002-file-comments-in-the-track-changents-sidecar.md"))
-        self.assertIn("Under that rule the sidecar now carries three additive fields on a comment, `target` (a region), "
+        self.assertIn("Under that rule the sidecar now carries six additive fields on a comment: `target` (a region), "
                       "`anchorAt`", adr)
         self.assertIn("the anchors follow-on, 2026-09-07", adr)
         self.assertIn("`changeIds` (the changes the comment is about, by id, the person's own pick; the about follow-on, "
                       "2026-09-10)", adr)
+        self.assertIn("`ordinal`, `copies` and `section` (the copy's index among the anchor's matches and their count, and "
+                      "the heading path above the passage, which place a comment once its position no longer names a copy; "
+                      "the tie-break, 2026-09-11)", adr)
 
     def test_the_fields_the_adr_names_are_optional_fields_of_the_store_comment(self):
         # The names come from the ADR's sentence, not from here: a field the ADR renames or adds is looked up
         # under its new name. "Additive" means optional on the type, whatever line or order the type puts it on.
         adr = _flat(_read("docs", "adr", "0002-file-comments-in-the-track-changents-sidecar.md"))
-        m = re.search(r"three additive fields on a comment, `(\w+)` \([^)]*\), `(\w+)` \([^)]*\) and `(\w+)` \(", adr)
-        self.assertIsNotNone(m, "the ADR's Consequences name the three fields")
+        m = re.search(r"six additive fields on a comment: `(\w+)` \([^)]*\), `(\w+)` \([^)]*\), `(\w+)` \([^)]*\), "
+                      r"and `(\w+)`, `(\w+)` and `(\w+)` \(", adr)
+        self.assertIsNotNone(m, "the ADR's Consequences name the six fields")
         names = m.groups()
-        self.assertEqual(sorted(names), ["anchorAt", "changeIds", "target"])
+        self.assertEqual(sorted(names), ["anchorAt", "changeIds", "copies", "ordinal", "section", "target"])
         model = _read("ui", "webview", "file-comments-model.ts")
         typ = re.search(r"export type StoreComment = \{(.*?)\n\};", model, re.S)
         self.assertIsNotNone(typ, "the store comment type")

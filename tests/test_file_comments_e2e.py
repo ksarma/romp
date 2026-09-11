@@ -409,7 +409,8 @@ def test_a_comment_on_the_second_of_two_identical_lines_keeps_its_place_and_its_
     c = r["store"]["comments"][0]
     assert c["anchorAt"] == second
     assert c["id"] == "%d-%d" % (c["ts"], second)
-    assert set(c) == set(KEEP) | {"anchor", "anchorAt"}
+    assert set(c) == set(KEEP) | {"anchor", "anchorAt", "ordinal", "copies", "section"}
+    assert (c["ordinal"], c["copies"], c["section"]) == (1, 1, "Findings > Day 2"), "the copy fields: 1 of 1 under the heading path (the tie-break, 2026-09-11)"
     assert c["anchor"] != anchor, "not the browser's anchor: 24 characters tied"
     assert c["anchor"] == make_anchor(TWICE, second, second + len("Ship it."), 48), "widened one step, no more"
     assert "2\n\nThe tests" in c["anchor"]["prefix"], "the prefix now reaches into the heading that differs"
@@ -571,7 +572,8 @@ def _passage_comment(world, fp, quote, body, fence=None, hint=True):
     assert anchor["quote"] == quote, "the browser's anchor quotes the source slice as it is"
     r = world.comment(fp, body, fence=fence, anchor=anchor, hint=start if hint else None)
     c = r["store"]["comments"][-1]
-    assert set(c) == set(KEEP) | {"anchor", "anchorAt"}, "the shape of every passage comment: KEEP plus anchor and anchorAt"
+    assert set(c) == set(KEEP) | {"anchor", "anchorAt", "ordinal", "copies", "section"}, "the shape of every passage comment: KEEP plus anchor, anchorAt and the copy fields (the tie-break, 2026-09-11)"
+    assert (c["ordinal"], c["copies"], c["section"]) == (1, 1, "Painted"), "the copy fields: 1 of 1 under the note's one heading (the fixture holds the passage once; the fence's `# trailing comment` is code, not a heading)"
     assert c["anchor"]["quote"] == quote, "the stored quote is the exact source slice"
     assert c["anchor"] == anchor, "unique at 24 characters: stored as the browser sent it"
     assert (c["anchorAt"], c["id"]) == (start, "%d-%d" % (c["ts"], start))
@@ -586,8 +588,8 @@ def _passage_comment(world, fp, quote, body, fence=None, hint=True):
 
 def test_a_passage_comment_on_a_code_line_holding_asterisks_stores_the_exact_source_slice(world):
     """Slice 5, item 2 (a regression guard: green before the slice). A comment saved from the Raw view on
-    `total = a * b * 2` inside a fence keeps its asterisks in the stored quote, the key set is KEEP plus anchor
-    and anchorAt, and the engine hinted by anchorAt lands on the line; the Rendered paint, which used to strip
+    `total = a * b * 2` inside a fence keeps its asterisks in the stored quote, the key set is KEEP plus anchor,
+    anchorAt and the copy fields, and the engine hinted by anchorAt lands on the line; the Rendered paint, which used to strip
     the asterisks as emphasis and find nothing, now reads the quote raw against the code block's text."""
     fp = world.root / "docs" / "note.md"
     fp.write_text(PAINTED)
@@ -606,8 +608,8 @@ def test_a_passage_comment_on_a_code_line_holding_asterisks_stores_the_exact_sou
 
 def test_a_passage_comment_across_two_table_cells_stores_the_slice_with_its_pipe(world):
     """Slice 5, item 8 (a regression guard: green before the slice). A comment saved from the Raw view on
-    `cell one | cell two` keeps the cell delimiter in the stored quote, the key set is KEEP plus anchor and
-    anchorAt, and the engine lands on the row with or without the position; the Rendered paint reads the pipe
+    `cell one | cell two` keeps the cell delimiter in the stored quote, the key set is KEEP plus anchor,
+    anchorAt and the copy fields, and the engine lands on the row with or without the position; the Rendered paint reads the pipe
     as a blank at paint time and marks both cells, the store never strips it."""
     fp = world.root / "docs" / "note.md"
     fp.write_text(PAINTED)
@@ -1199,7 +1201,7 @@ def test_a_region_on_an_embedded_figure_carries_the_embed_anchor_and_src_and_a_s
     r = world.ok("comment", md, {"note": "Label the axes.", "anchor": anchor, "hintOffset": start,
                                  "target": {"kind": "image", "region": dict(REGION), "src": "fig.png"}}, NO_STORE)
     c = r["store"]["comments"][0]
-    assert set(c) == set(KEEP) | {"anchor", "anchorAt", "target"}, "an anchored comment carries its stored position too"
+    assert set(c) == set(KEEP) | {"anchor", "anchorAt", "ordinal", "copies", "section", "target"}, "an anchored comment carries its stored position and copy fields too"
     assert c["anchorAt"] == start
     assert c["anchor"] == anchor, "placed like a passage comment, so every host shows it on the embed line"
     assert list(c["target"]) == ["kind", "region", "hash", "src"]

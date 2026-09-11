@@ -76,11 +76,15 @@ test("upgraded spots wire through setTip — the native title= on them is gone",
   assert.doesNotMatch(FEED, /a\._jauthBadge\.title =/);
   assert.doesNotMatch(FEED, /a\._retryBadge\.title =/);
   // statusline meta badges, the stop button (two lines: label + explanation), composer attach/send
-  assert.match(RENDER, /setTip\(btn, kind === "model" \? "change model \(sends \/model\)"/);
+  // the badge takes its words from metaTip since 2026-09-09 (syncMetaControls swaps in badgeHeldTip while a pick is
+  // held for the session's live work); the wiring is still setTip, and the words still live in render.ts
+  assert.match(RENDER, /setTip\(btn, metaTip\(kind\)\);/);
+  assert.match(RENDER, /function metaTip\(kind: MetaKind\): string \{\s*\n\s*return kind === "model" \? "change model \(sends \/model\)"/);
   assert.match(RENDER, /setTip\(btn, stuck\s*\n\s*\? "Stop retrying\\ninterrupt this thread/);
   assert.match(RENDER, /setTip\(attach, "Attach a file"\)/);
   assert.match(RENDER, /setTip\(sendBtn, "Send \(Enter\)"\)/);
   assert.doesNotMatch(RENDER, /btn\.title = kind === "model"/);
+  assert.doesNotMatch(RENDER, /btn\.title = metaTip/);
   assert.doesNotMatch(RENDER, /btn\.title = stuck/);
   // icon-only buttons keep an accessible name once the title is stripped
   assert.match(RENDER, /attach\.setAttribute\("aria-label", "Attach a file"\)/);

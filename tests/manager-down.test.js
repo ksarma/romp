@@ -65,6 +65,10 @@ function stubbornManager(managerPort, servePort) {
   const bin = path.join(dir, 'bin');
   for (const d of [bin, path.join(dir, 'tmux'), path.join(dir, 'state')]) fs.mkdirSync(d);
   fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  // the manager's write doors take the serve token (writeGate); the stand-in state root carries one,
+  // and h.req presents it on every POST (a synthetic value, never a real token)
+  const token = 'stand-in-token-for-tests';
+  fs.writeFileSync(path.join(dir, 'state', 'serve-token'), token + '\n', { mode: 0o600 });
   const ready = path.join(dir, 'kernel-ready');
   const serve = path.join(dir, 'fake-serve');
   fs.writeFileSync(serve, `#!/bin/sh\nexec "${process.execPath}" -e "process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.env.ROMP_TEST_READY, String(process.pid)); setInterval(() => {}, 1000)"\n`, { mode: 0o755 });
@@ -74,13 +78,15 @@ function stubbornManager(managerPort, servePort) {
     ROMP_SERVE_BIN: serve, ROMP_SHUTDOWN_GRACE_MS: '1000', ROMP_TEST_READY: ready,
   });
   delete env.ROMP_SUPERVISED;
+  delete env.ROMP_SERVE_TOKEN;   // the file above is the token; an inherited env value would outrank it
   const mgr = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'romp-manager'), 'up'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
   const h = { mgr, log: '', pids: new Set() };            // pids: every kernel the manager reported, reaped at cleanup
   mgr.stderr.on('data', (d) => { h.log += d; });
   h.exited = new Promise((resolve) => mgr.on('exit', (code, sig) => resolve({ code, sig })));
   h.sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   h.req = (p, method) => new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port: managerPort, path: p, method, timeout: 2000 }, (res) => {
+    const headers = method === 'GET' ? {} : { 'X-Romp-Token': token };
+    const r = http.request({ host: '127.0.0.1', port: managerPort, path: p, method, timeout: 2000, headers }, (res) => {
       let b = ''; res.on('data', (d) => (b += d)); res.on('end', () => resolve({ code: res.statusCode, body: b }));
     });
     r.on('error', reject); r.on('timeout', () => { r.destroy(); reject(new Error('timeout')); }); r.end();

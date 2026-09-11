@@ -23,9 +23,21 @@
 //   romp down      → `down`        stop every kernel and exit — the UNSUPERVISED half of `romp down`
 //                                  (under the login service bin/romp stops the service instead, or
 //                                  Restart=always / KeepAlive would respawn us within seconds)
-// (`restart [kernel]` (single) also exists for front ends — no romp verb.)
+// (`restart [kernel]` (single) is this client's own verb: no romp verb and no front end dials POST /restart;
+//  the dashboard's Restart posts the KERNEL's /restart, which the kernel forwards here as POST /restart-all.)
+//
+// The control port is loopback-only, and every state-changing door on it (POST /restart-all, /restart,
+// /stop, /ensure) requires the kernel's serve token in an `X-Romp-Token` header: the same 0600 file the
+// kernel gates its own writes with (STATE_ROOT/serve-token, or ROMP_SERVE_TOKEN), read fresh per request
+// so a reminted token is honoured without a manager restart. A request without it, or with a wrong one,
+// is answered 401 with a one-line body and logged with its address and door, never the token; while the
+// manager itself cannot read the token, writes are refused with 503 until the file is back, never let
+// through. GET /status needs none. The `romp` verbs above go through the control client at the bottom,
+// which reads the same file; the kernel and the VS Code extension send the header themselves. Before
+// this gate (2026-09-10) a local process restarted every session by posting to the port.
 
 const http = require('http');
+const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 const os = require('os');
 const path = require('path');
@@ -241,7 +253,7 @@ const QUIET_MAX_DEFER_MS = Number(process.env.ROMP_QUIET_MAX_DEFER_MS) || 15 * 6
 // and then stops the service, and this row lands after it (kernel/kernel.py _recent_restart_reason
 // skips them; any reader that takes only the newest row must do the same). `trigger` names what
 // set the SIGTERM off, so the row is legible on its own:
-//   restart      one kernel, POST /restart (the dashboard button, `romp-manager restart`)
+//   restart      one kernel, POST /restart (`romp-manager restart [kernel]`; the dashboard's Restart arrives as restart-all)
 //   restart-all  every kernel, POST /restart-all (`romp refresh`), at once or at the quiet window
 //   refresh      the stale-manager self-bounce: kernels stopped so the supervisor respawns the new manager
 //   cli-down     a stop while `romp down`'s marker (DOWN_MARKER) is on disk: the CLI asked for it
@@ -463,18 +475,127 @@ let tokenNoticed = false;   // the serve-token read failed → said once
 let drainNoticed = false;   // the kernel answered a drain=1 poll with draining:false → said once per episode
 function resetDrainNotices() { tokenNoticed = false; drainNoticed = false; }
 
-function kernelToken() {
+// One token file, read fresh (a tiny local file): {token}, or {token: '', why} naming the read failure.
+// lstat first: a SYMLINK at the path is refused, dangling or not, never read through (review round 2,
+// 2026-09-10). The kernel's own loader (kernel.py _serve_token_read_or_mint) refuses to start on a linked
+// token path, since a read or a chmod through a link lands on some other file whose bytes and mode are
+// not this gate's; a manager that read through the link would open its doors on that other file's
+// contents while the kernel crash-looped on the same path. No mode check here, on purpose: the kernel
+// ACCEPTS a readable file with a loose mode and tightens it at its next start, so a refusing check here
+// would be the inverse disagreement.
+function readTokenFile(file) {
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) return { token: '', why: `${file}: a symlink` };
+    const f = fs.readFileSync(file, 'utf8').trim();
+    return f ? { token: f } : { token: '', why: `${file}: empty` };
+  } catch (e) { return { token: '', why: `${file}: ${e && e.message}` }; }
+}
+
+// The primary kernel's serve token, read the way the kernel and bin/romp read it: ROMP_SERVE_TOKEN, else
+// the 0600 file under the state root. Fresh per call, so a reminted token is honoured on the next request
+// with no manager restart. Answers {token}, or {token: '', why} naming the read failure; each caller
+// decides what a missing token means for it: kernelToken polls token-less and says so once, the control
+// client below sends no header and says so, the write gate reads it through acceptedTokens.
+function serveToken() {
   const t = (process.env.ROMP_SERVE_TOKEN || '').trim();
-  if (t) return t;
-  const file = path.join(STATE_ROOT, 'serve-token');
-  try { return fs.readFileSync(file, 'utf8').trim(); }
-  catch (e) {
-    if (!tokenNoticed) {
-      tokenNoticed = true;
-      log(`kernel serve token unreadable (${file}: ${e && e.message}) — polling token-less: the busy count still reads, but the kernel will refuse to arm the drain hold`);
-    }
-    return '';
+  if (t) return { token: t };
+  return readTokenFile(path.join(STATE_ROOT, 'serve-token'));
+}
+
+// Every token the write gate accepts, read fresh per request (review round 1, 2026-09-10): the primary
+// root's (serveToken), then each kernels.json profile's own <stateDir>/serve-token. A profile kernel
+// serves with its own root's token (specEnv hands it ROMP_STATE_DIR and the kernel mints or reads the
+// file there) and presents that token when its dashboard's Restart or its converge posts /restart-all
+// here; a gate that compared against the primary alone refused every one of them with 401. One union
+// for every door, not a per-kernel match: `romp-manager restart <id>` runs the control client under the
+// primary's root, and both of the kernel's hops post /restart-all. The stateDir is joined as written,
+// with no ~ expansion, the spelling the kernel itself reads it under. `why` is the primary's read
+// failure when it has one; a profile file that cannot be read drops out of the set.
+function acceptedTokens() {
+  const primary = serveToken();
+  const tokens = primary.token ? [primary.token] : [];
+  for (const spec of loadSpecs(KERNELS_FILE, KERNEL_PORT, CONTROL_PORT).specs) {
+    if (!spec.stateDir) continue;
+    const r = readTokenFile(path.join(spec.stateDir, 'serve-token'));
+    if (r.token) tokens.push(r.token);
   }
+  return { tokens, why: primary.token ? '' : primary.why };
+}
+
+// The primary root's token file, minted here when NOTHING is at the path when the manager starts
+// (review round 1, 2026-09-10). The kernel mints its own at import (kernel.py _serve_token_read_or_mint),
+// but until then, and for a kernel that never gets there (romp-serve exiting before its exec, a python
+// that cannot compile the kernel, a crash loop), the manager held no token and answered every write
+// with 503, so `romp down` could not stop it. The same shape and mode as the kernel's mint: 18 random
+// bytes as base64url, 0600, born whole (written to a temp file and linked onto the path, so no reader
+// ever sees it empty). Only an absent path is minted: a file another starter minted first stays (the
+// link fails EEXIST and the temp is dropped), and a file that is empty, one the manager cannot read
+// (another owner, an unreadable mode, a directory) or a symlink is left alone, since replacing a token
+// strands every client holding it; those are the kernel's to judge under its lock, and the 503 stands
+// until it does (readTokenFile: the 503 covers a file that cannot be read or a symlink; a readable file
+// with a loose mode is accepted as it is, and the kernel tightens it at its next start). ROMP_SERVE_TOKEN
+// set: the env is the token, nothing to mint. Answers {minted, file} or {minted: false, why}.
+function mintServeTokenIfAbsent(root = STATE_ROOT) {
+  if ((process.env.ROMP_SERVE_TOKEN || '').trim()) return { minted: false };
+  const file = path.join(root, 'serve-token');
+  try { fs.lstatSync(file); return { minted: false }; }
+  catch (e) { if (!e || e.code !== 'ENOENT') return { minted: false, why: `${file}: ${e && e.message}` }; }
+  // OUTSIDE the kernel's sweep glob (review round 2, 2026-09-10): the kernel's and the bus's mints sweep
+  // `serve-token.*.tmp` under their lock, and this mint takes no lock, so a temp named that way could be
+  // unlinked mid-mint by a minter racing this start (the link then failed, this mint logged a 503 that
+  // the other minter's file cured moments later). `serve-token-mgr.<pid>.tmp` is not matched by the glob.
+  const tmp = path.join(root, `serve-token-mgr.${process.pid}.tmp`);
+  try {
+    fs.mkdirSync(root, { recursive: true });
+    const fd = fs.openSync(tmp, 'wx', 0o600);
+    try { fs.writeSync(fd, crypto.randomBytes(18).toString('base64url')); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    try { fs.linkSync(tmp, file); }
+    catch (e) {
+      if (e && e.code === 'EEXIST') { fs.unlinkSync(tmp); return { minted: false }; }   // another starter minted first: theirs stands
+      fs.renameSync(tmp, file);                                                          // a filesystem without hard links
+      return { minted: true, file };
+    }
+    fs.unlinkSync(tmp);
+    return { minted: true, file };
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) { /* never made */ }
+    return { minted: false, why: `${file}: ${e && e.message}` };
+  }
+}
+
+function kernelToken() {
+  const r = serveToken();
+  if (r.token) return r.token;
+  if (!tokenNoticed) {
+    tokenNoticed = true;
+    log(`kernel serve token unreadable (${r.why}); polling token-less: the busy count still reads, but the kernel will refuse to arm the drain hold`);
+  }
+  return '';
+}
+
+// The write gate (2026-09-10): every state-changing door requires a serve token in X-Romp-Token, the
+// header form the kernel takes from local daemons, and answers without it the way the kernel does. Pure
+// and exported: `presented` is the header's value (undefined when absent), `have` is acceptedTokens()'s
+// answer ({tokens, why}). 503 when the manager holds no token to compare against (the primary file
+// missing, unreadable, empty or a symlink, and no profile's readable either): the doors stay shut, never open, and
+// the body says what to repair. 401 for a missing or wrong header, one body for both; which of the two
+// it was goes on the manager's log (`why`), not to the caller. Every held token is compared, each in
+// constant time, so the answer's timing says nothing about any token.
+const TOKEN_FILE_HINT = () => path.join(STATE_ROOT, 'serve-token');
+function writeGate(presented, have) {
+  const tokens = (have && Array.isArray(have.tokens) ? have.tokens : []).filter(Boolean);
+  if (!tokens.length) {
+    return { ok: false, code: 503, why: 'the serve token is unavailable',
+             error: `the manager cannot read the serve token (${(have && have.why) || 'no token'}); state-changing requests are refused until it can` };
+  }
+  const p = typeof presented === 'string' ? presented.trim() : '';
+  const error = `serve token required: send it in X-Romp-Token (the serve-token file under the kernel's state root: ${TOKEN_FILE_HINT()} for the primary kernel, its own stateDir for a kernels.json profile)`;
+  if (!p) return { ok: false, code: 401, why: 'no serve token presented', error };
+  const a = Buffer.from(p);
+  let match = false;
+  for (const t of tokens) { const b = Buffer.from(t); if (a.length === b.length && crypto.timingSafeEqual(a, b)) match = true; }
+  if (!match) return { ok: false, code: 401, why: 'the serve token did not match', error };
+  return { ok: true, code: 200 };
 }
 
 function fetchBusy(port, cb, path) {
@@ -932,6 +1053,18 @@ function startManager() {
       try { const ou = new URL(origin); okOrigin = ['127.0.0.1', 'localhost', '::1'].includes(ou.hostname); } catch { okOrigin = false; }
       if (!okOrigin) return json(403, { ok: false, error: 'cross-site origin' });
     }
+    // The write gate (writeGate above): every request that is not a read needs a serve token the manager
+    // holds (acceptedTokens: the primary's, or a kernels.json profile's own), so the doors below (/ensure,
+    // /restart-all, /restart, /stop) are all behind it and a new one cannot be added in front of it. GET
+    // /status stays open (`romp status`, the probes). It runs before the doors' own logging, so a refused
+    // request leaves exactly one line: the address and the door, never the token.
+    if (req.method !== 'GET') {
+      const g = writeGate(req.headers['x-romp-token'], acceptedTokens());
+      if (!g.ok) {
+        log(`refused ${req.method} ${url.pathname} from ${req.socket.remoteAddress || '?'}: ${g.why}`);
+        return json(g.code, { ok: false, error: g.error });
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/status') {
       return json(200, {
         ok: true,
@@ -963,7 +1096,7 @@ function startManager() {
         if (!kernels.has(kid)) return json(404, { ok: false, error: `no kernel '${kid}'` });
         return json(202, { ok: true, deferred: true, coalesced: queueQuietRestart(kid) });
       }
-      clearPendingQuiet();                                       // the dashboard ↻ satisfies a pending deploy in passing
+      clearPendingQuiet();                                       // a single restart satisfies a pending deploy in passing
       return restartKernel(kid) ? json(200, { ok: true, restarted: kid }) : json(404, { ok: false, error: `no kernel '${kid}'` });
     }
     if (req.method === 'POST' && url.pathname === '/stop') {
@@ -976,6 +1109,10 @@ function startManager() {
     json(404, { ok: false, error: 'not found' });
   });
   server.on('error', (e) => { log(`control port :${CONTROL_PORT} unavailable: ${e.message}`); process.exit(1); });
+  // The token before the port opens: a request that lands between the two would meet a 503 for nothing.
+  const mint = mintServeTokenIfAbsent();
+  if (mint.minted) log(`minted the serve token at ${mint.file} (nothing was there); the kernel reads it at its start`);
+  else if (mint.why) log(`could not mint a serve token (${mint.why}); state-changing requests are refused with 503 until the file is readable`);
   server.listen(CONTROL_PORT, HOST, () => {
     log(`up — control :${CONTROL_PORT} · Ctrl+C to stop`);
     const boot = loadSpecs(KERNELS_FILE, KERNEL_PORT, CONTROL_PORT);
@@ -997,9 +1134,57 @@ function control(method, pathname, kernel, params) {
   const u = new URL(`http://${HOST}:${CONTROL_PORT}${pathname}`);
   if (kernel) u.searchParams.set('kernel', kernel);
   for (const [k, v] of Object.entries(params || {})) u.searchParams.set(k, v);
-  const req = http.request(u, { method, timeout: 4000 }, (res) => {
+  // Every write door needs the serve token (writeGate); the read (`status`) does not and carries none.
+  // Read the way the server reads it (serveToken), so this client and the manager it addresses agree on
+  // the file: bin/romp's refresh and down verbs get their header here. In the header, never in argv: a
+  // command line is readable by every account on the machine (bin/romp's curls use --config for the same
+  // reason). A token this client cannot read is said once here; the request still goes out, and the
+  // manager's own refusal, printed below, names the file.
+  const headers = {};
+  const tokenFile = path.join(STATE_ROOT, 'serve-token');
+  const fromEnv = !!(process.env.ROMP_SERVE_TOKEN || '').trim();
+  let sent = null;   // the serveToken() answer for a write: {token} or {token: '', why}
+  if (method !== 'GET') {
+    sent = serveToken();
+    if (sent.token) headers['X-Romp-Token'] = sent.token;
+    else console.error(`romp-manager: the serve token could not be read (${sent.why}); the manager refuses ${pathname} without it`);
+  }
+  // Three exits a caller can tell apart (bin/romp's down step keys on them): 0, the manager took it; 3,
+  // the manager ANSWERED and refused (a 4xx or 5xx: its body is on stdout, and one stderr line names the
+  // door, the status and the way out); 1, no answer (the timeout and the connection error below). A
+  // refusal is not a manager that will leave if waited for, so the caller should not wait for it.
+  // The stderr line carries the remedy (review round 2, 2026-09-10): this client is the one place that
+  // knows whether it sent a token and from where, so `romp refresh`, `romp-manager restart-all` and
+  // `romp-manager restart <kernel>` all say it here; bin/romp's down step composes its own line from
+  // the same facts. 401 with a token sent: the manager does not hold it, so it runs under another state
+  // root (or is another romp's), and the fix is a shell whose state root is the manager's; 401 with the
+  // token from ROMP_SERVE_TOKEN: a stale value, so unset or correct it; 401 with none sent: the file
+  // this client found nothing at, and the way to a token; 503: the manager's own file to repair.
+  const remedy = (code) => {
+    if (code === 401 && sent && !sent.token) {
+      return `it needs the serve token, and this romp found none at ${tokenFile} (${sent.why}). Point ROMP_STATE_DIR at the manager's state root, or set ROMP_SERVE_TOKEN.`;
+    }
+    if (code === 401 && fromEnv) {
+      return 'it does not hold the serve token this romp read from ROMP_SERVE_TOKEN. Unset it in this shell, or set it to the manager\'s token, or check ROMP_MANAGER_PORT.';
+    }
+    if (code === 401) {
+      return `it does not hold the serve token this romp read from ${tokenFile}, so it runs under another state root or belongs to another romp. Run this from a shell whose state root (ROMP_STATE_DIR or XDG_STATE_HOME) is the manager's, or check ROMP_MANAGER_PORT.`;
+    }
+    if (code === 503) {
+      return 'it cannot read its own serve-token file. Make that file a regular 0600 file that you own, under the manager\'s state root, then run this again.';
+    }
+    return '';
+  };
+  const req = http.request(u, { method, timeout: 4000, headers }, (res) => {
     let b = ''; res.on('data', (d) => (b += d));
-    res.on('end', () => { try { process.stdout.write(JSON.stringify(JSON.parse(b), null, 2) + '\n'); } catch (e) { process.stdout.write(b + '\n'); } process.exit(res.statusCode < 400 ? 0 : 1); });
+    res.on('end', () => {
+      if (res.statusCode >= 400) {
+        const fix = remedy(res.statusCode);
+        console.error(`romp-manager: the manager on :${CONTROL_PORT} answered HTTP ${res.statusCode} to ${method} ${pathname}${fix ? ': ' + fix : ''}`);
+      }
+      try { process.stdout.write(JSON.stringify(JSON.parse(b), null, 2) + '\n'); } catch (e) { process.stdout.write(b + '\n'); }
+      process.exit(res.statusCode < 400 ? 0 : 3);
+    });
   });
   req.on('timeout', () => { req.destroy(); console.error(`romp manager did not respond on :${CONTROL_PORT}`); process.exit(1); });
   req.on('error', () => { console.error(`romp manager is not running on :${CONTROL_PORT} — start it with \`romp up\`.`); process.exit(1); });
@@ -1035,7 +1220,7 @@ function ensureUp() {
 // Exported for unit tests (restartGate = the pure storm-cap decision). The CLI dispatch runs only when this
 // file is executed directly, so require()-ing it from a test has no side effects.
 module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp,
-                   kernelToken, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet,
+                   kernelToken, serveToken, readTokenFile, acceptedTokens, mintServeTokenIfAbsent, writeGate, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet,
                    tmuxStartArgv, scopedStartFailure, commandOnPath, TMUX_START_ARGV,
                    placementFromCgroup, tmuxServerPlacement, bareEnsuredLine, TMUX_SERVER_PID_ARGV,
                    withoutOpCredentials, retiredCredentialNames, retiredCredentialMessage, exitLine, auditSigterm,

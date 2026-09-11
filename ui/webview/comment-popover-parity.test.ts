@@ -9,6 +9,9 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
+import { threadBusy, threadStuck } from "./comments";
+import { heldMenuMarks } from "./pick-held";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
@@ -39,6 +42,14 @@ test("the popover's bottom row IS a statusline: the chat's chip anatomy + counti
   assert.ok(tms.includes("fast: th.fast ||"), "the fast badge's source rides the frame");
   // …and the kernel sends both (the element-set gap: Auto and Fast were missing entirely)
   assert.match(KERNEL, /"mode": str\(meta\.get\("mode"\) or ""\), "fast": str\(meta\.get\("fast"\) or ""\),/);
+  // ...and, since review round 6 (2026-09-10), the effort the thread RUNS with the hold beside it: the reg's
+  // effort is what the pick rewrites, so a held pick read from it showed as applied (the executed case below)
+  assert.match(KERNEL, /effort = str\(meta\.get\("effort"\) or ""\) if "effort" in meta else \(\(reg\.get\("effort"\) or ""\) if reg else ""\)/);
+  assert.match(KERNEL, /"effort": effort,/);
+  assert.match(KERNEL, /"pickHeld": pick_held, "effortPending": effort_pending,/);
+  // ...and the fast and mode reloads' flags (review round 7), the same gate as the chat's (_reconnect_pending)
+  assert.match(KERNEL, /"fastPending": fast_pending, "modePending": mode_pending,/);
+  assert.match(KERNEL, /if _reconnect_pending\(meta\):\n\s+events = events \+ \[_reconnecting_event\(meta\)\]/);
   // the popover-local dress is GONE — no .cmt-meta chip skin to drift again; and the row restates
   // the page's base font inside the popover's 12px context (the adopted-context trap)
   const CSSs = CSS;
@@ -157,7 +168,9 @@ test("the badges' COLOR is the chat's too: the rank tints ride the frame (the 20
   // chat's model/effort labels are tinted by server-computed rank colors (st.modelColor/effortColor,
   // metaColor), and the comments frame never carried them, so the popover's stayed plain gray.
   assert.match(KERNEL, /"modelColor": _model_color\(\(reg\.get\("liveModel"\) or reg\.get\("model"\) or ""\) if reg else "",\s*\n\s*cm\.stops_for\(_colormap\(\)\)\),/);
-  assert.match(KERNEL, /"effortColor": _effort_color\(\(reg\.get\("effort"\) or ""\) if reg else "",\s*\n\s*cm\.stops_for\(_colormap\(\)\)\),/);
+  // (the effort tint follows the value the frame ships, the running one on a live thread; review round 6)
+  assert.match(KERNEL, /"effortColor": _effort_color\(effort, cm\.stops_for\(_colormap\(\)\)\),/);
+  assert.match(KERNEL, /"effortTone": _effort_tone\(effort\),/);
   assert.match(RENDER, /modelColor: th\.modelColor, effortColor: th\.effortColor,\n\s*modelTone: \(th as any\)\.modelTone, effortTone: \(th as any\)\.effortTone \} as Status;/);
   // the equality bar (asserted headless over the built bundle, per the follow-up): computed
   // font-family/size/weight AND color/opacity equal chat↔popover for chip, timer, and all badges
@@ -256,3 +269,32 @@ test("the create name input wears no underline at rest (the user 2026-08-25)", (
   assert.match(CSS, /\.cmt-name:focus \{ outline: none; border-bottom-color: var\(--accent\); \}/, "focus still shows the editing affordance");
 });
 
+
+test("executed: threadMetaStatus carries a held pick and the armed reload into the popover's Status (review round 6)", () => {
+  // the popover's badges and menus are the chat's own builders over the Status this returns; without pickHeld
+  // and effortPending on it, syncMetaControls drew no held mark and metaRowMarks check-marked the held pick as
+  // applied on the popover while the chat's menu tagged it as waiting (ui-1). Lifted from render.ts and run.
+  const requireCjs = createRequire(__filename);
+  const start = RENDER.indexOf("function threadMetaStatus(th: CommentThread): Status {");
+  const end = RENDER.indexOf("\n}\n", start) + 3;
+  assert.ok(start > 0 && end > start, "the slice anchors moved; re-anchor");
+  const js = requireCjs("esbuild").transformSync(RENDER.slice(start, end), { loader: "ts" }).code;
+  const threadMetaStatus = new Function("threadStuck", "threadBusy", js + "\nreturn threadMetaStatus;")(threadStuck, threadBusy);
+  const held = { surfaces: ["effort"], subagents: 1, tasks: 0, inflight: true, picked: { effort: "max" } };
+  const th = { tid: "t1", state: "working", effort: "high", mode: "default", fast: "off", model: "Opus 5",
+               pickHeld: held, effortPending: false, msgs: [], status: "open" };
+  const st = threadMetaStatus(th);
+  assert.equal(st.effort, "high", "the frame's effort is the running value");
+  assert.deepEqual(st.pickHeld, held, "the hold rides into the Status the shared builders read");
+  assert.equal(st.effortPending, false);
+  assert.equal(threadMetaStatus({ ...th, pickHeld: null, effortPending: true }).effortPending, true, "the armed reload too");
+  // the fast and mode reloads' flags ride the same way (review round 7): the popover's badge pulses as the chat's does
+  assert.equal(threadMetaStatus({ ...th, pickHeld: null, fastPending: true }).fastPending, true);
+  assert.equal(threadMetaStatus({ ...th, pickHeld: null, modePending: true }).modePending, true);
+  const plain = threadMetaStatus({ ...th, pickHeld: undefined, effortPending: undefined });
+  assert.equal(plain.pickHeld, null, "an older kernel's frame: no hold, never undefined");
+  assert.equal(plain.effortPending, false);
+  assert.equal(plain.fastPending, false); assert.equal(plain.modePending, false);
+  // and the menu marks read from that Status agree with the chat's: the pick checked, the running value tagged
+  assert.deepEqual(heldMenuMarks("effort", st.pickHeld, st.effort), { current: "max", running: "high" });
+});

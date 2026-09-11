@@ -260,7 +260,27 @@ Four properties of the contract shape the design:
   engine as the tie-break when it paints, so a passage that recurs with identical surroundings
   wider than the anchor's context stays on the copy that was chosen while the position names one of
   the copies; a copy the position does not name is painted as a guess, never as the chosen one (the
-  painting paragraph under Commenting from either view).
+  painting paragraph under Commenting from either view). Three more romp-only fields sit beside
+  `anchorAt` since the tie-break (2026-09-11, decision 51): `ordinal: <number>` and `copies: <number>`,
+  the copy's 1-based index among the whole anchor's matches and their count at the moment of the write,
+  and `section: <string>`, the heading path above the passage in a markdown file (the nearest preceding
+  headings from the top level down, each heading's text cut at 200 characters, `SECTION_HEADING_CAP`,
+  joined with " > "; empty for a file without headings or a non-markdown file, the file's kind judged
+  from its name, `.md` or `.markdown`, never from the sidecar's own `path` field). The host writes them
+  at creation (none for a passage whole at more places than the refresh enumerates, where no count is
+  known; the review's third round, 2026-09-11) and refreshes them with the position on every
+  sidecar write for a comment whose position names its copy, and reads them when the whole anchor ties
+  and the position names none of the copies, not even by the quote with one side of its context whole
+  beside it (such a position, the other side edited, names the passage, and the copies whole elsewhere
+  are the other copies; the same round, and the review's fourth, which asks for the one side: a bare
+  occurrence of the quoted words is a stale position like any other): the ordinal's copy while the count of copies is unchanged, unless the stored
+  heading path names other copies and not the ordinal's, when the two fields disagree and the tie is a
+  guess (the same round; decision 51 says why); else, the count changed, the one copy under the stored
+  heading path; confirmed either way; else the nearest copy to the position, a guess. Every reply
+  carries the verdicts (`placed`, per comment id), except that while every change to the text is on
+  record a verdict the recorded changes carry to another place is left to the next write's refresh (the
+  same round), and the panel paints a confirmed copy plainly. The other editors and the CLIs write the
+  whole object back, so the six fields survive them.
 - **A file created through `track-edit` is one insertion** spanning the whole file, and while any
   same-author insertion is pending, that author's further edits inside or beside it coalesce
   into it (`engine.js:204-218`) and do not appear as separate changes. A first look at a file the
@@ -357,7 +377,8 @@ figure's hash, `comment` with a `target` and `retarget`, also fence on the figur
 and a mismatch refuses `figure-changed`. This key is optional where the mtime keys are not: a
 caller has no hash for a figure no reply has hashed yet, so a request naming none is checked on the
 mtime fences alone, and a value that is not a sha256 hex is a caller bug, refused before any disk
-read. A moved fence refuses, and the client re-issues `status`, re-renders, and retries by stable
+read. A moved fence refuses, as does `busy` (another writer held the host's lock past its wait, decision
+49), and the client re-issues `status`, re-renders, and retries by stable
 change or comment id, surfacing a second refusal verbatim. `figure-changed` is not retried, because
 a retry would stamp the new bytes: the person is told to reload and draw the region on the picture
 as it is now. Nothing merges. Two limits on the retry, from the Slice 2 build (2026-09-06):
@@ -376,7 +397,9 @@ containing the phrase "file editing is off", the regex the viewer already matche
 comments: cannot write the comments for the file, dashboard file editing is off on this machine),
 `store-moved`, `file-moved`, `config-moved`, `unsupported-version`, `corrupt`, `unreadable` (with
 the OS error text), `anchor-not-found`, `anchor-ambiguous`, `tracked-inherited`, `no-comment`,
-`too-large`, and from Slice 3 `figure-mismatch` (the anchored passage does not embed the `src` the
+`too-large`, `busy` (the lock on the sidecar, or on `config.json` for `set-tracked`, still held by another
+writer after the host's two-second wait; the client handles it as a moved fence, decision 49), and from
+Slice 3 `figure-mismatch` (the anchored passage does not embed the `src` the
 target names), `no-figure` (a re-place of a src-less anchored target whose passage embeds no
 figure, or several distinct ones) and `figure-changed` (the figure's bytes are not the ones the
 request's `figureHash` says were shown). There is no `no-root` code: a file with no landmark above
@@ -446,15 +469,61 @@ otherwise moves only to the one copy, or the one occurrence of the quote, those 
 carried it to, and only while the sidecar's fingerprint matches the file, since after an
 unrecorded edit the record no longer bounds the shift; nowhere, the engine's scoring places it.
 Every scan the refresh makes (the whole-anchor classification, the quote count, the engine's
-scoring) is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`), a passage
-still at its position costs no scan, and past the budget the remaining comments keep their
-position and stderr says how many, once per write; and a stored comment's anchor is located
-with its `anchorAt` as the hint. Reject writes the sidecar first, then the
+scoring) is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`); a passage
+still at its position costs no scan to place, only the one classification pass per distinct anchor
+that stamping its copy fields takes on every write since the tie-break (below; before it such a
+passage cost nothing), and past the budget the remaining comments keep their position and stderr
+says how many, once per write, and a comment whose stamp the budget refuses keeps the fields it
+has, or none, and stderr says how many of those, once per write; and a stored comment's anchor is
+located with its `anchorAt` as the hint. The comments without the fields are stamped before the
+rest, so a sidecar with more distinct anchors than one write scans gains fields where it has none
+before it refreshes the fields it has (`noteUnstamped` is the note; the review's first round,
+2026-09-11: before it the skip was silent, and a comment past the budget never gained the fields). Every
+reader of a stored anchor in the host (the figure a passage names, a re-place, the reply's `placed`)
+goes through `locateStored` since the tie-break (2026-09-11,
+decision 51): the position first, where the whole anchor still sits at it, and where the quote sits at it
+with one side of its context whole beside it while the whole anchor sits elsewhere (`quoteSitsAt`: the
+passage whose surroundings on the other side were edited, the state the refresh leaves when a recorded
+change edited the chosen copy's context and not its text; the copies whole elsewhere are then the other
+copies, no rule below places the comment on one, and the reply's map carries no verdict for it, so the
+panel paints by its own engine, the nearest whole copy as a guess with its cue, or, with exactly two
+copies, the one still whole, plainly, as since the anchors follow-on; the review's third round,
+2026-09-11, which took the quote alone, and its fourth, which asks for the one side, since a bare
+occurrence of the quoted words is what a stale position lands on by a coincidence of distance);
+then, when the whole anchor sits at several places and the position names none, the copy fields,
+`ordinal` while `copies` equals the count of matches now, unless the stored `section` names other
+matches and not the ordinal's, when the two fields disagree and neither confirms (the same round); else,
+the count changed, the one match under the stored `section`; both confirmed; else the match
+nearest the position, a guess, and a tie with no position refuses `anchor-ambiguous` as before; an
+anchor whole nowhere is the engine's. The reply's map (`placedFor`) carries the verdict of every such
+tie, except that while every change to the text is on record (the text as the sidecar's last writer left
+it) a verdict the recorded changes carry to another copy, or to the quote's own occurrence, is dropped
+for the next write's refresh to settle (`carriedTo`; the same round: before it a status between a
+tracked edit inside the first of two copies under one heading and the next host write confirmed the
+second copy by section, from a position the recorded edit accounted for); the walk over the copies the
+recorded changes can have carried a position to (`reachable`, the refresh's and the map's) reads the
+changes off one sorted index and is charged to the same budget, and a comment whose walk does not fit
+is one the changes say nothing about, its position kept and counted by the refresh, its verdict
+forwarded by the map (the fourth round: uncharged, the walk held a status on ten thousand pending
+changes past the deadline). The refresh stamps the three
+fields on every comment whose position names its copy once its pass is done (`stampCopy`), under the
+same budget, and the decisions' self-check carves them out with `anchorAt`. Creation stamps them alone
+where the whole anchor is at no more places than the refresh enumerates (`REFRESH_COPIES_MAX`): past
+that no count is known and none is written, as the stamping pass already refused to (the same round;
+before it the cap itself was written as the count). Reject writes the sidecar first, then the
 file, and restores the prior sidecar bytes (or removes the sidecar it created, when none existed)
 if the file write fails, the order `track-edit` uses (`cli/track-edit.mjs:108-128`); its file
 write is atomic (temp file and rename in the same directory, through the realpath, mode
 preserved, with a temporary name that does not end in `.json` so the other hosts' scans skip it) and applies the same 2 MB and UTF-8 checks as `_save_file`, refusing `too-large`
-before any write. When `findVaultRoot` finds no landmark above the file (`store-io.mjs:43-54` walks up to forty
+before any write. Every verb that rewrites the sidecar or `config.json` (`comment`, `reply`,
+`resolve`, `retarget`, `accept`, `reject` and `save` the sidecar; `set-tracked` the config) holds
+store-io's lock on the file it rewrites, from its fence stat through its last rename or prune, the
+lock the vendored CLIs hold around their own load-to-rename, and refuses `busy` when the lock is
+still held after two seconds; `log-edit` and `log-send`, which only append to the comments log,
+hold none, since the log is appended an entry at a time by the host script alone and never
+rewritten, so it has no load-to-rename for a second writer to erase; every clock a reply carries
+(`storeMtimeNs`, `configMtimeNs`) is taken before the bytes it describes are read, never at reply
+time (decisions 49 and 50). When `findVaultRoot` finds no landmark above the file (`store-io.mjs:43-54` walks up to forty
 parents and returns null), `status` answers `root: null, storePath: null, trackedBy: null, store:
 null` and the panel still offers Comment on this file and Track changes; `comment` and `set-tracked` then create `.trackchanges/` beside the file
 and call `findVaultRoot` again, which now returns the file's directory, and the CLIs resolve the
@@ -622,7 +691,9 @@ a session runs through Bash, extracts the paths it would write (cp, mv, install 
 `>` and `>>` redirections, `sed -i` and `perl -i` files, a path a python or node inline script
 opens for writing), resolves them against the session's working directory, and refuses when one is
 a tracked text file, naming the file and track-edit; a read never trips it and a command it cannot
-read through passes (decision 47).
+read through passes (decision 47). An eighth patch (2026-09-11) adds the per-sidecar lock to `store-io.mjs` and its take to
+`track-edit`, `track-comment` and `track-reply` (decision 49); written as offerable, it is held back
+from the offer under the standing word of that day to open nothing new upstream.
 
 ### The comments log
 
@@ -778,7 +849,9 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   and reject arrive with the next slice and that the session's own `track-edit` still works; from
   Slice 2 it says to resolve the changes first. Slice 5 lifts the refusal.
 - **Errors** render inside the panel as an error row under the control that asked, in the
-  viewer's `fileview-err` dress; `store-moved`, `file-moved`, and `config-moved` offer Reload. A
+  viewer's `fileview-err` dress; `store-moved`, `file-moved`, `config-moved` and, since the sidecar lock
+  (2026-09-11, decision 49), `busy` offer Reload, in the panel's row and in the viewer's Save error alike, and so
+  does `figure-changed` in the panel's row (Slice 3; never retried). A
   federation `warn` arriving while a request is outstanding is treated as that request's failure
   with the warn's text. An `editing-off` refusal runs the same confirm-then-consent-then-retry
   branch the viewer's Save uses, lifted into a shared helper (see the seam below).
@@ -857,7 +930,41 @@ position the recorded changes carried to no copy or to several, and every positi
 nobody recorded, and an edit inside the chosen copy's context leaves the other copies whole to
 outscore it, so the engine's nearest-wins pick from such a position, or its earliest tie with
 none, is a guess and is shown as one, never as the copy that was chosen (the anchors follow-on's
-review, 2026-09-07; before it the guess was painted as located). The stored position is an offset
+review, 2026-09-07; before it the guess was painted as located; with exactly two copies the one still whole is
+the engine's one best hit, not a tie, and is painted plainly, on the copy the person did not comment: the host
+paragraph and decision 51 say so and why). Since the tie-break (2026-09-11,
+decision 51) the status carries the host's verdict for every such comment (`placed`): a copy the host
+confirmed from the fields stored with the comment (the ordinal's copy while the count of copies is
+unchanged, unless the stored heading path names other copies and not that one; else, the count changed,
+the one copy under the stored heading path; decision 51 has the rules) is the painter's hint in place of
+the stale position (`placedAt`), so it is painted as the chosen one, with no dashed ring and no tag; a
+guessed verdict, or none (a tie whose verdict the recorded changes carry elsewhere has none until the
+next write settles it, and a position the quote sits at with one side of its context whole beside it
+has none, the panel painting that comment by its own engine as before the tie-break; the review's third
+round, 2026-09-11, and its fourth), paints as before, and the card's words end by saying how to confirm the copy. A passage comment's guessed
+copy has its card offer the Reveal those words name (the review's first round, 2026-09-11; before it the card
+offered Reveal only for a passage it could not paint, and named a button it did not have): it switches to Raw and
+scrolls to the guessed copy, and its title says that a comment saved from the copy you mean is placed on that copy
+and this one keeps its tag until you resolve it. A confirmed place the view's text has moved past (the poll's reload paints
+before the fresh status lands; a refused refresh keeps the old status) paints the copy nearest that place as a
+guess whose words name the confirmed place (`confirmedAt`), never plainly on a copy the host did not vouch for
+in the text shown.
+A region comment on an embed line that recurs is in the same state, its rectangle on the figure nearest
+the hint; its words end with the recourse a region has, a new region drawn on the figure meant, with a
+mouse (Reveal for a region scrolls to its picture, never to Raw, and Re-place keeps the anchor and its
+fields), and its card offers no Reveal (the review's second round, 2026-09-11).
+Those are the words of a view that paints the copy: with the editor up (Slice 5) no highlight of ours is
+painted and the card offers neither Reveal nor the composer, so a guessed card's words say only that the
+copy is a guess and name the way there first, leave edit mode, then reveal it and save again from the
+right copy (`UNSURE_IN_EDITOR`, `PASSAGE_CONFIRM_AFTER_EDIT`; a region's, leave edit mode, then draw a
+new region in the view that shows the image, `REGION_CONFIRM_AFTER_EDIT`), a passage's save line
+standing under them as in the read view; a region whose picture the view does not show (Raw) is told
+which view has it (`REGION_CONFIRM_UNSEEN`); and a pictured region's card on a coarse pointer, which
+offers no Re-place, ends with the pictured view's words less the sentence about Re-place
+(`REGION_CONFIRM_TOUCH`). Before it the card in the editor named a Reveal and a save it did not offer,
+the Raw card said to draw on a figure the view did not show, and the phone's card named a Re-place it
+did not have (the review's third round, 2026-09-11, and the sweep after it).
+The stored position is an offset
 into the text the host read, which keeps a leading UTF-8 BOM the fetch strips from the viewer's
 text, so the reply says whether it does (`bom`) and the panel maps the position into the view's
 coordinates by it (`viewAt`) before the engine takes it as the hint and before the copy is
@@ -1232,7 +1339,14 @@ under the track's clipped cards and drew its one rule under the fold, above Send
 the top of the text, and the reload's loader and the fold that says why a painted change has no card were among them.
 Every card is absolutely positioned at its mark's top in the body's content, less the header's height the track begins
 under: a comment highlight, a framed figure, a region rectangle on a picture or a PDF page, a change mark. Cards are
-laid by that top (ties by the list's order) and each takes the larger of it and the previous card's bottom plus the
+laid by that top (a tie in the list's order by the cards' own fields since 2026-09-10: a change card before a comment
+card, two changes by position then time, two comments by time, the key last, and never by the order the pass was given
+the cards in, so a comment about a change lays after the change at every pass, but for a tied pair above a focus with
+room for the comment but not for both, where the change, first of the pair, is the one laid below the focus and the
+comment holds the start (`card-layout.ts`; the focus follow-on, below); as first built, by that order, which is the
+model's after a render and the last placement's after any other pass, so under a focus each pass reversed a comment
+card and a change card whose marks shared a line, and every card below moved by their height difference: the Slice 4
+review of `plans/markdown-viewer.md`, round 16) and each takes the larger of it and the previous card's bottom plus the
 gap, so cards never overlap and, without a focus, only ever move down from their marks (with one — the card the person
 last acted on, which holds its mark — the cards above it move up, past their own marks where they must: the focus
 follow-on, 2026-09-08, below); a pushed card draws a dashed leader up the gutter to its mark's height, and a card the
@@ -1584,7 +1698,8 @@ copy, and only while the sidecar's fingerprint says no unrecorded edit touched t
 nowhere in whole is placed by the engine's scoring under `REFRESH_SCAN_BUDGET`, past which the rest keep
 their position and stderr says how many, so no count of comments holds a write past the kernel's deadline;
 every scan (the whole-anchor classification, the quote count, the engine's) is charged to that one
-budget per write, and a passage still at its position costs none. The panel passes a card's `anchorAt` to the
+budget per write, and a passage still at its position costs none to place, one classification pass per
+distinct anchor for its copy fields on every write since the tie-break (below). The panel passes a card's `anchorAt` to the
 engine as the tie-break when it paints (the model carries the field), so the highlight stays on the
 copy that was chosen even where the anchor alone cannot tell, while the position names a tied copy;
 where it names none, or the comment has no position, the copy the engine returns is a guess, and
@@ -1614,7 +1729,44 @@ tie told apart at 48, and a tie past the cap whose positions follow a tracked in
 words; a copy the position names and a unique passage paint plainly) and `-region-tied` (the region
 composer's tied and elsewhere pairs); and `tools/file-review-plan-anchors-states.test.mjs`, which pins
 the painting paragraph's four states, this note's guessed-copy clause and the Raw criterion's two
-outcomes against the panel and the host.
+outcomes against the panel and the host. The tie-break (2026-09-11, decision 51) closes the case the
+refresh leaves open: after an edit nobody recorded, the position names no copy and the changes vouch
+for nothing, so the copy nearest the stale position was painted as a guess for good. The host now
+writes `ordinal`, `copies` and `section` beside the position (`stampCopy`, at creation and with every
+refresh) and breaks the tie by them (`locateStored`, the one reader of a stored anchor): the ordinal's
+copy while the count of copies is unchanged, confirmed, unless the stored heading path names other
+copies and not the ordinal's, when the two fields disagree and the tie is a guess (the review's third
+round, 2026-09-11); else, the count changed, the one copy under the stored heading path,
+confirmed; else the nearest, a guess, whose words on the card end with "Reveal it and save again from
+the right copy to confirm." and whose card offers that Reveal (the review's first round, 2026-09-11).
+That is a passage comment's card: a region comment whose embed line ties is guessed by the same rules,
+and since Reveal for a region scrolls to its picture, never to Raw, and Re-place keeps the anchor, its
+position and its fields, its words end with the recourse a region has, a new region drawn on the figure
+meant, with a mouse, and its card offers no Reveal (the review's second round, 2026-09-11; decision 51
+says why). Both are the read view's card: with the editor up the words say only that the copy is a
+guess and name the way there first, leave edit mode, then reveal it and save again from the right copy
+(a region's: then draw a new region in the view that shows the image), and the card offers no Reveal; in
+Raw a region's words name the view that shows its picture, and on a coarse pointer they leave out the
+sentence about the Re-place the card lacks (the review's third round, 2026-09-11, and the sweep after
+it). A position the quote sits at with one side of its context whole beside it, the other side edited,
+names the passage before any rule runs, and the copies whole elsewhere are the other copies, never placed
+on (the same round, whose test took the quote alone, and the review's fourth, which asks for the one side;
+before the third a tracked edit inside one of two copies under one heading had the section rule confirm
+the other).
+Tests: `tools/file-comments-host-tiebreak.test.mjs` (the section helper,
+creation, the refresh, the rules in order, a read that rewrites nothing, the decisions' carve-out),
+`ui/webview/file-comments-tiebreak.test.ts` (the confirmed and the guessed paint),
+`ui/webview/file-comments-tiebreak-browser.test.ts` (Chromium and Firefox, Rendered and Raw: a raw
+insertion above, the status refreshed, the highlight on the right copy with no tag) and
+`tools/file-review-plan-tiebreak.test.mjs`, which pins this note, decision 51, the contract, the ADR
+and the guide against the host, the panel and the model; and from the review's first round (2026-09-11)
+`tools/file-comments-host-tiebreak-review.test.mjs`, `ui/webview/file-comments-tiebreak-recourse.test.ts`,
+`tests/test_guide_files_comments_confirm.py` and `tools/file-review-plan-tiebreak-review.test.mjs`, and from
+its second `tools/file-comments-host-tiebreak-review-2.test.mjs`, `ui/webview/file-comments-tiebreak-region.test.ts`,
+`tools/file-review-plan-tiebreak-review-2.test.mjs` and `tools/file-review-plan-tiebreak-review-3.test.mjs`, and from
+its third `tools/file-comments-host-tiebreak-review-3.test.mjs`, `ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts`,
+`ui/webview/file-comments-tiebreak-shown.test.ts`, `ui/webview/file-comments-tiebreak-touch.test.ts` and
+`tools/file-review-plan-tiebreak-review-4.test.mjs` (the Tests section says what each drives).
 
 The todo-file follow-on (2026-09-07): after the end-to-end walk the user asked that the link between a
 user todo and its file be structured, not a path in the detail's free text, and that any Send on the
@@ -1885,9 +2037,11 @@ the panel's slot anchored over the change's span in the current text, the presel
 (`aboutOption`, `input[data-opt="about"]`, "about this change"), and Save posts `changeIds: [id]` beside the anchor; a
 deletion, whose text is not in the file, takes the comment by id alone, the reference row saying "About the change …"
 and, in one line, that the comment is laid at the change's point (`markTop`'s fallback lays an anchorless comment's card
-level with the first pending change it names) or, in the list layout, where no card is laid at any point, that the comment
-names the change instead of a passage (the review's second round, 2026-09-10). For a spanned change, an insertion or a
-substitution, the card offers
+level with the first pending change it names, and after that change's card, since a tie on the top lays in the list's
+order, but for a tied pair above a focus with room for the comment but not for both, where the change is the one laid
+below the focus and the comment holds the start: the margin-layout record above) or, in the list layout, where no card
+is laid at any point, that the comment names the change instead of a passage (the review's second round, 2026-09-10).
+For a spanned change, an insertion or a substitution, the card offers
 Comment on this change only while the view carries the change's text (`spanCarried`: the view's bytes are the status's,
 whose offsets place the span (`textCurrent`); there is a text to cut it from (`indexedText`: the view's, or while the
 editor is up the file as the editor loaded it, never the buffer); and the view shows text at all, not the picture of a
@@ -2094,8 +2248,14 @@ the posture is unchanged in kind. `fileComments` is issuable from any authentica
 before any content check; the server-side gate is the enforcement and the UI's checks are
 convenience. The host script runs only on the owning kernel, on paths resolved by the kernel (and, from
 Slice 3, on the figure paths the next paragraph describes, the one class of path it resolves
-itself), and writes only the sidecar, the comments log, `config.json`, and (on reject or save) the
-commented file. The mtime fences refuse and never merge. Both ops route by `sid` to the owning
+itself), and writes only the sidecar, the comments log, `config.json`, (on reject or save) the
+commented file, and, for the length of one write, the lock beside the sidecar or the config
+(`<name>.lock`, decision 49), created with O_EXCL, which no link can redirect, and, for the few calls of a
+stale lock's break, the claim its waiters serialize on beside that lock (`<name>.lock.break`, created the same
+way; decision 49). Those two names, and the one `made-dir` line a writer that made the folder appends to
+another writer's lock or claim when it leaves first, are everything the lock leaves under `.trackchanges/`; a
+link or another non-file at the lock's name, or at the claim's while a stale lock stands, refuses the write as
+`unreadable`, never followed and never removed. The mtime fences refuse and never merge. Both ops route by `sid` to the owning
 kernel over the existing federation splice; nothing new is exempt from `_authorize`, and the
 panel's verdict rides the authenticated `/defaults` payload rather than `/version`. Nothing under
 `.trackchanges/` is read or written through a symbolic link: the sidecar, the comments log and
@@ -2195,7 +2355,14 @@ slice, pinned against the code by `ui/webview/file-review-posture.test.ts`:
 
 - **Two writers on one sidecar** (agent CLIs and the host script). Mitigation: one
   load-mutate-write per verb, mtime fences, refuse-and-reload, retry by stable id while the change
-  still reads as shown (the id-less verbs stop and re-read). The Obsidian
+  still reads as shown (the id-less verbs stop and re-read), and since 2026-09-11 one lock per
+  sidecar, shared with the CLIs, that serializes the writers (decision 49); the fences catch the
+  stale copy, the lock the concurrent writer.
+  Residual (decision 49): a lock names its writer's pid namespace only when that is not the initial one, and a pid is
+  judged only from the namespace that stamped it, so the lock serializes the writers of one machine; a lock written
+  from another machine over a shared filesystem is judged as if its pid were this machine's, dead when no process here
+  has the number, else by its stamp's age.
+  The Obsidian
   host spends several hundred lines on this race; the fence-plus-retry shape is the smaller
   alternative. The comments log has one writer, the host script, appending.
 - **Rendered markdown versus offsets.** Mitigation: Raw is exact; Rendered maps through the
@@ -2349,7 +2516,86 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   paragraph's four states and the follow-on note's guessed-copy clause against the panel (`copyUnsure`,
   the dashed ring on a located mark, the tag and the card's words), the Raw criterion's two outcomes
   against the host's `locateExact` on the Raw fixture and the panel's follow and Save, and the webview
-  modules that drive the painted states against the tree. `tools/file-review-plan-attribution.test.mjs` holds the margin-layout note to the
+  modules that drive the painted states against the tree. `tools/file-review-plan-tiebreak.test.mjs` pins
+  decision 51 and the tie-break's sentences here against the host (`locateStored`, `stampCopy`, the
+  fields), the panel (`placedAt`, the words), the model, the ADR's six fields and the guide's sentence,
+  and the tie-break modules against the tree. `tools/file-review-plan-tiebreak-review.test.mjs` holds the
+  tie-break review's two corrections to the record against the host: a passage still at its position costs
+  its copy fields one classification pass per distinct anchor on every write, charged to the budget, and
+  past it keeps the fields it has while stderr says how many, once per write (the stamping pass of
+  `refreshAnchorAts`, `noteUnstamped`, `fullMatches`'s memo), and a tie with no position is settled by the
+  fields before it is refused (`locateStored`). From that review's first round (2026-09-11):
+  `tools/file-comments-host-tiebreak-review.test.mjs` drives the real host as a child process over the round's
+  findings on it: the heading path read as the viewer renders the file (CRLF line ends, a leading BOM, a
+  front-matter block by the viewer's own test, each heading's text cut at `SECTION_HEADING_CAP`), the file's
+  kind judged from its name and never the sidecar's `path` field, the nearest fallback read off the enumerated
+  matches (a status over hundreds of stale tied comments inside the kernel's deadline), the stamping pass's
+  order and its stderr note, the engine-placed 1-of-1 stamp and `placed` on every write verb's reply;
+  `ui/webview/file-comments-tiebreak-recourse.test.ts` drives the panel over the tie-break stand-in: a guessed
+  copy's card offers the Reveal its words name, a confirmed copy's and a unique passage's offer none, and a
+  confirmed place the view's text moved past paints the nearest copy as a guess whose words name that place,
+  through the poll's path to that state; and `tests/test_guide_files_comments_confirm.py` holds the guide's
+  sentence on saving again (a new card on the right copy, the old one keeping its tag until resolved) to the
+  panel and walks it on the real host. From its second round, `tools/file-review-plan-tiebreak-review-2.test.mjs`
+  holds the record's account of the first round to the code: the stamp's note (`noteUnstamped`), the tied
+  CLI comment no host write stamps while its tie holds (`refreshAnchorAts`, on the real host), the heading
+  cap and the file's kind from its name, the guessed card's Reveal and the confirmed place the view moved
+  past, the guide's sentences in the Docs section, and the first round's modules against the tree.
+  From the same round, `tools/file-comments-host-tiebreak-review-2.test.mjs` drives the real host as a child
+  process, or its exported helpers, over the round's findings on the host: a scan the budget cut serves no
+  caller without a budget (`fullMatches`, so `passageFigure` and `doRetarget` read no null from
+  `locateStored`), the heading and front-matter regexes take a whitespace run without quadratic backtracking,
+  a whole-nowhere anchor under a budget is answered unplaced after the classification pass alone (`placedFor`
+  spends nothing on a verdict it drops), the refresh returns before judging a null store, `stampCopy` keeps
+  the fields of a comment carried to the quote's other occurrence, and `markdownOf` leaves an unjudged store's
+  heading path as it is, with its note once per process. `ui/webview/file-comments-tiebreak-region.test.ts`
+  drives both card kinds over the rendered stand-in and a Raw body: a region on the second of two embeds whose
+  title an unrecorded write edited has its rectangle on the guessed figure and the tag, its words end with the
+  region's recourse (a new region, with a mouse; what Re-place does instead), and its card offers Reply,
+  Resolve and Re-place on a pointer that draws, Reply and Resolve on a coarse one, and no Reveal in either
+  view; a passage comment on the same line, guessed, carries the words that ask for the save and a line under
+  them saying what the save does (the Reveal's title ends with the same words, and Reveal switches to Raw at
+  the guessed copy), and a passage whose position names its copy carries neither. On the coarse pointer the
+  words are the pictured view's less the sentence about the Re-place the card lacks (`REGION_CONFIRM_TOUCH`,
+  mirrored from the panel as `REGION_CONFIRM` is; the sweep after the third round, 2026-09-11).
+  `tools/file-review-plan-tiebreak-review-3.test.mjs` holds the record's account of the second round (the
+  region card's words and its missing Reveal, the passage card's line, the round's modules) to the panel
+  (`copyUnsureWords`, `REGION_CONFIRM`, `renderCard`, `reveal`), the host (`doRetarget`) and the tree. The
+  third round wrote it for the second's account; its own account is held below. From that third round
+  (2026-09-11), `tools/file-comments-host-tiebreak-review-3.test.mjs` drives the real host as a child process, or
+  its exported readers, over the round's findings on the host: a comment the refresh carried to the quote's own
+  occurrence, one side of its context still beside it, answers the position and the reply carries no verdict
+  for it (`locateStored`, `quoteSitsAt`, `placedFor`); a verdict the recorded changes carry elsewhere is dropped while every change is on record and
+  one they carry to the same copy stands (`carriedTo`); the ordinal yields to a stored heading path that names
+  other copies and not its own, while a heading renamed or deleted above the copies leaves it confirmed;
+  creation writes no copy fields for a passage whole at more places than `REFRESH_COPIES_MAX`, and a later
+  write adds none; a front-matter block closes on `---` alone, so a heading in a block closed only by `...` is
+  the passage's path; and a status on `REFRESH_COPIES_MAX` copies with two thousand tied comments answers
+  inside the kernel's deadline (`copiesUnder`, `nearestOf`). `ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts`
+  drives the panel's half of that state, over the tie-break stand-in and over the real host's reply: with no entry
+  the panel paints the nearest whole copy in the dashed cue with the stored position's words and nothing at the
+  quote, after a tracked edit inside the chosen copy's context and after a raw edit of the surroundings alone,
+  and an entry the host declines to forward would close nothing, since the panel paints no confirmed copy from
+  an offset the whole anchor is not at. `ui/webview/file-comments-tiebreak-shown.test.ts`
+  drives the words for what the render shows, over the recourse module's stand-in with a viewer that flips
+  into edit mode as `enterEdit` does: with the editor up a guessed passage card names the way there (leave
+  edit mode, then reveal it and save again) and offers no Reveal, the save's line under the words, and the
+  read view's words and Reveal return when the edit ends; a comment with no verdict, one whose confirmed
+  place the view moved past and one with no position wear the same words while editing, and each its own
+  after; a confirmed copy and a unique passage carry no tag and no note in the editor; and in Raw a region
+  on the second of two embeds after an unrecorded title edit has the embed line as its guess and words that
+  name the view showing the image, not a figure Raw lacks or the Re-place it does not offer, the editor's
+  words naming the way there first. `ui/webview/file-comments-tiebreak-touch.test.ts` drives the same region
+  on a coarse pointer with the picture in view: the words leave out the sentence about the Re-place the card
+  lacks and end with what drawing takes, the fine pointer's card names the Re-place it offers, word for
+  word, Raw's words are the same on either pointer, and the words name Re-place exactly when the card has
+  the button. `tools/file-review-plan-tiebreak-review-4.test.mjs` holds the record's account of the third
+  round (decision 51, the contract, the host and painting paragraphs, the note) to the host
+  (`locateStored`'s order with the position the quote names with one side of its context and the yield,
+  `placedFor`'s recorded window and the budgeted walk, `buildComment`'s cap, the front-matter reader), the
+  panel (`copyUnsureWords` and its words) and the tree, and drives the yield and that position on synthetic
+  markdown.
+  `tools/file-review-plan-attribution.test.mjs` holds the margin-layout note to the
   record: the ask as the user made it, with its hedges, and the layout as the build's reading of
   it, awaiting the user's word (a review of the follow-on found the note had folded the build's
   design into the ask, 2026-09-07); `ui/webview/styles-fc-margin-attribution.test.ts` holds each sheet's
@@ -2787,6 +3033,128 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   to one another; `tests/test_guide_files_bash_guard.py` holds the guide's Track changes sentence on the refusal
   to the hook's grammar.
 
+- The sidecar lock and the clocks (2026-09-11, decisions 49 and 50): `tools/file-comments-host-store-lock.test.mjs`
+  (the host's `comment` and the real `track-reply` against a writer mid-write, the `busy` refusal and the CLIs' one
+  line with nothing written, a dead writer's lock broken, and `withStoreLock` itself: the stamp, the release on
+  return and on throw, the folder made for the lock and taken away, a non-lock at its name refused);
+  `tools/file-comments-host-race.test.mjs` (a `track-edit` inside a reject's write through the
+  `FILE_COMMENTS_TEST_PAUSE_MS` seam: both land; the seam is read in one place, inert when unset, never set by the
+  kernel); `tools/file-comments-host-clocks.test.mjs` (a newer sidecar and a newer config landed right after the
+  first read, the read-back after a comment, a prune answering null with a null clock, and the source: every
+  reader clocks first and the reply stats nothing); `tools/vendor-patches.test.mjs` (P8: the three CLIs' refusal
+  under a held lock, the release on a failure, no folder left by a refused first comment);
+  `ui/webview/file-comments-changes-review2.test.ts` (Accept refused `busy`: one retry by id with the fresh fence,
+  the row verbatim with Reload on a second; Accept all refused `busy`: re-read, nothing decided);
+  `tools/file-review-plan-sidecar.test.mjs` (decisions 49 and 50, the host paragraph, the codes list, the
+  Vendoring sentence, this bullet and the ADR held to the source and the tree);
+  `tools/file-review-plan-lock-verbs.test.mjs` (the host paragraph's lock sentence held to the host's verb
+  table: the eight verbs route through the lock, `status`, `log-edit` and `log-send` take none, the log is
+  appended an entry at a time and never rewritten, and nothing vendored names it).
+  From the slice's review (2026-09-11; the first round's commit added six modules and named one here, found in the
+  second round): `tools/store-io-lock.test.mjs` (the break of a stale lock has one winner: real writers racing to
+  one instant on a dead pid's lock, or on a stamp past the bound, never hold together and every one writes; a live
+  breaker's claim, `<sidecar>.lock.break`, excludes every other breaker and a dead breaker's claim is removed; a
+  holder broken while alive leaves the breaker's lock alone at release, so a third writer waits for the breaker; a
+  stamp write that fails leaves no lock and no folder; two first writes on a fresh root leave no `.trackchanges/`
+  behind, the folder handed over by the `made-dir` line and taken away by the last one out; a lock the process
+  cannot read refused naming the lock and the OS error); `tools/file-comments-host-config-lock.test.mjs`
+  (`set-tracked` against a held `config.json.lock`: the wait, then `config-moved` from the holder's write and the
+  retry landing both entries, or the landing after a release with nothing written; `busy` past the wait naming the
+  root's tracked list, nothing written and the lock left; a comment on the same file landing under the sidecar's
+  own lock; two hosts toggling two files under one root in a loop, never both ok with an entry missing);
+  `tools/file-comments-host-landmark-race.test.mjs` (two first writes on one loose file, in both orderings the
+  race has and in a two-process loop: the second meets `store-moved` or `config-moved`, never `unreadable`, and
+  the retry lands both; a directory at the landmark's name is built over, a link to nothing is not);
+  `tools/file-comments-host-read-under-lock.test.mjs` (a comment sent while a `track-edit` has renamed its sidecar
+  and not yet written the file waits and is placed in the text the edit left, a whole-file comment carrying the
+  edited file's clock and fingerprint); `tools/track-comment-race.test.mjs` (six real `track-comment` processes on
+  one file at one instant, the first round on a root with no `.trackchanges/` yet: every comment lands and the
+  folder holds the sidecar alone; three comments and three replies to one earlier comment at once; the source:
+  the save inside the lock); `tests/test_kernel_file_comments_host_env.py` (the kernel hands the host its environment
+  minus `TRACKCHANGES_ROOT` and every `FILE_COMMENTS_*` variable, so a pause seam exported in the kernel's shell
+  never reaches a reject or a save: against the function, a stub host and the real host);
+  `ui/webview/file-comments-save-busy.test.ts` (the editor's Save through the panel refused `busy`: one status
+  re-read and one retry with the fresh fence, the success applied as the status; no retry on a second `busy`, the
+  refusal handed to the viewer with its code and the host's words; no retry either when the re-read shows other
+  records, the refusal handed on under the same code with the head's row's words, `MOVED_UNDER_EDIT`,
+  `CHANGES_MOVED_UNDER_EDIT` or `CHANGES_UNREAD_UNDER_EDIT`, since a retry could only refuse);
+  `ui/webview/file-comments-save-busy-viewer.test.ts` (the viewer's half at the real `openFileView`: a second `busy`
+  holds the host's words in the bar with Reload file, Save re-armed and the buffer kept, and Reload asks before it
+  re-opens the file); `ui/webview/file-comments.test.ts` gains the `MOVED` literal with `busy` and the save path's retry line;
+  `ui/webview/file-view.test.ts` anchors the viewer's failed arm on its four-code closing line and asserts the
+  anchor is found exactly once; `tools/file-comments-host-landed.test.mjs` reads the sidecar's lock as the first
+  thing a save creates under `.trackchanges/`, so a folder that cannot be written to refuses `unreadable` on the
+  lock; `tools/file-comments-host-store-lock.test.mjs` holds its header's 220 ms before-figure equal to decision
+  49's; `tools/0002-file-comments-in-the-track-changents-sidecar-lock-names.test.mjs` (the second round's module
+  for the ADR's lock bullet, `docs/adr/0002`, which the first round had left naming one file: the bullet's two
+  names, `<name>.lock` and `<name>.lock.break`, and its one `made-dir` line held to the constants `store-io.mjs`
+  defines, so a name or a line that one side has and the other lacks fails; and the lock run in a scratch root:
+  a live claim beside a dead lock governs the waiter and a dead claim goes with the break, the write seeing the
+  lock alone, and the maker of the folder writes the line into a real holder's lock, which that holder honors at
+  its own release). `tools/file-review-plan-sidecar-records.test.mjs` holds this bullet's inventory to the tree both
+  ways: every module it names is in the tree, and every test module under `tools/`, `ui/webview/` or `tests/` that
+  cites decision 49 or 50 is named here, so a later round's module cannot land unrecorded; it also holds the panel
+  section's Errors bullet (the codes that offer Reload) to the panel and the viewer, and the Security posture's two
+  lock names and one line to `store-io.mjs`. That scan goes by citation, and the ADR's module cites the ADR and
+  not the decision, so it landed in the commit that built the scan and was named nowhere in this plan (found in
+  the review's third round, 2026-09-11): `tools/file-review-plan-sidecar-adr-modules.test.mjs` holds every module
+  named for an ADR (under `tools/`, an ADR's number and slug and then what the module tests) to this bullet and
+  to decision 49 by its name, whatever it cites, and holds this bullet and decision 49 to the plan's vocabulary:
+  the `track-comment` race is run on a file and its replies land on a comment, and the two words `CONTEXT.md`
+  sets aside under File comment (the forked side session's and the send's paragraph's) appear in neither record,
+  where the second round had written both.
+  The third round's own commit showed the scan's other side (found in the fourth round, 2026-09-11): it added three
+  modules for the lock's own `store-io.mjs` behaviours that cite decision 49 and this plan, which the scan reached and
+  this bullet did not name, so the inventory pin was red at that commit, and two more the scan cannot reach, one
+  citing the decision without the plan's name and one citing the lock and no decision. All five are named here:
+  `tools/store-io-lock-inode-reuse.test.mjs` (the entry judged stale, lock or claim, kept open from the judgment
+  through its unlink, so the filesystem's reuse of a freed inode number cannot hand a waiter's fresh lock the judged
+  number and a breaker suspended past the bound cannot remove it: one interleaving driven by hand in-process, and a
+  breaker child stalled at its look for the unlink while a real writer breaks its claim and the dead lock and writes,
+  the breaker waiting for that write instead of entering beside it); `tools/store-io-lock-folder-name.test.mjs` (an
+  entry at `.trackchanges`'s name that is not a directory refused at once, held false and naming it: a link to nothing
+  left alone with nothing created, a regular file refused with the OS error, a link to a directory followed with the
+  folder behind it kept, and the real `track-comment` on such a root printing the line and exiting 1 in well under the
+  wait, where before it spun the whole wait and reported a live writer); `tools/store-io-lock-pid-namespace.test.mjs`
+  (a pid judged only by a reader in the namespace that stamped it: in a child namespace an initial-namespace writer's
+  dead pid's fresh lock is left alone and the writer waits the bound out and refuses as held, a stamp past the bound
+  is still broken, and in the initial namespace a dead pid's lock is broken at once; a writer in a child namespace
+  stamps `pid ts` and then `ns <inode>`, one in the initial namespace `pid ts` alone; a child-namespace writer's live
+  lock whose pid is a free number outside is left alone by a writer in the initial namespace, which waits the bound
+  out, where before it was broken at once; the same lock read from the stamping namespace is broken at once when the
+  pid is dead there and read from a third namespace waited out; each case a child process with the namespace read
+  through a stand-in, plus this machine's own namespace with none, and a real child namespace where `unshare` can make
+  one unprivileged, the vendored `track-comment` there refusing a live lock held outside it and a holder inside
+  stamping the namespace a writer outside waits behind, skipped where it cannot);
+  `tools/README-track-changents-patch-0008-row.test.mjs` (the vendored README's row for patch 0008 held to
+  `store-io.mjs`'s constants as the ADR bullet is: both names and the line in the row and no third, the row's account
+  of the folder against store-io's make and remove sites, and the row, the patch header and the ADR bullet listing one
+  set of names); `ui/webview/file-comments-busy-retry-fence.test.ts` (the retry after `busy` as it runs: the re-read
+  after a refusal for a lock still held shows the same clocks and the retry goes out on the same fence, the holder's
+  rename landing under it refuses `store-moved`, which reaches the viewer with its code and the host's words with no
+  third save; the contrast where the holder finished before the re-read; and the panel's comments at `MOVED` and on
+  `saveThroughComments` held to what the code gives). `tools/file-review-plan-sidecar-lock-modules.test.mjs` holds
+  those five by name, whatever they cite (every `tools/store-io-lock-*` and `tools/README-track-changents-patch-*`
+  module in the tree, and the fence module), to this bullet and to decision 49, what this bullet says of each to that
+  module's cases, and decision 49's pid-namespace sentences (a pid judged only by a reader in the namespace that
+  stamped it, named on the stamp's second line from any but the initial one; a stamp more than 15 s from the reader's
+  clock either way a dead writer's) to `store-io.mjs`. The fourth round's own modules:
+  `tools/store-io-lock-clock.test.mjs` (a stamp more than the bound ahead of the reader's clock is a dead writer's
+  too: a lock stamped `1 <an hour ahead>` broken at once, pid 1 alive to every reader or not, a live pid's lock an
+  hour ahead the same and five seconds ahead waited behind, a stampless lock's mtime judged the same way, a dead
+  breaker's claim an hour ahead removed and the break proceeding, and the real `track-comment` against such a lock
+  landing its comment in well under the wait, where before a lock committed or planted with a future stamp held every
+  write to `busy` with no message naming it); `tools/file-comments-host-decision-lock.test.mjs` (the decision verbs
+  load under the lock: against a writer that holds `<sidecar>.lock` and saves a comment 300 ms later, a reject-all, an
+  accept by id and a save with a rejection from the editor each answer after that save, refuse `store-moved` on the
+  moved fence, and the retry lands both the comment and the decision; and the source, `loadForDecision` called only
+  inside the function `underStoreLock` runs); `tools/track-comment-race-vocabulary.test.mjs` (the race module held to
+  the glossary's word for a comment with its replies, the vendored `track-reply`'s own flag and line excepted, and its
+  replies case described in the same words as this bullet);
+  `ui/webview/file-comments-changes-review2-busy-prose.test.ts` (the changes suite's explanation of its `busy` case
+  held to the premise the fence module pins in the panel's source, the retracted sentence banned there too). The last
+  two cite no decision, so the scan does not reach them; they are named here by hand.
+
 ## Docs
 
 `docs/guide.md`: "Reviewing a document" (`:29-45`) becomes a section on file comments and tracked
@@ -2822,7 +3190,14 @@ follow-on (2026-09-10), that a session writing a tracked file any other
 way, with its editing tools or a shell command, is refused and pointed at track-edit (`tests/test_guide_files_bash_guard.py`
 holds the sentence to the hook), and that sessions are asked to include `.trackchanges/` when they commit their own work while
 the person's commits stay theirs (`tests/test_guide_files_commit_folder.py` holds it to the prompt, the skill and decision
-25); `docs/install.md` names the Bash-side guard beside the vendored one.
+25); `docs/install.md` names the Bash-side guard beside the vendored one. With the tie-break (2026-09-11), that a
+comment on text which occurs more than once is placed again by its own record of where it was, which copy it is and
+the heading above it when the file has changed around that occurrence, that when none of those can tell the copy
+shown is a guess and the card says so, and that saving the comment again from the right copy adds a new card on that
+copy with no tag while the old card keeps its tag until you resolve it (the review's first round reworded that last
+sentence, which had promised a confirmation of the same comment that no verb performs;
+`tests/test_guide_files_comments_anchors.py` holds the first two to the panel and the ADR,
+`tests/test_guide_files_comments_confirm.py` the last to the panel and the real host).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -3147,10 +3522,308 @@ document stands on its own, each with the reasoning it was given.
     choose staging). `tests/test_guide_files_commit_folder.py` holds the four texts to one another;
     `tests/test_session_prompt.py` pins the sentence.
 
+49. **One writer per sidecar at a time** (2026-09-11). The lost-update probe (2026-09-09) ran the real host and
+    the real vendored CLIs against one file and lost one write in five at a stagger of 4 to 20 ms. Every writer
+    loads the sidecar, changes the object and renames a temp over it; a second writer whose load fell before the
+    first's rename saved a store without the first's change, and its rename erased it. A `track-edit` between a
+    reject's sidecar rename and its file rename lost its text the same way, to the reject's rename. A stat before
+    the rename narrows the window without closing it, and a lock in the host alone leaves the CLIs overwriting, so
+    the user said yes to one lock per sidecar shared by both (2026-09-11). `withStoreLock(storePath, fn)` in the
+    vendored `store-io.mjs` creates `<sidecar>.lock` with O_EXCL holding `pid ts`, sleeps 2 to 5 ms and retries
+    for up to 2 s while it is held, breaks a lock whose writer is dead or whose stamp is older than 15 s (the
+    kernel kills a host at 10 s), and unlinks it in `finally`; the `.trackchanges/` folder is made for the lock
+    when it is missing and removed again when nothing else landed in it.
+    A writer is dead when `kill(pid, 0)` answers ESRCH, and a pid is judged only by a reader in the pid namespace that
+    stamped it: pids are per namespace, and from a child pid namespace (a sandboxed tool shell with one of its own,
+    bubblewrap's `--unshare-pid`) every process outside is ESRCH, alive or not, while a pid stamped inside one names,
+    outside it, whatever process has that number there. Judged by pid regardless (the slice's review, third and fourth
+    rounds, 2026-09-11), a CLI in such a sandbox read the host's live lock as a dead writer's, broke it at once and
+    wrote inside the host's load-to-rename; and the host read the sandboxed CLI's live lock so whenever the CLI's pid
+    inside was a free number outside, broke it and wrote inside the CLI's load-to-rename, the loss this decision
+    closes, back for every such session. So a writer outside the initial namespace names its own on a second stamp
+    line, `ns <inode>` (the inode of `/proc/self/ns/pid`; the initial namespace has one inode number on every Linux
+    and is named by the line's absence), a reader judges the pid only when the lock names the reader's own namespace,
+    and any other lock is judged by its stamp's age alone: a dead writer's fresh lock from another namespace holds
+    every waiter until the stamp is 15 s old, each refusing as held at the end of its 2 s wait before then. Where
+    `/proc` cannot be read, a process is taken to be in the initial namespace. A stamp more than 15 s from the
+    reader's clock in either direction is a dead writer's (judged by age behind alone, a `.lock` committed from a
+    machine whose clock ran ahead, or planted, with a pid alive here held every writer of that file to `busy` for as
+    long as its stamp stayed in the future; a clock stepped back that far mid-write breaks a live lock, as a step
+    forward already did). `tools/store-io-lock-clock.test.mjs` drives that: a lock stamped `1 <an hour ahead>` is
+    broken at once, pid 1 alive to every reader or not, a live pid's lock stamped five seconds ahead is waited behind,
+    a stampless lock's mtime is judged the same way, a dead breaker's claim an hour ahead beside a dead lock is
+    removed and the break proceeds, and the real `track-comment` against such a lock lands its comment and exits 0 in
+    well under the wait (the fourth round). A lock written from another machine over a shared filesystem names a pid
+    of that machine, which this one judges as its own, dead when no process here has the number and else by the
+    stamp's age; the lock serializes the writers of one machine (`tools/store-io-lock-pid-namespace.test.mjs`, the
+    namespace read through a stand-in so the cases run on any machine, and one real child namespace where `unshare`
+    can make one unprivileged, skipped where it cannot).
+    The break has one winner (the slice's
+    review, first round, 2026-09-11; as first built two waiters that read one dead lock together both removed it,
+    the second taking away the first's fresh lock, and both wrote): the waiters that find a stale lock serialize
+    on a claim beside it, `<sidecar>.lock.break`, created with O_EXCL like the lock and holding the same `pid ts`;
+    the one holding the claim judges the lock again under it, unlinks it only while it is still stale, and removes
+    the claim on its way out; a claim whose breaker is dead or whose stamp is past the bound is removed by the
+    lock's own rule.
+    The entry judged stale, lock or claim, stays open from the judgment through its unlink (the third round: judged by
+    inode number alone, the guard was defeated by the filesystem's reuse of the number, an unlink and then a create in
+    one folder handing the new entry the number just freed, so a breaker suspended past the stale bound between its
+    claim check and its look for the unlink removed the fresh lock a waiter had put at the name and entered beside
+    it); an inode with a descriptor open keeps its number, so the fresh lock is another inode and is left alone
+    (`tools/store-io-lock-inode-reuse.test.mjs`: one interleaving driven by hand in-process, and a breaker child
+    stalled past the bound at its look while a real writer breaks its claim and the dead lock, writes and leaves, the
+    breaker waiting for that write instead of entering beside it).
+    The release unlinks the lock only while the entry at the name is the holder's own inode, so
+    a writer broken as stale while alive leaves the breaker's lock alone; a stamp that cannot be written after the
+    create leaves no lock and no folder behind; a writer that made the folder and leaves while another writer's
+    lock or claim is in it passes the folder's removal to that writer by a `made-dir` line appended to its lock or
+    claim, honored at that writer's release (or by the breaker of that lock when its holder dies); and a link or
+    another non-file at the lock's name, or at the claim's while a stale lock stands, is a lock that cannot be
+    taken: the host refuses `unreadable` naming it, the CLIs print its line and exit 1, and nothing is followed or
+    removed.
+    An entry at the folder's name that is not a directory (a link to nothing above all: the create says ENOENT through
+    it and `mkdir` EEXIST at it, on every turn) is refused the same way, at once and naming the entry, the CLIs
+    printing its line and exiting 1 in well under the wait; a link to a directory the lock follows, the folder behind
+    it staying, where the host refuses any entry there that is not a directory itself, a link to one included, as
+    `unreadable` before it locks (`checkTrackDir`). Retried until the wait ran out, such an entry was reported as a
+    live writer where there was none (the third round; `tools/store-io-lock-folder-name.test.mjs`).
+    The two names and that line are everything the lock leaves under `.trackchanges/`
+    (`tools/store-io-lock.test.mjs`; the ADR's lock bullet, `docs/adr/0002`, is held to the same names and line
+    and to the lock run in a scratch root by
+    `tools/0002-file-comments-in-the-track-changents-sidecar-lock-names.test.mjs`). `track-edit`, `track-comment`
+    and `track-reply` take it around their load-to-rename (`track-edit` from the file read through the file write and
+    the edit turn it adds to the comment it answers) and, when it is not obtained, print `another editor is writing this file; retry` and exit 1
+    with nothing written; their `fail()` throws to the entry point so a held lock is released. That part is
+    vendor patch 0008, written as offerable to the engine's author and held back from the offer by the
+    standing word of 2026-09-11 to open nothing new upstream.
+    The vendored README's row for it names the lock's whole footprint on disk, the two names, the line and the folder,
+    held to `store-io.mjs`'s constants, to the patch header and to the ADR bullet by
+    `tools/README-track-changents-patch-0008-row.test.mjs` (the third round, which found the row naming the lock
+    alone).
+    The host takes the same lock from its fence stat through its
+    last rename or prune (`underStoreLock`): the sidecar's for `comment`, `reply`, `resolve`, `retarget`,
+    `accept`, `reject` and `save`; `config.json`'s own for `set-tracked`, since that verb writes the root's list,
+    which every file under the root shares, and a held `config.json` lock refuses `busy` naming the root's tracked
+    list rather than the file, since that is what the lock guards (`tools/file-comments-host-config-lock.test.mjs`).
+    The decisions load under it too: `loadForDecision`, the fence stat, the file read and the sidecar load, runs
+    inside the function `underStoreLock` runs (`tools/file-comments-host-decision-lock.test.mjs`: against a holder
+    that saves a comment 300 ms later, a reject-all, an accept and a save each refuse `store-moved` and the retry
+    lands both; the fourth round, which found no module saying where a decision's load sits).
+    A loose file takes it after its landmark and checks its `""` fence
+    again under it, and every reply is built after the release from a store read back under the lock. The mtime
+    fences stay: the lock serializes the writers, the fences catch the panel's stale copy, so every writer loads
+    after the previous writer's rename and a stale copy always refuses. A lock still held after the wait refuses
+    `busy` with nothing changed; the panel handles `busy` as it handles a moved fence (`MOVED`): a fresh status,
+    one retry by id (the id-less verbs re-read and say nothing was decided), and the refusal verbatim with Reload
+    on a second.
+    `busy` arrives while the other writer still holds the lock (every holder releases after its last rename, and
+    `status` takes none), so the fresh status shows that writer's store only when it renamed in the gap, and the retry
+    otherwise goes out on the fence the refusal came back on; a holder that finishes under the retry moves the fence
+    and the host refuses `store-moved`, the second refusal, shown with Reload and not retried
+    (`ui/webview/file-comments-busy-retry-fence.test.ts`, the save path at the real timing; the third round, which
+    found the panel's comments saying the holder's write was on disk at the refusal).
+    `tools/file-comments-host-store-lock.test.mjs` drives the host and `track-reply` against a
+    writer mid-write (before the lock, each answered about 220 ms before the holder saved, and the holder's save
+    erased its write), the refusal and the stale lock; `tools/file-comments-host-race.test.mjs` a `track-edit`
+    inside a reject's write, through `FILE_COMMENTS_TEST_PAUSE_MS`, a test seam at the file's rename that is
+    inert unless set and that the kernel never sets; `tools/file-comments-host-landmark-race.test.mjs` two first
+    writes on one loose file, in both orderings the race has and in a two-process loop, the second meeting a moved
+    fence and never `unreadable`; `tools/file-comments-host-read-under-lock.test.mjs` a comment sent between a
+    `track-edit`'s two writes, placed in the text the edit left; `tools/file-comments-host-config-lock.test.mjs`
+    `set-tracked` against a held `config.json.lock`; `tools/track-comment-race.test.mjs` six real `track-comment`
+    processes on one file at one instant, every comment landing; `tools/vendor-patches.test.mjs` (P8) the CLIs' refusal and
+    their release on a failure; `ui/webview/file-comments-changes-review2.test.ts` the panel's `busy`;
+    `ui/webview/file-comments-save-busy.test.ts` the editor's Save through the panel refused `busy`, one retry and
+    no more; `tools/file-review-plan-sidecar.test.mjs` holds this record and decision 50 to the source,
+    `tools/file-review-plan-sidecar-records.test.mjs` the records' inventory to the tree, and
+    `tools/file-review-plan-sidecar-adr-modules.test.mjs` the ADR-named modules to the Tests bullet and to this
+    record by name, and both records to the glossary's words for a file and a comment, and
+    `tools/file-review-plan-sidecar-lock-modules.test.mjs` the third round's five modules (every
+    `tools/store-io-lock-*` and `tools/README-track-changents-patch-*` module, and the busy retry's) to the Tests
+    bullet and to this record by name, what the bullet says of each to the module, and this record's pid-namespace
+    sentences to `store-io.mjs`.
+50. **The clock a reply carries is taken before the read** (2026-09-11). The same probe found the panel's poll
+    blind to a write 11 times in 147 rounds. The host read the sidecar and then stat'ed it for the reply's
+    `storeMtimeNs`, so a write landing between the two gave the panel the writer's clock over the earlier bytes;
+    the poll compared that clock with the disk's, saw no difference, and the panel kept a store one write
+    behind until something else moved it. `configMtimeNs` had the same shape. The user said yes to the host
+    clocking each file before it reads it (2026-09-11): `loadOrRefuse` and `loadFile` stat the sidecar first
+    (`loadFile` decides from that clock whether there is a sidecar to read), `configStatus` stats `config.json`
+    first, a prune sets the sidecar's clock to null as of the prune, and `set-tracked` stamps the config's with
+    its own write, under its lock. The reply carries those clocks (`clockOf`) and stats nothing under
+    `.trackchanges/`; a verb that reaches the reply without a clock is a program error, never a stat at reply
+    time. The clock the panel baselines from is therefore never newer than the bytes it was given, so a write in
+    the remaining gap makes the next poll refresh once, or the next write refuse `store-moved`.
+    `tools/file-comments-host-clocks.test.mjs` interposes the read so a newer sidecar, and a newer config, land
+    right after the first read (before: the reply carried the disk's newer clock over bytes without the write),
+    and a newer sidecar in the instant after a prune (before: a later writer's clock beside a null store).
+51. **A recurring passage's copy is confirmed by its ordinal, then by its heading path, before the position's
+    nearest copy is guessed** (2026-09-11). The user reported a comment on a passage that occurs more than once
+    painted as a guess: the anchor matched several copies with the same surroundings, and the position stored
+    with the comment named none of them as the file stood, so the copy nearest that position was highlighted,
+    dashed, with the "passage recurs" tag. The cause was a change to the file the host never recorded (a raw
+    write outside the tracked path, since closed by decision 47's Bash guard; an editor save): the refresh moves
+    a position only where the recorded changes vouch for the copy, and an unrecorded edit above moved every copy
+    past the stored position at once. The user said yes to breaking the tie from what the comment itself
+    records. The host writes three more romp-only fields beside `anchorAt` on a passage comment, at creation and
+    on every host write for a comment whose position names its copy: `ordinal`, the 1-based index of the copy
+    among the whole anchor's matches at that moment (1 when unique); `copies`, how many matches there were then;
+    and `section`, the heading path above the passage, the text of the nearest preceding markdown headings from
+    the top level down joined with " > ", empty for a file without headings or a non-markdown file. Each heading's
+    text in the path is cut at 200 characters (`SECTION_HEADING_CAP`, by code point, at the stamp and the read
+    alike, so two headings alike for that long are one path; the review's first round, 2026-09-11, after nine
+    comments under a heading line of a megabyte refused every write as `too-large`), the headings are read as the
+    viewer renders the file (a leading BOM, CRLF line ends, a front-matter block by the viewer's own test in
+    `md-config.ts`), and whether the file is markdown is judged from the file's name, `.md` or `.markdown`, at
+    every stamp and every read, never from the sidecar's own `path` field (the same round: the refresh had
+    judged by that field once, stamped an empty path on a markdown file, and a later read took the empty path
+    for the copies above every heading and confirmed one of those). When the
+    host must choose among several copies and the position names none, not even by the quote with one side
+    of its context whole beside it (`locateStored`, which every reader of a stored anchor in the host goes
+    through, and the `placed` map every reply carries for the panel), the rules run in order: the count of copies unchanged since the fields were
+    written, the ordinal's copy, confirmed, unless the stored heading path names other copies and not the
+    ordinal's, when the two fields disagree and the tie is a guess (the review's third round, 2026-09-11, said
+    below); else, the count changed, exactly one copy under the stored heading path, that copy, confirmed; else
+    the copy nearest the position, a guess, as before. The panel paints a confirmed copy plainly (no dashed cue, no tag) and a
+    guessed one as before, for a passage comment with the card's words now ending "Reveal it and save again from
+    the right copy to confirm." and for a region comment with the card's words ending in the recourse a region
+    has, said below. A passage comment's guessed copy has its card offer the Reveal those words name (the review's
+    first round: before it the card offered Reveal only for a passage it could not paint, so the words named a
+    button the card did not have); it switches to Raw and scrolls to the guessed copy, and its title says that a
+    comment saved from the copy you mean is placed on that copy and this one keeps its tag until you resolve it,
+    which is what the guide says of saving again (a new card on that copy with no tag; the old card keeps its tag until you
+    resolve it; `tests/test_guide_files_comments_confirm.py`). A confirmed place the view's text has moved past
+    (the poll's reload paints before the fresh status lands; a refused refresh keeps the old status) paints the
+    copy nearest that place as a guess whose words name the confirmed place (`confirmedAt`), never plainly on a
+    copy the host did not vouch for in the text shown. The viewer's own sequential hint comes last, after the confirmed
+    copy and the stored position (plans/markdown-viewer.md, Slice 5 item 7: a card with neither whose anchor an earlier
+    card of the paint pass shares is painted on the copy after that card's, `nextCopyHint`, and its words name that copy,
+    `hintedCopy`).
+    A region comment on an embed line that recurs is guessed by the same rules (the host stamps and places every
+    anchored comment, and the panel's `copyUnsure` asks the same of a rectangle, which `paintRegions` puts on the
+    figure nearest the hint by `regionImageFor`), but the passage's recourse is not open to it: Reveal for a
+    region scrolls to its picture and never switches to Raw, and Re-place sends the rectangle alone, so the host
+    keeps the anchor, its position and its copy fields (`doRetarget` writes `target` back and nothing else), and
+    the one thing that places a comment on the figure meant is a new region drawn on it, with a mouse. Its words
+    end with that in place of the Reveal sentence (`REGION_CONFIRM`: draw a new region on the figure you mean, and
+    this comment keeps its tag until you resolve it; Re-place redraws the rectangle on the figure shown and does
+    not move the comment to another figure; drawing a region needs a mouse), and its card offers no Reveal: Reply,
+    Resolve and Re-place on a pointer that draws, Reply and Resolve on a coarse one, where the words naming the
+    mouse keep the card from dead-ending (the review's second round, 2026-09-11: before it the region card wore a
+    Reveal titled for the Raw view that scrolled to the picture already framed, over words asking for a save a
+    region cannot make). The same round put what the passage's save does on the open card as a line of its own
+    under the words that ask for it (`SAVE_FROM_COPY_NOTE`, the sentence the Reveal's title carries), since a
+    button's title never reaches touch; a region's words carry their own.
+    `ui/webview/file-comments-tiebreak-region.test.ts` drives both card kinds over the rendered stand-in and a Raw
+    body, `tools/file-comments-host-tiebreak-review-2.test.mjs` the round's findings on the host, and
+    `tools/file-review-plan-tiebreak-review-3.test.mjs` holds this account of the round to the panel, the host and
+    the tree (the Tests section says what each drives).
+    The review's third round (2026-09-11) qualified the first rule, the position's, and the reply's map. The
+    ordinal's copy is confirmed where the stored heading path names no copy at all (a heading renamed or deleted
+    above the copies; a non-markdown file, whose paths are all empty) or names the ordinal's copy, among others or
+    alone; where it names other copies and not the ordinal's, the two fields disagree, neither confirms, and the
+    tie is a guess: an unchanged count does not say that no copy was added or removed (one copy deleted and another
+    pasted under a different heading keep the count and move the ordinal onto a copy the person never commented,
+    which the round found confirmed and painted plainly), a heading moved among the copies misleads the heading
+    path the same way, so a tie the two fields read two ways is left to the person, and the section rule runs
+    once the count has changed. The contract the user said yes to confirmed the ordinal's copy whenever the count
+    was unchanged, with no such condition; the code and this record hold the qualified rule, and the user's word
+    on it is open (Open questions). A position the quote sits at with ONE side of its context whole beside it, the
+    other side edited (the state the refresh leaves when a recorded change edited the chosen copy's context and
+    not its text, and the state a raw edit of the surroundings alone leaves), names the passage before any rule
+    runs (`quoteSitsAt`), the copies whole elsewhere being the other copies: before it the rules ran over those,
+    and a tracked edit inside the first of two copies under one heading had the section rule confirm the second,
+    which the panel painted plainly while the reply's own `anchorAt` named the first. The third round took the
+    quote alone; the review's fourth round (2026-09-11) asks for the one side, since a bare occurrence of the
+    quoted words (a passing mention, a table cell, one character of a run) is what a stale position lands on by a
+    coincidence of distance, a raw insertion above of exactly the gap to it, and the quote alone took the comment
+    off the copy the fields named for the mention. The reply carries no verdict for such a comment, and the panel
+    paints by its own engine, which scores a whole copy over an edited one: with three or more copies the nearest
+    whole copy as a guess with its cue, the cue from before the tie-break; with exactly two, the one still whole,
+    plainly, the paint of the anchors follow-on, on the copy the person did not comment, since the map's contract
+    (a tie the position names no copy of) does not carry a position verdict today
+    (`ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts` drives the panel's half). While every change
+    to the text is on record (the text is as the sidecar's last writer left it, so the pending changes are the
+    whole difference), the reply's map forwards a tie's verdict only where the recorded changes carry the stored
+    position to that very copy (a tracked insertion above moved every copy alike) or to no one place, and drops
+    one they carry elsewhere (`placedFor`, `carriedTo`), since the next write's refresh moves the position there:
+    between a session's edit inside the first of two copies and the next host write, the status had confirmed
+    the second copy by section from a position two characters stale that the recorded edit accounted for. After
+    a raw write the changes vouch for nothing and every verdict is forwarded, as before. The walk over the copies
+    the recorded changes can have carried a position to (`reachable`, for the refresh and for `carriedTo`) reads
+    the changes off one sorted index, a compare per change to build it and a compare per copy inside the changes'
+    window, charged to the budget; a walk that does not fit is nothing known, the refresh keeping the position and
+    counting the comment among the unscanned, the map forwarding the verdict (the fourth round: uncharged and
+    summing every change per copy, the walk held a status on ten thousand pending changes and twenty stale tied
+    comments 18 s). Two more corrections
+    from the round: creation writes no copy fields for a passage whole at more places than the refresh
+    enumerates (`REFRESH_COPIES_MAX`), as the stamping pass already refused to (before it the cap itself was
+    written as the count, and a later text of exactly that many copies had the ordinal rule confirm from a false
+    count); and the front-matter reader closes a block on `---` alone, as the viewer's test does (a block closed
+    only by YAML's `...` is body, and a heading in it is the passage's path; before it such a heading was shown to
+    the person and absent from the stored path). The section rule and the nearest pick read the matches grouped
+    by heading path once per anchor and by binary search (`copiesUnder`, `nearestOf`), so a status on thousands
+    of tied comments sharing one anchor stays inside the kernel's deadline. On the panel's side the recourse is
+    worded for what the render shows: with the editor up (Slice 5) no highlight of ours is painted and the card
+    offers neither Reveal nor the composer, so a guessed card's words say only that the copy is a guess and name
+    the way there first, leave edit mode, then reveal it and save again from the right copy (`UNSURE_IN_EDITOR`,
+    `PASSAGE_CONFIRM_AFTER_EDIT`; a region's, leave edit mode, then draw a new region in the view that shows the
+    image, `REGION_CONFIRM_AFTER_EDIT`), a passage's save line standing under them as in the read view, and offer
+    no Reveal; a region whose picture the view does not show (Raw) is told which view has it
+    (`REGION_CONFIRM_UNSEEN`); and a pictured region's card on a coarse pointer, where no overlay takes a drag and
+    the card offers no Re-place, ends with the pictured view's words less the sentence about Re-place
+    (`REGION_CONFIRM_TOUCH`; the sweep after the round, the same day). Before them the card in the editor named a
+    Reveal and a save it did not offer, the Raw card said to draw on a figure the view did not show, and the
+    phone's card named a Re-place it did not have. `tools/file-comments-host-tiebreak-review-3.test.mjs` drives
+    the round's findings on the host, `ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts` the panel's
+    half of the position the quote names, `ui/webview/file-comments-tiebreak-shown.test.ts` the words over the
+    editor and Raw, `ui/webview/file-comments-tiebreak-touch.test.ts` the words on a coarse pointer, and
+    `tools/file-review-plan-tiebreak-review-4.test.mjs` holds this account of the round to the host, the panel
+    and the tree (the Tests section says what each drives).
+    The contract named two fields; `copies` is the third,
+    since the first rule compares the count of
+    copies with the count at the time the ordinal was written, and the ordinal alone does not carry it. Setext
+    headings (a line underlined with `=` or `-`) are not read as headings, a tie with no position still refuses
+    `anchor-ambiguous` when neither field tells (the fields settle it as for any other comment, so one whose
+    position an editor dropped is confirmed from its ordinal or its heading path, and a comment the CLI made on
+    a passage that recurs with the same 24 characters around it (the context the CLI stores) carries neither and
+    is refused as before; no host write stamps it while the tie holds, since the refresh stamps only a comment
+    it seats and never seats a tie with no position, and the next host write after an edit leaves its passage
+    at one place seats and stamps it, as it stamps a CLI comment on a unique passage, which was never refused;
+    the review's second round, 2026-09-11, which found this record saying the next host write stamped it), and
+    the other editors write the object back whole, so the fields survive them (docs/adr/0002: six additive
+    fields now). Tests:
+    `tools/file-comments-host-tiebreak.test.mjs`, `ui/webview/file-comments-tiebreak.test.ts`,
+    `ui/webview/file-comments-tiebreak-browser.test.ts` (Chromium and Firefox: the same paragraph twice under
+    different headings, a comment on the second, a paragraph inserted above by a raw write, the status refreshed,
+    the highlight on the second copy with no tag), `tools/file-review-plan-tiebreak.test.mjs`,
+    `tools/file-review-plan-tiebreak-review.test.mjs` (the review's two corrections to this record: the stamp's
+    pass on a passage still at its position, and the fields settling a tie with no position),
+    `tests/test_guide_files_comments_anchors.py`, and from the review's first round
+    `tools/file-comments-host-tiebreak-review.test.mjs` (the real host: the heading path read as the viewer
+    renders the file, the file's kind from its name, the nearest fallback off the enumerated matches inside the
+    kernel's deadline, the stamping order and its note, the engine-placed stamp and `placed` on every write's
+    reply), `ui/webview/file-comments-tiebreak-recourse.test.ts` (the guessed card's Reveal, the confirmed place
+    the view moved past) and `tests/test_guide_files_comments_confirm.py` (the guide's sentence on saving again,
+    walked on the real host); from its second round, `tools/file-review-plan-tiebreak-review-2.test.mjs` holds
+    this record's account of the first round to the code; from its third round,
+    `tools/file-comments-host-tiebreak-review-3.test.mjs` (the real host: the position the quote names with one
+    side of its context, the recorded window's dropped verdict, the ordinal's yield, no copy fields at creation
+    past the cap, front matter closed on `---` alone, a status on thousands of tied comments inside the deadline),
+    `ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts` (the panel's half of that position),
+    `ui/webview/file-comments-tiebreak-shown.test.ts` (the words with the editor up and in Raw),
+    `ui/webview/file-comments-tiebreak-touch.test.ts` (the words on a coarse pointer) and
+    `tools/file-review-plan-tiebreak-review-4.test.mjs`, which holds this record's account of the third round to
+    the code.
+
 ## Open questions for the user
 
 Every question raised by this document, by its reviews, or in the design interview has been ruled
-on; see Decisions. The margin layout (the follow-on note under Slice 2) awaits the user's word: it
+on; see Decisions. The tie-break's first rule as the review's third round qualified it (decision 51: the
+ordinal's copy is confirmed unless the stored heading path names other copies and not the ordinal's, when
+the tie is a guess) departs from the contract the user said yes to, which confirmed the ordinal's copy
+whenever the count of copies was unchanged; it awaits the user's word, and the code and the record hold
+the qualified rule meanwhile. The margin layout (the follow-on note under Slice 2) awaits the user's word: it
 is the build's reading of the ask, not a ruling, and the walk answers it. With it, the loose group's
 place: a card with no mark (a whole-file comment, a change the Rendered view cannot paint, a detached
 anchor, a region whose figure has not loaded) stands at the top of the track, which the lock keeps out

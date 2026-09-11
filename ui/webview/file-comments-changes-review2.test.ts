@@ -596,6 +596,46 @@ test("Reject refused the same way shows its row too; Accept all refused after a 
   assert.ok(a3.querySelector(".fc-foot .fc-err"), "the cards still show (no refresh ran): the row is the foot's");
 });
 
+const BUSY = "another editor is writing ~/notes-api/docs/report.md; retry";
+
+test("Accept refused busy (the host's lock was held past its wait, decision 49): status re-read and one retry by id with the fresh fence; a second busy shows the row verbatim with Reload and no third try; Accept all refused busy re-reads and says nothing was decided", async (t: TestContext) => {
+  // `busy` joins the moved fences in MOVED, and the retry is the moved-fence path reused, not a wait for the holder: the
+  // host refuses `busy` while the other writer STILL holds the lock (it releases after its last rename; `status` takes no
+  // lock), so the one re-read shows that writer's write only when it landed in the gap before the re-read, and only then
+  // does the retry carry a fence that lands (file-comments-busy-retry-fence.test.ts). The harness answers the re-read
+  // with S9: that case. It is not a decision the person must make again, so a by-id verb retries once; an id-less one
+  // stops and re-reads, as for a moved fence. A second refusal, `busy` again from a lock still held or `store-moved` from
+  // a holder that finished under the retry, shows verbatim with Reload, and there is no third try.
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  act(card(aside, "chg:h1")!, "fcaccept", "h1")!.click(); await flush();
+  const first = lastOf(w, "fileComments", "accept");
+  refuse(w, first, "busy", BUSY); await flush();
+  answer(w, status({ storeMtimeNs: S9 })); await flush(); await flush();
+  const retry = lastOf(w, "fileComments", "accept");
+  assert.ok(retry && retry.reqId !== first.reqId && retry.fence.storeMtimeNs === S9, "the retry by id, with the fresh fence");
+  assert.deepEqual(retry.args, { ids: ["h1"] });
+  refuse(w, retry, "busy", BUSY); await flush(); await flush();
+  assert.equal(countOf(w, "fileComments", "accept"), 2, "one retry, never a third");
+  const rows = aside.querySelectorAll(".fc-err");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].dataset.slot, "change:h1");
+  assert.ok(rows[0].textContent.startsWith(BUSY), "the host's words, verbatim");
+  assert.ok(act(rows[0], "fcreload"), "handled as a moved fence: Reload offered");
+  assert.equal(act(card(aside, "chg:h1")!, "fcaccept", "h1")!.disabled, false, "the card's Accept is live again");
+  w.close();
+  const w2 = world(); t.after(() => w2.close());
+  const { aside: a2 } = await openPanel(w2);
+  act(a2, "fcacceptall")!.click(); await flush();
+  const acc = lastOf(w2, "fileComments", "accept-all");
+  refuse(w2, acc, "busy", BUSY); await flush();
+  answer(w2, status({ storeMtimeNs: S9 })); await flush(); await flush();
+  assert.equal(countOf(w2, "fileComments", "accept-all"), 1, "no retry of an id-less verb");
+  const nothing = a2.querySelector('.fc-err[data-slot="changes"]')!;
+  assert.ok(nothing, "the row says so");
+  assert.ok(nothing.textContent.startsWith("Nothing decided: " + BUSY));
+});
+
 // ── the standalone card of a comment whose change was decided ──────────────────────────────────────
 
 test("a comment bound to a change the log has decided stands on its own card, tagged with the decision and titled for it; accepted and rejected alike", async (t: TestContext) => {

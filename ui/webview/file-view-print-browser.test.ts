@@ -55,7 +55,7 @@ test("the print block is byte-equal in styles.css and feed.css, names every piec
   assert.match(chat, /\.fileview-body \{ overflow: visible; container-type: inline-size; \}/, "the body's scroll box opens, and the body is the size container the print table's cqi cap reads (the screen's body is none since round 2: --fv-body-w there)");
   assert.match(chat, /body\.fileview-open > :not\(#romp-fileview\) \{ display: none; \}/, "the rest of the page is left out while a note is open");
   assert.match(chat, /\.fileview-md pre code span,\s*\n?\s*\.fileview-md pre code \.cl::before, \.fileview-md code\.md-math-src \{ color: black; \}/, "code tokens and line numbers print black");
-  assert.ok(chat.includes(".fileview-md pre code .cl::before, .fileview-body .fv-cl::before { opacity: 1; }"), "the line numbers print at full ink: the screen rules' 0.32 and 0.55 would stand otherwise, black or not");
+  assert.ok(chat.includes(".fileview-md pre code .cl::before, .fileview-body .fv-cl::before, .fileview-gutter { opacity: 1; }"), "the line numbers and the plain gutter print at full ink: the screen rules' 0.32 and 0.55 would stand otherwise, black or not");
   assert.doesNotMatch(chat.replace(/\/\*[\s\S]*?\*\//g, ""), /#[0-9a-fA-F]{3,8}\b(?!-)/, "keywords, no hex");
   const pane = read("files-pane.css");
   const pb = pane.slice(pane.indexOf("@media print{"));

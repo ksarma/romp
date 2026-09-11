@@ -17,7 +17,9 @@ test("applyBars no longer latches _barsLoaded unconditionally", () => {
 });
 
 test("a warming-and-empty bars payload keeps the loader; content or a settled build finalizes it", () => {
-  assert.match(SRC, /const hasContent = Object\.keys\(this\.data\.turns\)\.some\(\(k\) => \(this\.data\.turns\[k\] \|\| \[\]\)\.length\)\s*\n\s*\|\| \(this\.data\.sessions \|\| \[\]\)\.some\(\(s\) => s\.live\);/);
+  // the content check reads the wire payload as received (turnsWire), not data.turns: since 2026-09-11 that read
+  // would expand the frame, which a pane under the paint hold must not pay for
+  assert.match(SRC, /const hasContent = Object\.keys\(turnsWire\)\.some\(\(k\) => \(turnsWire\[k\] \|\| \[\]\)\.length\)\s*\n\s*\|\| \(this\.data\.sessions \|\| \[\]\)\.some\(\(s\) => s\.live\);/);
   assert.match(SRC, /if \(!\(m && m\.warming\) \|\| hasContent\) \{\s*\n\s*this\._barsLoaded = true;/);
   assert.match(SRC, /\} else \{\s*\n\s*this\._armLoaderBackstop\(\);\s*\n\s*\}/);
 });

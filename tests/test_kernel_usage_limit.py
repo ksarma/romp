@@ -104,7 +104,8 @@ class AutoPauseOnLimit(unittest.TestCase):
     """The flip's delivery (perf batch 2 P1, 2026-09-06): the tick job WAKES the pusher and builds nothing
     inline; the flag rides the next push's globalRetryPaused frame. No view reads retry-paused.json, so
     the dirty mark must NOT move (a dirty mark here is a full feed + timeline rebuild for nothing; this
-    fork's _set_retry_paused marks nothing, and its callers wake the pusher with _push_soon). An inline
+    fork's _set_retry_paused marks nothing and wakes the pusher itself, _push_soon being its last line,
+    so no caller wakes or pushes on its own: ruling K1 of the 2026-09-10 fold). An inline
     _push_all is the regression the tripwire in setUp catches. The idempotent path (already paused)
     writes nothing, so it neither wakes nor dirties. _views_dirty is a module global shared across the
     suite, so each test records its own floor rather than asserting an absolute value."""
@@ -139,6 +140,7 @@ class AutoPauseOnLimit(unittest.TestCase):
 
     def test_the_idempotent_path_neither_wakes_nor_dirties(self):
         km._set_retry_paused(True)                       # already paused: the write is skipped
+        km._pusher_wake.clear()                          # the setup write's own wake (ruling K1, Q1 = A): the path under test starts clean
         km._usage_limits = lambda: {"limited": {"fiveHour": True, "sevenDay": False, "fable": False}}
         floor = km._views_dirty[0]
         km._auto_pause_on_limit()
@@ -171,10 +173,9 @@ class AutoPauseOnLimit(unittest.TestCase):
         km._auto_pause_on_limit()
         self.assertTrue(km._retry_paused_on(), "a real 5h/7d limit still engages the pause")
 
-
     def test_the_pause_latches_reason_limit_at_the_event(self):
-        # the bottom bar's API health cell (2026-09-07) names the pause from the file's reason, never from
-        # _retry_resume_at's clock comparison (which would flip the word at the reset instant with no event)
+        # the bottom bar's API health cell names the pause from the file's reason, never from _retry_resume_at's
+        # clock comparison (which would flip the word at the reset instant with no event)
         fut = int(time.time()) + 3600
         km._usage_limits = lambda: {"limited": {"fiveHour": True, "sevenDay": False, "fable": False},
                              "fiveHour": {"pct": 100, "resetsAt": fut}}
@@ -229,6 +230,7 @@ class AutoPauseOnSpendLimit(unittest.TestCase):
         km._auto_pause_on_spend_limit(0, {})
         self.assertFalse(km._pusher_wake.is_set())
         km._set_retry_paused(True)                       # already paused: the write is skipped
+        km._pusher_wake.clear()                          # the setup write's own wake (ruling K1, Q1 = A, the same clear as AutoPauseOnLimit's): the path under test starts clean
         self._sessions({"spendLimit": True, "text": "spend limit"})
         km._auto_pause_on_spend_limit(0, {})
         self.assertFalse(km._pusher_wake.is_set(), "nothing written, nothing to deliver")

@@ -76,7 +76,13 @@ file served from the dashboard's own address (a published report, an evidence do
 and links inside the document resolve relative to the document, so a `![fig](fig.png)`
 beside it shows, and a link to a sibling document opens in the same viewer. Links to files
 on other sites open in a new tab, as before — and a ctrl- or ⌘-click still opens the file in
-a tab.
+a tab. The document is set for reading: a sans face at a slightly larger size, headings in
+proportion, a centred column about 80 characters wide, and task lists, keyboard keys and
+aligned table columns as GitHub shows them. Every code block is numbered by line and carries a
+**Copy** button that copies the block as the file holds it, tabs included; fences labelled
+`rust`, `go`, `c`, `java`, `sql` or `toml` are highlighted, in addition to the languages the
+chat already knows. Printing the page while a rendered file is open prints the file alone,
+black on white, across as many pages as it needs.
 
 **Opening a PDF.** A PDF the session mentions, or one you click in the file browser, opens
 inside the dashboard like an image: the chat's PDF card opens it full-view, a path or a
@@ -394,12 +400,13 @@ rather than opens.
 
 **Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
 the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown
-file's Rendered and Raw views, and the code view of every other text file. They appear
-on every surface that shows the viewer (over the chat, over the feed, in this pane), and
-not for a picture or a PDF, which have no text to size. Ctrl (or Cmd) and the mouse
-wheel over the text do the same. Once the size is off 100%, the percentage appears
-between the buttons; click it to go back. The choice is kept in this browser and applies
-to every file you open here. The prose of a rendered markdown file is a column of about
+file's Rendered and Raw views, the code view of every other text file, and a document
+opened from a link on the dashboard's own address. They appear wherever the viewer opens
+(over the chat, over the feed, in this pane), and not for a picture or a PDF, which have
+no text to size. Ctrl (or Cmd) and the mouse wheel over the text do the same. Once the
+size is off 100%, the percentage appears between the buttons; click it to go back. The
+choice is kept in this browser and applies to every file you open here. The prose of a
+rendered markdown file is a column of about
 eighty characters, centred in the pane. A step up in text size widens the column to keep
 its eighty characters while the pane has room for them; in a pane too narrow for that, the
 column fills the pane, leaving a small gutter on each side, and each step up fits fewer
@@ -412,22 +419,19 @@ leaves the page wider than the pane, and a picture sized in pixels by its `width
 the height it names.
 
 **How a markdown file reads.** The Rendered view shows a markdown file the way GitHub
-shows a README. The text is a little larger than the dashboard's own (15 pixels where the
-chat is 13), in the same sans face in both themes. Headings step down from twice the text
-size for a top-level heading to the text size for the fourth level and below, with a rule
-under the first two levels; the fifth and sixth levels are dimmed. A task list shows its
-boxes without bullets, ticked where the file says so. A table's header row is bold on a
-faint fill, every second row is tinted, and a column the file aligns with `:---:` or
-`---:` is centred or right-aligned. A `<kbd>` key reads as a key. Every fenced code block
-is numbered by line, wraps long lines and carries a **Copy** button that copies the
-block's text; a block that names its language is coloured when the language is one the
-viewer knows: bash, python, javascript, typescript, json, xml and html, css, markdown,
-diff, yaml, rust, go, c, java, sql and toml (an ini file's grammar). A block that names
-any other language stays plain rather than being guessed at. Comments in coloured code are
-readable against the block. TeX math renders wherever the file is shown: `$x^2$` inline and a
-`$$` block on its own, the same in the chat, the feed and the Files pane. Printing the page
-while a markdown file is open prints the file alone, black on white, across as many pages as
-it needs, without the title bar, the Comments panel or the Copy buttons.
+shows a README, set for reading as *Opening a markdown document* in the chat chapter
+describes: the face and size, the headings, task lists, keys and tables, the numbered
+code blocks with their **Copy** buttons, the highlighted fences and the print layout.
+The details that paragraph leaves out: the text is a little larger than the dashboard's
+own (15 pixels where the chat is 13); headings step down from twice the text size to the
+text size at the fourth level, with a rule under the first two and the fifth and sixth
+dimmed; a table's header row is bold on a faint fill and every second row is tinted; the
+languages the viewer colours are bash, python, javascript, typescript, json, xml and html,
+css, markdown, diff, yaml, rust, go, c, java, sql and toml (an ini file's grammar), a block
+that names any other language stays plain rather than being guessed at, and comments in
+coloured code are readable against the block. TeX math renders wherever the file is shown:
+`$x^2$` inline and a `$$` block on its own, the same in the chat, the feed and the Files
+pane. The printed page leaves out the title bar, the Comments panel and the Copy buttons.
 
 **Files written for Obsidian.** The constructs an Obsidian vault uses render as they do there.
 Front matter, the `---` block of keys at the top of a file, folds under a **Front matter** line;
@@ -495,11 +499,14 @@ the same object, and the two other editors that read the format see them too. Ea
 is a card in the panel: click it to expand or resolve it, and **Reply** opens the reply box inside
 the card, under the comment and its replies. The passage it
 refers to is highlighted in the file, and a comment on text that occurs more than once stays
-on the occurrence you chose. When the file has changed around that occurrence and the panel can
-no longer tell which copy the comment meant, its highlight is dashed and the card carries a
-**passage recurs** tag: the copy shown is a guess, and the card says so. Where two comments cover
-the same text, the text carries one highlight, and a click where they overlap opens both cards,
-the one you clicked in front. When the session has
+on the occurrence you chose. When the file has changed around that occurrence, the comment's own
+record of where it was, which copy it is and the heading above it places it again. When none of
+those can tell which copy the comment meant, its highlight is dashed and the card carries a
+**passage recurs** tag: the copy shown is a guess, and the card says so. Saving the comment again
+from the right copy, as the card asks, adds a new card on that copy with no tag; the old card keeps
+its tag, so resolve it once the new one is saved. Where two comments cover the same text, the text
+carries one highlight, and a click where they overlap opens both cards, the one you clicked in
+front. When the session has
 rewritten the passage, the card
 says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
 show it. Going to a comment whose passage sits inside a closed fold (a `<details>` block, a
