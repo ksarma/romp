@@ -2865,8 +2865,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   minus `TRACKCHANGES_ROOT` and every `FILE_COMMENTS_*` variable, so a pause seam exported in the kernel's shell
   never reaches a reject or a save: against the function, a stub host and the real host);
   `ui/webview/file-comments-save-busy.test.ts` (the editor's Save through the panel refused `busy`: one status
-  re-read and one retry with the fresh fence, the success applied as the status; no retry on a second `busy` or
-  when the re-read shows other records, the refusal handed to the viewer with its code and the host's words);
+  re-read and one retry with the fresh fence, the success applied as the status; no retry on a second `busy`, the
+  refusal handed to the viewer with its code and the host's words; no retry either when the re-read shows other
+  records, the refusal handed on under the same code with the head's row's words, `MOVED_UNDER_EDIT`,
+  `CHANGES_MOVED_UNDER_EDIT` or `CHANGES_UNREAD_UNDER_EDIT`, since a retry could only refuse);
   `ui/webview/file-comments-save-busy-viewer.test.ts` (the viewer's half at the real `openFileView`: a second `busy`
   holds the host's words in the bar with Reload file, Save re-armed and the buffer kept, and Reload asks before it
   re-opens the file); `ui/webview/file-comments.test.ts` gains the `MOVED` literal with `busy` and the save path's retry line;

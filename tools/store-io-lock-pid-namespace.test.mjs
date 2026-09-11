@@ -1,6 +1,6 @@
 // withStoreLock (plans/file-review.md, decision 49; vendor patch 0008) judges a lock's writer dead by
 // kill(pid, 0) answering ESRCH. Pids are per pid namespace. From a child pid namespace (a sandboxed tool
-// shell: bubblewrap's --unshare-pid, which the Codex and Claude Code sandboxes both pass) every process
+// shell with a pid namespace of its own: bubblewrap's --unshare-pid) every process
 // outside is ESRCH, alive or not, so a CLI in such a sandbox read an editor host's live lock as a dead
 // writer's, broke it at once and wrote inside the host's load-to-rename; and a pid stamped inside such a
 // sandbox names, outside it, whatever process has that number there, so the host read the sandboxed

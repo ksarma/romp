@@ -8,8 +8,8 @@
 //     (`<NNNN>-<adr slug>-<what>.test.mjs`, the ADR in docs/adr/) is named in the Tests bullet and in decision
 //     49, and what the bullet says of the lock-names module is read from that module and from store-io.
 //   * the second round's prose recorded the track-comment race as run on "one note" with its replies posted
-//     to "one thread", two words CONTEXT.md's File comment entry sets aside (the first is a forked side
-//     session anchored to the chat, the second goes with one send) and that the plan binds itself against
+//     to "one thread", two words CONTEXT.md's File comment entry sets aside (a note goes with one send, a
+//     thread is a forked side session anchored to the chat) and that the plan binds itself against
 //     (its terminology paragraph; decision 17). Held here: neither record uses either word outside a code
 //     span, and the race is recorded on a file, its replies on a comment.
 // Synthetic: only the repo's text.

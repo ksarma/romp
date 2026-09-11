@@ -94,6 +94,10 @@ test('decision 49 names the round\'s modules too, each beside the behaviour it p
   assert.ok(read('tools', 'file-comments-host-landmark-race.test.mjs').includes('never unreadable, and the retry lands both'), 'the landmark race');
   assert.ok(read('tools', 'file-comments-host-read-under-lock.test.mjs').includes('waits and is placed in the text the edit left'), 'the file read under the lock');
   assert.ok(read('ui', 'webview', 'file-comments-save-busy.test.ts').includes('a second busy on the retry is not retried'), 'the save\'s one retry');
+  // the records-changed case hands the viewer the head's row under the same code (the consolidation after the fourth round,
+  // 2026-09-11: the bullet had said the host's words for that case too)
+  assert.ok(read('ui', 'webview', 'file-comments-save-busy.test.ts').includes("the head's row (CHANGES_MOVED_UNDER_EDIT), not the host's retry"), 'the records-changed case');
+  assert.ok(testsBullet.includes('the refusal handed on under the same code with the head\'s row\'s words, `MOVED_UNDER_EDIT`, `CHANGES_MOVED_UNDER_EDIT` or `CHANGES_UNREAD_UNDER_EDIT`'), 'and the bullet says so');
   assert.ok(d49.includes('a held `config.json` lock refuses `busy` naming the root\'s tracked list rather than the file'));
   assert.match(host, /if \(e\.held && lockedPath === configPathFor\(root\)\) throw new Refusal\('busy', `another editor is changing which files under \$\{tilde\(root\)\} are tracked; retry`\);/, 'the host\'s line for a held config lock');
 });

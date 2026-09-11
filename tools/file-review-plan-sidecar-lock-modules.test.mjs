@@ -155,6 +155,23 @@ test('decision 49 and the Risks bullet state the pid rule as store-io keeps it: 
   assert.ok(d49.includes('A stamp more than 15 s from the reader\'s clock in either direction is a dead writer\'s'));
   assert.ok(d49.includes('the lock serializes the writers of one machine'));
   assert.ok(risks.includes('Residual (decision 49): a lock names its writer\'s pid namespace only when that is not the initial one'));
+  // the ADR's lock bullet, the vendored README's row and the patch header state the same rule (the consolidation after
+  // the fourth round, 2026-09-11: all three still said a dead writer's lock is broken, with no condition)
+  const adrBullet = between(read('docs', 'adr', '0002-file-comments-in-the-track-changents-sidecar.md'), '- Since 2026-09-11 one transient file', '- A romp-only field');
+  assert.ok(adrBullet.includes('a second line naming that namespace'), 'the ADR names the namespace line');
+  assert.ok(adrBullet.includes('The pid is judged only by a reader in the pid namespace that stamped it'), 'the ADR states the pid rule');
+  assert.ok(adrBullet.includes('or its stamp is that far ahead of the reader\'s clock'), 'and the ahead rule');
+  const row = read('vendor', 'track-changents', 'README.md').split('\n').find((l) => l.startsWith('| `0008-'));
+  assert.ok(row, 'the README has the row for patch 0008');
+  assert.ok(row.includes('a second line `ns <inode>` naming it'), 'the row names the namespace line');
+  assert.ok(row.includes('its pid judged only by a reader in the pid namespace that stamped it'), 'the row states the pid rule');
+  assert.ok(row.includes('more than 15 s from the reader\'s clock, behind or ahead'), 'and the ahead rule');
+  assert.ok(row.includes('an entry at `.trackchanges`\'s name that is not a directory is refused at once, held false, naming it'), 'and the non-directory refusal');
+  const patches = fs.readdirSync(path.join(REPO, 'vendor', 'track-changents', 'patches')).filter((f) => f.startsWith('0008-'));
+  const header = read('vendor', 'track-changents', 'patches', patches[0]).split('\ndiff --git ')[0].replace(/\n# ?/g, ' ');
+  assert.ok(header.includes('judged by kill(pid, 0) only by a reader in the pid namespace that stamped it'), 'the patch header states the pid rule');
+  assert.ok(header.includes('names its own on a second stamp line, `ns <inode>`'), 'and the namespace line');
+  assert.ok(header.includes('more than STORE_LOCK_STALE_MS (15 s) from the reader\'s clock, behind or ahead'), 'and the ahead rule');
   assert.ok(testsBullet.includes('a pid judged only by a reader in the namespace that stamped it, named on the stamp\'s second line from any but the initial one'));
   // the code
   assert.match(storeIo, /^const PROC_PID_INIT_INO = 0xEFFFFFFC;$/m, 'the initial namespace\'s inode');
