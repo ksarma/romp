@@ -8,8 +8,10 @@
 // when the sidecar's records are still the editor's, the success applied as the status; the refusal handed to the
 // viewer with its code and the host's words on a second `busy` or when the re-read shows other records, with no
 // third save and no further re-read; and the saving editor's fence following the re-read. The viewer's half (the
-// Reload offer on `busy`, file-view.ts) is the viewer suites' to drive. Synthetic fixtures only: the notes-api
-// world, placeholder ids.
+// Reload offer on `busy`, file-view.ts's failed arm) is driven at the real openFileView by
+// file-comments-save-busy-viewer.test.ts: this suite's ctx is a stand-in, so the refusal it hands on is where the viewer's
+// half begins, and the source pins that held that arm alone let a dropped `busy` pass every behavioral suite (the same
+// review). Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";

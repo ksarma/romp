@@ -47412,6 +47412,8 @@ _TRACKCHANGES_DIR = ".trackchanges"                                # the sidecar
 _EDIT_DIFF_MAX_LINES, _EDIT_DIFF_MAX_BYTES = 200, 16 * 1024       # the comments log's cap on a direct edit's diff
 _FILE_COMMENTS_KERNEL_VERBS = frozenset(("log-edit", "log-send"))   # the kernel's own follow-ups (after a save, after a
 #   send), never a client's request: the log is the record of what happened, so only the code that made it happen appends
+_FILE_COMMENTS_ENV_PREFIX = "FILE_COMMENTS_"                      # the host's test seams live under this prefix in ITS
+#   environment (a scratch home, a pause at the file's rename); the kernel sets none and forwards none (_file_comments_host_env)
 _SEND_WATERMARK_SKEW_MS = 60 * 60 * 1000                           # how far past this clock a send's watermark may sit
 
 
@@ -47440,10 +47442,21 @@ def _file_comments_verdict():
 
 
 def _file_comments_host_env():
-    """The host script's environment: the kernel's, minus TRACKCHANGES_ROOT. That variable overrides
-    every file's root discovery for the CLIs (track-changents survey item A8), and a kernel that
-    inherited it from some shell would write every project's comments into one stranger's folder."""
-    env = dict(os.environ)
+    """The host script's environment: the kernel's, minus TRACKCHANGES_ROOT and every variable under
+    _FILE_COMMENTS_ENV_PREFIX: what an inherited shell environment could carry that changes what the
+    host does. TRACKCHANGES_ROOT overrides every file's root discovery for the CLIs (track-changents
+    survey item A8), so a kernel that inherited it from some shell would write every project's
+    comments into one stranger's folder. The prefixed names are the host's own test seams: its node
+    tests point "~" at a scratch home through one, and hold a reject's or a save's write open between
+    the sidecar's rename and the file's through another (the race test's window). The kernel sets
+    none of them, and since 2026-09-11 forwards none: one exported in the shell a kernel was started
+    from (`romp up` with no login service runs the manager there) reached the host on every request,
+    moving every path it prints, or holding every reject and save past _FILE_COMMENTS_TIMEOUT, where
+    _run_bounded's kill lands after the sidecar and the log are written and before the file is, and
+    the rejected text stands in the file with no record. Stripped by prefix, not by name, so a seam
+    the host adds later is covered the day it is read; the kernel's own _FILE_COMMENTS_* names are
+    Python constants, never exported, so nothing of the kernel's is lost with them."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(_FILE_COMMENTS_ENV_PREFIX)}
     env.pop("TRACKCHANGES_ROOT", None)
     return env
 

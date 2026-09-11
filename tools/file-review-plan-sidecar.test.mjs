@@ -76,10 +76,16 @@ test('decision 49 records the measurement and the fix, and its bounds are store-
   assert.match(read('kernel', 'kernel.py'), /^_FILE_COMMENTS_TIMEOUT = 10\b/m, 'the kernel\'s deadline the bound is set against');
   assert.ok(d49.includes('holding `pid ts`'));
   assert.match(fn(storeIo, 'withStoreLock'), /fs\.writeFileSync\(fd, `\$\{process\.pid\} \$\{Date\.now\(\)\}\\n`\)/, 'the stamp is pid then ts');
-  assert.match(fn(storeIo, 'withStoreLock'), /fs\.openSync\(lockPath, 'wx'\)/, 'O_EXCL');
+  // 'ax+' since review round 2 (2026-09-11): still O_EXCL; O_APPEND so a maker's `made-dir` line put on the lock between
+  // its create and its stamp keeps its place, and readable so the holder reads the line back through its own descriptor
+  assert.match(fn(storeIo, 'withStoreLock'), /fs\.openSync\(lockPath, 'ax\+'\)/, 'O_EXCL');
   assert.match(fn(storeIo, 'withStoreLock'), /sleepMs\(2 \+ Math\.floor\(Math\.random\(\) \* 4\)\)/, '2 to 5 ms');
   assert.ok(d49.includes('unlinks it in `finally`'));
-  assert.match(fn(storeIo, 'withStoreLock'), /\} finally \{\n    try \{ fs\.unlinkSync\(lockPath\); \}/);
+  // the release since review round 1 (2026-09-11): `finally` unlinks through unlinkOwn, which removes the entry at
+  // the name only while it is still this holder's own inode, so a writer broken as stale never removes a breaker's lock
+  assert.match(fn(storeIo, 'withStoreLock'), /\} finally \{\n    const held = unlinkOwn\(lockPath, mine\);/, 'the release is in finally');
+  assert.match(fn(storeIo, 'withStoreLock'), /mine = fs\.fstatSync\(fd, \{ bigint: true \}\);/, 'the holder\'s identity is the open fd\'s inode');
+  assert.match(fn(storeIo, 'unlinkOwn'), /if \(!cur \|\| cur\.st\.ino !== mine\.ino \|\| cur\.st\.dev !== mine\.dev\) return null;\n  try \{ fs\.unlinkSync\(p\); \}/, 'unlinkOwn unlinks, and only its own inode');
 });
 
 test('decision 49 names the CLIs\' message and behaviour, and the CLIs keep them', () => {
@@ -139,7 +145,10 @@ test('decision 49 says what refuses and how the panel takes it; the host and the
   assert.match(viewer, /code === "store-moved" \|\| code === "file-moved" \|\| code === "config-moved" \|\| code === "busy"\);/, 'and the viewer\'s Reload offer');
   assert.ok(wire.includes('A moved fence refuses, as does `busy` (another writer held the host\'s lock past its wait, decision 49)'));
   assert.ok(wire.includes('`busy` (the lock on the sidecar, or on `config.json` for `set-tracked`, still held by another writer after the host\'s two-second wait; the client handles it as a moved fence, decision 49)'), 'the codes list');
-  assert.ok(hostPara.includes('Every verb that writes holds store-io\'s lock on the file it writes, from its fence stat through its last rename or prune'));
+  // the lock sentence, scoped to the eight verbs that rewrite a store since review round 1 (2026-09-11);
+  // tools/file-review-plan-lock-verbs.test.mjs holds the same sentence to the host's verb table
+  assert.ok(hostPara.includes('Every verb that rewrites the sidecar or `config.json` (`comment`, `reply`, `resolve`, `retarget`, `accept`, `reject` and `save` the sidecar; `set-tracked` the config) holds store-io\'s lock on the file it rewrites, from its fence stat through its last rename or prune'));
+  assert.equal(hostPara.includes('Every verb that writes holds'), false, 'the over-claim is gone (`log-edit` and `log-send` append the comments log under no lock)');
   assert.ok(hostPara.includes('refuses `busy` when the lock is still held after two seconds'));
   assert.ok(hostPara.includes('every clock a reply carries (`storeMtimeNs`, `configMtimeNs`) is taken before the bytes it describes are read, never at reply time (decisions 49 and 50)'));
   assert.ok(risks.includes('one lock per sidecar, shared with the CLIs, that serializes the writers (decision 49)'));

@@ -394,24 +394,37 @@ export function saveStore(vaultRoot, storePath, obj, currentText) {
 // lock under the claim and leaves it. Judged and removed by name alone (2026-09-11), two waiters
 // that read one dead lock together both removed it, the second taking away the first's fresh
 // lock, and both wrote; three writers on a dead lock did so in 54 rounds of 100. A dead breaker's
-// claim is judged and removed by the lock's own rule. A holder releases only while the entry at
-// the lock's name is still the inode it created (kept open for the length of the hold, so its
-// number is not reused): a holder broken as stale while alive (a machine suspended mid-write,
-// a writer stalled past the bound) would otherwise remove the breaker's fresh lock on its way
-// out and admit a third writer. A lock this process cannot read (another account's, under a
-// mode this one lacks) is one it cannot take: refused with the OS error, never thrown raw.
+// claim is judged by the lock's own rule and removed only while the entry at its name is still
+// the inode judged: removed by name alone (2026-09-11, the review), a waiter that had read a dead
+// claim took away the fresh claim another breaker had put at the name since, and the two broke
+// the lock together. The breaker in turn unlinks the lock only while the claim at the name is
+// still its own (a waiter may have removed it as dead, this breaker suspended past the bound) and
+// only the inode it judged. A holder releases only while the entry at the lock's name is still
+// the inode it created (kept open for the length of the hold, so its number is not reused): a
+// holder broken as stale while alive (a machine suspended mid-write, a writer stalled past the
+// bound) would otherwise remove the breaker's fresh lock on its way out and admit a third writer.
+// Every removal here is a look and then an unlink by name, the two a few microseconds apart in
+// one process: an unlink conditional on the inode is not a call the filesystem offers, so that
+// window is what stays. A lock this process cannot read (another account's, under a mode this one
+// lacks) is one it cannot take: refused with the OS error, never thrown raw.
 //
 // Held for one write and never across a wait on a person; not reentrant (a nested take waits out
 // its own lock and fails). The `.trackchanges/` directory is created for the lock when it does
 // not exist yet (a first comment in a fresh vault) and removed again afterwards when nothing
-// else landed in it, so a refused write leaves no trace: when another writer's lock is in the
-// folder at that moment (a second first write, on this sidecar or a sibling's), the duty passes
-// to it by a line appended to its lock (or to a breaker's claim), which its holder reads back at
-// release, or the breaker of that lock does if the holder dies, and the last one out removes the
-// folder. A folder the lock did not make is never removed. A pid is judged on this machine only:
-// a lock written from another machine over a shared filesystem names a pid this machine does not
-// know, so it reads as a dead writer's and is broken at once; the lock serializes the writers of
-// one machine.
+// else landed in it, whether the writer wrote or gave up waiting, so a refused write leaves no
+// trace: when another writer's lock is in the folder at that moment (a second first write, on
+// this sidecar or a sibling's), the duty passes to it by a line appended to its lock (or to a
+// breaker's claim), which its holder reads back at release, or the breaker of that lock does if
+// the holder dies, and the last one out removes the folder; the folder is looked at again until
+// every lock in it carries the line or it is gone. The stamp is appended (O_APPEND), so a line
+// put on a lock between its create and its stamp keeps its place; written at the start of the
+// file (2026-09-11), the stamp took the line's place and the folder stayed. The line is read
+// back through the holder's own descriptor after the unlink, from the inode itself, so a line
+// landing between the holder's look and its unlink is seen too; and the maker checks after the
+// line that the name still leads to the inode it wrote, else that holder is gone with the line
+// unread and the folder is looked at again. A folder the lock did not make is never removed. A pid is judged on this machine only: a lock written from another
+// machine over a shared filesystem names a pid this machine does not know, so it reads as a dead
+// writer's and is broken at once; the lock serializes the writers of one machine.
 export const STORE_LOCK_WAIT_MS = 2000;
 export const STORE_LOCK_STALE_MS = 15000;
 const STORE_LOCK_SUFFIX = '.lock';
@@ -475,14 +488,16 @@ function inspectLock(p) {
 }
 
 // Whether a held lock is a dead writer's: its pid gone, or its stamp (its mtime, when the stamp
-// is not written yet) older than staleMs.
+// is not written yet) older than staleMs. The stamp is the "pid ts" line wherever it is in the
+// file: a handover line appended before it (handOverDir) comes first.
 function lockIsStale(entry, staleMs, now) {
-  const m = /^(\d+) (\d+)/.exec(entry.raw);
+  const m = /^(\d+) (\d+)$/m.exec(entry.raw);
   if (!m) return now - Number(entry.st.mtimeMs) > staleMs;
   if (!pidAlive(Number(m[1]))) return true;
   return now - Number(m[2]) > staleMs;
 }
 
+const sameInode = (a, b) => a.ino === b.ino && a.dev === b.dev;
 const hasHandover = (raw) => raw.split('\n').includes(STORE_LOCK_HANDOVER);
 
 // Unlink `p` while the entry at the name is still the inode this process created (`mine`, its
@@ -497,25 +512,63 @@ function unlinkOwn(p, mine) {
   return cur.raw;
 }
 
+// Unlink the dead lock or claim at `p` while the entry at the name is still `judged`, the inode
+// read and found stale; another writer's fresh entry at the name since then is left alone.
+// Returns the content the entry held as it was removed (a handover line on it passes to the
+// caller), else null. A name that cannot be read or removed is a lock that cannot be taken.
+function unlinkJudged(p, judged) {
+  const cur = inspectLock(p);
+  if (!cur || !sameInode(cur.st, judged)) return null;
+  try {
+    fs.unlinkSync(p);
+  } catch (e) {
+    if (!e || e.code !== 'ENOENT') throw new StoreLockError(p, false, e, 'remove');
+    return null;
+  }
+  return cur.raw;
+}
+
+// The whole content of the open file `fd`, read from its start whatever the descriptor's position
+// (a pread), so a holder reads its lock back after unlinking it: the inode lives while the
+// descriptor is open. Null when it cannot be read.
+function contentOf(fd) {
+  try {
+    const size = Number(fs.fstatSync(fd).size);
+    const buf = Buffer.alloc(size);
+    let n = 0;
+    while (n < size) {
+      const r = fs.readSync(fd, buf, n, size - n, n);
+      if (r <= 0) break;
+      n += r;
+    }
+    return buf.toString('utf8', 0, n);
+  } catch {
+    return null;
+  }
+}
+
 // Break the stale lock at `lockPath`, once among its waiters: the breakers serialize on the claim
 // `<lock>.break`, an O_EXCL create like the lock's own, and the one holding it judges the lock
-// again before unlinking it. `removed` says whether this call removed the lock; it did not when
-// another breaker holds the claim (the caller waits and looks again; that break shows as the lock
-// gone or fresh), or when a dead breaker's claim was removed here, by the lock's own rule, for the
-// caller's next try. `handover` says the folder's removal passed to this writer: by the line on
-// the lock it removed, or by one put on its claim while it held it (removeDirUnlessUsed). A claim
-// that cannot be created or removed is a lock that cannot be taken.
+// again before unlinking it, and unlinks it only while the claim at the name is still its own.
+// `removed` says whether this call removed the lock; it did not when another breaker holds the
+// claim (the caller waits and looks again; that break shows as the lock gone or fresh), or when a
+// dead breaker's claim was removed here, by the lock's own rule and only while the entry at the
+// name was still the one judged, for the caller's next try. `handover` says the folder's removal
+// passed to this writer: by the line on the lock or the dead claim it removed, or by one put on
+// its claim while it held it (removeDirUnlessUsed). A claim that cannot be created or removed is
+// a lock that cannot be taken.
 function breakStaleLock(lockPath, staleMs) {
   const claim = lockPath + STORE_LOCK_BREAK_SUFFIX;
   const out = { removed: false, handover: false };
   let cfd;
   try {
-    cfd = fs.openSync(claim, 'wx');
+    cfd = fs.openSync(claim, 'ax+');   // O_EXCL; O_APPEND and readable, as the lock's own (the header says why)
   } catch (e) {
     if (e && e.code === 'EEXIST') {
       const other = inspectLock(claim);
       if (other && lockIsStale(other, staleMs, Date.now())) {
-        try { fs.unlinkSync(claim); } catch (e2) { if (!e2 || e2.code !== 'ENOENT') throw new StoreLockError(claim, false, e2, 'remove'); }
+        const held = unlinkJudged(claim, other.st);
+        if (held != null && hasHandover(held)) out.handover = true;   // the dead breaker held the folder's removal
       }
       return out;
     }
@@ -525,58 +578,84 @@ function breakStaleLock(lockPath, staleMs) {
   let mine = null;
   try {
     try {
-      fs.writeFileSync(cfd, `${process.pid} ${Date.now()}\n`);
       mine = fs.fstatSync(cfd, { bigint: true });
+      fs.writeFileSync(cfd, `${process.pid} ${Date.now()}\n`);
     } catch (e) {
       throw new StoreLockError(claim, false, e, 'write');
-    } finally {
-      try { fs.closeSync(cfd); } catch { /* ignore */ }
     }
     const entry = inspectLock(lockPath);
     if (entry && lockIsStale(entry, staleMs, Date.now())) {
-      try {
-        fs.unlinkSync(lockPath);
-        out.removed = true;
-        if (hasHandover(entry.raw)) out.handover = true;   // the dead writer held the folder's removal
-      } catch (e) {
-        if (!e || e.code !== 'ENOENT') throw new StoreLockError(lockPath, false, e, 'remove');
+      // Still under the claim: a waiter that judged it dead (this breaker suspended past the bound)
+      // has removed it, and the break is another's by now.
+      const cur = inspectLock(claim);
+      if (cur && sameInode(cur.st, mine)) {
+        const held = unlinkJudged(lockPath, entry.st);
+        if (held != null) {
+          out.removed = true;
+          if (hasHandover(held)) out.handover = true;   // the dead writer held the folder's removal
+        }
       }
     }
   } finally {
     const held = mine ? unlinkOwn(claim, mine) : null;
+    const last = held != null ? (contentOf(cfd) ?? held) : null;   // read back after the unlink, from the inode
+    try { fs.closeSync(cfd); } catch { /* ignore */ }
     if (!mine) { try { fs.unlinkSync(claim); } catch { /* ignore */ } }
-    if (held != null && hasHandover(held)) out.handover = true;
+    if (last != null && hasHandover(last)) out.handover = true;
   }
   return out;
 }
 
-// Append the handover line to the lock at `p`: its holder removes the folder at release when
-// nothing else is in it. Best effort, by the same rules as a read: no link followed, no non-file
-// written, a lock released meanwhile skipped.
+// Put the handover line on the lock at `p`: its holder removes the folder at release when
+// nothing else is in it. Returns true when the line is on it (put there now, or there already:
+// it is never appended twice) and the name still leads to that inode, so its holder, which reads
+// the lock back after unlinking it, will read the line; null when nothing is at the name now, or
+// another inode is (its holder released since the look, the line unread), for the caller to look
+// at the folder again; false when the entry is not a lock this writer can write (a link, a
+// directory, another account's), which keeps the folder. By the same rules as a read: no link
+// followed, no non-file written. Never throws: it runs on the way out of a write.
 function handOverDir(p) {
   let fd;
   try {
-    fd = fs.openSync(p, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-  } catch { return; }
+    fd = fs.openSync(p, fs.constants.O_RDWR | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? null : false;
+  }
   try {
-    if (fs.fstatSync(fd).isFile()) fs.writeFileSync(fd, `${STORE_LOCK_HANDOVER}\n`);
-  } catch { /* ignore */ } finally {
+    const st = fs.fstatSync(fd, { bigint: true });
+    if (!st.isFile()) return false;
+    if (!hasHandover(fs.readFileSync(fd, 'utf8'))) fs.writeFileSync(fd, `${STORE_LOCK_HANDOVER}\n`);
+    let now;
+    try { now = fs.lstatSync(p, { bigint: true }); } catch { return null; }
+    return sameInode(now, st) ? true : null;
+  } catch {
+    return false;
+  } finally {
     try { fs.closeSync(fd); } catch { /* ignore */ }
   }
 }
 
 // Take away the folder made for a lock once nothing else landed in it. When only other writers'
 // locks and break claims are in it, the duty is handed to each one's holder (a breaker's claim
-// carries it to the lock the breaker takes next), and the folder is tried once more for a holder
-// that released between the look and the line; anything else in it keeps it. Never throws: it
-// runs on the way out of a write.
+// carries it to the lock the breaker takes next), and the folder is looked at again: for a holder
+// that released between the look and the line, and for a lock that arrived since, until every
+// lock in it carries the line or the folder is gone (looked at once more only, 2026-09-11, a lock
+// that arrived as the looked-at holder left was never handed the folder, and it stayed). Anything
+// else in it keeps it. Never throws: it runs on the way out of a write.
 function removeDirUnlessUsed(dir) {
-  try { fs.rmdirSync(dir); return; } catch (e) { if (!e || e.code !== 'ENOTEMPTY') return; }
-  let names;
-  try { names = fs.readdirSync(dir); } catch { return; }
-  if (!names.every((n) => STORE_LOCK_NAME_RE.test(n))) return;
-  for (const n of names) handOverDir(path.join(dir, n));
-  try { fs.rmdirSync(dir); } catch { /* a holder handed the duty takes it away */ }
+  for (;;) {
+    try { fs.rmdirSync(dir); return; } catch (e) { if (!e || e.code !== 'ENOTEMPTY') return; }
+    let names;
+    try { names = fs.readdirSync(dir); } catch { return; }
+    if (!names.every((n) => STORE_LOCK_NAME_RE.test(n))) return;
+    let landed = true;
+    for (const n of names) {
+      const on = handOverDir(path.join(dir, n));
+      if (on === false) return;
+      if (on === null) landed = false;
+    }
+    if (landed) return;   // every lock in it carries the line: the last of their holders out takes the folder away
+  }
 }
 
 // Take the lock of `storePath`'s sidecar, run `fn`, release. Returns what `fn` returns; `fn`'s
@@ -590,49 +669,66 @@ export function withStoreLock(storePath, fn, opts) {
   const start = Date.now();
   let ownsDir = false;   // this writer takes the folder away at release when nothing else is in it
   let fd;
-  for (;;) {
-    try {
-      fd = fs.openSync(lockPath, 'wx');
-      break;
-    } catch (e) {
-      if (e && e.code === 'ENOENT' && !fs.existsSync(dir)) {
-        if (Date.now() - start >= waitMs) throw new StoreLockError(lockPath, true);
-        // Made here, so it is this writer's to take away; made by another writer in between
-        // (EEXIST), that writer's, which hands the duty over when it leaves first.
-        try { fs.mkdirSync(dir); ownsDir = true; } catch (e2) { if (!e2 || e2.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e2); }
-        continue;
+  try {
+    for (;;) {
+      try {
+        fd = fs.openSync(lockPath, 'ax+');   // O_EXCL; O_APPEND for the stamp, readable for the read-back (the header says why)
+        break;
+      } catch (e) {
+        if (e && e.code === 'ENOENT') {
+          // No folder for the lock: none yet (a first write in a fresh vault), the last writer took
+          // it away, or another writer made it since this create (mkdir says EEXIST). Made here, it
+          // is this writer's to take away; made by another, that writer's, which hands the duty over
+          // when it leaves first. Either way the create is tried again: judged by a look at the folder
+          // instead (2026-09-11), a create that lost to a peer's mkdir by microseconds was refused
+          // with the OS error, with nothing contended.
+          if (Date.now() - start >= waitMs) throw new StoreLockError(lockPath, true);
+          try { fs.mkdirSync(dir); ownsDir = true; } catch (e2) { if (!e2 || e2.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e2); }
+          continue;
+        }
+        if (!e || e.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e);
       }
-      if (!e || e.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e);
+      const now = Date.now();
+      const entry = inspectLock(lockPath);
+      if (!entry) continue;   // released between the create and the look: try again at once
+      if (lockIsStale(entry, staleMs, now)) {
+        const broke = breakStaleLock(lockPath, staleMs);
+        if (broke.handover) ownsDir = true;
+        if (broke.removed) continue;
+      }
+      if (now - start >= waitMs) throw new StoreLockError(lockPath, true);
+      sleepMs(2 + Math.floor(Math.random() * 4));
     }
-    const now = Date.now();
-    const entry = inspectLock(lockPath);
-    if (!entry) continue;   // released between the create and the look: try again at once
-    if (lockIsStale(entry, staleMs, now)) {
-      const broke = breakStaleLock(lockPath, staleMs);
-      if (broke.handover) ownsDir = true;
-      if (broke.removed) continue;
-    }
-    if (now - start >= waitMs) throw new StoreLockError(lockPath, true);
-    sleepMs(2 + Math.floor(Math.random() * 4));
+  } catch (e) {
+    // Given up without the lock: the folder made for it goes too, or passes to the lock that
+    // outwaited this writer (its holder was never told the folder was another's to remove), so a
+    // wait given up leaves no more trace than a refused write. Left out (2026-09-11), an empty
+    // folder stayed behind a maker that waited out another holder.
+    if (ownsDir) removeDirUnlessUsed(dir);
+    throw e;
   }
   let mine;
   try {
-    fs.writeFileSync(fd, `${process.pid} ${Date.now()}\n`);
     mine = fs.fstatSync(fd, { bigint: true });
+    fs.writeFileSync(fd, `${process.pid} ${Date.now()}\n`);
   } catch (e) {
     // A stamp that could not be written (the disk full) leaves no empty lock behind to be judged
     // by its age alone, nor the folder made for it.
+    if (mine) unlinkOwn(lockPath, mine); else { try { fs.unlinkSync(lockPath); } catch { /* ignore */ } }
     try { fs.closeSync(fd); } catch { /* ignore */ }
-    try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
-    if (ownsDir) { try { fs.rmdirSync(dir); } catch { /* something landed in it: keep it */ } }
+    if (ownsDir) removeDirUnlessUsed(dir);
     throw new StoreLockError(lockPath, false, e, 'write');
   }
   try {
     return fn();
   } finally {
     const held = unlinkOwn(lockPath, mine);
+    // The line is read back after the unlink, through this holder's descriptor, from the inode
+    // itself: a maker's line landing between the look and the unlink is in it, where the content
+    // of the look lacked it and the folder stayed (2026-09-11).
+    const last = held != null ? (contentOf(fd) ?? held) : null;
     try { fs.closeSync(fd); } catch { /* ignore */ }
-    if (held != null && hasHandover(held)) ownsDir = true;
+    if (last != null && hasHandover(last)) ownsDir = true;
     if (ownsDir) removeDirUnlessUsed(dir);
   }
 }

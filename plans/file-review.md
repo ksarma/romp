@@ -791,7 +791,9 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   and reject arrive with the next slice and that the session's own `track-edit` still works; from
   Slice 2 it says to resolve the changes first. Slice 5 lifts the refusal.
 - **Errors** render inside the panel as an error row under the control that asked, in the
-  viewer's `fileview-err` dress; `store-moved`, `file-moved`, and `config-moved` offer Reload. A
+  viewer's `fileview-err` dress; `store-moved`, `file-moved`, `config-moved` and, since the sidecar lock
+  (2026-09-11, decision 49), `busy` offer Reload, in the panel's row and in the viewer's Save error alike, and so
+  does `figure-changed` in the panel's row (Slice 3; never retried). A
   federation `warn` arriving while a request is outstanding is treated as that request's failure
   with the warn's text. An `editing-off` refusal runs the same confirm-then-consent-then-retry
   branch the viewer's Save uses, lifted into a shared helper (see the seam below).
@@ -2118,7 +2120,12 @@ convenience. The host script runs only on the owning kernel, on paths resolved b
 Slice 3, on the figure paths the next paragraph describes, the one class of path it resolves
 itself), and writes only the sidecar, the comments log, `config.json`, (on reject or save) the
 commented file, and, for the length of one write, the lock beside the sidecar or the config
-(`<name>.lock`, decision 49), created with O_EXCL, which no link can redirect. The mtime fences refuse and never merge. Both ops route by `sid` to the owning
+(`<name>.lock`, decision 49), created with O_EXCL, which no link can redirect, and, for the few calls of a
+stale lock's break, the claim its waiters serialize on beside that lock (`<name>.lock.break`, created the same
+way; decision 49). Those two names, and the one `made-dir` line a writer that made the folder appends to
+another writer's lock or claim when it leaves first, are everything the lock leaves under `.trackchanges/`; a
+link or another non-file at the lock's name, or at the claim's while a stale lock stands, refuses the write as
+`unreadable`, never followed and never removed. The mtime fences refuse and never merge. Both ops route by `sid` to the owning
 kernel over the existing federation splice; nothing new is exempt from `_authorize`, and the
 panel's verdict rides the authenticated `/defaults` payload rather than `/version`. Nothing under
 `.trackchanges/` is read or written through a symbolic link: the sidecar, the comments log and
@@ -2829,6 +2836,44 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tools/file-review-plan-lock-verbs.test.mjs` (the host paragraph's lock sentence held to the host's verb
   table: the eight verbs route through the lock, `status`, `log-edit` and `log-send` take none, the log is
   appended an entry at a time and never rewritten, and nothing vendored names it).
+  From the slice's review (2026-09-11; the first round's commit added six modules and named one here, found in the
+  second round): `tools/store-io-lock.test.mjs` (the break of a stale lock has one winner: real writers racing to
+  one instant on a dead pid's lock, or on a stamp past the bound, never hold together and every one writes; a live
+  breaker's claim, `<sidecar>.lock.break`, excludes every other breaker and a dead breaker's claim is removed; a
+  holder broken while alive leaves the breaker's lock alone at release, so a third writer waits for the breaker; a
+  stamp write that fails leaves no lock and no folder; two first writes on a fresh root leave no `.trackchanges/`
+  behind, the folder handed over by the `made-dir` line and taken away by the last one out; a lock the process
+  cannot read refused naming the lock and the OS error); `tools/file-comments-host-config-lock.test.mjs`
+  (`set-tracked` against a held `config.json.lock`: the wait, then `config-moved` from the holder's write and the
+  retry landing both entries, or the landing after a release with nothing written; `busy` past the wait naming the
+  root's tracked list, nothing written and the lock left; a comment on the same file landing under the sidecar's
+  own lock; two hosts toggling two files under one root in a loop, never both ok with an entry missing);
+  `tools/file-comments-host-landmark-race.test.mjs` (two first writes on one loose file, in both orderings the
+  race has and in a two-process loop: the second meets `store-moved` or `config-moved`, never `unreadable`, and
+  the retry lands both; a directory at the landmark's name is built over, a link to nothing is not);
+  `tools/file-comments-host-read-under-lock.test.mjs` (a comment sent while a `track-edit` has renamed its sidecar
+  and not yet written the file waits and is placed in the text the edit left, a whole-file comment carrying the
+  edited file's clock and fingerprint); `tools/track-comment-race.test.mjs` (six real `track-comment` processes on
+  one note at one instant, the first round on a root with no `.trackchanges/` yet: every comment lands and the
+  folder holds the sidecar alone; three comments and three replies to one thread at once; the source: the save
+  inside the lock); `tests/test_kernel_file_comments_host_env.py` (the kernel hands the host its environment minus
+  `TRACKCHANGES_ROOT` and every `FILE_COMMENTS_*` variable, so a pause seam exported in the kernel's shell never
+  reaches a reject or a save: against the function, a stub host and the real host);
+  `ui/webview/file-comments-save-busy.test.ts` (the editor's Save through the panel refused `busy`: one status
+  re-read and one retry with the fresh fence, the success applied as the status; no retry on a second `busy` or
+  when the re-read shows other records, the refusal handed to the viewer with its code and the host's words);
+  `ui/webview/file-comments-save-busy-viewer.test.ts` (the viewer's half at the real `openFileView`: a second `busy`
+  holds the host's words in the bar with Reload file, Save re-armed and the buffer kept, and Reload asks before it
+  re-opens the file); `ui/webview/file-comments.test.ts` gains the `MOVED` literal with `busy` and the save path's retry line;
+  `ui/webview/file-view.test.ts` anchors the viewer's failed arm on its four-code closing line and asserts the
+  anchor is found exactly once; `tools/file-comments-host-landed.test.mjs` reads the sidecar's lock as the first
+  thing a save creates under `.trackchanges/`, so a folder that cannot be written to refuses `unreadable` on the
+  lock; `tools/file-comments-host-store-lock.test.mjs` holds its header's 220 ms before-figure equal to decision
+  49's. `tools/file-review-plan-sidecar-records.test.mjs` holds this bullet's inventory to the tree both ways:
+  every module it names is in the tree, and every test module under `tools/`, `ui/webview/` or `tests/` that cites
+  decision 49 or 50 is named here, so a later round's module cannot land unrecorded; it also holds the panel
+  section's Errors bullet (the codes that offer Reload) to the panel and the viewer, and the Security posture's two
+  lock names and one line to `store-io.mjs`.
 
 ## Docs
 
@@ -3200,7 +3245,21 @@ document stands on its own, each with the reasoning it was given.
     vendored `store-io.mjs` creates `<sidecar>.lock` with O_EXCL holding `pid ts`, sleeps 2 to 5 ms and retries
     for up to 2 s while it is held, breaks a lock whose writer is dead or whose stamp is older than 15 s (the
     kernel kills a host at 10 s), and unlinks it in `finally`; the `.trackchanges/` folder is made for the lock
-    when it is missing and removed again when nothing else landed in it. `track-edit`, `track-comment` and
+    when it is missing and removed again when nothing else landed in it. The break has one winner (the slice's
+    review, first round, 2026-09-11; as first built two waiters that read one dead lock together both removed it,
+    the second taking away the first's fresh lock, and both wrote): the waiters that find a stale lock serialize
+    on a claim beside it, `<sidecar>.lock.break`, created with O_EXCL like the lock and holding the same `pid ts`;
+    the one holding the claim judges the lock again under it, unlinks it only while it is still stale, and removes
+    the claim on its way out; a claim whose breaker is dead or whose stamp is past the bound is removed by the
+    lock's own rule. The release unlinks the lock only while the entry at the name is the holder's own inode, so
+    a writer broken as stale while alive leaves the breaker's lock alone; a stamp that cannot be written after the
+    create leaves no lock and no folder behind; a writer that made the folder and leaves while another writer's
+    lock or claim is in it passes the folder's removal to that writer by a `made-dir` line appended to its lock or
+    claim, honored at that writer's release (or by the breaker of that lock when its holder dies); and a link or
+    another non-file at the lock's name, or at the claim's while a stale lock stands, is a lock that cannot be
+    taken: the host refuses `unreadable` naming it, the CLIs print its line and exit 1, and nothing is followed or
+    removed. The two names and that line are everything the lock leaves under `.trackchanges/`
+    (`tools/store-io-lock.test.mjs`). `track-edit`, `track-comment` and
     `track-reply` take it around their load-to-rename (`track-edit` from the file read through the file write and
     the edit turn it adds to the comment it answers) and, when it is not obtained, print `another editor is writing this file; retry` and exit 1
     with nothing written; their `fail()` throws to the entry point so a held lock is released. That part is
@@ -3208,7 +3267,9 @@ document stands on its own, each with the reasoning it was given.
     standing word of 2026-09-11 to open nothing new upstream. The host takes the same lock from its fence stat through its
     last rename or prune (`underStoreLock`): the sidecar's for `comment`, `reply`, `resolve`, `retarget`,
     `accept`, `reject` and `save`; `config.json`'s own for `set-tracked`, since that verb writes the root's list,
-    which every file under the root shares. A loose file takes it after its landmark and checks its `""` fence
+    which every file under the root shares, and a held `config.json` lock refuses `busy` naming the root's tracked
+    list rather than the file, since that is what the lock guards (`tools/file-comments-host-config-lock.test.mjs`).
+    A loose file takes it after its landmark and checks its `""` fence
     again under it, and every reply is built after the release from a store read back under the lock. The mtime
     fences stay: the lock serializes the writers, the fences catch the panel's stale copy, so every writer loads
     after the previous writer's rename and a stale copy always refuses. A lock still held after the wait refuses
@@ -3218,9 +3279,16 @@ document stands on its own, each with the reasoning it was given.
     writer mid-write (before the lock, each answered about 220 ms before the holder saved, and the holder's save
     erased its write), the refusal and the stale lock; `tools/file-comments-host-race.test.mjs` a `track-edit`
     inside a reject's write, through `FILE_COMMENTS_TEST_PAUSE_MS`, a test seam at the file's rename that is
-    inert unless set and that the kernel never sets; `tools/vendor-patches.test.mjs` (P8) the CLIs' refusal and
+    inert unless set and that the kernel never sets; `tools/file-comments-host-landmark-race.test.mjs` two first
+    writes on one loose file, in both orderings the race has and in a two-process loop, the second meeting a moved
+    fence and never `unreadable`; `tools/file-comments-host-read-under-lock.test.mjs` a comment sent between a
+    `track-edit`'s two writes, placed in the text the edit left; `tools/file-comments-host-config-lock.test.mjs`
+    `set-tracked` against a held `config.json.lock`; `tools/track-comment-race.test.mjs` six real `track-comment`
+    processes on one note at one instant, every comment landing; `tools/vendor-patches.test.mjs` (P8) the CLIs' refusal and
     their release on a failure; `ui/webview/file-comments-changes-review2.test.ts` the panel's `busy`;
-    `tools/file-review-plan-sidecar.test.mjs` holds this record and decision 50 to the source.
+    `ui/webview/file-comments-save-busy.test.ts` the editor's Save through the panel refused `busy`, one retry and
+    no more; `tools/file-review-plan-sidecar.test.mjs` holds this record and decision 50 to the source, and
+    `tools/file-review-plan-sidecar-records.test.mjs` the records' inventory to the tree.
 50. **The clock a reply carries is taken before the read** (2026-09-11). The same probe found the panel's poll
     blind to a write 11 times in 147 rounds. The host read the sidecar and then stat'ed it for the reply's
     `storeMtimeNs`, so a write landing between the two gave the panel the writer's clock over the earlier bytes;
