@@ -30,7 +30,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   APPS, DELTA_SEP, REPO, STRIPPED_ENV, WHOLE_STATE_TYPES, aggregateProfile, assertTmpPath, barsKeys, benchRoot, browserAvailability, buildReport, classifyFrame,
   compareReports, dispatchExpectation, dispatchType, frameKey, frameSettle, launchBrowser, loadFrames, matchDispatches, mergeAggregates, mergeWindows, percentile, rankProfile,
-  recordFrames, refineAlignment, renderCompare, renderProfile, renderReport, replay, sourceLocator, startPageServer, streamSummary, stripProfileQueries, summarize,
+  parseArgs, recordFrames, refineAlignment, renderCompare, renderProfile, renderReport, replay, sourceLocator, startPageServer, streamSummary, stripProfileQueries, summarize,
   sweepDeadRuns, synthesizeFrames, writeFrames,
 } from "../tools/ui-bench.mjs";
 
@@ -117,6 +117,35 @@ const pfd = (i, type, bytes, handlerMs, settleMs, dispatchMs, where = "inline") 
   const f = pf(i, type, bytes, handlerMs, settleMs);
   return { ...f, dispatchT0: where === "inline" ? f.t0 + 0.2 : f.t0 + handlerMs + 20, dispatchMs, dispatchInline: where === "inline" };
 };
+
+test("parseArgs: --fast, --hidden and --help take no value; every other option takes the next word", () => {
+  const o = parseArgs(["--replay", "timeline", "--frames", "f.jsonl", "--hidden", "--fast", "--iters", "3"]);
+  assert.equal(o.replay, "timeline"); assert.equal(o.frames, "f.jsonl"); assert.equal(o.hidden, true); assert.equal(o.fast, true); assert.equal(o.iters, "3");
+  assert.equal(parseArgs(["--replay", "timeline"]).hidden, undefined, "absent → not set");
+  assert.throws(() => parseArgs(["--frames"]), /--frames needs a value/);
+});
+
+test("buildReport carries the hidden regime: the expansion counts, and the return's cost and what it expanded", () => {
+  const plain = fakeRun({ perFrame: [pf(0, "bars", 5000, 40, 90)] });
+  const r0 = buildReport({ app: "timeline", framesFile: "f", cpuThrottle: 1, fast: true, iters: 1, browser: "t", runs: [plain] });
+  assert.equal(r0.hidden, false); assert.equal(r0.expand, null); assert.equal(r0.hiddenReturn, null, "a run without the fields reports none");
+  assert.doesNotMatch(renderReport(r0), /page hidden|return of the hidden page|timeline expansion/);
+  const a = { ...fakeRun({ perFrame: [pf(0, "bars", 5000, 4, 90)] }), hidden: true, expand: { bars: 0, judging: 0 }, hiddenReturn: { ms: 30, before: { bars: 0, judging: 0 }, after: { bars: 120, judging: 40 } } };
+  const b = { ...a, hiddenReturn: { ms: 50, before: { bars: 0, judging: 0 }, after: { bars: 120, judging: 40 } } };
+  const r = buildReport({ app: "timeline", framesFile: "f", cpuThrottle: 1, fast: true, iters: 2, browser: "t", runs: [a, b] });
+  assert.equal(r.hidden, true);
+  assert.deepEqual(r.expand, { bars: 0, judging: 0 }, "the replay's own expansion, averaged over runs");
+  assert.deepEqual(r.hiddenReturn, { ms: 40, maxMs: 50, expandBars: 120, expandJudging: 40 }, "the return: mean and max ms, what the catch-up paint expanded");
+  const text = renderReport(r);
+  assert.match(text, /page hidden/);
+  assert.match(text, /timeline expansion during the replay .*: 0 bars, 0 judging entries per run/);
+  assert.match(text, /return of the hidden page .*: 40(\.0)? ms mean, 50(\.0)? ms max; it expanded 120 bars, 40 judging entries/);
+  const c = { ...a, expand: null, hiddenReturn: { ms: 10, before: null, after: null } };
+  const rc = buildReport({ app: "feed", framesFile: "f", cpuThrottle: 1, fast: true, iters: 1, browser: "t", runs: [c] });
+  assert.equal(rc.expand, null, "a page without the counter reports no expansion");
+  assert.deepEqual(rc.hiddenReturn, { ms: 10, maxMs: 10, expandBars: null, expandJudging: null });
+  assert.doesNotMatch(renderReport(rc), /it expanded/);
+});
 
 test("buildReport folds runs per frame type with percentiles, attribution and end state", () => {
   const run = fakeRun({
