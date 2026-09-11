@@ -606,22 +606,39 @@ const EMBED_ELSEWHERE = "The file changed where you drew this region, and the li
 /** Save's refusal rows for an `elsewhere` pair: the note stays, and the person selects or draws again. */
 const PASSAGE_ELSEWHERE_SAVE = "Nothing saved: the file changed where you selected this passage, and its text now occurs only elsewhere in the file. Select the passage again.";
 const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file. Draw the region again.";
+/** A card as the panel holds it (cards): the model's Card and, for a passage comment the host's tie-break CONFIRMED a copy
+ *  for, that copy's offset in the view's coordinates (`confirmedAt`, placedAt's answer for the status showing; absent
+ *  without a confirmed verdict). It rides on the card because the paint takes it as the hint over the stored position
+ *  (paintAll) and the words for a guessed copy, handed the card alone, must say which hint the pick was nearest to
+ *  (copyUnsureWords, unsureMarkTitle): before it they described the copy nearest the stored position while the paint had
+ *  taken the copy nearest the confirmed place, a different copy when the view's text had moved past the status (the
+ *  review, 2026-09-11). */
+type PanelCard = Card & { confirmedAt?: number };
 /** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
- *  open card, since a tag's title never reaches touch. They end by saying how to confirm the copy (the tie-break,
- *  2026-09-11): a comment saved from the right copy stores the position, ordinal and heading path the host confirms by. */
-function copyUnsureWords(c: Card): string {
+ *  open card, since a tag's title never reaches touch. Three states, by the hint the paint took (paintAll): the host's
+ *  confirmed place, when the view's text has moved past it (`confirmedAt`: the poll's reload paints before the fresh
+ *  status lands, and a refused refresh keeps the old one), the copy nearest THAT place; else no stored position, the
+ *  first copy; else the stored position, the copy nearest it. They end by saying how to confirm the copy (the tie-break,
+ *  2026-09-11): a comment saved from the right copy stores the position, ordinal and heading path the host confirms by,
+ *  and the card offers the Reveal the sentence names (renderCard). */
+function copyUnsureWords(c: PanelCard): string {
   return "This passage occurs in the file more than once with the same surroundings, and "
-    + (c.anchorAt === null
+    + (c.confirmedAt !== undefined
+      ? "the place where the comment's copy was last confirmed names none of the copies as the file is now, so the copy nearest that place is highlighted"
+      : c.anchorAt === null
       ? "the comment stores no position to tell the copies apart, so the first copy is highlighted"
       : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted")
     + ", not a confirmed one. Reveal it and save again from the right copy to confirm.";
 }
-/** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branch as
- *  copyUnsureWords, so the mark and the card never disagree about whether a position is stored (the review,
- *  2026-09-08: the title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none). */
-function unsureMarkTitle(c: Card): string {
+/** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branches as
+ *  copyUnsureWords, so the mark and the card never disagree about which place the copy is the nearest to, or whether a
+ *  position is stored (the review, 2026-09-08: the title claimed a stored position on a comment `track-comment` wrote,
+ *  whose card said it stores none). */
+function unsureMarkTitle(c: PanelCard): string {
   return "Open the comment; this passage recurs, and "
-    + (c.anchorAt === null
+    + (c.confirmedAt !== undefined
+      ? "this copy is the nearest to where the comment's copy was last confirmed"
+      : c.anchorAt === null
       ? "the comment stores no position to tell the copies apart, so this is the first copy"
       : "this copy is the nearest to the comment's stored position")
     + ", not a confirmed one";
@@ -1123,8 +1140,9 @@ class Panel {
   colors: Map<string, FileViewIdentity> | null = null;
   wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED or hidden, and where the keyboard went meanwhile (refocus): kept while it is in the list and the keyboard stays there
   located = new Map<string, Located & { painted: boolean }>();
-  /** The comments whose highlight sits on a copy the panel cannot vouch for (copyUnsure): the anchor ties and the stored
-   *  position names none of the tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
+  /** The comments whose highlight sits on a copy the panel cannot vouch for (copyUnsure): the anchor ties and the paint's
+   *  hint, the stored position or the host's confirmed place the view moved past (PanelCard.confirmedAt), names none of the
+   *  tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
   unsureCopies = new Set<string>();
   base: PollBaseline | null = null;
   // editing over pending changes (Slice 5): what the editor's records came from — the status at Edit, or the last landed
@@ -3106,10 +3124,16 @@ class Panel {
   // move, so with hundreds of unseen replies one wheel tick held the page for tens of milliseconds rebuilding one model (the
   // review, 2026-09-09; file-comments-arrivals-review2.test.ts counts the builds through the store)
   private cardsOf: Status | null = null;
-  private cardsMemo: Card[] = [];
-  cards(): Card[] {
+  private cardsMemo: PanelCard[] = [];
+  cards(): PanelCard[] {
     if (!this.status) return [];
-    if (this.cardsOf !== this.status) { this.cardsOf = this.status; this.cardsMemo = cardModel(this.status.store, this.status.hunks || [], this.status.log || [], this.status.decided); }
+    if (this.cardsOf !== this.status) {
+      this.cardsOf = this.status;
+      // the host's confirmed place rides on the card (PanelCard.confirmedAt), read from the same status by placedAt, so the
+      // model stays a pure function of the status; a card with no confirmed verdict is the model's own object
+      this.cardsMemo = cardModel(this.status.store, this.status.hunks || [], this.status.log || [], this.status.decided)
+        .map((c) => { const at = this.placedAt(c); return at === undefined ? c : { ...c, confirmedAt: at }; });
+    }
     return this.cardsMemo;
   }
   /** The change cards, their paragraph groups over the current text, and the fold (GROUP_LIMIT). */
@@ -3222,7 +3246,9 @@ class Panel {
       // surroundings past the anchor's context is painted on the copy that was chosen — in the VIEW's coordinates
       // (viewAt: the host's text keeps a BOM the fetch strips, so its offsets run one ahead on such a file); where the
       // position names no copy any more and the host's tie-break confirmed one from the copy fields it stores (the
-      // status's `placed`, the tie-break, 2026-09-11), that copy is the hint instead, so it is painted as the chosen one
+      // status's `placed`, the tie-break, 2026-09-11), that copy is the hint instead, so it is painted as the chosen one;
+      // where the view's text has moved past that place too, the copy nearest it is a guess whose words name the place
+      // (copyUnsureWords, by the card's confirmedAt, the same answer stamped by cards())
       const at = this.placedAt(card) ?? this.viewAt(card);
       const loc = locateComment(src, card.anchor, at);
       // ...and where the anchor ties and the position names none of the tied copies, the copy painted is the engine's
@@ -3320,8 +3346,11 @@ class Panel {
    *  verdict for the card (an older host, a comment the position or the anchor alone places), when the verdict is a guess
    *  (`confirmed` false: the copy nearest the position, painted as a guess by the path viewAt feeds), or when the entry is
    *  not of the shape the host writes (docs/adr/0002: a field of the wrong shape claims nothing). The hint is trusted only
-   *  as a hint: copyUnsure still compares it with the copy the engine paints, so a confirmed position into text the view
-   *  has since moved past falls back to the guess it would have made, never to a plain paint on the wrong copy. */
+   *  as a hint: copyUnsure still compares it with the copy the engine paints, so a confirmed place the view's text has
+   *  since moved past (the poll's reload paints before the fresh status lands; a refused refresh keeps the old status) is
+   *  painted as a guess, the copy nearest that place in the dashed cue with words that name the place (copyUnsureWords,
+   *  by the card's `confirmedAt`), never plainly on the wrong copy. Both readers of the status's verdict go through it:
+   *  cards() stamps its answer on the card, and the paint takes it as the hint (paintAll). */
   private placedAt(card: Card): number | undefined {
     const p = this.status && this.status.placed && typeof this.status.placed === "object" ? this.status.placed[card.id] : undefined;
     if (!p || typeof p !== "object" || p.confirmed !== true || typeof p.at !== "number" || !Number.isFinite(p.at)) return undefined;
@@ -5513,7 +5542,7 @@ class Panel {
     if (!picture) return this.ctx.media() === "pdf" ? "Resolve it; re-placing it needs its page drawn in the viewer." : "Resolve it, or re-place it from the view that shows the image.";
     return "Resolve it, or re-place it from a computer: drawing a region needs a mouse.";
   }
-  private renderCard(c: Card): HTMLElement {
+  private renderCard(c: PanelCard): HTMLElement {
     const isOpen = this.openCards.has(c.id) || this.replyTo() === c.id;   // open while its reply is written: the box stands in it (placeComposer)
     const loc = this.located.get(c.id);
     const picture = c.target ? this.regionImageFor(c) : null;   // the picture the region is on, in this view; null when it shows none
@@ -5675,6 +5704,17 @@ class Panel {
       if (c.anchor && loc && loc.range && !loc.painted) {
         const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.id;
         rv.title = "Show the passage in the Raw view" + (src !== null ? " (line " + (rawOffsetToLine(src, loc.range.start) + 1) + ")" : "");
+        acts.appendChild(rv);
+      } else if (c.anchor && loc && loc.range && this.unsureCopies.has(c.id)) {
+        // a guessed copy (copyUnsure) is painted, so the branch above offers nothing, but its words end by asking the person
+        // to reveal it and save again from the right copy (copyUnsureWords), so the control they name is offered here too:
+        // Reveal switches to Raw and scrolls to the guessed copy, the other copies near it, where a selection places a
+        // comment on the copy it is made in. Before this the card named a button it did not have (the review, 2026-09-11;
+        // ui/CLAUDE.md: a compact view never dead-ends). The title says what that save does: the host's comment verb mints
+        // a new comment, so this card keeps its tag until it is resolved (docs/guide.md says the same)
+        const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.id;
+        rv.title = "Show this copy in the Raw view" + (src !== null ? " (line " + (rawOffsetToLine(src, loc.range.start) + 1) + ")" : "")
+          + "; a comment saved from the copy you mean is placed on that copy, and this one keeps its tag until you resolve it";
         acts.appendChild(rv);
       }
     }

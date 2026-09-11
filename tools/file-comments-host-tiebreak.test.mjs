@@ -110,15 +110,21 @@ const PASSAGE_KEYS = ['id', 'author', 'ts', 'anchor', 'anchorAt', 'ordinal', 'co
 
 // ── the section helper ──────────────────────────────────────────────
 
-test('sectionAt: the heading path from the top level down, a lower level closed by a later heading of a higher one, a heading line under itself; not a heading: a line inside a fenced block, a front-matter line, a hash with no space; closing hashes and extra spaces stripped; empty for no headings and for a non-markdown file', () => {
+test('sectionAt: the heading path from the top level down, a lower level closed by a later heading of a higher one, a heading line under itself; not a heading: a line inside a fenced block, a hash line inside a front-matter block (closed by --- or ..., and opening no section for the passage after it), a hash with no space; closing hashes and extra spaces stripped; empty for no headings and for a non-markdown file', () => {
   const text = [
     '---', 'title: Front matter', '# not a heading: inside the front matter', '---', '',
+    'After the front matter, before any heading.', '',
     '# Alpha  ', '', 'Under alpha.', '', '## Beta ##', '', 'Under beta.', '', '### Gamma', '', 'Under gamma.', '',
     '```', '# a comment in code', '```', '', 'Still under gamma.', '', '##   Delta   with   spaces', '', 'Under delta.', '',
     '#hashtag is not a heading', '', 'Still under delta.', '', '# Omega', '', 'Under omega.', '',
   ].join('\n');
   const at = (needle) => { const i = text.indexOf(needle); assert.ok(i >= 0, needle); return i; };
   assert.equal(sectionAt(text, at('title: Front'), true), '', 'inside the front matter: nothing above');
+  assert.equal(sectionAt(text, at('# not a heading'), true), '', 'the hash line inside the front matter is not a heading, not even under itself');
+  const closingRule = text.indexOf('\n---\n') + 1;
+  assert.equal(text.slice(closingRule, closingRule + 3), '---', 'the fixture: the closing rule of the front matter');
+  assert.equal(sectionAt(text, closingRule, true), '', 'the closing rule of the front matter: still nothing above');
+  assert.equal(sectionAt(text, at('After the front matter'), true), '', 'a passage after the front matter and before the first heading: the hash line inside the block opened no section');
   assert.equal(sectionAt(text, at('Under alpha.'), true), 'Alpha');
   assert.equal(sectionAt(text, at('Under beta.'), true), 'Alpha > Beta', 'the closing hashes stripped');
   assert.equal(sectionAt(text, at('Under gamma.'), true), 'Alpha > Beta > Gamma');
@@ -129,6 +135,9 @@ test('sectionAt: the heading path from the top level down, a lower level closed 
   assert.equal(sectionAt(text, at('# Omega') + 2, true), 'Omega', 'a passage on the heading line itself is under that heading');
   assert.equal(sectionAt(text, at('# Alpha'), true), 'Alpha', 'the heading from its first character');
   assert.equal(sectionAt(text, 0, true), '', 'the top of the file');
+  const dots = '---\ntitle: Dots\n# not a heading: inside a block the document-end marker closes\n...\n\nAfter a front matter closed by three dots.\n\n# Alpha\n\nUnder alpha.\n';
+  assert.equal(sectionAt(dots, dots.indexOf('After a front matter'), true), '', 'a front matter closed by the YAML document-end marker is skipped the same way');
+  assert.equal(sectionAt(dots, dots.indexOf('Under alpha.'), true), 'Alpha', 'and the headings after it are read');
   assert.equal(sectionAt(PLAIN, PLAIN.indexOf('unique'), true), '', 'a markdown file with no headings');
   assert.equal(sectionAt(text, at('Under gamma.'), false), '', 'a non-markdown file: no heading path however the text reads');
   assert.equal(sectionAt(TIED, nth(TIED, MARKER, 1), true), 'Report > Second pass');

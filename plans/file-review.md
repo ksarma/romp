@@ -457,11 +457,14 @@ otherwise moves only to the one copy, or the one occurrence of the quote, those 
 carried it to, and only while the sidecar's fingerprint matches the file, since after an
 unrecorded edit the record no longer bounds the shift; nowhere, the engine's scoring places it.
 Every scan the refresh makes (the whole-anchor classification, the quote count, the engine's
-scoring) is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`), a passage
-still at its position costs no scan, and past the budget the remaining comments keep their
-position and stderr says how many, once per write; and a stored comment's anchor is located
-with its `anchorAt` as the hint. Every reader of a stored anchor in the host (the figure a passage
-names, a re-place, the reply's `placed`) goes through `locateStored` since the tie-break (2026-09-11,
+scoring) is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`); a passage
+still at its position costs no scan to place, only the one classification pass per distinct anchor
+that stamping its copy fields takes on every write since the tie-break (below; before it such a
+passage cost nothing), and past the budget the remaining comments keep their position and stderr
+says how many, once per write, and a comment whose stamp the budget refuses keeps the fields it
+has, with no note; and a stored comment's anchor is located with its `anchorAt` as the hint. Every
+reader of a stored anchor in the host (the figure a passage names, a re-place, the reply's `placed`)
+goes through `locateStored` since the tie-break (2026-09-11,
 decision 51): the position first, where the whole anchor still sits at it; then, when the whole anchor
 sits at several places and the position names none, the copy fields, `ordinal` while `copies` equals
 the count of matches now, else the one match under the stored `section`, both confirmed; else the match
@@ -1615,7 +1618,8 @@ copy, and only while the sidecar's fingerprint says no unrecorded edit touched t
 nowhere in whole is placed by the engine's scoring under `REFRESH_SCAN_BUDGET`, past which the rest keep
 their position and stderr says how many, so no count of comments holds a write past the kernel's deadline;
 every scan (the whole-anchor classification, the quote count, the engine's) is charged to that one
-budget per write, and a passage still at its position costs none. The panel passes a card's `anchorAt` to the
+budget per write, and a passage still at its position costs none to place, one classification pass per
+distinct anchor for its copy fields on every write since the tie-break (below). The panel passes a card's `anchorAt` to the
 engine as the tie-break when it paints (the model carries the field), so the highlight stays on the
 copy that was chosen even where the anchor alone cannot tell, while the position names a tied copy;
 where it names none, or the comment has no position, the copy the engine returns is a guess, and
@@ -2398,7 +2402,11 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   modules that drive the painted states against the tree. `tools/file-review-plan-tiebreak.test.mjs` pins
   decision 51 and the tie-break's sentences here against the host (`locateStored`, `stampCopy`, the
   fields), the panel (`placedAt`, the words), the model, the ADR's six fields and the guide's sentence,
-  and the tie-break modules against the tree. `tools/file-review-plan-attribution.test.mjs` holds the margin-layout note to the
+  and the tie-break modules against the tree. `tools/file-review-plan-tiebreak-review.test.mjs` holds the
+  tie-break review's two corrections to the record against the host: a passage still at its position costs
+  its copy fields one classification pass per distinct anchor on every write, charged to the budget and
+  skipped past it with no note (the stamping pass of `refreshAnchorAts`, `fullMatches`'s memo), and a tie
+  with no position is settled by the fields before it is refused (`locateStored`). `tools/file-review-plan-attribution.test.mjs` holds the margin-layout note to the
   record: the ask as the user made it, with its hedges, and the layout as the build's reading of
   it, awaiting the user's word (a review of the follow-on found the note had folded the build's
   design into the ask, 2026-09-07); `ui/webview/styles-fc-margin-attribution.test.ts` holds each sheet's
@@ -3216,12 +3224,17 @@ document stands on its own, each with the reasoning it was given.
     guessed one as before, with the card's words now ending "Reveal it and save again from the right copy to
     confirm." The contract named two fields; `copies` is the third, since the first rule compares the count of
     copies with the count at the time the ordinal was written, and the ordinal alone does not carry it. Setext
-    headings (a line underlined with `=` or `-`) are not read as headings, a tie with no position still refuses,
-    and the other editors write the object back whole, so the fields survive them (docs/adr/0002: six additive
-    fields now). Tests: `tools/file-comments-host-tiebreak.test.mjs`, `ui/webview/file-comments-tiebreak.test.ts`,
+    headings (a line underlined with `=` or `-`) are not read as headings, a tie with no position still refuses
+    `anchor-ambiguous` when neither field tells (the fields settle it as for any other comment, so one whose
+    position an editor dropped is confirmed from its ordinal or its heading path, and a comment the CLI made,
+    which carries neither until the next host write stamps it, is refused as before), and the other editors
+    write the object back whole, so the fields survive them (docs/adr/0002: six additive fields now). Tests:
+    `tools/file-comments-host-tiebreak.test.mjs`, `ui/webview/file-comments-tiebreak.test.ts`,
     `ui/webview/file-comments-tiebreak-browser.test.ts` (Chromium and Firefox: the same paragraph twice under
     different headings, a comment on the second, a paragraph inserted above by a raw write, the status refreshed,
-    the highlight on the second copy with no tag), `tools/file-review-plan-tiebreak.test.mjs` and
+    the highlight on the second copy with no tag), `tools/file-review-plan-tiebreak.test.mjs`,
+    `tools/file-review-plan-tiebreak-review.test.mjs` (the review's two corrections to this record: the stamp's
+    pass on a passage still at its position, and the fields settling a tie with no position) and
     `tests/test_guide_files_comments_anchors.py`.
 
 ## Open questions for the user

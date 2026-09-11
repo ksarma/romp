@@ -115,11 +115,12 @@
 //     the one place the recorded changes (the pending ops, the ops this write settles — accept's and
 //     save's alike — the edits this write applies) can have carried it to, never to the nearest one and
 //     never to the other copy of a passage whose own surroundings were edited; a comment whose whole
-//     anchor still sits at its position costs no scan at all, and every scan the rest need — the
-//     classification scan (fullMatches, charged as the native pass and the hits it is), the quote's
-//     occurrences (quoteHits) and the engine's scoring a nowhere anchor costs — is charged to one
-//     budget per write (REFRESH_SCAN_BUDGET), so no count of comments can hold a write past the
-//     kernel's deadline, and a write that moved no passage costs nothing however many there are;
+//     anchor still sits at its position costs no scan to place (its copy fields, the next bullet, cost
+//     one classification pass per distinct anchor), and every scan the rest need, the classification
+//     scan (fullMatches, charged as the native pass and the hits it is), the quote's occurrences
+//     (quoteHits) and the engine's scoring a nowhere anchor costs, is charged to one budget per write
+//     (REFRESH_SCAN_BUDGET), so no count of comments can hold a write past the kernel's deadline, and a
+//     write that moved no passage costs one pass per distinct anchor and no more;
 //   * beside `anchorAt` a passage comment carries three more romp-only fields (the tie-break, 2026-09-11;
 //     decision 51): `ordinal` and `copies`, its index among the whole anchor's matches and their count at the
 //     moment of the write, and `section`, the heading path above it in a markdown file ('' otherwise). Written
@@ -128,8 +129,15 @@
 //     names none, after an edit nobody recorded: every reader of a stored anchor here (locateStored:
 //     passageFigure, doRetarget, and the `placed` map every reply carries for the panel) takes the ordinal's
 //     copy when the count of copies is unchanged, else the one copy under the stored heading path, and marks
-//     it confirmed; only when neither tells does it fall back to the copy nearest the position (a hintless tie
-//     still refuses), a guess the panel shows as one. A decision's self-check carves these out with anchorAt (commentsApartFromAnchorAt);
+//     it confirmed; only when neither tells does it fall back to the copy nearest the position, read off the
+//     whole matches already enumerated with no further scan (a hintless tie still refuses), a guess the panel
+//     shows as one. The heading path is read as the viewer renders the file (headings: a leading BOM, CRLF line
+//     ends, a front-matter block by the viewer's own test, each heading's text capped at SECTION_HEADING_CAP), so
+//     the path stamped and the path read agree with what the person sees; whether the file is markdown is judged
+//     from the FILE's name at every stamp and every read (handle's ctx.markdown, stamped on the store at load for
+//     the refresh: MARKDOWN_FILE), never from the sidecar JSON's editable `path` field. Past the budget a comment
+//     keeps the fields it has and stderr says how many, once per write, the comments without the fields stamped
+//     first. A decision's self-check carves these out with anchorAt (commentsApartFromAnchorAt);
 //   * nothing under `.trackchanges/` is read or written through a symbolic link. The sidecar, the
 //     comments log and config.json are named from the file's path and never shown to the person,
 //     and a checked-out repository can commit anything under those names (the plan leaves committing
@@ -285,10 +293,14 @@ export const ANCHOR_CTX_CAP = 480;
 // second pass adds no positions the first did not (the memos make what the first scanned free) and
 // the reply is measured with exactly the positions the sidecar gets. Past the budget a comment keeps
 // the position it has, and stderr says how many and why, once per write. A comment whose whole anchor
-// still sits at its stored position is never scanned (sitsAt, a compare of the anchor's own length),
-// so a sidecar of any size costs nothing on a write that moved none of its passages, and the budget
-// bounds the comments whose passages moved, which the next write takes up where this one stopped.
-// About half a second of scanning on the machine the figure was taken on, at the engine's rate.
+// still sits at its stored position is never scanned to place it (sitsAt, a compare of the anchor's own
+// length); its copy fields (the tie-break, 2026-09-11) cost one classification pass per distinct anchor on
+// every write, after the positions have had the budget, so a write that moved none of a sidecar's passages
+// costs one pass per distinct anchor and no more, and the budget bounds the comments whose passages moved,
+// which the next write takes up where this one stopped. The reply's `placed` map (placedFor) draws on the
+// same budget and adds no scan of its own: a tie's nearest copy is read off the whole matches already
+// enumerated (locateStored). About half a second of scanning on the machine the figure was taken on, at
+// the engine's rate.
 export const REFRESH_SCAN_BUDGET = 48_000_000;
 export const REFRESH_PASS_DIVISOR = 32;
 // The most copies of a whole anchor (and the most occurrences of a quote) the refresh enumerates for
@@ -310,6 +322,14 @@ const ENGINE_PLACED = Symbol('romp.enginePlaced');
 // False means the file changed under the sidecar by an edit nobody recorded — a direct write, an
 // editor without the sidecar — and the recorded changes cannot vouch for where a tied passage went.
 const TEXT_AS_WRITTEN = Symbol('romp.textAsWritten');
+// Whether the file a store was loaded or seeded for is markdown (isMarkdownPath of the request path, handle's
+// ctx.markdown), stamped on the store object at load (loadOrRefuse) and on a seeded store (withSidecar), for the copy
+// fields' heading path the refresh stamps (refreshAnchorAts, stampCopy). The one judgment of the file's kind, the
+// same one every reader of a stored anchor takes (locateStored, from ctx): never the store's own `path` field, which
+// any writer can leave stale or absent. The refresh judged by that field once, stamped '' for the heading path of a
+// markdown file, and a later read, judging by the file's name, took the '' for the path of the copies above every
+// heading and confirmed one of those (the review, 2026-09-11).
+const MARKDOWN_FILE = Symbol('romp.markdownFile');
 // Where stageSidecar staged the store's next bytes: the temp file the rename lands, stamped on the
 // store object at the stage under a symbol key so saveStore's JSON never carries it. A decision's
 // self-check (requireCommentsUntouched) reads the staged sidecar back through it, between the stage
@@ -1134,13 +1154,15 @@ const NOT_BARE = /[\s"'>]/;
 const REF_DEF = /^ {0,3}\[((?:\\.|[^\[\]\\])+)\]:[ \t]*<?([^\s>]+)>?/gm;
 const normLabel = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 
-// Offsets of the text's fenced code blocks, [start, end).
+// Offsets of the text's fenced code blocks, [start, end). A leading U+FEFF (kept in this text, stripped by the fetch
+// the viewer reads) is not part of the first line's fence mark, and a CR before the newline is whitespace.
 function fencedRanges(text) {
   const out = [];
   let open = null;
   let at = 0;
+  const bom = text.charCodeAt(0) === 0xFEFF;
   for (const line of text.split('\n')) {
-    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(bom && at === 0 ? line.slice(1) : line);
     if (m) {
       if (!open) open = { ch: m[1][0], n: m[1].length, at };
       else if (m[1][0] === open.ch && m[1].length >= open.n && /^\s*$/.test(line.slice(m[0].length))) { out.push([open.at, at + line.length]); open = null; }
@@ -1350,38 +1372,95 @@ export function isMarkdownPath(p) {
   return ext === 'md' || ext === 'markdown';
 }
 
+// The most characters of one heading's text kept in a `section` path (headings). A heading is a line of a few words,
+// and the path is stored on every passage comment under it and carried in every reply: with no cap, a comment under a
+// heading line of a megabyte carried the megabyte, and a file of nine such comments answered `too-large` on every
+// write from the section bytes alone (the review, 2026-09-11). Stamp and read cap alike (sectionAt is the one reader),
+// so the section rule's equality holds as before; two headings alike for this many characters are one path. The cut
+// is by code point, so it never splits a surrogate pair, and the whitespace it leaves at the end is dropped.
+export const SECTION_HEADING_CAP = 200;
+function capHeading(words) {
+  if (words.length <= SECTION_HEADING_CAP) return words;
+  const chars = Array.from(words);
+  return chars.length <= SECTION_HEADING_CAP ? words : chars.slice(0, SECTION_HEADING_CAP).join('').trimEnd();
+}
+
+// Whether the lines between a front-matter block's rules read as a YAML block mapping: the viewer's own test
+// (ui/webview/md-config.ts, isYamlMapping, line for line), so the block this reader skips is the block the viewer
+// folds. Every line at the left margin is a `key:` line, a `- ` item under a key, a `#` comment or blank, and an
+// indented line belongs to the key above; prose, a list or a fence between two rules fails it.
+const YAML_KEY_RE = /^(?:"[^"\n]*"|'[^'\n]*'|[\p{L}\p{N}_][^:\n]*?)[ \t]*:(?:[ \t]|$)/u;
+function isYamlMapping(lines) {
+  let underKey = false;
+  for (const line of lines) {
+    if (/^[ \t]*(?:#|$)/.test(line)) continue;                                  // blank, or a comment
+    if (/^[ \t]/.test(line)) { if (!underKey) return false; continue; }         // a nested line: the key above's
+    if (/^-(?:[ \t]|$)/.test(line)) { if (!underKey) return false; continue; }  // a sequence item under the key above
+    if (!YAML_KEY_RE.test(line)) return false;
+    underKey = true;
+  }
+  return true;
+}
+
+// How many of `lines` (the text's lines, a CR and a leading BOM already off) a YAML front-matter block takes at the
+// top of the file, the rules included, or 0 when the file opens with none. The viewer's rule (md-config.ts,
+// frontMatter): a `---` line first, closed by a later `---` line (or YAML's own document-end marker, `...`, which
+// this reader accepted before the viewer's test was mirrored), the line after the opener not blank (pandoc's rule: a
+// rule then a blank line is a thematic break, not metadata), and the body a YAML mapping (isYamlMapping). A file that
+// merely opens with a thematic break, closed by a later rule or by nothing, has its headings read: before the test
+// was mirrored any leading `---` opened a block that the next rule or the end of the file closed, and every heading
+// before that was swallowed, so a notes file opening with a rule stored '' for every passage and the section rule
+// could never confirm a copy in it (the review, 2026-09-11).
+function frontMatterLines(lines) {
+  if (!lines.length || !/^---[ \t]*$/.test(lines[0])) return 0;
+  let close = -1;
+  for (let i = 1; i < lines.length; i++) if (/^(---|\.\.\.)[ \t]*$/.test(lines[i])) { close = i; break; }
+  if (close < 0) return 0;
+  const body = lines.slice(1, close);
+  if (body.length && /^[ \t]*$/.test(body[0])) return 0;
+  if (!isYamlMapping(body)) return 0;
+  return close + 1;
+}
+
 // The ATX headings of a markdown text, in order, each {at, level, text, path}: `at` the offset of the line's first
 // character, `text` the heading's words (the marks, the closing hashes and the surrounding whitespace stripped,
-// inner runs of whitespace collapsed), `path` the heading path in force from that line on, the text of the nearest
-// preceding headings from the top level down joined with " > " (a heading closes every open heading of its level or
-// lower). Not a heading: a line inside a fenced code block (fencedRanges), a line of a YAML front-matter block at the
-// top of the file, or a hash run with no space after it (`#hashtag`). Setext headings (a line underlined with `=`
-// or `-`) are not read; the reports this feature is for write ATX headings, and a rule that told an underline from a
-// table's rule or a thematic break would cost more than the headings it found. Memoized per text for this one-verb
-// process: the refresh and the reply ask for many comments' sections over the one text.
+// inner runs of whitespace collapsed, capped at SECTION_HEADING_CAP characters), `path` the heading path in force
+// from that line on, the text of the nearest preceding headings from the top level down joined with " > " (a heading
+// closes every open heading of its level or lower). Not a heading: a line inside a fenced code block (fencedRanges),
+// a line of a YAML front-matter block at the top of the file (frontMatterLines), or a hash run with no space after it
+// (`#hashtag`). The lines are read as the viewer renders them: a leading U+FEFF, which this script's text keeps and
+// the fetch strips before the viewer sees the file, is not part of the first line, and a CR before the newline (a
+// CRLF file, which the viewer shows and saves as it is) is not part of any line; the offsets count the text as it is.
+// Before the review (2026-09-11) the BOM hid the first line's heading or front-matter rule and the CR hid every
+// heading of a CRLF file, so the stored path lost its top level or was '' throughout such files, and the section rule
+// could not confirm a copy the viewer showed under a heading. Setext headings (a line underlined with `=` or `-`) are
+// not read; the reports this feature is for write ATX headings, and a rule that told an underline from a table's rule
+// or a thematic break would cost more than the headings it found. Memoized per text for this one-verb process: the
+// refresh and the reply ask for many comments' sections over the one text.
 const headingMemo = { text: null, list: null };
 function headings(text) {
   if (headingMemo.text === text) return headingMemo.list;
   const list = [];
   const fences = fencedRanges(text);
   const stack = [];
+  const raw = text.split('\n');
+  const lines = raw.map((line, i) => {
+    const body = line.endsWith('\r') ? line.slice(0, -1) : line;
+    return i === 0 && body.charCodeAt(0) === 0xFEFF ? body.slice(1) : body;
+  });
+  const skip = frontMatterLines(lines);
   let at = 0;
-  let front = text.startsWith('---\n') || text === '---' ? 'open' : 'none';
-  for (const line of text.split('\n')) {
-    if (front === 'open') {
-      if (at > 0 && /^(---|\.\.\.)\s*$/.test(line)) front = 'closed';
-      at += line.length + 1;
-      continue;
-    }
-    const m = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/.exec(line);
+  for (let i = 0; i < raw.length; i++) {
+    const line = lines[i];
+    const m = i < skip ? null : /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/.exec(line);
     if (m && (m[2] !== undefined || line.trim() === m[1]) && !inFencedRange(fences, at)) {
       const level = m[1].length;
-      const words = (m[2] || '').replace(/(^|[ \t])#+[ \t]*$/, '').trim().replace(/\s+/g, ' ');
+      const words = capHeading((m[2] || '').replace(/(^|[ \t])#+[ \t]*$/, '').trim().replace(/\s+/g, ' '));
       while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
       stack.push({ level, text: words });
       list.push({ at, level, text: words, path: stack.map((h) => h.text).join(' > ') });
     }
-    at += line.length + 1;
+    at += raw[i].length + 1;
   }
   headingMemo.text = text;
   headingMemo.list = list;
@@ -1533,6 +1612,7 @@ function loadOrRefuse(ctx, paths, text) {
     case 'ok': {
       const fp = typeof text === 'string' ? fingerprintOf(text) : null;
       store[TEXT_AS_WRITTEN] = !!(fp && store.fingerprint && store.fingerprint.hash === fp.hash && store.fingerprint.size === fp.size);
+      store[MARKDOWN_FILE] = ctx.markdown;
       return store;
     }
     case 'absent': return null;
@@ -1728,12 +1808,15 @@ function sectionOf(c) {
 // (sectionAt). Assigned in place, so a comment that has the fields keeps their slot after `anchorAt`, and a comment
 // from before the fields gains them where JSON puts a new key. Nothing is written when `at` is not among the hits (the
 // position names a place the anchor does not sit at in whole: the fields keep what they last said, as anchorAt does
-// when it cannot be bettered) or when the hits were cut short (no count is known).
+// when it cannot be bettered) or when the hits were cut short (no count is known). `markdown` is whether the file is
+// markdown by its name; undefined (a store this script did not load or seed, markdownOf's note) writes the ordinal and
+// the count and leaves the heading path as it is, rather than judge the file from anything but its name.
 function stampCopy(c, text, at, hits, markdown) {
   const k = hits.indexOf(at);
   if (k < 0) return;
   c.ordinal = k + 1;
   c.copies = hits.length;
+  if (markdown === undefined) return;
   c.section = sectionAt(text, at, markdown);
 }
 
@@ -1747,9 +1830,13 @@ function stampCopy(c, text, at, hits, markdown) {
 //     order: `ordinal` when the count of copies is unchanged since the fields were written (the ordinal's copy, since
 //     no copy was added or removed: an unrecorded edit above moved them all alike), confirmed; else `section` when
 //     exactly one copy lies under the stored heading path, confirmed; else `nearest` to the position (the engine's own
-//     tie-break, the pick the panel paints), a guess, and the caller says so; with no position and neither field
-//     telling, `anchor-ambiguous`, as locateExact answers a hintless tie (the panel paints the first copy as a guess
-//     itself, with its words for a comment that stores no position);
+//     tie-break, the pick the panel paints: among the whole matches, which are the engine's best-scoring hits, the one
+//     nearest the position, the earlier of two at one distance, read off the matches already enumerated with no
+//     further scan), a guess, and the caller says so; with no position and neither field telling, `anchor-ambiguous`,
+//     as locateExact answers a hintless tie (the panel paints the first copy as a guess itself, with its words for a
+//     comment that stores no position). Before the review (2026-09-11) this fallback ran the engine's whole scan per
+//     comment, uncharged and unmemoized, on every reply: a status on a file of repeated text with 400 such comments
+//     took 13 s, past the kernel's deadline, so the file's comments could not be opened at all;
 //   * `engine`: the whole anchor sits nowhere (its context edited) and the engine's scoring places it, confirmed when
 //     it has one best hit and a guess when a tie there is broken by the position; a tie with no position is
 //     `anchor-ambiguous`, as locateExact answers.
@@ -1758,7 +1845,8 @@ function stampCopy(c, text, at, hits, markdown) {
 // refresh's. With a `budget` (the reply's pass over a sidecar, placedFor) every scan is charged to it and a comment
 // whose scan does not fit answers null, nothing known, rather than run past the kernel's deadline; without one
 // (passageFigure, doRetarget: one comment) the scans run. More copies than the refresh enumerates
-// (REFRESH_COPIES_MAX) leave the tie to nearest-wins, a guess.
+// (REFRESH_COPIES_MAX) leave the tie to nearest-wins, a guess, by the engine's own scan of every occurrence, charged
+// like the engine's placing of a nowhere anchor (affordable) since the enumerated matches are then not all of them.
 export function locateStored(text, c, markdown, budget) {
   const anchor = c.anchor;
   const at = hintOf(c);
@@ -1785,7 +1873,17 @@ export function locateStored(text, c, markdown, budget) {
     }
   }
   if (at === undefined) return { error: 'anchor-ambiguous' };
+  if (!more) return span(nearestOf(hits, at), false, 'nearest');
+  if (budget && !affordable(budget, text, anchor)) return null;
   return span(engine.locateAnchor(text, anchor, at).from, false, 'nearest');
+}
+
+// The one of `hits` (ascending offsets) nearest `at`, the earlier of two at one distance: the engine's own tie-break
+// among equally scored candidates (engine.js, pickCandidate), which the whole matches of an anchor are.
+function nearestOf(hits, at) {
+  let best = hits[0];
+  for (const h of hits) if (Math.abs(h - at) < Math.abs(best - at)) best = h;
+  return best;
 }
 
 // The reply's `placed`: for every passage comment whose whole anchor ties in the text and whose stored position names
@@ -1964,6 +2062,7 @@ function movedCopy(hits, at, bounds, occurrences) {
 // refresh passes a write makes (checkReplyFits, then stageSidecar) draw on this one figure. `kept`
 // remembers what stderr was last told, so the note goes out once per write and only when it changes.
 const refreshBudget = { left: REFRESH_SCAN_BUDGET, kept: { skipped: 0, unscanned: 0 } };
+refreshBudget.keptUnstamped = 0;   // what stderr was last told of the copy fields the stamping pass left (noteUnstamped)
 
 // Whether one classification scan (fullMatches, a pass of indexOf over the whole text) fits what is
 // left of the refresh's budget. A result already memoized for this text and anchor is free (a shared
@@ -2025,13 +2124,16 @@ function affordable(budget, text, anchor) {
 // (REFRESH_SCAN_BUDGET), past which a comment keeps its position and stderr says how many, once per
 // write. The anchor's own fields are never touched here, and a comment without an anchor (a whole-file,
 // change or standalone region comment) never gains the field. The other hosts and the CLIs write the
-// whole object back, so the field survives them.
+// whole object back, so the field survives them. Whether the file is markdown, for the copy fields'
+// heading path (stampCopy, below), is the judgment stamped on the store at load from the file's name
+// (MARKDOWN_FILE, markdownOf), never the store's own `path` field.
 function refreshAnchorAts(store, text) {
   if (typeof text !== 'string') return;
   let bounds = null;
   const budget = refreshBudget;
   budget.skipped = 0;
   budget.unscanned = 0;
+  budget.unstamped = 0;
   const recorded = !!store && store[TEXT_AS_WRITTEN] === true;
   const seated = [];   // the comments whose position names a copy in this text once the pass is done: their copy fields are refreshed below
   for (const c of (store && store.comments) || []) {
@@ -2068,9 +2170,19 @@ function refreshAnchorAts(store, text) {
   // whose position names its copy now, its index among the whole anchor's matches and their count (the engine's one
   // best hit counts as 1 of 1 where the anchor sits in whole nowhere) and the heading path above it. One
   // classification scan per distinct anchor, memoized, so the comments the pass above scanned cost nothing more here
-  // and a comment still at its position costs one pass the first time and none after; charged to the same budget,
-  // past which the fields keep what they said, with no note (the position is right, and the next write takes it up).
-  const markdown = isMarkdownPath(store && store.path);
+  // and a comment still at its position costs one pass per write (the count must be seen to be unchanged: a stamped
+  // comment is not free next time, as a refreshed position is); charged to the same budget, after the positions have
+  // had it, and past it the fields keep what they said and stderr says how many, once per write (noteUnstamped). The
+  // budget is spent in store order, so a sidecar with more distinct seated anchors than one write scans leaves the
+  // same tail unstamped on every write while it keeps that shape; the comments WITHOUT the fields (the CLIs', an
+  // older host's) are stamped before the rest, so such a sidecar gains fields where it has none before it refreshes
+  // the fields it has (the review, 2026-09-11: the skip was silent, and a comment past the budget never gained them).
+  // A comment past REFRESH_COPIES_MAX is left by the copies cap, not the budget, and is not counted. Whether the file
+  // is markdown is the judgment stamped on the store at load from the file's name (MARKDOWN_FILE), never the sidecar
+  // JSON's `path` field, so the path stamped here is the path locateStored reads.
+  const markdown = markdownOf(store);
+  const stampedAlready = (c) => ordinalOf(c) !== null && sectionOf(c) !== null;
+  seated.sort((a, b) => Number(stampedAlready(a)) - Number(stampedAlready(b)));   // stable: store order within each group
   for (const c of seated) {
     const at = c.anchorAt;
     if (c[ENGINE_PLACED]) { delete c[ENGINE_PLACED]; stampCopy(c, text, at, [at], markdown); continue; }
@@ -2079,6 +2191,8 @@ function refreshAnchorAts(store, text) {
     if (cut || more) continue;
     stampCopy(c, text, at, hits, markdown);
   }
+  budget.unstamped = seated.filter((c) => stampRefused(text, c.anchor)).length;
+  noteUnstamped(budget);
   if (budget.skipped !== budget.kept.skipped || budget.unscanned !== budget.kept.unscanned) {
     budget.kept = { skipped: budget.skipped, unscanned: budget.unscanned };
     if (budget.skipped) {
@@ -2087,6 +2201,42 @@ function refreshAnchorAts(store, text) {
     if (budget.unscanned) {
       process.stderr.write(`file-comments-host: ${budget.unscanned} comment(s) kept their stored position: locating them would scan past the refresh's budget for one write\n`);
     }
+  }
+}
+
+// The file's kind for the copy fields' heading path (stampCopy): the judgment stamped on the store at load or seed
+// (MARKDOWN_FILE), from the request path's name. This script stamps every store it loads (loadOrRefuse) or seeds
+// (withSidecar), so a store carrying none reaches here only through a caller using this module as a library
+// (stageSidecar on a store of its own); such a store has its heading paths left as they are, and stderr says so once,
+// rather than have the file judged from the sidecar JSON's own `path` field, which any writer can leave stale or absent.
+let unjudgedTold = false;
+function markdownOf(store) {
+  const m = store ? store[MARKDOWN_FILE] : undefined;
+  if (typeof m === 'boolean') return m;
+  if (!unjudgedTold) {
+    unjudgedTold = true;
+    process.stderr.write("file-comments-host: the store carries no judgment of the file's kind, so no heading path was written; every store this script loads or seeds is judged from the file's name\n");
+  }
+  return undefined;
+}
+
+// Whether the stamping pass (refreshAnchorAts) left a seated comment's copy fields for the budget: its classification
+// scan over this text was never run (affordableScan refused the pass) or was cut short by the budget (fullMatches'
+// `cut`, memoized like a whole result). An anchor the engine placed, or whose scan ran whole, has a memoized result
+// without `cut`, past REFRESH_COPIES_MAX or not: the copies cap, not the budget, leaves those.
+function stampRefused(text, anchor) {
+  const m = matchMemo.get(`${REFRESH_COPIES_MAX} ${anchorKey(anchor)}`);
+  return !m || m.text !== text || m.result.cut === true;
+}
+
+// The stamping pass's note: how many seated comments kept the copy fields they had, or none, for the budget
+// (refreshAnchorAts, `unstamped`), told once per write and only when the count changes, as the position notes are
+// (the measure's pass and the stage's pass share the budget and the memos, so the second pass tells nothing new).
+function noteUnstamped(budget) {
+  if (budget.unstamped === budget.keptUnstamped) return;
+  budget.keptUnstamped = budget.unstamped;
+  if (budget.unstamped) {
+    process.stderr.write(`file-comments-host: ${budget.unstamped} comment(s) kept the copy fields they had, or none: counting the copies of their passage would scan past the refresh's budget for one write\n`);
   }
 }
 
@@ -2514,7 +2664,7 @@ function withSidecar(ctx, create, plan) {
   // below, after the last check that can refuse (the reply's size).
   const rootToBe = root || path.dirname(ctx.abs);
   const pathsToBe = paths || pathsFor(rootToBe, ctx.abs);
-  if (!store) store = seedStore(pathsToBe.rel);
+  if (!store) { store = seedStore(pathsToBe.rel); store[MARKDOWN_FILE] = ctx.markdown; }
   apply(store);
   checkReplyFits(ctx, { root: rootToBe, paths: pathsToBe, store, ...file }, null, [], `this ${ctx.verb}`);
   if (!root) {
