@@ -202,7 +202,7 @@ test('a comment on the second copy of a sentence lands there with the hint, stor
   const c = readSidecar(r.storePath).comments[0];
   assert.equal(c.id, `${c.ts}-${second.idx}`);
   assert.equal(c.anchorAt, second.idx);
-  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'body', 'replies', 'resolved']);
+  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'ordinal', 'copies', 'section', 'body', 'replies', 'resolved'], 'the position, then the copy fields (the tie-break, 2026-09-11)');
   assert.equal(c.anchor.quote, 'Ship it.');
   assert.deepEqual(c.anchor, engine.makeAnchor(w.text, second.idx, second.idx + 8, 48), 'widened one step: the browser\'s 24 tied, 48 does not');
   assert.equal(locatesOnlyAt(w.text, c.anchor, second.idx), true, 'unique from both ends');

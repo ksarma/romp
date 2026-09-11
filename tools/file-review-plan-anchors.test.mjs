@@ -21,7 +21,10 @@
 // changes decide, through the whole copies and then the quote's other occurrences), skipped a comment
 // still at its position with no scan, and charged every scan to one budget object per write; the pins
 // read that host, and the plan's four statements of the rule (the contract, the host paragraph, the
-// follow-on note, the Tests paragraph) say the same (the consolidation, 2026-09-08).
+// follow-on note, the Tests paragraph) say the same (the consolidation, 2026-09-08). The tie-break (2026-09-11,
+// decision 51) then had the refresh stamp copy fields on every seated comment, so a passage still at its position
+// costs no scan to place but one classification pass per distinct anchor for its fields; the host-paragraph pin
+// below reads that sentence as the plan now states it (the tie-break review's own module pins the change itself).
 // Synthetic: the repo's own text, no session data.
 // Run: node --test tools/file-review-plan-anchors.test.mjs
 import { test } from 'node:test';
@@ -84,30 +87,32 @@ test('the contract states the refresh by where the whole anchor sits, and refres
   assert.ok(contract.includes("nowhere, the engine's scoring places it, under a scan budget per write past which the remaining such comments keep the position they have"));
   assert.ok(contract.includes('A comment without an anchor never carries it'));
   assert.ok(op.includes('at one place, the position becomes that place when the comment had none or the quote occurs nowhere else, and otherwise moves only where the recorded changes (the pending ops, the ops the write settles, among them the changes a save\'s editor accepted, the edits the write applies) can have carried it, to that copy or to the one other occurrence of the quote'));
-  assert.ok(op.includes("Every scan the refresh makes (the whole-anchor classification, the quote count, the engine's scoring) is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`), a passage still at its position costs no scan, and past the budget the remaining comments keep their position and stderr says how many, once per write"));
-  // the host, after the third review (2026-09-08): a comment still at its position costs no scan; one whole hit is the
-  // place only for a comment with no position or a quote that occurs nowhere else, and otherwise the recorded changes
-  // decide (movedCopy: the whole copies first, then the quote's other occurrences); a tie after an unrecorded edit
-  // stands; an anchor that sits in whole nowhere is the engine's, under the budget
+  assert.ok(op.includes("Every scan the refresh makes (the whole-anchor classification, the quote count, the engine's scoring) is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`); a passage still at its position costs no scan to place, only the one classification pass per distinct anchor that stamping its copy fields takes on every write since the tie-break (below; before it such a passage cost nothing), and past the budget the remaining comments keep their position and stderr says how many, once per write"));
+  // the host, after the third review (2026-09-08): a comment still at its position costs no scan to place (since the
+  // tie-break, 2026-09-11, its copy fields cost one classification pass per distinct anchor, pinned in
+  // tools/file-review-plan-tiebreak-review.test.mjs); one whole hit is the place only for a comment with no position or
+  // a quote that occurs nowhere else, and otherwise the recorded changes decide (movedCopy: the whole copies first, then
+  // the quote's other occurrences); a tie after an unrecorded edit stands; an anchor that sits in whole nowhere is the
+  // engine's, under the budget
   const refresh = fn(host, 'refreshAnchorAts');
   inOrder(refresh, [
     'const budget = refreshBudget;',
     'const recorded = !!store && store[TEXT_AS_WRITTEN] === true;',
-    'if (at !== undefined && sitsAt(text, c.anchor, at)) continue;',
+    'if (at !== undefined && sitsAt(text, c.anchor, at)) { seated.push(c); continue; }',
     'if (!affordableScan(budget, text, c.anchor)) { budget.unscanned++; continue; }',
     'const { hits, more, cut } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX, budget);',
-    'if (hits.length === 1 && at === undefined) { c.anchorAt = hits[0]; continue; }',
+    'if (hits.length === 1 && at === undefined) { c.anchorAt = hits[0]; seated.push(c); continue; }',
     'if (hits.length >= 1) {',
     'const whole = movedCopy(hits, at, bounds);',
     '} else if (hits.length > 1) {',
     'const q = quoteHits(text, c.anchor.quote, budget);',
-    'if (hits.length === 1 && q.count === 1) { c.anchorAt = hits[0]; continue; }',
+    'if (hits.length === 1 && q.count === 1) { c.anchorAt = hits[0]; seated.push(c); continue; }',
     'if (!recorded) continue;',
     'const moved = movedCopy(hits, at, bounds, q.positions);',
-    'if (moved !== null) c.anchorAt = moved;',
+    'if (moved !== null) { c.anchorAt = moved; seated.push(c); }',
     'if (!affordable(budget, text, c.anchor)) continue;',
     'const loc = locateExact(text, c.anchor, undefined);',
-    'if (!loc.error) c.anchorAt = loc.from;',
+    'if (!loc.error) { c.anchorAt = loc.from; c[ENGINE_PLACED] = true; seated.push(c); }',
   ], 'the refresh');
   // the budget is per write: one module-level object (the process is one verb; checkReplyFits and stageSidecar draw
   // on the same figure), which the refresh takes and never remakes, its counts reset per pass

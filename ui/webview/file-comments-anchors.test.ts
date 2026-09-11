@@ -413,7 +413,7 @@ test("the same comment with no stored position is painted on the first copy (the
   assert.equal(rowOf(w, marks[0]), 2, "the first paragraph: nothing said which copy");
   // pinned at source: the painter hands the stored position to locateComment through viewAt, which passes 0 through
   // (only null, no position, becomes undefined) and maps a BOM file's position into the view's coordinates
-  assert.match(SRC, /const at = this\.viewAt\(card\);\s*\n\s*const loc = locateComment\(src, card\.anchor, at\);/);
+  assert.match(SRC, /const at = this\.placedAt\(card\) \?\? this\.viewAt\(card\);\s*\n\s*const loc = locateComment\(src, card\.anchor, at\);/);   // or the copy the host's tie-break confirmed (the tie-break, 2026-09-11)
   assert.match(SRC, /if \(card\.anchorAt === null\) return undefined;/);
 });
 

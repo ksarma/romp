@@ -1,19 +1,25 @@
-// The guessed-copy cue on the two marks the raw suite never reaches (the anchors follow-on's review, round 3, 2026-09-08;
-// plans/file-review.md, Commenting from either view and the follow-on note). (1) In Rendered view a comment on an embed
-// line paints no text: its highlight is a frame on the picture (frameImage), and when the anchor ties and the stored
-// position settles nothing, that frame wears the dashed cue like a Raw mark does — the ternary in paintAll's picture
-// branch, which no test exercised: reverting it left the whole suite green while the card said "passage recurs" over a
-// solid frame. (2) The mark's own title branches as the card's words do: a comment with no stored position (the shape
-// `track-comment` writes) says so, instead of claiming a stored position the card on the same comment says it lacks.
-// Driven over the DOM stand-in file-comments-region-tied.test.ts uses, with a Raw body added for the titles. Synthetic
-// fixtures only: the notes-api world, placeholder ids.
+// The recurring-passage tie-break on a coarse pointer (the review, 2026-09-11; plans/file-review.md, decision 51). A
+// REGION comment whose embed line ties has its rectangle on the guessed figure and its card says how a region's copy is
+// confirmed: a new region drawn on the figure meant, with a mouse. On a pointer that draws that card offers Re-place, and
+// the words say what Re-place does instead (it redraws the rectangle on the figure shown and moves nothing), so the
+// person does not take the button for the recourse. On a phone the same picture is in view but no overlay takes a drag
+// (RegionLayer's active is the panel open AND a fine pointer), so the card offers Reply and Resolve alone: the words kept
+// the sentence about Re-place all the same, the class the third round had closed for the editor (a Reveal the card
+// lacked) and for Raw (a figure the view lacked). Now renderCard stamps the pointer half of the Re-place gate on the card
+// its words read (Shown.draws, from the same drawsRegions() replaceOffered reads), and a pictured card with no pointer
+// that draws ends with REGION_CONFIRM_TOUCH: the pictured view's words with the sentence about Re-place left out, still
+// ending with what drawing takes, so the card does not dead-end. Driven over the DOM stand-in the region module uses
+// (copied, as every module here copies it), with the primary pointer switchable; the fine pointer is the control.
+// Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
-import { makeAnchor, locateComment } from "./anchor-map";
+import { locateComment } from "./anchor-map";
 
 // ── the DOM stand-in ───────────────────────────────────────────────────────────────────────────────
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
@@ -191,7 +197,7 @@ class E extends N {
   }
   setPointerCapture(): void { /* inert */ }
   releasePointerCapture(): void { /* inert */ }
-  getContext(): null { return null; }
+  getContext(): { drawImage(): void } | null { return this.tagName === "CANVAS" ? { drawImage: () => { /* the crop's draw: inert */ } } : null; }   // a canvas draws: the open region card cuts its crop (cropFor)
   scrollIntoView(): void { this.scrolled++; }
 }
 const VOID = new Set(["br", "hr", "img", "input", "meta", "link", "area", "base", "col", "embed", "source", "track", "wbr"]);
@@ -246,7 +252,9 @@ win.parent = win;
 win.innerWidth = 1200; win.innerHeight = 800;
 win.devicePixelRatio = 1;
 win.getSelection = () => ({ isCollapsed: true, rangeCount: 0, toString: () => "" });
-win.matchMedia = () => { throw new TypeError("matchMedia is not a function"); };
+/** The primary pointer a test claims: null leaves matchMedia absent (a desktop without it); true is a finger. */
+let coarse: boolean | null = null;
+win.matchMedia = (q: string) => { if (coarse === null) throw new TypeError("matchMedia is not a function"); return { matches: q === "(pointer: coarse)" && coarse }; };
 (globalThis as any).window = win;
 (globalThis as any).document = doc;
 /** The kernel a test stands up: a 404 to every HEAD and no sessions. */
@@ -255,11 +263,12 @@ const realSetInterval = globalThis.setInterval;
 (globalThis as any).setInterval = (fn: () => void, ms: number) => { const t = realSetInterval(fn, ms); (t as any).unref?.(); return t; };
 const tick = () => new Promise<void>((r) => setImmediate(r));
 
-// ── fixtures: the notes-api world — a report embedding one figure twice, with the same long paragraphs around each ──
+// ── fixtures: the notes-api world, a report embedding one figure twice with the same long paragraphs around each ──
 const SID = "11111111-2222-3333-4444-555555555555";
 const MD = "/repo/notes-api/docs/report.md";
 const STORE_MD = "/repo/notes-api/.trackchanges/docs%2Freport.md.json";
 const T0 = 1757145600000;
+const H1 = "1111111111111111111111111111111111111111111111111111111111111111";
 // each paragraph is longer than the host's widening cap (480 characters), so an anchor on either embed line, widened to
 // the cap by the host, has the same context at both copies: the copies tie, and only the stored position tells them apart
 const BEFORE = "The quick brown fox jumps over the lazy dog. ".repeat(12).trim();
@@ -274,44 +283,55 @@ assert.ok(FIRST_AT > 0 && SECOND_AT > FIRST_AT && DOC.indexOf(EMBED, SECOND_AT +
 // the anchor the host stores at its cap for the second embed (engine.makeAnchor with 480 characters of context)
 const CAP_ANCHOR = { quote: EMBED, prefix: DOC.slice(SECOND_AT - 480, SECOND_AT), suffix: DOC.slice(SECOND_AT + EMBED.length, SECOND_AT + EMBED.length + 480) };
 assert.equal(CAP_ANCHOR.prefix, DOC.slice(FIRST_AT - 480, FIRST_AT), "the same 480 characters before either embed");
-assert.equal(CAP_ANCHOR.suffix, DOC.slice(FIRST_AT + EMBED.length, FIRST_AT + EMBED.length + 480), "and after");
 // the title edited, and nothing recorded it: both copies moved by the edit's length, and the stored position names neither
 const REVISED = DOC.replace("# Report", "# Report, revised");
 const SHIFT = REVISED.length - DOC.length;
 assert.ok(SHIFT > 0 && SHIFT < (SECOND_AT - FIRST_AT) / 2, "the shift is small: the nearest tied copy to the old position is still the second");
+const GUESS_AT = SECOND_AT + SHIFT;   // the engine's pick in REVISED from the stale position: the second copy, a guess
+assert.equal(locateComment(REVISED, CAP_ANCHOR, SECOND_AT).range!.start, GUESS_AT, "nearest-wins from the stale position picks the second copy");
+const GUESS_LINE = REVISED.slice(0, GUESS_AT).split("\n").length;   // its 1-based line, as the Reveal's title names it
 /** The Rendered body marked produces for the report, its title as given. */
 const html = (title: string): string =>
   "<h1>" + title + "</h1>\n<p>" + BEFORE + "</p>\n<p><img src=\"figs/p95.png\" alt=\"Latency\"></p>\n<p>" + AFTER + "</p>\n"
   + "<p>" + BEFORE + "</p>\n<p><img src=\"figs/p95.png\" alt=\"Latency\"></p>\n<p>" + AFTER + "</p>\n";
-/** The panel's comment on the second embed line, as the host saved it: the cap anchor and the located offset. */
+/** A passage comment on the second embed line, as the host saved it: the cap anchor and the located offset. */
 const onSecond: StoreComment = {
   id: T0 + "-" + SECOND_AT, author: "you", ts: T0, body: "Use the p99 chart instead.", anchor: CAP_ANCHOR, anchorAt: SECOND_AT, replies: [], resolved: false,
 };
-/** A comment `track-comment` wrote on the first embed line: the engine's 24 characters of context (which tie here too)
- *  and no position — the CLI stores none. */
-const byCli: StoreComment = {
-  id: T0 + "-cli", author: "api", ts: T0, body: "Swap in the p99 chart.", anchor: makeAnchor(DOC, { start: FIRST_AT, end: FIRST_AT + EMBED.length }), replies: [], resolved: false,
+// the figure: a 600×400 picture drawn at half size, 100px in and 200px down; the region, a rectangle inside it
+const IMG_RECT = rectOf(100, 200, 300, 200);
+const REGION = { x: 0.1667, y: 0.2, w: 0.3333, h: 0.3 };
+/** A REGION comment drawn on the second figure, as the host saved it: the same anchor and position on the embed line, and
+ *  the rectangle with the figure's hash (regionState reads it against the status's embeddedHashes: current). */
+const regionOnSecond: StoreComment = {
+  id: T0 + "-region", author: "you", ts: T0, body: "Crop the y axis.", anchor: CAP_ANCHOR, anchorAt: SECOND_AT, replies: [], resolved: false,
+  target: { kind: "image", region: REGION, hash: H1, src: "figs/p95.png" } as StoreComment["target"],
 };
-assert.notEqual(locateComment(DOC, byCli.anchor!, 0).range!.start, locateComment(DOC, byCli.anchor!, DOC.length).range!.start, "the CLI's anchor ties");
 // the panel's words, copied here so a swap or a rewording fails a driven test
-const UNSURE_POSITION = "This passage occurs in the file more than once with the same surroundings, and the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted, not a confirmed one. Reveal it and save again from the right copy to confirm.";
-const UNSURE_NONE = "This passage occurs in the file more than once with the same surroundings, and the comment stores no position to tell the copies apart, so the first copy is highlighted, not a confirmed one. Reveal it and save again from the right copy to confirm.";
-const MARK_UNSURE_POSITION = "Open the comment; this passage recurs, and this copy is the nearest to the comment's stored position, not a confirmed one";
-const MARK_UNSURE_NONE = "Open the comment; this passage recurs, and the comment stores no position to tell the copies apart, so this is the first copy, not a confirmed one";
-const MARK_PLAIN = "Open the comment on this passage";
+const STATE_POSITION = "This passage occurs in the file more than once with the same surroundings, and the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted, not a confirmed one.";
+const REGION_CONFIRM = "To confirm the copy, draw a new region on the figure you mean; this comment keeps its tag until you resolve it. Re-place redraws the rectangle on the figure shown and does not move the comment to another figure. Drawing a region needs a mouse.";
+const REGION_CONFIRM_TOUCH = "To confirm the copy, draw a new region on the figure you mean; this comment keeps its tag until you resolve it. Drawing a region needs a mouse.";
+const REGION_CONFIRM_TAIL = "; this comment keeps its tag until you resolve it. Re-placing it there redraws the rectangle on the figure it is on and does not move the comment to another figure. Drawing a region needs a mouse.";
+const REGION_CONFIRM_UNSEEN = "To confirm the copy, draw a new region on the figure you mean in the view that shows the image" + REGION_CONFIRM_TAIL;
+const UNSURE_REGION = STATE_POSITION + " " + REGION_CONFIRM;
+const UNSURE_REGION_TOUCH = STATE_POSITION + " " + REGION_CONFIRM_TOUCH;
+const UNSURE_REGION_UNSEEN = STATE_POSITION + " " + REGION_CONFIRM_UNSEEN;
+/** The sentence a phone's card leaves out: what Re-place does, on a card that has the button. */
+const REPLACE_SENTENCE = " Re-place redraws the rectangle on the figure shown and does not move the comment to another figure.";
+/** The panel's source, for the pins on how the words are chosen (the tests run from vscode-extension/). */
+const web = (f: string): string => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 function mdStatus(comments: StoreComment[]): Status {
   return {
     verb: "status", root: "/repo/notes-api", storePath: STORE_MD, trackedBy: null, agentTooling: "present",
     fileMtimeNs: "1757145600000000001", storeMtimeNs: "1757145600000000002", configMtimeNs: null,
     store: { v: 3, path: "docs/report.md", suggestions: [], comments },
     hunks: [], log: [], unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null },
-    embeddedHashes: {},
+    embeddedHashes: { "figs/p95.png": H1 },
   };
 }
 
 // ── the harness: a Rendered body (`html`) or a Raw body (the code rows), the seam as closures ──────
 const mk = (tag: string, cls: string): E => { const e = doc.createElement(tag); e.className = cls; return e; };
-const IMG_RECT = rectOf(100, 200, 300, 200);
 const picture = (img: E): void => { img.rect = IMG_RECT; img.naturalWidth = 600; img.naturalHeight = 400; img.complete = true; };
 /** The Raw view's rows, as codeBlock builds them: one `.fv-cl > .fv-ct` per line, a trailing newline being no line. */
 function rows(code: E, src: string): void {
@@ -338,6 +358,8 @@ async function harness(over: { mode: "rendered" | "raw"; src: string; html?: str
   }
   const posted: Array<Record<string, any>> = [];
   const closers: Array<() => void> = [];
+  const modes: string[] = [];
+  const offsets: number[] = [];
   let aside: E | null = null;
   const noop = () => { /* inert */ };
   const ctx: FileViewActionCtx = {
@@ -351,112 +373,156 @@ async function harness(over: { mode: "rendered" | "raw"; src: string; html?: str
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: (cb) => { closers.push(cb); },
     post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
-    setMode: noop, scrollToOffset: noop, reload: noop,
+    setMode: (m) => { modes.push(m); }, scrollToOffset: (n) => { offsets.push(n); }, reload: noop,
   };
   const unit = fc.fileCommentsAction.mount(ctx) as unknown as E;
   const button = unit.childNodes[0] as E;
   const last = () => posted[posted.length - 1];
   const reply = async (s: Status) => { win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: last().reqId, ...s } })); await tick(); await tick(); };
   return {
-    main,
+    main, modes, offsets,
     /** Answer the mount's probe, open the panel, answer its refresh: the panel as a person first sees it. */
     open: async (s: Status) => { await reply(s); button.dispatch("click"); await reply(s); },
     q: (sel: string) => main.querySelector(sel),
     qa: (sel: string) => main.querySelectorAll(sel),
     head: (id: string): E => main.querySelector('.fc-card[data-id="' + id + '"] .fc-card-head')!,
     tags: (id: string): E[] => main.querySelector('.fc-card[data-id="' + id + '"] .fc-card-head')!.querySelectorAll(".fc-tag"),
+    /** Open the comment's card and hand it back. */
+    openCard: (id: string): E => { main.querySelector('.fc-card[data-id="' + id + '"] .fc-card-head')!.dispatch("click"); const card = main.querySelector('.fc-card.open[data-id="' + id + '"]'); assert.ok(card, "the card opens"); return card!; },
     dispose: () => { for (const cb of closers) cb(); },
   };
 }
-const framed = (img: E): boolean => img.classList.contains("fc-img") && img.classList.contains("fc-hl");
+const notesOf = (card: E): string[] => card.querySelectorAll(".fc-note").map((n) => n.textContent);
+const buttonsOf = (card: E): string[] => card.querySelectorAll(".fc-actions button").map((b) => b.textContent);
+const revealOf = (card: E): E | null => card.querySelector('[data-act="fcreveal"]');
+/** The picture a region's rectangle is painted on: the overlay's wrapper holds the picture and the rectangle. */
+const pictureOf = (rect: E): E | null => rect.closest(".fc-imgwrap")?.querySelector("img") ?? null;
 
-// ── the picture frame wears the cue ────────────────────────────────────────────────────────────────
+/** Whether any of a card's words name the Re-place button (not "Re-placing", the verb Raw's words use for the act). */
+const namesReplace = (words: string): boolean => /\bRe-place\b/.test(words);
 
-test("Rendered view, the title edited unrecorded: the stored position names neither embed, so the nearest picture's frame is dashed and the card wears 'passage recurs' with the words for a position", async () => {
-  const h = await harness({ mode: "rendered", src: REVISED, html: html("Report, revised") });
-  await h.open(mdStatus([onSecond]));
-  const [first, second] = h.qa(".fileview-md img");
-  assert.ok(second && framed(second), "the second picture is framed: nearest to the old position among the tied copies");
-  assert.equal(framed(first), false, "the first is not");
-  assert.ok(second.classList.contains("fc-hl-context"), "the frame wears the dashed cue: a guess, not the copy that was chosen");
-  assert.equal(second.style.outline, "2px dashed var(--warn)", "styleFrame draws the cue as a dashed outline");
-  assert.equal(second.dataset.act, "fcopen"); assert.equal(second.dataset.id, onSecond.id);
-  const tags = h.tags(onSecond.id);
-  assert.deepEqual(tags.map((t) => t.textContent), ["passage recurs"]);
-  assert.equal(tags[0].title, UNSURE_POSITION);
-  h.head(onSecond.id).dispatch("click");
-  assert.equal(h.q('.fc-card.open[data-id="' + onSecond.id + '"] .fc-note')!.textContent, UNSURE_POSITION, "the open card says it in words");
-  h.dispose();
+// ── the phone: the picture in view, no pointer that draws, and words that name no Re-place ─────────
+
+test("Rendered view on a coarse pointer (a phone), a region on the second of two embeds after an unrecorded title edit: the rectangle is on the guessed figure, and the tag's title and the open card's one line end with the recourse worded for a card with no Re-place (nothing about a button it lacks; drawing needs a mouse), while the actions are Reply and Resolve", async () => {
+  coarse = true;
+  try {
+    const h = await harness({ mode: "rendered", src: REVISED, html: html("Report, revised") });
+    await h.open(mdStatus([regionOnSecond]));
+    const [first, second] = h.qa(".fileview-md img");
+    const rects = h.qa('.fc-region[data-id="' + regionOnSecond.id + '"]');
+    assert.equal(rects.length, 1, "the picture is in view and wears the rectangle: the pictured branch, not Raw's");
+    assert.equal(pictureOf(rects[0]), second, "on the second figure: the copy nearest the stale position, the engine's guess");
+    assert.notEqual(pictureOf(rects[0]), first);
+    const tags = h.tags(regionOnSecond.id);
+    assert.deepEqual(tags.map((t) => t.textContent), ["passage recurs"], "the tag: the embed line recurs and the position names no copy");
+    assert.equal(tags[0].title, UNSURE_REGION_TOUCH, "its title: the state, then the recourse worded for a card with no Re-place");
+    const card = h.openCard(regionOnSecond.id);
+    assert.deepEqual(notesOf(card), [UNSURE_REGION_TOUCH], "the open card says the same, in one line");
+    assert.deepEqual(buttonsOf(card), ["Reply", "Resolve"], "a finger draws nothing: no Re-place; a region: no Reveal");
+    assert.equal(revealOf(card), null);
+    assert.ok(!namesReplace(notesOf(card).join(" ")) && !namesReplace(tags[0].title), "no control this card lacks is named");
+    assert.ok(UNSURE_REGION_TOUCH.endsWith("Drawing a region needs a mouse."), "the words still say what drawing takes, so the card does not dead-end");
+    assert.ok(UNSURE_REGION_TOUCH.includes("draw a new region on the figure you mean;"), "and the recourse a region has");
+    h.dispose();
+  } finally { coarse = null; }
 });
 
-test("Rendered view, a comment with no stored position on an embed that recurs: the first picture's frame is dashed, with the words for no position", async () => {
-  const h = await harness({ mode: "rendered", src: DOC, html: html("Report") });
-  await h.open(mdStatus([byCli]));
-  const [first, second] = h.qa(".fileview-md img");
-  assert.ok(framed(first), "the engine's earliest tie: the first picture");
-  assert.equal(framed(second), false);
-  assert.ok(first.classList.contains("fc-hl-context"));
-  assert.equal(first.style.outline, "2px dashed var(--warn)");
-  const tags = h.tags(byCli.id);
-  assert.deepEqual(tags.map((t) => t.textContent), ["passage recurs"]);
-  assert.equal(tags[0].title, UNSURE_NONE);
-  h.dispose();
+test("the control: the same card on a pointer that draws, with matchMedia absent (a desktop without it) and with it answering fine, names the Re-place it offers (the pictured view's words, word for word), so the sentence about Re-place goes with the button", async () => {
+  for (const pointer of [null, false] as Array<boolean | null>) {
+    coarse = pointer;
+    try {
+      const h = await harness({ mode: "rendered", src: REVISED, html: html("Report, revised") });
+      await h.open(mdStatus([regionOnSecond]));
+      const tags = h.tags(regionOnSecond.id);
+      assert.equal(tags[0].title, UNSURE_REGION, "matchMedia " + (pointer === null ? "absent" : "fine") + ": the pictured view's words");
+      const card = h.openCard(regionOnSecond.id);
+      assert.deepEqual(notesOf(card), [UNSURE_REGION]);
+      assert.deepEqual(buttonsOf(card), ["Reply", "Resolve", "Re-place"], "a pointer that draws: Re-place, and no Reveal");
+      assert.ok(namesReplace(notesOf(card)[0]), "the words explain the button the card has");
+      h.dispose();
+    } finally { coarse = null; }
+  }
 });
 
-test("Rendered view, the position naming the second embed in the text as saved: a solid frame on the second picture, no tag — the copy that was chosen", async () => {
-  const h = await harness({ mode: "rendered", src: DOC, html: html("Report") });
-  await h.open(mdStatus([onSecond]));
-  const [first, second] = h.qa(".fileview-md img");
-  assert.ok(framed(second), "the second picture is framed");
-  assert.equal(framed(first), false);
-  assert.equal(second.classList.contains("fc-hl-context"), false, "painted plainly: the position names this copy");
-  assert.equal(second.style.outline, "2px solid var(--warn)");
-  assert.deepEqual(h.tags(onSecond.id), [], "no tag");
-  h.dispose();
+test("Raw view on a coarse pointer: the view with no picture is judged first, so the words name the view that shows the image, as they do on a pointer that draws, and the pointer changes nothing there", async () => {
+  for (const pointer of [true, null] as Array<boolean | null>) {
+    coarse = pointer;
+    try {
+      const h = await harness({ mode: "raw", src: REVISED });
+      await h.open(mdStatus([regionOnSecond]));
+      const marks = h.qa(".fc-hl");
+      assert.equal(marks.length, 1);
+      assert.equal(marks[0].textContent, EMBED, "the embed line stands in for the picture Raw does not show");
+      assert.equal(h.tags(regionOnSecond.id)[0].title, UNSURE_REGION_UNSEEN);
+      const card = h.openCard(regionOnSecond.id);
+      assert.deepEqual(notesOf(card), [UNSURE_REGION_UNSEEN]);
+      assert.deepEqual(buttonsOf(card), ["Reply", "Resolve"]);
+      assert.ok(!namesReplace(notesOf(card)[0]), "no Re-place on this card either, and none named");
+      h.dispose();
+    } finally { coarse = null; }
+  }
 });
 
-// ── the mark's title says the same thing the card does ─────────────────────────────────────────────
-
-test("Raw view: the guessed copy's highlight title branches as the card's words do — no stored position says so and names the first copy; a stale position says nearest; a position naming its copy is the plain title", async () => {
-  // no position: the mark cannot claim one the card says is absent
-  const none = await harness({ mode: "raw", src: DOC });
-  await none.open(mdStatus([byCli]));
-  let marks = none.qa("code.hljs .fc-hl");
-  assert.equal(marks.length, 1, "one highlight (the embed line is one row)");
-  assert.equal(marks[0].textContent, EMBED);
-  assert.ok(marks[0].classList.contains("fc-hl-context"));
-  assert.equal(marks[0].title, MARK_UNSURE_NONE);
-  assert.match(marks[0].title, /not a confirmed one/);
-  assert.equal(none.tags(byCli.id)[0].title, UNSURE_NONE, "the tag on the same comment: the same branch");
-  none.dispose();
-  // a stale position: nearest-wins, and the title says so
-  const stale = await harness({ mode: "raw", src: REVISED });
-  await stale.open(mdStatus([onSecond]));
-  marks = stale.qa("code.hljs .fc-hl");
-  assert.equal(marks.length, 1);
-  assert.ok(marks[0].classList.contains("fc-hl-context"));
-  assert.equal(marks[0].title, MARK_UNSURE_POSITION);
-  assert.equal(stale.tags(onSecond.id)[0].title, UNSURE_POSITION);
-  stale.dispose();
-  // the position names its copy: no cue, the plain title
-  const sure = await harness({ mode: "raw", src: DOC });
-  await sure.open(mdStatus([onSecond]));
-  marks = sure.qa("code.hljs .fc-hl");
-  assert.equal(marks.length, 1);
-  assert.equal(marks[0].classList.contains("fc-hl-context"), false);
-  assert.equal(marks[0].title, MARK_PLAIN);
-  assert.deepEqual(sure.tags(onSecond.id), []);
-  sure.dispose();
+test("the words and the actions agree on every pointer in either view: the card's line names Re-place exactly when the card has the button", async () => {
+  for (const mode of ["rendered", "raw"] as const) {
+    for (const pointer of [null, false, true] as Array<boolean | null>) {
+      coarse = pointer;
+      try {
+        const h = await harness(mode === "rendered" ? { mode, src: REVISED, html: html("Report, revised") } : { mode, src: REVISED });
+        await h.open(mdStatus([regionOnSecond]));
+        const card = h.openCard(regionOnSecond.id);
+        const notes = notesOf(card);
+        assert.equal(notes.length, 1, mode + ", pointer " + String(pointer) + ": one line");
+        assert.equal(namesReplace(notes[0]), buttonsOf(card).includes("Re-place"), mode + ", pointer " + String(pointer) + ": Re-place is named when, and only when, the card offers it");
+        assert.equal(namesReplace(h.tags(regionOnSecond.id)[0].title), buttonsOf(card).includes("Re-place"), "and the tag's title agrees with the line");
+        h.dispose();
+      } finally { coarse = null; }
+    }
+  }
 });
 
-// The stand-in's nodes inspect as their own projection, never as the tree: every edge (parentNode, childNodes, the
-// attribute map, the listener table, style, dataset, classList) is non-enumerable, so a failing assertion's dump of a
-// node is a few lines, not the whole document (ui/test-dom-shim.ts says why; ui/test-dom-shim.test.ts keeps the ratchet).
-test("stand-in: a node enumerates its primitives alone and inspects without its edges", () => {
+test("a region whose position names its copy (the text as saved) carries no tag and no note on a coarse pointer, so the phone's words are for a guess alone", async () => {
+  coarse = true;
+  try {
+    const h = await harness({ mode: "rendered", src: DOC, html: html("Report") });
+    await h.open(mdStatus([regionOnSecond]));
+    assert.deepEqual(h.tags(regionOnSecond.id), []);
+    const card = h.openCard(regionOnSecond.id);
+    assert.deepEqual(notesOf(card), []);
+    assert.deepEqual(buttonsOf(card), ["Reply", "Resolve"]);
+    h.dispose();
+  } finally { coarse = null; }
+});
+
+// ── the words, and how the panel chooses them ─────────────────────────────────────────────────────
+
+test("the phone's words are the pictured view's with the sentence about Re-place left out and nothing else changed; the panel holds both as one literal each, stamps the pointer half of the Re-place gate on the card its words read, and judges the picture before the pointer", () => {
+  assert.equal(REGION_CONFIRM_TOUCH, REGION_CONFIRM.replace(REPLACE_SENTENCE, ""), "one sentence fewer, the rest word for word");
+  assert.ok(REGION_CONFIRM.includes(REPLACE_SENTENCE), "the sentence is the pictured view's middle one");
+  assert.notEqual(REGION_CONFIRM_TOUCH, REGION_CONFIRM);
+  assert.ok(!namesReplace(REGION_CONFIRM_TOUCH) && namesReplace(REGION_CONFIRM), "the button is named on the pointer that has it alone");
+  assert.ok(REGION_CONFIRM_TOUCH.endsWith("Drawing a region needs a mouse.") && REGION_CONFIRM.endsWith("Drawing a region needs a mouse."), "both end with what drawing takes");
+  assert.ok(!/Reveal/.test(REGION_CONFIRM_TOUCH) && !/save/i.test(REGION_CONFIRM_TOUCH), "a region's words name neither the Reveal nor a save");
+  const SRC = web("file-comments.ts");
+  assert.ok(SRC.includes('const REGION_CONFIRM_TOUCH = "' + REGION_CONFIRM_TOUCH + '";'), "the module holds the panel's words, so a change to either fails here");
+  assert.ok(SRC.includes('const REGION_CONFIRM = "' + REGION_CONFIRM + '";'));
+  assert.ok(SRC.includes("type Shown = { editing: boolean; pictured: boolean; draws: boolean };"), "what the render shows: the editor, the picture, and a pointer that draws");
+  assert.ok(SRC.includes("const c: WordedCard = { ...given, shown: { editing, pictured: !!picture, draws: this.drawsRegions() } };"), "stamped from the same test the Re-place gate makes");
+  assert.match(SRC, /const replaceOffered = \(!!picture \|\| gone\) && !c\.resolved && this\.drawsRegions\(\);/, "the gate: the picture (or a page the PDF lost), an unresolved card, a pointer that draws");
+  assert.ok(SRC.includes("if (card.resolved || !card.anchor) continue;"), "the paint skips resolved cards, so a card wearing these words is never resolved and the picture and the pointer are the whole gate");
+  const start = SRC.indexOf("function copyUnsureWords(");
+  const words = SRC.slice(start, SRC.indexOf("\n}\n", start));
+  const unseen = words.indexOf('if (c.target && !c.shown.pictured) return state + ", not a confirmed one. " + REGION_CONFIRM_UNSEEN;');
+  const touch = words.indexOf('if (c.target && !c.shown.draws) return state + ", not a confirmed one. " + REGION_CONFIRM_TOUCH;');
+  const fine = words.indexOf('if (c.target) return state + ", not a confirmed one. " + REGION_CONFIRM;');
+  const passage = words.indexOf('return state + ", not a confirmed one. Reveal it and save again from the right copy to confirm.";');
+  assert.ok(unseen >= 0 && touch > unseen && fine > touch && passage > fine, "no picture first, then no pointer that draws, then the pictured view on a pointer that draws, then a passage comment");
+});
+
+test("a node of the stand-in enumerates its primitives alone, and its dump names neither its parent nor its children", () => {
   const root = doc.createElement("div");
   const kid = root.appendChild(doc.createElement("span"));
   kid.appendChild(doc.createTextNode("leaf"));
-  kid.setAttribute("data-id", "k1");
   for (const n of [root, kid, kid.firstChild!]) {
     const o = n as unknown as Record<string, unknown>;
     assert.ok(Object.keys(o).every((k) => staysEnumerable(o[k])), "only primitives enumerate on " + n.constructor.name + ": " + Object.keys(o).join(","));

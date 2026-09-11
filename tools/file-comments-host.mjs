@@ -115,11 +115,46 @@
 //     the one place the recorded changes (the pending ops, the ops this write settles — accept's and
 //     save's alike — the edits this write applies) can have carried it to, never to the nearest one and
 //     never to the other copy of a passage whose own surroundings were edited; a comment whose whole
-//     anchor still sits at its position costs no scan at all, and every scan the rest need — the
-//     classification scan (fullMatches, charged as the native pass and the hits it is), the quote's
-//     occurrences (quoteHits) and the engine's scoring a nowhere anchor costs — is charged to one
-//     budget per write (REFRESH_SCAN_BUDGET), so no count of comments can hold a write past the
-//     kernel's deadline, and a write that moved no passage costs nothing however many there are;
+//     anchor still sits at its position costs no scan to place (its copy fields, the next bullet, cost
+//     one classification pass per distinct anchor), and every scan the rest need, the classification
+//     scan (fullMatches, charged as the native pass and the hits it is), the quote's occurrences
+//     (quoteHits) and the engine's scoring a nowhere anchor costs, is charged to one budget per write
+//     (REFRESH_SCAN_BUDGET), so no count of comments can hold a write past the kernel's deadline, and a
+//     write that moved no passage costs one pass per distinct anchor and no more;
+//   * beside `anchorAt` a passage comment carries three more romp-only fields (the tie-break, 2026-09-11;
+//     decision 51): `ordinal` and `copies`, its index among the whole anchor's matches and their count at the
+//     moment of the write, and `section`, the heading path above it in a markdown file ('' otherwise). Written
+//     at creation (buildComment) and refreshed with the position on every host write for a comment whose
+//     position names its copy (refreshAnchorAts, stampCopy), they let a reader tell the copy once the position
+//     names none, after an edit nobody recorded: every reader of a stored anchor here (locateStored:
+//     passageFigure, doRetarget, and the `placed` map every reply carries for the panel) takes the ordinal's
+//     copy when the count of copies is unchanged (unless the stored heading path names other copies and not the
+//     ordinal's: the two fields then disagree, and neither confirms), else the one copy under the stored heading
+//     path, and marks it confirmed; only when neither tells does it fall back to the copy nearest the position,
+//     read off the whole matches already enumerated with no further scan (a hintless tie still refuses), a guess
+//     the panel shows as one; the matches are grouped by heading path once per anchor (copiesUnder) and the
+//     nearest is a binary search, so a sidecar of thousands of comments on one recurring passage costs a lookup
+//     a comment. A position the quote sits at with ONE side of its context whole beside it, the other side edited
+//     (quoteSitsAt: the state the refresh leaves when a recorded change edited the chosen copy's context, and the
+//     state a raw edit of the surroundings leaves), names the passage before any rule runs, and the copies whole
+//     elsewhere are the other copies, never placed on; a bare occurrence of the quoted words at the position,
+//     neither side beside it, is what a stale position lands on by a coincidence of distance (a raw insertion above
+//     of exactly the gap to a passing mention), and the rules run as for any stale position (the review's fourth
+//     round, 2026-09-11; the third took the quote alone, and quoteSitsAt's note weighs the two). While every change
+//     to the text is on record, a verdict the reply would carry is dropped where the recorded changes carry the
+//     stored position elsewhere (placedFor, carriedTo: the refresh settles it on the next write, and the panel
+//     paints by its own engine meanwhile); the walk over the copies the recorded changes can have carried a position
+//     to (reachable) reads the changes off one sorted index and is charged to the same budget, so a sidecar of many
+//     pending changes and many stale comments on a recurring passage cannot hold a status past the deadline (the
+//     fourth round). The heading path is read as the viewer
+//     renders the file (headings: a leading BOM, CRLF line
+//     ends, a front-matter block by the viewer's own test, each heading's text capped at SECTION_HEADING_CAP), so
+//     the path stamped and the path read agree with what the person sees; whether the file is markdown is judged
+//     from the FILE's name at every stamp and every read (handle's ctx.markdown, stamped on the store at load for
+//     the refresh: MARKDOWN_FILE), never from the sidecar JSON's editable `path` field. Past the budget a comment
+//     keeps the fields it has and stderr says how many, once per write, the comments without the fields stamped
+//     first; past REFRESH_COPIES_MAX no count is known, and none is written, at creation as on a write. A
+//     decision's self-check carves these out with anchorAt (commentsApartFromAnchorAt);
 //   * nothing under `.trackchanges/` is read or written through a symbolic link. The sidecar, the
 //     comments log and config.json are named from the file's path and never shown to the person,
 //     and a checked-out repository can commit anything under those names (the plan leaves committing
@@ -287,10 +322,23 @@ export const ANCHOR_CTX_CAP = 480;
 // second pass adds no positions the first did not (the memos make what the first scanned free) and
 // the reply is measured with exactly the positions the sidecar gets. Past the budget a comment keeps
 // the position it has, and stderr says how many and why, once per write. A comment whose whole anchor
-// still sits at its stored position is never scanned (sitsAt, a compare of the anchor's own length),
-// so a sidecar of any size costs nothing on a write that moved none of its passages, and the budget
-// bounds the comments whose passages moved, which the next write takes up where this one stopped.
-// About half a second of scanning on the machine the figure was taken on, at the engine's rate.
+// still sits at its stored position is never scanned to place it (sitsAt, a compare of the anchor's own
+// length); its copy fields (the tie-break, 2026-09-11) cost one classification pass per distinct anchor on
+// every write, after the positions have had the budget, so a write that moved none of a sidecar's passages
+// costs one pass per distinct anchor and no more, and the budget bounds the comments whose passages moved,
+// which the next write takes up where this one stopped. The reply's `placed` map (placedFor) draws on the
+// same budget: one classification pass per distinct anchor, free after a write's refresh (the memo) and its
+// own on a status, and never the engine's scan (a whole anchor that sits nowhere is the engine's to place,
+// and the map carries no engine verdict, so locateStored under a budget answers it unplaced with no further
+// scan: the review's second round, 2026-09-11, found a hundred such comments on a near-cap file spending the
+// budget on a status, and every tied comment behind them losing its confirmed verdict, silently); a tie's
+// nearest copy is read off the whole matches already enumerated (locateStored), and the walk over the copies
+// the recorded changes can have carried a tied position to (reachable, for the refresh and for the map's
+// carriedTo) costs a compare per change to index the changes once and a compare per copy inside the changes'
+// window per comment (the review's fourth round, 2026-09-11: uncharged, and summing every change per copy, the
+// walk held a status on a sidecar of ten thousand pending changes and twenty stale tied comments on a
+// recurring character 18 s). About half a second of scanning on the machine the figure was taken on, at the
+// engine's rate.
 export const REFRESH_SCAN_BUDGET = 48_000_000;
 export const REFRESH_PASS_DIVISOR = 32;
 // The most copies of a whole anchor (and the most occurrences of a quote) the refresh enumerates for
@@ -303,11 +351,23 @@ const REFRESH_COPIES_MAX = 65_536;
 // write drops from the sidecar while their text stands (accepted), as toHunks rows; `applied`: this
 // write's own edits to the text, as {end, delta} in the coordinates of the text being saved.
 const WRITE_SHIFTS = Symbol('romp.writeShifts');
+// Set on a comment object for the span of one refresh pass (refreshAnchorAts) when the engine's scoring placed it,
+// so its copy fields are stamped as 1 of 1 at that place; removed before the pass ends, and a symbol besides, so
+// saveStore's JSON never carries it.
+const ENGINE_PLACED = Symbol('romp.enginePlaced');
 // Whether the text a store was loaded against is the text its last writer saved it for (the sidecar's
 // fingerprint, store-io's fingerprintOf, matches), stamped on the store object at load (loadOrRefuse).
 // False means the file changed under the sidecar by an edit nobody recorded — a direct write, an
 // editor without the sidecar — and the recorded changes cannot vouch for where a tied passage went.
 const TEXT_AS_WRITTEN = Symbol('romp.textAsWritten');
+// Whether the file a store was loaded or seeded for is markdown (isMarkdownPath of the request path, handle's
+// ctx.markdown), stamped on the store object at load (loadOrRefuse) and on a seeded store (withSidecar), for the copy
+// fields' heading path the refresh stamps (refreshAnchorAts, stampCopy). The one judgment of the file's kind, the
+// same one every reader of a stored anchor takes (locateStored, from ctx): never the store's own `path` field, which
+// any writer can leave stale or absent. The refresh judged by that field once, stamped '' for the heading path of a
+// markdown file, and a later read, judging by the file's name, took the '' for the path of the copies above every
+// heading and confirmed one of those (the review, 2026-09-11).
+const MARKDOWN_FILE = Symbol('romp.markdownFile');
 // Where stageSidecar staged the store's next bytes: the temp file the rename lands, stamped on the
 // store object at the stage under a symbol key so saveStore's JSON never carries it. A decision's
 // self-check (requireCommentsUntouched) reads the staged sidecar back through it, between the stage
@@ -1133,13 +1193,15 @@ const NOT_BARE = /[\s"'>]/;
 const REF_DEF = /^ {0,3}\[((?:\\.|[^\[\]\\])+)\]:[ \t]*<?([^\s>]+)>?/gm;
 const normLabel = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 
-// Offsets of the text's fenced code blocks, [start, end).
+// Offsets of the text's fenced code blocks, [start, end). A leading U+FEFF (kept in this text, stripped by the fetch
+// the viewer reads) is not part of the first line's fence mark, and a CR before the newline is whitespace.
 function fencedRanges(text) {
   const out = [];
   let open = null;
   let at = 0;
+  const bom = text.charCodeAt(0) === 0xFEFF;
   for (const line of text.split('\n')) {
-    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(bom && at === 0 ? line.slice(1) : line);
     if (m) {
       if (!open) open = { ch: m[1][0], n: m[1].length, at };
       else if (m[1][0] === open.ch && m[1].length >= open.n && /^\s*$/.test(line.slice(m[0].length))) { out.push([open.at, at + line.length]); open = null; }
@@ -1278,7 +1340,7 @@ function passageFigure(ctx, text, c, embeds) {
   } catch (e) {
     return { src: null, code: 'anchor-not-found', reason: `the anchor of comment ${id} in ${ctx.shown} cannot be read (${e.message}), so which figure it is on cannot be told` };
   }
-  const loc = locateExact(text, anchor, hintOf(c));
+  const loc = locateStored(text, { ...c, anchor }, ctx.markdown);
   if (loc.error) return { src: null, code: loc.error, reason: `the passage of comment ${id} could not be placed in ${ctx.shown} (${loc.error}), so which figure it is on cannot be told` };
   const dests = [...new Set(embeds.filter((e) => e.start < loc.to && e.end > loc.from).map((e) => e.dest))];
   if (dests.length === 1) return { src: dests[0] };
@@ -1338,6 +1400,140 @@ export function isTextPath(p) {
   const dot = base.lastIndexOf('.');
   const ext = dot > 0 && /[^.]/.test(base.slice(0, dot)) ? base.slice(dot + 1) : '';
   return (ext !== '' && TEXT_EXT.has(ext)) || TEXT_NAMES.has(base);
+}
+
+// Whether the viewer shows the file as markdown (file-view.ts langFor: `.md` and `.markdown` are the kinds with a
+// Rendered form), which is when a passage comment's `section` is a heading path and otherwise empty (sectionAt).
+export function isMarkdownPath(p) {
+  const base = path.basename(String(p == null ? '' : p)).toLowerCase();
+  const dot = base.lastIndexOf('.');
+  const ext = dot > 0 ? base.slice(dot + 1) : '';
+  return ext === 'md' || ext === 'markdown';
+}
+
+// The most characters of one heading's text kept in a `section` path (headings). A heading is a line of a few words,
+// and the path is stored on every passage comment under it and carried in every reply: with no cap, a comment under a
+// heading line of a megabyte carried the megabyte, and a file of nine such comments answered `too-large` on every
+// write from the section bytes alone (the review, 2026-09-11). Stamp and read cap alike (sectionAt is the one reader),
+// so the section rule's equality holds as before; two headings alike for this many characters are one path. The cut
+// is by code point, so it never splits a surrogate pair, and the whitespace it leaves at the end is dropped.
+export const SECTION_HEADING_CAP = 200;
+function capHeading(words) {
+  if (words.length <= SECTION_HEADING_CAP) return words;
+  const chars = Array.from(words);
+  return chars.length <= SECTION_HEADING_CAP ? words : chars.slice(0, SECTION_HEADING_CAP).join('').trimEnd();
+}
+
+// Whether the lines between a front-matter block's rules read as a YAML block mapping: the viewer's own test
+// (ui/webview/md-config.ts, isYamlMapping), the same lines accepted and refused, so the block this reader skips is
+// the block the viewer folds. Every line at the left margin is a `key:` line, a `- ` item under a key, a `#` comment
+// or blank, and an indented line belongs to the key above; prose, a list or a fence between two rules fails it. The
+// key regex takes a bare key greedily to its colon (the whitespace before the colon is inside the run it takes), where
+// the viewer's lazy `[^:\n]*?` before `[ \t]*:` backtracks quadratically over a run of whitespace in a line with no
+// colon: a front-matter line of 80k spaces cost five seconds here, and a write on the file ran past the kernel's
+// deadline (the review's second round, 2026-09-11). The two accept the same lines: the first colon must be followed
+// by whitespace or the end of the line either way.
+const YAML_KEY_RE = /^(?:(?:"[^"\n]*"|'[^'\n]*')[ \t]*|[\p{L}\p{N}_][^:\n]*):(?:[ \t]|$)/u;
+function isYamlMapping(lines) {
+  let underKey = false;
+  for (const line of lines) {
+    if (/^[ \t]*(?:#|$)/.test(line)) continue;                                  // blank, or a comment
+    if (/^[ \t]/.test(line)) { if (!underKey) return false; continue; }         // a nested line: the key above's
+    if (/^-(?:[ \t]|$)/.test(line)) { if (!underKey) return false; continue; }  // a sequence item under the key above
+    if (!YAML_KEY_RE.test(line)) return false;
+    underKey = true;
+  }
+  return true;
+}
+
+// How many of `lines` (the text's lines, a CR and a leading BOM already off) a YAML front-matter block takes at the
+// top of the file, the rules included, or 0 when the file opens with none. The viewer's rule (md-config.ts,
+// frontMatter, FRONT_MATTER_RE): a `---` line first, closed by a later `---` line, the line after the opener not blank
+// (pandoc's rule: a rule then a blank line is a thematic break, not metadata), and the body a YAML mapping
+// (isYamlMapping). YAML's own document-end marker, `...`, closes no block, since it closes none in the viewer: this
+// reader accepted it until the review's third round (2026-09-11), so a block closed by `...` alone (pandoc's YAML
+// metadata) had its lines skipped here while the viewer rendered them as body, and a heading among them was shown to
+// the person and absent from the stored `section`, which is stamped and read to agree with what the person sees. A file
+// that merely opens with a thematic break, closed by a later rule or by nothing, has its headings read: before the test
+// was mirrored any leading `---` opened a block that the next rule or the end of the file closed, and every heading
+// before that was swallowed, so a notes file opening with a rule stored '' for every passage and the section rule
+// could never confirm a copy in it (the review, 2026-09-11).
+function frontMatterLines(lines) {
+  if (!lines.length || !/^---[ \t]*$/.test(lines[0])) return 0;
+  let close = -1;
+  for (let i = 1; i < lines.length; i++) if (/^---[ \t]*$/.test(lines[i])) { close = i; break; }
+  if (close < 0) return 0;
+  const body = lines.slice(1, close);
+  if (body.length && /^[ \t]*$/.test(body[0])) return 0;
+  if (!isYamlMapping(body)) return 0;
+  return close + 1;
+}
+
+// The ATX headings of a markdown text, in order, each {at, level, text, path}: `at` the offset of the line's first
+// character, `text` the heading's words (the marks, the closing hashes and the surrounding whitespace stripped,
+// inner runs of whitespace collapsed, capped at SECTION_HEADING_CAP characters), `path` the heading path in force
+// from that line on, the text of the nearest preceding headings from the top level down joined with " > " (a heading
+// closes every open heading of its level or lower). Not a heading: a line inside a fenced code block (fencedRanges),
+// a line of a YAML front-matter block at the top of the file (frontMatterLines), or a hash run with no space after it
+// (`#hashtag`). The lines are read as the viewer renders them: a leading U+FEFF, which this script's text keeps and
+// the fetch strips before the viewer sees the file, is not part of the first line, and a CR before the newline (a
+// CRLF file, which the viewer shows and saves as it is) is not part of any line; the offsets count the text as it is.
+// Before the review (2026-09-11) the BOM hid the first line's heading or front-matter rule and the CR hid every
+// heading of a CRLF file, so the stored path lost its top level or was '' throughout such files, and the section rule
+// could not confirm a copy the viewer showed under a heading. Setext headings (a line underlined with `=` or `-`) are
+// not read; the reports this feature is for write ATX headings, and a rule that told an underline from a table's rule
+// or a thematic break would cost more than the headings it found. The heading regex takes everything after the marks
+// and their whitespace whole, and the trim below drops the trailing whitespace: the first cut's lazy `(.*?)` before
+// `[ \t]*$` backtracked quadratically over a run of whitespace inside the line (a heading line of 120k spaces held a
+// `comment` on the file 13 s, past the kernel's deadline; the review's second round, 2026-09-11), for the same words.
+// Memoized per text for this one-verb process: the refresh and the reply ask for many comments' sections over the one
+// text.
+const headingMemo = { text: null, list: null };
+function headings(text) {
+  if (headingMemo.text === text) return headingMemo.list;
+  const list = [];
+  const fences = fencedRanges(text);
+  const stack = [];
+  const raw = text.split('\n');
+  const lines = raw.map((line, i) => {
+    const body = line.endsWith('\r') ? line.slice(0, -1) : line;
+    return i === 0 && body.charCodeAt(0) === 0xFEFF ? body.slice(1) : body;
+  });
+  const skip = frontMatterLines(lines);
+  let at = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const line = lines[i];
+    const m = i < skip ? null : /^ {0,3}(#{1,6})(?:[ \t]+([\s\S]*))?$/.exec(line);
+    if (m && (m[2] !== undefined || line.trim() === m[1]) && !inFencedRange(fences, at)) {
+      const level = m[1].length;
+      const words = capHeading((m[2] || '').replace(/(^|[ \t])#+[ \t]*$/, '').trim().replace(/\s+/g, ' '));
+      while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
+      stack.push({ level, text: words });
+      list.push({ at, level, text: words, path: stack.map((h) => h.text).join(' > ') });
+    }
+    at += raw[i].length + 1;
+  }
+  headingMemo.text = text;
+  headingMemo.list = list;
+  return list;
+}
+
+// `section`, the romp-only heading path stored beside a passage comment's anchor (the tie-break, 2026-09-11; decision
+// 51): the path in force at `offset`, from the last heading that starts at or before it (a passage on a heading line
+// is under that heading), or '' when no heading precedes it or the file is not markdown (`markdown`, from the file's
+// name: isMarkdownPath). A binary search over the memoized heading list, so a sidecar of many comments costs one walk of
+// the text and a few compares per comment.
+export function sectionAt(text, offset, markdown) {
+  if (!markdown || typeof text !== 'string' || typeof offset !== 'number') return '';
+  const list = headings(text);
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid].at <= offset) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo === 0 ? '' : list[lo - 1].path;
 }
 
 // The kernel's _under_trackchanges: is the path inside a .trackchanges/ directory (a directory
@@ -1509,6 +1705,7 @@ function loadOrRefuse(ctx, paths, text) {
     case 'ok': {
       const fp = typeof text === 'string' ? fingerprintOf(text) : null;
       store[TEXT_AS_WRITTEN] = !!(fp && store.fingerprint && store.fingerprint.hash === fp.hash && store.fingerprint.size === fp.size);
+      store[MARKDOWN_FILE] = ctx.markdown;
       return store;
     }
     case 'absent': return null;
@@ -1691,6 +1888,265 @@ function hintOf(c) {
   return c && typeof c.anchorAt === 'number' && Number.isFinite(c.anchorAt) ? c.anchorAt : undefined;
 }
 
+// The copy fields stored beside a passage comment's anchor and position (the tie-break, 2026-09-11; decision 51),
+// read defensively (docs/adr/0002: a field of the wrong shape claims nothing): `ordinal`, the 1-based index of the
+// chosen copy among the whole anchor's matches at the moment the fields were written, and `copies`, how many matches
+// there were then; the pair is one datum, since an ordinal is meaningless without the count it was taken in, so a
+// malformed half voids both. Null when either is missing or malformed. `section` is read apart (sectionOf).
+function ordinalOf(c) {
+  if (!c || !Number.isInteger(c.ordinal) || !Number.isInteger(c.copies) || c.ordinal < 1 || c.copies < c.ordinal) return null;
+  return { ordinal: c.ordinal, copies: c.copies };
+}
+function sectionOf(c) {
+  return c && typeof c.section === 'string' ? c.section : null;
+}
+
+// Write the copy fields on a passage comment whose position `at` names its copy in `text`: the whole anchor sits at
+// `at` among `hits` (fullMatches, or one place the engine found when the anchor sits in whole nowhere, passed as
+// [at]), so `ordinal` is its index among them and `copies` their count; `section` is the heading path above it
+// (sectionAt). Assigned in place, so a comment that has the fields keeps their slot after `anchorAt`, and a comment
+// from before the fields gains them where JSON puts a new key. Nothing is written when `at` is not among the hits (the
+// position names a place the anchor does not sit at in whole: the fields keep what they last said, as anchorAt does
+// when it cannot be bettered) or when the hits were cut short (no count is known: the callers' check, buildComment's
+// and the refresh's stamping pass's alike, since fullMatches' `more` is theirs to read). `markdown` is whether the file is
+// markdown by its name; undefined (a store this script did not load or seed, markdownOf's note) writes the ordinal and
+// the count and leaves the heading path as it is, rather than judge the file from anything but its name.
+function stampCopy(c, text, at, hits, markdown) {
+  const k = hits.indexOf(at);
+  if (k < 0) return;
+  c.ordinal = k + 1;
+  c.copies = hits.length;
+  if (markdown === undefined) return;
+  c.section = sectionAt(text, at, markdown);
+}
+
+// Place a STORED passage comment in the file as it is now: what every reader of a stored anchor in this script goes
+// through (passageFigure, doRetarget, the reply's `placed`), and the one place the recurring-passage tie-break lives
+// (decision 51). `c` carries the anchor (validated by the caller) and, when it has them, `anchorAt` and the copy
+// fields. Answers {from, to, confirmed, by} or {error} with locateExact's codes:
+//   * `position`: the whole anchor sits at the stored position, which therefore names the copy (sitsAt, no scan); or
+//     the quote sits there with ONE side of its context whole beside it while the whole anchor sits elsewhere
+//     (quoteSitsAt, after the one classification scan that says it does; an anchor whole nowhere is the engine's,
+//     below): the passage whose own surroundings were edited on the other side, the state the refresh leaves on purpose
+//     when a recorded change edited the chosen copy's context and not its text (refreshAnchorAts, movedCopy's
+//     occurrences: the position follows the quote and the copy fields stand) and the state a raw edit of the
+//     surroundings alone leaves. The copies still whole elsewhere are then the OTHER copies, and no rule below may place
+//     the comment on one: before the review's third round (2026-09-11) the rules ran on this state, and a tracked edit
+//     inside the first of two copies under one heading had the section rule confirm the second, which the panel painted
+//     plainly as the copy chosen while the host's own reply carried the position on the first. The third round took the
+//     quote alone at the position as the passage; the fourth asks for one side of its context too, since a bare
+//     occurrence of the quoted words is what a stale position lands on by a coincidence of distance, a raw insertion
+//     above of exactly the gap to it, and the quote alone took the comment off the copy the fields named (the
+//     ordinal's, the count unchanged) for the mention (quoteSitsAt's note weighs the two and states the cost).
+//     The reply's placed map has no entry for a `position` (placedFor, as for the first case), and the panel paints by
+//     its own engine, which scores a whole copy over an edited one: with three or more copies the two or more still
+//     whole tie and the nearest is a guess with its cue, the cue from before the tie-break; with exactly two copies the
+//     one still whole is the engine's one best hit, and the panel paints it plainly, on the copy the person never
+//     commented, as it has since the anchors follow-on (2026-09-07) and before the tie-break (the third round's note
+//     here said a guess for both counts; the fourth corrected it). This script answers the position to its own readers
+//     either way (passageFigure and doRetarget read the right copy); painting the quote at a position the host vouches
+//     for is the panel's, and needs the verdict carried to it, which the placed map's contract (a tie the position
+//     names no copy of) does not today;
+//   * `whole`: the whole anchor sits at exactly one place, the engine's one best hit, whatever the position;
+//   * a tie (the whole anchor sits at several places and the position names none of them), broken in the contract's
+//     order: `ordinal` when the count of copies is unchanged since the fields were written (the ordinal's copy: an
+//     unrecorded edit above moved them all alike), confirmed, unless the stored heading path names other copies and not
+//     the ordinal's, when the two fields disagree and neither confirms: an unchanged count does not say that no copy was
+//     added or removed (one deleted and one pasted elsewhere keep the count and move the ordinal onto a copy the person
+//     never commented), and a heading moved among the copies misleads the section the same way, so a tie the two fields
+//     read two ways is a guess; the ordinal stands where the stored path names no copy at all (a heading renamed or
+//     deleted above the copies) and where it names the ordinal's copy, among others or alone; else, the count changed,
+//     `section` when exactly one copy lies under the stored heading path, confirmed; else `nearest` to the position
+//     (the engine's own tie-break, the pick the panel paints: among the whole matches, which are the engine's
+//     best-scoring hits, the one nearest the position, the earlier of two at one distance, read off the matches
+//     already enumerated with no further scan), a guess, and the caller says so; with no position and neither field
+//     telling, `anchor-ambiguous`, as locateExact answers a hintless tie (the panel paints the first copy as a guess
+//     itself, with its words for a comment that stores no position). Before the review (2026-09-11) this fallback ran
+//     the engine's whole scan per comment, uncharged and unmemoized, on every reply: a status on a file of repeated
+//     text with 400 such comments took 13 s, past the kernel's deadline, so the file's comments could not be opened at
+//     all; the review's third round found the section rule and the nearest pick walking every enumerated copy per
+//     comment, 2.4 ms a comment on an anchor at REFRESH_COPIES_MAX, so a few thousand such comments held a status past
+//     the deadline again: the matches are grouped by heading path once per anchor (copiesUnder) and the nearest is a
+//     binary search (nearestOf);
+//   * `engine`: the whole anchor sits nowhere (its context edited) and the engine's scoring places it, confirmed when
+//     it has one best hit and a guess when a tie there is broken by the position; a tie with no position is
+//     `anchor-ambiguous`, as locateExact answers. Under a budget the answer is `{by: 'engine'}` alone, unplaced: the
+//     one budgeted reader (placedFor) carries no engine verdict, so the engine's scan, the costliest of these, is
+//     not charged to the reply for a verdict it drops (the review's second round, 2026-09-11: on a near-cap file a
+//     hundred comments whose context was edited spent the budget on a status, and every tied comment behind them in
+//     the store answered null, so the panel painted its confirmed copy as a guess, with nothing on stderr).
+// The copy fields are read defensively (ordinalOf, sectionOf), and a stored `section` on a non-markdown file is ''
+// like every copy's, so the section rule never confirms there. The scans are memoized per anchor and text like the
+// refresh's. With a `budget` (the reply's pass over a sidecar, placedFor) every scan is charged to it and a comment
+// whose scan does not fit answers null, nothing known, rather than run past the kernel's deadline; without one
+// (passageFigure, doRetarget: one comment) the scans run whole, a classification the budget cut short included
+// (fullMatches serves a cut result to no caller without a budget; before the review's second round it did, and this
+// answered null to passageFigure, which read `.error` off it: every write on a file holding a src-less region
+// comment whose scan the budget had cut died with a TypeError until the sidecar was edited by hand). More copies than
+// the refresh enumerates (REFRESH_COPIES_MAX) leave the tie to nearest-wins, a guess, by the engine's own scan of
+// every occurrence, charged like the engine's placing of a nowhere anchor (affordable) since the enumerated matches
+// are then not all of them.
+export function locateStored(text, c, markdown, budget) {
+  const anchor = c.anchor;
+  const at = hintOf(c);
+  const span = (from, confirmed, by) => ({ from, to: from + anchor.quote.length, confirmed, by });
+  if (at !== undefined && sitsAt(text, anchor, at)) return span(at, true, 'position');
+  if (budget && !affordableScan(budget, text, anchor)) return null;
+  const { hits, more, cut } = fullMatches(text, anchor, REFRESH_COPIES_MAX, budget);
+  if (cut) return null;   // only under a budget: without one fullMatches runs a cut scan whole
+  if (hits.length === 0) {
+    if (budget) return { by: 'engine' };   // the engine's to place, and the budgeted reader drops its verdict: no scan charged for it
+    const loc = locateExact(text, anchor, at);
+    if (loc.error) return loc;
+    const { first, last } = boundaryHits(text, anchor);
+    return span(loc.from, !last || last.from === first.from, 'engine');
+  }
+  if (at !== undefined && quoteSitsAt(text, anchor, at)) return span(at, true, 'position');   // the quote with one side of its context beside it, the other side edited: the copies whole elsewhere are the other copies
+  if (hits.length === 1 && !more) return span(hits[0], true, 'whole');
+  if (!more) {
+    const o = ordinalOf(c);
+    const s = sectionOf(c);
+    const under = s !== null && markdown ? copiesUnder(text, anchor, hits, markdown, s, budget) : [];   // the copies under the stored heading path; none on a non-markdown file, where the section never confirms
+    if (under === null) return null;   // only under a budget: the grouping does not fit what is left of it
+    if (o && o.copies === hits.length) {
+      const pick = hits[o.ordinal - 1];
+      if (!under.length || sectionAt(text, pick, markdown) === s) return span(pick, true, 'ordinal');
+      // the stored heading path names other copies and not the ordinal's: the two fields disagree, and neither confirms
+    } else if (under.length === 1) {
+      return span(under[0], true, 'section');
+    }
+  }
+  if (at === undefined) return { error: 'anchor-ambiguous' };
+  if (!more) return span(nearestOf(hits, at), false, 'nearest');
+  if (budget && !affordable(budget, text, anchor)) return null;
+  return span(engine.locateAnchor(text, anchor, at).from, false, 'nearest');
+}
+
+// The one of `hits` (ascending offsets) nearest `at`, the earlier of two at one distance: the engine's own tie-break
+// among equally scored candidates (engine.js, pickCandidate), which the whole matches of an anchor are. A binary search
+// for the first hit at or past `at`, weighed against the hit before it: a walk of every hit per comment cost a status on
+// thousands of stale comments sharing one anchor at REFRESH_COPIES_MAX 0.1 ms a comment (the review's third round,
+// 2026-09-11; the section rule's walk beside it cost 2.4 ms, copiesUnder).
+function nearestOf(hits, at) {
+  let lo = 0;
+  let hi = hits.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (hits[mid] < at) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo === 0) return hits[0];
+  if (lo === hits.length) return hits[hits.length - 1];
+  return at - hits[lo - 1] <= hits[lo] - at ? hits[lo - 1] : hits[lo];
+}
+
+// The whole anchor's matches under one heading path: `hits` (fullMatches, whole and in order, every match) grouped by
+// the path above each (sectionAt), memoized per anchor, text and file kind like fullMatches, and the group for `section`
+// read off the grouping. One walk of the matches per distinct anchor, so the section rule and the ordinal's check against
+// it cost a comment one lookup: a filter of the matches per comment walked every copy for every comment, and a status on
+// a few thousand tied comments sharing one anchor at REFRESH_COPIES_MAX took 2.4 ms a comment, past the kernel's 10 s
+// deadline, after which the file's comments could not be opened or written through the panel (the review's third round,
+// 2026-09-11). With a `budget` (placedFor's) the walk is charged once, a compare per match, when it is first made for a
+// text, and null when that does not fit what is left: the comment then answers nothing known, as one whose scan does not
+// fit does; a grouping already memoized is free, as a memoized scan is.
+const sectionMemo = new Map();
+function copiesUnder(text, anchor, hits, markdown, section, budget) {
+  const key = `${markdown} ${anchorKey(anchor)}`;
+  let m = sectionMemo.get(key);
+  if (!m || m.text !== text) {
+    if (budget) {
+      if (budget.left < hits.length) return null;
+      budget.left -= hits.length;
+    }
+    const groups = new Map();
+    for (const h of hits) {
+      const p = sectionAt(text, h, markdown);
+      const g = groups.get(p);
+      if (g) g.push(h);
+      else groups.set(p, [h]);
+    }
+    m = { text, groups };
+    sectionMemo.set(key, m);
+  }
+  return m.groups.get(section) || [];
+}
+
+// The reply's `placed`: for every passage comment whose whole anchor ties in the text and whose stored position names
+// none of the copies, where the tie-break put it (locateStored) as {at, confirmed, by}, keyed by comment id, so the
+// panel paints a confirmed copy plainly and a guessed one as a guess with its words (the tie-break, 2026-09-11). A
+// comment the position or the anchor alone places (the whole anchor at the position, or the quote there with one side
+// of its context whole beside it, the other side edited: `position` both), one the engine's scoring places, one with no position on a tie
+// the fields do not settle (refused, as a hintless tie always was) and one whose scan the budget refused have no
+// entry, and the panel places those itself as before. A read never rewrites the sidecar: the stored
+// position stands until the next host write. `at` is an offset into the text this script read (the reply's `bom`
+// says how the panel maps it, as for anchorAt). Charged to the refresh's budget: the process is one verb, and the
+// refresh this reply may have run has memoized the same scans; on a status no refresh ran, and the one classification
+// pass per distinct anchor is this map's own. The engine's scan never is: a whole anchor that sits nowhere is the
+// engine's to place, and this map carries no engine verdict, so locateStored under a budget answers it unplaced
+// (`{by: 'engine'}`) with nothing charged past the classification.
+// While every change to the text is on record (TEXT_AS_WRITTEN: the text is as the sidecar's last writer left it, and
+// the pending changes are the whole difference) the recorded changes say where a stored position went, and the next
+// write's refresh carries it there (movedCopy); a verdict from the fields or the nearest copy is forwarded only where
+// they carry the position to that very copy (the two agree: a tracked insertion above moved every copy alike, and the
+// ordinal names the one the changes reach) or to no one place (none within their bounds, or several, which the
+// refresh leaves as they are), and dropped where they carry it elsewhere (carriedTo): to the quote's own occurrence
+// inside the copy whose context a tracked edit changed, or to another copy. Before the review's third round
+// (2026-09-11) a status between a session's edit inside the first of two copies under one heading and the next host
+// write confirmed the second copy by section, from a position two characters stale that the recorded edit accounted
+// for, and the panel painted the copy the person never commented plainly for as long as the person reviewed the
+// edit; with no entry the panel paints by its own engine, as before the tie-break, until the write settles it: a guess
+// with its cue where two or more copies are still whole, and where one is (two copies, one edited) that copy, plainly,
+// the paint of the anchors follow-on (locateStored's note on `position`). After a raw write (unrecorded) the changes
+// vouch for nothing and every verdict is forwarded, as before. The walk over the copies the changes can have carried
+// a position to (carriedTo, reachable) is charged to the same budget, a compare per copy inside the changes' window,
+// and a comment whose walk does not fit is one the changes say nothing about (carriedTo answers null, as for a
+// classification the budget cut), its verdict forwarded as after a raw write: before the review's fourth round
+// (2026-09-11) the walk summed every pending change for every copy of every tied comment, uncharged, and a status on a
+// file of REFRESH_COPIES_MAX one-character copies with ten thousand pending insertions and twenty stale tied comments
+// took 18 s, past the kernel's deadline, after which the file's comments could not be opened at all.
+function placedFor(store, text, markdown) {
+  const out = {};
+  if (!store || typeof text !== 'string') return out;
+  const recorded = store[TEXT_AS_WRITTEN] === true;
+  let bounds = null;
+  for (const c of store.comments || []) {
+    if (!c || !c.anchor || typeof c.anchor !== 'object' || typeof c.anchor.quote !== 'string' || !c.anchor.quote) continue;
+    const loc = locateStored(text, c, markdown, refreshBudget);
+    if (!loc || loc.error || loc.by === 'position' || loc.by === 'whole' || loc.by === 'engine') continue;
+    if (recorded) {
+      if (!bounds) bounds = shiftBounds(store);
+      const carried = carriedTo(text, c, bounds, refreshBudget);
+      if (carried !== null && carried !== loc.from) continue;   // the recorded changes carry the position elsewhere: the refresh's to settle, on the next write
+    }
+    out[String(c.id)] = { at: loc.from, confirmed: loc.confirmed, by: loc.by };
+  }
+  return out;
+}
+
+// Where the recorded changes (`bounds`, shiftBounds) carry a tied comment's stored position, as the refresh will on the
+// next write (refreshAnchorAts' rule for a whole anchor at one or several places, in its order: the one whole copy
+// within the bounds, else the one occurrence of the quote there that is not a whole copy), or null when they carry it
+// to no one place, or nothing is known (the classification the budget cut or the copies past REFRESH_COPIES_MAX, and a
+// quote count the budget cut). A comment with no position is carried nowhere, as the refresh leaves it (the fields
+// place it). For placedFor alone, on a comment locateStored has just placed by a tie rule, so the classification scan
+// is memoized and the quote's occurrences are charged once per quote, as the refresh charges them. The walk over the
+// copies (movedCopy, reachable) is charged to the same `budget`, and a walk that does not fit (movedCopy's undefined)
+// is nothing known, null here like a classification the budget cut: the changes say nothing about the position, and
+// placedFor forwards the verdict as it does after a raw write (the review's fourth round, 2026-09-11).
+function carriedTo(text, c, bounds, budget) {
+  const at = hintOf(c);
+  if (at === undefined) return null;
+  const { hits, more, cut } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX, budget);
+  if (cut || more || !hits.length) return null;
+  const whole = movedCopy(hits, at, bounds, undefined, budget);
+  if (whole === undefined) return null;   // the walk did not fit the budget: nothing known
+  if (whole !== null) return whole;
+  const q = quoteHits(text, c.anchor.quote, budget);
+  if (q.more) return null;
+  const moved = movedCopy(hits, at, bounds, q.positions, budget);
+  return moved === undefined ? null : moved;
+}
+
 // What one native pass of indexOf over `text` costs the refresh's budget (REFRESH_SCAN_BUDGET's note).
 function passCost(text) {
   return Math.ceil(text.length / REFRESH_PASS_DIVISOR);
@@ -1706,6 +2162,33 @@ function sitsAt(text, anchor, at) {
   return at >= prefix.length && text.startsWith(anchor.quote, at) && text.startsWith(suffix, at + anchor.quote.length) && text.startsWith(prefix, at - prefix.length);
 }
 
+// Whether the quote sits at `at` with ONE side of its context whole beside it, the prefix ending right before it or the
+// suffix starting right after (a side the anchor lacks counts for nothing): the passage whose surroundings on the other
+// side were edited, the second case of locateStored's `position`. A compare of the anchor's own length, no scan. A
+// position that is not a whole number inside the text sits nowhere, as for sitsAt (startsWith would read a negative one
+// as 0). The review's third round (2026-09-11) asked for the quote alone here; the fourth asks for a side: the engine
+// scores an occurrence of the quote by the sides that sit beside it (locateAnchor, 2 a side, so a whole copy outscores a
+// half and a half a bare occurrence), and a bare occurrence of the quoted words, a passing mention of them, a table cell
+// or one character of a run, is what a stale position lands on by a coincidence of distance, a raw insertion above of
+// exactly the gap to it; the quote alone then took the mention for the passage, and the copy the fields would have
+// confirmed (the ordinal's, the count unchanged) was a guess on the panel, with its cue, where a confirmation was due.
+// A passage still at its position with its context edited keeps a side in every ordinary case: an edit after the quote
+// leaves the prefix, and an edit before it that keeps the quote at its position is one of the same length, or a recorded
+// one the refresh followed the quote through (movedCopy's occurrences), which leaves the suffix. What the side costs,
+// stated in the record: a recorded rewrite of both sides around the quoted words, followed the same way, is a position
+// no rule takes for the passage, and the copies whole elsewhere fall to the rules as after any edit (two copies, the
+// other one, `whole`; more, the fields); and a near copy whose one side matches to the anchor's width, at exactly the
+// coincidence's distance, is still taken. Not the refresh's test of a seated comment: a comment here keeps the copy
+// fields it has (stampCopy writes none for a position among no whole match), and the refresh moved it here itself where a
+// recorded change vouched.
+function quoteSitsAt(text, anchor, at) {
+  if (!Number.isInteger(at) || at < 0 || at > text.length || !text.startsWith(anchor.quote, at)) return false;
+  const prefix = typeof anchor.prefix === 'string' ? anchor.prefix : '';
+  const suffix = typeof anchor.suffix === 'string' ? anchor.suffix : '';
+  return (prefix.length > 0 && at >= prefix.length && text.startsWith(prefix, at - prefix.length))
+    || (suffix.length > 0 && text.startsWith(suffix, at + anchor.quote.length));
+}
+
 // Every offset at which the WHOLE anchor sits in `text` — prefix immediately before, quote at, suffix
 // immediately after — in order, at most `max` of them (past that the list is cut and `more` is set).
 // Where there is at least one, these are exactly the engine's best-scoring hits: locateAnchor scores
@@ -1719,12 +2202,19 @@ function sitsAt(text, anchor, at) {
 // With a `budget` (the refresh's) the scan is charged as it runs — one pass over the text, then the
 // needle's length per hit, what indexOf compares to confirm each — and stops with `more` and `cut` set
 // when the budget is spent, so a whole anchor that sits at nearly every offset costs what it costs and
-// no more (REFRESH_SCAN_BUDGET's note). Without one (uniqueAnchor, the tests) nothing is charged.
+// no more (REFRESH_SCAN_BUDGET's note). Without one (uniqueAnchor, locateStored for passageFigure and
+// doRetarget, the tests) nothing is charged, and a memoized result the budget cut short is no answer:
+// the scan runs whole and the whole result replaces the cut one, so the budgeted callers after it (the
+// stage's refresh pass, stampRefused, placedFor) have it for free. The cut result stays memoized for the
+// budgeted callers otherwise (the refresh's second pass must not pay the cut scan again). Before the
+// review's second round (2026-09-11) the cut result served every caller: locateStored answered null to
+// passageFigure, which read `.error` off it, and every write on a file holding a src-less region comment
+// whose scan the budget had cut died with a TypeError.
 const matchMemo = new Map();
 export function fullMatches(text, anchor, max, budget) {
   const key = `${max} ${anchorKey(anchor)}`;
   const m = matchMemo.get(key);
-  if (m && m.text === text) return m.result;
+  if (m && m.text === text && (budget || !m.result.cut)) return m.result;
   const prefix = typeof anchor.prefix === 'string' ? anchor.prefix : '';
   const suffix = typeof anchor.suffix === 'string' ? anchor.suffix : '';
   const needle = prefix + anchor.quote + suffix;
@@ -1798,15 +2288,87 @@ function shiftBounds(store) {
   return out;
 }
 
-// The places among `cands` that the recorded changes (shiftBounds) can have carried the stored
-// position `at` to: each one's distance from `at` lies within the summed bounds of the changes ending
-// at or before it.
-function reachable(cands, at, bounds) {
+// The recorded changes' bounds (shiftBounds) indexed for reachable: sorted by where each ends, with the running sums
+// of the bounds ending at or before each, so the shift the changes can have given a position is two sums read off a
+// binary search rather than a walk of every change per candidate; and the widest the sums get over any prefix
+// (`minLo`, `maxHi`), the window a position can have moved within at all. Built once per bounds list (a WeakMap on
+// the list, which shiftBounds makes once per verb) and charged to the `budget`, when one is given, as a compare per
+// change; null when that does not fit what is left.
+const boundsIndexMemo = new WeakMap();
+function boundsIndex(bounds, budget) {
+  let ix = boundsIndexMemo.get(bounds);
+  if (ix) return ix;
+  if (budget) {
+    if (budget.left < bounds.length) return null;
+    budget.left -= bounds.length;
+  }
+  const sorted = bounds.slice().sort((a, b) => a.end - b.end);
+  const ends = new Array(sorted.length);
+  const lo = new Array(sorted.length + 1);
+  const hi = new Array(sorted.length + 1);
+  lo[0] = 0;
+  hi[0] = 0;
+  let minLo = 0;
+  let maxHi = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    ends[i] = sorted[i].end;
+    lo[i + 1] = lo[i] + sorted[i].lo;
+    hi[i + 1] = hi[i] + sorted[i].hi;
+    if (lo[i + 1] < minLo) minLo = lo[i + 1];
+    if (hi[i + 1] > maxHi) maxHi = hi[i + 1];
+  }
+  ix = { ends, lo, hi, minLo, maxHi };
+  boundsIndexMemo.set(bounds, ix);
+  return ix;
+}
+
+// The first index in the ascending `arr` whose value is at least `v` (lowerBound) or past it (upperBound), or
+// arr.length: the binary searches reachable makes over the candidates and over the bounds index.
+function lowerBound(arr, v) {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] < v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+function upperBound(arr, v) {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] <= v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+// The places among `cands` (ascending offsets: the whole matches, or the quote's spare occurrences, both in order)
+// that the recorded changes (`bounds`, shiftBounds) can have carried the stored position `at` to: each one's distance
+// from `at` lies within the summed bounds of the changes ending at or before it. Only the candidates inside the
+// window the sums ever span (boundsIndex) are looked at, found by binary search, and each costs the two sums read off
+// the index: before the review's fourth round (2026-09-11) every candidate summed every bound, and a status on a file
+// of REFRESH_COPIES_MAX copies with a sidecar of ten thousand pending changes and twenty stale tied comments spent 17 s
+// of its 18 in this walk, past the kernel's deadline, after which the file's comments could not be opened. With a
+// `budget` the candidates looked at are charged, a compare each as copiesUnder charges its matches, and null is
+// answered when they do not fit what is left: nothing known, as for a scan that does not fit.
+function reachable(cands, at, bounds, budget) {
+  const ix = boundsIndex(bounds, budget);
+  if (ix === null) return null;
+  const from = lowerBound(cands, at + ix.minLo);
+  const to = upperBound(cands, at + ix.maxHi);
+  if (budget) {
+    if (budget.left < to - from) return null;
+    budget.left -= to - from;
+  }
   const out = [];
-  for (const p of cands) {
-    let lo = 0;
-    let hi = 0;
-    for (const b of bounds) if (b.end <= p) { lo += b.lo; hi += b.hi; }
+  for (let i = from; i < to; i++) {
+    const p = cands[i];
+    const k = upperBound(ix.ends, p);   // the changes ending at or before p: the first k of the index
+    const lo = ix.lo[k];
+    const hi = ix.hi[k];
     const d = p - at;
     if (d < lo || d > hi) continue;
     out.push(p);
@@ -1826,26 +2388,55 @@ function reachable(cands, at, bounds) {
 // whole copies within the bounds are not told apart by the quote's other occurrences either, so those
 // are asked only when no whole copy is reachable. The caller asks only when every change to the text
 // is on record (TEXT_AS_WRITTEN): a bound is a bound on what the recorded changes did, and an
-// unrecorded edit beside a wide one could carry the position past its copy onto another.
-function movedCopy(hits, at, bounds, occurrences) {
+// unrecorded edit beside a wide one could carry the position past its copy onto another. The
+// occurrences that are not whole copies are read once per anchor and quote (spareOf): a set of the
+// hits built per comment held a write on a sidecar of two thousand comments on one recurring
+// character 27 s, past the kernel's deadline (the tie-break review's third round, 2026-09-11).
+// Answers the one place, null for none or several, and undefined when the walk did not fit the
+// `budget` (reachable): nothing known, which the callers treat as a position the changes say nothing
+// about (the refresh keeps it and counts the comment as unscanned; placedFor forwards the verdict).
+// The budget is the refresh's unless a caller names one: the process is one verb and has the one
+// budget (refreshBudget), and every caller here is charged to it; exported for the tests, which name
+// their own to hold the refusal.
+export function movedCopy(hits, at, bounds, occurrences, budget = refreshBudget) {
+  const whole = reachable(hits, at, bounds, budget);
+  if (whole === null) return undefined;
   let found = null;
-  for (const p of reachable(hits, at, bounds)) {
+  for (const p of whole) {
     if (found !== null) return null;
     found = p;
   }
   if (found !== null || !occurrences) return found;
-  const whole = new Set(hits);
-  for (const p of reachable(occurrences.filter((q) => !whole.has(q)), at, bounds)) {
+  const spare = reachable(spareOf(hits, occurrences), at, bounds, budget);
+  if (spare === null) return undefined;
+  for (const p of spare) {
     if (found !== null) return null;
     found = p;
   }
   return found;
 }
 
+// The quote's occurrences that are not whole copies, for movedCopy: memoized by the identity of the two lists, which
+// are the memoized results of fullMatches and quoteHits for one anchor, quote and text and so the same arrays for every
+// comment on the passage; a list from anywhere else is filtered afresh, and a WeakMap holds nothing past the lists.
+const spareMemo = new WeakMap();
+function spareOf(hits, occurrences) {
+  let byOccurrences = spareMemo.get(hits);
+  if (!byOccurrences) { byOccurrences = new WeakMap(); spareMemo.set(hits, byOccurrences); }
+  let spare = byOccurrences.get(occurrences);
+  if (!spare) {
+    const whole = new Set(hits);
+    spare = occurrences.filter((q) => !whole.has(q));
+    byOccurrences.set(occurrences, spare);
+  }
+  return spare;
+}
+
 // The refresh's budget for this write (REFRESH_SCAN_BUDGET's note): one process is one verb, and the two
 // refresh passes a write makes (checkReplyFits, then stageSidecar) draw on this one figure. `kept`
 // remembers what stderr was last told, so the note goes out once per write and only when it changes.
 const refreshBudget = { left: REFRESH_SCAN_BUDGET, kept: { skipped: 0, unscanned: 0 } };
+refreshBudget.keptUnstamped = 0;   // what stderr was last told of the copy fields the stamping pass left (noteUnstamped)
 
 // Whether one classification scan (fullMatches, a pass of indexOf over the whole text) fits what is
 // left of the refresh's budget. A result already memoized for this text and anchor is free (a shared
@@ -1907,44 +2498,77 @@ function affordable(budget, text, anchor) {
 // (REFRESH_SCAN_BUDGET), past which a comment keeps its position and stderr says how many, once per
 // write. The anchor's own fields are never touched here, and a comment without an anchor (a whole-file,
 // change or standalone region comment) never gains the field. The other hosts and the CLIs write the
-// whole object back, so the field survives them.
+// whole object back, so the field survives them. Whether the file is markdown, for the copy fields'
+// heading path (stampCopy, below), is the judgment stamped on the store at load from the file's name
+// (MARKDOWN_FILE, markdownOf), never the store's own `path` field.
 function refreshAnchorAts(store, text) {
-  if (typeof text !== 'string') return;
+  if (typeof text !== 'string' || !store) return;   // no sidecar (a save on a tracked file before its first comment or change): nothing to refresh, and no store for markdownOf to judge
   let bounds = null;
   const budget = refreshBudget;
   budget.skipped = 0;
   budget.unscanned = 0;
+  budget.unstamped = 0;
   const recorded = !!store && store[TEXT_AS_WRITTEN] === true;
+  const seated = [];   // the comments whose position names a copy in this text once the pass is done: their copy fields are refreshed below
   for (const c of (store && store.comments) || []) {
     if (!c || !c.anchor || typeof c.anchor !== 'object' || typeof c.anchor.quote !== 'string' || !c.anchor.quote) continue;
     const at = hintOf(c);
-    if (at !== undefined && sitsAt(text, c.anchor, at)) continue;
+    if (at !== undefined && sitsAt(text, c.anchor, at)) { seated.push(c); continue; }
     if (!affordableScan(budget, text, c.anchor)) { budget.unscanned++; continue; }
     const { hits, more, cut } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX, budget);
     if (cut) { budget.unscanned++; continue; }
     if (more) continue;
-    if (hits.length === 1 && at === undefined) { c.anchorAt = hits[0]; continue; }
+    if (hits.length === 1 && at === undefined) { c.anchorAt = hits[0]; seated.push(c); continue; }
     if (hits.length >= 1) {
       if (at === undefined) continue;
       if (recorded) {
         if (!bounds) bounds = shiftBounds(store);
         const whole = movedCopy(hits, at, bounds);
-        if (whole !== null) { c.anchorAt = whole; continue; }
+        if (whole === undefined) { budget.unscanned++; continue; }   // the walk over the copies did not fit the budget (movedCopy's, this one): the position stands, and stderr counts it
+        if (whole !== null) { c.anchorAt = whole; seated.push(c); continue; }
       } else if (hits.length > 1) {
         continue;   // a tie after an edit nobody recorded: the changes vouch for nothing, and the quote's other occurrences add nothing
       }
       const q = quoteHits(text, c.anchor.quote, budget);
       if (q.more) { budget.unscanned++; continue; }
-      if (hits.length === 1 && q.count === 1) { c.anchorAt = hits[0]; continue; }
+      if (hits.length === 1 && q.count === 1) { c.anchorAt = hits[0]; seated.push(c); continue; }
       if (!recorded) continue;
       const moved = movedCopy(hits, at, bounds, q.positions);
-      if (moved !== null) c.anchorAt = moved;
+      if (moved === undefined) { budget.unscanned++; continue; }
+      if (moved !== null) { c.anchorAt = moved; seated.push(c); }   // to the quote's other occurrence: the whole anchor sits elsewhere, so the copy fields stand (stampCopy)
       continue;
     }
     if (!affordable(budget, text, c.anchor)) continue;
     const loc = locateExact(text, c.anchor, undefined);
-    if (!loc.error) c.anchorAt = loc.from;
+    if (!loc.error) { c.anchorAt = loc.from; c[ENGINE_PLACED] = true; seated.push(c); }
   }
+  // The copy fields (ordinal, copies, section: the tie-break, 2026-09-11) follow the position: for every comment
+  // whose position names its copy now, its index among the whole anchor's matches and their count (the engine's one
+  // best hit counts as 1 of 1 where the anchor sits in whole nowhere) and the heading path above it. One
+  // classification scan per distinct anchor, memoized, so the comments the pass above scanned cost nothing more here
+  // and a comment still at its position costs one pass per write (the count must be seen to be unchanged: a stamped
+  // comment is not free next time, as a refreshed position is); charged to the same budget, after the positions have
+  // had it, and past it the fields keep what they said and stderr says how many, once per write (noteUnstamped). The
+  // budget is spent in store order, so a sidecar with more distinct seated anchors than one write scans leaves the
+  // same tail unstamped on every write while it keeps that shape; the comments WITHOUT the fields (the CLIs', an
+  // older host's) are stamped before the rest, so such a sidecar gains fields where it has none before it refreshes
+  // the fields it has (the review, 2026-09-11: the skip was silent, and a comment past the budget never gained them).
+  // A comment past REFRESH_COPIES_MAX is left by the copies cap, not the budget, and is not counted. Whether the file
+  // is markdown is the judgment stamped on the store at load from the file's name (MARKDOWN_FILE), never the sidecar
+  // JSON's `path` field, so the path stamped here is the path locateStored reads.
+  const markdown = markdownOf(store);
+  const stampedAlready = (c) => ordinalOf(c) !== null && sectionOf(c) !== null;
+  seated.sort((a, b) => Number(stampedAlready(a)) - Number(stampedAlready(b)));   // stable: store order within each group
+  for (const c of seated) {
+    const at = c.anchorAt;
+    if (c[ENGINE_PLACED]) { delete c[ENGINE_PLACED]; stampCopy(c, text, at, [at], markdown); continue; }
+    if (!affordableScan(budget, text, c.anchor)) continue;
+    const { hits, more, cut } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX, budget);
+    if (cut || more) continue;
+    stampCopy(c, text, at, hits, markdown);
+  }
+  budget.unstamped = seated.filter((c) => stampRefused(text, c.anchor)).length;
+  noteUnstamped(budget);
   if (budget.skipped !== budget.kept.skipped || budget.unscanned !== budget.kept.unscanned) {
     budget.kept = { skipped: budget.skipped, unscanned: budget.unscanned };
     if (budget.skipped) {
@@ -1953,6 +2577,46 @@ function refreshAnchorAts(store, text) {
     if (budget.unscanned) {
       process.stderr.write(`file-comments-host: ${budget.unscanned} comment(s) kept their stored position: locating them would scan past the refresh's budget for one write\n`);
     }
+  }
+}
+
+// The file's kind for the copy fields' heading path (stampCopy): the judgment stamped on the store at load or seed
+// (MARKDOWN_FILE), from the request path's name. This script stamps every store it loads (loadOrRefuse) or seeds
+// (withSidecar), so a store carrying none reaches here only through a caller using this module as a library
+// (stageSidecar on a store of its own); such a store has its heading paths left as they are, and stderr says so once,
+// rather than have the file judged from the sidecar JSON's own `path` field, which any writer can leave stale or absent.
+// A save on a file with no sidecar has no store at all, and the refresh returns before judging (the review's second
+// round, 2026-09-11: the note went out on every such save, and the kernel logged it).
+let unjudgedTold = false;
+function markdownOf(store) {
+  const m = store ? store[MARKDOWN_FILE] : undefined;
+  if (typeof m === 'boolean') return m;
+  if (!unjudgedTold) {
+    unjudgedTold = true;
+    process.stderr.write("file-comments-host: the store carries no judgment of the file's kind, so no heading path was written; every store this script loads or seeds is judged from the file's name\n");
+  }
+  return undefined;
+}
+
+// Whether the stamping pass (refreshAnchorAts) left a seated comment's copy fields for the budget: its classification
+// scan over this text was never run (affordableScan refused the pass) or was cut short by the budget (fullMatches'
+// `cut`, memoized like a whole result). An anchor the engine placed, or whose scan ran whole, has a memoized result
+// without `cut`, past REFRESH_COPIES_MAX or not: the copies cap, not the budget, leaves those.
+function stampRefused(text, anchor) {
+  const m = matchMemo.get(`${REFRESH_COPIES_MAX} ${anchorKey(anchor)}`);
+  return !m || m.text !== text || m.result.cut === true;
+}
+
+// The stamping pass's note: how many seated comments kept the copy fields they had, or none, for the budget
+// (refreshAnchorAts, `unstamped`), told once per write and only when the count changes, as the position notes are
+// (the measure's pass and the stage's pass share the budget and the memos, so the second pass tells nothing new,
+// unless a reader without a budget ran a cut anchor's scan whole between the two passes, fullMatches: the stage's
+// pass then stamps that anchor's comments for free, and the lower count is told, when it is not none).
+function noteUnstamped(budget) {
+  if (budget.unstamped === budget.keptUnstamped) return;
+  budget.keptUnstamped = budget.unstamped;
+  if (budget.unstamped) {
+    process.stderr.write(`file-comments-host: ${budget.unstamped} comment(s) kept the copy fields they had, or none: counting the copies of their passage would scan past the refresh's budget for one write\n`);
   }
 }
 
@@ -2054,7 +2718,13 @@ function validateAnchor(anchor) {
 // the comment, the legacy meaning, and a decision leaves such a comment as it was, open or resolved
 // (decision 42, 2026-09-09; before it, accept marked the bound comments resolved — requireCommentsUntouched
 // now refuses a decision that changes one).
-export function buildComment(text, args, now, suggestions, detached) {
+// After `anchorAt`, a passage comment carries the three copy fields (the tie-break, 2026-09-11; decision 51):
+// `ordinal` and `copies`, its index among the whole anchor's matches in this text and their count (1 of 1 for an
+// anchor the widening made unique; k of n for one still tied at the cap, where the position tells the copies apart),
+// and `section`, the heading path above it when the file is markdown (`opts.markdown`, from the file's name) and ''
+// otherwise (stampCopy, sectionAt). They are what a later reader breaks a tie by once the position no longer names a
+// copy (locateStored), and every host write refreshes them with the position (refreshAnchorAts).
+export function buildComment(text, args, now, suggestions, detached, opts) {
   const note = requireNote(args);
   if (args.suggestionId != null) {
     throw new BadRequest('suggestionId is not accepted: a comment names the changes it is about with changeIds');
@@ -2087,12 +2757,24 @@ export function buildComment(text, args, now, suggestions, detached) {
   const anchor = validateAnchor(args.anchor);
   const loc = locateExact(text, anchor, browserHint(text, args.hintOffset), { exact: true });
   if (loc.error) return { error: loc.error };
+  const stored = uniqueAnchor(text, loc.from, loc.to);
+  // the copy fields (an anchor the widening made unique is 1 of 1 with no further scan; one still tied at the cap is
+  // counted among the whole anchor's matches), spread in place after the position. Past REFRESH_COPIES_MAX no count is
+  // known and nothing is written, the refresh's rule (the stamping pass of refreshAnchorAts): until the review's third
+  // round (2026-09-11) the cap itself was written as the count, so a comment on a passage whole at more places than that
+  // carried `copies: 65536` and an ordinal among the first that many, which every later write kept (the stamping pass
+  // refuses that state), and a later text of exactly that many copies had the ordinal rule confirm a copy from a count
+  // that was never real. The one memoized scan is read twice, for its cut and for its matches.
+  const copy = {};
+  const counted = stored.unique || !fullMatches(text, stored.anchor, REFRESH_COPIES_MAX).more;
+  if (counted) stampCopy(copy, text, loc.from, stored.unique ? [loc.from] : fullMatches(text, stored.anchor, REFRESH_COPIES_MAX).hits, !!(opts && opts.markdown));
   const c = {
     id: `${now}-${loc.from}`,
     author: AUTHOR,
     ts: now,
-    anchor: uniqueAnchor(text, loc.from, loc.to).anchor,
+    anchor: stored.anchor,
     anchorAt: loc.from,
+    ...copy,
     ...about,
     body: note,
     replies: [],
@@ -2217,6 +2899,9 @@ function reply(ctx, state, extra, opts) {
     log,
     logTruncated,
     decided: decidedFor(store, entries),
+    // where the tie-break puts every passage comment whose anchor ties and whose position names none of the copies,
+    // per comment id ({at, confirmed, by}: placedFor); a media file has no anchors
+    placed: media ? {} : placedFor(store, text, ctx.markdown),
   };
   // What a region comment's target.hash is compared with, on every reply (each one is the status
   // the panel holds next): a media file's own bytes, or the figures a text file's comments name —
@@ -2383,7 +3068,7 @@ function withSidecar(ctx, create, plan) {
     // below, after the last check that can refuse (the reply's size).
     const rootToBe = root || path.dirname(ctx.abs);
     const pathsToBe = paths || pathsFor(rootToBe, ctx.abs);
-    if (!store) store = seedStore(pathsToBe.rel);
+    if (!store) { store = seedStore(pathsToBe.rel); store[MARKDOWN_FILE] = ctx.markdown; }
     apply(store);
     checkReplyFits(ctx, { root: rootToBe, paths: pathsToBe, store, ...file }, null, [], `this ${ctx.verb}`);
     const land = () => {
@@ -2425,7 +3110,7 @@ function doComment(ctx) {
   if (figureHash != null && ctx.args.target == null) throw new BadRequest('fence.figureHash fences the figure a region is on, and this comment has no target');
   return withSidecar(ctx, true, (store, text, root) => {
     const target = ctx.args.target == null ? null : validateTarget(ctx.args.target, ctx.args.anchor != null);
-    const built = buildComment(text, ctx.args, Date.now(), store ? store.suggestions : [], store ? store.detached : []);
+    const built = buildComment(text, ctx.args, Date.now(), store ? store.suggestions : [], store ? store.detached : [], { markdown: ctx.markdown });
     // The words a refusal uses. A region on an embedded figure was drawn on the figure, not selected as text: its
     // anchor is the embed line, and the remedy is to draw again, so the refusal names the line and that gesture
     // (the review, 2026-09-08: every refusal said to select the passage again). A passage keeps the words it had.
@@ -2495,7 +3180,7 @@ function doRetarget(ctx) {
       if (stored != null) {
         if (validated.src !== stored) throw new BadRequest(`retarget keeps the figure: comment ${String(id)} is on ${tilde(stored)}, and target.src names ${tilde(validated.src)}`);
       } else {
-        const loc = locateExact(text, validateAnchor(c.anchor), hintOf(c));
+        const loc = locateStored(text, { ...c, anchor: validateAnchor(c.anchor) }, ctx.markdown);
         if (loc.error) throw new Refusal(loc.error, `the passage of comment ${String(id)} could not be placed in ${ctx.shown} (${loc.error}), so which figure it embeds cannot be told — reload and retry`);
         checkEmbedNamesSrc(ctx, text, loc.from, loc.to, validated.src);
       }
@@ -2662,7 +3347,8 @@ function cannotRecord(ctx, paths, e, then, what) {
 
 // A decision never touches a comment (decision 42, 2026-09-09): the comments in the sidecar a decision
 // stages are the loaded ones, field for field, apart from `anchorAt`, the romp-only position every
-// sidecar write refreshes against the current text (refreshAnchorAts, in stageSidecar). Each decision
+// sidecar write refreshes against the current text (refreshAnchorAts, in stageSidecar), and the three
+// copy fields refreshed with it, `ordinal`, `copies` and `section` (the tie-break, 2026-09-11). Each decision
 // verb takes the comments as loaded (commentsApartFromAnchorAt, before it changes anything), stages
 // the sidecar, and then checks the STAGED bytes, read back from the temp file the rename would land
 // (store[STAGED]): everything between the load and the bytes is covered — the verb's own steps, the
@@ -2674,7 +3360,7 @@ function cannotRecord(ctx, paths, e, then, what) {
 export function commentsApartFromAnchorAt(comments) {
   return JSON.stringify((comments || []).map((c) => {
     if (!c || typeof c !== 'object') return c;
-    const { anchorAt, ...rest } = c;   // eslint-disable-line no-unused-vars
+    const { anchorAt, ordinal, copies, section, ...rest } = c;   // eslint-disable-line no-unused-vars
     return rest;
   }));
 }
@@ -3556,7 +4242,7 @@ export function handle(req) {
   const fence = req.fence == null ? {} : req.fence;
   if (typeof fence !== 'object' || Array.isArray(fence)) throw new BadRequest('fence must be an object');
   const abs = path.resolve(req.path);
-  const ctx = { verb, abs, args, fence, shown: tilde(abs) };
+  const ctx = { verb, abs, args, fence, shown: tilde(abs), markdown: isMarkdownPath(abs) };   // markdown: the file has a Rendered form, so a passage comment's section is a heading path
   return HANDLERS[verb](ctx);
 }
 

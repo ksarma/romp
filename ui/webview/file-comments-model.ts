@@ -33,10 +33,22 @@ export type StoreReply = { author: string; authorId?: string; ts: number; body?:
  *  that overlaps their marks), by id, with or without an anchor. `suggestionId` is the format's own field, the one the
  *  other editors bind a comment to a change on: romp reads one (a sidecar from before the follow-on, or one `track-edit
  *  --thread` wrote) as the change that ANSWERED the comment and never writes it (decision 45). */
+/** `ordinal`, `copies` and `section` are the copy fields (the tie-break, 2026-09-11; decision 51), written by the host beside
+ *  `anchorAt` on a passage comment and refreshed with it: the copy's 1-based index among the whole anchor's matches at the
+ *  moment of the write and their count, and the heading path above the passage in a markdown file ("" otherwise). The host
+ *  reads them to break a tie once the position names no copy (an edit nobody recorded); the panel never reads them, it takes
+ *  the host's verdict from the status (`Status.placed`). Carried on the type so a writer here keeps them, and so the ADR's
+ *  field list is checked against it. */
 export type StoreComment = {
   id: string; author: string; authorId?: string; ts: number; body: string;
-  replies?: StoreReply[]; resolved?: boolean; anchor?: Anchor | null; anchorAt?: number; changeIds?: string[]; suggestionId?: string; target?: Target;
+  replies?: StoreReply[]; resolved?: boolean; anchor?: Anchor | null; anchorAt?: number; ordinal?: number; copies?: number; section?: string;
+  changeIds?: string[]; suggestionId?: string; target?: Target;
 };
+/** The host's verdict on a passage comment whose anchor ties in the text and whose stored position names none of the copies
+ *  (`Status.placed`, the tie-break, 2026-09-11): `at`, the copy it put the comment on, an offset into the host's text (mapped
+ *  by `bom` like anchorAt); `confirmed`, whether the copy fields settled it (`by` the ordinal, the count of copies being
+ *  unchanged, or the one copy under the stored heading path) or it fell back to the copy nearest the position, a guess. */
+export type Placed = { at: number; confirmed: boolean; by: "ordinal" | "section" | "nearest" };
 export type Store = {
   v: number; id?: string; path: string; suggestions: unknown[]; comments: StoreComment[];
   detached?: unknown[]; fingerprint?: string;
@@ -63,6 +75,9 @@ export type Status = {
    *  `anchorAt` is an offset into the host's text, so on such a file it is the view's offset plus one (the panel's viewAt
    *  maps it); absent from an older host, read as false */
   bom?: boolean;
+  /** per comment id, the host's verdict on a passage comment whose anchor ties and whose position names no copy (Placed):
+   *  a confirmed copy is painted plainly there, a guessed one as before; absent from an older host, read as no verdict */
+  placed?: Record<string, Placed> | null;
   /** a non-text file's sha256 (E2); null when the host could not compute it (over its cap); absent from an older host */
   fileHash?: string | null;
   /** a text file: the current sha256 of every figure its region comments name, by `src` as written (E2) */

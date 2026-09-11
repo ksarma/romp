@@ -277,11 +277,13 @@ test('a passage comment deep-equals addComment\'s object for the same quote and 
   assert.equal(addComment(seed, w.text, quote, 'Say which percentile window.', 'you', now, null).error, undefined);
   const want = seed.comments[0];
   // addComment's keys, plus the stored position after the anchor (the anchors follow-on, 2026-09-07:
-  // the second romp-only field, like `target`, which older readers ignore and every host writes back)
-  assert.deepEqual(Object.keys(got), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'body', 'replies', 'resolved']);
+  // the second romp-only field, like `target`, which older readers ignore and every host writes back) and
+  // the three copy fields after it (the tie-break, 2026-09-11)
+  assert.deepEqual(Object.keys(got), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'ordinal', 'copies', 'section', 'body', 'replies', 'resolved']);
   assert.deepEqual(Object.keys(want), ['id', 'author', 'ts', 'anchor', 'body', 'replies', 'resolved']);
-  const { anchorAt: at, ...gotSans } = got;
+  const { anchorAt: at, ordinal, copies, section, ...gotSans } = got;
   assert.deepEqual({ ...gotSans, id: 'x', ts: 0 }, { ...want, id: 'x', ts: 0 });
+  assert.deepEqual([ordinal, copies, section], [1, 1, 'Latency report > Findings'], 'the copy fields: 1 of 1 under the heading path');
   assert.equal(at, idx, 'anchorAt is the offset the anchor located at');
   assert.equal(got.id, `${got.ts}-${idx}`);
   assert.deepEqual(got.anchor, engine.makeAnchor(w.text, idx, idx + quote.length), 'a passage unique at 24 characters keeps track-comment\'s context');
@@ -306,9 +308,10 @@ test('a sidecar written by track-comment, replied to by the host script, read by
   assert.equal(agentComment.author, 'web');
   assert.equal(agentComment.authorId, SID);
   assert.equal('anchorAt' in agentComment, false, 'the CLI writes the contract\'s shape alone');
-  // The host's write adds the one field it keeps on every anchored comment, romp-only and additive: the
-  // offset the anchor locates at (the anchors follow-on, 2026-09-07). Everything else is kept as written.
-  const placed = { ...agentComment, anchorAt: w.text.indexOf('shipping the cache in v1.2') };
+  // The host's write adds the fields it keeps on every anchored comment, romp-only and additive: the
+  // offset the anchor locates at (the anchors follow-on, 2026-09-07) and the copy fields beside it (the
+  // tie-break, 2026-09-11). Everything else is kept as written.
+  const placed = { ...agentComment, anchorAt: w.text.indexOf('shipping the cache in v1.2'), ordinal: 1, copies: 1, section: 'Latency report > Recommendation' };
 
   const st = status(w, w.report);
   assert.equal(st.store.comments[0].id, agentComment.id);
@@ -1361,7 +1364,7 @@ test('comment {anchor, changeIds} writes a passage comment about the changes it 
   const { anchor, hintOffset, idx } = anchorAt(cur, 'reduced p95 latency by 40%', 0);
   const r = ok(w, { verb: 'comment', path: w.report, args: { anchor, hintOffset, changeIds: [B.id, A.id, B.id], note: 'Both belong in the summary.' }, fence: fenceFor(st) });
   const c = readSidecar(r.storePath).comments[0];
-  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'changeIds', 'body', 'replies', 'resolved']);
+  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'ordinal', 'copies', 'section', 'changeIds', 'body', 'replies', 'resolved']);
   assert.deepEqual(c.changeIds, [B.id, A.id], 'each id once, as first named');
   assert.equal(c.anchorAt, idx);
   assert.equal(c.id, `${c.ts}-${idx}`, 'an anchored comment takes its id from the anchor, whatever changes it names');

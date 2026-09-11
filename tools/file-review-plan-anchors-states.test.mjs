@@ -81,7 +81,9 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   assert.ok(panel.includes('const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);'), 'asked of a located comment, at the copy the engine returned, with the stored position in the view\'s coordinates');
   // the position the engine and copyUnsure read is the stored one mapped into the view's coordinates (viewAt): the
   // host keeps a BOM the fetch strips, and the status says whether it does (bom), the host's own word on its text
-  assert.ok(panel.includes('const at = this.viewAt(card);') && panel.includes('const loc = locateComment(src, card.anchor, at);'), 'the hint is the mapped position');
+  assert.ok(panel.includes('const at = this.placedAt(card) ?? this.viewAt(card);') && panel.includes('const loc = locateComment(src, card.anchor, at);'), 'the hint is the mapped position, or the copy the host\'s tie-break confirmed (the tie-break, 2026-09-11)');
+  const placed = method(panel, 'placedAt');
+  assert.ok(placed.includes('p.confirmed !== true') && placed.includes("return this.status!.bom ? p.at - 1 : p.at;"), 'placedAt: a confirmed verdict alone, mapped past a BOM like anchorAt');
   const view = method(panel, 'viewAt');
   assert.ok(view.includes('if (card.anchorAt === null) return undefined;') && view.includes('return this.status && this.status.bom ? card.anchorAt - 1 : card.anchorAt;'), 'one character on a BOM file, as the status says; 0 is a position');
   assert.ok(read('ui', 'webview', 'file-comments-model.ts').includes('bom?: boolean;'), 'the status type carries the bit');
@@ -113,7 +115,7 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   const words = fn(panel, 'copyUnsureWords');
   assert.ok(words.includes('"the comment stores no position to tell the copies apart, so the first copy is highlighted"'), 'no position: the first copy');
   assert.ok(words.includes('"the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted"'), 'a position naming none: the nearest');
-  assert.ok(words.includes('" — not a confirmed one."'), 'and never a confirmed one');
+  assert.ok(words.includes('", not a confirmed one. Reveal it and save again from the right copy to confirm."'), 'and never a confirmed one, ending with how to confirm it (the tie-break, 2026-09-11)');
 });
 
 // ── the contract and the follow-on note: the tie-break holds while the position names a copy ──

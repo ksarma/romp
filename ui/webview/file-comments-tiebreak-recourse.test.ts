@@ -1,16 +1,14 @@
-// The anchors follow-on, reviewed (2026-09-07; plans/file-review.md, The contract, Commenting from either view, and the
-// follow-on note): two ways a comment on text that recurs landed on a copy the person never chose, each shown as if
-// chosen. (1) The painter handed the stored position to the engine as the tie-break and painted whatever came back as
-// located — but the engine ranks by context first and uses the position only among equal scores, and the host keeps a
-// position that names no copy when the recorded changes cannot vouch for one (or when the file changed unrecorded), so
-// an edit inside the chosen copy's context, or a long insertion above, put the highlight on another copy with no tag.
-// Now a tie the stored position does not settle is painted in the dashed cue and the card says so (copyUnsure). (2) The
-// composer's follow re-found a passage the edit reached through its anchor and accepted any single best hit — when the
-// session rewrote the selected copy of a sentence that recurs, the hit was the OTHER copy, the presel moved there, the
-// chip said nothing, and Save sent that copy's offset. Now a hit wholly outside the span the edit's text occupies is
-// `elsewhere`: painted nowhere, the chip says the passage changed and where its text is, and Save is refused here, since
-// the host, handed one hit, would place the note on it. Driven over the DOM stand-in file-comments-anchors.test.ts uses.
-// Synthetic fixtures only: the notes-api world, placeholder ids.
+// The recurring-passage tie-break, reviewed (2026-09-11; plans/file-review.md, decision 51 and the anchors follow-on note).
+// Two findings on the panel's half. (1) The words for a guessed copy end by asking the person to reveal it and save again
+// from the right copy, but the card offered Reveal only for a passage it could not paint, and a guessed copy IS painted
+// (in the dashed cue), so the open card's actions were Reply and Resolve alone: the words named a button the card did not
+// have. Now a guessed copy's card offers Reveal too, which switches to Raw and scrolls to the guessed copy, and its title
+// says what the save does (a new comment on the copy chosen; this card keeps its tag until it is resolved, as
+// docs/guide.md says). (2) A copy the host confirmed at a place the view's text has since moved past (the poll's reload
+// paints before the fresh status lands; a refused refresh keeps the old status) is painted as a guess nearest THAT place,
+// the paint's hint, while the tag, the open card and the mark said it was the copy nearest the stored position, which
+// can be another copy. The words now name the confirmed place in that state (PanelCard.confirmedAt). Driven over the DOM
+// stand-in file-comments-tiebreak.test.ts uses. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
@@ -218,7 +216,7 @@ const store = new Map<string, string>();
 
 
 
-// ── fixtures: the notes-api world — a report whose paragraph recurs, and one whose sentence does ───
+// ── fixtures: the notes-api world, a report whose paragraph recurs, and one whose sentence does ───
 const SID = "11111111-2222-3333-4444-555555555555";
 const ABS = "/repo/notes-api/docs/report.md";
 const ROOT = "/repo/notes-api";
@@ -269,10 +267,10 @@ assert.ok(DAY1 > 0 && DAY2 > DAY1 && REPORT.indexOf(SHIP, DAY2 + 1) === -1, "the
 const DAY2_ROW = 25;   // the rows: Day 1's sentence is row 20, Day 2's row 25
 const SOON = REPORT.slice(0, DAY2) + "Ship it soon." + REPORT.slice(DAY2 + SHIP.length);   // the session's rewrite of Day 2's sentence
 // the panel's words, copied here so a swap or a rewording fails a driven test
-const PASSAGE_ELSEWHERE = "The file changed where you selected this passage, and its text now occurs only elsewhere in the file, at a copy you did not select; Save is refused rather than put the note there. Select the passage again.";
-const PASSAGE_ELSEWHERE_SAVE = "Nothing saved: the file changed where you selected this passage, and its text now occurs only elsewhere in the file. Select the passage again.";
-const UNSURE_POSITION = "This passage occurs in the file more than once with the same surroundings, and the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted, not a confirmed one. Reveal it and save again from the right copy to confirm.";
-const UNSURE_NONE = "This passage occurs in the file more than once with the same surroundings, and the comment stores no position to tell the copies apart, so the first copy is highlighted, not a confirmed one. Reveal it and save again from the right copy to confirm.";
+// the panel's words, copied here so a swap or a rewording fails a driven test: both end by saying how to confirm the copy
+const CONFIRM = " Reveal it and save again from the right copy to confirm.";
+const UNSURE_POSITION = "This passage occurs in the file more than once with the same surroundings, and the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted, not a confirmed one." + CONFIRM;
+const UNSURE_NONE = "This passage occurs in the file more than once with the same surroundings, and the comment stores no position to tell the copies apart, so the first copy is highlighted, not a confirmed one." + CONFIRM;
 const storeWith = (comments: StoreComment[]): Status["store"] => ({ v: 3, path: "docs/report.md", suggestions: [], comments });
 function status(over: Partial<Status> = {}): Status {
   return {
@@ -380,207 +378,168 @@ async function openPanel(w: World, s: Status = status()): Promise<{ unit: El; bu
 }
 
 
-// ── driving the composer: a selection in one row, the float, Enter ─────────────────────────────────
-const RECT = { left: 100, top: 200, right: 300, bottom: 220, width: 200, height: 20 };
-function textNodeIn(root: El, needle: string): { node: Txt; at: number } | null {
-  for (const c of root.childNodes) {
-    if (c instanceof Txt) { const i = c.data.indexOf(needle); if (i >= 0) return { node: c, at: i }; }
-    else { const r = textNodeIn(c, needle); if (r) return r; }
-  }
-  return null;
-}
-/** A selection of `quote` in the Raw view's row `row` (0-based), the way the person drags over the second paragraph. */
-function selectRow(w: World, row: number, quote: string): any {
-  const hit = textNodeIn(w.code.childNodes[row] as El, quote);
-  assert.ok(hit, "row " + row + " holds " + JSON.stringify(quote));
-  return { rangeCount: 1, isCollapsed: false, anchorNode: hit.node, anchorOffset: hit.at, focusNode: hit.node, focusOffset: hit.at + quote.length,
-    toString: () => quote, getRangeAt: () => ({ getBoundingClientRect: () => RECT }) };
-}
-const theFloat = (): El => { const all = doc.body.querySelectorAll(".fc-float"); return all[all.length - 1]; };
-/** Select `quote` in row `row`, let the seam fire, and press the floating Comment button. */
-function startCommentInRow(w: World, row: number, quote: string): void {
-  const sel = selectRow(w, row, quote);
-  for (const cb of w.hooks.selection) cb(sel);
-  const float = theFloat();
-  assert.equal(float.hidden, false, "the float appears beside a selection in the body");
-  selection = sel;
-  float.click();
-}
-const input = (aside: El): El => aside.querySelector(".fc-input")!;
-/** The save chord (Ctrl+Enter; Cmd+Enter is the same key policy): a plain Enter is a newline in the box now. */
-const chord = (el: El) => dispatch(el, new Ev("keydown", { key: "Enter", ctrlKey: true }));
-const preselRows = (w: World): Array<[number, string]> => w.code.querySelectorAll(".fc-presel").map((m) => [w.code.childNodes.indexOf(m.closest(".fv-cl")!), m.textContent] as [number, string]);
-const tag = (aside: El): El | null => aside.querySelector(".fc-composer-ref .fc-tag");
+// ── the review's two legs: the guessed copy's Reveal, and the words for a confirmed place the view moved past ──
+
+/** The status the host answers after a raw insertion above (ABOVE): the store as it stands, the position stale, and the
+ *  tie-break's verdict for the comment. */
+const placedAs = (at: number, confirmed: boolean, by: "ordinal" | "section" | "nearest", over: Partial<Status> = {}): Status =>
+  status({ store: storeWith([onSecond]), placed: { [onSecond.id]: { at, confirmed, by } }, ...over });
+const SECOND_ROW = 6;   // ABOVE's rows: title, blank, the inserted paragraph, blank, the first copy, blank, the second copy
+const FIRST_ROW = 4;
 /** The row (0-based line) a mark sits in: the `.fv-cl` ancestor's index among the code's rows. */
 function rowOf(w: World, mark: El): number { return w.code.childNodes.indexOf(mark.closest(".fv-cl")!); }
 const headOf = (aside: El, id: string): El => aside.querySelector('.fc-card[data-id="' + id + '"] .fc-card-head')!;
 const tagsOf = (head: El): El[] => head.querySelectorAll(".fc-tag");
-
-// ── followPassage: a passage the edit reached, whose text survives only at a copy the edit never touched ──
-
-test("followPassage: rewriting the selected copy of a sentence that recurs is `elsewhere`, never a move onto the other copy; deleting it likewise; a unique passage rewritten is `gone`; a hit inside the edited span still moves, and an insertion above is exact as before", async () => {
-  const { followPassage } = await import("./file-comments");
-  const range = { start: DAY2, end: DAY2 + SHIP.length };
-  // what the re-find got wrong: the anchor's one best hit in the rewritten text is Day 1's sentence, whole context and all
-  assert.equal(locateComment(SOON, makeAnchor(REPORT, range), DAY2).range!.start, DAY1, "the engine alone re-finds the other copy");
-  assert.deepEqual(followPassage(REPORT, range, SOON), { state: "elsewhere" });
-  // Day 2's sentence deleted outright (with the space before it): the same
-  const cut = REPORT.slice(0, DAY2 - 1) + REPORT.slice(DAY2 + SHIP.length);
-  assert.equal(locateComment(cut, makeAnchor(REPORT, range), DAY2).range!.start, DAY1);
-  assert.deepEqual(followPassage(REPORT, range, cut), { state: "elsewhere" });
-  // a unique passage rewritten: intact nowhere
-  assert.deepEqual(followPassage(UNIQ, URANGE, UNIQ.replace(UPHRASE, "unique sentence")), { state: "gone" });
-  // edits on both sides of a unique passage: its one hit lies where the edit's text now sits, so it moves there
-  const moved = UNIQ.replace("Alpha", "Alpha two").replace("Omega", "Omega two");
-  assert.deepEqual(followPassage(UNIQ, URANGE, moved), { state: "moved", range: { start: moved.indexOf(UPHRASE), end: moved.indexOf(UPHRASE) + UPHRASE.length } });
-  // the recurring passage with a paragraph inserted above: exact, and a tie on edits at both ends, as before
-  assert.deepEqual(followPassage(DOC, RANGE, ABOVE), { state: "moved", range: { start: SECOND + SHIFT, end: SECOND + SHIFT + MARKER.length } });
-  assert.deepEqual(followPassage(DOC, RANGE, DOC.replace("# Report", "# Report, revised") + "\nDone.\n"), { state: "tied" });
-});
-
-// ── the composer, driven: the note never lands on the copy the person did not select ───────────────
-
-test("a note on Day 2's sentence, the session rewriting that sentence: the composer paints nothing, says the passage changed and is elsewhere, Save is refused here with the note kept, the pair's own text again clears it, and selecting the sentence as it reads now pins it", async (t: TestContext) => {
-  const w = world({ src: REPORT }); t.after(() => w.close());
-  const { aside } = await openPanel(w);
-  startCommentInRow(w, DAY2_ROW, SHIP);
-  assert.deepEqual(preselRows(w), [[DAY2_ROW, SHIP]], "the presel marks Day 2's sentence");
-  input(aside).value = "Say it once.";
-  // the poll saw the file move and the viewer reloaded the bytes: Day 2's sentence is "Ship it soon." now
-  w.disk = SOON; w.ctx.reload();
-  assert.deepEqual(preselRows(w), [], "nothing painted: the copy that was selected is gone, and Day 1's is not it");
-  const tg = tag(aside);
-  assert.ok(tg, "the composer wears a tag");
-  assert.equal(tg!.textContent, "passage changed");
-  assert.equal(tg!.title, PASSAGE_ELSEWHERE);
-  assert.equal(aside.querySelector(".fc-quote")!.textContent, SHIP, "the chip still names the passage");
-  const before = countOf(w, "fileComments", "comment");
-  chord(input(aside)); await flush();
-  assert.equal(countOf(w, "fileComments", "comment"), before, "nothing posted: the host, handed the anchor, would place its one hit on Day 1");
-  assert.ok(aside.querySelector(".fc-composer .fileview-err")!.textContent.startsWith(PASSAGE_ELSEWHERE_SAVE), "the refusal row (its text, before the dismiss glyph)");
-  assert.equal(input(aside).value, "Say it once.", "the note stays");
-  // the edit is reverted: the pair indexes the text shown again, and the presel is back
-  w.disk = REPORT; w.ctx.reload();
-  assert.equal(tag(aside), null, "the pair's own text again: no tag");
-  assert.deepEqual(preselRows(w), [[DAY2_ROW, SHIP]]);
-  w.disk = SOON; w.ctx.reload();
-  assert.equal(tag(aside)!.title, PASSAGE_ELSEWHERE, "and elsewhere again");
-  // the person selects the sentence as it reads now: a fresh pair, no tag, and Save sends its offset
-  startCommentInRow(w, DAY2_ROW, "Ship it soon.");
-  assert.equal(tag(aside), null);
-  assert.deepEqual(preselRows(w), [[DAY2_ROW, "Ship it soon."]]);
-  assert.equal(input(aside).value, "Say it once.");
-  chord(input(aside)); await flush();
-  const post = lastOf(w, "fileComments", "comment");
-  assert.ok(post, "Enter saves");
-  assert.equal(post.args.hintOffset, SOON.indexOf("Ship it soon."));
-  assert.equal(post.args.anchor.quote, "Ship it soon.");
-  assert.equal(post.args.note, "Say it once.");
-});
-
-// ── the painter, driven: a tie the stored position does not settle is a guess, and says so ─────────
-
-test("an edit inside the chosen copy's context: the stored position names none of the tied copies, so the engine's pick is painted in the dashed cue, the card wears 'passage recurs' with the words, and the open card says them", async (t: TestContext) => {
-  const w = world({ src: NEAR }); t.after(() => w.close());
-  const { aside } = await openPanel(w, status({ store: storeWith([onSecond]) }));
-  const marks = w.code.querySelectorAll(".fc-hl");
-  assert.equal(marks.length, 1, "one highlight");
-  assert.equal(marks[0].textContent, MARKER);
-  assert.equal(rowOf(w, marks[0]), 2, "the engine's pick, the first copy: nearest to the stale position among the copies still whole");
-  assert.ok(marks[0].classList.contains("fc-hl-context"), "the dashed cue: not confirmed at its place");
-  assert.match(marks[0].title, /not a confirmed one/);
-  const head = headOf(aside, onSecond.id);
-  assert.deepEqual(tagsOf(head).map((x) => x.textContent), ["passage recurs"]);
-  assert.equal(tagsOf(head)[0].title, UNSURE_POSITION);
+const openCard = (aside: El, id: string): El | null => aside.querySelector('.fc-card.open[data-id="' + id + '"]');
+const buttonsOf = (card: El): string[] => card.querySelectorAll(".fc-actions button").map((b) => b.textContent);
+const revealOf = (card: El): El | null => card.querySelector('[data-act="fcreveal"]');
+const noteOf = (card: El): El | null => card.querySelector(".fc-note");
+/** Open the comment's card and hand it back, with its head. */
+function open(aside: El, id: string): { head: El; card: El } {
+  const head = headOf(aside, id);
   head.click();
-  const note = aside.querySelector('.fc-card.open[data-id="' + onSecond.id + '"] .fc-note');
-  assert.ok(note, "the open card says it in words");
-  assert.equal(note!.textContent, UNSURE_POSITION);
+  const card = openCard(aside, id);
+  assert.ok(card, "the card opens");
+  return { head, card: card! };
+}
+// the panel's words for the third state (the stand-in above copies the other two), so a swap or a rewording fails a driven test
+const UNSURE_CONFIRMED_PLACE = "This passage occurs in the file more than once with the same surroundings, and the place where the comment's copy was last confirmed names none of the copies as the file is now, so the copy nearest that place is highlighted, not a confirmed one." + CONFIRM;
+const MARK_POSITION = "Open the comment; this passage recurs, and this copy is the nearest to the comment's stored position, not a confirmed one";
+const MARK_CONFIRMED_PLACE = "Open the comment; this passage recurs, and this copy is the nearest to where the comment's copy was last confirmed, not a confirmed one";
+const REVEAL_TAIL = "; a comment saved from the copy you mean is placed on that copy, and this one keeps its tag until you resolve it";
+const revealTitle = (row: number): string => "Show this copy in the Raw view (line " + (row + 1) + ")" + REVEAL_TAIL;
+
+test("a guessed copy (the host's verdict fell back to the nearest): the open card offers the Reveal its words name, beside Reply and Resolve; it switches to Raw and scrolls to the guessed copy, and its title says what the save does", async (t: TestContext) => {
+  const w = world({ src: ABOVE }); t.after(() => w.close());
+  const { aside } = await openPanel(w, placedAs(FIRST + SHIFT, false, "nearest"));
+  const marks = w.code.querySelectorAll(".fc-hl");
+  assert.equal(marks.length, 1);
+  assert.equal(rowOf(w, marks[0]), FIRST_ROW, "the guessed copy, painted");
+  const { head, card } = open(aside, onSecond.id);
+  assert.equal(tagsOf(head)[0].title, UNSURE_POSITION);
+  assert.equal(noteOf(card)!.textContent, UNSURE_POSITION, "the open card asks the person to reveal the copy and save again");
+  assert.deepEqual(buttonsOf(card), ["Reply", "Resolve", "Reveal"], "and offers the Reveal the words name");
+  const rv = revealOf(card)!;
+  assert.equal(rv.title, revealTitle(FIRST_ROW), "the title names the Raw line, and says the save adds a comment on the chosen copy while this one keeps its tag");
+  const modes = w.modes.length, scrolls = w.scrolls.length;
+  rv.click();
+  assert.deepEqual(w.modes.slice(modes), ["raw"], "Reveal switches to Raw");
+  assert.deepEqual(w.scrolls.slice(scrolls), [FIRST + SHIFT], "and scrolls to the guessed copy, the one highlighted, where the other copies are near it");
 });
 
-test("a long insertion above that nothing recorded: the stored position is stale, names no copy, and the nearest copy is painted as a guess", async (t: TestContext) => {
+test("no verdict (an older host) and a comment with no position: guessed copies both, and both cards offer Reveal", async (t: TestContext) => {
   const w = world({ src: ABOVE }); t.after(() => w.close());
   const { aside } = await openPanel(w, status({ store: storeWith([onSecond]) }));
-  const marks = w.code.querySelectorAll(".fc-hl");
-  assert.equal(marks.length, 1);
-  assert.equal(rowOf(w, marks[0]), 4, "the first copy, shifted: title, blank, the inserted paragraph, blank, first");
-  assert.ok(marks[0].classList.contains("fc-hl-context"));
-  assert.deepEqual(tagsOf(headOf(aside, onSecond.id)).map((x) => x.textContent), ["passage recurs"]);
-});
-
-test("a comment with no stored position on a passage that recurs: the first copy is painted as a guess, with the words for no position", async (t: TestContext) => {
-  const w = world(); t.after(() => w.close());
-  const { anchorAt: _at, ...withoutAt } = onSecond;
-  const { aside } = await openPanel(w, status({ store: storeWith([withoutAt as StoreComment]) }));
-  const marks = w.code.querySelectorAll(".fc-hl");
-  assert.equal(marks.length, 1);
-  assert.equal(rowOf(w, marks[0]), 2, "the engine's earliest tie");
-  assert.ok(marks[0].classList.contains("fc-hl-context"));
-  const tags = tagsOf(headOf(aside, onSecond.id));
-  assert.deepEqual(tags.map((x) => x.textContent), ["passage recurs"]);
-  assert.equal(tags[0].title, UNSURE_NONE);
-});
-
-test("a BOM-prefixed file: the stored position runs one past the view's text, the status says so (bom), and the position is mapped before the copy is judged, so the chosen copy paints plainly; the same status without the bit paints it as a guess", async (t: TestContext) => {
-  // the host reads the file with its BOM kept and the fetch hands the viewer the text without it: the comment on the
-  // second copy stores SECOND + 1, the host's offset, while the view's rows index the BOM-stripped DOC
-  const onSecondBom: StoreComment = { ...onSecond, anchorAt: SECOND + 1 };
-  const w = world(); t.after(() => w.close());
-  const { aside } = await openPanel(w, status({ bom: true, store: storeWith([onSecondBom]) }));
-  const marks = w.code.querySelectorAll(".fc-hl");
-  assert.equal(marks.length, 1);
-  assert.equal(rowOf(w, marks[0]), 4, "the second copy: the position, mapped past the BOM, names it");
-  assert.equal(marks[0].classList.contains("fc-hl-context"), false, "painted plainly: the copy that was chosen");
-  assert.equal(marks[0].title, "Open the comment on this passage");
-  assert.deepEqual(tagsOf(headOf(aside, onSecond.id)), [], "no tag");
+  const { card } = open(aside, onSecond.id);
+  assert.equal(noteOf(card)!.textContent, UNSURE_POSITION);
+  assert.deepEqual(buttonsOf(card), ["Reply", "Resolve", "Reveal"]);
+  assert.equal(revealOf(card)!.title, revealTitle(FIRST_ROW));
   w.close();
-  // the control, and the bug the bit fixes: read unmapped, a position one past the copy names no copy of the view's
-  // text, and the copy is painted as a guess — which every BOM file showed before the status carried the bit
   const w2 = world(); t.after(() => w2.close());
-  const { aside: aside2 } = await openPanel(w2, status({ bom: false, store: storeWith([onSecondBom]) }));
-  const marks2 = w2.code.querySelectorAll(".fc-hl");
-  assert.equal(marks2.length, 1);
-  assert.equal(rowOf(w2, marks2[0]), 4, "nearest-wins still lands on the second copy");
-  assert.ok(marks2[0].classList.contains("fc-hl-context"), "but as a guess: the position names no copy of this text");
-  assert.deepEqual(tagsOf(headOf(aside2, onSecond.id)).map((x) => x.textContent), ["passage recurs"]);
+  const { anchorAt: _at, ...withoutAt } = onSecond;
+  const { aside: aside2 } = await openPanel(w2, status({ store: storeWith([withoutAt as StoreComment]), placed: {} }));
+  const { card: card2 } = open(aside2, onSecond.id);
+  assert.equal(noteOf(card2)!.textContent, UNSURE_NONE);
+  assert.deepEqual(buttonsOf(card2), ["Reply", "Resolve", "Reveal"]);
+  assert.equal(revealOf(card2)!.title, revealTitle(2), "the engine's earliest tie is DOC's first copy, row 2");
 });
 
-test("the position naming a tied copy, and a unique passage with an outdated position, paint plainly with no tag: the copy is the one chosen, or the anchor's own answer", async (t: TestContext) => {
-  const w = world(); t.after(() => w.close());
-  const { aside } = await openPanel(w, status({ store: storeWith([onSecond]) }));
+test("a copy the host confirmed paints plainly and its card offers no Reveal (nothing to reveal: the copy is painted and vouched for); a resolved comment offers none either", async (t: TestContext) => {
+  const w = world({ src: ABOVE }); t.after(() => w.close());
+  const { aside } = await openPanel(w, placedAs(SECOND + SHIFT, true, "ordinal"));
+  const { head, card } = open(aside, onSecond.id);
+  assert.deepEqual(tagsOf(head), [], "no tag");
+  assert.equal(noteOf(card), null, "no note");
+  assert.deepEqual(buttonsOf(card), ["Reply", "Resolve"], "no Reveal: the words that name it are not on this card");
+  w.close();
+  const w2 = world({ src: ABOVE }); t.after(() => w2.close());
+  const { aside: aside2 } = await openPanel(w2, status({ store: storeWith([{ ...onSecond, resolved: true }]), placed: { [onSecond.id]: { at: FIRST + SHIFT, confirmed: false, by: "nearest" } } }));
+  assert.equal(w2.code.querySelectorAll(".fc-hl").length, 0, "a resolved comment paints nothing");
+  const fold = aside2.querySelector('[data-act="fcresolved"]');
+  if (fold) fold.click();
+  const head2 = headOf(aside2, onSecond.id);
+  assert.ok(head2, "the resolved card is listed");
+  head2.click();
+  const card2 = openCard(aside2, onSecond.id);
+  assert.ok(card2, "the resolved card opens");
+  assert.equal(revealOf(card2!), null, "no Reveal on a resolved comment: it is not painted, and not a guess either");
+  assert.deepEqual(tagsOf(head2).map((x) => x.textContent), ["resolved"]);
+});
+
+test("a unique passage is painted plainly and its card offers no Reveal: the guessed copy's Reveal is for a guess alone", async (t: TestContext) => {
+  const w = world({ src: UNIQ }); t.after(() => w.close());
+  const unique: StoreComment = { id: T0 + "-" + URANGE.start, author: "you", ts: T0, body: "Once.", anchor: makeAnchor(UNIQ, URANGE), anchorAt: URANGE.start, replies: [], resolved: false };
+  const { aside } = await openPanel(w, status({ store: storeWith([unique]) }));
   const marks = w.code.querySelectorAll(".fc-hl");
   assert.equal(marks.length, 1);
-  assert.equal(rowOf(w, marks[0]), 4, "the second copy: the position names it");
-  assert.equal(marks[0].classList.contains("fc-hl-context"), false, "painted plainly");
-  assert.equal(marks[0].title, "Open the comment on this passage");
-  assert.deepEqual(tagsOf(headOf(aside, onSecond.id)), [], "no tag");
-  w.close();
-  // a unique passage, the paragraph inserted above it, the position not yet refreshed: one best hit, no tie to settle
-  const w2 = world({ src: UNIQ_ABOVE }); t.after(() => w2.close());
-  const unique: StoreComment = { id: T0 + "-u", author: "you", ts: T0, body: "Keep this.", anchor: makeAnchor(UNIQ, URANGE), anchorAt: URANGE.start, replies: [], resolved: false };
-  const { aside: aside2 } = await openPanel(w2, status({ store: storeWith([unique]) }));
-  const marks2 = w2.code.querySelectorAll(".fc-hl");
-  assert.equal(marks2.length, 1);
-  assert.equal(rowOf(w2, marks2[0]), 6, "the passage where it is now");
-  assert.equal(marks2[0].classList.contains("fc-hl-context"), false);
-  assert.deepEqual(tagsOf(headOf(aside2, unique.id)), []);
+  assert.equal(marks[0].textContent, UPHRASE);
+  assert.equal(marks[0].classList.contains("fc-hl-context"), false);
+  const { head, card } = open(aside, unique.id);
+  assert.deepEqual(tagsOf(head), []);
+  assert.deepEqual(buttonsOf(card), ["Reply", "Resolve"]);
 });
 
-// The stand-in's nodes inspect as their own projection, never as the tree: every edge (parentNode, childNodes, the
-// attribute map, the listener table, style, dataset, classList) is non-enumerable, so a failing assertion's dump of a
-// node is a few lines, not the whole document (ui/test-dom-shim.ts says why; ui/test-dom-shim.test.ts keeps the ratchet).
-test("stand-in: a node enumerates its primitives alone and inspects without its edges", () => {
-  const root = doc.createElement("div");
-  const kid = root.appendChild(doc.createElement("span"));
-  kid.appendChild(doc.createTextNode("leaf"));
-  kid.setAttribute("data-id", "k1");
-  for (const n of [root, kid, kid.firstChild!]) {
-    const o = n as unknown as Record<string, unknown>;
-    assert.ok(Object.keys(o).every((k) => staysEnumerable(o[k])), "only primitives enumerate on " + n.constructor.name + ": " + Object.keys(o).join(","));
-    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
-    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump of " + n.constructor.name);
-  }
-  assert.equal(kid.parentNode, root); assert.equal(root.childNodes.length, 1); assert.equal(kid.textContent, "leaf");
-  // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
-  assertHiddenEvent(new Ev("click"), root, kid);
+test("a confirmed place the view's text moved past: the copy nearest THAT place is painted as a guess, and the tag, the open card and the mark say so in those words, not as the copy nearest the stored position, which is another copy; the card offers Reveal", async (t: TestContext) => {
+  const w = world({ src: ABOVE }); t.after(() => w.close());
+  const { aside } = await openPanel(w, placedAs(SECOND + SHIFT + 5, true, "ordinal"));
+  const marks = w.code.querySelectorAll(".fc-hl");
+  assert.equal(marks.length, 1);
+  assert.equal(rowOf(w, marks[0]), SECOND_ROW, "the copy nearest the host's confirmed place (the engine's nearest-wins from the hint)");
+  assert.ok(marks[0].classList.contains("fc-hl-context"), "as a guess: the place names no copy of this text");
+  assert.equal(marks[0].title, MARK_CONFIRMED_PLACE, "the mark says which place this copy is the nearest to");
+  // the words the old branch would have used are false of this paint: the copy nearest the STORED position is the first
+  assert.equal(locateComment(ABOVE, CAP_ANCHOR, SECOND).range!.start, FIRST + SHIFT, "nearest the stored position is the first copy, not the one painted");
+  const { head, card } = open(aside, onSecond.id);
+  assert.deepEqual(tagsOf(head).map((x) => x.textContent), ["passage recurs"]);
+  assert.equal(tagsOf(head)[0].title, UNSURE_CONFIRMED_PLACE, "the tag's title names the confirmed place");
+  assert.equal(noteOf(card)!.textContent, UNSURE_CONFIRMED_PLACE, "so does the open card");
+  assert.deepEqual(buttonsOf(card), ["Reply", "Resolve", "Reveal"]);
+  assert.equal(revealOf(card)!.title, revealTitle(SECOND_ROW));
+  // the control: the same text and comment with no verdict paint the copy nearest the stored position, in the words for it
+  w.close();
+  const w2 = world({ src: ABOVE }); t.after(() => w2.close());
+  const { aside: aside2 } = await openPanel(w2, status({ store: storeWith([onSecond]) }));
+  const marks2 = w2.code.querySelectorAll(".fc-hl");
+  assert.equal(rowOf(w2, marks2[0]), FIRST_ROW);
+  assert.equal(marks2[0].title, MARK_POSITION);
+  assert.equal(tagsOf(headOf(aside2, onSecond.id))[0].title, UNSURE_POSITION);
+});
+
+test("the poll's path to that state: a confirmed copy painted plainly, then a raw write above reloads the view before the fresh status lands, and the interim paint is a guess nearest the confirmed place, said as one; the fresh status paints it plainly again", async (t: TestContext) => {
+  const w = world({ src: ABOVE }); t.after(() => w.close());
+  const { aside } = await openPanel(w, placedAs(SECOND + SHIFT, true, "ordinal"));
+  assert.equal(rowOf(w, w.code.querySelectorAll(".fc-hl")[0]), SECOND_ROW, "confirmed: painted plainly on the second copy");
+  assert.deepEqual(tagsOf(headOf(aside, onSecond.id)), []);
+  // a second raw insertion above, shorter than half the gap: the copies move down two rows, and the confirmed place
+  // (SECOND + SHIFT) now sits in the inserted text nearest the second copy, while the stored position (SECOND) is
+  // still nearest the first; the viewer reloads the bytes (the poll's askReload) and the panel paints over them with
+  // the status it has
+  const LINE = "One more line above.\n\n";
+  const AGAIN = "# Report\n\n" + LINE + ABOVE.slice("# Report\n\n".length);
+  const AGAIN_SECOND = AGAIN.indexOf(MARKER, AGAIN.indexOf(MARKER) + 1);
+  assert.ok(LINE.length < GAP / 2, "the shift is short: nearest-wins from the confirmed place keeps the second copy");
+  w.disk = AGAIN; w.ctx.reload();
+  const marks = w.code.querySelectorAll(".fc-hl");
+  assert.equal(marks.length, 1);
+  assert.equal(rowOf(w, marks[0]), SECOND_ROW + 2, "the second copy still, two rows down");
+  assert.equal(marks[0].textContent, MARKER);
+  assert.ok(marks[0].classList.contains("fc-hl-context"), "but a guess now: the confirmed place names no copy of this text");
+  assert.equal(marks[0].title, MARK_CONFIRMED_PLACE);
+  assert.equal(locateComment(AGAIN, CAP_ANCHOR, SECOND + SHIFT).range!.start, AGAIN_SECOND, "the copy nearest the confirmed place is the one painted");
+  assert.equal(locateComment(AGAIN, CAP_ANCHOR, SECOND).range!.start, AGAIN.indexOf(MARKER), "the copy nearest the stored position is the first: the old words would have been false of the paint");
+  const head = headOf(aside, onSecond.id);
+  assert.deepEqual(tagsOf(head).map((x) => x.textContent), ["passage recurs"]);
+  assert.equal(tagsOf(head)[0].title, UNSURE_CONFIRMED_PLACE);
+  head.click();
+  const card = openCard(aside, onSecond.id)!;
+  assert.equal(noteOf(card)!.textContent, UNSURE_CONFIRMED_PLACE);
+  assert.deepEqual(buttonsOf(card), ["Reply", "Resolve", "Reveal"]);
+  // the fresh status: the host, over the new bytes, confirms the copy at its new place, and the paint is plain again
+  w.close();
+  const w2 = world({ src: AGAIN }); t.after(() => w2.close());
+  const { aside: aside2 } = await openPanel(w2, placedAs(AGAIN_SECOND, true, "ordinal"));
+  const marks2 = w2.code.querySelectorAll(".fc-hl");
+  assert.equal(rowOf(w2, marks2[0]), SECOND_ROW + 2);
+  assert.equal(marks2[0].classList.contains("fc-hl-context"), false);
+  assert.deepEqual(tagsOf(headOf(aside2, onSecond.id)), []);
 });
