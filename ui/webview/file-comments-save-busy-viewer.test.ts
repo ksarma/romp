@@ -11,7 +11,9 @@
 // that reads the bar after a real refusal pins it. Here the viewer runs over the seam suite's DOM stand-in
 // (file-view-seam.test.ts, copied and trimmed as file-view-edit-races.test.ts copies it: node --test runs each bundled
 // file in its own process and that file exports nothing), the panel is the real one, and each case is checked by what the
-// viewer DOES: the bar's words, the button, the re-armed Save, the surviving buffer, and Reload's ask and re-open.
+// viewer DOES: the bar's words, the button, the re-armed Save, the surviving buffer, and Reload's ask and re-open. A
+// `busy` whose re-read shows the records changed carries the head's row into the bar in place of the host's words
+// (file-comments.ts, underEditRefusal): both are read here, from the bar and from the opened panel's head.
 // Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
@@ -421,7 +423,13 @@ test("a save refused busy, retried once and refused busy again: the bar holds th
   assert.equal(countOf("fileComments", "status"), asks, "no status re-ask after the save: the reply IS the panel's status");
 });
 
-test("a save refused busy whose re-read shows the sidecar's records changed: no retry, the refusal stands in the bar with Reload file; Reload asks first, a no keeps the buffer and the viewer, a yes re-opens the file fresh, reading", async (t) => {
+// The re-read shows the records changed under the editor: the head's row (CHANGES_MOVED_UNDER_EDIT) is raised by that
+// re-read, and the bar carries the SAME words under the `busy` code, not the host's "; retry" — the host's words were
+// true while the lock was held and are stale once the re-read has shown other records, and a bar asking for a retry over
+// a head saying Save will refuse sent the person into one refused round trip before the accurate words arrived (the slice
+// review's stale-bar finding, 2026-09-11). The code keeps the Reload offer: the other writer's text is on disk.
+test("a save refused busy whose re-read shows the sidecar's records changed: no retry, the bar carries the head's row (Save will refuse; copy, Cancel, Edit again) with Reload file, and the head says the same; Reload asks first, a no keeps the buffer and the viewer, a yes re-opens the file fresh, reading", async (t) => {
+  const fc = await import("./file-comments");
   const o = await open(REPORT, t);
   const { body, b } = o;
   const v2 = DOC.replace("40%", "45%");
@@ -433,7 +441,27 @@ test("a save refused busy whose re-read shows the sidecar's records changed: no 
   assert.equal(countOf("fileComments", "status"), asks, "and no second re-read");
   const bar = errBar(body)!;
   assert.ok(bar, "the refusal is the note bar over the editor");
-  assert.equal(bar.childNodes[0].textContent, BUSY, "in the host's words");
+  assert.equal(bar.childNodes[0].textContent, fc.CHANGES_MOVED_UNDER_EDIT, "the head's row's words, not the host's");
+  assert.notEqual(bar.childNodes[0].textContent, BUSY);
+  assert.match(bar.childNodes[0].textContent, /Save will refuse; copy anything you typed, then Cancel and Edit again/, "what a Save would do, and what to do instead");
+  // the head says the same: open the Comments aside and read its row
+  const acts = o.wrap.querySelector(".fileview-acts")!;
+  const comments = acts.querySelectorAll("button").find((x) => /^Comments/.test(x.textContent));
+  assert.ok(comments, "the panel's button in the action row");
+  comments!.click();
+  await settle();
+  const aside = o.wrap.querySelector(".fileview-aside")!;
+  assert.ok(aside, "the panel is open beside the body");
+  await answerStatus(status([hunk("h1"), hunk("h2")], { storeMtimeNs: S9 }));   // the open's own refresh
+  const rows = aside.querySelectorAll(".fc-sec-head .fc-err");
+  assert.equal(rows.length, 1, "one row in the head");
+  assert.equal(rows[0].childNodes[0].textContent, bar.childNodes[0].textContent, "…and it is the bar's text: one instruction on screen, not two");
+  comments!.click();                                   // closed again: the rest of the case is the viewer's
+  await settle();
+  assert.equal(o.wrap.querySelector(".fileview-aside"), null);
+  assert.equal(errBar(body), bar, "the bar stands through the panel's open and close");
+  assert.equal(countOf("fileComments", "status"), asks + 1, "the open's refresh was the one ask since the re-read");
+  const asksNow = countOf("fileComments", "status");
   const reload = bar.querySelector("button")!;
   assert.ok(reload, "with Reload file");
   assert.equal(reload.textContent, "Reload file");
@@ -460,7 +488,7 @@ test("a save refused busy whose re-read shows the sidecar's records changed: no 
   assert.ok(fresh && fresh !== o.wrap, "accepted: a fresh viewer replaced the old one, buffer and all");
   assert.equal(fresh.querySelector(".fileview-cm"), null, "…reading, not editing");
   assert.equal(fresh.querySelector(".fileview-err"), null, "…with no bar carried over");
-  assert.equal(countOf("fileComments", "status"), asks + 1, "the fresh panel probes status");
+  assert.equal(countOf("fileComments", "status"), asksNow + 1, "the fresh panel probes status");
   assert.equal(fetches.filter((f) => f.startsWith("GET /file")).length, 2, "the re-open read the file again");
 });
 

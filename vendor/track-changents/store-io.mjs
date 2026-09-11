@@ -432,21 +432,39 @@ export function saveStore(vaultRoot, storePath, obj, currentText) {
 // entry at the folder's name that is not a directory (a link to nothing) is a lock that cannot be
 // created: refused at once, held false, naming the entry.
 //
-// A pid is judged on this machine, and from its own pid namespace, only. A lock written from
-// another machine over a shared filesystem names a pid this machine does not know, so it reads
-// as a dead writer's and is broken at once: the lock serializes the writers of one machine. A
-// writer inside a child pid namespace (a sandboxed tool shell: bubblewrap's --unshare-pid) sees
-// no process outside it, alive or dead, so there a lock is judged by its stamp's age alone
-// (judged by pid, 2026-09-11, the review, a CLI in such a sandbox read an editor host's live lock
-// as a dead writer's and broke it at once). The stamp does not name the namespace that wrote it,
-// so a lock stamped inside such a sandbox names a pid its readers outside cannot tell from one
-// of their own: known to none of them, it reads there as a dead writer's.
+// A pid is judged on this machine, and in the pid namespace that stamped it, only. Pids are per
+// namespace: from a child pid namespace (a sandboxed tool shell: bubblewrap's --unshare-pid)
+// every process outside is ESRCH, alive or not, and a pid stamped inside one names, outside it,
+// whatever process has that number there. Judged by pid regardless (2026-09-11, the review), a
+// CLI in such a sandbox read an editor host's live lock as a dead writer's and broke it at once;
+// and the host read the sandboxed CLI's live lock so whenever its in-namespace pid was a free
+// number outside, broke it and wrote inside the CLI's load-to-rename: the lost update this lock
+// exists to close, back for every such session. So a writer outside the initial namespace names
+// its own on a second line of the stamp, `ns <inode>` (the inode of /proc/self/ns/pid; the
+// initial namespace has one inode number on every Linux and is named by the line's absence), and
+// a reader judges the pid only when the lock names the reader's own namespace; any other lock is
+// judged by its stamp's age alone. Where /proc cannot be read (no /proc; another OS, which has no
+// pid namespaces) a process is taken to be in the initial namespace. A lock written from another
+// machine over a shared filesystem names a pid of that machine, which this one judges as its own:
+// dead when no process here has the number, else by the stamp's age alone; the lock serializes
+// the writers of one machine. A stamp more than STORE_LOCK_STALE_MS from this clock in either
+// direction is a dead writer's: no live writer stamps a time that far ahead of a reader on its
+// own clock, and judged by age behind alone (2026-09-11, the review), a `.lock` committed from a
+// machine whose clock ran ahead, or planted, with a pid alive here (1 always is) held every
+// writer of that file to `busy` for as long as its stamp stayed in the future; a clock stepped
+// back that far mid-write breaks a live lock, as a step forward already did.
 export const STORE_LOCK_WAIT_MS = 2000;
 export const STORE_LOCK_STALE_MS = 15000;
 const STORE_LOCK_SUFFIX = '.lock';
-const STORE_LOCK_BREAK_SUFFIX = '.break';   // the breakers' claim on a lock: `<sidecar>.lock.break`
-const STORE_LOCK_HANDOVER = 'made-dir';     // a line appended to a lock whose holder removes the folder at release
-// Every name this lock leaves in a `.trackchanges/` folder while it works; nothing else of its is ever there.
+// The breakers' claim on a lock: `<sidecar>.lock.break`.
+const STORE_LOCK_BREAK_SUFFIX = '.break';
+// A line appended to a lock whose holder removes the folder at release.
+const STORE_LOCK_HANDOVER = 'made-dir';
+// The stamp, "pid ts", wherever it is in the file; the line naming the writer's pid namespace.
+const STORE_LOCK_STAMP_RE = /^(\d+) (\d+)$/m;
+const STORE_LOCK_NS_RE = /^ns (\d+)$/m;
+// Every name this lock leaves in a `.trackchanges/` folder while it works; nothing else of its is
+// ever there.
 const STORE_LOCK_NAME_RE = /\.lock(\.break)?$/;
 
 export class StoreLockError extends Error {
@@ -460,7 +478,8 @@ export class StoreLockError extends Error {
     this.lockPath = lockPath;
     // true: held by a live writer past the wait; false: the lock could not be created, written,
     // read or removed at all (the OS error is `cause`; `failed` names the step), or the name is
-    // taken by something that is not a lock (a link, a directory), never followed and never removed.
+    // taken by something that is not a lock (a link, a directory), never followed and never
+    // removed.
     this.held = held;
     if (cause) this.cause = cause;
   }
@@ -479,20 +498,30 @@ function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
 }
 
-// Whether a stamp's pid is one this process can judge at all: pids are per namespace, and from a
-// child pid namespace (a sandboxed tool shell) every process outside is ESRCH, alive or not (the
-// header says so). Read once, from /proc/self/ns/pid: the initial namespace has one inode number
-// on every Linux (PROC_PID_INIT_INO); where the link cannot be read (no /proc; another OS, which
-// has no pid namespaces) every pid is judged.
+// The pid namespace this process is in, as the inode number of /proc/self/ns/pid, read once. Pids
+// are per namespace, so a stamp's pid is judged only by a reader in the namespace that stamped it
+// (the header says why). The initial namespace has one inode number on every Linux
+// (PROC_PID_INIT_INO); where the link cannot be read (no /proc; another OS, which has no pid
+// namespaces) this process is taken to be in it.
 const PROC_PID_INIT_INO = 0xEFFFFFFC;
-let pidsJudgeable;
-function canJudgePids() {
-  if (pidsJudgeable === undefined) {
-    let ns = null;
-    try { ns = /^pid:\[(\d+)\]$/.exec(fs.readlinkSync('/proc/self/ns/pid')); } catch { /* no /proc */ }
-    pidsJudgeable = !ns || Number(ns[1]) === PROC_PID_INIT_INO;
+let ownNs;
+function ownPidNamespace() {
+  if (ownNs === undefined) {
+    let m = null;
+    let link = null;
+    try { link = fs.readlinkSync('/proc/self/ns/pid'); } catch { /* no /proc */ }
+    if (link) m = /^pid:\[(\d+)\]$/.exec(link);
+    ownNs = m ? Number(m[1]) : PROC_PID_INIT_INO;
   }
-  return pidsJudgeable;
+  return ownNs;
+}
+
+// What this process writes into a lock or a claim it created: the stamp, "pid ts", and, from a
+// pid namespace other than the initial one, the line naming it (the initial one is named by the
+// line's absence). One write, so under O_APPEND the two lines land together.
+function lockStamp() {
+  const ns = ownPidNamespace();
+  return `${process.pid} ${Date.now()}\n${ns === PROC_PID_INIT_INO ? '' : `ns ${ns}\n`}`;
 }
 
 // What is at `p`: its stat (bigint fields) and content, read from one open of the name without
@@ -538,15 +567,18 @@ function peekLock(p) {
   return entry;
 }
 
-// Whether a held lock is a dead writer's: its pid gone (where a pid can be judged; canJudgePids),
-// or its stamp (its mtime, when the stamp is not written yet) older than staleMs. The stamp is the
+// Whether a held lock is a dead writer's: its pid gone, judged only when the lock names this
+// reader's own pid namespace (lockStamp, ownPidNamespace), or its stamp (its mtime, when the
+// stamp is not written yet) more than staleMs from now, behind or ahead. The stamp is the
 // "pid ts" line wherever it is in the file: a handover line appended before it (handOverDir)
 // comes first.
 function lockIsStale(entry, staleMs, now) {
-  const m = /^(\d+) (\d+)$/m.exec(entry.raw);
-  if (!m) return now - Number(entry.st.mtimeMs) > staleMs;
-  if (canJudgePids() && !pidAlive(Number(m[1]))) return true;
-  return now - Number(m[2]) > staleMs;
+  const m = STORE_LOCK_STAMP_RE.exec(entry.raw);
+  if (!m) return Math.abs(now - Number(entry.st.mtimeMs)) > staleMs;
+  const ns = STORE_LOCK_NS_RE.exec(entry.raw);
+  const writerNs = ns ? Number(ns[1]) : PROC_PID_INIT_INO;
+  if (writerNs === ownPidNamespace() && !pidAlive(Number(m[1]))) return true;
+  return Math.abs(now - Number(m[2])) > staleMs;
 }
 
 const sameInode = (a, b) => a.ino === b.ino && a.dev === b.dev;
@@ -637,7 +669,7 @@ function breakStaleLock(lockPath, staleMs) {
   try {
     try {
       mine = fs.fstatSync(cfd, { bigint: true });
-      fs.writeFileSync(cfd, `${process.pid} ${Date.now()}\n`);
+      fs.writeFileSync(cfd, lockStamp());
     } catch (e) {
       throw new StoreLockError(claim, false, e, 'write');
     }
@@ -795,7 +827,7 @@ export function withStoreLock(storePath, fn, opts) {
   let mine;
   try {
     mine = fs.fstatSync(fd, { bigint: true });
-    fs.writeFileSync(fd, `${process.pid} ${Date.now()}\n`);
+    fs.writeFileSync(fd, lockStamp());
   } catch (e) {
     // A stamp that could not be written (the disk full) leaves no empty lock behind to be judged
     // by its age alone, nor the folder made for it.

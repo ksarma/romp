@@ -15,7 +15,7 @@
 //     round on a root with no `.trackchanges/` yet: every one exits 0 with its one line, every comment
 //     is in the sidecar with its author, and the folder holds the sidecar alone (no lock, no temp, no
 //     claim).
-//   * the same with track-reply beside it: three comments and three replies to one thread at once.
+//   * the same with track-reply beside it: three comments and three replies to one earlier comment at once.
 //   * a first comment on a root with no `.trackchanges/` yet whose folder another writer makes
 //     between its lock create's ENOENT and its look at the folder lands: the create is tried again,
 //     not refused as `cannot create <lock>: ENOENT`. The race above met this in about one run in
@@ -221,7 +221,8 @@ test('three track-comment and three track-reply processes, each another session,
   const w = world();
   const seed = await cli('track-comment', ['--file', w.note, '--anchor', 'Step one', '--note', 'Which cache?'], SESSIONS[0]);
   landed([seed]);
-  const thread = loadStore(w.storePath, NOTE).comments[0].id;
+  // The vendored CLI takes the id of the comment a reply goes to as `--thread`; here that is the earlier comment.
+  const earlier = loadStore(w.storePath, NOTE).comments[0].id;
   let atGate = 0;
   for (let r = 0; r < 6; r++) {
     const writers = [
@@ -231,7 +232,7 @@ test('three track-comment and three track-reply processes, each another session,
       })),
       ...[4, 5, 0].map((i) => ({
         name: 'track-reply', session: SESSIONS[i],
-        args: ['--file', w.note, '--thread', thread, '--note', `Round ${r}: ${SESSIONS[i].name} answers.`],
+        args: ['--file', w.note, '--thread', earlier, '--note', `Round ${r}: ${SESSIONS[i].name} answers.`],
       })),
     ];
     const { results, ready } = await race(writers);
@@ -240,8 +241,8 @@ test('three track-comment and three track-reply processes, each another session,
     const store = loadStore(w.storePath, NOTE);
     assert.ok(store, `round ${r}: the sidecar parses`);
     assert.equal(store.comments.length, 1 + 3 * (r + 1), `round ${r}: ${1 + 3 * (r + 1) - store.comments.length} comment(s) lost`);
-    const head = store.comments.find((c) => c.id === thread);
-    assert.ok(head, `round ${r}: the thread is in the sidecar`);
+    const head = store.comments.find((c) => c.id === earlier);
+    assert.ok(head, `round ${r}: the earlier comment is in the sidecar`);
     assert.equal(head.replies.length, 3 * (r + 1), `round ${r}: ${3 * (r + 1) - head.replies.length} reply(ies) lost`);
     for (const x of writers) {
       const list = x.name === 'track-comment' ? store.comments : head.replies;

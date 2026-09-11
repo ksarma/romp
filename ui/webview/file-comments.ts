@@ -2217,7 +2217,9 @@ class Panel {
    *  and file-comments-busy-retry-fence.test.ts), but the records the editor carries are still the sidecar's own — a reply
    *  a session wrote mid-edit, a toggle from another browser; never for a moved file (the editor's
    *  text is from the old bytes) or a sidecar whose records changed (file-comments-save-busy.test.ts drives the `busy`
-   *  leg; file-comments-panel.test.ts the moved fences). The reply is applied as the status (it is one), so onSaved has
+   *  leg; file-comments-panel.test.ts the moved fences). A `busy` whose re-read shows the records changed hands the viewer
+   *  the head's row in place of the host's words, which ask for a retry that can only refuse (underEditRefusal); a moved
+   *  fence's words stand. The reply is applied as the status (it is one), so onSaved has
    *  nothing left to re-read — and it re-seeds the fence, since the editor may stay up past a landed save (the viewer
    *  keeps it over keystrokes typed during the round trip, or a decision clicked then) and its next Save must meet the
    *  sidecar THIS save wrote, not the poll's latest: a decision landed elsewhere between two saves would pass that fence
@@ -2287,10 +2289,29 @@ class Panel {
             if (seed && gen === this.editGen) this.editSeed = { ...seed, storeMtimeNs: fence.storeMtimeNs, configMtimeNs: fence.configMtimeNs };   // the saving editor's seed follows; a later editor's is its own
             continue;
           }
+          // The records changed under the editor and the refusal was `busy`: the host's words ask for a retry that can
+          // only refuse (underEditRefusal), so the viewer gets the head's row instead, under the same code. A moved
+          // fence's words stand: they say reload, as the row does.
+          if (s && e.code === "busy") throw { code: e.code, error: this.underEditRefusal(seed, s) };
         }
         throw e;
       }
     }
+  }
+  /** The words a Save refused `busy` hands the viewer when its re-read shows the sidecar's pending changes are no longer
+   *  the ones the editor carries (saveThroughComments): the row that same re-read raised in the head, so the viewer's bar
+   *  and the head say one thing. The host's words ("another editor is writing <path>; retry") were true when the lock was
+   *  held and are stale once the re-read has shown other records: a Save now can only refuse `store-moved`, since its
+   *  fence is the sidecar the records came from and re-fencing it would pass the editor's stale list over what the other
+   *  writer decided (the review's stale-bar finding, 2026-09-11; file-comments-save-busy.test.ts). The code stays `busy`,
+   *  so the viewer's Reload offer keys on it as before: the other writer's text is on disk, and a reload shows it. The
+   *  conditions are the rows' own (noteMovedUnderEdit, noteChangesMovedUnderEdit, noteChangesUnreadUnderEdit): the file
+   *  moved too (a reject's or a track-edit's write), the file's row; records rode in and changed, the moved-records row;
+   *  none rode in and the re-read shows changes, the unread row. Not a moved fence's words: `store-moved` and
+   *  `config-moved` already say reload and retry, which agrees with the row. */
+  private underEditRefusal(seed: EditSeed | null, s: Status): string {
+    if (laterNs(s.fileMtimeNs, this.ctx.mtimeNs())) return MOVED_UNDER_EDIT;
+    return seed ? CHANGES_MOVED_UNDER_EDIT : CHANGES_UNREAD_UNDER_EDIT;
   }
   /** The file's bytes moved under an edit (the poll saw it; a verb's reply read a later file): the viewer's reload() stands
    *  down in edit mode, so the head says so. Save will refuse on its file fence; the first paint after the edit ends

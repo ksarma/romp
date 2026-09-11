@@ -599,9 +599,13 @@ test("Reject refused the same way shows its row too; Accept all refused after a 
 const BUSY = "another editor is writing ~/notes-api/docs/report.md; retry";
 
 test("Accept refused busy (the host's lock was held past its wait, decision 49): status re-read and one retry by id with the fresh fence; a second busy shows the row verbatim with Reload and no third try; Accept all refused busy re-reads and says nothing was decided", async (t: TestContext) => {
-  // `busy` joins the moved fences in MOVED: the other writer's write is on disk by the time the refusal arrives, so the
-  // same re-read shows it and the same one retry lands after it. It is not a decision the person must make again, so a
-  // by-id verb retries once; an id-less one stops and re-reads, as for a moved fence.
+  // `busy` joins the moved fences in MOVED, and the retry is the moved-fence path reused, not a wait for the holder: the
+  // host refuses `busy` while the other writer STILL holds the lock (it releases after its last rename; `status` takes no
+  // lock), so the one re-read shows that writer's write only when it landed in the gap before the re-read, and only then
+  // does the retry carry a fence that lands (file-comments-busy-retry-fence.test.ts). The harness answers the re-read
+  // with S9: that case. It is not a decision the person must make again, so a by-id verb retries once; an id-less one
+  // stops and re-reads, as for a moved fence. A second refusal, `busy` again from a lock still held or `store-moved` from
+  // a holder that finished under the retry, shows verbatim with Reload, and there is no third try.
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   act(card(aside, "chg:h1")!, "fcaccept", "h1")!.click(); await flush();

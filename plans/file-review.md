@@ -2227,7 +2227,12 @@ slice, pinned against the code by `ui/webview/file-review-posture.test.ts`:
   load-mutate-write per verb, mtime fences, refuse-and-reload, retry by stable id while the change
   still reads as shown (the id-less verbs stop and re-read), and since 2026-09-11 one lock per
   sidecar, shared with the CLIs, that serializes the writers (decision 49); the fences catch the
-  stale copy, the lock the concurrent writer. The Obsidian
+  stale copy, the lock the concurrent writer.
+  Residual (decision 49): a lock names its writer's pid namespace only when that is not the initial one, and a pid is
+  judged only from the namespace that stamped it, so the lock serializes the writers of one machine; a lock written
+  from another machine over a shared filesystem is judged as if its pid were this machine's, dead when no process here
+  has the number, else by its stamp's age.
+  The Obsidian
   host spends several hundred lines on this race; the fence-plus-retry shape is the smaller
   alternative. The comments log has one writer, the host script, appending.
 - **Rendered markdown versus offsets.** Mitigation: Raw is exact; Rendered maps through the
@@ -2887,6 +2892,57 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   the `track-comment` race is run on a file and its replies land on a comment, and the two words `CONTEXT.md`
   sets aside under File comment (the forked side session's and the send's paragraph's) appear in neither record,
   where the second round had written both.
+  The third round's own commit showed the scan's other side (found in the fourth round, 2026-09-11): it added three
+  modules for the lock's own `store-io.mjs` behaviours that cite decision 49 and this plan, which the scan reached and
+  this bullet did not name, so the inventory pin was red at that commit, and two more the scan cannot reach, one
+  citing the decision without the plan's name and one citing the lock and no decision. All five are named here:
+  `tools/store-io-lock-inode-reuse.test.mjs` (the entry judged stale, lock or claim, kept open from the judgment
+  through its unlink, so the filesystem's reuse of a freed inode number cannot hand a waiter's fresh lock the judged
+  number and a breaker suspended past the bound cannot remove it: one interleaving driven by hand in-process, and a
+  breaker child stalled at its look for the unlink while a real writer breaks its claim and the dead lock and writes,
+  the breaker waiting for that write instead of entering beside it); `tools/store-io-lock-folder-name.test.mjs` (an
+  entry at `.trackchanges`'s name that is not a directory refused at once, held false and naming it: a link to nothing
+  left alone with nothing created, a regular file refused with the OS error, a link to a directory followed with the
+  folder behind it kept, and the real `track-comment` on such a root printing the line and exiting 1 in well under the
+  wait, where before it spun the whole wait and reported a live writer); `tools/store-io-lock-pid-namespace.test.mjs`
+  (a pid judged only by a reader in the namespace that stamped it: in a child namespace an initial-namespace writer's
+  dead pid's fresh lock is left alone and the writer waits the bound out and refuses as held, a stamp past the bound
+  is still broken, and in the initial namespace a dead pid's lock is broken at once; a writer in a child namespace
+  stamps `pid ts` and then `ns <inode>`, one in the initial namespace `pid ts` alone; a child-namespace writer's live
+  lock whose pid is a free number outside is left alone by a writer in the initial namespace, which waits the bound
+  out, where before it was broken at once; the same lock read from the stamping namespace is broken at once when the
+  pid is dead there and read from a third namespace waited out; each case a child process with the namespace read
+  through a stand-in, plus this machine's own namespace with none, and a real child namespace where `unshare` can make
+  one unprivileged, the vendored `track-comment` there refusing a live lock held outside it and a holder inside
+  stamping the namespace a writer outside waits behind, skipped where it cannot);
+  `tools/README-track-changents-patch-0008-row.test.mjs` (the vendored README's row for patch 0008 held to
+  `store-io.mjs`'s constants as the ADR bullet is: both names and the line in the row and no third, the row's account
+  of the folder against store-io's make and remove sites, and the row, the patch header and the ADR bullet listing one
+  set of names); `ui/webview/file-comments-busy-retry-fence.test.ts` (the retry after `busy` as it runs: the re-read
+  after a refusal for a lock still held shows the same clocks and the retry goes out on the same fence, the holder's
+  rename landing under it refuses `store-moved`, which reaches the viewer with its code and the host's words with no
+  third save; the contrast where the holder finished before the re-read; and the panel's comments at `MOVED` and on
+  `saveThroughComments` held to what the code gives). `tools/file-review-plan-sidecar-lock-modules.test.mjs` holds
+  those five by name, whatever they cite (every `tools/store-io-lock-*` and `tools/README-track-changents-patch-*`
+  module in the tree, and the fence module), to this bullet and to decision 49, what this bullet says of each to that
+  module's cases, and decision 49's pid-namespace sentences (a pid judged only by a reader in the namespace that
+  stamped it, named on the stamp's second line from any but the initial one; a stamp more than 15 s from the reader's
+  clock either way a dead writer's) to `store-io.mjs`. The fourth round's own modules:
+  `tools/store-io-lock-clock.test.mjs` (a stamp more than the bound ahead of the reader's clock is a dead writer's
+  too: a lock stamped `1 <an hour ahead>` broken at once, pid 1 alive to every reader or not, a live pid's lock an
+  hour ahead the same and five seconds ahead waited behind, a stampless lock's mtime judged the same way, a dead
+  breaker's claim an hour ahead removed and the break proceeding, and the real `track-comment` against such a lock
+  landing its comment in well under the wait, where before a lock committed or planted with a future stamp held every
+  write to `busy` with no message naming it); `tools/file-comments-host-decision-lock.test.mjs` (the decision verbs
+  load under the lock: against a writer that holds `<sidecar>.lock` and saves a comment 300 ms later, a reject-all, an
+  accept by id and a save with a rejection from the editor each answer after that save, refuse `store-moved` on the
+  moved fence, and the retry lands both the comment and the decision; and the source, `loadForDecision` called only
+  inside the function `underStoreLock` runs); `tools/track-comment-race-vocabulary.test.mjs` (the race module held to
+  the glossary's word for a comment with its replies, the vendored `track-reply`'s own flag and line excepted, and its
+  replies case described in the same words as this bullet);
+  `ui/webview/file-comments-changes-review2-busy-prose.test.ts` (the changes suite's explanation of its `busy` case
+  held to the premise the fence module pins in the panel's source, the retracted sentence banned there too). The last
+  two cite no decision, so the scan does not reach them; they are named here by hand.
 
 ## Docs
 
@@ -3258,20 +3314,62 @@ document stands on its own, each with the reasoning it was given.
     vendored `store-io.mjs` creates `<sidecar>.lock` with O_EXCL holding `pid ts`, sleeps 2 to 5 ms and retries
     for up to 2 s while it is held, breaks a lock whose writer is dead or whose stamp is older than 15 s (the
     kernel kills a host at 10 s), and unlinks it in `finally`; the `.trackchanges/` folder is made for the lock
-    when it is missing and removed again when nothing else landed in it. The break has one winner (the slice's
+    when it is missing and removed again when nothing else landed in it.
+    A writer is dead when `kill(pid, 0)` answers ESRCH, and a pid is judged only by a reader in the pid namespace that
+    stamped it: pids are per namespace, and from a child pid namespace (a sandboxed tool shell with one of its own,
+    bubblewrap's `--unshare-pid`) every process outside is ESRCH, alive or not, while a pid stamped inside one names,
+    outside it, whatever process has that number there. Judged by pid regardless (the slice's review, third and fourth
+    rounds, 2026-09-11), a CLI in such a sandbox read the host's live lock as a dead writer's, broke it at once and
+    wrote inside the host's load-to-rename; and the host read the sandboxed CLI's live lock so whenever the CLI's pid
+    inside was a free number outside, broke it and wrote inside the CLI's load-to-rename, the loss this decision
+    closes, back for every such session. So a writer outside the initial namespace names its own on a second stamp
+    line, `ns <inode>` (the inode of `/proc/self/ns/pid`; the initial namespace has one inode number on every Linux
+    and is named by the line's absence), a reader judges the pid only when the lock names the reader's own namespace,
+    and any other lock is judged by its stamp's age alone: a dead writer's fresh lock from another namespace holds
+    every waiter until the stamp is 15 s old, each refusing as held at the end of its 2 s wait before then. Where
+    `/proc` cannot be read, a process is taken to be in the initial namespace. A stamp more than 15 s from the
+    reader's clock in either direction is a dead writer's (judged by age behind alone, a `.lock` committed from a
+    machine whose clock ran ahead, or planted, with a pid alive here held every writer of that file to `busy` for as
+    long as its stamp stayed in the future; a clock stepped back that far mid-write breaks a live lock, as a step
+    forward already did). `tools/store-io-lock-clock.test.mjs` drives that: a lock stamped `1 <an hour ahead>` is
+    broken at once, pid 1 alive to every reader or not, a live pid's lock stamped five seconds ahead is waited behind,
+    a stampless lock's mtime is judged the same way, a dead breaker's claim an hour ahead beside a dead lock is
+    removed and the break proceeds, and the real `track-comment` against such a lock lands its comment and exits 0 in
+    well under the wait (the fourth round). A lock written from another machine over a shared filesystem names a pid
+    of that machine, which this one judges as its own, dead when no process here has the number and else by the
+    stamp's age; the lock serializes the writers of one machine (`tools/store-io-lock-pid-namespace.test.mjs`, the
+    namespace read through a stand-in so the cases run on any machine, and one real child namespace where `unshare`
+    can make one unprivileged, skipped where it cannot).
+    The break has one winner (the slice's
     review, first round, 2026-09-11; as first built two waiters that read one dead lock together both removed it,
     the second taking away the first's fresh lock, and both wrote): the waiters that find a stale lock serialize
     on a claim beside it, `<sidecar>.lock.break`, created with O_EXCL like the lock and holding the same `pid ts`;
     the one holding the claim judges the lock again under it, unlinks it only while it is still stale, and removes
     the claim on its way out; a claim whose breaker is dead or whose stamp is past the bound is removed by the
-    lock's own rule. The release unlinks the lock only while the entry at the name is the holder's own inode, so
+    lock's own rule.
+    The entry judged stale, lock or claim, stays open from the judgment through its unlink (the third round: judged by
+    inode number alone, the guard was defeated by the filesystem's reuse of the number, an unlink and then a create in
+    one folder handing the new entry the number just freed, so a breaker suspended past the stale bound between its
+    claim check and its look for the unlink removed the fresh lock a waiter had put at the name and entered beside
+    it); an inode with a descriptor open keeps its number, so the fresh lock is another inode and is left alone
+    (`tools/store-io-lock-inode-reuse.test.mjs`: one interleaving driven by hand in-process, and a breaker child
+    stalled past the bound at its look while a real writer breaks its claim and the dead lock, writes and leaves, the
+    breaker waiting for that write instead of entering beside it).
+    The release unlinks the lock only while the entry at the name is the holder's own inode, so
     a writer broken as stale while alive leaves the breaker's lock alone; a stamp that cannot be written after the
     create leaves no lock and no folder behind; a writer that made the folder and leaves while another writer's
     lock or claim is in it passes the folder's removal to that writer by a `made-dir` line appended to its lock or
     claim, honored at that writer's release (or by the breaker of that lock when its holder dies); and a link or
     another non-file at the lock's name, or at the claim's while a stale lock stands, is a lock that cannot be
     taken: the host refuses `unreadable` naming it, the CLIs print its line and exit 1, and nothing is followed or
-    removed. The two names and that line are everything the lock leaves under `.trackchanges/`
+    removed.
+    An entry at the folder's name that is not a directory (a link to nothing above all: the create says ENOENT through
+    it and `mkdir` EEXIST at it, on every turn) is refused the same way, at once and naming the entry, the CLIs
+    printing its line and exiting 1 in well under the wait; a link to a directory the lock follows, the folder behind
+    it staying, where the host refuses any entry there that is not a directory itself, a link to one included, as
+    `unreadable` before it locks (`checkTrackDir`). Retried until the wait ran out, such an entry was reported as a
+    live writer where there was none (the third round; `tools/store-io-lock-folder-name.test.mjs`).
+    The two names and that line are everything the lock leaves under `.trackchanges/`
     (`tools/store-io-lock.test.mjs`; the ADR's lock bullet, `docs/adr/0002`, is held to the same names and line
     and to the lock run in a scratch root by
     `tools/0002-file-comments-in-the-track-changents-sidecar-lock-names.test.mjs`). `track-edit`, `track-comment`
@@ -3279,18 +3377,34 @@ document stands on its own, each with the reasoning it was given.
     the edit turn it adds to the comment it answers) and, when it is not obtained, print `another editor is writing this file; retry` and exit 1
     with nothing written; their `fail()` throws to the entry point so a held lock is released. That part is
     vendor patch 0008, written as offerable to the engine's author and held back from the offer by the
-    standing word of 2026-09-11 to open nothing new upstream. The host takes the same lock from its fence stat through its
+    standing word of 2026-09-11 to open nothing new upstream.
+    The vendored README's row for it names the lock's whole footprint on disk, the two names, the line and the folder,
+    held to `store-io.mjs`'s constants, to the patch header and to the ADR bullet by
+    `tools/README-track-changents-patch-0008-row.test.mjs` (the third round, which found the row naming the lock
+    alone).
+    The host takes the same lock from its fence stat through its
     last rename or prune (`underStoreLock`): the sidecar's for `comment`, `reply`, `resolve`, `retarget`,
     `accept`, `reject` and `save`; `config.json`'s own for `set-tracked`, since that verb writes the root's list,
     which every file under the root shares, and a held `config.json` lock refuses `busy` naming the root's tracked
     list rather than the file, since that is what the lock guards (`tools/file-comments-host-config-lock.test.mjs`).
+    The decisions load under it too: `loadForDecision`, the fence stat, the file read and the sidecar load, runs
+    inside the function `underStoreLock` runs (`tools/file-comments-host-decision-lock.test.mjs`: against a holder
+    that saves a comment 300 ms later, a reject-all, an accept and a save each refuse `store-moved` and the retry
+    lands both; the fourth round, which found no module saying where a decision's load sits).
     A loose file takes it after its landmark and checks its `""` fence
     again under it, and every reply is built after the release from a store read back under the lock. The mtime
     fences stay: the lock serializes the writers, the fences catch the panel's stale copy, so every writer loads
     after the previous writer's rename and a stale copy always refuses. A lock still held after the wait refuses
     `busy` with nothing changed; the panel handles `busy` as it handles a moved fence (`MOVED`): a fresh status,
     one retry by id (the id-less verbs re-read and say nothing was decided), and the refusal verbatim with Reload
-    on a second. `tools/file-comments-host-store-lock.test.mjs` drives the host and `track-reply` against a
+    on a second.
+    `busy` arrives while the other writer still holds the lock (every holder releases after its last rename, and
+    `status` takes none), so the fresh status shows that writer's store only when it renamed in the gap, and the retry
+    otherwise goes out on the fence the refusal came back on; a holder that finishes under the retry moves the fence
+    and the host refuses `store-moved`, the second refusal, shown with Reload and not retried
+    (`ui/webview/file-comments-busy-retry-fence.test.ts`, the save path at the real timing; the third round, which
+    found the panel's comments saying the holder's write was on disk at the refusal).
+    `tools/file-comments-host-store-lock.test.mjs` drives the host and `track-reply` against a
     writer mid-write (before the lock, each answered about 220 ms before the holder saved, and the holder's save
     erased its write), the refusal and the stale lock; `tools/file-comments-host-race.test.mjs` a `track-edit`
     inside a reject's write, through `FILE_COMMENTS_TEST_PAUSE_MS`, a test seam at the file's rename that is
@@ -3305,7 +3419,11 @@ document stands on its own, each with the reasoning it was given.
     no more; `tools/file-review-plan-sidecar.test.mjs` holds this record and decision 50 to the source,
     `tools/file-review-plan-sidecar-records.test.mjs` the records' inventory to the tree, and
     `tools/file-review-plan-sidecar-adr-modules.test.mjs` the ADR-named modules to the Tests bullet and to this
-    record by name, and both records to the glossary's words for a file and a comment.
+    record by name, and both records to the glossary's words for a file and a comment, and
+    `tools/file-review-plan-sidecar-lock-modules.test.mjs` the third round's five modules (every
+    `tools/store-io-lock-*` and `tools/README-track-changents-patch-*` module, and the busy retry's) to the Tests
+    bullet and to this record by name, what the bullet says of each to the module, and this record's pid-namespace
+    sentences to `store-io.mjs`.
 50. **The clock a reply carries is taken before the read** (2026-09-11). The same probe found the panel's poll
     blind to a write 11 times in 147 rounds. The host read the sidecar and then stat'ed it for the reply's
     `storeMtimeNs`, so a write landing between the two gave the panel the writer's clock over the earlier bytes;

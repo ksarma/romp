@@ -6,8 +6,10 @@
 // so a regression that kept the literal and lost the retry passed every behavioral suite (the slice review, 2026-09-11).
 // Here the same harness as the panel suite's drives the save: one status re-read, one retry with the fresh fence
 // when the sidecar's records are still the editor's, the success applied as the status; the refusal handed to the
-// viewer with its code and the host's words on a second `busy` or when the re-read shows other records, with no
-// third save and no further re-read; and the saving editor's fence following the re-read. The viewer's half (the
+// viewer with its code and the host's words on a second `busy`, with no third save and no further re-read; the
+// refusal handed on under the same code with the head's row's words when the re-read shows other records (the host's
+// "; retry" is stale then: a Save can only refuse, and the head says so; the slice review's stale-bar finding,
+// 2026-09-11); and the saving editor's fence following the re-read. The viewer's half (the
 // Reload offer on `busy`, file-view.ts's failed arm) is driven at the real openFileView by
 // file-comments-save-busy-viewer.test.ts: this suite's ctx is a stand-in, so the refusal it hands on is where the viewer's
 // half begins, and the source pins that held that arm alone let a dropped `busy` pass every behavioral suite (the same
@@ -17,6 +19,7 @@ import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
 import type { Status, StoreComment, Hunk } from "./file-comments-model";
+import { MOVED_UNDER_EDIT } from "./file-comments-model";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── the DOM stand-in (the panel suite's) ───────────────────────────────────────────────────────────
@@ -316,17 +319,82 @@ test("a second busy on the retry is not retried: the refusal reaches the viewer 
   h.dispose();
 });
 
-test("a save refused busy whose re-read shows the sidecar's records changed: the refusal stands with its code and the host's words, and there is no retry", async () => {
+// The re-read after `busy` shows the sidecar's records are no longer the editor's. No retry: the fence is the sidecar the
+// records came from, and a re-fence would pass the editor's stale list over what the other writer decided. The head's
+// row says so at once (noteChangesMovedUnderEdit and its siblings, in the render the re-read gets), and the refusal
+// handed to the viewer carries THAT row's words under the `busy` code, not the host's: the host's "; retry" was true
+// while the lock was held and is stale once the re-read has shown other records, and a bar saying retry over a head
+// saying Save will refuse sent the person into one more refused round trip (the slice review's stale-bar finding,
+// 2026-09-11). The code stays `busy`, so the viewer's Reload offer keys on it as before (file-comments-save-busy-viewer.test.ts).
+test("a save refused busy whose re-read shows the sidecar's records changed: no retry, and the refusal reaches the viewer under its code with the head's row (CHANGES_MOVED_UNDER_EDIT), not the host's retry", async () => {
+  const fc = await import("./file-comments");
   const h = await harness();
   const c1 = chg("c1", 5, "old", "new"), c2 = chg("c2", 40, "was", "is");
-  const { out } = await saveFromEditor(h, c1);
+  const { te, out } = await saveFromEditor(h, c1);
   await h.refuse("busy", BUSY);
   assert.equal(h.last().verb, "status");
   await h.ok({ ...withChanges(c1, c2), storeMtimeNs: S9 });   // the writer that held the lock recorded a second change
-  assert.deepEqual(out.err, { code: "busy", error: BUSY }, "the records changed under the editor: the refusal stands, in the host's words");
+  assert.deepEqual(out.err, { code: "busy", error: fc.CHANGES_MOVED_UNDER_EDIT }, "the records changed under the editor: the head's row, under the code the viewer's Reload offer keys on");
+  assert.notEqual(fc.CHANGES_MOVED_UNDER_EDIT, BUSY);
+  assert.match(fc.CHANGES_MOVED_UNDER_EDIT, /Save will refuse/, "…and it says what a Save would do, where the host's words said retry");
+  assert.doesNotMatch(fc.CHANGES_MOVED_UNDER_EDIT, /retry/);
   assert.equal(h.last().verb, "status", "no retry");
   assert.equal(h.count("save"), 1);
   assert.match(h.button.textContent, /2 changes$/, "the panel shows the re-read status meanwhile");
+  // the seed is NOT re-fenced (a re-fence would let this editor's list, which lacks c2, pass the store fence): a Save the
+  // person sends anyway goes out on the sidecar the records came from and can only refuse store-moved — which is what the
+  // row told them, and what the host's "; retry" did not
+  const out2 = settleOf(te.save("the new text", [c1.rec], { accepted: [], rejected: [] }));
+  await tick();
+  const next = h.last();
+  assert.equal(next.verb, "save");
+  assert.deepEqual(next.fence, { storeMtimeNs: STORE_NS, configMtimeNs: CONFIG_NS, fileMtimeNs: FILE_NS }, "fenced on the sidecar the records rode in from, not the re-read's");
+  await h.refuse("store-moved", "the comments for ~/notes-api/docs/report.md changed on disk since you opened the file — reload and retry");
+  await h.ok({ ...withChanges(c1, c2), storeMtimeNs: S9 });   // its own re-read: the records still differ
+  assert.deepEqual(out2.err, { code: "store-moved", error: "the comments for ~/notes-api/docs/report.md changed on disk since you opened the file — reload and retry" }, "a moved fence's words stand: they say reload, as the row does");
+  h.dispose();
+});
+
+test("…and when the re-read shows the file moved too (a reject's or a track-edit's write), the words are the file's row (MOVED_UNDER_EDIT), as in the head", async () => {
+  const h = await harness();
+  const c1 = chg("c1", 5, "old", "new");
+  const { out } = await saveFromEditor(h, c1);
+  await h.refuse("busy", BUSY);
+  await h.ok({ hunks: [], store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage] }, storeMtimeNs: S9, fileMtimeNs: "1757145600000000021" });   // the writer rejected c1: the file's bytes moved with the sidecar
+  assert.deepEqual(out.err, { code: "busy", error: MOVED_UNDER_EDIT }, "the file's row: it says the same about Save and adds what Cancel shows");
+  assert.equal(h.count("save"), 1, "no retry");
+  h.dispose();
+});
+
+test("…and when no records rode into the editor and the re-read shows changes the file's clock does not account for, the words are the unread row (CHANGES_UNREAD_UNDER_EDIT)", async () => {
+  const fc = await import("./file-comments");
+  const h = await harness();
+  await h.ok();                                        // nothing pending at Edit: the editor carries no records, and Save follows the status
+  const te = h.tracked[0]!;
+  te.begin();
+  h.setEditing(true);
+  const out = settleOf(te.save("the new text", [], { accepted: [], rejected: [] }));
+  await tick();
+  assert.equal(h.last().verb, "save");
+  assert.deepEqual(h.last().fence, { storeMtimeNs: STORE_NS, configMtimeNs: CONFIG_NS, fileMtimeNs: FILE_NS }, "fenced on the status as it stood");
+  await h.refuse("busy", BUSY);
+  const c1 = chg("c1", 5, "old", "new");
+  await h.ok({ ...withChanges(c1), storeMtimeNs: S9 });   // a session's track-comment-style write recorded a change; the file did not move
+  assert.deepEqual(out.err, { code: "busy", error: fc.CHANGES_UNREAD_UNDER_EDIT }, "the editor shows the text with no marks: the unread row's words");
+  assert.equal(h.count("save"), 1, "no retry: an empty list written back would drop the change");
+  h.dispose();
+});
+
+test("a moved fence whose re-read shows the records changed keeps the host's words: the substitution is busy's alone", async () => {
+  const h = await harness();
+  const c1 = chg("c1", 5, "old", "new"), c2 = chg("c2", 40, "was", "is");
+  const { out } = await saveFromEditor(h, c1);
+  const CHANGED = "the comments for ~/notes-api/docs/report.md changed on disk since you opened the file — reload and retry";
+  await h.refuse("store-moved", CHANGED);
+  assert.equal(h.last().verb, "status");
+  await h.ok({ ...withChanges(c1, c2), storeMtimeNs: S9 });
+  assert.deepEqual(out.err, { code: "store-moved", error: CHANGED }, "reload and retry agrees with the head's row; nothing to substitute");
+  assert.equal(h.count("save"), 1);
   h.dispose();
 });
 
