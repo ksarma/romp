@@ -688,7 +688,10 @@ function reuseLane(lane, prev, expandOne, keyField) {
 // The lanes, expanded, with `memo` the Map (sid -> {wire, ex}) the previous call built, so a lane that says the
 // same thing as last time is not expanded twice: a full frame after a hold, or one whose lanes did not change,
 // costs a compare per bar and no allocation (2026-09-11: the expansion ran on every frame before the paint hold,
-// and a hidden dashboard paid for it). Returns {out, memo}; expandBars is the memo-less form.
+// and a hidden dashboard paid for it). Returns {out, memo}; expandBars is the memo-less form. The reuse does not
+// reach the lanes of an attached host whose clock skew federation rebases (rebaseHostTimes copies every bar with
+// a per-merge offset that moves with arrival jitter, so start and end differ frame to frame): those expand per
+// visible frame, as before this change; under the hold they still expand nothing.
 function expandBarsMemo(turns, memo) {
   const out = {}, next = new Map();
   for (const sid in (turns || {})) {
