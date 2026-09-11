@@ -340,7 +340,7 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     assert.equal(await page.evaluate(() => !getSelection()!.isCollapsed), true, "the repaint kept the selection");
     await page.evaluate(() => getSelection()!.removeAllRanges());
     await page.locator("#romp-fileview .fileview-size-reset").click(); await settle();   // back to 100% for the row-in-view checks below
-    // Still the one fetch: a text-size step repaints from the text on hand (setTextSize reads the place, restyles, seats;
+    // Still the one fetch: a text-size step repaints from the text on hand (textSizeControl's step reads the place, restyles, seats;
     // nothing there fetches). Asserted here, apart from the click below, so a stray second fetch names its moment: one red
     // run under 34 concurrent browser legs and 16 CPU burners (the Slice 2 review, round 3) found app.py at served[1] and
     // the assertion below could not say whether it arrived during the size steps or at the click. The viewer has no path

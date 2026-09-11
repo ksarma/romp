@@ -188,7 +188,7 @@ test("the fetch and the body read ride one AbortController, registered module-le
 });
 
 test("closeFileView and BOTH replace paths call dropUrlRead — a stale read never keeps pulling for a gone modal", () => {
-  assert.match(CLOSE_FN, /dropMediaUrl\(\);[^\n]*\n\s*dropUrlRead\(\);/, "close: right beside the media-URL revoke");
+  assert.match(CLOSE_FN, /dropMediaUrl\(\);[^\n]*\n\s*dropWidthWatch\(\);[^\n]*\n\s*dropUrlRead\(\);/, "close: right beside the media-URL revoke, the body's width watch dropped between the two (watchBodyWidth, since the text-size offer came home)");
   assert.match(OPEN_FN, /dropMediaUrl\(\);[^\n]*\n\s*dropUrlRead\(\);[^\n]*\n\s*document\.getElementById\("romp-fileview"\)\?\.remove\(\);/,
     "the local viewer's replace path: before the old viewer is torn down");
   assert.match(URL_FN, /dropMediaUrl\(\);\s*\n\s*dropUrlRead\(\);[^\n]*\n\s*document\.getElementById\("romp-fileview"\)\?\.remove\(\);/,
@@ -405,7 +405,7 @@ test("the opened URL's own #fragment lands after the FIRST rendered paint — on
   assert.match(URL_FN, /if \(!hash\) \{ landed = true; return; \}\s*\n\s*if \(fmt\.md !== "rendered"\) return;[^\n]*\n\s*landed = true;/);
   assert.match(URL_FN, /try \{ hash = new URL\(href\)\.hash; \} catch \{/);
   assert.match(URL_FN, /landed = true;\s*\n\s*requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToFragment\(body, hash\); \}\);/);
-  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/, "after the paint, the folds' restore and the reader's seat (reader-place.ts, through the viewer's held-place seat), inside renderBody, so a later Rendered toggle lands too");
+  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/, "after the paint, the folds' restore, the tables' width stamp and the reader's seat (reader-place.ts, through the viewer's held-place seat), inside renderBody, so a later Rendered toggle lands too");
   assert.doesNotMatch(URL_FN, /renderBody\(\);\s*\n\s*landFragment\(\);/, "no second, mode-blind landing after the bytes");
 });
 

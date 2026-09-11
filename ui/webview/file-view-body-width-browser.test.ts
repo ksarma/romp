@@ -8,10 +8,10 @@
 // it, and a write restyles the tables alone. This leg holds the shape in the real viewer on both sheets: the body and the
 // prose carry no --fv-body-w, every top-level table carries the body's content width, a nested table none; the tables follow
 // a width change (the pane narrower, the aside open), a re-render (Raw and back: mdBlock rebuilds the root, no report follows,
-// renderBody stamps), and the URL viewer, which has no width observer, leaves the property unset so the sheet's fallback holds
-// (the cap is the column). The first leg is the regression guard: at the commit before the change the body carried the
-// property and it fails there. The URL-viewer leg pins the fallback that already held before the change (that viewer never
-// had a width observer), so it passes on both sides and guards the invariant, not the change. The geometry itself (18px
+// renderBody stamps), and the URL viewer, which watches its body too since the text-size offer came home (file-view.ts
+// watchBodyWidth in both viewers, 2026-09-10; before that it had no observer and its tables read the sheet's fallback, the
+// column), stamps its tables the same way. The first leg is the regression guard: at the commit before the change the body
+// carried the property and it fails there. The URL-viewer leg holds the same shape over the other viewer. The geometry itself (18px
 // insets, the cap under a visible scrollbar) is file-view-scrollbar-browser.test.ts's and
 // file-view-typescale-browser.test.ts's. Skips loudly without a browser. Synthetic values only.
 import { test } from "node:test";
@@ -83,13 +83,13 @@ test("--fv-body-w sits on each top-level table and nowhere else, and follows a w
   });
 });
 
-test("the URL viewer has no width observer: the property stays unset and the sheet's fallback caps a table at the column", { timeout: 120000 }, async (t) => {
+test("the URL viewer watches its body too: every top-level table carries the body's content width, the body and the prose none, and the wide table grows to the body less the inset, as in the local viewer", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openViewer(browser, "pane", 1400, 700, { url: "/notes/report.md", urls: { [ORIGIN + "/notes/report.md"]: NOTE } });
+    await frames(page, 2);                                   // the observer's first report lands after the layout, before the next frame paints
     const m = await page.evaluate(measure);
-    assert.equal(m.nTables, 3); assert.equal(m.body, ""); assert.equal(m.prose, "");
-    assert.deepEqual(m.tables, ["", "", ""], "no observer, no write: every table's --fv-body-w is unset");
-    assert.ok(Math.abs(m.wide - m.column) <= 0.5, "the fallback (the column) caps the wide table (" + m.wide + " in a " + m.column + " column)");
+    holds(m, "URL viewer 1400");
+    assert.ok(m.wide > m.column + 20, "the wide table left the column for the body's room (" + m.wide + " past a " + m.column + " column): the fallback no longer caps it");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

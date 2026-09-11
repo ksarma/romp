@@ -1,10 +1,10 @@
-// A fence's text as the note holds it, for the viewer's Copy button (fence-source.ts; Slice 3 of plans/markdown-viewer.md, the
-// slice's review, round 1). marked 12's lexer turns every leading run of tabs into four spaces a tab before it tokenizes, so a
-// code token's text, and the code element's textContent mdBlock copies from, carry spaces where the note has tabs: a Makefile
-// recipe copied out of the rendered view pasted back with spaces. The module reads each token's lines back out of the note
-// through the rewrite. Exercised over the REAL marked: the tokens come from marked.parse's walkTokens, the way mdBlock collects
-// them, so the cases pin marked's own transformations (the expansion, a list item's indent slice, a quote's stripped `> `,
-// indentCodeCompensation, CRLF) beside the module's reading of them. Synthetic notes throughout.
+// A fence's text as the file holds it, for the viewer's Copy button (fence-source.ts). marked's lexer turns every leading run
+// of tabs into four spaces a tab before it tokenizes, so a code token's text, and the code element's textContent mdBlock
+// copies from, carry spaces where the file has tabs: a Makefile recipe copied out of the rendered view pasted back with
+// spaces. The module reads each token's lines back out of the file through the rewrite. Exercised over the REAL marked: the
+// tokens come from marked.parse's walkTokens, the way mdBlock collects them, so the cases pin marked's own transformations
+// (the expansion, a list item's indent slice, a quote's stripped `> `, an indented block's four columns, CRLF) beside the
+// module's reading of them. Self-contained: marked and the module only. Synthetic documents throughout.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { marked } from "marked";
@@ -17,7 +17,7 @@ const tokens = (src: string): Fence[] => {
   marked.parse(src, { walkTokens: (t) => { if (t.type === "code") { const c = t as { text: string; codeBlockStyle?: string }; out.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); } } });
   return out;
 };
-/** marked's own preprocessing, as Lexer.lex and Lexer.blockTokens spell it (marked 12.0.2). */
+/** marked's own preprocessing, as its Lexer spells it: line endings to LF, then a line's leading tabs to four spaces each. */
 const markedOwn = (src: string): string => src.replace(/\r\n|\r/g, "\n").replace(/^( *)(\t+)/gm, (_, l: string, t: string) => l + "    ".repeat(t.length));
 
 test("markedView is marked's own preprocessing, character for character, and maps every character back to its source index", () => {
@@ -91,17 +91,17 @@ test("the renderer's shape: one trailing newline dropped and one appended, so th
   assert.deepEqual(fenceSources(spaceTab, tokens(spaceTab)), [" \tfoo\n"]);
 });
 
-test("fences are matched in document order: two fences rendering the same four spaces copy a tab and four spaces respectively; a token not in the note is null", () => {
+test("fences are matched in document order: two fences rendering the same four spaces copy a tab and four spaces respectively; a token not in the file is null", () => {
   const src = `${F}\n\tx\n${F}\n\n${F}\n    x\n${F}\n`;
   const t = tokens(src);
   assert.equal(t[0].text, t[1].text, "the same rendered text");
   assert.deepEqual(fenceSources(src, t), ["\tx\n", "    x\n"]);
-  assert.deepEqual(fenceSources(src, [{ text: "not in the note", indented: false }]), [null]);
+  assert.deepEqual(fenceSources(src, [{ text: "not in the file", indented: false }]), [null]);
   // a token whose lines exist but never after a fence opener is not taken for a fence
   assert.deepEqual(fenceSources("plain x\n", [{ text: "plain x", indented: false }]), [null]);
 });
 
-test("fenceCopyQueue: keyed by the rendered text, in document order, null for a fence not found; empty for a note without a tab or a CR (marked's view is the note)", () => {
+test("fenceCopyQueue: keyed by the rendered text, in document order, null for a fence not found; empty for a file without a tab or a CR (marked's view is the file)", () => {
   const src = `${F}\n\tx\n${F}\n\n${F}\n    x\n${F}\n\n${F}\nplain\n${F}\n`;
   const q = fenceCopyQueue(src, tokens(src));
   assert.deepEqual(Array.from(q.keys()), ["    x\n", "plain\n"]);
@@ -112,9 +112,9 @@ test("fenceCopyQueue: keyed by the rendered text, in document order, null for a 
   assert.equal(fenceCopyQueue(src, []).size, 0, "no fences: nothing to queue");
 });
 
-test("an empty fence is matched as its opener and closer, so the fence after it is found: marked's text is empty for no line and for one blank line alike, and read as one blank content line it ran past its own closer and claimed a blank line inside the next fence", () => {
+test("an empty fence is matched as its opener and closer, so the fence after it is found: marked's text is empty for no line and for one blank line alike", () => {
   // the closer directly followed by a fence whose first line is blank and whose second holds a tab: read as one blank
-  // line, the empty fence matched the py fence's blank first line, and the py fence, behind the cursor, was null
+  // line, the empty fence would match the py fence's blank first line, and the py fence, behind the cursor, would be null
   const adjacent = `${F}\n${F}\n${F}py\n\n\tx = 1\n${F}\n`;
   const t = tokens(adjacent);
   assert.equal(t[0].text, "", "marked: a fence of no lines has the empty text");
@@ -129,7 +129,7 @@ test("an empty fence is matched as its opener and closer, so the fence after it 
   assert.deepEqual(fenceSources(blankLine, tokens(blankLine)), ["\n", "\n\tx = 1\n"]);
   // without a trailing newline the lone empty fence is found by its closer, not by a blank line after it
   assert.deepEqual(fenceSources(`${F}\n${F}`, tokens(`${F}\n${F}`)), ["\n"]);
-  // an opener the note ends on: an unclosed fence runs to the end, and its text is empty
+  // an opener the file ends on: an unclosed fence runs to the end, and its text is empty
   assert.deepEqual(fenceSources(`${F}\n`, tokens(`${F}\n`)), ["\n"]);
   // inside a quote, the blank line a bare `>`; directly after another fence's closer
   const quoted = `> ${F}\n>\n> ${F}\n> ${F}\n> \tq\n> ${F}\n`;

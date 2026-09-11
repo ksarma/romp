@@ -374,10 +374,12 @@ test("content wider than the column: an inline svg, canvas or video shrinks to t
       const box = (sel: string) => { const r = (md.querySelector(sel) as HTMLElement).getBoundingClientRect(); return { width: r.width, height: r.height }; };
       const table = md.querySelector(".fx-table") as HTMLElement;
       table.scrollLeft = 200;
+      const tr = table.getBoundingClientRect(), br = body.getBoundingClientRect();
       return {
         column, svg: box(".fx-svg"), canvas: box(".fx-canvas"), video: box(".fx-video"),
         tableClient: table.clientWidth, tableScroll: table.scrollWidth, tableOverflowX: getComputedStyle(table).overflowX, tableScrolled: table.scrollLeft,
-        tableBox: (() => { const r = table.getBoundingClientRect(), b = body.getBoundingClientRect(); return { width: r.width, left: r.left - b.left, right: b.right - r.right }; })(),
+        tableInset: { left: tr.left - br.left, right: br.right - tr.right },
+        tableBox: { width: tr.width, left: tr.left - br.left, right: br.right - tr.right },
         cellBorders: getComputedStyle(md.querySelector(".fx-table td") as HTMLElement).borderLeftWidth,
         bodyClient: body.clientWidth, bodyScroll: body.scrollWidth,
       };
@@ -388,8 +390,12 @@ test("content wider than the column: an inline svg, canvas or video shrinks to t
     assert.ok(facts.canvas.width <= facts.column + 0.5 && facts.canvas.width > facts.column - 2, "the canvas fills the column, no wider: " + JSON.stringify(facts.canvas));
     near(facts.canvas.height, facts.canvas.width * 100 / 2500, "the canvas keeps its own ratio", 1.5);
     assert.ok(facts.video.width <= facts.column + 0.5, "the video is no wider than the column: " + JSON.stringify(facts.video));
-    // the table rules are Slice 3's (plans/markdown-viewer.md): a direct-child table wider than the column breaks out to the
-    // pane, its box the body less 36px and centred in it (`.fileview-md > table`), and scrolls its content inside that box
+    // a table of the page's own (a direct child of the root) may grow out of the prose column, evenly into both gutters, but
+    // never past the body's content width less the root's 18px inset (`.fileview-md > table`, both sheets; the cap is the
+    // column itself until the viewer's width observer has reported), so its box stays inside the body and nothing is clipped
+    assert.ok(facts.tableClient >= facts.column - 0.5 && facts.tableClient <= facts.bodyClient - 36 + 0.5, "the table's box is the column or wider, up to the body less the inset: " + facts.tableClient + " (column " + facts.column + ", body " + facts.bodyClient + ")");
+    assert.ok(facts.tableInset.left >= 18 - 0.5 && facts.tableInset.right >= 18 - 0.5, "the table's box keeps the root's inset on both sides of the body: " + JSON.stringify(facts.tableInset));
+    // and, with this wide fixture, exactly: the table broke out of the column (the premise of the two below), its box is the body less 36px and centred, within 2px (the fork's Slice 3 table rules; slice 4 ruling (e))
     assert.ok(facts.tableClient > facts.column + 0.5, "the wide table broke out of the column: " + facts.tableClient + " vs column " + facts.column);
     near(facts.tableBox.width, facts.bodyClient - 36, "its box is the body less 36px (the pane-wide break-out)", 2);
     assert.ok(Math.abs(facts.tableBox.left - facts.tableBox.right) <= 2, "centred in the body: " + JSON.stringify(facts.tableBox));

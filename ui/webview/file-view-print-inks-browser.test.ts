@@ -49,7 +49,7 @@ const BLACK = "rgb(0, 0, 0)", CLEAR = "rgba(0, 0, 0, 0)";
 
 test("the print block colours code wherever it is in the body, hides the region overlay, prints the change marks and chips black, and gives a wide table the body's room", () => {
   const css = read("styles.css"); const block = css.slice(css.indexOf("@media print {"));
-  assert.ok(block.includes('.fileview-body code.hljs, .fileview-body code.hljs span, .fileview-body .fv-cl::before { color: black; }'), "the Raw and code views' ink, and a two-class token's (code.hljs span outranks .hljs-title.function_)");
+  assert.ok(block.includes('.fileview-body code.hljs, .fileview-body code.hljs span, .fileview-body .fv-cl::before, .fileview-gutter { color: black; }'), "the Raw and code views' ink, the plain gutter's, and a two-class token's (code.hljs span outranks .hljs-title.function_)");
   assert.ok(block.includes(".fileview-body .fc-overlay { display: none; }"), "the region overlay is left out");
   assert.ok(block.includes(".fileview-body .fc-ins, .fileview-body .fc-del { border-bottom-color: black; background: none; }"), "the change marks' underline prints black, no wash");
   assert.ok(block.includes(".fileview-body .fc-del::before { color: black; background: none; }"), "the struck label prints black");

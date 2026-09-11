@@ -15,7 +15,7 @@
 // Skips LOUDLY without a playwright browser (CI installs none), as the other legs do. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, frames, topBlock, LONG, ORIGIN, type Mode } from "./real-viewer-leg";
+import { inBrowser, openViewer, frames, topBlock, putAtTop, LONG, ORIGIN, type Mode } from "./real-viewer-leg";
 
 const near = (a: number, b: number, what: string, tol = 1.5) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
 const click = async (page: any, label: string) => { await page.locator("#romp-fileview .fileview-btn", { hasText: new RegExp("^" + label + "$") }).click(); await frames(page, 3); };
@@ -49,6 +49,43 @@ test("in a browser, the URL viewer: the Rendered/Raw round trip from the end of 
       assert.equal(afterAt, beforeAt, cell + ": the same top block by position");
       near(after.top, before.top, cell + ": at the same height (the Slice 3 tree: 27 to 81px off from Rendered)");
       assert.equal(after.scrollTop, before.scrollTop, cell + ": the same scrollTop");
+      assert.deepEqual(errors, [], cell + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+// A text-size step is a reflow the reader did not ask to lose their place over: the URL viewer's textSizeControl call brackets the
+// apply with its own keptPlace and seat, as the local viewer's does (the 2026-09-10 fold of the offer that landed the control in
+// both viewers: upstream's URL viewer steps with no place keeping). Before the bracket, A+ at a passage in the middle of the note
+// left scrollTop where it was while the text above the passage grew (the root's inline padding moves with the ch, so the browser's
+// own scroll anchoring stands down), and the top block was an earlier paragraph; A- then brought the layout back and the reader
+// with it, so the case pins BOTH stops: the top block after A+ and after A-. Two cells, the chat modal and the pane.
+const stepSize = async (page: any, larger: boolean) => { await page.locator('#romp-fileview button[aria-label="' + (larger ? "Larger" : "Smaller") + ' text"]').click(); await frames(page, 3); };
+const sizeOf = (page: any): Promise<string | undefined> => page.evaluate(() => (document.querySelector(".fileview") as HTMLElement).dataset.fvText);
+
+test("in a browser, the URL viewer: the reader scrolled to a passage keeps its top block across A+ and then A-, chat and pane, as the local viewer does", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const mode of ["chat", "pane"] as Mode[]) {
+      const cell = `URL viewer, a passage, ${mode}`;
+      const { page, errors } = await openViewer(browser, mode, 900, 600, { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: LONG } });
+      await putAtTop(page, "Paragraph 40:");
+      await frames(page, 3);
+      const before = (await topBlock(page))!; const beforeAt = await topIndex(page);
+      assert.equal(before.view, "rendered", cell + ": the scene opens rendered");
+      assert.ok(before.text.startsWith("Paragraph 40"), cell + ": the passage is at the top: " + before.text);
+      assert.equal(await sizeOf(page), "100", cell + ": the default size");
+      await stepSize(page, true);
+      assert.equal(await sizeOf(page), "115", cell + ": one step up");
+      const up = (await topBlock(page))!;
+      assert.equal(up.text, before.text, cell + ": after A+ the passage's top block is still the one seated (the bracket read the place before the text grew and seated it after)");
+      assert.equal(await topIndex(page), beforeAt, cell + ": ...by position too");
+      await stepSize(page, false);
+      assert.equal(await sizeOf(page), "100", cell + ": and back to the default");
+      const after = (await topBlock(page))!; const afterAt = await topIndex(page);
+      assert.equal(after.text, before.text, cell + ": after A- the same top block");
+      assert.equal(afterAt, beforeAt, cell + ": the same top block by position");
+      near(after.top, before.top, cell + ": at the same height");
       assert.deepEqual(errors, [], cell + ": no script error");
       await page.close();
     }
