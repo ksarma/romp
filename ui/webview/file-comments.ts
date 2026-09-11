@@ -2304,7 +2304,8 @@ class Panel {
    *  held and are stale once the re-read has shown other records: a Save now can only refuse `store-moved`, since its
    *  fence is the sidecar the records came from and re-fencing it would pass the editor's stale list over what the other
    *  writer decided (the review's stale-bar finding, 2026-09-11; file-comments-save-busy.test.ts). The code stays `busy`,
-   *  so the viewer's Reload offer keys on it as before: the other writer's text is on disk, and a reload shows it. The
+   *  so the viewer's Reload offer keys on it as before: a reload shows the file as it stands once the other writer
+   *  releases. The
    *  conditions are the rows' own (noteMovedUnderEdit, noteChangesMovedUnderEdit, noteChangesUnreadUnderEdit): the file
    *  moved too (a reject's or a track-edit's write), the file's row; records rode in and changed, the moved-records row;
    *  none rode in and the re-read shows changes, the unread row. Not a moved fence's words: `store-moved` and

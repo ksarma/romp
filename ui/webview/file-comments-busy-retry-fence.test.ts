@@ -341,7 +341,19 @@ test("the panel's comments at MOVED and on saveThroughComments say the retry lan
   assert.ok(prose.includes("the re-read shows the holder's write only when it landed in the gap before the re-read, and only then does the retry carry a fence that lands"), "and the one case the retry lands");
   assert.ok(prose.includes("A holder that finishes during the retry's own wait moves the fence under it (the retry refuses `store-moved`); one still writing refuses `busy` again; either is the second refusal, shown verbatim with Reload"), "and the two second refusals");
   assert.ok(prose.includes("the same re-read and retry, which land only when the holder released before the re-read, since `busy` arrives while it is still writing"), "the save's doc says the same");
-  assert.doesNotMatch(prose, /on disk by (?:the time|now)|re-read shows what it wrote|the retry lands after it\b/, "no site claims the holder's write is on disk when busy arrives");
+  assert.doesNotMatch(prose, BAN, "no site claims the holder's write is on disk when busy arrives");
+});
+
+/** The claim in every wording the review found (2026-09-11, rounds 3 and 4): the holder's write on disk at the refusal,
+ *  the re-read showing it, the retry landing after it, a reload showing its text. */
+const BAN = /on disk by (?:the time|now)|re-read shows what it wrote|the retry lands after it\b|one retry lands after it\b|shows what that writer wrote|text is on disk/;
+
+test("the sibling suites' messages and comments make no such claim either: the save-busy suite, the viewer's half and the panel suite", () => {
+  // their assertion messages said the other writer's write was on disk by the re-read, and Reload showed its text
+  // (the fourth round, 2026-09-11); the ban above read the panel's source alone, so the wording survived there
+  for (const f of ["file-comments-save-busy.test.ts", "file-comments-save-busy-viewer.test.ts", "file-comments.test.ts"]) {
+    assert.doesNotMatch(flat(repoFile("ui", "webview", f)), BAN, f + " claims the holder's write is on disk when busy arrives");
+  }
 });
 
 test("the premise holds in the code: the host's status takes no lock, busy is the refusal for a lock still held, and store-io releases in finally after the work", () => {

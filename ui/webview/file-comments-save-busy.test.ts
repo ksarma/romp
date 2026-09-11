@@ -277,7 +277,7 @@ test("a save refused busy: the panel re-reads status once and, with the sidecar'
   const { out, first } = await saveFromEditor(h, c1);
   const asks = h.count("status");
   await h.refuse("busy", BUSY);
-  assert.equal(h.last().verb, "status", "one re-read before deciding: the other writer's write is on disk by now");
+  assert.equal(h.last().verb, "status", "one re-read before deciding: the holder may have renamed in the gap, and the retry's fence must be the sidecar as it stands");
   assert.equal(h.count("status"), asks + 1);
   assert.equal(out.ok, undefined); assert.equal(out.err, undefined, "still open");
   await h.ok({ ...withChanges(c1), storeMtimeNs: S9 });   // a reply a session wrote mid-edit moved the clock; the records are the same

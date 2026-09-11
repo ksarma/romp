@@ -371,7 +371,7 @@ async function saveIntoBusy(o: Open, content: string): Promise<{ first: any; ask
   const first = saveTracked(o, content);
   const asks = countOf("fileComments", "status");
   await saveRefused(first.reqId, "busy", BUSY);
-  assert.equal(lastOf("fileComments").verb, "status", "one re-read before deciding: the other writer's write is on disk by now");
+  assert.equal(lastOf("fileComments").verb, "status", "one re-read before deciding: the holder may have renamed in the gap, and the retry's fence must be the sidecar as it stands");
   assert.equal(countOf("fileComments", "status"), asks + 1);
   assert.equal(errBar(o.body), null, "nothing said to the person yet");
   assert.equal(o.b.save.disabled, true); assert.equal(o.b.save.textContent, "Saving…", "still saving through the retry");
@@ -399,7 +399,7 @@ test("a save refused busy, retried once and refused busy again: the bar holds th
   assert.equal(bar.childNodes[0].textContent, BUSY, "the host's words, verbatim");
   assert.doesNotMatch(BUSY, /changed on disk/, "…which are not the kernel's conflict wording, so the offer below rests on the code");
   const reload = bar.querySelector("button");
-  assert.ok(reload, "busy offers Reload file: the other writer's text is on disk, and a reload shows it");
+  assert.ok(reload, "busy offers Reload file: the other writer's text lands when it releases, and a reload shows the file as it stands");
   assert.equal(reload!.textContent, "Reload file");
   assert.equal(reload!.title, RELOAD_TITLE);
   assert.equal(bar.querySelectorAll("button").length, 1, "one offer");
@@ -427,7 +427,8 @@ test("a save refused busy, retried once and refused busy again: the bar holds th
 // re-read, and the bar carries the SAME words under the `busy` code, not the host's "; retry" — the host's words were
 // true while the lock was held and are stale once the re-read has shown other records, and a bar asking for a retry over
 // a head saying Save will refuse sent the person into one refused round trip before the accurate words arrived (the slice
-// review's stale-bar finding, 2026-09-11). The code keeps the Reload offer: the other writer's text is on disk.
+// review's stale-bar finding, 2026-09-11). The code keeps the Reload offer: a reload shows the file as it stands once the
+// other writer releases.
 test("a save refused busy whose re-read shows the sidecar's records changed: no retry, the bar carries the head's row (Save will refuse; copy, Cancel, Edit again) with Reload file, and the head says the same; Reload asks first, a no keeps the buffer and the viewer, a yes re-opens the file fresh, reading", async (t) => {
   const fc = await import("./file-comments");
   const o = await open(REPORT, t);

@@ -782,8 +782,9 @@ test("every mutating verb: consent first, a fence from the current status, one r
   assert.match(once, /this\.errors\.set\(slot, \{ text: e\.error, reload: MOVED\.has\(e\.code\) \|\| e\.code === FIGURE_CHANGED \}\);/, "a second refusal shows verbatim; moved fences offer Reload, and so does a figure whose bytes changed (Slice 3: never retried)");
   assert.match(once, /const fh = FIGURE_VERBS\.has\(verb\) && args\.target \? figureFenceHash\(s, args\.target as Target\) : null;\n\s*if \(fh\) fence\.figureHash = fh;/, "a write about a figure also fences on its bytes, when the status holds a hash for it (Slice 3)");
   // `busy` joined the three moved fences with the sidecar lock (decision 49, 2026-09-11): another writer held the host's
-  // lock past its wait, so the panel takes it as it takes a moved fence: a fresh status shows what that writer wrote, one
-  // retry lands after it, and a second refusal shows verbatim with Reload. tools/file-review-plan-sidecar.test.mjs pins the
+  // lock past its wait, so the panel takes it as it takes a moved fence: a fresh status, one retry on the fence it shows
+  // (which lands only when the holder released before the re-read: file-comments-busy-retry-fence.test.ts), and a second
+  // refusal shows verbatim with Reload. tools/file-review-plan-sidecar.test.mjs pins the
   // same literal against the plan's words; the save path's own retry (attempt === 0) names the code too.
   assert.match(SRC, /const MOVED = new Set\(\["store-moved", "file-moved", "config-moved", "busy"\]\);/,
     "the codes a fresh status and one retry answer: the three moved fences and busy (the host's lock, decision 49)");
