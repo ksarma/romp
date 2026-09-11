@@ -12,7 +12,12 @@
 // inside an html wrapper its own element inside the wrapper, read through the wrapper: "what the place refuses" below); in Raw it is the run of
 // rows from its first line to its last, so a blank row between two paragraphs belongs to neither and the block after
 // it is the place (the Slice 2 review: read as its own place, a blank top row seated the paragraph BEFORE the first
-// text the reader saw), while a blank row inside a fenced code block belongs to the code block. When the reader is
+// text the reader saw), while a blank row inside a fenced code block belongs to the code block; a row of a closing tag
+// alone (`</details>`, `</div>`, a wrapper's end, which renders no element of its own) reads as the block after it the
+// same way (the Slice 5 review, round 1: read as its own place, a shut fold's closing row seated nothing in Rendered,
+// since the seat walked back through the fold's unshown paragraphs to the wrapper's refused block, and the numeric
+// scrollTop stood, off by the fold's source height, 370px at 900px; a closing tag that is the document's last block
+// stays its own place). When the reader is
 // partway into a block that shows LINES (any block in Raw; in Rendered a markdown code block, fenced or indented, whose
 // code element shows the block's lines one for one), the line at the edge is kept too, as its own source span and its
 // top edge: the Raw row under the edge, or, in Rendered, the code's row under the edge (code-block.ts wraps every fence
@@ -89,9 +94,11 @@
 // of the block's wrappers (the summary; a tag the block closed before opening the wrapper) is a row of the block's own,
 // never the place, and is passed over for the block after it, so the wrapper's box at the edge reads the first nested
 // block (the owner's rulings for Slice 5: the wrapper's own rows are never the place in either direction, and the edge
-// inside a wrapper reads what is nested there; a closed `<details>`, whose nested content has no layout, reads the block
-// after it). Each level is searched on its own (topVisibleIndex over that level's children, then the descent into the
-// child the search lands on), not over one flattened list: the map's index checks the root's shape, every child by
+// inside a wrapper reads what is nested there; a closed `<details>`, whose nested content the browser does not show, reads
+// the block after it: boxOf reads that content as no layout by checkVisibility, since Chromium lays a shut fold's content
+// out all the same and the first hidden paragraph's rect coincides with the block after the fold's). Each level is
+// searched on its own (topVisibleIndex over that level's children, then the descent into the child the search lands
+// on), not over one flattened list: the map's index checks the root's shape, every child by
 // identity, on each read, so a read per top-level child would cost the square of the document on every scroll frame.
 // An html block's pairing to one element or several is trusted only when its own source, parsed by the browser's HTML
 // parser (DOMParser), yields as many elements with the same text, whitespace and the viewer's own controls apart (a
@@ -125,10 +132,11 @@
 // form in nearly every note. Every other entity form, valid or not, decodes alike on both sides.
 //
 // Written over the DOM the viewer builds and nothing else (querySelector, childNodes, getBoundingClientRect,
-// scrollTop) and the anchor map's block table, so a stand-in with no layout (every box at 0,0) reads no place and seats
-// nothing, and the node tests over the viewer run unchanged; the browser legs (file-view-place-browser.test.ts,
-// file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts, file-view-place-html-browser.test.ts,
-// file-view-place-wrapper-end-browser.test.ts) measure the real thing.
+// checkVisibility where the browser has it, scrollTop) and the anchor map's block table, so a stand-in with no layout
+// (every box at 0,0) reads no place and seats nothing, and the node tests over the viewer run unchanged; the browser legs
+// (file-view-place-browser.test.ts, file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts,
+// file-view-place-html-browser.test.ts, file-view-place-wrapper-end-browser.test.ts,
+// file-view-place-closed-details-browser.test.ts) measure the real thing.
 import { Lexer } from "marked";
 import { followPassage } from "./file-comments";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, renderedBlockWrappers, rawRows, rawRowForOffset, rawRowSpan, type SourceRange } from "./anchor-map";
@@ -209,10 +217,21 @@ export function blockHolding(spans: SourceRange[], offset: number): number {
 const elementsOf = (n: Node): Element[] => Array.from(n.childNodes).filter((c) => c.nodeType === 1) as Element[];
 const hasBox = (n: unknown): n is Element => !!n && typeof (n as Element).getBoundingClientRect === "function";
 /** An element's box, or null for one with no layout: every edge 0 and no client rect (display: none, a `hidden`
- *  attribute the sanitizer keeps; a stand-in with no layout reads the same, and so keeps no place). */
+ *  attribute the sanitizer keeps; a stand-in with no layout reads the same, and so keeps no place), or an element the
+ *  browser does not SHOW though it answers a rect (checkVisibility false). The content of a closed `<details>` is the
+ *  second kind: Chromium skips it through the fold's `::details-content` pseudo-element (content-visibility: hidden) and
+ *  still lays it out on a forced read, so a paragraph inside a shut fold answers a full box and a client rect, the fold's
+ *  blocks stacked from where it would open, the first coinciding with the block after the fold's (the Slice 5 review,
+ *  round 1: read by its rect, the hidden paragraph was the place, and the Raw switch seated the fold's hidden source at
+ *  the edge under the summary's row where the reader had the block after the fold in view; the plan's rule for a closed
+ *  fold, the block after it, had assumed the content has no layout; md-config-goto-closed-details-browser.test.ts and
+ *  anchor-map-obsidian.test.ts record the same phantom under a highlight). checkVisibility is the browser's own answer
+ *  to "is this shown", and the one thing that tells the phantom from the block it coincides with; where a browser
+ *  offers none (a stand-in) the rect alone decides, as before. */
 function boxOf(el: Element): Box | null {
   const r = el.getBoundingClientRect();
   if (r.top === 0 && r.bottom === 0 && r.width === 0 && r.height === 0 && (typeof el.getClientRects !== "function" || el.getClientRects().length === 0)) return null;
+  if (typeof el.checkVisibility === "function" && !el.checkVisibility()) return null;
   return { top: r.top, bottom: r.bottom };
 }
 const bottomOrNaN = (el: Element): number => { const b = boxOf(el); return b ? b.bottom : NaN; };
@@ -272,6 +291,10 @@ function isHtmlBlock(source: string, span: SourceRange): boolean {
   if (!/^ {0,3}</.test(source.slice(span.start, Math.min(span.end, span.start + 4)))) return false;
   try { const t = Lexer.lex(source.slice(span.start, span.end))[0]; return !!t && t.type === "html"; } catch { return false; }
 }
+/** Whether the block is a closing tag alone (`</details>`, `</div>`, after at most three spaces, nothing else on its
+ *  lines): the end of a wrapper the browser nested markdown into, which owns no element (anchor-map.ts pairs it to none,
+ *  as a comment's block) and renders nothing of its own, so its Raw row is read as a blank row between blocks is. */
+const closesAlone = (source: string, span: SourceRange): boolean => /^ {0,3}<\/[a-zA-Z][\w:-]*\s*>\s*$/.test(source.slice(span.start, span.end));
 /** Block `b`'s elements when the pairing can be trusted, null when it cannot. None always can, and one element of any
  *  block but an html block (every other block renders as exactly one, a paragraph nested in an html wrapper included).
  *  An html block's, one or several, are trusted when the block's own source, parsed by the browser's HTML parser,
@@ -375,7 +398,8 @@ function rawLineTop(code: Element, source: string, span: SourceRange, lineStart:
 
 /** The reader's place in `body` as it stands: the top-visible block of the Rendered view (`.fileview-md`'s children,
  *  read to their blocks, an html wrapper's descended into: readRendered) or of the Raw view (the block holding the top
- *  row of `code.hljs .fv-cl`, or the one after a blank row between blocks), read against `source`, the text that view
+ *  row of `code.hljs .fv-cl`, or the one after a blank row between blocks or a row of a closing tag alone), read
+ *  against `source`, the text that view
  *  was painted from, with the line at the edge when the reader is partway into a block that shows lines. null when the
  *  body shows neither view, when nothing is in view (a stand-in with no layout), when no element at or below the top
  *  edge is a block's (whitespace between blocks, an html block's leftover node, a row of a wrapper's block's own: the
@@ -402,12 +426,16 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
     if (!rowBox) continue;
     const span = rawRowSpan(code, source, rows[i]);
     if (!span) return null;
-    const b = blockHolding(spans, span.start);
+    let b = blockHolding(spans, span.start);
     if (b < 0) return null;
+    // a row of a closing tag alone (a wrapper's end, which renders no element of its own) reads as the block after it, as a
+    // blank row between blocks does (the header); one that is the document's last block stays its own, seated through the
+    // nearest block before it with a box (renderedBoxNear)
+    while (b + 1 < spans.length && closesAlone(source, spans[b])) b++;
     const box = rawBlockBox(code, source, spans[b]);
     if (!box) return null;
-    // the row is the block's own when the block starts above the edge: a blank row between blocks reads as the block after
-    // it, whose rows all start below the row and so below the edge
+    // the row is the block's own when the block starts above the edge: a blank row between blocks, or a closing tag's, reads
+    // as the block after it, whose rows all start below the row and so below the edge
     return placeOf(source, "raw", spans, b, box, edge, atTop, box.top < edge ? { start: span.start, end: span.end, top: rowBox.top - edge } : null);
   }
   return null;
@@ -431,7 +459,7 @@ function readRendered(md: Element, source: string, spans: SourceRange[], kids: E
       if (wrappers.indexOf(kids[i]) < 0) continue;   // a row of the wrapper's block's own (its summary): the blocks nested after it are read
       const inner = readRendered(md, source, spans, elementsOf(kids[i]), edge, atTop);
       if (inner !== undefined) return inner;
-      continue;   // nothing nested in the wrapper ends below the edge with a layout (a closed details' content): the element after it
+      continue;   // nothing nested in the wrapper ends below the edge with a layout (a closed details' content, boxOf): the element after it
     }
     const els = ownedElements(md, source, spans[b], b);
     if (!els) return null;   // a pairing the map got wrong (an html block a sanitizer drop reshaped): no place
@@ -607,12 +635,17 @@ export function seatPlaceOutcome(body: HTMLElement, source: string, place: Place
   return outcome(true);
 }
 /** Block `b`'s box in the Rendered view, or, when it has no element with a layout (a comment, a hidden element, a block
- *  the sanitizer dropped, a wrapper's closing tag, a paragraph nested in a closed `<details>`), the nearest block's
- *  before it, else after it. null when block `b`'s own pairing, or the nearest before it with elements, is one the map
- *  got wrong or the wrapper's own (the wrapper's own rows read from Raw; a paragraph nested in a wrapper has its own
- *  element since Slice 5's walk and never reaches the wrapper here): the wrapper's box is the rest of the document's,
- *  and no seat is better than that one (the review round 3: a Raw row of `<summary>` seated the run's union, 3200px,
- *  in Rendered). */
+ *  the sanitizer dropped, a wrapper's closing tag, a paragraph nested in a closed `<details>`, which boxOf reads as
+ *  none), the nearest block's before it, else after it. null when block `b`'s own pairing, or the nearest before it
+ *  with elements, is one the map got wrong or the wrapper's own (the wrapper's own rows read from Raw; a paragraph
+ *  nested in an OPEN wrapper has its own element since Slice 5's walk and never reaches the wrapper here; one nested in
+ *  a closed `<details>` walks back through the fold's unshown paragraphs to the wrapper's block and seats nothing, the
+ *  body left where it stands; the fold's closing tag reaches here only as the document's last block, since readPlace
+ *  reads its Raw row as the block after it): the wrapper's box is the rest of the document's, and no seat is better
+ *  than that one (the review round 3: a Raw row of `<summary>` seated the run's union, 3200px, in Rendered; the Slice
+ *  5 review, round 1, records the shut fold's own rows, its opener and its hidden source, as a question for the owner,
+ *  since a seat at the fold itself, or a Raw read of the opener's rows as the block after them, would land the reader
+ *  instead). */
 function renderedBoxNear(md: Element, source: string, spans: SourceRange[], b: number): Box | null {
   const own = ownedElements(md, source, spans[b], b);
   if (!own) return null;

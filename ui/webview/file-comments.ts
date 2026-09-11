@@ -436,9 +436,13 @@ function unframeImage(img: HTMLElement, marks: string[]): void {
  *  in its place and the mark comes out, then each parent is normalized ONCE, after the loop (plans/markdown-viewer.md Slice 5,
  *  section 2 (d)). Normalizing the parent per mark cost the square of a paragraph's inline children where the paint costs their
  *  count: 9,999 marks over a paragraph of 5,000 links painted in 33 ms and unwrapped in 469 (the Slice 4 review, round 9);
- *  normalized once per parent they unwrap in 11 ms. Nested marks (two comments over one passage) come in document order, the
- *  outer first, so the inner's parent is read after the outer went and the set holds the block once; given inner first (an
- *  order a caller might hold), the inner's parent is the outer, detached by then, and its normalize is a no-op. */
+ *  normalized once per parent they unwrap in 11 ms. Both figures are for marks the browser has not laid out (the unpaint in the
+ *  same task as the paint, or a host outside the document). The panel's unpaint always finds its marks laid out (the pass before
+ *  measured them in trimBlanks, and frames rendered since), and there Chromium detaches each mark's layout object on removeChild,
+ *  a cost the order of the normalize does not touch: the same 9,999 marks unwrap in about 340 ms against about 790, a gain of
+ *  2.3x, not 40x (the Slice 5 review, round 1, headless Chromium). Nested marks (two comments over one passage) come in document
+ *  order, the outer first, so the inner's parent is read after the outer went and the set holds the block once; given inner first
+ *  (an order a caller might hold), the inner's parent is the outer, detached by then, and its normalize is a no-op. */
 export function unwrapMarks(marks: Iterable<Element>): void {
   const parents = new Set<Node>();
   for (const n of marks) {
@@ -448,6 +452,13 @@ export function unwrapMarks(marks: Iterable<Element>): void {
   }
   for (const p of parents) p.normalize();
 }
+/** A selection's two ends as the browser reports them (Panel.offeredFor), and whether a live selection stands at them: four
+ *  compares by node identity and offset, where Selection.toString walks the selected text (2 ms over a paragraph of 5,000 links),
+ *  so a changed selection is settled for free and the text is read only for one whose ends match (onSelectionChange). */
+type SelectionEnds = { anchorNode: Node | null; anchorOffset: number; focusNode: Node | null; focusOffset: number };
+const endsOf = (sel: Selection): SelectionEnds => ({ anchorNode: sel.anchorNode, anchorOffset: sel.anchorOffset, focusNode: sel.focusNode, focusOffset: sel.focusOffset });
+const atEnds = (was: SelectionEnds, sel: Selection): boolean =>
+  was.anchorNode === sel.anchorNode && was.anchorOffset === sel.anchorOffset && was.focusNode === sel.focusNode && was.focusOffset === sel.focusOffset;
 /** Whether a selection end (`node`, `offset`) lies inside the mark `x`, or at one of its edges (Panel.dragClick). A drag
  *  that ends at the mark's boundary may be reported by the engine not as a point inside the mark but as one in the mark's
  *  parent, at the mark's index (its start) or the next (its end), or at the end of the text node before the mark or the
@@ -629,21 +640,29 @@ const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew thi
 type PassageAnchor = NonNullable<Card["anchor"]>;
 const anchorKey = (a: PassageAnchor): string => JSON.stringify([a.quote, a.prefix, a.suffix]);
 /** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
- *  open card, since a tag's title never reaches touch. */
-function copyUnsureWords(c: Card): string {
+ *  open card, since a tag's title never reaches touch. `hinted`: the copy is the sequential hint's, the one after the previous
+ *  comment's on the same passage (paintAll, nextCopyHint; Panel.hintedCopies), and the words name that copy; the first copy is
+ *  named only where it is the one highlighted (the Slice 5 review, round 1: a hinted card's words named the first copy while its
+ *  highlight sat on the second). */
+function copyUnsureWords(c: Card, hinted: boolean): string {
   return "This passage occurs in the file more than once with the same surroundings, and "
     + (c.anchorAt === null
-      ? "the comment stores no position to tell the copies apart, so the first copy is highlighted"
+      ? (hinted
+        ? "the comment stores no position to tell the copies apart, so the copy after the previous comment's on this passage is highlighted"
+        : "the comment stores no position to tell the copies apart, so the first copy is highlighted")
       : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted")
     + " — not a confirmed one.";
 }
-/** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branch as
+/** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branches as
  *  copyUnsureWords, so the mark and the card never disagree about whether a position is stored (the review,
- *  2026-09-08: the title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none). */
-function unsureMarkTitle(c: Card): string {
+ *  2026-09-08: the title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none) or about
+ *  which copy is painted (the Slice 5 review, round 1). */
+function unsureMarkTitle(c: Card, hinted: boolean): string {
   return "Open the comment; this passage recurs, and "
     + (c.anchorAt === null
-      ? "the comment stores no position to tell the copies apart, so this is the first copy"
+      ? (hinted
+        ? "the comment stores no position to tell the copies apart, so this is the copy after the previous comment's on this passage"
+        : "the comment stores no position to tell the copies apart, so this is the first copy")
       : "this copy is the nearest to the comment's stored position")
     + ", not a confirmed one";
 }
@@ -1087,10 +1106,17 @@ class Panel {
    *  subject is a picture, the picture itself; a passage is re-read from the live selection. hideFloatOnScroll compares the
    *  subject's rect now against it; cleared with the float (hideFloat), so no element of a swapped-out render is held. */
   floatAt: { top: number; right: number; img: HTMLElement | null } | null = null;
-  /** The selection the float was last offered beside (onSelection): its text and its two ends. The document's selectionchange
-   *  re-offers for a DIFFERENT selection only (onSelectionChange), so the seam's re-seat of the same selection after a paint
-   *  makes no second offer, and an offer a scroll hid stays hidden until the selection changes. */
-  offeredFor: { text: string; anchorNode: Node | null; anchorOffset: number; focusNode: Node | null; focusOffset: number } | null = null;
+  /** The selection the float answers to: the one it was last offered beside (onSelection), as the panel's own writes over the
+   *  body's text have since left it (afterPaint: the end of paintAll and repaintPresel); its text and its two ends. The document's
+   *  selectionchange re-offers for a DIFFERENT selection only (onSelectionChange), so the seam's re-seat of the same selection after
+   *  a reflow makes no second offer, an offer a scroll hid stays hidden until the selection changes, and the paint's own move of the
+   *  selection is no offer either: unwrapping a mark collapses a selection end inside its text to the mark's place, so a selection
+   *  overlapping a highlight is cut short by every paint that is no gesture of the person's (a peer's comment landing through the
+   *  poll, a filter or settings pick), and the browser fires selectionchange for the move; compared with the ends of the OFFER, that
+   *  change read as the person's and re-offered a float a scroll had hidden, beside a passage nobody selected (the Slice 5 review,
+   *  round 1). Read from the live selection after each paint, the record holds no node of a swapped-out render: it used to keep the
+   *  offer's two nodes past a reload's paint, and the whole previous render behind them, until the next offer (the same review). */
+  offeredFor: SelectionEnds & { text: string } | null = null;
   /** A pointer is down (the document's capture mousedown or touchstart; cleared at mouseup, touchend, touchcancel, or the dragend
    *  of a press that became a drag of the selected text, which ends in no mouseup): a drag's every selectionchange is ignored, so
    *  the drag keeps its one offer at mouseup (the seam's onSelect) and the float does not flicker mid-drag. */
@@ -1115,10 +1141,13 @@ class Panel {
       if (this.floatAt && !this.floatAt.img) this.hideFloat();
       return;
     }
+    // the selection the float answers to, as offered or as the panel's own paint left it (offeredFor): the ends first (atEnds), the
+    // text last and only for ends that match, handed on so a changed selection is read once, in onSelection, not twice (the Slice 5
+    // review, round 1: 2 ms a read over a paragraph of 5,000 links)
     const was = this.offeredFor;
-    if (was && was.text === sel.toString() && was.anchorNode === sel.anchorNode && was.anchorOffset === sel.anchorOffset
-      && was.focusNode === sel.focusNode && was.focusOffset === sel.focusOffset) return;
-    this.onSelection(sel);
+    let text: string | undefined;
+    if (was && atEnds(was, sel)) { text = sel.toString(); if (was.text === text) return; }
+    this.onSelection(sel, text);
   };
   regionLayers = new Map<Pictured, RegionLayer>();            // the overlays, one per picture in view — an <img>, or a PDF page's canvas (Slice 3/4; paintRegions)
   regionMarks = new Map<Pictured, RegionMark[]>();            // the rectangles the last region pass filed per picture: what a layer made late (onPageNear) paints
@@ -1180,6 +1209,9 @@ class Panel {
   /** The comments whose highlight sits on a copy the panel cannot vouch for (copyUnsure): the anchor ties and the stored
    *  position names none of the tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
   unsureCopies = new Set<string>();
+  /** The comments among them whose copy is the sequential hint's, the one after the previous comment's on the same passage
+   *  (paintAll, nextCopyHint), so the card's and the mark's words name that copy and not the first (copyUnsureWords). */
+  hintedCopies = new Set<string>();
   base: PollBaseline | null = null;
   // editing over pending changes (Slice 5): what the editor's records came from — the status at Edit, or the last landed
   // save's reply once the editor stayed up past it — as the records and the sidecar/config fence the save fences on (a
@@ -1993,6 +2025,7 @@ class Panel {
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.pressBegan, true);
     for (const ev of ["mouseup", "touchend", "touchcancel", "dragend"]) document.removeEventListener(ev, this.pressEnded, true);
     document.removeEventListener("selectionchange", this.onSelectionChange);   // the keyboard's offer goes with the float (onSelectionChange)
+    this.offeredFor = null;                                                      // ...and the selection it compared with
     this.ctx.body().removeEventListener("load", this.scheduleRetrim, true);
     const fonts = typeof document !== "undefined" ? (document as any).fonts : null;
     if (fonts && typeof fonts.removeEventListener === "function") fonts.removeEventListener("loadingdone", this.scheduleRetrim);   // the document outlives the viewer
@@ -2454,7 +2487,7 @@ class Panel {
   }
 
   // ── commenting ─────────────────────────────────────────────────────────────────────────────────
-  onSelection(sel: Selection): void {
+  onSelection(sel: Selection, text?: string): void {
     if (!this.open || this.ctx.mode() === "media" || !sel.rangeCount) return;
     // the seam fires for any selection inside the viewer's box, the aside included: a passage is text of the
     // FILE, so a selection in a card, the Log or the message preview offers nothing (it would only be refused)
@@ -2463,7 +2496,7 @@ class Panel {
     const rect = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect();
     if (!rect.width && !rect.height) return;
     this.imageTarget = null;                           // a text selection replaces a picture as the float's subject
-    this.offeredFor = { text: sel.toString(), anchorNode: sel.anchorNode, anchorOffset: sel.anchorOffset, focusNode: sel.focusNode, focusOffset: sel.focusOffset };   // what a selectionchange compares with (onSelectionChange)
+    this.offeredFor = { text: text ?? sel.toString(), ...endsOf(sel) };   // what a selectionchange compares with (onSelectionChange; `text` when it read the text already)
     this.showFloat(rect);
   }
   private showFloat(rect: { right: number; top: number }, img: HTMLElement | null = null): void {
@@ -3263,7 +3296,7 @@ class Panel {
    *  deletion the map cannot place is card-only), each mark carrying the change's id and the author's session
    *  colour — or none of them, with Show changes inline off. The composer's pending target is painted last. */
   paintAll(): void {
-    if (this.ctx.editing()) { this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render
+    if (this.ctx.editing()) { this.afterPaint(); this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render; the offer's record goes with the read view's nodes (afterPaint)
     this.clearLanding();                               // a paint pass over the read view is new information about its rows: the last Reveal's cue goes with it (landOn)
     this.editSeed = null;                              // no editor is up: nothing rode into one (routesSave reads the status again)
     // the rows that said to decide in the editor are about an editor that is gone: retired with it (a row another
@@ -3279,7 +3312,7 @@ class Panel {
     if (this.changesMovedUnderEdit) { this.changesMovedUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_MOVED_UNDER_EDIT) this.errors.delete("edit"); }
     if (this.changesUnreadUnderEdit) { this.changesUnreadUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_UNREAD_UNDER_EDIT) this.errors.delete("edit"); }
     this.located = new Map();
-    this.unsureCopies = new Set();
+    this.unsureCopies = new Set(); this.hintedCopies = new Set();
     this.paintedChanges = new Set();
     // a mark of ours holding the keyboard (Enter on it opened the panel, whose colour fetch and status reply both
     // repaint) is unwrapped below, and a removed element drops the focus to the body; refocus() mends only the
@@ -3319,6 +3352,8 @@ class Panel {
       // guess: painted in the dashed cue and said on the card (copyUnsure), never shown as the copy that was chosen
       const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);
       if (unsure) this.unsureCopies.add(card.id);
+      const hinted = at === undefined && hint !== undefined;   // the hint moved the pick past the previous card's copy: the words name that copy (copyUnsureWords)
+      if (hinted) this.hintedCopies.add(card.id);
       let painted = false;
       if (loc.state !== "detached" && loc.range) {
         const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");
@@ -3329,7 +3364,7 @@ class Panel {
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
         // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
-        const title = unsure ? unsureMarkTitle(card) : "Open the comment on this passage";
+        const title = unsure ? unsureMarkTitle(card, hinted) : "Open the comment on this passage";
         for (const m of out || []) { if (unsure) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);
@@ -3350,7 +3385,18 @@ class Panel {
     for (const c of this.passChanges) if (!c.marks.some(standing)) this.paintedChanges.delete(c.id);
     this.paintRegions();
     if (held) this.refocusMark(held);
+    this.afterPaint();
     this.render();
+  }
+  /** After the panel's own writes over the body's text (the end of paintAll, of repaintPresel, and paintAll's stand-down while the
+   *  editor holds the body): the selection the float answers to is the selection as the writes left it (offeredFor, read by
+   *  onSelectionChange), so the selectionchange the writes fire is no offer, and a record whose nodes a reload's paint or the editor
+   *  replaced holds the live selection's nodes instead of the swapped-out render's. Read after every write of the pass, the overlays'
+   *  (paintRegions) included, since a live range's ends move with the nodes around them; the text once (Selection.toString), the
+   *  same read the offer makes. */
+  private afterPaint(): void {
+    const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    this.offeredFor = sel && sel.rangeCount ? { text: sel.toString(), ...endsOf(sel) } : null;
   }
   /** The layout-time trim over the pass's standing Rendered marks (anchor-map.ts trimCollapsedMarks: a mark whose text is blank
    *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every
@@ -3613,7 +3659,8 @@ class Panel {
    *  whitespace, so it is never painted; md-config-paint-presel-refile-browser.test.ts, both directions, the paragraph in a
    *  monospace face at a fixed measure so the wrap point is the design's and not the face's). A filing that did not move renders
    *  nothing: the caller's render stands, and no card moves on no new information. */
-  private repaintPresel(): void {
+  private repaintPresel(): void { this.repaintPreselPass(); this.afterPaint(); }   // the selection as the repaint left it is the one the float answers to (afterPaint)
+  private repaintPreselPass(): void {
     const src = this.ctx.text(); const root = this.contentRoot();
     if (src === null || !root || this.ctx.mode() !== "rendered") {   // a media body, or the Raw view (a row mark, no layout-time trim)
       this.unpaint(".fc-presel");
@@ -5684,7 +5731,7 @@ class Panel {
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
     // a highlight on a copy the panel cannot vouch for (copyUnsure): the composer's chip for a pending passage in the same
     // state wears the same words, and the title says which copy is painted and why it is a guess
-    if (this.unsureCopies.has(c.id)) { const t = el("span", "fc-tag", "passage recurs"); t.title = copyUnsureWords(c); head.appendChild(t); }
+    if (this.unsureCopies.has(c.id)) { const t = el("span", "fc-tag", "passage recurs"); t.title = copyUnsureWords(c, this.hintedCopies.has(c.id)); head.appendChild(t); }
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
     // the changes the comment names (refs; the about follow-on, 2026-09-10): one tag per source — "about N changes" for the
     // person's own pick, "answered by a change" for a legacy binding — its title the changes' words and states, and the
@@ -5731,7 +5778,7 @@ class Panel {
     // changed, that the region could not be read — each with its way out: the tags' titles never reach touch, where the
     // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
     // and no way to learn that resolving ends it (the 2026-09-06 review; ui/CLAUDE.md: never dead-end a compact view)
-    if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c)));   // the tag's words, in reach of touch
+    if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c, this.hintedCopies.has(c.id))));   // the tag's words, in reach of touch
     if (shownGone || shownSt === "stale") card.appendChild(el("div", "fc-note", staleWords));
     else if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status, c.id)));
     if (unreadable) card.appendChild(el("div", "fc-note", UNREADABLE_REGION + " " + recourse));

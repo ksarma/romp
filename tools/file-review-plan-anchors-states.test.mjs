@@ -96,12 +96,16 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   for (const sheet of ['styles.css', 'feed.css']) {
     assert.ok(read('ui', 'webview', sheet).replace(/\s+/g, ' ').includes('wears a dashed ring, and so does a located copy the panel cannot confirm as the one chosen (file-comments.ts copyUnsure: the passage recurs and the stored position names none of the copies)'), `${sheet} names the guessed copy as a wearer of fc-hl-context`);
   }
-  assert.ok(panel.includes('const title = unsure ? unsureMarkTitle(card) : "Open the comment on this passage";'), 'the mark says it is not confirmed');
+  assert.ok(panel.includes('const title = unsure ? unsureMarkTitle(card, hinted) : "Open the comment on this passage";'), 'the mark says it is not confirmed');
   // the title branches on whether a position is stored, on the same test as the card's words (the third review: the
-  // title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none)
+  // title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none), and on whether the
+  // sequential hint placed the copy (the Slice 5 review, round 1: a hinted card's words named the first copy while its highlight
+  // sat on the second)
   const markTitle = fn(panel, 'unsureMarkTitle');
   assert.ok(markTitle.includes('"Open the comment; this passage recurs, and "') && markTitle.includes('c.anchorAt === null'), 'the same branch as copyUnsureWords');
   assert.ok(markTitle.includes('"the comment stores no position to tell the copies apart, so this is the first copy"'), 'no position: the first copy');
+  assert.ok(markTitle.includes('"the comment stores no position to tell the copies apart, so this is the copy after the previous comment\'s on this passage"'), 'no position, the sequential hint: the copy after the previous comment\'s');
+  assert.ok(panel.includes('const hinted = at === undefined && hint !== undefined;') && panel.includes('if (hinted) this.hintedCopies.add(card.id);'), 'the hint\'s cards are remembered for the words');
   assert.ok(markTitle.includes('"this copy is the nearest to the comment\'s stored position"') && markTitle.includes('", not a confirmed one"'), 'a position naming none: the nearest, and never a confirmed one');
   assert.ok(panel.includes('if (img) { frameImage(img, unsure ? cls + " fc-hl-context" : cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }'), 'a framed figure too');
   // copyUnsure: a position that names the copy is the choice; a tie is the anchor's earliest and latest best hits differing
@@ -110,10 +114,11 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   assert.ok(unsure.includes('const first = locateComment(src, card.anchor, 0);') && unsure.includes('const last = locateComment(src, card.anchor, src.length);'), 'the host\'s own test for a tie');
   assert.ok(unsure.includes('return last.state === "located" && !!last.range && last.range.start !== first.range.start;'), 'one best hit is the anchor\'s own answer');
   // the card: a "passage recurs" tag with the words as its title, and the words on the open card
-  assert.ok(panel.includes('if (this.unsureCopies.has(c.id)) { const t = el("span", "fc-tag", "passage recurs"); t.title = copyUnsureWords(c); head.appendChild(t); }'), 'the tag');
-  assert.ok(panel.includes('if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c)));'), 'the line on the open card');
+  assert.ok(panel.includes('if (this.unsureCopies.has(c.id)) { const t = el("span", "fc-tag", "passage recurs"); t.title = copyUnsureWords(c, this.hintedCopies.has(c.id)); head.appendChild(t); }'), 'the tag');
+  assert.ok(panel.includes('if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c, this.hintedCopies.has(c.id))));'), 'the line on the open card');
   const words = fn(panel, 'copyUnsureWords');
   assert.ok(words.includes('"the comment stores no position to tell the copies apart, so the first copy is highlighted"'), 'no position: the first copy');
+  assert.ok(words.includes('"the comment stores no position to tell the copies apart, so the copy after the previous comment\'s on this passage is highlighted"'), 'no position, the sequential hint: the copy after the previous comment\'s');
   assert.ok(words.includes('"the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted"'), 'a position naming none: the nearest');
   assert.ok(words.includes('" — not a confirmed one."'), 'and never a confirmed one');
 });

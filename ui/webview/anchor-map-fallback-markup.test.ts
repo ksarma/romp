@@ -188,7 +188,11 @@ test("stripMarkupMapped: the text is the flat strip's, byte for byte, and every 
     ["trailing backslash\\", "trailing backslash"],
     ["| `GET /notes` | GET /notes lists notes |", "| GET /notes | GET /notes lists notes |"],
     ["| **cache** | cache |", "| cache | cache |"],
-    ["a * b * c", "a  b  c"],
+    ["a * b * c", "a * b * c"],   // no emphasis: the asterisks are not flanking (they were read as a pair around " b " before)
+    ["*em* and a * b", "em and a * b"],
+    ["`__init__` and `f(*args, **kwargs)` and `a*b*c`", "__init__ and f(*args, **kwargs) and a*b*c"],   // a code span's content is the rendering's
+    ["`` a ` b `` and **`x`**", " a ` b  and x"],
+    ["\\`not code\\` *em*", "`not code` em"],   // an escaped backtick opens no span and is the backtick it shows (before: the backticks went and the backslashes stayed)
     ["-\tTab after the marker", "Tab after the marker"],
     ["# T\n\n| a | b |\n|---|---|\n| `x` | x |\n```\nfence\n```\n", "T\n\n| a | b |\n|---|---|\n| x | x |\n\nfence\n\n"],
   ];
@@ -440,6 +444,46 @@ test("Rendered fallback, a table hole: cells with no whitespace between them in 
   h = highlight(quoted, rangeOf(quoted, "c | d"));
   assert.ok(h.marks && h.marks.length, "a quoted table's two cells paint");
   assert.deepEqual(textMarks(h.marks!).map((m) => m.textContent), ["c", "d"]);
+});
+
+// ── the Slice 5 review, round 1: a code span's content in a cell, and a quote begun inside a fence line ──
+
+test("Rendered fallback, a table hole: a code span's content is read as the rendering shows it, so `__init__`, `f(*args, **kwargs)`, `_private_` and `a*b*c` in cells paint whole (before: the emphasis rules ran inside the backticks and the needle read `init`, `f(args, *kwargs)`, `private` and `abc`: a partial mark over `init`, or none, the card offering Reveal); a plain cell `x * y * z` paints too (before: its asterisks read as a pair); a bold cell and a code-span cell whose plain text recurs still paint their own cell", () => {
+  const NAMES = "# Names\n\n| Name | Meaning |\n|------|---------|\n| `__init__` | the constructor |\n| `f(*args, **kwargs)` | a call |\n| `_private_` | hidden |\n| `a*b*c` | product |\n| x * y * z | stars |\n| **bold** `__x__` | both |\n| `GET /notes` | GET /notes lists notes |\n\nAfter.\n";
+  for (const [quote, shown] of [["`__init__`", "__init__"], ["`f(*args, **kwargs)`", "f(*args, **kwargs)"], ["`_private_`", "_private_"], ["`a*b*c`", "a*b*c"], ["x * y * z", "x * y * z"], ["**bold** `__x__`", "bold __x__"]] as const) {
+    const h = highlight(NAMES, rangeOf(NAMES, quote));
+    assert.ok(h.marks && h.marks.length, quote + ": painted (was " + (quote === "`__init__`" || quote === "`_private_`" ? "a partial mark" : "null") + ")");
+    assert.equal(norm(h.text!), shown, quote + ": the whole cell's text under the marks");
+    assert.equal(h.cell!.index, 0, quote + ": the first cell");
+  }
+  // the ordinal over a recurring plain text still finds the commented cell (the control of part 2)
+  const h = highlight(NAMES, rangeOf(NAMES, "`GET /notes`"));
+  assert.ok(h.marks && h.marks.length);
+  assert.equal(h.text, "GET /notes");
+  assert.equal(h.cell!.index, 0);
+});
+
+test("Rendered fallback, a code hole: a quote begun inside the opening fence's info string (a Raw drag from the `p` of ```python, or from its second backtick, to the end of the first code line) paints the first code line (before: the sliced first line, `python`, was no fence by its text and stayed in the needle, which the code never holds: nothing painted, the card offering Reveal); one ending inside the closing fence's backticks paints the last line; a code line that itself opens with three backticks inside a four-backtick fence stays in the needle and paints (before: dropped as a fence line on the source side while the rendering shows it)", () => {
+  const fence = TOTALS.indexOf("```python"), line1End = TOTALS.indexOf("total = a * b * 2") + "total = a * b * 2".length;
+  let h = highlight(TOTALS, { start: fence + 3, end: line1End }, "PRE");
+  assert.ok(h.marks && h.marks.length, "from the `p` of the info string (was null)");
+  assert.equal(norm(h.text!), "total = a * b * 2");
+  h = highlight(TOTALS, { start: fence + 1, end: line1End }, "PRE");
+  assert.ok(h.marks && h.marks.length, "from the second backtick (was null)");
+  assert.equal(norm(h.text!), "total = a * b * 2");
+  const close = TOTALS.indexOf("```\n\nAfter");
+  h = highlight(TOTALS, { start: TOTALS.indexOf("name_ ="), end: close + 2 }, "PRE");
+  assert.ok(h.marks && h.marks.length, "to inside the closing fence (was null)");
+  assert.equal(norm(h.text!), "name_ = under_score # trailing comment");
+  const FOUR = "Intro paragraph.\n\n````\n```\ninner fence line\n```\n````\n\nAfter paragraph.\n";
+  h = highlight(FOUR, rangeOf(FOUR, "```\ninner fence line"), "PRE");
+  assert.ok(h.marks && h.marks.length);
+  assert.equal(norm(h.text!), "``` inner fence line", "the three-backtick code line is in the needle (before: `inner fence line` alone)");
+  // the whole block, fence lines included, still paints from its first character (part 3's pin, kept)
+  const whole = { start: FENCED.indexOf("```python"), end: FENCED.indexOf("```\n\nAfter") + 3 };
+  h = highlight(FENCED, whole, "PRE");
+  assert.ok(h.marks && h.marks.length);
+  assert.equal(norm(h.text!), norm("# a comment\ndef f(x):\n    return x + 1  # trailing\n\nvalue = f(2)"));
 });
 
 // ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────

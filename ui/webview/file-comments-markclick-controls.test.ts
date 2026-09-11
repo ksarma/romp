@@ -360,7 +360,8 @@ async function press(t: TestContext, act: "fcchange" | "fcopen", id: string, key
   const mark = markOf(w, act, id);
   const c0 = card(w.main, key);
   assert.equal(!!c0 && c0.classes.includes("open"), false, "the card starts collapsed, or unmounted with the panel");
-  win.getSelection = () => selOf(mark, w.body);
+  const sel = selOf(mark, w.body);   // read once: a click that opens the panel paints, and the panel reads the selection after its paint (afterPaint), when the mark's words have moved out of it
+  win.getSelection = () => sel;
   if (opts.via === "enter") mark.focus();
   const scrolls = scrolledInto.length, focus = doc.activeElement;
   if (opts.via === "enter") dispatch(mark, new Ev("keydown", { key: "Enter" }));   // the row's keydown: x.click(), a click with no pointer behind it

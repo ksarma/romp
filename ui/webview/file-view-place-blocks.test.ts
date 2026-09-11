@@ -25,7 +25,8 @@
 // details the block after it; a wrapper inside a wrapper is read at each depth; two adjacent html blocks read as their
 // own; and a Raw row of the wrapper's own still seats nothing (the owner's ruling 2 for the slice), where the closing
 // tag's row seats the last nested paragraph. The wrapper's children take boxes stacked inside its box (nestBoxes), as a
-// browser lays a `<details>` or a centred `<div>` out; a closed details' content takes none. The Slice 3 review's third
+// browser lays a `<details>` or a centred `<div>` out; a closed details' content takes none here (Chromium gives it a box
+// that checkVisibility denies, which boxOf reads as none: file-view-place-closed-details.test.ts). The Slice 3 review's third
 // round pinned that the math fill's source fallback (a `$$` or `\[` block) is no code block to codeOf either, and that a
 // code element with no rows (the stand-in's fences, which nothing wraps) reads and seats no line whatever hit test the
 // document offers: the hit-test path Slice 2 read a code line with, kept in Slice 3 for that fallback, could never reach

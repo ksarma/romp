@@ -22,7 +22,7 @@ import * as path from "node:path";
 import { marked } from "marked";
 import { applyMdConfig, resolveWikilink } from "./md-config";
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, renderedBlockWrappers, paintRendered, type SelLike, type MapResult } from "./anchor-map";
-import { hideEdges } from "../test-dom-shim";
+import { hideEdges, sameNodes } from "../test-dom-shim";
 
 applyMdConfig();
 const FIXDIR = path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map-fixtures");
@@ -493,4 +493,159 @@ test("the cached index follows a wrapper's children: the regions layer wrapping 
   mapsWhole(box, src, "Centered paragraph here.");
   mapsWhole(box, src, "After para.");
   assert.deepEqual(elems(box, src, blockAt(src, "![a]")), ['SPAN.fc-region-wrap:""'], "the picture's block pairs with the span by its empty text, as at the top level");
+});
+
+// ── the Slice 5 review, round 1: the pairing's edges ──
+/** The tag names of block b's elements, in order. */
+const tagsOf = (box: FakeElement, src: string, b: number): string[] => renderedBlockElements(El(box), src, b).map((e) => (e as unknown as FakeElement).tagName);
+const P = (i: number): string => `Paragraph ${i} carries several plain words for the probe to find.`;
+
+test("a wrapper whose raw holds its own child (a summary, a lead text) followed at once by another html block: the summary stays the outer block's and the inner block takes its own element, so the passages nested in the inner wrapper and every later one map (before: the outer's resync ended at the next html block with the summary left over in its place, the inner's scan found the summary where its element should be, took nothing, and fell to every node to the end of the document, every later selection refused as an HTML block at the inner's offset); nested details, details then a centred div, a lead text then an inner div, a comment between, an empty details then a details, and details then an img, which owns its img alone", () => {
+  const NESTED = `# T\n\n${P(1)}\n\n<details><summary>Outer</summary>\n\n<details><summary>Inner</summary>\n\n${P(2)}\n\n</details>\n\n${P(3)}\n\n</details>\n\n${P(4)}\n`;
+  let box = buildRendered(NESTED);
+  assert.deepEqual(kidsOf(box).map(tagOf), ["H1", "P", "DETAILS", "P"]);
+  assert.deepEqual(kidsOf(kidsOf(box)[2]).map(tagOf), ["SUMMARY", "DETAILS", "P"], "the inner details and the outer's paragraph nest in the outer details");
+  for (const para of [P(2), P(3), P(4)]) mapsWhole(box, NESTED, para);
+  const outer = blockAt(NESTED, "<details><summary>Outer"), inner = blockAt(NESTED, "<details><summary>Inner");
+  assert.deepEqual([tagsOf(box, NESTED, outer), wraps(box, NESTED, outer)], [["DETAILS", "SUMMARY"], ["DETAILS"]], "the outer block: its details and its summary, the details the wrapper");
+  assert.deepEqual([tagsOf(box, NESTED, inner), wraps(box, NESTED, inner)], [["DETAILS", "SUMMARY"], ["DETAILS"]], "the inner block: its own details and summary (before: the outer's summary, the inner details, and every paragraph after)");
+  assert.equal(owner(box, NESTED, find(box, "SUMMARY", "Outer")), outer);
+  assert.equal(owner(box, NESTED, find(box, "SUMMARY", "Inner")), inner);
+  assert.deepEqual(tagsOf(box, NESTED, blockAt(NESTED, P(2))), ["P"]);
+  const sum = bad(mapText(box, NESTED, "Inner"), "the inner summary");
+  assert.match(sum.reason, /an HTML block/);
+  assert.equal(sum.blockStartOffset, at(NESTED, "<details><summary>Inner"), "refused at the inner details' own offset");
+  // details then a centred div
+  const DIV = `# T\n\n${P(1)}\n\n<details><summary>Sum</summary>\n\n<div align="center">\n\n${P(2)}\n\n</div>\n\n${P(3)}\n\n</details>\n\n${P(4)}\n`;
+  box = buildRendered(DIV);
+  for (const para of [P(2), P(3), P(4)]) mapsWhole(box, DIV, para);
+  assert.deepEqual(tagsOf(box, DIV, blockAt(DIV, "<div align")), ["DIV"], "the div block owns its div alone");
+  assert.deepEqual(tagsOf(box, DIV, blockAt(DIV, "<details>")), ["DETAILS", "SUMMARY"]);
+  // a lead text inside the wrapper's own line, then an inner div
+  const LEAD = `# T\n\n<div align="center">Lead\n\n<div class="in">\n\n${P(2)}\n\n</div>\n\n${P(3)}\n\n</div>\n`;
+  box = buildRendered(LEAD);
+  for (const para of [P(2), P(3)]) mapsWhole(box, LEAD, para);
+  assert.deepEqual(tagsOf(box, LEAD, blockAt(LEAD, "<div class")), ["DIV"]);
+  assert.match(bad(mapText(box, LEAD, "Lead"), "the lead text").reason, /an HTML block/, "the wrapper's own text stays the html block's");
+  // a comment between the two
+  const COMMENT = `# T\n\n<details><summary>Sum</summary>\n\n<!-- c -->\n\n<div align="center">\n\n${P(2)}\n\n</div>\n\n${P(3)}\n\n</details>\n`;
+  box = buildRendered(COMMENT);
+  for (const para of [P(2), P(3)]) mapsWhole(box, COMMENT, para);
+  // an empty details (closed at once), then a details holding text
+  const EMPTY = `# T\n\n<details><summary>Empty</summary>\n\n</details>\n\n<details><summary>Second</summary>\n\n${P(2)}\n\n</details>\n\n${P(3)}\n`;
+  box = buildRendered(EMPTY);
+  for (const para of [P(2), P(3)]) mapsWhole(box, EMPTY, para);
+  assert.deepEqual(tagsOf(box, EMPTY, blockAt(EMPTY, "<details><summary>Empty")), ["DETAILS", "SUMMARY"]);
+  assert.deepEqual(tagsOf(box, EMPTY, blockAt(EMPTY, "<details><summary>Second")), ["DETAILS", "SUMMARY"]);
+  assert.deepEqual(tagsOf(box, EMPTY, blockAt(EMPTY, "</details>")), [], "the closing tag's block owns nothing");
+  // details then an img block: the img block owns the img alone, and the summary's refusal names the details' offset
+  const IMG = `# T\n\n<details><summary>Sum</summary>\n\n<img src="a.png" alt="x">\n\n${P(2)}\n\n</details>\n\n${P(3)}\n`;
+  box = buildRendered(IMG);
+  for (const para of [P(2), P(3)]) mapsWhole(box, IMG, para);
+  assert.deepEqual(tagsOf(box, IMG, blockAt(IMG, "<img")), ["IMG"], "the img block owns its img (before: the summary and the img)");
+  assert.deepEqual(tagsOf(box, IMG, blockAt(IMG, "<details>")), ["DETAILS", "SUMMARY"]);
+  assert.equal(bad(mapText(box, IMG, "Sum"), "the summary").blockStartOffset, at(IMG, "<details>"), "the Raw view opens at the details, not at the img");
+  // a paragraph between the two wrappers, the shape that paired before, still does
+  const BETWEEN = `# T\n\n<details><summary>Outer</summary>\n\n${P(5)}\n\n<details><summary>Inner</summary>\n\n${P(2)}\n\n</details>\n\n</details>\n`;
+  box = buildRendered(BETWEEN);
+  for (const para of [P(5), P(2)]) mapsWhole(box, BETWEEN, para);
+});
+
+test("a closing tag inside a paragraph (`**Bold** </div>` on the paragraph's own line, `Last line.</details>`): the parser closes the wrapper with the paragraph's `<p>` and mints an empty `<p></p>` for the paragraph's own `</p>`, which the pairing steps over as no block's, so every paragraph after the closer maps to its own offsets, two identical paragraphs to their own copies (before: the paragraph after the closer took the empty `<p>` as a mismatch, each later one its predecessor's element, the FIRST rendered copy of a repeated paragraph mapped to the SECOND copy's offsets, and the last paragraph was no block's); a stray `</div>` in a top-level paragraph, which the parser drops, mints nothing", () => {
+  const REPEAT = `# T\n\n${P(1)}\n\n<div align="center">\n\n${P(2)}\n\n**Bold** </div>\n\nGo\n\nGo\n\n${P(3)}\n`;
+  let box = buildRendered(REPEAT);
+  const div = find(box, "DIV", "Bold");
+  assert.deepEqual(kidsOf(div).map(tagOf), ["P", "P"], "the div holds its two paragraphs, the closer's among them");
+  assert.deepEqual(kidsOf(box).map(tagOf), ["H1", "P", "DIV", "P", "P", "P", "P"], "an empty <p> after the div (the parser's, for the stray </p>), then Go, Go and the last paragraph");
+  const minted = kidsOf(box)[3];
+  assert.equal(minted.textContent, "", "the minted <p> is empty");
+  assert.equal(owner(box, REPEAT, minted), -1, "the minted <p> is no block's");
+  const first = ok(mapText(box, REPEAT, "Go", 0), "the first rendered Go");
+  assert.equal(first.range.start, at(REPEAT, "\nGo\n") + 1, "maps to the FIRST copy's offsets (before: the second's)");
+  const second = ok(mapText(box, REPEAT, "Go", 1), "the second rendered Go (before: a mismatch refusal)");
+  assert.equal(second.range.start, REPEAT.lastIndexOf("\nGo\n") + 1);
+  mapsWhole(box, REPEAT, P(3));
+  mapsWhole(box, REPEAT, P(2));
+  assert.deepEqual(tagsOf(box, REPEAT, blockAt(REPEAT, "**Bold**")), ["P"], "the closer's paragraph owns its nested <p>");
+  assert.equal(owner(box, REPEAT, kidsOf(box)[6]), blockAt(REPEAT, P(3)), "the last paragraph is its block's (before: no block's)");
+  // distinct paragraphs after the closer
+  const PLAINER = `# T\n\n<div align="center">\n\n${P(2)}\n\n**Bold** </div>\n\n${P(3)}\n\n${P(4)}\n`;
+  box = buildRendered(PLAINER);
+  for (const para of [P(2), P(3), P(4)]) mapsWhole(box, PLAINER, para);
+  // a details closed on the last nested paragraph's line
+  const DET = `# T\n\n<details><summary>Sum</summary>\n\n${P(2)}\n\nLast line.</details>\n\n${P(3)}\n`;
+  box = buildRendered(DET);
+  for (const para of [P(2), "Last line.", P(3)]) mapsWhole(box, DET, para);
+  assert.deepEqual(tagsOf(box, DET, blockAt(DET, P(3))), ["P"]);
+  // a top-level paragraph with a stray closer: no wrapper is open, the parser drops the tag, nothing is minted, the next maps
+  const STRAY = `# T\n\n${P(1)}\n\nText </div>\n\n${P(3)}\n`;
+  box = buildRendered(STRAY);
+  assert.deepEqual(kidsOf(box).map(tagOf), ["H1", "P", "P", "P"]);
+  mapsWhole(box, STRAY, P(3));
+  assert.equal(owner(box, STRAY, kidsOf(box)[3]), blockAt(STRAY, P(3)));
+});
+
+test("a formula at the selection's END is judged in document order with the other obstacles: a drag from a table cell (or from the intro across the table) into a formula's glyphs names the table, the obstacle the person's eye meets first, with the table's Raw offer (before: the formula, judged ahead of the pass); a drag from the paragraph before the formula into it still names the formula with the formula preselected, and so does one from the whitespace between two formulas into the second, and a drag begun inside a formula names the formula whatever follows", () => {
+  const src = "Intro para.\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n\nBetween para.\n\nTail $t$ formula.\n\nPair $a$ $b$ here.\n";
+  const box = buildRendered(src);
+  const inT = { node: find(box, "SPAN", "t").childNodes[0], offset: 1 };   // inside the stand-in fill's glyphs for $t$ (a `.katex` span holding "t")
+  assert.equal((inT.node as FakeText).data, "t", "the formula's glyph node");
+  const span = (from: Pt, to: Pt) => mapRenderedSelection(sel(from, to), El(box), src);
+  let r = bad(span(point(box, "cell two"), inT), "a cell into the formula's glyphs");
+  assert.match(r.reason, /^This selection touches a table; comment on it from the Raw view\.$/, "the table comes first (before: a formula): " + r.reason);
+  assert.equal(r.blockStartOffset, at(src, "| Col A"), "the table's Raw offer");
+  r = bad(span(point(box, "Intro para."), inT), "the intro across the table into the formula");
+  assert.match(r.reason, /a table/, r.reason);
+  r = bad(span(inT, point(box, "cell two")), "the same drag made backwards (the anchor inside the formula, the focus in the cell)");
+  assert.match(r.reason, /a table/, "the end of the span in document order is still the formula: " + r.reason);
+  // no obstacle before the formula: the formula, preselected
+  r = bad(span(point(box, "Between para."), inT), "the paragraph before into the formula");
+  assert.match(r.reason, /a formula/, r.reason);
+  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "$t$", "the formula with its delimiters preselected");
+  assert.equal(r.blockStartOffset, at(src, "$t$"));
+  // the whitespace between two formulas into the second: a formula, not "only whitespace"
+  const pairP = find(box, "P", "Pair");
+  const ws = pairP.childNodes.find((n) => n instanceof FakeText && n.data === " " && n.parentNode === pairP && pairP.childNodes.indexOf(n) > 0 && pairP.childNodes[pairP.childNodes.indexOf(n) - 1] instanceof FakeElement) as FakeText;
+  assert.ok(ws, "the space between $a$ and $b$");
+  const bGlyph = find(box, "SPAN", "b").childNodes[0];
+  r = bad(span({ node: ws, offset: 0 }, { node: bGlyph, offset: 1 }), "the space between the formulas into the second");
+  assert.match(r.reason, /a formula/, r.reason);
+  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "$b$");
+  // begun inside a formula: the formula is the first obstacle, whatever the span crosses after it
+  r = bad(span({ node: inT.node, offset: 0 }, point(box, "here.", true)), "from inside $t$ to the end of the next paragraph");
+  assert.match(r.reason, /a formula/, r.reason);
+  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "$t$");
+  // the spans that end in prose read as before
+  assert.match(bad(span(point(box, "cell two"), point(box, "Tail", true)), "a cell into prose").reason, /a table/);
+  assert.equal(ok(span(point(box, "Between para."), point(box, "Tail", true)), "prose to prose").quote, "Between para.\n\nTail");
+});
+
+test("Rendered paint inside a document-wide wrapper reads the nested blocks a range touches and no other: a mark costs its own paragraphs, as at the top level (before: every highlight unit under the wrapper per mark, the root's child being the wrapper; the Slice 5 review measured 0.8 ms per mark on a 1,000-paragraph note inside one div against 0.1 flat in Chromium, growing with the wrapper, where the stand-in had said 2x)", () => {
+  const N = 40;
+  const paras = Array.from({ length: N }, (_, i) => P(i));
+  for (const [what, src] of [["a div", "# T\n\n<div align=\"center\">\n\n" + paras.join("\n\n") + "\n\n</div>\n"], ["a details", "# T\n\n<details><summary>More</summary>\n\n" + paras.join("\n\n") + "\n\n</details>\n"]] as const) {
+    const box = buildRendered(src);
+    const wrapper = kidsOf(box)[1];
+    const ps = kidsOf(wrapper).filter((k) => k.tagName === "P");
+    assert.equal(ps.length, N, what + ": the paragraphs nest in the wrapper");
+    // the index is built once per root and source (it walks everything then); the first paint pays it
+    assert.ok((paintRendered(El(box), src, { start: at(src, paras[0]), end: at(src, paras[0]) + 9 }, "fc-hl") || []).length >= 1, what + ": warm");
+    const reads = new Map<FakeElement, number>();
+    for (const p of ps) {
+      const kids = p.childNodes;
+      Object.defineProperty(p, "childNodes", { configurable: true, get() { reads.set(p, (reads.get(p) || 0) + 1); return kids; } });
+    }
+    const holder = (n: FakeNode): FakeElement => { let c: FakeNode = n; while (c.parentNode && c.parentNode !== wrapper) c = c.parentNode; return c as FakeElement; };
+    // one nested paragraph
+    const q = paras[10];
+    const one = paintRendered(El(box), src, { start: at(src, q), end: at(src, q) + q.length }, "fc-hl") as unknown as FakeElement[];
+    assert.equal(one.map((m) => m.textContent).join(""), q, what);
+    sameNodes(ps.filter((p) => reads.has(p)), [ps[10]], what + ": only the paragraph holding the passage was read; read " + ps.filter((p) => reads.has(p)).map((p) => ps.indexOf(p)).join(",") + " where 10 was expected");
+    assert.equal(holder(one[0]), ps[10]);
+    // several: the run from the first mark's paragraph to the last mark's, none before or after
+    reads.clear();
+    const many = paintRendered(El(box), src, { start: at(src, paras[20]), end: at(src, paras[22]) + paras[22].length }, "fc-hl") as unknown as FakeElement[];
+    assert.ok(many.length >= 3, what);
+    sameNodes(ps.filter((p) => reads.has(p)), ps.slice(20, 23), what + ": the paragraphs between the two ends and no other; read " + ps.filter((p) => reads.has(p)).map((p) => ps.indexOf(p)).join(",") + " where 20..22 were expected");
+  }
 });

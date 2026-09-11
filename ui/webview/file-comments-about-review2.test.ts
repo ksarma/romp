@@ -298,6 +298,9 @@ function rows(code: El, src: string): void {
   }));
 }
 function world(over: { todoId?: string | null; src?: string } = {}): World {
+  // a new world starts with no selection: the panel reads the live selection after every paint (afterPaint), so a fake a previous
+  // test left installed over its closed world would run here, over nodes that world no longer holds
+  win.getSelection = () => null;
   const main = new El("div"); main.className = "fileview-main";
   const body = new El("div"); body.className = "fileview-body";
   const wrap = new El("div"); wrap.className = "fileview-code";
@@ -485,7 +488,8 @@ test("two ids under one selection, one accepted meanwhile: the option is relabel
 test("the option unchecked survives the prune of another id; a status that holds every id changes nothing; applyStatus is the one caller", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
-  win.getSelection = () => selectFrom(insOf(w, "h1").childNodes[0] as Txt, 1, insOf(w, "h2").childNodes[0] as Txt, 8);
+  const both = selectFrom(insOf(w, "h1").childNodes[0] as Txt, 1, insOf(w, "h2").childNodes[0] as Txt, 8);   // read once: the paint after h2's accept reads the selection too (afterPaint), when h2's text is gone
+  win.getSelection = () => both;
   floatOf().click(); await flush();
   const cb = aside.querySelector('input[data-opt="about"]')!;
   assert.ok(cb, "the option for the two changes");

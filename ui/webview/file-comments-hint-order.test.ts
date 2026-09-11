@@ -9,7 +9,10 @@
 // before; a comment with a unique anchor takes no hint. Two shapes: a paragraph repeated three times, whose copies stand a
 // thousand characters apart (the engine picks the tied copy nearest the hint, so the previous copy's end alone would name the
 // same copy again: the probe steps the hint right until the pick moves), and a short line repeated back to back with a two-
-// character context, the shape of the probe. Driven over the behavior suite's DOM stand-in (the Raw view's rows), the row a mark
+// character context, the shape of the probe. The words for a guessed copy (copyUnsureWords, unsureMarkTitle: the mark's title, the
+// card's tag title and the open card's line) name the copy: the first for a positionless card the engine placed alone, the copy after
+// the previous comment's for one the hint placed (the Slice 5 review, round 1: the hinted card's words said the first copy while its
+// highlight sat on the second). Driven over the behavior suite's DOM stand-in (the Raw view's rows), the row a mark
 // sits in telling the copies apart. Nodes hide their edges at construction (hideEdges, ui/test-dom-shim.ts). Synthetic fixtures
 // only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
@@ -357,4 +360,35 @@ test("the probe's shape: a short line repeated back to back, two positionless co
   const { aside } = await openPanel(w, status([a, b, c]));
   assert.deepEqual([painted(w, aside, a.id).row, painted(w, aside, b.id).row, painted(w, aside, c.id).row], [2, 4, 2], "the first copy, the second, and the first again");
   assert.ok([a, b, c].every((x) => painted(w, aside, x.id).dashed && painted(w, aside, x.id).tagged), "every one a guess: the dashed cue and the tag");
+});
+
+test("the words name the copy painted: a positionless card the engine placed alone says the first copy; one the hint placed says the copy after the previous comment's (before: the first copy, while its highlight sat on the second); one with the copies used up, back on the first, says the first; on the mark's title, the card's tag title and the open card's line", async (t: TestContext) => {
+  const w = world(DOC); t.after(() => w.close());
+  const { aside } = await openPanel(w, status([N1, N2, S3, N4, U5]));
+  const words = (id: string) => {
+    const m = w.code.querySelector('mark.fc-hl[data-id="' + id + '"]')!;
+    const tag = aside.querySelector('.fc-card[data-id="' + id + '"] .fc-tag')!;
+    return { row: painted(w, aside, id).row, mark: m.title, tag: tag.title };
+  };
+  const FIRST_MARK = /so this is the first copy, not a confirmed one$/, FIRST_TAG = /so the first copy is highlighted/;
+  const NEXT_MARK = /so this is the copy after the previous comment's on this passage, not a confirmed one$/, NEXT_TAG = /so the copy after the previous comment's on this passage is highlighted/;
+  const n1 = words(N1.id);
+  assert.equal(n1.row, ROW.first); assert.match(n1.mark, FIRST_MARK, "N1 sits on the first copy and its title says so"); assert.match(n1.tag, FIRST_TAG, "...and its tag");
+  const n2 = words(N2.id);
+  assert.equal(n2.row, ROW.second, "the hint put N2 on the second copy");
+  assert.match(n2.mark, NEXT_MARK, "...and its title names that copy, the one after the previous comment's (before: the first copy)");
+  assert.match(n2.tag, NEXT_TAG, "...as does its tag's title");
+  assert.doesNotMatch(n2.mark + n2.tag, /first copy/, "nothing on N2 names the first copy");
+  const n4 = words(N4.id);
+  assert.equal(n4.row, ROW.first, "N4's copies are used up: the engine's earliest, the first");
+  assert.match(n4.mark, FIRST_MARK, "...and its title says the first copy, since that is where it sits"); assert.match(n4.tag, FIRST_TAG);
+  for (const c of [N1, N2, N4]) assert.match(words(c.id).mark, /stores no position/, c.id + ": every positionless card's title says no position is stored");
+  // the open card's line carries the tag's words: N2's names the copy after the previous comment's
+  const m2 = w.code.querySelector('mark.fc-hl[data-id="' + N2.id + '"]')!;
+  const click = new Ev("click"); click.detail = 1; m2.dispatchEvent(click); await flush(); await flush();
+  const card2 = aside.querySelector('.fc-card[data-id="' + N2.id + '"]')!;
+  assert.ok(card2.classes.includes("open"), "the mark's click opens N2's card");
+  const note2 = card2.querySelector(".fc-note")!;
+  assert.match(note2.textContent, NEXT_TAG, "the open card's line names the copy after the previous comment's");
+  assert.doesNotMatch(note2.textContent, /first copy/);
 });

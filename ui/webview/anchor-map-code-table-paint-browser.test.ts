@@ -6,13 +6,14 @@
 // two`; each is saved through the float and the composer, the harness answering the save with the store holding the comment in
 // the host's shape (the quote the exact source slice, the pipe kept; the posted anchor is checked to be that), and the view is
 // switched to Rendered: the code comment's marks read the whole line inside the fence's first row, the table comment's marks sit
-// one in each of the row's two cells, and each card offers Scroll to the passage, not Reveal. The same comments served before a
-// fresh open paint the same on the Files pane and in the chat modal. Before this slice the probe recorded 0 marks for both in
-// Rendered, the cards offering Reveal: the code needle lost its asterisks to the emphasis strip and matched nothing, the table
-// needle kept its pipe and the cells' text has none. A comment on the note's last paragraph is served throughout as the pass's
-// sentinel: its mark is what the legs wait for before reading the others (the paint is one pass over every card). Skips LOUDLY
-// without a playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented note,
-// /repo/notes-api paths, the placeholder sid.
+// one in each of the row's two cells, and each card, opened from its head, offers Scroll to the passage and no Reveal (a folded
+// card renders its preview and no actions row, so Reveal's absence is read on the OPEN card; the review's round 1 found the read
+// over a folded card vacuous). The same comments served before a fresh open paint the same on the Files pane and in the chat
+// modal. Before this slice the probe recorded 0 marks for both in Rendered, the open cards offering Reveal: the code needle lost
+// its asterisks to the emphasis strip and matched nothing, the table needle kept its pipe and the cells' text has none. A comment
+// on the note's last paragraph is served throughout as the pass's sentinel: its mark is what the legs wait for before reading the
+// others (the paint is one pass over every card). Skips LOUDLY without a playwright browser (CI installs none), as the other
+// browser legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -60,6 +61,17 @@ async function openWith(browser: any, mode: Mode, width: number, raw: boolean, s
 /** Wait for the comment's highlight in the view's body (the pass painted it). */
 const markPainted = (page: any, cid: string): Promise<unknown> =>
   page.waitForFunction((c: string) => !!document.querySelector('.fileview-body [data-act="fcopen"][data-id="' + c + '"]'), cid, { timeout: 10000 });
+/** Open the comment's card from its head, and wait for it: a folded card renders its preview and no actions row (renderCard
+ *  returns before the row), so Reveal, or its absence, is only readable on the open card. The head's centre is the quote, which
+ *  is the Scroll link once the comment painted (fcgoto stops the click), so the click lands on the head's clock, which the
+ *  panel's delegate resolves to the head's fccard. Neither test writes a reply, so no card is held open and the click is a plain open. */
+async function openCard(page: any, cid: string): Promise<void> {
+  const card = '.fileview-aside .fc-card[data-id="' + cid + '"]';
+  assert.equal(await page.evaluate((k: string) => { const c = document.querySelector(k); return !!c && !c.classList.contains("open"); }, card), true, "the card " + cid + " is there and folded before its head is clicked");
+  await page.click(card + " .fc-card-head .fc-time");
+  await page.waitForFunction((k: string) => { const c = document.querySelector(k); return !!c && c.classList.contains("open"); }, card, { timeout: 5000 });
+  await frames(page, 2);
+}
 
 type Points = { sx: number; sy: number; ex: number; ey: number; selected: string };
 /** In the page: the boxes of the passage's first and last characters under `rootSel`, its start scrolled to the body's middle first. */
@@ -108,8 +120,9 @@ async function saveComment(page: any, c: Record<string, unknown>, next: Record<s
 }
 const posted = (page: any): Promise<any[]> => page.evaluate(() => (window as any).__posted);
 
-type Read = { marks: number; text: string; rows: number[]; cells: ({ tag: string; index: number } | null)[]; sameRow: boolean; card: boolean; goto: boolean; reveal: boolean };
-/** The comment's marks in the Rendered view: their count, their text (the ones with text of their own), the fence rows and the table cells they sit in, and what its card offers. */
+type Read = { marks: number; text: string; rows: number[]; cells: ({ tag: string; index: number } | null)[]; sameRow: boolean; card: boolean; open: boolean; goto: boolean; reveal: boolean };
+/** The comment's marks in the Rendered view: their count, their text (the ones with text of their own), the fence rows and the table cells they
+ *  sit in, and what its card offers, with whether the card is open (`reveal` means nothing on a folded card, which renders no actions row). */
 const readMarks = (page: any, cid: string): Promise<Read> => page.evaluate((c: string) => {
   const md = document.querySelector(".fileview-md") as HTMLElement;
   const marks = Array.from(md.querySelectorAll('.fc-hl[data-act="fcopen"][data-id="' + c + '"]')) as HTMLElement[];
@@ -123,25 +136,29 @@ const readMarks = (page: any, cid: string): Promise<Read> => page.evaluate((c: s
     marks: marks.length, text: withText.map((m) => m.textContent).join(" ").replace(/\s+/g, " ").trim(),
     rows: Array.from(new Set(withText.map(rowOf))).sort(), cells: cells.map((x) => x && { tag: x.tag, index: x.index }),
     sameRow: cells.length === 2 && !!cells[0] && !!cells[1] && cells[0].row === cells[1].row,
-    card: !!card, goto: !!card && !!card.querySelector('[data-act="fcgoto"]'), reveal: !!card && !!card.querySelector('[data-act="fcreveal"]'),
+    card: !!card, open: !!card && card.classList.contains("open"),
+    goto: !!card && !!card.querySelector('[data-act="fcgoto"]'), reveal: !!card && !!card.querySelector('[data-act="fcreveal"]'),
   };
 }, cid);
-/** The two comments' paint in Rendered, as items 2 and 8 promise it. */
+/** The two comments' paint in Rendered, as items 2 and 8 promise it; `code` and `cells` are read with their cards OPEN (openCard), the
+ *  only state in which the actions row, and so a Reveal button, renders. */
 function assertPainted(what: string, code: Read, cells: Read): void {
   assert.ok(code.marks > 0, what + ": the code comment paints (before: 0 marks, the needle read `total = a  b  2`)");
   assert.equal(code.text, CODE_Q, what + ": the code marks read the whole line, asterisks included");
   assert.deepEqual(code.rows, [0], what + ": inside the fence's first row");
   assert.equal(code.card && code.goto, true, what + ": the code card offers Scroll to the passage");
-  assert.equal(code.reveal, false, what + ": ...and not Reveal (before: Reveal, no Scroll link)");
+  assert.equal(code.open, true, what + ": the code card is open, so its actions row is rendered and Reveal is readable");
+  assert.equal(code.reveal, false, what + ": ...and the open card offers no Reveal (before: Reveal, no Scroll link)");
   assert.ok(cells.marks > 0, what + ": the across-cells comment paints (before: 0 marks, the needle kept the pipe)");
   assert.equal(cells.text, "cell one cell two", what + ": the two cells' text, nothing of the pipe");
   assert.deepEqual(cells.cells, [{ tag: "TD", index: 0 }, { tag: "TD", index: 1 }], what + ": one mark in each of the row's two cells");
   assert.equal(cells.sameRow, true, what + ": the same row");
   assert.equal(cells.card && cells.goto, true, what + ": the table card offers Scroll to the passage");
-  assert.equal(cells.reveal, false, what + ": ...and not Reveal");
+  assert.equal(cells.open, true, what + ": the table card is open, so its actions row is rendered and Reveal is readable");
+  assert.equal(cells.reveal, false, what + ": ...and the open card offers no Reveal (before: Reveal)");
 }
 
-test("in a browser, the real viewer and panel on the Files pane: a comment saved from a Raw drag over `total = a * b * 2` and one over `cell one | cell two` (the quote the exact source slice, pipe kept) paint in Rendered after the view switch: the code line whole in the fence's first row, the two cells one mark each; the cards offer Scroll to the passage (before: no marks, Reveal)", { timeout: 240000 }, async (t) => {
+test("in a browser, the real viewer and panel on the Files pane: a comment saved from a Raw drag over `total = a * b * 2` and one over `cell one | cell two` (the quote the exact source slice, pipe kept) paint in Rendered after the view switch: the code line whole in the fence's first row, the two cells one mark each; the cards, opened, offer Scroll to the passage and no Reveal (before: no marks, Reveal)", { timeout: 240000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openWith(browser, "pane", 900, true, withComments([FINAL], 0));
     // the code line
@@ -160,6 +177,8 @@ test("in a browser, the real viewer and panel on the Files pane: a comment saved
     await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
     await markPainted(page, id(FINAL));
     await frames(page, 3);
+    await openCard(page, id(CODE));
+    await openCard(page, id(CELLS));
     assertPainted("pane 900px after the Raw saves", await readMarks(page, id(CODE)), await readMarks(page, id(CELLS)));
     assert.deepEqual(errors, [], "no script error");
     await page.close();
@@ -172,6 +191,8 @@ test("in a browser, the real viewer and panel: the same comments served before a
       const what = mode + " " + width + "px, fresh open";
       const { page, errors } = await openWith(browser, mode, width, false, withComments([FINAL, CODE, CELLS], 3));
       await frames(page, 2);
+      await openCard(page, id(CODE));
+      await openCard(page, id(CELLS));
       assertPainted(what, await readMarks(page, id(CODE)), await readMarks(page, id(CELLS)));
       assert.deepEqual(errors, [], what + ": no script error");
       await page.close();

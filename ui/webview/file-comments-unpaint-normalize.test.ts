@@ -2,7 +2,9 @@
 // the step Panel.unpaint and Panel.unwrap run). Unwrapping a mark puts its children back in its place and removes it, and until this
 // slice normalized the parent per mark, so unwrapping the marks of one paragraph cost the square of its inline children where the
 // paint costs their count (the Slice 4 review's round 9: 9,999 marks over a paragraph of 5,000 links painted in 33 ms and unwrapped
-// in 469; normalized once per parent, 11 ms). Now the parents are collected over the loop and each normalized once after it. Driven
+// in 469; normalized once per parent, 11 ms; both for marks not yet laid out, and the panel's unpaint, which always finds its marks
+// laid out, pays about 340 ms against about 790 there, Chromium's detachment of each mark's layout object being the rest: the Slice 5
+// review, round 1). Now the parents are collected over the loop and each normalized once after it. Driven
 // over the behavior suite's DOM stand-in, its normalize counted per element: a paint pass over a body whose marks stand (the seam's
 // onRendered for the same text: paintAll unpaints before it repaints) normalizes the row holding three comments' marks once, and the
 // row holding two overlapping comments' nested marks once, and the rows read as built afterwards (one text node, the line whole);

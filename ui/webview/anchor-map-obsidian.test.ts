@@ -868,6 +868,29 @@ test("a selection endpoint inside a formula offers the Raw view with the FORMULA
   }
 });
 
+test("a display block written with indent (one to three spaces before `$$` or `\\[`): blockStartOffset stays at the hole's raw start, the indent, and rawRange begins past it at the opener, on the same line, so the two coincide only for the unindented shape the test above pins; the range's slice first occurs at the range when searched from blockStartOffset, the search the Raw switch runs (rawTarget, file-comments.ts), so the preselection is the formula either way", () => {
+  const shapes = [["one space, dollars", " ", "$$", "$$"], ["two spaces, dollars", "  ", "$$", "$$"], ["three spaces, brackets", "   ", "\\[", "\\]"]] as const;
+  for (const [name, indent, open, close] of shapes) {
+    const src = "Intro.\n\n" + indent + open + "\n" + indent + "x+2\n" + indent + close + "\n\nAfter.\n";
+    const box = buildRendered(src);
+    const dglyphs = allText(byClass(topEl(box, 1), "katex"))[0];
+    const nextP = topEl(box, 2);
+    const formula = open + "\n" + indent + "x+2\n" + indent + close;
+    const lineStart = src.indexOf("\n\n") + 2, opener = lineStart + indent.length;
+    assert.equal(src.slice(opener, opener + formula.length), formula, name + ": the fixture's opener sits after the indent");
+    for (const [what, s] of [["selected whole", sel({ node: dglyphs, offset: 0 }, { node: nextP, offset: 0 })], ["from inside", sel({ node: dglyphs, offset: 1 }, { node: nextP, offset: 0 })]] as const) {
+      const b = bad(mapRenderedSelection(s, El(box), src), name + ": " + what);
+      assert.match(b.reason, /touches a formula/, name + ": " + what);
+      assert.equal(b.blockStartOffset, lineStart, name + ": " + what + ": the block start is the hole's raw start, the indent (as before the slice)");
+      assert.equal(b.blockStartLine, 2, name + ": " + what + ": the block's line, the line the range starts on");
+      assert.equal(b.rawHasQuote, true, name + ": " + what);
+      assert.deepEqual(b.rawRange, { start: opener, end: opener + formula.length }, name + ": " + what + ": the range begins past the indent, at the opener");
+      assert.equal(src.slice(b.rawRange!.start, b.rawRange!.end), formula, name + ": " + what + ": the formula with its delimiters, the indent before the opener not in it");
+      assert.equal(src.indexOf(src.slice(b.rawRange!.start, b.rawRange!.end), b.blockStartOffset), b.rawRange!.start, name + ": " + what + ": searched from blockStartOffset, the slice first occurs at the range");
+    }
+  }
+});
+
 test("a formula the walk never saw (an empty `.katex` span an author typed by hand as inline html before the real formula) makes the count disagree: the Raw view opens at the block's start and the offer falls back to the selected text's occurrence as before (none for the formula alone, whose glyphs are not the source's; the prose beside it for a selection running into it)", () => {
   const src = 'Hand <span class="katex"></span> then $x^2$ real.\n\nNext para.\n';
   const box = buildRendered(src);

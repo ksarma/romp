@@ -1,0 +1,317 @@
+// The reader's place at the edge of a CLOSED `<details>`, over a DOM stand-in that lays the fold out as Chromium does
+// (plans/markdown-viewer.md Slice 5, item 1b; the Slice 5 review, round 1). The rule: a `<summary>` is a row of the
+// wrapper's block's own and is passed over, and a closed details reads the block after it (reader-place.ts readRendered).
+// file-view-place-blocks.test.ts pins that rule over a stand-in whose shut content has NO box, the layout the rule was
+// written for. Chromium 151 lays a shut fold out otherwise: the content of a closed `<details>` is skipped through its
+// `::details-content` pseudo-element's content-visibility: hidden, and a skipped element KEEPS a box on a forced read
+// (getBoundingClientRect answers a full rect and one client rect, the blocks stacked from where the fold's content would
+// open, so the first hidden paragraph's box coincides with the block after the fold's); only checkVisibility() says the
+// element is not shown (md-config-goto-closed-details-browser.test.ts found the same phantom under a highlight, and
+// anchor-map-obsidian.test.ts records it for the trim). Read by its rect alone, the hidden paragraph was the place: its
+// box ends below the edge like the visible block's, so the Raw switch seated the fold's hidden source at the edge, the
+// summary's row above it, where the reader had the block after the fold in view (the review: paragraph 11's row at the
+// edge for paragraph 16, and the way back 26px off at 900px). Now boxOf asks checkVisibility where the browser offers it:
+// an element the browser does not show has no layout for the place, whatever its rect says, on the read side (the fold
+// at the edge reads the block after it) and on the seat side (a Raw row of the fold's hidden source seats no phantom;
+// its block has no box, the blocks before it inside the fold none, and the wrapper's own block is refused, so nothing is
+// seated and the body stands, as it does for every pairing the map cannot confirm). Where the browser offers no
+// checkVisibility the rect alone decides, as before. With that alone the round trip from a shut fold's edge lost the
+// place by the fold's source height (370px at 900px): the Raw seat put the block after the fold where it was, so the
+// fold's closing row (`</details>`) was the top Raw row, its block owns no element, and its seat walked back through the
+// fold's unshown paragraphs to the wrapper's refused block and seated nothing. So the Raw read treats a row of a closing
+// tag alone as it treats a blank row between blocks: the block after it is the place (the third test; a closing tag that
+// is the document's last block stays its own). The stand-in's elements answer checkVisibility as Chromium does (false
+// under a closed details, outside its summary); the real thing is measured in
+// file-view-place-closed-details-browser.test.ts. Synthetic fixtures only.
+import { test } from "node:test";
+import * as assert from "node:assert/strict";
+import { marked } from "marked";
+import { readPlace, seatPlace, type Place } from "./reader-place";
+import { sourceBlockSpans, renderedBlockIndex, renderedBlockWrappers } from "./anchor-map";
+import { hideEdges, sameNodes } from "../test-dom-shim";
+
+// ── a DOM stand-in: marked's output as nodes, a box per element, checkVisibility as Chromium answers it ────────
+class FakeNode {
+  nodeType = 0;
+  parentNode!: FakeNode | null;
+  childNodes!: FakeNode[];
+  constructor() {
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
+  get textContent(): string { return this.nodeType === 3 ? (this as unknown as FakeText).data : this.childNodes.map((c) => c.textContent).join(""); }
+}
+class FakeText extends FakeNode { nodeType = 3; constructor(public data: string) { super(); hideEdges(this); } }
+class FakeElement extends FakeNode {
+  nodeType = 1;
+  attrs = new Map<string, string>();
+  scrollTop = 0;
+  /** the box a test gives the element; none means no rect at all (every edge 0, no client rects) */
+  box: { top: number; bottom: number } | null = null;
+  constructor(public tagName: string) { super(); hideEdges(this); }
+  getAttribute(n: string): string | null { return this.attrs.has(n) ? (this.attrs.get(n) as string) : null; }
+  setAttribute(n: string, v: string): void { this.attrs.set(n, v); }
+  removeAttribute(n: string): void { this.attrs.delete(n); }
+  appendChild(n: FakeNode): FakeNode { this.childNodes.push(n); n.parentNode = this; return n; }
+  get className(): string { return this.attrs.get("class") || ""; }
+  elements(): FakeElement[] { return this.childNodes.filter((n): n is FakeElement => n instanceof FakeElement); }
+  matches(sel: string): boolean {
+    const m = /^([a-z]+)?((?:\.[\w-]+)*)$/.exec(sel);
+    if (!m) throw new Error("stand-in: unsupported selector " + sel);
+    if (m[1] && m[1].toUpperCase() !== this.tagName) return false;
+    const classes = this.className.split(/\s+/);
+    return (m[2].match(/\.[\w-]+/g) || []).every((c) => classes.includes(c.slice(1)));
+  }
+  querySelectorAll(sel: string): FakeElement[] {
+    const out: FakeElement[] = [];
+    const walk = (n: FakeNode) => { for (const c of n.childNodes) if (c instanceof FakeElement) { if (c.matches(sel)) out.push(c); walk(c); } };
+    walk(this); return out;
+  }
+  querySelector(sel: string): FakeElement | null { return this.querySelectorAll(sel)[0] || null; }
+  getBoundingClientRect(): { top: number; bottom: number; left: number; right: number; width: number; height: number } {
+    const b = this.box || { top: 0, bottom: 0 };
+    return { top: b.top, bottom: b.bottom, left: 0, right: this.box ? 400 : 0, width: this.box ? 400 : 0, height: b.bottom - b.top };
+  }
+  getClientRects(): unknown[] { return this.box ? [this.getBoundingClientRect()] : []; }
+  /** As Chromium answers it: false for an element inside a closed `<details>` that is not (inside) its summary, whatever
+   *  box the element answers; true otherwise. */
+  checkVisibility(): boolean {
+    for (let child: FakeNode = this, p = this.parentNode; p; child = p, p = p.parentNode) {
+      if (p instanceof FakeElement && p.tagName === "DETAILS" && p.getAttribute("open") === null && !(child instanceof FakeElement && child.tagName === "SUMMARY")) return false;
+    }
+    return true;
+  }
+}
+class FakeDocument {
+  /** `rectOnly`: a stand-in whose elements offer no checkVisibility (a browser before the API), so the rect alone decides */
+  constructor(public rectOnly = false) {}
+  createElement(tag: string): FakeElement {
+    const el = new FakeElement(tag.toUpperCase());
+    if (this.rectOnly) Object.defineProperty(el, "checkVisibility", { value: undefined, enumerable: false, configurable: true });
+    return el;
+  }
+  createTextNode(s: string): FakeText { return new FakeText(s); }
+}
+const VOID = new Set(["br", "hr", "img", "input", "meta", "link", "area", "base", "col", "embed", "source", "track", "wbr"]);
+const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const decodeEntities = (s: string) => s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e: string) => {
+  if (e[0] === "#") { const cp = parseInt(e[1] === "x" || e[1] === "X" ? e.slice(2) : e.slice(1), e[1] === "x" || e[1] === "X" ? 16 : 10); return Number.isFinite(cp) && cp <= 0x10ffff ? String.fromCodePoint(cp) : "�"; }
+  return e in NAMED ? NAMED[e] : m;
+});
+/** marked's output as a tree: tags, text, entities; void elements do not nest; a newline right after <pre> is dropped. */
+function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
+  const root = doc.createElement("ROOT");
+  let cur: FakeElement = root;
+  const re = /<!--[\s\S]*?-->|<\/?([a-zA-Z][\w-]*)([^>]*)>|([^<]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    if (m[0].startsWith("<!--")) continue;
+    if (m[3] !== undefined) { cur.appendChild(doc.createTextNode(decodeEntities(m[3]))); continue; }
+    const tag = m[1].toLowerCase();
+    if (m[0][1] === "/") { if (cur.tagName === tag.toUpperCase() && cur.parentNode) cur = cur.parentNode as FakeElement; continue; }
+    const el = doc.createElement(tag);
+    const attrRe = /([\w-]+)(?:="([^"]*)")?/g; let a: RegExpExecArray | null;
+    while ((a = attrRe.exec(m[2]))) el.setAttribute(a[1], a[2] === undefined ? "" : decodeEntities(a[2]));
+    cur.appendChild(el);
+    if (!VOID.has(tag) && !m[2].endsWith("/")) { cur = el; if (tag === "pre" && html[re.lastIndex] === "\n") re.lastIndex++; }
+  }
+  return root.childNodes.slice();
+}
+/** The browser's DOMParser, over parseHTML: reader-place.ts trusts an html block's pairing when the block's own source
+ *  parses to the elements the map paired it with, and refuses the wrapper's own block (one parsed against the wrapper
+ *  and its summary), the refusal the seat case below reaches. */
+class FakeDOMParser {
+  parseFromString(html: string, _type: string): { body: FakeElement } {
+    const doc = new FakeDocument();
+    const body = doc.createElement("body");
+    for (const n of parseHTML(doc, html)) body.appendChild(n);
+    return { body };
+  }
+}
+if (typeof (globalThis as { DOMParser?: unknown }).DOMParser !== "function") (globalThis as { DOMParser?: unknown }).DOMParser = FakeDOMParser;
+const El = (n: FakeNode) => n as unknown as Element;
+const H = (n: FakeNode) => n as unknown as HTMLElement;
+
+const PARA = (i: number) => `Paragraph ${i}: some words of the report, enough to make a line.`;
+const paras = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => PARA(a + i)).join("\n\n");
+/** the heading, paragraphs 1 to 4, a details holding paragraphs 5 and 6 after its summary, paragraphs 7 to 10 */
+const fold = (open: boolean) => "# Report\n\n" + paras(1, 4) + "\n\n<details" + (open ? " open" : "") + ">\n<summary>Folded one</summary>\n\n" + paras(5, 6) + "\n\n</details>\n\n" + paras(7, 10) + "\n";
+const GAP = 8, H_BLOCK = 40, EDGE = 100;
+
+type Scene = { body: FakeElement; md: FakeElement; blocks: FakeElement[]; det: FakeElement; summary: FakeElement; hidden: FakeElement[]; p7: FakeElement };
+/** `.fileview-body > div.fileview-md > marked output`, the body's top edge at 100 and every top-level block 40px, 8 apart,
+ *  stacked from `top0`. The details is laid out as Chromium lays a fold out: OPEN, it is as tall as its summary and its two
+ *  paragraphs stacked inside it; CLOSED, it is as tall as its summary alone, and its two paragraphs, skipped and not shown,
+ *  still answer boxes stacked from the top of the block after the fold, the first coinciding with that block's. */
+function scene(open: boolean, top0 = 0, rectOnly = false): Scene {
+  const doc = new FakeDocument(rectOnly);
+  const body = doc.createElement("div"); body.setAttribute("class", "fileview-body"); body.box = { top: EDGE, bottom: EDGE + 600 };
+  const md = doc.createElement("div"); md.setAttribute("class", "fileview-md");
+  for (const n of parseHTML(doc, marked.parse(fold(open)) as string)) md.appendChild(n);
+  body.appendChild(md);
+  const blocks = md.elements();
+  const det = blocks[5];
+  assert.equal(det.tagName, "DETAILS", "the fixture: the details is the sixth top-level element");
+  assert.equal(det.getAttribute("open") !== null, open, "the fixture: the details' open attribute");
+  const [summary, ...hidden] = det.elements();
+  assert.deepEqual([summary.tagName, hidden.map((k) => k.tagName), hidden.map((k) => k.textContent)], ["SUMMARY", ["P", "P"], [PARA(5), PARA(6)]], "the fixture: the summary and the two paragraphs nested after it");
+  const detH = open ? H_BLOCK + (H_BLOCK + GAP) * hidden.length : H_BLOCK;
+  let y = top0;
+  blocks.forEach((b) => { const h = b === det ? detH : H_BLOCK; b.box = { top: y, bottom: y + h }; y += h + GAP; });
+  summary.box = { top: det.box!.top, bottom: det.box!.top + H_BLOCK };
+  const p7 = blocks[6];
+  assert.equal(p7.textContent, PARA(7), "the fixture: paragraph 7 follows the details at the top level (the closing tag renders nothing)");
+  let z = open ? summary.box.bottom + GAP : p7.box!.top;
+  for (const k of hidden) { k.box = { top: z, bottom: z + H_BLOCK }; z += H_BLOCK + GAP; }
+  return { body, md, blocks, det, summary, hidden, p7 };
+}
+/** Every box under `root` moved by `d` px (the root's own too, when it has one). */
+function shiftBoxes(root: FakeElement, d: number): void {
+  if (root.box) root.box = { top: root.box.top + d, bottom: root.box.bottom + d };
+  for (const c of root.childNodes) if (c instanceof FakeElement) shiftBoxes(c, d);
+}
+/** The Rendered view scrolled so that `el`'s box straddles the body's top edge, `depth` px into it. */
+const toEdge = (md: FakeElement, el: FakeElement, depth: number): void => shiftBoxes(md, EDGE - depth - el.box!.top);
+const textOf = (doc: string, p: Place | null) => (p ? doc.slice(p.start, p.end) : null);
+
+test("readPlace: a paragraph inside a CLOSED details keeps a box in Chromium (coinciding with the block after the fold's) but is not shown (checkVisibility false), so it has no layout for the place: the fold's summary at the edge reads the block after the fold, not the hidden paragraph (before: the hidden paragraph, and the Raw switch seated the fold's hidden source at the edge); the same fold OPEN reads its first nested paragraph; a stand-in offering no checkVisibility reads by the rect alone", () => {
+  const doc = fold(false), spans = sourceBlockSpans(doc);
+  const b5 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(5)), b7 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(7));
+  const wb = spans.findIndex((sp) => doc.slice(sp.start, sp.end).startsWith("<details>"));
+  const c = scene(false);
+  // the fixture, as Chromium lays a shut fold out: the details is its summary's height, the first hidden paragraph's box IS the
+  // block after the fold's, the second's sits under it, and each answers a client rect; only checkVisibility tells them apart
+  assert.deepEqual(c.det.box, c.summary.box, "the fixture: a closed details is as tall as its summary");
+  assert.deepEqual(c.hidden[0].box, c.p7.box, "the fixture: the first hidden paragraph's box coincides with paragraph 7's");
+  assert.equal(c.hidden[0].getClientRects().length, 1, "the fixture: the hidden paragraph answers a client rect");
+  assert.deepEqual([c.hidden[0].checkVisibility(), c.hidden[1].checkVisibility(), c.summary.checkVisibility(), c.det.checkVisibility(), c.p7.checkVisibility()], [false, false, true, true, true], "the fixture: checkVisibility is false for the shut content alone");
+  // the block table (anchor-map.ts, Slice 5): the details is the wrapper of its block, the hidden paragraphs are their own blocks
+  sameNodes(renderedBlockWrappers(El(c.md), doc, wb), [c.det], "the fixture: the details is its block's wrapper");
+  assert.equal(renderedBlockIndex(El(c.md), doc, El(c.hidden[0])), b5, "the fixture: the first hidden paragraph is paragraph 5's block's");
+  assert.equal(renderedBlockIndex(El(c.md), doc, El(c.p7)), b7, "the fixture: paragraph 7 is its own block's");
+  // the fold's summary straddling the edge, 20px in: the summary is a row of the wrapper's block's own and is passed over; the
+  // hidden paragraphs are not shown, so nothing nested ends below the edge with a layout, and the block after the fold is the
+  // place, at its distance below the edge (before: paragraph 5, whose phantom box ends below the edge like paragraph 7's)
+  toEdge(c.md, c.summary, 20);
+  const q = readPlace(H(c.body), doc);
+  assert.equal(textOf(doc, q), PARA(7), "the block after the fold is the place (before: the hidden paragraph 5)");
+  assert.deepEqual([q!.start, q!.end, q!.top, q!.height], [spans[b7].start, spans[b7].end, c.p7.box!.top - EDGE, H_BLOCK], "paragraph 7's span, its box's distance below the edge and its height");
+  assert.ok(q!.top > 0, "below the edge, so a seat keeps its distance (a Raw switch puts paragraph 7's row there, the fold's own rows above it)");
+  // the edge inside the phantom itself (paragraph 7 straddling the edge, so the hidden paragraph 5's coinciding box does too): the
+  // top-level search lands on paragraph 7, its own block, and never on the phantom, which hangs in the details above
+  const c2 = scene(false); toEdge(c2.md, c2.p7, 15);
+  const q2 = readPlace(H(c2.body), doc);
+  assert.deepEqual([textOf(doc, q2), q2!.top], [PARA(7), -15], "paragraph 7 partway in: its own block");
+  // the same fold OPEN: its content is shown, so the summary at the edge reads the first nested paragraph, below the edge inside
+  // the wrapper (file-view-place-blocks.test.ts's rule, unchanged)
+  const docO = fold(true), spansO = sourceBlockSpans(docO);
+  const b5o = spansO.findIndex((sp) => docO.slice(sp.start, sp.end) === PARA(5));
+  const o = scene(true); toEdge(o.md, o.summary, 20);
+  const qo = readPlace(H(o.body), docO);
+  assert.equal(textOf(docO, qo), PARA(5), "the open fold's first nested paragraph");
+  assert.deepEqual([qo!.start, qo!.top], [spansO[b5o].start, o.hidden[0].box!.top - EDGE], "paragraph 5's span, below the edge by the summary's remaining height and the gap");
+  assert.equal(qo!.top, 28);
+  // the open fold's nested paragraph partway in: its own block (checkVisibility true, the box read as ever)
+  const o2 = scene(true); toEdge(o2.md, o2.hidden[1], 10);
+  assert.deepEqual([textOf(docO, readPlace(H(o2.body), docO)), readPlace(H(o2.body), docO)!.top], [PARA(6), -10], "the open fold's second paragraph, 10px in");
+  // a stand-in offering no checkVisibility (a browser before the API): the rect alone decides, so the phantom reads as before
+  const r = scene(false, 0, true); toEdge(r.md, r.summary, 20);
+  assert.equal(typeof (r.hidden[0] as { checkVisibility?: unknown }).checkVisibility, "undefined", "the fixture: no checkVisibility on this stand-in");
+  assert.equal(textOf(doc, readPlace(H(r.body), doc)), PARA(5), "without checkVisibility the hidden paragraph's rect is read as a box, as before");
+});
+
+test("seatPlace: a Raw place on a paragraph inside a CLOSED details seats nothing and leaves the body where it stands (before: it seated the paragraph's phantom box, two blocks past the fold); one on the block after the fold seats at that block's box; the same fold OPEN seats the nested paragraph at its own box", () => {
+  const doc = fold(false), spans = sourceBlockSpans(doc);
+  const b6 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(6)), b7 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(7));
+  // the reader 3px into paragraph 6's Raw row, inside the fold's source, switched to Rendered: paragraph 6 is not shown, paragraph 5
+  // before it is not shown, and the wrapper's own block before that is refused (its source parses to one element against the
+  // wrapper and its summary: ruling 2), so nothing lends a box and the body stands
+  const onHidden: Place = { source: doc, view: "raw", start: spans[b6].start, end: spans[b6].end, top: -3, height: 18, atTop: false, prev: spans[b6 - 1], next: spans[b6 + 1] };
+  const c = scene(false, 0); c.body.scrollTop = 500;
+  const phantom = c.hidden[1].box!;
+  assert.equal(seatPlace(H(c.body), doc, onHidden), false, "no seat from the fold's hidden source (before: true, the phantom box seated)");
+  assert.equal(c.body.scrollTop, 500, "the body stands (before: scrolled by " + ((phantom.top - EDGE) - (-3 * H_BLOCK / 18)) + "px, to the phantom's fraction)");
+  // a Raw place on paragraph 7, the block after the fold, 3px in: its own box, at the row's depth as a fraction of its height
+  const onAfter: Place = { source: doc, view: "raw", start: spans[b7].start, end: spans[b7].end, top: -3, height: 18, atTop: false, prev: spans[b7 - 1], next: spans[b7 + 1] };
+  const a = scene(false, 0); a.body.scrollTop = 500;
+  assert.equal(seatPlace(H(a.body), doc, onAfter), true, "the block after the fold seats");
+  assert.equal(a.body.scrollTop, 500 + (a.p7.box!.top - EDGE) - (-3 * H_BLOCK / 18), "paragraph 7's box at the row's depth, scaled");
+  // the same fold OPEN: paragraph 6 is shown and its own box is seated
+  const docO = fold(true), spansO = sourceBlockSpans(docO);
+  const b6o = spansO.findIndex((sp) => docO.slice(sp.start, sp.end) === PARA(6));
+  const onShown: Place = { source: docO, view: "raw", start: spansO[b6o].start, end: spansO[b6o].end, top: -3, height: 18, atTop: false, prev: spansO[b6o - 1], next: spansO[b6o + 1] };
+  const o = scene(true, 0); o.body.scrollTop = 500;
+  assert.equal(seatPlace(H(o.body), docO, onShown), true, "the open fold's paragraph seats");
+  assert.equal(o.body.scrollTop, 500 + (o.hidden[1].box!.top - EDGE) - (-3 * H_BLOCK / 18), "the nested paragraph's own box, at the row's depth scaled");
+});
+
+/** `.fileview-body > div.fileview-code > pre > code.hljs > span.fv-cl*`, one row per line, rows `h` px apart from `top0`;
+ *  the body's top edge at 100. */
+function raw(src: string, top0 = 0, h = 20): { body: FakeElement; code: FakeElement; rows: FakeElement[] } {
+  const doc = new FakeDocument();
+  const body = doc.createElement("div"); body.setAttribute("class", "fileview-body"); body.box = { top: EDGE, bottom: EDGE + 600 };
+  const wrap = doc.createElement("div"); wrap.setAttribute("class", "fileview-code");
+  const pre = doc.createElement("pre"); const code = doc.createElement("code"); code.setAttribute("class", "hljs");
+  const lines = src.split("\n"); if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  const rows = lines.map((ln, i) => {
+    const row = doc.createElement("span"); row.setAttribute("class", "fv-cl");
+    const t = doc.createElement("span"); t.setAttribute("class", "fv-ct"); if (ln) t.appendChild(doc.createTextNode(ln));
+    row.appendChild(t); row.box = { top: top0 + i * h, bottom: top0 + (i + 1) * h }; code.appendChild(row); return row;
+  });
+  pre.appendChild(code); wrap.appendChild(pre); body.appendChild(wrap);
+  return { body, code, rows };
+}
+/** The Raw view with the row whose text is `text` straddling the edge `depth` px in (or `-depth` below it). */
+function rawAt(src: string, text: string, depth: number): ReturnType<typeof raw> & { row: FakeElement } {
+  const lines = src.split("\n"); const k = lines.indexOf(text); assert.ok(k >= 0, "the fixture holds the row " + JSON.stringify(text));
+  const r = raw(src, EDGE - depth - k * 20);
+  return { ...r, row: r.rows[k] };
+}
+
+test("readPlace in Raw: a row of a closing tag alone (`</details>`, `</div>`, a wrapper's end, which renders no element of its own) reads as the block after it, as a blank row between blocks does, whether the row straddles the edge or starts below it, and through a run of closers (before: the closing block itself, partway in, whose seat walked back to the fold's unshown paragraphs and the wrapper's refused block, so a shut fold's Rendered-Raw-Rendered round trip lost the place by the fold's source height); a closing tag that is the document's last block stays its own place; a closing tag inside a larger html block is that block's row", () => {
+  for (const open of [false, true]) {
+    const doc = fold(open), spans = sourceBlockSpans(doc);
+    const b7 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(7)), bc = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === "</details>");
+    assert.equal(bc, b7 - 1, "the fixture: the closing tag is its own block, right before paragraph 7");
+    // the closing row straddling the edge, 9px in
+    const r = rawAt(doc, "</details>", 9);
+    const q = readPlace(H(r.body), doc)!;
+    assert.equal(textOf(doc, q), PARA(7), (open ? "open" : "closed") + ": the block after the closing tag is the place (before: the closing tag's block)");
+    const p7Row = r.rows[doc.split("\n").indexOf(PARA(7))];
+    assert.deepEqual([q.start, q.end, q.top, q.height, q.line], [spans[b7].start, spans[b7].end, p7Row.box!.top - EDGE, 20, null], "paragraph 7's span, its first row's distance below the edge (the blank row between), one row tall, no line kept");
+    assert.equal(q.top, 31, "9px of the closing row, the blank row's 20, then paragraph 7's row");
+    assert.deepEqual([doc.slice(q.prev!.start, q.prev!.end), doc.slice(q.next!.start, q.next!.end)], ["</details>", PARA(8)], "its neighbours are the closing tag and paragraph 8");
+    // the closing row starting 5px below the edge (the row before it ends there): the same block after it
+    const r2 = rawAt(doc, "</details>", -5);
+    assert.deepEqual([textOf(doc, readPlace(H(r2.body), doc)), readPlace(H(r2.body), doc)!.top], [PARA(7), 45], "a closing row below the edge: paragraph 7 at its distance");
+    // a row of the fold's own paragraphs reads as ever: paragraph 6, partway in, with its line (the seat then decides by the view)
+    const r3 = rawAt(doc, PARA(6), 4);
+    const q3 = readPlace(H(r3.body), doc)!;
+    assert.deepEqual([textOf(doc, q3), q3.top, !!q3.line], [PARA(6), -4, true], "a nested paragraph's row is its own place");
+  }
+  // a run of closers: a div inside a div, both closed before the paragraph after them; the first closing row reads as that paragraph
+  const docN = "# Report\n\n<div align=\"center\">\n<div>\n\n" + paras(1, 2) + "\n\n</div>\n\n</div>\n\n" + PARA(3) + "\n";
+  const spansN = sourceBlockSpans(docN);
+  assert.deepEqual(spansN.slice(-3).map((sp) => docN.slice(sp.start, sp.end)), ["</div>", "</div>", PARA(3)], "the fixture: two closing blocks then the paragraph");
+  const rn = rawAt(docN, "</div>", 9);
+  assert.equal(textOf(docN, readPlace(H(rn.body), docN)), PARA(3), "the first closer's row reads past both closers to the paragraph");
+  assert.equal(readPlace(H(rn.body), docN)!.top, 9 + 20 + 20 + 20 + 20 - 9 - 9, "9px of the first closer, a blank, the second closer, a blank, then the paragraph's row");
+  // the closing tag as the document's last block: nothing after it, so its own block is the place, partway in, with its line
+  const docL = "# Report\n\n<div align=\"center\">\n\n" + paras(1, 2) + "\n\n</div>\n";
+  const spansL = sourceBlockSpans(docL);
+  assert.equal(docL.slice(spansL[spansL.length - 1].start, spansL[spansL.length - 1].end), "</div>", "the fixture: the closing tag is the last block");
+  const rl = rawAt(docL, "</div>", 9);
+  const ql = readPlace(H(rl.body), docL)!;
+  assert.deepEqual([textOf(docL, ql), ql.top, !!ql.line], ["</div>", -9, true], "the last block's closing row is its own place, as before");
+  // a closing tag inside a larger html block (`<p>Alpha</p>` on the line before `</div>` is one block): that block's own row
+  const docB = "# Report\n\n<div align=\"center\">\n\n" + PARA(1) + "\n\n<p>Alpha</p>\n</div>\n\n" + PARA(2) + "\n";
+  const spansB = sourceBlockSpans(docB);
+  const bB = spansB.findIndex((sp) => docB.slice(sp.start, sp.end) === "<p>Alpha</p>\n</div>");
+  assert.ok(bB >= 0, "the fixture: the closed tag and the closing tag are one html block");
+  const rb = rawAt(docB, "</div>", 9);
+  const qb = readPlace(H(rb.body), docB)!;
+  assert.deepEqual([qb.start, qb.top, !!qb.line], [spansB[bB].start, -29, true], "the html block, its first row 29px above the edge, the closing row the line kept");
+});

@@ -1,21 +1,30 @@
-// The Comment offer on a keyboard selection (plans/markdown-viewer.md Slice 5, item 9; file-comments.ts onSelectionChange). The
-// float rode one trigger, the seam's mouseup and touchend (file-view.ts onSelect, the panel's onSelection hook), so a selection made
-// or changed from the keyboard, Shift+Arrow over a selection a drag began, caret browsing, assistive technology, offered nothing,
-// and the float stayed where the drag had left it while the selection shrank under it (the Slice 5 probe (i)). Now the panel hears
-// the document's selectionchange itself, with four guards, and then runs the seam's own path: a selectionchange with the selection
-// the float is already offered beside does nothing (the seam's re-seat of the same ends after a paint fires the event too, and an
-// offer a scroll hid stays hidden); a collapsed selection hides the float; one arriving while a pointer is down does nothing (a
-// drag keeps its one offer at mouseup, and the float does not flicker mid-drag); one with an end outside the body hides a passage's
-// float and offers nothing; a DIFFERENT non-collapsed selection inside the body shows the float at the new rect; nothing while the
-// editor holds the body; and the listeners leave at dispose. Driven over the behavior suite's DOM stand-in with the selection faked
-// per case (window.getSelection is what the panel reads) and the document's listeners run as the browser runs them.
-// file-comments-keyboard-offer-browser.test.ts presses the keys in Chromium. Nodes hide their edges at construction (hideEdges,
-// ui/test-dom-shim.ts). Synthetic fixtures only: the notes-api world, placeholder ids.
+// The Comment float and the panel's OWN paints (plans/markdown-viewer.md Slice 5, item 9; file-comments.ts onSelectionChange,
+// afterPaint, offeredFor; the Slice 5 review, round 1). Three defects of the slice's selectionchange listener, each with the case
+// that failed before its fix:
+// (1) A paint that is no gesture of the person's (a peer's comment landing through the poll, a settings pick from another pane)
+//     unwraps and re-wraps the highlights, and a selection end inside a mark's text collapses to the mark's place, so a selection
+//     overlapping a highlight is cut short and the browser fires selectionchange for the move. The listener compared the changed ends
+//     with the OFFER's, read the change as a new selection of the person's, and re-offered a float a scroll had hidden, beside a
+//     passage nobody selected. Now paintAll and repaintPresel end by reading the selection as they left it into the record the
+//     listener compares with (afterPaint), so the paint's own event is no offer and the float stays as the paint found it, shown
+//     or hidden; the person's next change offers.
+// (2) offeredFor held the offer's two nodes and nothing cleared it, so after a reload replaced the body the whole previous render
+//     stayed reachable behind it until the next offer (a WeakRef over the selected text node, collected only once the record is gone).
+//     Now the record is read from the live selection after every paint, and holds no node of a swapped-out render.
+// (3) The same-selection guard ran Selection.toString before the four end compares, and a changed selection stringified twice (the
+//     guard's read and onSelection's). Now the ends come first and the text is read once, for ends that match or handed on.
+// Driven over the behavior suite's DOM stand-in with the selection faked per case (window.getSelection is what the panel reads and
+// what afterPaint records), the document's listeners run as the browser runs them, and the seam's paint fired through its hook.
+// file-comments-paint-offer-browser.test.ts runs (1) over the real viewer in Chromium, where the paint moves the selection itself.
+// Nodes hide their edges at construction (hideEdges, ui/test-dom-shim.ts). Synthetic fixtures only: the notes-api world,
+// placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
 import { hideEdges } from "../test-dom-shim";
+import * as v8 from "node:v8";
+import * as vm from "node:vm";
 
 // ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
 const SID = "11111111-2222-3333-4444-555555555555";
@@ -342,102 +351,111 @@ async function offered(t: TestContext): Promise<{ w: World; float: El; sel: any 
   return { w, float, sel };
 }
 
-test("a selectionchange with the selection the float is already offered beside changes nothing: shown, it stays where it is; hidden by a scroll that moved the passage, it stays hidden (the seam's re-seat of the same selection is no new offer)", async (t) => {
-  const { w, float, sel } = await offered(t);
-  documentEvent("selectionchange");
-  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the same selection: the float stands where the drag put it");
-  // the body scrolls and the passage moves from under the button: the float goes (hideFloatOnScroll)
-  sel.rect = RECT_MOVED;
-  dispatch(w.body, new Ev("scroll"));
-  assert.equal(float.hidden, true, "hidden by the scroll");
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, true, "the same selection again (a re-seat after a paint fires this too): no second offer");
-});
+/** A garbage collection on demand, without a command-line flag: the V8 flag set at run time and `gc` read from a fresh context. */
+const gc: () => void = (() => { v8.setFlagsFromString("--expose-gc"); return vm.runInNewContext("gc"); })();
+/** A turn's end (a WeakRef's target is held through the job that read it), then two full collections. */
+const settle = async (): Promise<void> => { await new Promise<void>((r) => setImmediate(r)); gc(); await new Promise<void>((r) => setImmediate(r)); gc(); };
+/** The seam's onRendered for a paint: the panel hides the float and runs paintAll over the body as it stands (the stand-in's rows are
+ *  untouched; the selection the fake reports when the pass ends is what the paint "left", the stand-in laying nothing out). */
+const paintHook = (w: World): void => { for (const cb of w.hooks.rendered) cb(); };
+/** A settings pick from another pane (settings.ts onExternalSettingsChange: the same-document signal): the live panel repaints the
+ *  marks with no gesture and no hideFloat, the poll's shape for a float that is showing. */
+function externalFilterPick(): void {
+  const ls = (globalThis as any).localStorage; const raw = ls.getItem("romp:settings");
+  const cur = raw ? JSON.parse(raw) : {};
+  ls.setItem("romp:settings", JSON.stringify({ ...cur, commentsFilter: cur.commentsFilter === "comments" ? "all" : "comments" }));
+  win.dispatchEvent(new Event("romp:settings"));
+}
+/** The fake selection's toString counted: the panel's reads of the selected text. */
+function countReads(s: any): () => number { let n = 0; const orig = s.toString; s.toString = () => { n++; return orig(); }; return () => n; }
 
-test("a DIFFERENT non-collapsed selection inside the body shows the float at the new rect: the selection shrunk by Shift+Arrow after a drag moves the button with it (before, it stayed where the drag left it)", async (t) => {
-  const { w, float } = await offered(t);
-  selection = selectionOn(w.body, QUOTE, 9, RECT_B);   // the drag's selection with three words fewer at its end, a narrower rect
-  documentEvent("selectionchange");
-  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "offered beside the shrunk selection");
-  // ...and hidden by a scroll, a further change offers it again
-  selection.rect = RECT_MOVED; dispatch(w.body, new Ev("scroll"));
-  assert.equal(float.hidden, true);
-  selection = selectionOn(w.body, QUOTE, 5, RECT_B);
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, false, "a new selection after the scroll: offered again");
-});
+/** A LIVE selection over the passage, as a browser's is: its nodes read at each access, so after a paint has unwrapped the
+ *  passage's mark, normalized the row and wrapped it again (the text node replaced), the ends name the new node, as a live range's
+ *  do; `length` is how far the selection reaches into the passage, cut short by the paint's collapse of an end (the fake is told). */
+function liveSelectionOn(root: El, passage: string, length: number, rect: Rect): any {
+  const hit = () => textNodeWith(root, passage);
+  const sel = { rangeCount: 1, isCollapsed: false, length, rect,
+    get anchorNode() { return hit().node; }, get anchorOffset() { return hit().at; }, get focusNode() { return hit().node; }, get focusOffset() { return hit().at + sel.length; },
+    toString: () => passage.slice(0, sel.length), getRangeAt: () => ({ getBoundingClientRect: () => sel.rect }) };
+  return sel;
+}
 
-test("a collapsed selection hides the float (the keyboard collapsed it); a picture's offer, which answers to no selection, stands", async (t) => {
-  const { w, float } = await offered(t);
-  const words = textNodeWith(w.body, QUOTE).node;
-  selection = { rangeCount: 1, isCollapsed: true, anchorNode: words, anchorOffset: 3, focusNode: words, focusOffset: 3, toString: () => "", getRangeAt: () => ({ getBoundingClientRect: () => RECT_A }) };
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, true, "collapsed: the passage the button was offered for is no longer selected");
-  // a picture's float (onImageClick: a click on a rendered picture, the Rendered view's root holding it): the button is about the
-  // picture, and the document's selection, collapsed by the click, says nothing about it
-  const md = new El("div"); md.className = "fileview-md";
-  const para = new El("p"); const img = new El("img"); img.rect = RECT_A; img.setAttribute("src", "figs/p95.png");
-  para.appendChild(img); md.appendChild(para); w.body.appendChild(md);
-  w.mode = "rendered";
-  dispatch(img, new Ev("click"));
-  assert.equal(float.hidden, false, "the click on the picture offers Comment on its embed line");
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, false, "the collapsed selection leaves a picture's offer standing");
-});
-
-test("a selectionchange while a pointer is down does nothing (a drag keeps its one offer at mouseup and the float does not flicker mid-drag); the press over, the next change offers", async (t) => {
-  const { w, float } = await offered(t);
-  dispatch(w.body, new Ev("mousedown"));   // the document's capture listeners: hideFloatOnDown hides the float, the press flag goes up
-  assert.equal(float.hidden, true, "a press anywhere else hides the float (hideFloatOnDown)");
-  selection = selectionOn(w.body, QUOTE, 9, RECT_B);
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, true, "mid-press: the selection's every change is the drag's, and offers nothing");
-  dispatch(w.body, new Ev("mouseup"));
-  documentEvent("selectionchange");
-  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the press over: the change offers the float beside the selection");
-  // a touch press the same way
-  dispatch(w.body, new Ev("touchstart"));
-  selection = selectionOn(w.body, QUOTE, 5, RECT_B);
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, true, "mid-touch: nothing");
-  dispatch(w.body, new Ev("touchend"));
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, false, "the finger lifted: offered");
-});
-
-test("a selection with an end outside the body (Ctrl+A puts one at the page's start; a selection in the aside) hides a passage's float and offers nothing", async (t) => {
-  const { w, float } = await offered(t);
-  const outside = w.actions.childNodes[0] as Txt;
-  assert.ok(!w.body.contains(outside), "the title bar's text stands outside the body");
-  selection = { rangeCount: 1, isCollapsed: false, anchorNode: outside, anchorOffset: 0, focusNode: textNodeWith(w.body, "More text").node, focusOffset: 4, toString: () => "the whole page", getRangeAt: () => ({ getBoundingClientRect: () => RECT_A }) };
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, true, "the passage is no longer the selection: the float goes, and no offer is made for the page");
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, true, "and stays hidden");
-});
-
-test("while the editor holds the body its selections are edits: a selectionchange offers nothing", async (t) => {
-  const { w, float } = await offered(t);
-  dispatch(w.body, new Ev("mousedown")); dispatch(w.body, new Ev("mouseup"));   // the drag's offer hidden by a press, the press over
-  assert.equal(float.hidden, true);
-  w.editing = true;
-  selection = selectionOn(w.body, QUOTE, 9, RECT_B);
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, true, "editing: nothing");
-  w.editing = false;
-  documentEvent("selectionchange");
-  assert.equal(float.hidden, false, "the read view back: the same change offers");
-});
-
-test("the document's listeners leave at dispose: selectionchange, and the press flag's mousedown, touchstart, mouseup, touchend, touchcancel and dragend", async (t) => {
-  const count = (type: string) => doc.listeners.filter((l) => l.type === type).length;
-  const before = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend") };
-  const w = world(); t.after(() => w.close());   // beside the explicit close below: a count that fails before it would leave the panel's poll timer holding the process, and the run would hang instead of reporting (dispose tolerates the second call)
-  t.after(() => { selection = null; });
+test("the panel's own paint cuts an overlapping selection short and fires selectionchange: a float a scroll hid stays hidden (before: re-offered beside the truncated passage with no gesture), a float shown stays where it was offered, and the person's next change offers", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
   await openPanel(w);
-  const during = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend") };
-  assert.deepEqual(during, { sc: before.sc + 1, md: before.md + 2, ts: before.ts + 2, mu: before.mu + 1, te: before.te + 1, tc: before.tc + 1, de: before.de + 1 }, "one selectionchange listener; the press flag beside hideFloatOnDown on mousedown and touchstart, and its four ends");
-  w.close();
-  const after = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend") };
-  assert.deepEqual(after, before, "every one removed with the viewer");
+  const live = liveSelectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
+  const before = live.anchorNode;
+  assert.ok(before.parentNode.classes.includes("fc-hl"), "the passage is highlighted: the selection's node is the mark's text");
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
+  live.rect = RECT_MOVED; dispatch(w.body, new Ev("scroll"));
+  assert.equal(float.hidden, true, "hidden by a scroll that moved the passage");
+  // the paint (the seam's hook: hideFloat, then paintAll) unwraps and re-wraps the highlight: the passage's text node is replaced,
+  // and the selection's end inside the old node collapsed to the mark's place, so the selection reaches nine characters, not all
+  live.length = 9; live.rect = RECT_B;
+  paintHook(w);
+  assert.notEqual(live.anchorNode, before, "the paint replaced the selection's node");
+  assert.equal(String(live), QUOTE.slice(0, 9), "...and left the selection cut short");
+  documentEvent("selectionchange");   // the event the paint's move fires, a task later
+  assert.equal(float.hidden, true, "the paint's own selectionchange: no offer, the float stays hidden (before: shown beside the truncated selection, which nobody selected)");
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "the same selection again: still no offer");
+  // the person's next change: offered beside it
+  live.length = 5;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the keyboard's change after the paint offers the float");
+  // a paint with no gesture while the float SHOWS (a settings pick from another pane: paintAll with no hideFloat, the poll's shape):
+  // the float stays as the paint found it, where main left it before the panel heard selectionchange at all
+  live.length = 3; live.rect = RECT_A;   // the paint cuts the selection again; the fake's rect differs, so an offer would move the button
+  const mid = live.anchorNode;
+  externalFilterPick();
+  assert.notEqual(live.anchorNode, mid, "the pick's paint replaced the node again");
+  assert.equal(float.hidden, false, "the pick itself hides nothing");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the paint's own event moves nothing: the float stands where the person's selection put it");
+  // ...and a person's change after that paint is an offer again
+  live.length = 7;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the next change offers beside the selection");
+});
+
+test("a paint that replaces the body releases the offer's nodes: the selected text node of the swapped-out render is collected once the reload has painted (before: held by the offer's record until the next selection), while an offer standing over its own render holds them", async (t) => {
+  let { w, float, sel } = await offered(t);
+  const text = new WeakRef<object>(sel.anchorNode); const row = new WeakRef<object>(sel.anchorNode.parentNode);
+  assert.ok(w.body.contains(sel.anchorNode), "the offer's node stands in the body");
+  // the browser's selection after the body's children are replaced: collapsed at the body (Chromium fires no selectionchange for it)
+  selection = { rangeCount: 1, isCollapsed: true, anchorNode: w.body, anchorOffset: 0, focusNode: w.body, focusOffset: 0, toString: () => "", getRangeAt: () => ({ getBoundingClientRect: () => RECT_A }) };
+  sel = null;   // the test holds nothing of the old render now: the panel's record is the one holder
+  await settle();
+  assert.ok(text.deref() !== undefined && row.deref() !== undefined, "the offer standing: the panel holds the selected node (the record the same-selection guard compares with)");
+  // the reload replaces the rows (the seam's paint, `why` "paint"): the old render is swapped out
+  w.ctx.reload();
+  assert.equal(float.hidden, true, "onRendered hides the float");
+  await settle();
+  assert.equal(text.deref(), undefined, "the old render's text node is collected: nothing in the panel holds it (before: the offer's record did, until the next offer)");
+  assert.equal(row.deref(), undefined, "...and its row with it");
+  // the next selection on the new render offers as ever
+  selection = selectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "a selection on the new render is offered");
+});
+
+test("the same-selection guard reads the selected text once, and only for ends that match: the offered selection re-fired costs one read; a changed selection costs one read too (before: two, the guard's and onSelection's) and is offered", async (t) => {
+  const { w, float } = await offered(t);
+  const same = selectionOn(w.body, QUOTE, QUOTE.length, RECT_A); const sameReads = countReads(same);
+  selection = same;
+  documentEvent("selectionchange");
+  assert.equal(sameReads(), 1, "the ends match the offer's: the text is compared, one read");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the same selection: no new offer");
+  const changed = selectionOn(w.body, QUOTE, 9, RECT_B); const changedReads = countReads(changed);
+  selection = changed;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "a changed selection is offered beside its rect");
+  assert.equal(changedReads(), 1, "...for one read of its text, the offer's own (before: the guard's read and then the offer's)");
+  // a selection whose ends match the record but whose text differs (the guard's last compare): offered, one read shared with the offer
+  const alike = selectionOn(w.body, QUOTE, 9, RECT_A); alike.toString = () => "other words"; const alikeReads = countReads(alike);
+  selection = alike;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "matching ends, other text: an offer");
+  assert.equal(alikeReads(), 1, "the guard's one read is handed to the offer");
 });
