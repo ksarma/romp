@@ -1590,7 +1590,10 @@ def _serve_token_read_or_mint(f, who):
       - The mint sweeps any `serve-token.*.tmp` a crashed attempt left (safe under the lock), writes
         its own with O_EXCL at 0600, checks the write length, fsyncs, and os.replace()s it onto the
         path: the live file appears with the token already inside, at 0600 from its first byte, and
-        the live path is never opened for writing at all.
+        the live path is never opened for writing at all. bin/romp-manager's own mint of an absent
+        primary token (mintServeTokenIfAbsent) holds NO lock and names its temp
+        `serve-token-mgr.<pid>.tmp`, outside this glob on purpose, so this sweep never unlinks a
+        manager's temp mid-mint (review round 2, 2026-09-10); keep the two names apart.
       - A non-empty token with any mode bit outside 0600 (group, other, the owner's execute) has
         those bits stripped in place, and said on stderr; a TIGHTER mode (0400) is left alone. The
         check was equality with 0600, which widened 0400 and called it a repair (review find,
@@ -9332,6 +9335,7 @@ def _run_update(tag):
     # detached script outlives this kernel, so the dying kernel's cut row can only join to a reason
     # written at curl time (auto deploys used to leave the row anonymous).
     aud = q(str(jd.STATE / "restart-audit.jsonl"))
+    tokf = q(str(jd.STATE / "serve-token"))
     # The report is written AFTER the restart request, saying what the request actually did. It
     # used to be written first, claiming restarted:true whenever a manager port was known — so a
     # manager that never took the request (gone, or a stale port) left an "updated and restarted"
@@ -9350,10 +9354,18 @@ def _run_update(tag):
         # that timeout, read as not restarted with a why of its own; any other non-zero exit is a
         # request the manager did not take. `rc` is read once, off the curl itself, never off a
         # test in an `elif` (whose `$?` is the previous test's).
+        # The manager's write doors take the serve token in X-Romp-Token (bin/romp-manager writeGate).
+        # The script reads it at RUN time, the way bin/romp does (the env override, else the kernel's
+        # token file), and hands it to curl on stdin as a --config line: this script travels to bash as
+        # an argument, so a token written into it would sit in argv for the update's whole run, and a
+        # `-H` would put it there for curl's; a command line is readable by every account on the machine
+        # (bin/romp's _romp_token_cfg, the same shape). The escaping is curl's config syntax, for a token
+        # carrying " or \ (only possible through ROMP_SERVE_TOKEN; the minted one is base64url).
         restart = (("  printf '{\"t\": %%s, \"action\": \"self-update\", \"tag\": \"%s\"}\\n' \"$(date +%%s)\" >> %s\n"
                     % (tag, aud))
-                   + "  curl -fsS --max-time %d -X POST 'http://127.0.0.1:%d/restart-all' >/dev/null 2>>%s; rc=$?\n"
-                   % (_RESTART_REQUEST_MAX_S, int(mport), log)
+                   + (r'''  tok="${ROMP_SERVE_TOKEN:-$(cat %s 2>/dev/null)}"; tok="${tok//\\/\\\\}"; tok="${tok//\"/\\\"}"''' % tokf) + "\n"
+                   + (r'''  printf 'header = "X-Romp-Token: %%s"\n' "$tok" | curl -fsS --max-time %d -X POST 'http://127.0.0.1:%d/restart-all' --config - >/dev/null 2>>%s; rc=$?'''
+                      % (_RESTART_REQUEST_MAX_S, int(mport), log)) + "\n"
                    + "  if [ \"$rc\" -eq 0 ]; then\n"
                    + "    " + report({"ok": True, "tag": tag, "restarted": True})
                    + "  elif [ \"$rc\" -eq 28 ]; then\n"
@@ -9980,9 +9992,17 @@ def _in_place_converge(target):
 
 _DEPLOY_RESTART_REASONS = ("main-converge", "p2p-update", "self-update",   # ledger reasons that ARE a
                            "kernel-asks-manager-restart-all: self-update")   # deploy restart of this kernel
-_NO_RESTART_ACTIONS = {"main-converge-skip", "bus-converge", "end-on-idle"}   # audit rows that restart no
-#                                                                              kernel (in-place converges; a
-#                                                                              session's own self-close ask)
+_MANAGER_REFUSED_ACTION = "manager-refused-restart-all"   # the manager answered a hop 4xx/5xx: nothing restarted
+_NO_RESTART_ACTIONS = {"main-converge-skip", "bus-converge", "end-on-idle", _MANAGER_REFUSED_ACTION}
+# The request rows a refused hop was written for, which the refusal consumes in _recent_restart_audit's walk
+# (review round 2, 2026-09-10): the dashboard's Restart writes http-restart and then, through
+# _restart_this_kernel, kernel-asks-manager-restart-all; the converge writes main-converge and hops itself;
+# the far-host apply script (_update_remote) writes p2p-update on the peer and hops to the peer's manager
+# through the control client, and its REFUSED branch writes the refusal over it (review round 3, 2026-09-10:
+# the third writer was missing here, so the far kernel kept the refused deploy as its live request).
+_MANAGER_REFUSED_REQUESTS = ("kernel-asks-manager-restart-all", "http-restart", "main-converge", "p2p-update")
+#                                                        # audit rows that restart no kernel (in-place converges;
+#                                                        # a session's own self-close ask; a refused manager hop)
 
 
 def _last_deploy_restart_t():
@@ -10315,15 +10335,19 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target="
         # HTTP_PROXY / http_proxy, so under a proxy environment this loopback POST went to the
         # proxy and the code on disk never restarted — reported only as "restart request failed"
         c = http.client.HTTPConnection("127.0.0.1", int(manager_port or 7432), timeout=5)
-        c.request("POST", "/restart-all%s" % ("" if immediate else "?when=quiet"))
+        c.request("POST", "/restart-all%s" % ("" if immediate else "?when=quiet"), headers=_manager_headers())
         resp = c.getresponse()
-        resp.read()
+        body = resp.read()
         c.close()
-        if resp.status >= 400:
-            raise RuntimeError("the manager answered HTTP %d" % resp.status)
     except Exception as e:
-        _sync_notice("romp is updated on disk but the restart request failed (%s) — "
+        _sync_notice("romp is updated on disk but the restart request failed (%s); "
                      "restart it yourself: romp refresh" % e, ok=False)
+        return
+    if resp.status >= 400:
+        # the manager answered and said no (its write gate: 401, this kernel's token is not one it holds;
+        # 503, it holds none): said three ways, with the notice leading on what did not happen
+        _report_manager_refusal("/restart-all", resp.status, body, reason="main-converge: %s" % kind,
+                                head="romp is updated on disk but the restart request failed")
 
 
 def _update_check_loop():
@@ -24647,7 +24671,16 @@ def _update_remote(host, head=None):
         # answers 202 and restarts nothing, which would have turned this into a silent never-restart
         # (review find). SYNCED:<sha>:MANAGED = the manager bounced it; SYNCED:<sha>:FALLBACK = the kill
         # path below ran (no owning manager reachable — node absent, no manager, or the polled kernel is
-        # bare).
+        # bare); REFUSED:<sha>:<status> = the far manager ANSWERED and refused (the control client's exit
+        # 3: its write gate, 401 or 503), and nothing was killed or started.
+        # THE MANAGER'S REFUSAL IS FINAL (review round 2, 2026-09-10): the client's exit 3 used to fall
+        # through to the last-resort path like exit 1 (no answer), which pkilled the managed kernel out from
+        # under the manager that had just answered for it, wrote a false "no owning manager" row and
+        # reported an immediate restart. A managed kernel is never killed out from under a manager that
+        # answered: on 3 the code is synced, a manager-refused-restart-all row (the kernel's own action for
+        # a refused hop, _MANAGER_REFUSED_ACTION) lands on the far host with the status the client named,
+        # the client's own stderr line (which names the file it read and the way out) is in update.log,
+        # and the apply exits 0 with the REFUSED tag so _verdict says what did not happen and why.
         'arow() { python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
         '\'reason\':\'from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; }; '
         '[ -f "$LOGDIR/down-by-romp" ] || arow; '
@@ -24657,7 +24690,13 @@ def _update_remote(host, head=None):
         'if [ "$OWNED" = 1 ]; then '
         # a manager owning the kernel beside a `romp down` marker (see above): its restart is attributed too
         '[ ! -f "$LOGDIR/down-by-romp" ] || arow; '
-        'if "$R/bin/romp-manager" restart-all >>"$LOGDIR/update.log" 2>&1; then echo "SYNCED:$NEW:MANAGED$K"; exit 0; fi; fi; '
+        '"$R/bin/romp-manager" restart-all >>"$LOGDIR/update.log" 2>&1; MRC=$?; '
+        'if [ "$MRC" = 0 ]; then echo "SYNCED:$NEW:MANAGED$K"; exit 0; fi; '
+        # the status the client named ("answered HTTP <code>"), read back from the lines it just appended
+        'if [ "$MRC" = 3 ]; then MCODE="$(tail -n 5 "$LOGDIR/update.log" | sed -n "s/.*answered HTTP \\([0-9][0-9][0-9]\\).*/\\1/p" | tail -n 1)"; '
+        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'manager-refused-restart-all\',\'door\':\'/restart-all\','
+        '\'status\':int(\'${MCODE:-0}\'),\'reason\':\'p2p-update from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        'echo "REFUSED:$NEW:${MCODE:-?}$K"; exit 0; fi; fi; '
         # stopped on purpose (see above): synced, nothing restarted
         'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN$K"; exit 0; fi; '
         # LAST RESORT (no owning manager answering on this host): the immediate path below — audit row,
@@ -24679,6 +24718,7 @@ def _update_remote(host, head=None):
         'echo "SYNCED:$NEW:FALLBACK$K"'
     ) % (shlex.quote(rdir), lfull, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF,
          _local_machine_label(), lfull[:8], kport,
+         _local_machine_label(), lfull[:8],
          _local_machine_label(), lfull[:8], kport)
     # The apply KILLS the running kernel before booting its replacement, so it must be immune to the
     # ssh dying between the two halves — exactly what a flaky link does (the user 2026-07-11:
@@ -24744,7 +24784,15 @@ def _update_remote(host, head=None):
                 return True, ("synced to %s; %s is stopped by romp down, so nothing was restarted there "
                               "(romp up on it starts the new code)" % (short, host))
             return True, "synced to %s + restarting" % short
-        _unexpect()                       # nothing restarted: REFMISMATCH / DIVERGED / STATERR / DIRTYNOW / RESETFAIL / NOLAUNCH / error
+        _unexpect()                       # nothing restarted: REFUSED / REFMISMATCH / DIVERGED / STATERR / DIRTYNOW / RESETFAIL / NOLAUNCH / error
+        if tag == "REFUSED":
+            # the far manager answered the restart and refused it (its write gate; review round 2,
+            # 2026-09-10): the code is synced and its kernel keeps running the old build, under its manager
+            short, _, code = rest.partition(":")
+            return False, ("synced to %s, but the manager on %s refused the restart (HTTP %s from its write gate), "
+                           "so its kernel keeps running the old code. On %s, run romp refresh from a shell whose "
+                           "state root is the manager's, or repair its serve-token file (a regular 0600 file you own)"
+                           % (short.strip() or lfull[:8], host, code.strip() or "?", host))
         if tag == "REFMISMATCH":
             return False, ("pushed %s, but the scratch ref on %s now holds %s — another push moved it between "
                            "ours and the apply; nothing was reset there. Push again."
@@ -25527,6 +25575,18 @@ def _recent_restart_audit(window=90, now=None, started=None):
         `signal` row of its own (review round 2: two stray kills within 90 seconds left one row);
       - a `down-failed` row (bin/romp, when a `romp down` did not stop the kernel) supersedes the `down`
         beneath it: neither is the request for a signal that arrives later;
+      - a `manager-refused-restart-all` row (the manager answered the hop 4xx or 5xx) consumes the ONE
+        request beneath it that the hop was made for, keyed on action and timestamp, never on a reason
+        (two of the four request rows carry none): the nearest `kernel-asks-manager-restart-all`,
+        `main-converge` or `p2p-update` (the far-host apply's) row at or before its t. A consumed
+        kernel-asks row the /restart door wrote (any reason but a self-update's) also owes the ONE
+        `http-restart` row the door wrote before it: the next such row beneath, however many rows apart.
+        Adjacency was the key (review round 3, 2026-09-10): a Restart of every kernel writes http-restart,
+        runs its remote half for seconds of network, then writes the kernel-asks row for its local half,
+        and a local click refused in that gap sat between the two, so the broad click's own row outlived
+        its refusal. Neither is the request for a signal that arrives later, since the manager restarted
+        nothing on it; a request further down (a parked quiet converge under an unrelated refusal) stays
+        visible (review round 2, 2026-09-10);
       - a `manager-sigterm` row (bin/romp-manager auditSigterm, written before every SIGTERM it sends) is
         a mechanism note, not a request: it says the manager was the messenger, and its `trigger` names
         what set it off (`restart`, `restart-all`, `refresh`, `cli-down`, `stop`), so that is the label it
@@ -25549,6 +25609,8 @@ def _recent_restart_audit(window=90, now=None, started=None):
         via_manager = None                                  # the newest manager-sigterm note about us, if any
         down_superseded = False
         park_settled = False                                # a row above showed a parked quiet request delivered or dropped
+        refused = []                                        # the t of each manager-refused row met, each owed one request beneath it
+        owed_http = 0                                       # http-restart rows owed, one per consumed kernel-asks row the /restart door wrote
         # a DEEP tail: every session self-close writes an end-on-idle row, and fifty of them inside a parked
         # quiet window pushed the live park's row out of a short tail and un-parked it (T240d review find);
         # the window and the start bound end the walk, not the tail
@@ -25560,12 +25622,33 @@ def _recent_restart_audit(window=90, now=None, started=None):
             if not (isinstance(rec, dict) and isinstance(rec.get("t"), int)):
                 continue
             action = str(rec.get("action") or "")
+            if action == _MANAGER_REFUSED_ACTION:
+                refused.append(rec["t"])                    # restarted no kernel, and its request beneath it did not either
+                continue
             if action in _NO_RESTART_ACTIONS:
                 continue                                    # restarted no kernel; says nothing about this cut
             quiet = rec.get("when") == "quiet"
             win = max(window, RESTART_EXPECT_MAX_S) if quiet else window
             if t0 - rec["t"] > win:
                 break                                       # older rows are older still
+            if action in _MANAGER_REFUSED_REQUESTS and (owed_http or refused):
+                # the request a refusal above was written for: the manager refused it, so it is not the
+                # request for this signal (review round 2, 2026-09-10). One request per refusal, keyed on
+                # action and timestamp. A consumed kernel-asks row the /restart door wrote owes the one
+                # http-restart row the door wrote before it, the next one beneath however many rows apart
+                # (a count, not a flag: pairing on the row directly beneath left a broad Restart's row live
+                # when a local click's three rows landed inside its remote half; review round 3,
+                # 2026-09-10). A self-update's kernel-asks row (older builds wrote one) had no http-restart
+                # row, so it owes none. An older request beneath an unrelated refusal stays visible.
+                if action == "http-restart" and owed_http:
+                    owed_http -= 1
+                    continue
+                if refused and rec["t"] <= refused[-1]:
+                    refused.pop()
+                    if action == "kernel-asks-manager-restart-all" \
+                            and not str(rec.get("reason") or "").startswith("self-update"):
+                        owed_http += 1
+                    continue
             spent = bool(consumed) and rec["t"] == consumed  # a cut row already joined it (auditT)
             if rec["t"] < born:
                 # a predecessor's row; only a parked quiet request survives the kernel that filed it
@@ -25608,21 +25691,108 @@ def _local_machine_label():
     return clean or "this-machine"
 
 
+def _manager_token():
+    """The serve token the manager's write doors require (X-Romp-Token; bin/romp-manager writeGate),
+    read the way bin/romp and the manager itself read it: ROMP_SERVE_TOKEN, else the token file under
+    this kernel's state root, fresh per call so a reminted file is honoured; this kernel's own TOKEN
+    when the file cannot be read (the manager then answers 503 or 401, and the caller reports that
+    rather than guessing: _report_manager_refusal)."""
+    t = (os.environ.get("ROMP_SERVE_TOKEN") or "").strip()
+    if t:
+        return t
+    try:
+        return (jd.STATE / "serve-token").read_text().strip() or TOKEN
+    except OSError:
+        return TOKEN
+
+
+def _manager_headers():
+    """The header every request to a manager write door carries (2026-09-10: a local process restarted
+    every session by posting to the port, and the manager now gates its doors the way this kernel gates
+    its own). Both loopback hops here (_run_main_update, _restart_this_kernel) and the self-update
+    script's curl (_run_update) present it; the `romp` verbs get theirs from the manager's control
+    client."""
+    return {"X-Romp-Token": _manager_token()}
+
+
+def _manager_refusal(door, status, body):
+    """What a 4xx or 5xx from a manager write door means, in the user's terms: (why, fix, err, src). `err`
+    is the manager's own one-line error (it names its token file, never a token); `why` names the status
+    and the cause; `fix` is the way out; `src` is where this kernel read the token it sent (ROMP_SERVE_TOKEN,
+    or this kernel's token file). 401 is the write gate not holding the token this kernel sent (another
+    state root, or a manager that is not this kernel's); 503 is a manager that cannot read its own token
+    file (it mints an absent one at its start, so this is a file that exists and cannot be read). The 401
+    remedy is `romp refresh` from a shell whose state root is the manager's: that verb runs the manager's
+    control client, which reads the token file under ITS OWN root (ROMP_STATE_DIR, else XDG_STATE_HOME),
+    or ROMP_SERVE_TOKEN when that is set, never "the manager's own file"; a shell under another root
+    sends a token the manager does not hold and meets the same 401 (review round 2, 2026-09-10).
+    `why` and `fix` are FIXED texts with no path in them (review round 2, 2026-09-10): the bell shows a
+    notice cut at SYNC_NOTICE_FIT, the state-root path is unbounded, and with it in the text the way out
+    was what got cut; the stderr line and the audit row carry `src`."""
+    try:
+        raw = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body or "")
+        err = str((json.loads(raw) or {}).get("error") or "").strip()
+    except Exception:
+        err = ""
+    src = "ROMP_SERVE_TOKEN" if (os.environ.get("ROMP_SERVE_TOKEN") or "").strip() else str(jd.STATE / "serve-token")
+    if status == 401:
+        why = "the manager refused (HTTP 401): it does not hold the serve token this kernel sent"
+        fix = "Run romp refresh from a shell whose state root (ROMP_STATE_DIR or XDG_STATE_HOME) is the manager's"
+    elif status == 503:
+        why = "the manager refused (HTTP 503): it cannot read its own serve-token file"
+        fix = "Make that file a regular 0600 file you own, under the manager's state root, then run romp refresh"
+    else:
+        why = "the manager answered HTTP %d" % status
+        fix = "Restart it yourself: romp refresh"
+    return why, fix, err, src
+
+
+def _report_manager_refusal(door, status, body, reason="", head="The restart did not happen"):
+    """A manager write door answered 4xx or 5xx: say it three ways (review round 1, 2026-09-10; the answer
+    used to be discarded, after the /restart handler had already acked restarting:true). One plain stderr
+    line naming the door, the status, the manager's own words and where this kernel read the token it
+    sent; an audit row of its own action (_MANAGER_REFUSED_ACTION, in _NO_RESTART_ACTIONS: no kernel
+    restarted, so the cut reader never takes it for a request) carrying the same source; and a sync notice
+    the user reads in the bell, `head` first, built to fit the bell whole (SYNC_NOTICE_FIT) for either head.
+    Returns the notice text, for a handler that answers its caller with it."""
+    why, fix, err, src = _manager_refusal(door, status, body)
+    sys.stderr.write("romp-kernel: the manager refused POST %s (HTTP %d%s); this kernel's token was read from %s\n"
+                     % (door, status, (": " + err) if err else "", src))
+    _audit_restart_request(_MANAGER_REFUSED_ACTION, door=door, status=status, reason=reason, error=err[:200],
+                           tokenSrc=src)
+    text = "%s: %s. %s." % (head, why, fix)
+    # kind "refused" (review round 2, 2026-09-10): filed under the default "sync" kind the row wore the
+    # machine-sync label, and a mute on that kind (the one that records successes, so a plausible mute)
+    # hid every refused restart with it; the bell's DESC for "refused" names a refused restart too
+    _sync_notice(text, ok=False, kind="refused")
+    return text
+
+
 def _restart_this_kernel(reason="", manager_port=_PORT_FROM_ENV):
     """Ask the manager to restart-all (it SIGTERMs this kernel; its exit handler spawns a fresh one).
     Standalone (no manager) → nothing to restart, which is not an error. `reason` lands in
     restart-audit.jsonl so the manager hop is never an anonymous SIGTERM (see _audit_restart_request).
     `manager_port` is the value an HTTP handler resolved BEFORE its ack went out (see _PORT_FROM_ENV);
-    the default reads the env here, for callers with no ack to sequence against."""
+    the default reads the env here, for callers with no ack to sequence against.
+    Returns "" when the manager took the request or none was reachable, else the refusal text: a 4xx or
+    5xx from the manager's write gate, said three ways by _report_manager_refusal, so a handler acks only
+    a restart that will happen (review round 1, 2026-09-10). The connection-failure arm stays silent on
+    purpose: ECONNREFUSED is a standalone kernel, and every test kernel runs against a dead port."""
     _audit_restart_request("kernel-asks-manager-restart-all", reason=reason, pid=os.getpid())
     mport = os.environ.get("ROMP_MANAGER_PORT") if manager_port is _PORT_FROM_ENV else manager_port
     if not mport:
-        return
+        return ""
     try:
         c = http.client.HTTPConnection("127.0.0.1", int(mport), timeout=4)
-        c.request("POST", "/restart-all"); c.getresponse(); c.close()
+        c.request("POST", "/restart-all", headers=_manager_headers())
+        resp = c.getresponse()
+        body = resp.read()
+        c.close()
     except Exception:
-        pass                                       # no manager reachable → nothing to restart
+        return ""                                  # no manager reachable → nothing to restart
+    if resp.status >= 400:
+        return _report_manager_refusal("/restart-all", resp.status, body, reason=reason)
+    return ""
 
 
 def _is_ask_pull(r, head=None):
@@ -53035,7 +53205,7 @@ window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='logUn
 var KINDS=['conn','limit','judge','warn','stalled','nudge','retry','apierror','sdk','sync','locate','cleared','refused','undelivered'];
 var KINDLBL={conn:'offline',limit:'limit',judge:'judge',warn:'warning',stalled:'stalled',
 nudge:'follow-up failed',retry:'retrying',apierror:'api error',sdk:'sdk',sync:'fleet sync',
-locate:'jump failed',cleared:'cleared',refused:'not saved',undelivered:'not sent'};
+locate:'jump failed',cleared:'cleared',refused:'refused',undelivered:'not sent'};
 // what each kind MEANS (the user 2026-07-28: the tooltip should explain the badge, not just say
 // show/hide) — worn by the filter toggles AND every entry's chip
 var DESC={conn:"the dashboard lost its live connection to the kernel for a visible pane; it reconnects on its own",
@@ -53050,7 +53220,7 @@ sdk:"romp's Claude Code backend, the machinery that actually runs your sessions,
 sync:"romp moved commits between your machines by itself \u2014 a push to a remote, a pull from one, or an ask that a peer fast-forward itself. Successes are logged as well as failures, so this is the record of what romp did to your machines; the network panel shows a sync while it is still running",
 locate:"a click that should have jumped to a message in the chat couldn't find it. Usually the chat is missing part of its history; reload the pane if it keeps happening",
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
-refused:"a setting that could not be saved, or a state file that could not be read. A change you made \u2014 a lane or tab setting, a card bell, a lane order \u2014 was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults",
+refused:"a setting that could not be saved, a state file that could not be read, or a restart the manager refused. A change you made \u2014 a lane or tab setting, a card bell, a lane order \u2014 was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults. Or the kernel asked its manager to restart and the manager refused (it does not hold the serve token the kernel sent, or cannot read its own): nothing restarted, and the entry carries the status and the way out",
 undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read the live session list (tmux did not answer; the same send works once it does), or it could not read the comment threads' store while resolving a session name, or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a refused reply, interrupt, end or compact files a row there with no text; a clear, drop or undo refused over the goals file writes nothing there"};
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
@@ -54355,15 +54525,31 @@ back.appendChild(panel);back.addEventListener('click',function(e){if(e.target===
 document.body.appendChild(back);}).catch(function(){});}catch(e){}}
 _fleetReport();
 // Factored to window.__rompRestart so the mobile bottom bar (no rail there) can trigger the same thing.
+// The kernel answers the POST with what its manager said (review round 2, 2026-09-10): on a 2xx the manager
+// took the restart, and this page polls /healthz for the new boot id as below; on a 4xx or 5xx (502: the
+// manager refused it) nothing is restarting, so there is no poll, the splash comes down and the rail button
+// comes back wearing the kernel's words as its title (the strip's failure-title pattern), until the next
+// click restores its own. The refusal itself reaches the bell from the kernel: its /restart handler filed the
+// notice under the refused kind (_report_manager_refusal) before it answered, and the feed pane mirrors it
+// into this bell, so the page files nothing of its own (review round 3, 2026-09-10: a page-side notice of the
+// same text made one refused click read as two). The splash used to stay up for the full two-minute backstop
+// and then reload onto the same kernel, hiding the dashboard and the bell the whole time. A fetch that
+// fails outright (the old kernel already gone) polls as before: that is a restart under way, not an answer.
+var rfTitle=null;
 window.__rompRestart=function(){
 var boot=document.getElementById('romp-boot');
 if(!boot){boot=document.createElement('div');boot.id='romp-boot';boot.innerHTML=__ROMP_LOADER__;document.body.appendChild(boot);}
 boot.classList.remove('gone');
-try{fetch('/restart',{method:'POST'}).catch(function(){});}catch(e){}
-var n=0;(function again(){setTimeout(function(){n++;
+var rf=document.getElementById('rail-refresh');
+if(rf){if(rfTitle===null)rfTitle=rf.title||'';rf.title=rfTitle;}
+function poll(){var n=0;(function again(){setTimeout(function(){n++;
 fetch('/healthz',{cache:'no-store'}).then(function(r){var b=(r&&r.ok)?r.headers.get('X-Romp-Boot'):null;
 if(b&&b!==__ROMP_BOOT__)location.reload();else if(n<240)again();else location.reload();})
-.catch(function(){if(n<240)again();else location.reload();});},500);})();};
+.catch(function(){if(n<240)again();else location.reload();});},500);})();}
+function refused(r){return r.json().catch(function(){return null;}).then(function(b){
+boot.classList.add('gone');
+if(rf){rf.style.pointerEvents='';rf.style.opacity='';rf.title=(b&&b.error)||('The restart did not happen: the kernel answered HTTP '+r.status);}});}
+try{fetch('/restart',{method:'POST'}).then(function(r){if(r&&r.ok===false)return refused(r);poll();}).catch(function(){poll();});}catch(e){poll();}};
 var rf=document.getElementById('rail-refresh');
 if(rf)rf.onclick=function(){rf.style.pointerEvents='none';rf.style.opacity='0.5';window.__rompRestart();};
 })();
@@ -58275,13 +58461,34 @@ class Handler(BaseHTTPRequestHandler):
                 # The value in force when the kernel acks is the value acted on; absent still means
                 # what it always meant (no manager → nothing to restart).
                 _mport = os.environ.get("ROMP_MANAGER_PORT")
-                self._send(200, json.dumps({"ok": True, "restarting": True, "boot": _BOOT_ID,
-                                            "fleet": bool(_fleet)}), "application/json")
                 if _fleet and _remotes:
+                    # the remote half is seconds of network per host, so the ack goes first and the
+                    # report is read back after the reload; a refusal of the local half at the end lands
+                    # on the bell and the audit ledger (_report_manager_refusal)
+                    self._send(200, json.dumps({"ok": True, "restarting": True, "boot": _BOOT_ID,
+                                                "fleet": bool(_fleet)}), "application/json")
                     threading.Thread(target=_fleet_restart_run,
                                      kwargs={"manager_port": _mport}, daemon=True).start()
-                else:
-                    _restart_this_kernel("http /restart (local-only)", manager_port=_mport)
+                    return
+                # Local only: the manager is asked FIRST and the ack says what it answered (review round
+                # 1, 2026-09-10). The ack used to go out before the hop, restarting:true whatever the
+                # manager said; with the manager's write gate a 401 or 503 is a real answer and the
+                # caller must hear it. On a 200 the manager has already sent SIGTERM by the time it
+                # answers, so the ack is IN FLIGHT while _graceful_term runs on the main thread: the
+                # marker below (review round 2) holds the exit until _send has written it, bounded
+                # (_RESTART_ACKS; with no backend to drain, the exit used to win that race one time in
+                # three to five and the ack was lost). The buttons poll /healthz either way.
+                _restart_ack_begin()
+                try:
+                    refused = _restart_this_kernel("http /restart (local-only)", manager_port=_mport)
+                    if refused:
+                        return self._send(502, json.dumps({"ok": False, "restarting": False, "boot": _BOOT_ID,
+                                                           "fleet": bool(_fleet), "error": refused}),
+                                          "application/json")
+                    self._send(200, json.dumps({"ok": True, "restarting": True, "boot": _BOOT_ID,
+                                                "fleet": bool(_fleet)}), "application/json")
+                finally:
+                    _restart_ack_end()
                 return
             if u.path == "/fleet-restart":
                 # What the last fleet restart did, read back by the page AFTER it reloads (the restart
@@ -61836,6 +62043,45 @@ _TERMINATING = [False]   # set the moment an exit path takes the lock: the watch
 #                          under a running graceful term (T240 review), and readers that only need to
 #                          know an exit is underway ask this instead of touching the lock
 
+# The /restart acks in flight (review round 2, 2026-09-10). The local leg of POST /restart asks the
+# manager BEFORE it acks, so the ack can say what the manager answered (round 1), and a manager that
+# takes the request SIGTERMs this kernel before it answers: _graceful_term then races the handler
+# thread, which is between the manager's 200 and its own _send, and with no SDK backend to drain the
+# exit won that race one time in three to five, losing the ack. The peer that asked
+# (_ask_peer_to_pull) then reported a kernel that was in fact restarting as one that never acked.
+# The handler counts itself in before the hop and out after _send (in a finally), and _drain_and_exit
+# waits for the count to reach zero before os._exit, bounded by the drain budget (its own two seconds
+# when no backend drained). The event waited on is the ack's write, not a delay.
+_RESTART_ACK_COND = threading.Condition()
+_RESTART_ACKS = [0]
+_RESTART_ACK_WAIT_S = 2.0     # the drain's budget, and the wait's own bound when there was no drain
+
+
+def _restart_ack_begin():
+    with _RESTART_ACK_COND:
+        _RESTART_ACKS[0] += 1
+
+
+def _restart_ack_end():
+    with _RESTART_ACK_COND:
+        _RESTART_ACKS[0] = max(0, _RESTART_ACKS[0] - 1)
+        _RESTART_ACK_COND.notify_all()
+
+
+def _wait_restart_acks(timeout):
+    """Block until no /restart ack is in flight, or `timeout` seconds have passed; True when none is
+    left. Called from the exit path only (the signal handler's main thread, or the parent watch's
+    thread, whichever called _drain_and_exit), while the handler threads keep running; a zero or
+    negative timeout is one look with no wait."""
+    deadline = time.monotonic() + max(0.0, float(timeout or 0))
+    with _RESTART_ACK_COND:
+        while _RESTART_ACKS[0] > 0:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return False
+            _RESTART_ACK_COND.wait(left)
+        return True
+
 
 def _parent_watch():
     """Exit if the manager that spawned us (ROMP_MANAGER_PID) dies, so a supervisor crash doesn't
@@ -61893,9 +62139,12 @@ def _drain_and_exit(reason, signum=None, what="SIGTERM", audit=None):
     res = {}
     err = ""
     be = _sdk_backend or None
+    budget = time.monotonic() + _RESTART_ACK_WAIT_S   # the drain's budget, shared with the ack wait below
+    drained = False
     try:
         sys.stderr.write("romp-kernel: %s — draining SDK sessions\n" % what)
         if be is not None and hasattr(be, "drain"):
+            drained = True
             res = be.drain(2.0)
     except Exception:
         # log-and-record, never die recordless (T143: a raising drain lost 2 of 18 restarts' rows)
@@ -61916,6 +62165,19 @@ def _drain_and_exit(reason, signum=None, what="SIGTERM", audit=None):
             _append_restart_cut(row)
         except Exception:
             sys.stderr.write("romp-kernel: cut ledger failed: %s\n" % traceback.format_exc())
+        # A /restart ack still in flight lands before the exit (review round 2, 2026-09-10; see
+        # _RESTART_ACKS): the manager that sent this signal answered the handler's hop, and the handler
+        # thread is writing the ack the caller is waiting on. Bounded by what is left of the drain's
+        # budget when a backend drained, else by the wait's own two seconds; nothing in flight returns
+        # at once. An ack the bound runs out on is said on stderr (review round 3, 2026-09-10: the exit
+        # used to leave nothing behind about the ack it abandoned), inside the try so a failed write
+        # cannot raise past the os._exit.
+        try:
+            if not _wait_restart_acks(budget - time.monotonic() if drained else _RESTART_ACK_WAIT_S):
+                sys.stderr.write("romp-kernel: a /restart ack was still in flight when the drain budget ran out; "
+                                 "exiting without it\n")
+        except Exception:
+            pass
         os._exit(0)
 
 

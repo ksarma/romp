@@ -156,6 +156,35 @@ export const STRIP_PANES: Array<{ key: string; label: string }> = [
   { key: "feed", label: "Feed" },
 ];
 
+const RESTART_TITLE = "Restart the romp kernel";
+
+// The strip's Restart click, factored so both branches run under test with a stub button and a stub fetch
+// (review round 2, 2026-09-10). The kernel answers POST /restart with what its manager said: a 2xx means the
+// restart is under way (the button stays disabled; the failsafe re-arms it after `rearmMs`, and the reload
+// normally lands first); a 4xx or 5xx (502: the manager refused it) means nothing is restarting, so the
+// re-arm is cleared, the button comes back at once and wears the kernel's error text as its title (the
+// failure-title pattern the network popover's actions use), so the refusal and its way out are one hover
+// away. The response used to be discarded: the button sat disabled for eight seconds and nothing was said.
+// A fetch that fails outright is left to the reconnect machinery, as before.
+export function restartFromStrip(btn: { disabled: boolean; title: string; classList: { add(c: string): void; remove(c: string): void } },
+                                 post: () => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>,
+                                 rearmMs = 8000): Promise<void> {
+  btn.disabled = true;
+  btn.classList.remove("sn-actfail");
+  btn.title = RESTART_TITLE;
+  const rearm = setTimeout(() => { btn.disabled = false; }, rearmMs);
+  return post().then((res) => {
+    if (res.ok) return;
+    return res.json().catch(() => null).then((b) => {
+      clearTimeout(rearm);
+      btn.disabled = false;
+      btn.classList.add("sn-actfail");
+      const err = b && typeof b === "object" && typeof (b as { error?: unknown }).error === "string" ? (b as { error: string }).error : "";
+      btn.title = err || `The restart did not happen: the kernel answered HTTP ${res.status}`;
+    });
+  }).catch(() => { /* the reconnect machinery reports */ });
+}
+
 export function initStrip(openSettings: () => void, post?: (m: Record<string, unknown>) => void): void {
   if (!(window as any).__rompShowStrip) return;
   if (document.getElementById("romp-strip")) return;
@@ -168,17 +197,16 @@ export function initStrip(openSettings: () => void, post?: (m: Record<string, un
   // hidden-set ({type:"stripPanes"}) on every panel create/dispose/view-state.
   const panesWrap = document.createElement("div");
   panesWrap.id = "strip-panes";
-  // ↻ kernel restart — the rail's #rrefresh twin. The pipes reconnect and the
-  // host reloads the webviews on their own once the kernel is back.
+  // ↻ kernel restart: the rail's #rail-refresh twin. The pipes reconnect and the
+  // host reloads the webviews on their own once the kernel is back; a refusal comes
+  // back onto the button (restartFromStrip).
   const refresh = document.createElement("button");
   refresh.id = "strip-refresh";
-  refresh.title = "Restart the romp kernel";
+  refresh.title = RESTART_TITLE;
   refresh.textContent = "↻";
   refresh.addEventListener("click", (e) => {
     e.stopPropagation();
-    refresh.disabled = true;
-    fetch(kernelUrl("/restart"), { method: "POST" }).catch(() => { /* the reconnect machinery reports */ });
-    setTimeout(() => { refresh.disabled = false; }, 8000);   // pure failsafe re-arm; the reload normally lands first
+    void restartFromStrip(refresh, () => fetch(kernelUrl("/restart"), { method: "POST" }));
   });
   // Remote kernels — the rail's #rail-net twin (same endpoints; the shell keeps
   // its own copy until federation unifies them).

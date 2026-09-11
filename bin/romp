@@ -2755,7 +2755,70 @@ PYEOF
         _dn_mgr=""
         if "${ROMP_MANAGER_BIN:-romp-manager}" status >/dev/null 2>&1; then
             _dn_mgr=1
-            "${ROMP_MANAGER_BIN:-romp-manager}" down >/dev/null 2>&1 || true
+            # The stop, with its answer kept. The control client exits 3 when the manager ANSWERED and
+            # refused (its write gate: HTTP 401, the manager does not hold the serve token this romp sent,
+            # so it runs under another state root or is another romp's, or this romp SENT NONE because it
+            # found no token to send; HTTP 503, the manager cannot read its own token file), and 1 for no
+            # answer at all (a timeout, a connection error), which the poll below handles as before. A
+            # refusal is final: seven seconds of polling would not change it, and a manager that refused
+            # this romp's token is not this romp's to stop, so the hold is released, the marker taken back,
+            # and the answer said with the status, the manager's own words and the remedy (review round 1,
+            # 2026-09-10: the answer used to be discarded and the refusal reported as a manager that would
+            # not leave, with "stop it by hand"). Whether a token was sent is read from the client's own
+            # stderr, captured below: it says "the serve token could not be read (<file>: <why>)" before it
+            # asks without one (review round 2, 2026-09-10: the 401 line used to claim a token was read from
+            # the file when the file was missing or empty and no header went out).
+            _dn_mout="$("${ROMP_MANAGER_BIN:-romp-manager}" down 2>&1)" && _dn_mrc=0 || _dn_mrc=$?
+            if [[ "$_dn_mrc" -eq 3 ]]; then
+                _dn_mref="$(DN_OUT="$_dn_mout" DN_TOK="$(_romp_state_dir)/serve-token" DN_ENV="${ROMP_SERVE_TOKEN:+1}" python3 - <<'PYEOF'
+import json, os, re
+out = os.environ.get("DN_OUT") or ""
+m = re.search(r"answered HTTP (\d{3})", out)
+code = m.group(1) if m else "?"
+try:
+    err = " ".join(str((json.loads(out[out.index("{"):]) or {}).get("error") or "").split())
+except Exception:
+    err = ""
+tok = os.environ.get("DN_TOK") or "its token file"
+# where the client read the token it sent, from the client's own line first (it knows what it sent; review
+# round 3, 2026-09-10: this snippet's own env check could disagree with the client's), else from DN_ENV
+env = bool(re.search(r"read from ROMP_SERVE_TOKEN\b", out)) if "read from " in out else bool(os.environ.get("DN_ENV"))
+none = re.search(r"the serve token could not be read \((.*?)\); the manager refuses", out)
+if code == "401" and none:
+    why = none.group(1)
+    if why.startswith(tok + ": "):
+        why = why[len(tok) + 2:]
+    fix = ("It needs the serve token, and this romp found none at %s (%s). Point ROMP_STATE_DIR at the manager's "
+           "state root, or set ROMP_SERVE_TOKEN." % (tok, why))
+elif code == "401" and env:
+    # the state root changes nothing while the variable is set: the remedy is the variable (the control
+    # client's and the extension's wording; review round 3, 2026-09-10)
+    fix = ("It does not hold the serve token this romp read from ROMP_SERVE_TOKEN. Unset it in this shell, or set "
+           "it to the manager's token, or check ROMP_MANAGER_PORT.")
+elif code == "401":
+    fix = ("It does not hold the serve token this romp read from %s, so it runs under another state root or "
+           "belongs to another romp. Check ROMP_STATE_DIR and ROMP_MANAGER_PORT, or stop it from the shell that "
+           "started it." % tok)
+elif code == "503":
+    fix = ("It cannot read its own serve-token file. Make that file a regular 0600 file that you own, under the "
+           "manager's state root, then run romp down again.")
+else:
+    fix = "See the manager's log."
+print(code)
+print("HTTP %s%s" % (code, (": " + err) if err else ""))
+print(fix)
+PYEOF
+)"
+                _dn_mcode="${_dn_mref%%$'\n'*}"
+                _dn_mrest="${_dn_mref#*$'\n'}"
+                _dn_mhttp="${_dn_mrest%%$'\n'*}"
+                _dn_mfix="${_dn_mrest#*$'\n'}"
+                _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_nocancel" "the manager on :$_dn_mport refused the stop (HTTP $_dn_mcode)"
+                # the documented shape (docs/reference.md, Stopping): the manager's words close the parenthesis,
+                # the remedy follows it as its own sentence (review round 2, 2026-09-10)
+                echo "romp down: the manager on :$_dn_mport refused the stop ($_dn_mhttp). $_dn_mfix The kernel keeps running." >&2
+                exit 1
+            fi
             for _ in $(seq 1 28); do
                 "${ROMP_MANAGER_BIN:-romp-manager}" status >/dev/null 2>&1 || break
                 sleep 0.25
@@ -2862,14 +2925,21 @@ PYEOF
         exit 0 ;;
     refresh)   # restart EVERYTHING (the user 2026-06-29): the postal bus too, not just the kernels — the bus
                # is a separate long-lived singleton the manager doesn't own, so a kernel-only refresh left it
-               # serving stale code. Bounce the bus first (best-effort), then exec the kernel restart.
+               # serving stale code. The kernels first, through the manager's control client, and the bus
+               # (best-effort) only once the manager took the request.
                _romp_restart_audit refresh "" "${2:-}"   # who asked (see the helper), before acting; --quiet rides along
-               "${ROMP_POSTAL_BIN:-romp-postal-service}" restart >/dev/null 2>&1 || true
                # Deploys bounce IMMEDIATELY, cutting in-flight turns (T160 — the parked
                # quiet window cost minutes per push; boot reconcile resumes cut turns with
                # their history). `romp refresh --quiet` defers to the next quiet window
                # explicitly (no SDK turn in flight, drain lease held, backstop-capped).
-               exec "${ROMP_MANAGER_BIN:-romp-manager}" restart-all "${2:-}" ;;
+               # The client's exit is this command's: 3 when the manager ANSWERED and refused (its write
+               # gate, HTTP 401 or 503; the client's stderr line names the file this romp read, or that
+               # it found none, and the way out), 1 when nothing answered. On a refusal nothing restarted,
+               # so the bus is left alone too (review round 2, 2026-09-10: it used to be bounced before the
+               # answer was known, leaving the bus on new code and every kernel on the old).
+               "${ROMP_MANAGER_BIN:-romp-manager}" restart-all "${2:-}" || exit $?
+               "${ROMP_POSTAL_BIN:-romp-postal-service}" restart >/dev/null 2>&1 || true
+               exit 0 ;;
     status)
         _st_marker="$(_romp_state_dir)/down-by-romp"
         [[ -f "$_st_marker" ]] || exec "${ROMP_MANAGER_BIN:-romp-manager}" status

@@ -295,6 +295,25 @@ class StaleTempsAreSwept(_TokenFile):
         self.assertEqual(_mode(self.f), 0o600)
         self.assertEqual(self._temps(), [])
 
+    def test_the_managers_temp_is_not_this_sweeps_to_unlink(self):
+        """bin/romp-manager's mint of an absent primary token (mintServeTokenIfAbsent) holds no lock and
+        names its temp `serve-token-mgr.<pid>.tmp`, outside this sweep's glob on purpose (review round 2,
+        2026-09-10): the two mints can overlap, and this sweep must never unlink a manager's temp
+        mid-mint. The REAL sweep, over a directory holding both names beside no token, removes only the
+        kernel's own (review round 3: the node suite matched the manager's name against a hand-copied
+        regex, which a glob widened here would not have failed). The manager's temp is unlinked here,
+        since _clear() sweeps only the kernel's."""
+        mgr = self.f.with_name("serve-token-mgr.99999.tmp")
+        stale = self.f.with_name("serve-token.99999.tmp")
+        mgr.write_text("a-managers-mint-in-progress-DO-NOT-USE")
+        stale.write_text("half-written-DO-NOT-USE")
+        self.addCleanup(lambda: mgr.exists() and mgr.unlink())
+        tok = km._load_token()
+        self.assertFalse(stale.exists(), "the kernel's own crashed temp is swept")
+        self.assertTrue(mgr.exists(), "the manager's temp is not this sweep's to unlink")
+        self.assertEqual(mgr.read_text(), "a-managers-mint-in-progress-DO-NOT-USE", "and untouched")
+        self.assertEqual(self.f.read_text(), tok, "the token was minted")
+
 
 class TightenMode(_TokenFile):
     def test_a_loose_existing_token_is_tightened_and_returned_unchanged(self):

@@ -126,4 +126,8 @@
 .sn-row.sn-sub { margin-left: 20px; }
 .sn-sub.sn-empty { margin-left: 20px; text-align: left; padding: 4px 0; }
 .sn-subtoggle { flex: 0 0 auto; }
-.sn-actfail { border-color: #E5534B; color: #E5534B; }
+/* a refused restart's chrome (restartFromStrip adds .sn-actfail): the strip button's own id rules outrank a bare
+   class rule whatever the order, so the id joins this rule's selector (the same two colours, no new raw hex: the
+   census pins strip.css at eight), and the rule sits after #strip-refresh:hover so hovering to read the title keeps
+   the red (review round 3, 2026-09-10) */
+.sn-actfail, #strip-refresh.sn-actfail { border-color: #E5534B; color: #E5534B; }

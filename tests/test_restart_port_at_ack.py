@@ -103,7 +103,9 @@ class RestartPortResolvedAtAck(unittest.TestCase):
             method="POST")
         with urllib.request.urlopen(req, timeout=10) as r:
             self.assertTrue(json.loads(r.read()).get("restarting"))
-        # the manager hop runs after the ack — wait (bounded) for the handler thread to finish it
+        # the hop PRECEDES the ack for this leg since 2026-09-10 (the ack says what the manager answered, and
+        # the port resolved before the hop is still the one in force), so the recording manager's list is
+        # full by the time the ack is read above; the loop below is a backstop, not the sequencing
         deadline = time.time() + 10
         while not _RecordingManager.hits and time.time() < deadline:
             time.sleep(0.01)

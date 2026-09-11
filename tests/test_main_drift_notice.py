@@ -549,7 +549,7 @@ class UiOnlyConverge(unittest.TestCase):
         km._converge_classes = lambda a, b: {"kernel": [], "bus": [],
                                              "skip": ["ui/webview/feed.ts"], "ast_equal": []}
         self.notices, self.banners, self.rebuilds = [], [], []
-        km._sync_notice = lambda msg, ok=True: self.notices.append((msg, ok))
+        km._sync_notice = lambda msg, ok=True, kind="sync": self.notices.append((msg, ok))   # the refusal path passes kind (round 2)
         km._send_to_app = lambda app, payload: self.banners.append(payload)
         km._update_mode = lambda: "ask"
         km._kernel_sha = lambda: "cur-sha"
@@ -790,7 +790,7 @@ class ConvergePullStep(unittest.TestCase):
 
         env = {"HTTP_PROXY": proxy, "http_proxy": proxy} if proxy else {}
         with mock.patch.object(km.subprocess, "run", side_effect=fake_run), \
-             mock.patch.object(km, "_sync_notice", side_effect=lambda m, ok=True: rec.notices.append((m, ok))), \
+             mock.patch.object(km, "_sync_notice", side_effect=lambda m, ok=True, kind="sync": rec.notices.append((m, ok))), \
              mock.patch.object(km, "_kernel_sha", return_value="cur-sha"), \
              mock.patch.object(km, "_kernel_code_changed", return_value=True), \
              mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
