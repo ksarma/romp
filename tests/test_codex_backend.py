@@ -241,6 +241,29 @@ def build(tmp=None, factory=None):
     return be, fake, tmp
 
 
+class RestartImpact(unittest.TestCase):
+    def test_counts_the_sessions_a_kernel_restart_stops_and_the_turns_it_cuts(self):
+        # the update banner's confirm step (2026-09-10) sums this with the SDK backend's restart_impact:
+        # (live, busy) in the same shape. Every session not dead is stopped (the app-server dies with the
+        # kernel); busy is a turn in flight only. A queued-only session is busy() to the scheduler but
+        # not to this count: its queue is persisted and re-armed by the next kernel's constructor, so the
+        # restart cuts nothing of it. A dead session, even one whose turn id was never cleared, is neither
+        be, _fake, _ = build()
+        turning = cb._Session("11111111-2222-4333-8444-555555555501", "t1", "web", "/TESTDIR")
+        turning.turn_id = "turn-1"
+        queued = cb._Session("11111111-2222-4333-8444-555555555502", "t2", "api", "/TESTDIR")
+        queued.queue = ["hello"]
+        queued.queue_ids = ["q1"]
+        dead = cb._Session("11111111-2222-4333-8444-555555555503", "t3", "tests", "/TESTDIR")
+        dead.dead = True
+        dead.turn_id = "turn-3"
+        for s in (turning, queued, dead):
+            be._put_session(s)
+        self.assertEqual(be.restart_impact(), (2, 1))
+        self.assertTrue(be.busy(queued.sid), "queued is busy to the scheduler, and rightly not counted as cut")
+        self.assertEqual(build()[0].restart_impact(), (0, 0), "an empty backend stops nothing")
+
+
 class Conformance(unittest.TestCase):
     def test_every_abstract_method_exists(self):
         missing = [m for m in sb.SessionBackend.__abstractmethods__

@@ -15,16 +15,20 @@ redirected before the module loads.
 """
 import asyncio
 import ast
+import builtins
+import io
 import inspect
 import textwrap
 import hashlib
 import json
 import os
+import pathlib
 import stat
 import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1212,32 +1216,6 @@ class TransitionLedger(unittest.TestCase):
         self.assertEqual(b["state"], "thrashing", "no restart: the same reading holds thrashing by hysteresis")
         self.assertTrue(0.10 < b["windows"]["900"]["rate429"] < 0.15, b["windows"]["900"])
 
-    def test_a_malformed_legacy_ledger_row_is_skipped_never_the_backends_death(self):
-        """Finding 6: only json.loads was guarded; a non-numeric `t` or an unhashable `bucket` raised
-        out of ApiHealth.__init__, out of SdkBackend.__init__, and the kernel then pinned the SDK
-        backend unavailable for its whole life. Such rows are skipped and logged once. The ledger is
-        now the first cut's legacy file, read once at the first boot without a state file."""
-        d = tempfile.mkdtemp()
-        p = os.path.join(d, sb.API_HEALTH_LEGACY_LEDGER)
-        good = {"t": T0, "bucket": KEY, "auth": LABEL, "family": "fable", "from": "unknown", "to": "thrashing", "why": "x"}
-        with open(p, "w") as f:
-            f.write(json.dumps({"t": "yesterday", "bucket": KEY, "to": "thrashing"}) + "\n")
-            f.write(json.dumps({"t": T0, "bucket": ["not", "a", "key"], "to": "thrashing"}) + "\n")
-            f.write(json.dumps({"t": T0, "bucket": {"k": 1}, "to": "thrashing"}) + "\n")
-            f.write("not json at all\n")
-            f.write(json.dumps(good) + "\n")
-        lines = []
-        ah = sb.ApiHealth(d, log=lines.append, boot_at=T0 + 10)
-        self.assertEqual(ah._last_state[KEY]["state"], "unknown", "the good row seeded; the bad ones did not")
-        hits = [l for l in lines if "malformed" in l]
-        self.assertEqual(len(hits), 1, "logged once: %r" % lines)
-        self.assertIn("4", hits[0])
-        self.assertEqual([(r["from"], r["to"]) for r in ah.snapshot(T0 + 11)["transitions"]],
-                         [("unknown", "thrashing"), ("thrashing", "unknown")])
-        # …and a backend over that state dir constructs
-        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
-        self.assertIn(KEY, be.api_health_snapshot(T0 + 12)["buckets"])
-
     def test_state_since_is_the_first_read_that_observed_it(self):
         ah = sb.ApiHealth(tempfile.mkdtemp())
         for e in _storm(T0 - 600, T0):
@@ -1395,44 +1373,6 @@ class StateFile(unittest.TestCase):
         self.assertEqual(sizes[-1], sizes[-10], "full tail: the file stopped growing")
         self.assertLess(sizes[-1], 32 * 1024)
 
-    def test_a_legacy_jsonl_seeds_once_including_the_row_at_the_64kb_mark(self):
-        """The first cut's api-health.jsonl is read at the first boot without a state file, from its
-        last 64 KB, starting at the first row boundary at or after the mark. The first cut sought to
-        the mark and dropped its first LINE — a complete row whenever the mark fell on a boundary: one
-        invisible transition per boot past 64 KB, and a bucket whose newest row it was fell out of the
-        seed. Here the quiet bucket's only row begins exactly at the mark."""
-        d = tempfile.mkdtemp()
-        quiet = "key:aaaaaaaaaaaa|haiku"
-
-        def row(bucket, t, to, why="w"):
-            a, f = bucket.split("|")
-            return json.dumps({"t": t, "bucket": bucket, "auth": a, "family": f, "from": "unknown", "to": to,
-                               "why": why, "evidence": {"window": 300, "rate429": 0.4, "rate5xx": 0.0, "n": 20}}) + "\n"
-        head = "".join(row(KEY, T0 - 1000 + i, "healthy") for i in range(5))
-        q = row(quiet, T0 - 100, "thrashing", "the quiet neighbour's only row")
-        tail_rows = [row(KEY, T0 - 90 + i, "thrashing" if i % 2 else "healthy") for i in range(280)]
-        pad = 65536 - len(q) - sum(map(len, tail_rows)) - len(row(KEY, T0 - 1, "healthy", ""))
-        self.assertGreater(pad, 0, "the fixture must fit under 64 KB before padding: shorten the tail")
-        blob = head + q + "".join(tail_rows) + row(KEY, T0 - 1, "healthy", "x" * pad)
-        self.assertEqual(len(blob) - 65536, len(head), "the quiet row begins exactly at the 64 KB mark")
-        p = os.path.join(d, sb.API_HEALTH_LEGACY_LEDGER)
-        with open(p, "w") as f:
-            f.write(blob)
-        ah = sb.ApiHealth(d, boot_at=T0 + 10)
-        self.assertIn(quiet, ah._last_state, "the row at the mark seeds its bucket")
-        self.assertEqual(ah._last_state[quiet]["state"], "unknown")
-        self.assertEqual(ah._last_state[KEY]["state"], "unknown")
-        rows = _rows(d)
-        self.assertEqual({r["bucket"] for r in rows if r["to"] == "unknown"}, {quiet, KEY}, "continuity rows for both")
-        self.assertEqual(rows[-3]["t"], T0 - 1, "the newest legacy row precedes the boot rows")
-        # the state file exists; the jsonl is untouched and no longer read
-        self.assertEqual(sorted(os.listdir(d)), sorted([sb.API_HEALTH_STATE_FILE, sb.API_HEALTH_LEGACY_LEDGER]))
-        with open(p) as f:
-            self.assertEqual(f.read(), blob, "left as it was")
-        os.unlink(p)
-        ah3 = sb.ApiHealth(d, boot_at=T0 + 20)
-        self.assertIn(quiet, ah3._last_state, "seeded from the state file, not the jsonl")
-
     def test_a_malformed_state_file_is_logged_and_never_the_backends_death(self):
         d = tempfile.mkdtemp()
         p = os.path.join(d, sb.API_HEALTH_STATE_FILE)
@@ -1456,6 +1396,63 @@ class StateFile(unittest.TestCase):
         self.assertEqual(len(hits), 1, lines)
         self.assertIn("4", hits[0])
         self.assertEqual([(r["from"], r["to"]) for r in _rows(d)], [("thrashing", "unknown")])
+
+    def test_a_state_dir_with_only_the_first_cuts_jsonl_starts_empty_and_never_reads_it(self):
+        """K4 (the 4d-4 fold): a boot without api-health.json starts with no history. The fork's first cut
+        appended one row per transition to STATE/api-health.jsonl, and later fork builds seeded a missing
+        state file once from that ledger's last 64 KB; upstream never had the ledger, and every box that has
+        booted since the state file arrived holds one, so the seed retired whole. A stale ledger is neither
+        opened nor reflected in the state: its buckets are absent, the tail is empty, nothing is logged and
+        nothing is written. Synthetic rows in the retired seed's shape, so the old code would have read them."""
+        d = tempfile.mkdtemp()
+        quiet = "key:aaaaaaaaaaaa|haiku"
+
+        def row(bucket, t, to):
+            a, f = bucket.split("|")
+            return json.dumps({"t": t, "bucket": bucket, "auth": a, "family": f, "from": "unknown", "to": to,
+                               "why": "w", "evidence": {"window": 300, "rate429": 0.4, "rate5xx": 0.0, "n": 20}}) + "\n"
+        blob = row(KEY, T0 - 100, "thrashing") + row(quiet, T0 - 50, "healthy")
+        p = os.path.join(d, "api-health.jsonl")
+        with open(p, "w") as f:
+            f.write(blob)
+        # every open the boot makes, by any door: builtins.open, io.open, and pathlib.Path.open and Path.read_text
+        # on the class. The two module functions alone miss a Path.read_text on Python 3.10, whose pathlib binds
+        # io.open into its accessor at import time (_NormalAccessor.open), so the class methods are spied too;
+        # from 3.11 on Path.open calls io.open by name and the class spies see the same open a second time.
+        opened, real_open = [], builtins.open
+        real_path_open, real_read_text = pathlib.Path.open, pathlib.Path.read_text
+
+        def spy(file, *a, **kw):
+            opened.append(os.fspath(file))
+            return real_open(file, *a, **kw)
+
+        def spy_path_open(self_, *a, **kw):
+            opened.append(os.fspath(self_))
+            return real_path_open(self_, *a, **kw)
+
+        def spy_read_text(self_, *a, **kw):
+            opened.append(os.fspath(self_))
+            return real_read_text(self_, *a, **kw)
+        builtins.open, io.open = spy, spy
+        try:
+            with mock.patch.object(pathlib.Path, "open", spy_path_open), \
+                    mock.patch.object(pathlib.Path, "read_text", spy_read_text):
+                lines = []
+                ah = sb.ApiHealth(d, log=lines.append, boot_at=T0 + 10)
+        finally:
+            builtins.open, io.open = real_open, real_open
+        self.assertNotIn(p, opened, "the ledger is never opened")
+        self.assertEqual(ah._last_state, {}, "no bucket is seeded from it")
+        self.assertEqual(ah.boot_stamp, T0 + 10, "nothing restored, so nothing to clamp past")
+        snap = ah.snapshot(T0 + 11)
+        self.assertEqual((snap["buckets"], snap["transitions"]), ({}, []), "no bucket, no tail")
+        self.assertNotIn(quiet, json.dumps(snap))
+        self.assertEqual(lines, [], "a missing state file is a fresh start, not an error")
+        self.assertEqual(os.listdir(d), ["api-health.jsonl"], "no state file is written: nothing was filed")
+        with open(p) as f:
+            self.assertEqual(f.read(), blob, "left as it was")
+        self.assertFalse(hasattr(sb, "API_HEALTH_LEGACY_LEDGER"), "the constant retired with the seed")
+        self.assertFalse(hasattr(sb.ApiHealth, "_read_legacy_tail"), "the reader retired with the seed")
 
     def test_a_churning_bucket_does_not_truncate_a_quiet_neighbours_history(self):
         """A per-bucket `transitions` that is a filter of the GLOBAL 50-row tail lets a neighbour

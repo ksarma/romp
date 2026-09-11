@@ -215,10 +215,10 @@ class LandingShell(unittest.TestCase):
         html = km._landing()
         # +1 2026-08-28: the theme reader right after <body>; +1 2026-09-06: the notification-tap landing
         # script (_LANDING_REVEAL_JS) — its own script so a throw in the bell's cannot strand a tap;
-        # +1 2026-09-07: the bottom bar's API health cell (_LANDING_APIH_JS);
         # +1 2026-09-08: the reload core (T265, _reload_core) ahead of the build-staleness banner script, which
         # registers as its refused fallback — its own script so a banner throw cannot take the reload with it
-        self.assertEqual(html.count("<script>"), 20)   # 19 on each parent of the 2026-09-08 fold; the two additions are independent
+        # +1: the bottom bar's API health cell (_LANDING_APIH_JS), after the usage script whose backdrop it shares
+        self.assertEqual(html.count("<script>"), 20)
 
     def test_bottom_bar_is_text_only_and_compact(self):
         html = km._landing()

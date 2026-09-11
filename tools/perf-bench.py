@@ -129,8 +129,11 @@ How the liveness snapshot is reconstructed, and what is approximated:
 Side-effect guards (all reported in the output; a guard whose target a kernel revision lacks is an
 error, never a silent skip):
   * The manager control-port variables are removed or poisoned before the import (ROMP_MANAGER_PORT
-    is set to a dead port rather than unset — an ABSENT value maps to the default, live, port in
-    one consumer; see tests/conftest.py), so nothing this process does can reach the live manager.
+    is set to a dead port rather than unset: every kernel door (_manager_port: _manager_kernels,
+    _run_main_update, _restart_this_kernel, _run_update) treats an absent, empty or non-port value as
+    no manager since 2026-09-10, and the dead value "1" stays as the floor because bin/romp-manager,
+    bin/romp's down path and vscode-extension/src/extension.ts still default to 7432; see
+    tests/conftest.py), so nothing this process does can reach the live manager.
   * ROMP_MODEL_CATALOG=off, ROMP_CLI_SCOPE=0, ROMP_CLAUDE_BIN=/bin/false, the service env file
     pointed at a missing path, every ANTHROPIC_* variable removed.
   * Functions that would start a network fetch, a background parse thread, a desktop notification,
@@ -326,7 +329,9 @@ def prepare_env(state, claude_dir, private_dir):
     os.makedirs(tmux_dir, exist_ok=True)          # tmux falls back to the default socket dir when this is missing
     no_env = os.path.join(private_dir, "no-such-service.env")
     sets = {
-        "ROMP_MANAGER_PORT": "1",                 # a dead port: absent maps to the default (live) port in _run_main_update
+        "ROMP_MANAGER_PORT": "1",                 # a dead port, the floor: every kernel door (_manager_port) reads absent, empty
+        #                                           or non-port as no manager since 2026-09-10; "1" stays because bin/romp-manager,
+        #                                           bin/romp's down path and the extension still default to 7432
         "ROMP_KERNEL_NO_OPEN": "1",
         "ROMP_MODEL_CATALOG": "off",
         "ROMP_CLI_SCOPE": "0",

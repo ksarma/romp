@@ -7575,9 +7575,10 @@ class ServeSecurity(unittest.TestCase):
         legs = {"local": [], "broad": [], "localDone": threading.Event(), "broadDone": threading.Event()}
         saved = (km._restart_this_kernel, km._fleet_restart_run, dict(km._remotes),
                  os.environ.get("ROMP_MANAGER_PORT"))
-        # A DEAD manager port, never an absent one (tests/conftest.py: absent is the one unsafe state,
-        # since _run_main_update maps it to the live default; the poison "1" is safe against every
-        # consumer). Both legs are faked below, so nothing dials it either way; the handler hands the
+        # A DEAD manager port, never an absent one (tests/conftest.py's note says why the floor is a dead
+        # value and stays: the poison "1" is safe against every consumer, present and future; every kernel
+        # door reads an absent variable as no manager since 2026-09-10, and bin/romp-manager still defaults to
+        # 7432). Both legs are faked below, so nothing dials it either way; the handler hands the
         # value it acked with to whichever leg runs, and the tests check that (review find, 2026-09-08).
         os.environ["ROMP_MANAGER_PORT"] = "1"
 
