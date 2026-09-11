@@ -17,6 +17,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { heldMenuMarks } from "./pick-held";
 
 const ROOT = path.resolve(process.cwd(), "..");
 const RENDER = fs.readFileSync(path.join(ROOT, "ui", "webview", "render.ts"), "utf8");
@@ -92,7 +93,14 @@ test("the switching CONTROL is the tab menu's Billing submenu, both sides listed
   // with the session's current choice check-marked
   assert.match(RENDER, /\{ label: st\.authAcct \? `Login \(\$\{st\.authAcct\}\)` : "Login", value: "login", why: avail\.login \? "" : /);   // 2026-09-08: each option carries the reason it is greyed, or ""
   assert.match(RENDER, /\{ label: "API key", value: "key", why: avail\.key \? "" : /);   // 2026-09-08: reason field, see above
-  assert.match(RENDER, /el\("div", "ctx-item" \+ \(st\.auth === c\.value \? " current" : ""\) \+ \(c\.why \? " disabled" : ""\)\)/);   // 2026-09-08: the unavailable side is greyed, never hidden
+  // ...check-marked on the intent, or, while the billing pick is HELD for live work, on the pick with the side the
+  // CLI reports tagged running (pick-held.ts heldMenuMarks, review round 5; effort-switch-pending.test.ts pins the
+  // convention across the menus); the side this box cannot bill stays greyed with its reason, held or not (2026-09-08:
+  // the unavailable side is greyed, never hidden)
+  // ...falling back to st.auth, the field that carries the billing PICK, when the held payload names none (an older
+  // kernel; review round 6, executed below)
+  assert.match(RENDER, /const current = heldAuth \? \(heldAuth\.current \|\| st\.auth\) === c\.value : st\.auth === c\.value;/);
+  assert.match(RENDER, /el\("div", "ctx-item" \+ \(current \? " current" : ""\) \+ \(running \? " running" : ""\) \+ \(c\.why \? " disabled" : ""\)\)/);
   // a pick posts the same setAuth the badge used, and only a CHANGE posts (current = dismiss)
   assert.match(RENDER, /if \(st\.auth !== c\.value && vscodeApi\) vscodeApi\.postMessage\(\{ type: "setAuth", id, value: c\.value \}\);/);
   // the item's sub-line names the current billing, or the applying reconnect (billing-label.ts's words)
@@ -145,4 +153,25 @@ test("set_auth refuses a login pick on a box with no login — the same bar the 
 
 test("setAuth is an intent op — held through a kernel-restart window, never dropped", () => {
   assert.match(INTENT, /"setModel", "setEffort", "setMode", "setFast", "setAuth",/);
+});
+
+test("executed: the Billing flyout's check falls back to st.auth when the held payload names no picked value", () => {
+  // the flyout's own line, read from render.ts and run over the marks heldMenuMarks returns for a Status: a held
+  // payload WITH the picked side checks it (the running side tagged); one WITHOUT (an older kernel) checks the
+  // side st.auth names, since auth is the one kind whose status field carries the pick; not held, st.auth as ever
+  const flyout = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub");'), RENDER.indexOf("menu.appendChild(sub);"));
+  const expr = (flyout.match(/const current = (.+);\n/) || [])[1];
+  assert.ok(expr, "the flyout's current line moved; re-anchor");
+  const currentRows = (st: { auth: string; authLive?: string; pickHeld?: any }) => {
+    const heldAuth = heldMenuMarks("auth", st.pickHeld, st.authLive || "");
+    return ["login", "key"].filter((value) => new Function("heldAuth", "st", "c", "return " + expr)(heldAuth, st, { value }));
+  };
+  const base = { auth: "login", authLive: "key", authBoth: true };
+  assert.deepEqual(currentRows({ ...base, pickHeld: { surfaces: ["auth"], subagents: 1, tasks: 0 } }), ["login"],
+    "no picked value: the st.auth row is current");
+  assert.deepEqual(currentRows({ ...base, pickHeld: { surfaces: ["auth"], subagents: 1, tasks: 0, picked: { auth: "key" } } }), ["key"],
+    "the picked value wins when the payload carries it");
+  assert.deepEqual(currentRows({ ...base, pickHeld: null }), ["login"], "not held: st.auth");
+  assert.deepEqual(currentRows({ ...base, pickHeld: { surfaces: ["effort"], subagents: 1, tasks: 0, picked: { effort: "max" } } }), ["login"],
+    "a hold on another kind leaves the flyout on st.auth");
 });

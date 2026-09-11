@@ -176,9 +176,11 @@ class SessionBackend(ABC):
     def set_effort(self, sid: str, value: str) -> bool:
         """Set the reasoning effort (one of the kernel's effort choices, 'low' through 'ultracode'). The two
         backends land it differently from each other and from set_model: effort is a connect-time CLI flag
-        (--effort) with no SDK control request, so the SDK persists the value and RECONNECTS to apply it —
-        at once if the session is idle, at the end of the turn if it's busy — with `effortPending` driving
-        the badge's switching-dots and the chat's "Reloading session…" notice (SdkBackend.set_effort). tmux
+        (--effort) with no SDK control request, so the SDK persists the value and RECONNECTS to apply it:
+        at once when the session is quiet (no turn in flight, no fed text, no live subagent, Workflow run
+        or background task), else at the turn settle that finds it quiet, with `effortPending` driving
+        the badge's switching-dots and the chat's "Reloading session…" notice and `pickHeld` marking a
+        pick that waits for live work (SdkBackend.set_effort). tmux
         types '/effort X' into the pane, which the TUI applies in place: no reconnect, no confirmation, so
         no second Enter (TmuxBackend.set_effort). False when the backend can tell the change did not land,
         so the kernel can be loud instead of pretending: the SDK and Codex refuse an unknown sid (no

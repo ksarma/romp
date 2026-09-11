@@ -535,8 +535,37 @@ chat shows the CLI's own reply.
 The backends apply the change differently. A Claude Code session switches
 model live but reloads to apply a new effort: the chat shows "Reloading
 session…" and the effort badge shows switching-dots until the reload completes,
-and a session that is mid-turn reloads when the turn ends. A Claude Code (tmux)
-session gets the CLI's own command typed into its pane. `/model` there asks for a
+and a session that is mid-turn reloads when the turn ends. A session with live
+subagents or background tasks holds the pick rather than cutting them off, and
+reloads at the end of the first turn that finds none left: the CLI starts a turn
+of its own to deliver each finished task's result, so in the usual case that is
+the turn right after the last one ends; if no turn follows, the session's next
+turn. One ordering is not covered: when a second task finishes while the turn
+delivering the first one's result is still running, that turn's end finds no
+work left and reloads, and the turn the CLI then starts to deliver the second
+result is cut by the reload. While the pick is held the chat says so in place of the reloading line
+("The effort pick is waiting on 2 subagents and 1 background task", then "The
+effort pick applies when this turn finishes" once the work is done, or "applies
+when the next turn finishes" when no turn is open at that point), and the badge
+keeps showing the value the session runs with a small mark beside it. Its menu,
+the tab menu's Billing flyout and the tab tooltip's rows all read the hold the
+same way: the check mark stays on the value you picked, the value the session
+runs meanwhile is tagged "running", and a tooltip row reads "high until the
+background work finishes, then max".
+The same hold and the same line apply to a permission-mode pick into bypass,
+the first fast-mode opt-in and a billing switch. Once nothing holds them, a
+mode pick into bypass and the first fast-mode opt-in reload the way an effort
+pick does: the chat shows the same reloading line while the reload runs, and the
+mode or fast badge dims and pulses until it lands. A billing switch's reload
+shows no chat line and no badge pulse; the tab menu's Billing flyout sub-line
+reads "applying…" until it lands. The reload that takes a refused opt-in's flag
+back off shows no reloading line and no pulse either. When the CLI refuses that
+opt-in, the reload that takes the flag back off is held the same way, and the
+line says the fast mode control is restored when the work finishes, or when
+the turn does once no work is running. A pick equal to what the
+session already runs with (the same effort, the same billing) reloads nothing.
+A Claude Code (tmux) session
+gets the CLI's own command typed into its pane. `/model` there asks for a
 confirmation, which the kernel accepts on your behalf so the pane is never
 left waiting on a keystroke the dashboard cannot send; `/effort` and `/fast`
 apply in place.

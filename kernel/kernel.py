@@ -16684,6 +16684,24 @@ def _comments_frame(sid, tmux=None):
                 meta = be.session_meta(tsid) or {}
             except Exception:
                 meta = {}
+        # The thread's effort is the value the live backend reports (session_meta carries the snapshot's
+        # effort since review round 6, 2026-09-10: what the process RUNS, also while an effort pick is held
+        # for the thread's live work); the reg's effort serves a dormant thread only (meta empty). The reg is
+        # what set_effort rewrites at pick time, so a thread read from it showed a held pick as applied, and
+        # the popover's effort badge check-marked the pick while the chat's tagged it as waiting (ui-1). The
+        # tints follow the same value. The hold rides with it (pickHeld, effortPending), so the popover's
+        # badges and menus read it the way the chat's do (threadMetaStatus), and the thread's events end on
+        # the chat's `reconnecting` element under the live row's own gate (build_session: effortPending or
+        # pickHeld), the waiting line while a pick is held and the reloading line for the armed effort
+        # reconnect. Appended after the projection's reads (unread, lastUuid) so a marker without a uuid
+        # never stands in for the newest record; _thread_events hands out a copy, so the served build is
+        # never appended to.
+        effort = str(meta.get("effort") or "") if "effort" in meta else ((reg.get("effort") or "") if reg else "")
+        pick_held = meta.get("pickHeld") or None
+        effort_pending = bool(meta.get("effortPending"))
+        fast_pending, mode_pending = bool(meta.get("fastPending")), bool(meta.get("modePending"))   # round 7: the chat's gate
+        if _reconnect_pending(meta):
+            events = events + [_reconnecting_event(meta)]
         threads.append({"tid": th.get("tid"), "anchorUuid": th.get("anchorUuid"),
                         "relayedT": th.get("relayedT") or 0,   # the persistent sent-back indicator's stamp (T145)
                         "name": th.get("name") or "", "color": th.get("color") or "",
@@ -16695,7 +16713,9 @@ def _comments_frame(sid, tmux=None):
                         "unreachable": unreachable or None,            # a broken thread (missing transcript / lost cut): owes nothing
                         "promotedName": th.get("promotedName") or "",
                         "model": (reg.get("liveModel") or reg.get("model") or "") if reg else "",
-                        "effort": (reg.get("effort") or "") if reg else "",
+                        "effort": effort,                              # the running value on a live thread (see above)
+                        "pickHeld": pick_held, "effortPending": effort_pending,   # the hold and the armed reconnect, as the live row's status carries them
+                        "fastPending": fast_pending, "modePending": mode_pending,   # the fast and mode reloads' flags (review round 7)
                         "sinceEpoch": since_ms,
                         "mode": str(meta.get("mode") or ""), "fast": str(meta.get("fast") or ""),
                         # the same rank tints the chat statusline's badges wear (the user 2026-08-25,
@@ -16703,10 +16723,9 @@ def _comments_frame(sid, tmux=None):
                         # reads these and the frame never carried them)
                         "modelColor": _model_color((reg.get("liveModel") or reg.get("model") or "") if reg else "",
                                                    cm.stops_for(_colormap())),
-                        "effortColor": _effort_color((reg.get("effort") or "") if reg else "",
-                                                     cm.stops_for(_colormap())),
+                        "effortColor": _effort_color(effort, cm.stops_for(_colormap())),
                         "modelTone": _model_tone((reg.get("liveModel") or reg.get("model") or "") if reg else ""),
-                        "effortTone": _effort_tone((reg.get("effort") or "") if reg else ""),
+                        "effortTone": _effort_tone(effort),
                         "msgs": msgs, "events": events})
     return {"type": "comments", "id": sid, "threads": threads}
 
@@ -20427,6 +20446,12 @@ class Sessions:
                                 "model": st.get("model", ""), "effort": st.get("effort", ""),
                                 "modelPending": bool(st.get("modelPending")),   # a /model switch resolving → badge shows switching-dots
                                 "effortPending": bool(st.get("effortPending")),   # an /effort switch reconnecting → effort-badge dots + "Reloading session…"
+                                "fastPending": bool(st.get("fastPending")),   # a fast pick pending on its reconnect (review round 7, 2026-09-10)
+                                "modePending": bool(st.get("modePending")),   # a mode pick pending on its reconnect or the landing's live switch
+                                "modeSwitching": bool(st.get("modeSwitching")),   # that live switch is in flight: the chat names it, not a reload (review round 10)
+                                # a pick HELD for the session's live work before its reconnect ({surfaces,
+                                # subagents, tasks} or None): the chat's waiting line reads it (2026-09-09)
+                                "pickHeld": st.get("pickHeld") or None,
                                 "retryCount": int(st.get("retryCount") or 0),   # api_retry backoff attempts → the chat's "API retrying — attempt N…" element
                                 "retryInfo": st.get("retryInfo") or None,   # the attempt's detail (attempt/max, error, next-attempt epoch) → the retrying element's context lines (the user 2026-07-10)
                                 "connected": bool(st.get("connected")),   # SDK handshake up → the opening-chip override stands down (fresh sessions have no transcript yet)
@@ -33424,16 +33449,23 @@ def _park_op_locked(sid, op):
     """_park_op's mutation + mirror write, for a caller that already holds _pending_ops_lock and will wake
     the pusher itself after releasing (_park_behind_queue)."""
     q = _pending_ops.setdefault(str(sid), [])
+    replaced = False
     if op[0] in ("model", "effort", "fast", "env", "cwd"):
         for i, o in enumerate(q):
             if o[0] == op[0]:
                 q[i] = op
+                replaced = True
                 break
         else:
             q.append(op)
     else:
         q.append(op)
     _save_pending_ops()               # mirror the park to disk (survives a kernel death)
+    # one line per park (2026-09-09): a pick that queued behind an open turn and fired minutes later left
+    # no trace here, so the backend's own setter line was the first sign the pick had happened at all
+    sys.stderr.write("parked-op: %s parked for %s (%s; depth %d)\n"
+                     % (op[0], str(sid)[:8], "replaced the earlier %s in place" % op[0] if replaced else "queued",
+                        len(q)))
 
 
 def _parked_md(op):
@@ -36623,8 +36655,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # leaves NO record in the chat. While that reconnect is pending, show an animated "Reloading session…"
     # element (mirrors the compacting one) so the user sees the "rereading transcript" step the TUI narrates;
     # it clears the instant the new client connects (effortPending drops). Appended before the queued bubble.
-    if (tm0 or {}).get("effortPending"):
-        events.append({"kind": "reconnecting", "effort": (tm0 or {}).get("effort") or ""})
+    # While a pick is HELD for the session's live work (pickHeld: subagents, background tasks, a Workflow
+    # run), nothing is reloading yet, so the element carries the hold and the webview renders a waiting
+    # line in its place (review round 1, 2026-09-09: the reloading line ran for the whole hold), and it
+    # shows for EVERY held kind, not only an effort pick (review round 2: a held mode, fast or billing pick
+    # reached no chat surface), and for a fast or mode pick's own reload (fastPending, modePending; review
+    # round 7). _reconnect_pending is the gate; _reconnecting_event composes it.
+    if _reconnect_pending(tm0):
+        events.append(_reconnecting_event(tm0))
     # Live API-RETRY indicator (the user 2026-07-08): while the CLI backs off + retries a rate-limited /
     # overloaded request the turn stalls in 'retrying' — which was visible ONLY as the amber tab border, with
     # NOTHING in the chat ("the border says retrying but the chat shows no sign"). Show an animated "API
@@ -37133,6 +37171,9 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                   "authPending": bool(tm.get("authPending")),   # an /auth reconnect applying → badge dots
                   "modelPending": _model_pending_now(sid, tm),   # switching-dots on the model badge until the pick lands, from EITHER surface (the user 2026-07-03)
                   "effortPending": bool(tm.get("effortPending")),   # switching-dots on the effort badge while the /effort reconnect applies (SDK-only; the user 2026-07-06)
+                  "fastPending": bool(tm.get("fastPending")),   # a fast pick pending on its reconnect (the badge's pulse, the reloading line; review round 7)
+                  "modePending": bool(tm.get("modePending")),   # a mode pick pending on its reconnect or the landing's live switch (ditto)
+                  "pickHeld": tm.get("pickHeld") or None,   # the pick waits for live work before that reconnect (2026-09-09)
                   "ctx": str(tm["context"]) if tm["context"] is not None else "",
                   # the % above is clamped at 100 — ctxOver says the CLI reported 100+ (tokens exceed
                   # the CURRENT model's window, e.g. right after a 1M→200k model switch), so the
@@ -49898,8 +49939,56 @@ def _fleet_view_sig(now, tmux):
                          t.get("fast"), t.get("since"), t.get("fastReason"),
                          _row_items_sig(t.get("subagents")), _row_ids_sig(t.get("bgTasks")),
                          bool(t.get("modelPending")), bool(t.get("effortPending")), bool(t.get("authPending")),
-                         int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")))
+                         bool(t.get("fastPending")), bool(t.get("modePending")),   # the fast and mode reloads (review round 7)
+                         bool(t.get("modeSwitching")),   # the landing's live switch: the chat's line changes its words (round 10)
+                         int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")),
+                         _pick_held_sig(t.get("pickHeld")))   # the hold's start, its counts, and its end all repaint
     return tuple(sorted(sig.items()))
+
+
+def _pick_held_sig(h):
+    """A held pick's status entry ({surfaces, subagents, tasks, picked} or None) as a hashable: the waiting
+    line the chat renders off it must change when the hold begins, when a count falls, when the arm clears
+    it while effortPending stays set (2026-09-09), and when a re-pick during the hold changes the picked
+    value the badge menus check-mark and the tooltip rows name (`picked`, review round 5, 2026-09-10)."""
+    if not isinstance(h, dict):
+        return None
+    picked = h.get("picked")
+    return (tuple(h.get("surfaces") or ()), h.get("subagents"), h.get("tasks"),
+            tuple(sorted(picked.items())) if isinstance(picked, dict) else None)
+
+
+def _reconnect_pending(tm0) -> bool:
+    """Whether a live row owes the chat its `reconnecting` element (build_session, _comments_frame): a pick
+    pending on a reconnect (effortPending; fastPending and modePending since review round 7, 2026-09-10, when
+    a held fast or mode pick that ARMED showed no reloading line between its arm and its landing, the gate
+    reading effortPending alone), or any pick held for the session's live work (pickHeld)."""
+    tm0 = tm0 or {}
+    return bool(tm0.get("effortPending") or tm0.get("fastPending") or tm0.get("modePending") or tm0.get("pickHeld"))
+
+
+def _reconnecting_event(tm0):
+    """The chat's `reconnecting` element for a live row (build_session): {"kind", "effort", "held", "picks",
+    "switching"}. Shown
+    while a reconnect is pending for an effort, fast or mode pick (_reconnect_pending) and, since review round
+    2 (2026-09-09), while ANY pick is held for the session's live work (pickHeld: the status's one marker for a
+    held effort, mode, fast or billing pick), since a held mode, fast or billing pick reached no chat surface
+    before. `effort` names the pick only for the armed effort reconnect: a live row's effort is never empty,
+    the renderer took any effort text as the effort pick's, and while a pick is held the row's effort is the
+    value the session RUNS, not the pick; a fast or mode reload renders the plain reloading line. `picks` names
+    the kinds whose reload this is (review round 9, 2026-09-10; "effort", "mode", "fast", from the pending flags,
+    in _pick_names' order), so the renderer's hover title can name the change it applies: round 8's gate emitted the
+    element for a fast or mode reload with the effort reload's title. Empty while a pick is held (the hold names
+    its own surfaces). `switching` (review round 10, 2026-09-10): the landing's live mode switch is in flight
+    (modeSwitching), so modePending is true with nothing reloading; the renderer says the mode change is being
+    applied instead of "Reloading session", and its title names any reload that follows for the other picks."""
+    tm0 = tm0 or {}
+    held = tm0.get("pickHeld") or None
+    effort = (tm0.get("effort") or "") if (tm0.get("effortPending") and not held) else ""
+    picks = [] if held else [k for k, flag in (("effort", "effortPending"), ("mode", "modePending"), ("fast", "fastPending"))
+                             if tm0.get(flag)]
+    switching = bool(tm0.get("modeSwitching")) and not held
+    return {"kind": "reconnecting", "effort": effort, "held": held, "picks": picks, "switching": switching}
 
 
 def _row_items_sig(rows):

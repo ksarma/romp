@@ -86,7 +86,10 @@ test("the tooltip still shows the full path + mode/model/effort — path and bra
   assert.match(RENDER, /rows\.push\(\["⎇", s\.gitBranch\]\)/);
   assert.match(RENDER, /rows\.push\(\["Worktree", s\.workTree\.dir/);
   assert.doesNotMatch(RENDER, /tab-tip-path/, "the naked top path line is gone — the grid row replaced it");
-  assert.match(RENDER, /rows\.push\(\["Mode", prettyMode\(s\.status\.mode\)\]\)/);
+  // the Mode and Effort values pass through heldRow, which returns them as they are unless a pick of that kind
+  // is held for the session's live work (review round 4, 2026-09-10; effort-switch-pending.test.ts pins the
+  // held shape, pick-held.test.ts executes its words)
+  assert.match(RENDER, /rows\.push\(\["Mode", heldRow\("mode", prettyMode\(s\.status\.mode\)\)\]\)/);
   assert.match(RENDER, /rows\.push\(\["Model", s\.status\.model\]\)/);
-  assert.match(RENDER, /rows\.push\(\["Effort", s\.status\.effort\]\)/);
+  assert.match(RENDER, /rows\.push\(\["Effort", heldRow\("effort", s\.status\.effort\)\]\)/);
 });
