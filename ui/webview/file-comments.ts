@@ -4226,6 +4226,11 @@ class Panel {
     const items: LayoutItem[] = [];
     const nodes = new Map<string, HTMLElement>();
     const laid: HTMLElement[] = [];                    // the items' nodes in the DOM's order, as the pass found them
+    // the fields a tie on the desired top is broken by (card-layout.ts, tieOrder): a change card's position and time from
+    // its hunk, a comment card's time from its card, so two cards whose marks share a line lay in the list's order at
+    // every pass, whatever order this pass reads them in (the Slice 4 review of plans/markdown-viewer.md, round 16)
+    const hunks = new Map<string, Hunk>((this.status?.hunks || []).map((h) => [String(h.id), h]));
+    const byId = new Map<string, Card>(this.cards().map((c) => [c.id, c]));
     if (watch) this.cardSizer?.disconnect();
     let n = 0;
     for (const child of kids()) {
@@ -4233,7 +4238,17 @@ class Panel {
       const isCard = child.classList.contains("fc-card") && !!child.dataset.id;
       const key = isCard ? child.dataset.id! : "#" + n++;
       const mark = isCard ? this.markTop(key) : null;
-      items.push({ key, desired: mark === null ? null : mark - bodyRect.top + scroll - offset, height: child.getBoundingClientRect().height });
+      const item: LayoutItem = { key, desired: mark === null ? null : mark - bodyRect.top + scroll - offset, height: child.getBoundingClientRect().height };
+      if (isCard && child.dataset.change !== undefined) {   // a change card (renderChangeCard): its hunk's place and time
+        item.kind = "change";
+        const h = hunks.get(child.dataset.change);
+        if (h) { item.from = h.curFrom; item.ts = h.ts; }
+      } else if (isCard) {
+        item.kind = "comment";
+        const c = byId.get(key);
+        if (c) item.ts = c.ts;
+      }
+      items.push(item);
       nodes.set(key, child); laid.push(child);
       if (isCard && watch) this.cardSizer?.observe(child);
     }

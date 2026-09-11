@@ -1,6 +1,8 @@
 # Multi-kernel: several kernels per machine, per-kernel accounts, inter-kernel mail
 
-Status: PROPOSED — not shipped. A design sketch; no part of this has landed.
+Status: PROPOSED, not shipped, except phase 3a: the kernels.json registry with per-profile `stateDir`
+shipped in 822028ab3 (bin/romp-manager loadSpecs/specEnv, tests/manager-registry.test.js), and the
+manager's write gate accepts each profile root's serve token (2026-09-10). The rest is a design sketch.
 
 The user's ask (2026-07-24, via romp_docs + directly): run SEVERAL kernels on one machine, each on
 its own port with its own state, so different remote people can each be handed their own kernel —

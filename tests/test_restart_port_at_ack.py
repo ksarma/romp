@@ -38,8 +38,10 @@ load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 # A dead manager port at module level — NEVER pop: a pop here executes at collection time and
-# erases any suite-wide floor for the rest of the run, and an ABSENT var is the one unsafe state
-# (_run_main_update maps absent to the DEFAULT port: a live manager, if one is running).
+# erases any suite-wide floor for the rest of the run. Every kernel door (_manager_port: _manager_kernels,
+# _run_main_update, _restart_this_kernel, _run_update) treats an absent variable as no manager since
+# 2026-09-10; the dead value "1" stays as the floor because it is the one state safe against every consumer,
+# present (bin/romp-manager and bin/romp's down path still default to 7432) and future.
 os.environ["ROMP_MANAGER_PORT"] = "1"
 km = load_source("romp_kernel_port_ack", os.path.join(BIN, "romp-kernel"))
 
@@ -103,7 +105,9 @@ class RestartPortResolvedAtAck(unittest.TestCase):
             method="POST")
         with urllib.request.urlopen(req, timeout=10) as r:
             self.assertTrue(json.loads(r.read()).get("restarting"))
-        # the manager hop runs after the ack — wait (bounded) for the handler thread to finish it
+        # the hop PRECEDES the ack for this leg since 2026-09-10 (the ack says what the manager answered, and
+        # the port resolved before the hop is still the one in force), so the recording manager's list is
+        # full by the time the ack is read above; the loop below is a backstop, not the sequencing
         deadline = time.time() + 10
         while not _RecordingManager.hits and time.time() < deadline:
             time.sleep(0.01)

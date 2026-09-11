@@ -1,0 +1,162 @@
+// A settings pick HELD for the session's live work: the words the chat line, its hover and the badge tips
+// use. Pure and string-only, like billing-label.ts, so every case runs as a test (pick-held.test.ts) and the
+// surfaces cannot drift; the callers own their chrome.
+//
+// The kernel holds a pick (effort, permission mode into bypass, fast mode's first opt-in, billing, env) while
+// the session runs subagents, Workflow runs or background tasks, since the reload that applies it would kill
+// them, and it arms the reload only at a turn's settle that finds none left (SdkSession._arm_reconnect_if_quiet,
+// 2026-09-09). The status carries ONE marker for every held kind, `pickHeld` ({surfaces, subagents, tasks}
+// from SdkSession.snapshot), and every surface reads it: the badges show the value the session RUNS with a
+// small pending mark, the chat says what waits and on what. Both counts at zero means the work has finished
+// and the pick waits for a turn to finish: the one in flight (the one the CLI starts to deliver the last
+// result) when `inflight` is true, else the session's next; the copy names which instead of "waiting on 0
+// subagents" (review round 2; the turn phase since review round 3, 2026-09-09: the kernel sends `inflight`
+// from SdkSession._pick_held, and a payload without it keeps the "this turn" copy). One surface is not a pick:
+// "fast-reset", the flagless relaunch the kernel requests when the CLI refuses an armed fast opt-in
+// (SdkSession._adopt_fast_state). Its line says the fast mode control is restored, never that a fast pick is
+// waiting, since the toast has just said the pick is back off; and it says nothing about a badge, since the
+// kernel blanks the fast badge while the refusal's reason stands, so no held mark or tip renders for it
+// (review round 3b, 2026-09-09). The clause that says WHEN a held pick applies is one function (heldUntil), and
+// the surfaces outside this module that name it (billing-label.ts's row and sub-line, render.ts's tooltip
+// rows through heldRowValue) take it from here (review round 4, 2026-09-10).
+
+// `picked` (review round 5, 2026-09-10): the PICKED value of each held kind, by kind ("effort", "mode", "fast",
+// "auth"), since the status fields beside the marker report what the session RUNS; the badge menus check-mark it
+// and the tooltip rows name it. A payload from an older kernel has none, and the surfaces then name the pick by kind.
+export interface PickHeld { surfaces: string[]; subagents: number; tasks: number; inflight?: boolean; picked?: Record<string, string> }
+
+// Which turn's end applies the pick once the work is done: the open one, or the session's next when none is.
+function turnPhrase(h: PickHeld): string {
+  return h.inflight === false ? "the next turn" : "this turn";
+}
+
+// When a held pick applies, as the clause every surface hangs its own words on: while work runs, when it
+// finishes; once it has, when the open turn finishes, or the session's next when none is open. ONE phrase
+// (review round 4, 2026-09-10): the Billing row, the tab menu's Billing sub-line and the tab tooltip's Mode
+// and Effort rows all take it from here, so none of them can say "the background work" at zero counts while
+// the chat line beside them names the turn.
+export function heldUntil(h: PickHeld): string {
+  return h.subagents + h.tasks > 0 ? "the background work finishes" : `${turnPhrase(h)} finishes`;
+}
+
+// A status row's value while its kind is held (the tab tooltip's Mode and Effort rows): what the session runs
+// now, then when the picked value takes over, in the Billing row's shape ("API key until ..., then Login").
+// `picked` is the picked value as the row displays it (the caller reads pickHeld.picked and prettifies a mode;
+// review round 5); a payload without it names the pick by its kind, as every payload did before.
+export function heldRowValue(now: string, kind: string, h: PickHeld, picked?: string): string {
+  return `${now} until ${heldUntil(h)}, then ${picked || `the picked ${pickKindName(kind)}`}`;
+}
+
+// ONE convention for a menu's rows while a pick of its kind is HELD (review round 5, 2026-09-10): the check mark
+// stays on the PICKED value, what the session will run, and the value the session runs meanwhile wears a
+// "running" tag (RUNNING_TAG). The statusline's effort and mode menus and the tab menu's Billing flyout all take
+// their marks from here; until round 5 the badge menus checked the running value (they never read the hold) while
+// the Billing flyout checked the pick, so the same hold read two ways on one screen. Returns null when the kind is
+// not held, and the menu marks its current value as it always did. A payload without the picked value (an older
+// kernel) checks no row rather than a wrong one, and still tags the running value; auth is the one kind whose
+// status field (st.auth) carries the pick rather than the running value (authLive is the CLI's report), so its
+// flyout falls back to it when `current` is empty (render.ts, review round 6), where the badge kinds' fields
+// report the running value and have nothing to fall back on.
+export interface HeldMenuMarks { current: string; running: string }
+
+export const RUNNING_TAG = "running";
+
+export function heldMenuMarks(kind: string, h: PickHeld | null | undefined, running: string): HeldMenuMarks | null {
+  if (!h || !(h.surfaces || []).includes(kind)) return null;
+  return { current: (h.picked || {})[kind] || "", running: running || "" };
+}
+
+// The kind names in the user's words; a surface this build does not know is named as the kernel sent it.
+const KIND_NAMES: Record<string, string> = {
+  effort: "effort", mode: "permission mode", fast: "fast mode", auth: "billing", env: "environment",
+  "fast-reset": "fast mode restore",
+};
+
+// The surface that is a restore, not a pick (the header says which); the line names it in its own clause.
+const RESTORE_SURFACE = "fast-reset";
+
+export function pickKindName(kind: string): string {
+  return KIND_NAMES[kind] ?? kind;
+}
+
+// The reloading line's hover title, naming the change the reload applies (review round 9, 2026-09-10): the kernel's
+// event carries the pending kinds (`picks`: effort, permission mode, fast mode; two when two picks ride one reload).
+// An older kernel's event carries none: its effort text still says effort, and otherwise the change is unnamed.
+// Until round 9 every reloading line, a fast or mode reload's included, said it was applying the effort change.
+export function reloadingTitle(picks: string[] | undefined, effort: string | undefined): string {
+  const names = (picks && picks.length ? picks : effort ? ["effort"] : []).map(pickKindName);
+  return `applying ${changesPhrase(names)}: reloading the session (it re-reads the transcript); any message you send lands once it's back`;
+}
+
+// "the settings change" / "the effort change" / "the effort and fast mode changes", from the kind names.
+function changesPhrase(names: string[]): string {
+  return names.length === 0 ? "the settings change"
+    : names.length === 1 ? `the ${names[0]} change`
+    : `the ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} changes`;
+}
+
+// The line's hover title while the landing's live permission-mode switch is in flight (review round 10, 2026-09-10):
+// the kernel applies a mode pick made during a reload to the process that just landed, over the control channel, and
+// nothing reloads for that round trip, so the title says the switch is being applied; when other picks ride the same
+// reconnect (the event's picks beyond "mode") their reload follows the switch, and the title says so. Until round 10
+// the line and its title claimed a reload for the whole round trip.
+export function switchingTitle(picks: string[] | undefined): string {
+  const rest = (picks || []).filter((k) => k !== "mode").map(pickKindName);
+  const then = rest.length ? `, then reloading the session for ${changesPhrase(rest)}` : "";
+  return `applying the permission mode change to the running session (no reload)${then}; any message you send lands once it's ${rest.length ? "back" : "applied"}`;
+}
+
+export function workPhrase(n: number, m: number): string {
+  return `${n} subagent${n === 1 ? "" : "s"} and ${m} background task${m === 1 ? "" : "s"}`;
+}
+
+// "The effort pick" / "The effort and billing picks" / "The pending change" for a hold naming no surface. The
+// restore surface is not a pick, so it is left out here; pickHeldLine gives it its own clause.
+export function pickHeldSubject(h: PickHeld): { text: string; plural: boolean } {
+  const names = (h.surfaces || []).filter((s) => s !== RESTORE_SURFACE).map(pickKindName);
+  if (names.length === 0) return { text: "The pending change", plural: false };
+  if (names.length === 1) return { text: `The ${names[0]} pick`, plural: false };
+  return { text: `The ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} picks`, plural: true };
+}
+
+// When the fast mode control comes back: once the work finishes, or once the turn does when none is running.
+function restoreWhen(h: PickHeld): string {
+  return h.subagents + h.tasks > 0 ? `when ${workPhrase(h.subagents, h.tasks)} finish` : `when ${turnPhrase(h)} finishes`;
+}
+
+// The chat line's visible text, keyed on the state: work still running names the counts; none left says
+// the pick applies when the turn finishes. The restore surface alone says the fast mode control is restored;
+// beside picks it is a clause after them.
+export function pickHeldLine(h: PickHeld): string {
+  const surfaces = h.surfaces || [];
+  const restore = surfaces.includes(RESTORE_SURFACE);
+  if (restore && surfaces.every((s) => s === RESTORE_SURFACE)) return `The fast mode control is restored ${restoreWhen(h)}`;
+  const { text, plural } = pickHeldSubject(h);
+  const line = h.subagents + h.tasks > 0
+    ? `${text} ${plural ? "are" : "is"} waiting on ${workPhrase(h.subagents, h.tasks)}`
+    : `${text} ${plural ? "apply" : "applies"} when ${turnPhrase(h)} finishes`;
+  return restore ? `${line}; the fast mode control is restored with ${plural ? "them" : "it"}` : line;
+}
+
+// The chat line's hover: the why, not the counts (those are in the line itself).
+export function pickHeldTitle(h: PickHeld): string {
+  if (h.subagents + h.tasks > 0) {
+    return "the session reloads to apply the change when they finish; reloading now would cut them off";
+  }
+  if (h.inflight === false) {
+    return "the background work has finished and no turn is open; the session reloads to apply the change "
+      + "when the session's next turn ends";
+  }
+  return "the background work has finished; the session reloads to apply the change when the turn that "
+    + "delivers the last result ends";
+}
+
+// A badge's tip while its kind is held: the label is what the session runs now, and this says what waits.
+export function badgeHeldTip(kind: string, h: PickHeld): string {
+  const name = pickKindName(kind);
+  const what = `${/^[aeiou]/i.test(name) ? "an" : "a"} ${name} pick`;
+  const when = h.subagents + h.tasks > 0
+    ? `is waiting on ${workPhrase(h.subagents, h.tasks)}`
+    : `applies when ${turnPhrase(h)} finishes`;
+  return `${what} ${when}; the badge shows what the session runs now`;
+}

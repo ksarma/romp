@@ -18,6 +18,11 @@ setup() {
     # checks that both lines stay.
     unset ROMP_STATE_DIR
     export XDG_STATE_HOME="$TEST_DIR/state"; mkdir -p "$XDG_STATE_HOME"
+    # The manager's write doors (/restart-all, /stop, /ensure) take the serve token (X-Romp-Token): the
+    # suite's state root carries one, and every POST below presents it. The env spelling is dropped so
+    # the file is the token for the manager and the curls alike (a synthetic value, never a real token).
+    unset ROMP_SERVE_TOKEN
+    TOK=ensure-suite-token; mkdir -p "$XDG_STATE_HOME/romp"; printf '%s\n' "$TOK" > "$XDG_STATE_HOME/romp/serve-token"
     # Every test here starts a REAL manager, and startManager() runs `tmux start-server` before it does
     # anything else. Two layers keep that off the machine's tmux server (tests/tmux-private.bash has the
     # 2026-09-06 incident this file caused): a recording fake tmux on PATH for the WHOLE file (the
@@ -48,7 +53,7 @@ FAKE
 
 teardown() {
     # Graceful stop, then reap the detached manager (it is orphaned, not our child).
-    curl -fsS -X POST "http://127.0.0.1:${CPORT:-0}/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST -H "X-Romp-Token: $TOK" "http://127.0.0.1:${CPORT:-0}/stop" >/dev/null 2>&1 || true
     [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null || true
     # The kill before the rm (a server the real tmux started must not outlive the test), and last, so
     # its failure is teardown's status: bats swallows a failing command mid-teardown.
@@ -203,7 +208,7 @@ teardown() {
     MGR_PID=$!
     local i
     for i in $(seq 1 50); do [ -s "$envdump" ] && break; sleep 0.1; done
-    curl -fsS -X POST "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST -H "X-Romp-Token: $TOK" "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
     [ -s "$envdump" ]
     # `run` + status, NOT a bare `! grep`: `!` is exempt from set -e, so mid-test it asserts nothing.
     run grep -q '^TMUX=' "$envdump"
@@ -252,9 +257,9 @@ PYEOF
     [ "$(grep -c spawn "$SPAWNS")" -eq 1 ]
 
     # Two quiet-mode refreshes while turns are in flight: both defer, the second coalesces.
-    run curl -fsS -X POST "http://127.0.0.1:$CPORT/restart-all?when=quiet"
+    run curl -fsS -X POST -H "X-Romp-Token: $TOK" "http://127.0.0.1:$CPORT/restart-all?when=quiet"
     [[ "$output" == *'"deferred":true'* ]]
-    run curl -fsS -X POST "http://127.0.0.1:$CPORT/restart-all?when=quiet"
+    run curl -fsS -X POST -H "X-Romp-Token: $TOK" "http://127.0.0.1:$CPORT/restart-all?when=quiet"
     [[ "$output" == *'"coalesced":2'* ]]
 
     # Still busy after several poll cycles -> no bounce happened.
@@ -265,7 +270,7 @@ PYEOF
     echo 0 > "$BUSY"
     for i in $(seq 1 60); do [ "$(grep -c spawn "$SPAWNS")" -ge 2 ] && break; sleep 0.1; done
     [ "$(grep -c spawn "$SPAWNS")" -eq 2 ]
-    curl -fsS -X POST "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST -H "X-Romp-Token: $TOK" "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
 }
 
 @test "quiet-mode refresh defers on background work too, and asks for the drain hold only while turns are in flight" {
@@ -313,7 +318,7 @@ PYEOF
     done
     [ "$(grep -c spawn "$SPAWNS")" -eq 1 ]
 
-    run curl -fsS -X POST "http://127.0.0.1:$CPORT/restart-all?when=quiet"
+    run curl -fsS -X POST -H "X-Romp-Token: $TOK" "http://127.0.0.1:$CPORT/restart-all?when=quiet"
     [[ "$output" == *'"deferred":true'* ]]
     sleep 2.2
     [ "$(grep -c spawn "$SPAWNS")" -eq 1 ]                    # background work alone DEFERS the restart
@@ -325,7 +330,7 @@ PYEOF
     echo 0 > "$BG"
     for i in $(seq 1 60); do [ "$(grep -c spawn "$SPAWNS")" -ge 2 ] && break; sleep 0.1; done
     [ "$(grep -c spawn "$SPAWNS")" -eq 2 ]                    # the work ended → the quiet event applies
-    curl -fsS -X POST "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST -H "X-Romp-Token: $TOK" "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
 }
 
 @test "ensure: a romp down marker holds the auto-start — no manager comes up, exit 0, the reason said" {
