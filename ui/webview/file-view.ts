@@ -1949,8 +1949,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // textarea. A conflict (the disk moved: an agent wrote it) carries a Reload button, which re-opens
     // fresh behind the same discard confirm, so the user's edits are never thrown away silently (never
     // a merge UI).
-    // `moved`: the comments host's store-moved / file-moved / config-moved refusals (Slice 5) offer the same Reload the
-    // kernel's own conflict wording does; a desync or any other refusal shows its reason and keeps the buffer, no offer.
+    // `moved`: the comments host's store-moved / file-moved / config-moved refusals (Slice 5), and its `busy` (another
+    // writer held its lock past the wait; decision 49), offer the same Reload the kernel's own conflict wording does; a
+    // desync or any other refusal shows its reason and keeps the buffer, no offer.
     const showSaveError = (err: string, moved = false) => {
       const bar2 = noteBar(err);
       if (/changed on disk/.test(err)) { moved = true; }   // saveFile's conflict, in the kernel's words
@@ -2029,7 +2030,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
           void ensureEditingAllowed(sid, err).then((ok) => { if (ok) doSave(); else showSaveError(err); });
           return;
         }
-        showSaveError(err, code === "store-moved" || code === "file-moved" || code === "config-moved");
+        showSaveError(err, code === "store-moved" || code === "file-moved" || code === "config-moved" || code === "busy");
       },
     };
     editHooks = hooks;

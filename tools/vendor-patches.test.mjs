@@ -10,12 +10,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const VENDOR = path.resolve(HERE, '..', 'vendor', 'track-changents');
-const { storePathFor, loadStore, recordAgentEdit } = await import(path.join(VENDOR, 'store-io.mjs'));
+const { storePathFor, loadStore, recordAgentEdit, storeLockPathFor, STORE_LOCK_WAIT_MS } = await import(path.join(VENDOR, 'store-io.mjs'));
 
 const SID_API = '11111111-2222-3333-4444-555555555555';
 const SID_WEB = '66666666-7777-8888-9999-000000000000';
@@ -228,3 +228,79 @@ test('P7 the skill asks the agent to include the .trackchanges/ folder in a comm
   assert.ok(notes.includes('it holds the user\'s comments on your files and the record of your tracked changes'));
 });
 
+
+// ── P8: one writer per sidecar: the CLIs take store-io's lock around their load-to-rename ──
+//
+// Patch 0008 adds withStoreLock to store-io.mjs and has track-edit, track-comment and track-reply
+// take it; a lock held past the wait fails with one plain line and nothing written, and a failure
+// inside the locked region releases the lock (fail() throws to the entry point instead of exiting
+// on the spot). The waiting itself, against the host and against a mid-write holder, is driven in
+// tools/file-comments-host-store-lock.test.mjs.
+
+function cliAsync(name, args) {
+  return new Promise((resolve, reject) => {
+    const base = { ...process.env };
+    for (const k of ['TRACKCHANGES_ROOT', 'TRACKCHANGES_SESSION', 'ROMP_SID', 'ROMP_SESSION_NAME']) delete base[k];
+    const child = spawn(process.execPath, [path.join(VENDOR, 'cli', `${name}.mjs`), ...args],
+      { env: { ...base, ROMP_SESSION_NAME: 'web', ROMP_SID: SID_WEB } });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8'); child.stdout.on('data', (c) => { stdout += c; });
+    child.stderr.setEncoding('utf8'); child.stderr.on('data', (c) => { stderr += c; });
+    child.on('error', reject);
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end();
+  });
+}
+
+test('P8 a lock held past the wait: track-edit, track-comment and track-reply each print one plain line, exit 1 and write nothing', async () => {
+  const { text1, storePath } = seedPendingChangeAndParkedComment();
+  const before = fs.readFileSync(storePath);
+  const lockPath = storeLockPathFor(storePath);
+  fs.writeFileSync(lockPath, `${process.pid} ${Date.now()}\n`, { flag: 'wx' });
+  const t0 = Date.now();
+  let results;
+  try {
+    results = await Promise.all([
+      cliAsync('track-edit', ['--file', note, '--old', 'p95 latency', '--new', 'tail latency']),
+      cliAsync('track-comment', ['--file', note, '--anchor', 'p95 latency', '--note', 'Which figure?']),
+      cliAsync('track-reply', ['--file', note, '--thread', 'C1', '--note', 'The p95 over the last week.']),
+    ]);
+  } finally {
+    fs.unlinkSync(lockPath);
+  }
+  assert.ok(Date.now() - t0 >= STORE_LOCK_WAIT_MS, 'each waited out the bound before giving up');
+  for (const r of results) {
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.stderr, 'another editor is writing this file; retry\n');
+    assert.equal(r.stdout, '');
+  }
+  assert.ok(fs.readFileSync(storePath).equals(before), 'the sidecar is untouched');
+  assert.equal(fs.readFileSync(note, 'utf8'), text1, 'the note is untouched');
+});
+
+test('P8 a failure inside the locked region releases the lock and leaves no folder made for it', () => {
+  // an existing sidecar: --old not found fails after the lock was taken
+  const { storePath } = seedPendingChangeAndParkedComment();
+  const r = cli('track-edit', ['--file', note, '--old', 'no such text', '--new', 'x']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /--old text not found/);
+  assert.equal(fs.existsSync(storeLockPathFor(storePath)), false, 'the lock is released on the failure');
+  // a fresh vault with no .trackchanges/ yet: the folder made for the lock goes with the refusal
+  const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-vendor-patches-fresh-'));
+  try {
+    fs.mkdirSync(path.join(fresh, '.obsidian'));
+    const n2 = path.join(fresh, 'note.md');
+    fs.writeFileSync(n2, 'A line.\n');
+    const r2 = cli('track-comment', ['--file', n2, '--anchor', 'missing span', '--note', 'Where?']);
+    assert.equal(r2.status, 1);
+    assert.match(r2.stderr, /Anchor text not found/);
+    assert.equal(fs.existsSync(path.join(fresh, '.trackchanges')), false, 'a refused first comment leaves no .trackchanges/ behind');
+    const r3 = cli('track-comment', ['--file', n2, '--anchor', 'A line', '--note', 'Where?']);
+    assert.equal(r3.status, 0, r3.stderr);
+    assert.ok(fs.existsSync(storePathFor(fresh, n2)), 'a landed one keeps the folder and the sidecar');
+    assert.equal(fs.existsSync(storeLockPathFor(storePathFor(fresh, n2))), false);
+  } finally {
+    fs.rmSync(fresh, { recursive: true, force: true });
+  }
+});

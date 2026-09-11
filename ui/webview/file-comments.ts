@@ -100,7 +100,9 @@ import { regionDesc, isRegion, type Region } from "./region-geometry";
 import { layoutCards, CARD_GAP, type LayoutItem, type PlacedItem } from "./card-layout";   // the margin layout's pure half (the 2026-09-07 follow-on)
 
 const POLL_MS = 2500;
-const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
+// The refusals a fresh status and one retry answer: a moved fence (the panel's copy is stale), and `busy` (another
+// writer held the host's lock past its wait, decision 49: the re-read shows what it wrote, and the retry lands after it).
+const MOVED = new Set(["store-moved", "file-moved", "config-moved", "busy"]);
 /** Whether a scroller stands at its end (within the pixel a fractional scrollTop can fall short of the integer heights). */
 const atEnd = (el: HTMLElement): boolean => el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
 /** The comment a `comment` reply added, read off the reply's store (the host names no id in the reply): the one comment
@@ -2265,7 +2267,7 @@ class Panel {
         return { mtimeNs: r.fileMtimeNs, logged: (r as { logged?: unknown }).logged === true, ...(logWarning ? { logWarning } : {}) };
       } catch (err) {
         const e = err as { code: string; error: string };
-        if (attempt === 0 && (e.code === "store-moved" || e.code === "config-moved")) {
+        if (attempt === 0 && (e.code === "store-moved" || e.code === "config-moved" || e.code === "busy")) {
           await this.refresh();
           this.noteMovedUnderEdit();                   // the re-read can show the file moved too: the head says so, as the poll's would
           const s = this.status;

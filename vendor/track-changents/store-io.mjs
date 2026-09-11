@@ -373,6 +373,128 @@ export function saveStore(vaultRoot, storePath, obj, currentText) {
   fs.renameSync(tmp, storePath);
 }
 
+// ── one writer per sidecar ──────────────────────────────────────────
+//
+// Every writer of a sidecar (the agent CLIs, an editor host) loads it, changes the object and
+// renames a temp over it. Two writers interleaved between load and rename each save a store
+// that lacks the other's change, and the second rename erases the first's write: a reply lost
+// under a host's comment, an edit's op lost under a reply. Measured against the real CLIs and
+// the real host (2026-09-09): one write in five lost at a stagger of 4 to 20 ms. A stat before
+// the rename narrows that window and cannot close it, so every writer takes this lock around
+// its load-to-rename instead: an O_EXCL create of `<sidecar>.lock` holding "pid ts". A writer
+// that finds the lock held sleeps a few milliseconds and tries again for up to
+// STORE_LOCK_WAIT_MS, then gives up with a StoreLockError (a CLI prints its one line and exits
+// nonzero; a host refuses and its panel retries). A lock whose writer is dead, or whose stamp is
+// older than STORE_LOCK_STALE_MS (an editor host is killed at ten seconds by the kernel that
+// runs it), is a dead writer's and is broken: renamed away by the one waiter whose rename
+// succeeds, then unlinked, so two waiters cannot both break it and the second unlink a fresh
+// lock. Held for one write and never across a wait on a person; not reentrant (a nested take
+// waits out its own lock and fails). The `.trackchanges/` directory is created for the lock
+// when it does not exist yet (a first comment in a fresh vault) and removed again afterwards
+// when nothing else landed in it, so a refused write leaves no trace. A pid is judged on this
+// machine only: on a filesystem shared between machines the stamp's age is the working bound.
+export const STORE_LOCK_WAIT_MS = 2000;
+export const STORE_LOCK_STALE_MS = 15000;
+const STORE_LOCK_SUFFIX = '.lock';
+
+export class StoreLockError extends Error {
+  constructor(lockPath, held, cause) {
+    super(held
+      ? 'another editor is writing this file; retry'
+      : cause
+        ? `cannot create ${lockPath}: ${cause.message}`
+        : `${lockPath} exists and is not a regular file, so the file cannot be locked for writing`);
+    this.name = 'StoreLockError';
+    this.lockPath = lockPath;
+    // true: held by a live writer past the wait; false: the lock could not be created at all (the
+    // OS error is `cause`), or the name is taken by something that is not a lock (a link, a
+    // directory), never followed and never removed.
+    this.held = held;
+    if (cause) this.cause = cause;
+  }
+}
+
+export function storeLockPathFor(storePath) {
+  return storePath + STORE_LOCK_SUFFIX;
+}
+
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
+}
+
+// Whether a held lock is a dead writer's: its pid gone, or its stamp (its mtime, when the stamp
+// is not written yet) older than staleMs. Throws ENOENT when the holder released it meanwhile.
+function lockIsStale(lockPath, staleMs, now) {
+  const st = fs.lstatSync(lockPath);
+  if (!st.isFile()) throw new StoreLockError(lockPath, false);
+  const raw = fs.readFileSync(lockPath, 'utf8');
+  const m = /^(\d+) (\d+)/.exec(raw);
+  if (!m) return now - st.mtimeMs > staleMs;
+  if (!pidAlive(Number(m[1]))) return true;
+  return now - Number(m[2]) > staleMs;
+}
+
+// Take the lock of `storePath`'s sidecar, run `fn`, release. Returns what `fn` returns; `fn`'s
+// throw releases the lock and propagates. `opts.waitMs` and `opts.staleMs` override the bounds
+// (tests); callers in the loop use the defaults.
+export function withStoreLock(storePath, fn, opts) {
+  const waitMs = opts && opts.waitMs != null ? opts.waitMs : STORE_LOCK_WAIT_MS;
+  const staleMs = opts && opts.staleMs != null ? opts.staleMs : STORE_LOCK_STALE_MS;
+  const lockPath = storeLockPathFor(storePath);
+  const dir = path.dirname(storePath);
+  const start = Date.now();
+  let madeDir = false;
+  let fd;
+  for (;;) {
+    try {
+      fd = fs.openSync(lockPath, 'wx');
+      break;
+    } catch (e) {
+      if (e && e.code === 'ENOENT' && !fs.existsSync(dir)) {
+        if (Date.now() - start >= waitMs) throw new StoreLockError(lockPath, true);
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (e2) { throw new StoreLockError(lockPath, false, e2); }
+        madeDir = true;
+        continue;
+      }
+      if (!e || e.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e);
+    }
+    const now = Date.now();
+    let stale = false;
+    try {
+      stale = lockIsStale(lockPath, staleMs, now);
+    } catch (e) {
+      if (e && e.code === 'ENOENT') continue;   // released between the create and the look: try again at once
+      throw e;
+    }
+    if (stale) {
+      const aside = `${lockPath}.stale-${process.pid}-${Date.now()}`;
+      try {
+        fs.renameSync(lockPath, aside);
+        fs.unlinkSync(aside);
+      } catch { /* another waiter broke it first, or the holder released it */ }
+      continue;
+    }
+    if (now - start >= waitMs) throw new StoreLockError(lockPath, true);
+    sleepMs(2 + Math.floor(Math.random() * 4));
+  }
+  try {
+    fs.writeFileSync(fd, `${process.pid} ${Date.now()}\n`);
+  } finally {
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+  try {
+    return fn();
+  } finally {
+    try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+    if (madeDir) { try { fs.rmdirSync(dir); } catch { /* something landed in it: keep it */ } }
+  }
+}
+
 // Delete the sidecar once a note has no pending suggestions and no comments.
 // The caller's `store` can be stale — an agent CLI may have written new ops to
 // the sidecar since it was loaded, and a delete based on the caller's belief

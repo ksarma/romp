@@ -1,0 +1,383 @@
+# Patch 0008 — one writer per sidecar: withStoreLock, taken by track-edit, track-comment and track-reply
+# Offered back: no (not yet: written as offerable to the engine's author, held back by the standing word of 2026-09-11 to open nothing new upstream)
+# Files: store-io.mjs, cli/track-comment.mjs, cli/track-edit.mjs, cli/track-reply.mjs
+#
+# Reason: every writer of a sidecar loads it, changes the object and renames a temp over it, and
+# two writers interleaved between load and rename each save a store that lacks the other's
+# change, so the second rename erases the first's write (a reply lost under an editor host's
+# comment, an edit's op lost under a reply). Measured against the real CLIs and an editor host,
+# one write in five was lost at a stagger of 4 to 20 ms (2026-09-09); a stat before the rename
+# narrows that window and cannot close it. store-io gains withStoreLock(storePath, fn): an O_EXCL
+# create of `<sidecar>.lock` holding "pid ts", a few milliseconds' sleep and retry for up to
+# STORE_LOCK_WAIT_MS (2 s) when held, a StoreLockError past that (held: true) or when the name is
+# taken by a non-lock or cannot be created (held: false), a break of a lock whose writer is dead
+# or whose stamp is older than STORE_LOCK_STALE_MS (15 s), the unlink in finally, and the
+# `.trackchanges/` folder made for the lock when missing and removed again when nothing landed
+# in it. The three CLIs take it around their load-to-rename (track-edit: the file read through
+# the file write and the thread turn; track-comment and track-reply: the note read through the
+# save), printing "another editor is writing this file; retry" and exiting 1 when it is not
+# obtained. Their fail() now throws a CliFailure the entry point prints and exits 1 on, instead
+# of exiting on the spot, so a lock held at that moment is released (process.exit skips every
+# finally); the exit status and the message are unchanged. The exported pure functions keep
+# their signatures. Tests: tools/vendor-patches.test.mjs (P8 cases) and
+# tools/file-comments-host-store-lock.test.mjs (the CLIs waiting for a held lock).
+diff --git a/cli/track-comment.mjs b/cli/track-comment.mjs
+index ea6e27545..9b6e9d0c7 100755
+--- a/cli/track-comment.mjs
++++ b/cli/track-comment.mjs
+@@ -14,6 +14,7 @@ import path from 'node:path';
+ import { fileURLToPath } from 'node:url';
+ import {
+   findVaultRoot, storePathFor, relPathFor, loadStore, saveStore, STORE_VERSION,
++  withStoreLock, StoreLockError,
+ } from '../store-io.mjs';
+ import { parseArgs } from './cli-args.mjs';
+ 
+@@ -58,9 +59,11 @@ function sessionLabel() {
+   return process.env.TRACKCHANGES_SESSION || process.env.ROMP_SESSION_NAME || 'unknown';
+ }
+ 
++// A failure is thrown, not exited on the spot, so a lock held at that moment is released on the
++// way out (process.exit skips every finally); the entry point prints it and exits 1.
++class CliFailure extends Error {}
+ function fail(msg) {
+-  process.stderr.write(msg.endsWith('\n') ? msg : msg + '\n');
+-  process.exit(1);
++  throw new CliFailure(msg);
+ }
+ 
+ function run(argv) {
+@@ -69,10 +72,24 @@ function run(argv) {
+   const abs = path.resolve(args.file);
+   const vaultRoot = process.env.TRACKCHANGES_ROOT || findVaultRoot(abs);
+   if (!vaultRoot) fail(`Not inside an Obsidian vault: ${abs}`);
++  const storePath = storePathFor(vaultRoot, abs);
++  // One writer per sidecar (store-io's withStoreLock): the note read, the load, the comment and
++  // the save run under the sidecar's lock, so a host or another CLI writing the same sidecar
++  // cannot land between this load and this rename and have its write erased by it. A lock still
++  // held after the wait fails with one line and nothing written.
++  try {
++    withStoreLock(storePath, () => commentUnderLock(args, abs, vaultRoot, storePath));
++  } catch (e) {
++    if (e instanceof StoreLockError) fail(e.message);
++    throw e;
++  }
++  process.stdout.write('Comment added.\n');
++}
++
++function commentUnderLock(args, abs, vaultRoot, storePath) {
+   let text;
+   try { text = fs.readFileSync(abs, 'utf8'); } catch { fail(`Could not read ${abs}`); }
+ 
+-  const storePath = storePathFor(vaultRoot, abs);
+   let store = loadStore(storePath, text);
+   if (!store) {
+     store = { v: STORE_VERSION, path: relPathFor(vaultRoot, abs), suggestions: [], comments: [] };
+@@ -80,7 +97,6 @@ function run(argv) {
+   const res = addComment(store, text, args.anchor, args.note, sessionLabel(), Date.now(), process.env.ROMP_SID || null);
+   if (res.error) fail(res.error);
+   try { saveStore(vaultRoot, storePath, store, text); } catch { fail(`Could not write the store for ${abs}`); }
+-  process.stdout.write('Comment added.\n');
+ }
+ 
+ const invokedDirectly = (() => {
+@@ -89,4 +105,12 @@ const invokedDirectly = (() => {
+   } catch { return false; }
+ })();
+ 
+-if (invokedDirectly) run(process.argv.slice(2));
++if (invokedDirectly) {
++  try {
++    run(process.argv.slice(2));
++  } catch (e) {
++    if (!(e instanceof CliFailure)) throw e;
++    process.stderr.write(e.message.endsWith('\n') ? e.message : e.message + '\n');
++    process.exit(1);
++  }
++}
+diff --git a/cli/track-edit.mjs b/cli/track-edit.mjs
+index 42b6da4be..f6fd2337e 100755
+--- a/cli/track-edit.mjs
++++ b/cli/track-edit.mjs
+@@ -21,7 +21,7 @@ import path from 'node:path';
+ import { fileURLToPath } from 'node:url';
+ import {
+   findVaultRoot, recordAgentEdit, addThreadEditTurn, storePathFor, loadStore, saveStore, reviveThreadInto,
+-  isNonTextPath,
++  isNonTextPath, withStoreLock, StoreLockError,
+ } from '../store-io.mjs';
+ import { parseArgs } from './cli-args.mjs';
+ 
+@@ -63,9 +63,11 @@ function sessionLabel() {
+   return process.env.TRACKCHANGES_SESSION || process.env.ROMP_SESSION_NAME || 'unknown';
+ }
+ 
++// A failure is thrown, not exited on the spot, so a lock held at that moment is released on the
++// way out (process.exit skips every finally); the entry point prints it and exits 1.
++class CliFailure extends Error {}
+ function fail(msg) {
+-  process.stderr.write(msg.endsWith('\n') ? msg : msg + '\n');
+-  process.exit(1);
++  throw new CliFailure(msg);
+ }
+ 
+ function run(argv) {
+@@ -82,6 +84,22 @@ function run(argv) {
+       + `rewrites a file from its UTF-8 text, which would destroy this one. Nothing was written. `
+       + `Regenerate the file with a normal write instead.`);
+   }
++  const storePath = storePathFor(vaultRoot, abs);
++  // One writer per sidecar (store-io's withStoreLock): the file read, the record, the file write
++  // and the thread turn run under the sidecar's lock, so a host or another CLI writing the same
++  // sidecar cannot land between this load and this rename and have its write erased by it, and
++  // a host's file write cannot land over this one. A lock still held after the wait fails with
++  // one line and nothing written.
++  try {
++    withStoreLock(storePath, () => editUnderLock(args, abs, vaultRoot, storePath));
++  } catch (e) {
++    if (e instanceof StoreLockError) fail(e.message);
++    throw e;
++  }
++  process.stdout.write('Tracked edit applied.\n');
++}
++
++function editUnderLock(args, abs, vaultRoot, storePath) {
+   let text;
+   let res;
+   if (!fs.existsSync(abs)) {
+@@ -130,7 +148,6 @@ function run(argv) {
+   // Snapshot the sidecar so the note write below can be rolled back. Recording
+   // happens first (see above), so a failed note write would otherwise leave an op
+   // describing text that is not in the file.
+-  const storePath = storePathFor(vaultRoot, abs);
+   let priorStore = null;
+   try { priorStore = fs.readFileSync(storePath, 'utf8'); } catch { priorStore = null; }
+ 
+@@ -175,7 +192,6 @@ function run(argv) {
+       }
+     } catch (e) { /* best effort */ }
+   }
+-  process.stdout.write('Tracked edit applied.\n');
+ }
+ 
+ const invokedDirectly = (() => {
+@@ -184,4 +200,12 @@ const invokedDirectly = (() => {
+   } catch { return false; }
+ })();
+ 
+-if (invokedDirectly) run(process.argv.slice(2));
++if (invokedDirectly) {
++  try {
++    run(process.argv.slice(2));
++  } catch (e) {
++    if (!(e instanceof CliFailure)) throw e;
++    process.stderr.write(e.message.endsWith('\n') ? e.message : e.message + '\n');
++    process.exit(1);
++  }
++}
+diff --git a/cli/track-reply.mjs b/cli/track-reply.mjs
+index 64ba1c9c1..1a13e7db8 100755
+--- a/cli/track-reply.mjs
++++ b/cli/track-reply.mjs
+@@ -14,6 +14,7 @@ import path from 'node:path';
+ import { fileURLToPath } from 'node:url';
+ import {
+   findVaultRoot, storePathFor, loadStore, saveStore, reviveThreadFromSuperseded, reviveThreadInto,
++  withStoreLock, StoreLockError,
+ } from '../store-io.mjs';
+ import { parseArgs } from './cli-args.mjs';
+ 
+@@ -39,9 +40,11 @@ function sessionLabel() {
+   return process.env.TRACKCHANGES_SESSION || process.env.ROMP_SESSION_NAME || 'unknown';
+ }
+ 
++// A failure is thrown, not exited on the spot, so a lock held at that moment is released on the
++// way out (process.exit skips every finally); the entry point prints it and exits 1.
++class CliFailure extends Error {}
+ function fail(msg) {
+-  process.stderr.write(msg.endsWith('\n') ? msg : msg + '\n');
+-  process.exit(1);
++  throw new CliFailure(msg);
+ }
+ 
+ function run(argv) {
+@@ -51,9 +54,23 @@ function run(argv) {
+   const abs = path.resolve(args.file);
+   const vaultRoot = process.env.TRACKCHANGES_ROOT || findVaultRoot(abs);
+   if (!vaultRoot) fail(`Not inside an Obsidian vault: ${abs}`);
++  const storePath = storePathFor(vaultRoot, abs);
++  // One writer per sidecar (store-io's withStoreLock): the note read, the load, the reply and
++  // the save run under the sidecar's lock, so a host or another CLI writing the same sidecar
++  // cannot land between this load and this rename and have its write erased by it. A lock still
++  // held after the wait fails with one line and nothing written.
++  try {
++    withStoreLock(storePath, () => replyUnderLock(args, abs, vaultRoot, storePath));
++  } catch (e) {
++    if (e instanceof StoreLockError) fail(e.message);
++    throw e;
++  }
++  process.stdout.write('Reply posted to thread.\n');
++}
++
++function replyUnderLock(args, abs, vaultRoot, storePath) {
+   let text = null;
+   try { text = fs.readFileSync(abs, 'utf8'); } catch { /* store still loadable without it */ }
+-  const storePath = storePathFor(vaultRoot, abs);
+   let store = loadStore(storePath, text);
+   if (!store) {
+     // The review may have just CLOSED (last change accepted → store
+@@ -74,7 +91,6 @@ function run(argv) {
+   }
+   if (res.error) fail(res.error);
+   try { saveStore(vaultRoot, storePath, store, text); } catch { fail(`Could not write the store for ${abs}`); }
+-  process.stdout.write('Reply posted to thread.\n');
+ }
+ 
+ const invokedDirectly = (() => {
+@@ -83,4 +99,12 @@ const invokedDirectly = (() => {
+   } catch { return false; }
+ })();
+ 
+-if (invokedDirectly) run(process.argv.slice(2));
++if (invokedDirectly) {
++  try {
++    run(process.argv.slice(2));
++  } catch (e) {
++    if (!(e instanceof CliFailure)) throw e;
++    process.stderr.write(e.message.endsWith('\n') ? e.message : e.message + '\n');
++    process.exit(1);
++  }
++}
+diff --git a/store-io.mjs b/store-io.mjs
+index ff537d40e..3163b7c65 100644
+--- a/store-io.mjs
++++ b/store-io.mjs
+@@ -373,6 +373,128 @@ export function saveStore(vaultRoot, storePath, obj, currentText) {
+   fs.renameSync(tmp, storePath);
+ }
+ 
++// ── one writer per sidecar ──────────────────────────────────────────
++//
++// Every writer of a sidecar (the agent CLIs, an editor host) loads it, changes the object and
++// renames a temp over it. Two writers interleaved between load and rename each save a store
++// that lacks the other's change, and the second rename erases the first's write: a reply lost
++// under a host's comment, an edit's op lost under a reply. Measured against the real CLIs and
++// the real host (2026-09-09): one write in five lost at a stagger of 4 to 20 ms. A stat before
++// the rename narrows that window and cannot close it, so every writer takes this lock around
++// its load-to-rename instead: an O_EXCL create of `<sidecar>.lock` holding "pid ts". A writer
++// that finds the lock held sleeps a few milliseconds and tries again for up to
++// STORE_LOCK_WAIT_MS, then gives up with a StoreLockError (a CLI prints its one line and exits
++// nonzero; a host refuses and its panel retries). A lock whose writer is dead, or whose stamp is
++// older than STORE_LOCK_STALE_MS (an editor host is killed at ten seconds by the kernel that
++// runs it), is a dead writer's and is broken: renamed away by the one waiter whose rename
++// succeeds, then unlinked, so two waiters cannot both break it and the second unlink a fresh
++// lock. Held for one write and never across a wait on a person; not reentrant (a nested take
++// waits out its own lock and fails). The `.trackchanges/` directory is created for the lock
++// when it does not exist yet (a first comment in a fresh vault) and removed again afterwards
++// when nothing else landed in it, so a refused write leaves no trace. A pid is judged on this
++// machine only: on a filesystem shared between machines the stamp's age is the working bound.
++export const STORE_LOCK_WAIT_MS = 2000;
++export const STORE_LOCK_STALE_MS = 15000;
++const STORE_LOCK_SUFFIX = '.lock';
++
++export class StoreLockError extends Error {
++  constructor(lockPath, held, cause) {
++    super(held
++      ? 'another editor is writing this file; retry'
++      : cause
++        ? `cannot create ${lockPath}: ${cause.message}`
++        : `${lockPath} exists and is not a regular file, so the file cannot be locked for writing`);
++    this.name = 'StoreLockError';
++    this.lockPath = lockPath;
++    // true: held by a live writer past the wait; false: the lock could not be created at all (the
++    // OS error is `cause`), or the name is taken by something that is not a lock (a link, a
++    // directory), never followed and never removed.
++    this.held = held;
++    if (cause) this.cause = cause;
++  }
++}
++
++export function storeLockPathFor(storePath) {
++  return storePath + STORE_LOCK_SUFFIX;
++}
++
++function sleepMs(ms) {
++  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
++}
++
++function pidAlive(pid) {
++  if (!Number.isInteger(pid) || pid <= 0) return false;
++  try { process.kill(pid, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
++}
++
++// Whether a held lock is a dead writer's: its pid gone, or its stamp (its mtime, when the stamp
++// is not written yet) older than staleMs. Throws ENOENT when the holder released it meanwhile.
++function lockIsStale(lockPath, staleMs, now) {
++  const st = fs.lstatSync(lockPath);
++  if (!st.isFile()) throw new StoreLockError(lockPath, false);
++  const raw = fs.readFileSync(lockPath, 'utf8');
++  const m = /^(\d+) (\d+)/.exec(raw);
++  if (!m) return now - st.mtimeMs > staleMs;
++  if (!pidAlive(Number(m[1]))) return true;
++  return now - Number(m[2]) > staleMs;
++}
++
++// Take the lock of `storePath`'s sidecar, run `fn`, release. Returns what `fn` returns; `fn`'s
++// throw releases the lock and propagates. `opts.waitMs` and `opts.staleMs` override the bounds
++// (tests); callers in the loop use the defaults.
++export function withStoreLock(storePath, fn, opts) {
++  const waitMs = opts && opts.waitMs != null ? opts.waitMs : STORE_LOCK_WAIT_MS;
++  const staleMs = opts && opts.staleMs != null ? opts.staleMs : STORE_LOCK_STALE_MS;
++  const lockPath = storeLockPathFor(storePath);
++  const dir = path.dirname(storePath);
++  const start = Date.now();
++  let madeDir = false;
++  let fd;
++  for (;;) {
++    try {
++      fd = fs.openSync(lockPath, 'wx');
++      break;
++    } catch (e) {
++      if (e && e.code === 'ENOENT' && !fs.existsSync(dir)) {
++        if (Date.now() - start >= waitMs) throw new StoreLockError(lockPath, true);
++        try { fs.mkdirSync(dir, { recursive: true }); } catch (e2) { throw new StoreLockError(lockPath, false, e2); }
++        madeDir = true;
++        continue;
++      }
++      if (!e || e.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e);
++    }
++    const now = Date.now();
++    let stale = false;
++    try {
++      stale = lockIsStale(lockPath, staleMs, now);
++    } catch (e) {
++      if (e && e.code === 'ENOENT') continue;   // released between the create and the look: try again at once
++      throw e;
++    }
++    if (stale) {
++      const aside = `${lockPath}.stale-${process.pid}-${Date.now()}`;
++      try {
++        fs.renameSync(lockPath, aside);
++        fs.unlinkSync(aside);
++      } catch { /* another waiter broke it first, or the holder released it */ }
++      continue;
++    }
++    if (now - start >= waitMs) throw new StoreLockError(lockPath, true);
++    sleepMs(2 + Math.floor(Math.random() * 4));
++  }
++  try {
++    fs.writeFileSync(fd, `${process.pid} ${Date.now()}\n`);
++  } finally {
++    try { fs.closeSync(fd); } catch { /* ignore */ }
++  }
++  try {
++    return fn();
++  } finally {
++    try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
++    if (madeDir) { try { fs.rmdirSync(dir); } catch { /* something landed in it: keep it */ } }
++  }
++}
++
+ // Delete the sidecar once a note has no pending suggestions and no comments.
+ // The caller's `store` can be stale — an agent CLI may have written new ops to
+ // the sidecar since it was loaded, and a delete based on the caller's belief
