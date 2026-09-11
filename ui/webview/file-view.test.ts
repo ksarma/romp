@@ -750,8 +750,18 @@ test("a save refused by the OWNING kernel's edit gate re-offers the consent and 
   // the arm hands the refusal to ensureEditingAllowed's re-consent path (shared with the comment
   // verbs since Slice 1) and retries on a yes; the helper re-posts the SAME opt-in the first popup
   // sends — gesture-stamped like it — before the caller's retry rides the same socket
-  // `code` (Slice 5): the comments host's refusal code when the save went through the panel — the moved fences offer Reload
-  const failedArm = VIEW.split("failed: (err, code) => {")[1].split('showSaveError(err, code === "store-moved" || code === "file-moved" || code === "config-moved");\n      },')[0];
+  // `code` (Slice 5): the comments host's refusal code when the save went through the panel: the moved fences offer
+  // Reload, and so does a held sidecar lock ("busy", since 2026-09-11: another writer was mid-write; a reload shows
+  // what it wrote). The arm is scoped by its CLOSING line, used as a split anchor, so the anchor's own match is
+  // asserted first: when that line was rewritten to add "busy", the old anchor matched nothing, the split returned
+  // one part (the whole rest of the file) and the arm-scoped assert below passed against text anywhere in it.
+  const ARM_OPEN = "failed: (err, code) => {";
+  const ARM_CLOSE = 'showSaveError(err, code === "store-moved" || code === "file-moved" || code === "config-moved" || code === "busy");\n      },';
+  assert.equal(VIEW.split(ARM_OPEN).length, 2, "one save-failed arm takes a refusal code");
+  const armParts = VIEW.split(ARM_OPEN)[1].split(ARM_CLOSE);
+  assert.equal(armParts.length, 2, "the failed arm closes on its showSaveError line, found exactly once: a drifted anchor widens the scope to the whole file, silently");
+  const failedArm = armParts[0];
+  assert.ok(!failedArm.includes("editHooks = hooks;"), "the scope ends at the arm, before the hooks object is installed");
   assert.match(failedArm, /void ensureEditingAllowed\(sid, err\)\.then\(\(ok\) => \{ if \(ok\) doSave\(\); else showSaveError\(err\); \}\);/);
   const helper = VIEW.split("export async function ensureEditingAllowed(")[1].split("\n}")[0];
   assert.match(helper, /if \(!\/file editing is off\/\.test\(refusal\)\) return false;/, "only the gate's own text re-offers");

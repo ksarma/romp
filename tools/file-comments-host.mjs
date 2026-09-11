@@ -1483,12 +1483,17 @@ function whyOf(e) {
 // and re-checks its "" fence under it. Everything that reads the disk for the reply (the log, the
 // tracking verdict, the figures' hashes) runs after the release; the store the reply carries was
 // read back under the lock. A lock still held after store-io's wait
-// refuses `busy`, nothing changed; the panel re-reads and retries once, as for a moved fence.
+// refuses `busy`, nothing changed; the panel re-reads and retries once, as for a moved fence. The
+// refusal names what the held lock guards: the file, for the sidecar's; for config.json's, the
+// tracking list of the root, which every file under it shares, so the writer holding it may be a
+// toggle on a sibling file, and "writing <this file>" would be false (the review, 2026-09-11).
 function underStoreLock(ctx, lockedPath, fn) {
   try {
     return withStoreLock(lockedPath, fn);
   } catch (e) {
     if (!(e instanceof StoreLockError)) throw e;
+    const root = path.dirname(path.dirname(lockedPath));   // <root>/.trackchanges/<name>
+    if (e.held && lockedPath === configPathFor(root)) throw new Refusal('busy', `another editor is changing which files under ${tilde(root)} are tracked; retry`);
     if (e.held) throw new Refusal('busy', `another editor is writing ${ctx.shown}; retry`);
     throw new Refusal('unreadable', `cannot lock ${ctx.shown} for writing: ${errText(e)}; nothing was changed`);
   }
@@ -1545,11 +1550,16 @@ function seedStore(rel) {
 function createLandmark(ctx) {
   const dir = path.dirname(ctx.abs);
   const mark = path.join(dir, '.trackchanges');
-  // findVaultRoot saw no directory here, so anything AT the name is a link to nowhere or a
-  // non-directory: never followed, never removed, and never built over (mkdir would fail or land
-  // the folder wherever a dangling link is later pointed).
+  // findVaultRoot saw no directory here. A directory AT the name now is another first write's
+  // landmark, made since that look (two first comments on one loose file, or a comment and a
+  // tracking toggle, from two clients at once): mkdir is a no-op over it, and the caller's lock and
+  // its "" fence re-check under the lock meet the other writer (store-moved or config-moved, which
+  // the panel re-reads and retries). Refusing it named a folder that by then held the other
+  // writer's comment and told the person to remove it (the review, 2026-09-11). Anything else AT
+  // the name is a link to nowhere or a non-directory: never followed, never removed, and never
+  // built over (mkdir would fail or land the folder wherever a dangling link is later pointed).
   const st = lstatOrNull(mark);
-  if (st) {
+  if (st && !st.isDirectory()) {
     throw new Refusal('unreadable', `the comments folder for ${ctx.shown} cannot be created: ${tilde(mark)} already exists as ${whatIs(st)}${st.isSymbolicLink() ? ' to nothing' : ''}, not a directory — remove it, or replace it with a directory; nothing was changed`);
   }
   fs.mkdirSync(mark, { recursive: true });

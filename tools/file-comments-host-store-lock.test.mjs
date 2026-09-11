@@ -7,8 +7,9 @@
 // test itself: it loads the store, takes the lock the way a writer does, and saves 300 ms later.
 //   * the host's `comment` waits for the release; the holder's rename moved the fence, so the host
 //     refuses store-moved (the panel's copy IS stale now) and the panel's one retry lands; both
-//     writes survive. Before: the host answered about 150 ms BEFORE the holder saved, and the
-//     holder's save erased its comment.
+//     writes survive. Before: the host answered about 220 ms BEFORE the holder saved (the figure
+//     decision 49 records; every recorded fails-before run reported 220 to 250 ms in the assertion's
+//     own message, the spread being load), and the holder's save erased its comment.
 //   * the same with the real track-reply, which has no fence: it waits, then loads the holder's
 //     write and adds its reply to it. Before: its reply was erased.
 //   * a lock held past store-io's wait refuses `busy` (host) and exits 1 with one plain line (CLI),
@@ -305,4 +306,22 @@ test('withStoreLock: a held lock refuses after the wait with the one plain line;
   assert.equal(err.held, false);
   assert.match(err.message, /is not a regular file/);
   assert.ok(fs.statSync(lockPath).isDirectory(), 'never removed');
+});
+
+// ── the record ──────────────────────────────────────────────────────
+
+test('the before-figure in this header is the one decision 49 records', () => {
+  // The same measurement was once on record with two values (150 here, 220 in the plan); a reader
+  // checking the decision against the test it names could not tell which was measured.
+  const here = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const plan = fs.readFileSync(path.join(REPO, 'plans', 'file-review.md'), 'utf8');
+  const a = plan.indexOf('49. **One writer per sidecar at a time**');
+  const b = plan.indexOf('50. **', a);
+  assert.ok(a >= 0 && b > a, 'decision 49 is in the plan');
+  const d49 = plan.slice(a, b).replace(/\s+/g, ' ');
+  const inPlan = /about (\d+) ms before the holder saved/.exec(d49);
+  const inHeader = /about (\d+) ms BEFORE the holder saved/.exec(here.slice(0, here.indexOf('import { test')));
+  assert.ok(inPlan, 'decision 49 records the before-figure');
+  assert.ok(inHeader, 'the header records the before-figure');
+  assert.equal(inHeader[1], inPlan[1], `header says ${inHeader[1]} ms, decision 49 says ${inPlan[1]} ms`);
 });

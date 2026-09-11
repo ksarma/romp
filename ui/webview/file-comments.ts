@@ -2204,14 +2204,17 @@ class Panel {
   }
   /** The editor's Save through the host: `save` with the text, the records as the editor holds them and its decisions,
    *  fenced on the sidecar the records came from (editSeed; the latest status when none rode in), the config, and the
-   *  file as the viewer loaded it. One retry, as every mutating verb gets (mutateOnce), when the sidecar or config moved
-   *  but the records the editor carries are still the sidecar's own — a reply a session wrote mid-edit, a toggle from
-   *  another browser; never for a moved file (the editor's text is from the old bytes) or a sidecar whose records
-   *  changed. The reply is applied as the status (it is one), so onSaved has nothing left to re-read — and it re-seeds the
-   *  fence, since the editor may stay up past a landed save (the viewer keeps it over keystrokes typed during the round trip,
-   *  or a decision clicked then) and its next Save must meet the sidecar THIS save wrote, not the poll's latest: a decision
-   *  landed elsewhere between two saves would pass that fence and be written back as pending. The host's `logWarning`
-   *  (the comments log did not take the edit) rides the resolved value for the viewer's note bar and is said in the head. */
+   *  file as the viewer loaded it. One retry, as every mutating verb gets (mutateOnce), when the sidecar or config moved,
+   *  or the host's lock on the sidecar was still held past its wait (`busy`, decision 49: the holder's write is on disk by
+   *  the time the refusal arrives, so the same re-read shows it), but the records the editor carries are still the
+   *  sidecar's own — a reply a session wrote mid-edit, a toggle from another browser; never for a moved file (the editor's
+   *  text is from the old bytes) or a sidecar whose records changed (file-comments-save-busy.test.ts drives the `busy`
+   *  leg; file-comments-panel.test.ts the moved fences). The reply is applied as the status (it is one), so onSaved has
+   *  nothing left to re-read — and it re-seeds the fence, since the editor may stay up past a landed save (the viewer
+   *  keeps it over keystrokes typed during the round trip, or a decision clicked then) and its next Save must meet the
+   *  sidecar THIS save wrote, not the poll's latest: a decision landed elsewhere between two saves would pass that fence
+   *  and be written back as pending. The host's `logWarning` (the comments log did not take the edit) rides the resolved
+   *  value for the viewer's note bar and is said in the head. */
   async saveThroughComments(content: string, records: unknown[], decided: EditDecisions): Promise<{ mtimeNs: string; logged: boolean; logWarning?: string }> {
     const seed = this.editSeed;
     const gen = this.editGen;                          // the editor this save came from (begin() counts them): see `mine` below

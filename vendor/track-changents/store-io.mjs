@@ -386,29 +386,52 @@ export function saveStore(vaultRoot, storePath, obj, currentText) {
 // STORE_LOCK_WAIT_MS, then gives up with a StoreLockError (a CLI prints its one line and exits
 // nonzero; a host refuses and its panel retries). A lock whose writer is dead, or whose stamp is
 // older than STORE_LOCK_STALE_MS (an editor host is killed at ten seconds by the kernel that
-// runs it), is a dead writer's and is broken: renamed away by the one waiter whose rename
-// succeeds, then unlinked, so two waiters cannot both break it and the second unlink a fresh
-// lock. Held for one write and never across a wait on a person; not reentrant (a nested take
-// waits out its own lock and fails). The `.trackchanges/` directory is created for the lock
-// when it does not exist yet (a first comment in a fresh vault) and removed again afterwards
-// when nothing else landed in it, so a refused write leaves no trace. A pid is judged on this
-// machine only: on a filesystem shared between machines the stamp's age is the working bound.
+// runs it), is a dead writer's and is broken.
+//
+// Breaking has one winner. The breakers of a lock serialize on a second O_EXCL name beside it,
+// `<sidecar>.lock.break`, held for the few calls of the break, and the one holding it judges the
+// lock again before unlinking it: a waiter whose verdict predates another's break finds a fresh
+// lock under the claim and leaves it. Judged and removed by name alone (2026-09-11), two waiters
+// that read one dead lock together both removed it, the second taking away the first's fresh
+// lock, and both wrote; three writers on a dead lock did so in 54 rounds of 100. A dead breaker's
+// claim is judged and removed by the lock's own rule. A holder releases only while the entry at
+// the lock's name is still the inode it created (kept open for the length of the hold, so its
+// number is not reused): a holder broken as stale while alive (a machine suspended mid-write,
+// a writer stalled past the bound) would otherwise remove the breaker's fresh lock on its way
+// out and admit a third writer. A lock this process cannot read (another account's, under a
+// mode this one lacks) is one it cannot take: refused with the OS error, never thrown raw.
+//
+// Held for one write and never across a wait on a person; not reentrant (a nested take waits out
+// its own lock and fails). The `.trackchanges/` directory is created for the lock when it does
+// not exist yet (a first comment in a fresh vault) and removed again afterwards when nothing
+// else landed in it, so a refused write leaves no trace: when another writer's lock is in the
+// folder at that moment (a second first write, on this sidecar or a sibling's), the duty passes
+// to it by a line appended to its lock (or to a breaker's claim), which its holder reads back at
+// release, or the breaker of that lock does if the holder dies, and the last one out removes the
+// folder. A folder the lock did not make is never removed. A pid is judged on this machine only:
+// a lock written from another machine over a shared filesystem names a pid this machine does not
+// know, so it reads as a dead writer's and is broken at once; the lock serializes the writers of
+// one machine.
 export const STORE_LOCK_WAIT_MS = 2000;
 export const STORE_LOCK_STALE_MS = 15000;
 const STORE_LOCK_SUFFIX = '.lock';
+const STORE_LOCK_BREAK_SUFFIX = '.break';   // the breakers' claim on a lock: `<sidecar>.lock.break`
+const STORE_LOCK_HANDOVER = 'made-dir';     // a line appended to a lock whose holder removes the folder at release
+// Every name this lock leaves in a `.trackchanges/` folder while it works; nothing else of its is ever there.
+const STORE_LOCK_NAME_RE = /\.lock(\.break)?$/;
 
 export class StoreLockError extends Error {
-  constructor(lockPath, held, cause) {
+  constructor(lockPath, held, cause, failed) {
     super(held
       ? 'another editor is writing this file; retry'
       : cause
-        ? `cannot create ${lockPath}: ${cause.message}`
+        ? `cannot ${failed || 'create'} ${lockPath}: ${cause.message}`
         : `${lockPath} exists and is not a regular file, so the file cannot be locked for writing`);
     this.name = 'StoreLockError';
     this.lockPath = lockPath;
-    // true: held by a live writer past the wait; false: the lock could not be created at all (the
-    // OS error is `cause`), or the name is taken by something that is not a lock (a link, a
-    // directory), never followed and never removed.
+    // true: held by a live writer past the wait; false: the lock could not be created, written,
+    // read or removed at all (the OS error is `cause`; `failed` names the step), or the name is
+    // taken by something that is not a lock (a link, a directory), never followed and never removed.
     this.held = held;
     if (cause) this.cause = cause;
   }
@@ -427,16 +450,133 @@ function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
 }
 
+// What is at `p`: its stat (bigint fields) and content, read from one open of the name without
+// following a link, so the file judged is the file read; null when nothing is there. A name held
+// by something that is not a regular file (a link, a directory, a pipe) is refused, never followed
+// and never removed. Any other failure to open or read it is a lock this process cannot take.
+function inspectLock(p) {
+  let fd;
+  try {
+    fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return null;
+    if (e && e.code === 'ELOOP') throw new StoreLockError(p, false);
+    throw new StoreLockError(p, false, e, 'read');
+  }
+  try {
+    const st = fs.fstatSync(fd, { bigint: true });
+    if (!st.isFile()) throw new StoreLockError(p, false);
+    let raw;
+    try { raw = fs.readFileSync(fd, 'utf8'); } catch (e) { throw new StoreLockError(p, false, e, 'read'); }
+    return { st, raw };
+  } finally {
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+}
+
 // Whether a held lock is a dead writer's: its pid gone, or its stamp (its mtime, when the stamp
-// is not written yet) older than staleMs. Throws ENOENT when the holder released it meanwhile.
-function lockIsStale(lockPath, staleMs, now) {
-  const st = fs.lstatSync(lockPath);
-  if (!st.isFile()) throw new StoreLockError(lockPath, false);
-  const raw = fs.readFileSync(lockPath, 'utf8');
-  const m = /^(\d+) (\d+)/.exec(raw);
-  if (!m) return now - st.mtimeMs > staleMs;
+// is not written yet) older than staleMs.
+function lockIsStale(entry, staleMs, now) {
+  const m = /^(\d+) (\d+)/.exec(entry.raw);
+  if (!m) return now - Number(entry.st.mtimeMs) > staleMs;
   if (!pidAlive(Number(m[1]))) return true;
   return now - Number(m[2]) > staleMs;
+}
+
+const hasHandover = (raw) => raw.split('\n').includes(STORE_LOCK_HANDOVER);
+
+// Unlink `p` while the entry at the name is still the inode this process created (`mine`, its
+// fstat); a lock broken as stale while its holder was alive has another writer's at the name by
+// now, which is left alone. Returns the content the entry held when it was this process's, else
+// null. Never throws: it runs on the way out of a write.
+function unlinkOwn(p, mine) {
+  let cur = null;
+  try { cur = inspectLock(p); } catch { return null; }
+  if (!cur || cur.st.ino !== mine.ino || cur.st.dev !== mine.dev) return null;
+  try { fs.unlinkSync(p); } catch { return null; }
+  return cur.raw;
+}
+
+// Break the stale lock at `lockPath`, once among its waiters: the breakers serialize on the claim
+// `<lock>.break`, an O_EXCL create like the lock's own, and the one holding it judges the lock
+// again before unlinking it. `removed` says whether this call removed the lock; it did not when
+// another breaker holds the claim (the caller waits and looks again; that break shows as the lock
+// gone or fresh), or when a dead breaker's claim was removed here, by the lock's own rule, for the
+// caller's next try. `handover` says the folder's removal passed to this writer: by the line on
+// the lock it removed, or by one put on its claim while it held it (removeDirUnlessUsed). A claim
+// that cannot be created or removed is a lock that cannot be taken.
+function breakStaleLock(lockPath, staleMs) {
+  const claim = lockPath + STORE_LOCK_BREAK_SUFFIX;
+  const out = { removed: false, handover: false };
+  let cfd;
+  try {
+    cfd = fs.openSync(claim, 'wx');
+  } catch (e) {
+    if (e && e.code === 'EEXIST') {
+      const other = inspectLock(claim);
+      if (other && lockIsStale(other, staleMs, Date.now())) {
+        try { fs.unlinkSync(claim); } catch (e2) { if (!e2 || e2.code !== 'ENOENT') throw new StoreLockError(claim, false, e2, 'remove'); }
+      }
+      return out;
+    }
+    if (e && e.code === 'ENOENT') return out;   // the folder went with the last lock: the caller makes it again
+    throw new StoreLockError(claim, false, e);
+  }
+  let mine = null;
+  try {
+    try {
+      fs.writeFileSync(cfd, `${process.pid} ${Date.now()}\n`);
+      mine = fs.fstatSync(cfd, { bigint: true });
+    } catch (e) {
+      throw new StoreLockError(claim, false, e, 'write');
+    } finally {
+      try { fs.closeSync(cfd); } catch { /* ignore */ }
+    }
+    const entry = inspectLock(lockPath);
+    if (entry && lockIsStale(entry, staleMs, Date.now())) {
+      try {
+        fs.unlinkSync(lockPath);
+        out.removed = true;
+        if (hasHandover(entry.raw)) out.handover = true;   // the dead writer held the folder's removal
+      } catch (e) {
+        if (!e || e.code !== 'ENOENT') throw new StoreLockError(lockPath, false, e, 'remove');
+      }
+    }
+  } finally {
+    const held = mine ? unlinkOwn(claim, mine) : null;
+    if (!mine) { try { fs.unlinkSync(claim); } catch { /* ignore */ } }
+    if (held != null && hasHandover(held)) out.handover = true;
+  }
+  return out;
+}
+
+// Append the handover line to the lock at `p`: its holder removes the folder at release when
+// nothing else is in it. Best effort, by the same rules as a read: no link followed, no non-file
+// written, a lock released meanwhile skipped.
+function handOverDir(p) {
+  let fd;
+  try {
+    fd = fs.openSync(p, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch { return; }
+  try {
+    if (fs.fstatSync(fd).isFile()) fs.writeFileSync(fd, `${STORE_LOCK_HANDOVER}\n`);
+  } catch { /* ignore */ } finally {
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+}
+
+// Take away the folder made for a lock once nothing else landed in it. When only other writers'
+// locks and break claims are in it, the duty is handed to each one's holder (a breaker's claim
+// carries it to the lock the breaker takes next), and the folder is tried once more for a holder
+// that released between the look and the line; anything else in it keeps it. Never throws: it
+// runs on the way out of a write.
+function removeDirUnlessUsed(dir) {
+  try { fs.rmdirSync(dir); return; } catch (e) { if (!e || e.code !== 'ENOTEMPTY') return; }
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return; }
+  if (!names.every((n) => STORE_LOCK_NAME_RE.test(n))) return;
+  for (const n of names) handOverDir(path.join(dir, n));
+  try { fs.rmdirSync(dir); } catch { /* a holder handed the duty takes it away */ }
 }
 
 // Take the lock of `storePath`'s sidecar, run `fn`, release. Returns what `fn` returns; `fn`'s
@@ -448,7 +588,7 @@ export function withStoreLock(storePath, fn, opts) {
   const lockPath = storeLockPathFor(storePath);
   const dir = path.dirname(storePath);
   const start = Date.now();
-  let madeDir = false;
+  let ownsDir = false;   // this writer takes the folder away at release when nothing else is in it
   let fd;
   for (;;) {
     try {
@@ -457,41 +597,43 @@ export function withStoreLock(storePath, fn, opts) {
     } catch (e) {
       if (e && e.code === 'ENOENT' && !fs.existsSync(dir)) {
         if (Date.now() - start >= waitMs) throw new StoreLockError(lockPath, true);
-        try { fs.mkdirSync(dir, { recursive: true }); } catch (e2) { throw new StoreLockError(lockPath, false, e2); }
-        madeDir = true;
+        // Made here, so it is this writer's to take away; made by another writer in between
+        // (EEXIST), that writer's, which hands the duty over when it leaves first.
+        try { fs.mkdirSync(dir); ownsDir = true; } catch (e2) { if (!e2 || e2.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e2); }
         continue;
       }
       if (!e || e.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e);
     }
     const now = Date.now();
-    let stale = false;
-    try {
-      stale = lockIsStale(lockPath, staleMs, now);
-    } catch (e) {
-      if (e && e.code === 'ENOENT') continue;   // released between the create and the look: try again at once
-      throw e;
-    }
-    if (stale) {
-      const aside = `${lockPath}.stale-${process.pid}-${Date.now()}`;
-      try {
-        fs.renameSync(lockPath, aside);
-        fs.unlinkSync(aside);
-      } catch { /* another waiter broke it first, or the holder released it */ }
-      continue;
+    const entry = inspectLock(lockPath);
+    if (!entry) continue;   // released between the create and the look: try again at once
+    if (lockIsStale(entry, staleMs, now)) {
+      const broke = breakStaleLock(lockPath, staleMs);
+      if (broke.handover) ownsDir = true;
+      if (broke.removed) continue;
     }
     if (now - start >= waitMs) throw new StoreLockError(lockPath, true);
     sleepMs(2 + Math.floor(Math.random() * 4));
   }
+  let mine;
   try {
     fs.writeFileSync(fd, `${process.pid} ${Date.now()}\n`);
-  } finally {
+    mine = fs.fstatSync(fd, { bigint: true });
+  } catch (e) {
+    // A stamp that could not be written (the disk full) leaves no empty lock behind to be judged
+    // by its age alone, nor the folder made for it.
     try { fs.closeSync(fd); } catch { /* ignore */ }
+    try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+    if (ownsDir) { try { fs.rmdirSync(dir); } catch { /* something landed in it: keep it */ } }
+    throw new StoreLockError(lockPath, false, e, 'write');
   }
   try {
     return fn();
   } finally {
-    try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
-    if (madeDir) { try { fs.rmdirSync(dir); } catch { /* something landed in it: keep it */ } }
+    const held = unlinkOwn(lockPath, mine);
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+    if (held != null && hasHandover(held)) ownsDir = true;
+    if (ownsDir) removeDirUnlessUsed(dir);
   }
 }
 

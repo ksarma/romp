@@ -457,11 +457,15 @@ file, and restores the prior sidecar bytes (or removes the sidecar it created, w
 if the file write fails, the order `track-edit` uses (`cli/track-edit.mjs:108-128`); its file
 write is atomic (temp file and rename in the same directory, through the realpath, mode
 preserved, with a temporary name that does not end in `.json` so the other hosts' scans skip it) and applies the same 2 MB and UTF-8 checks as `_save_file`, refusing `too-large`
-before any write. Every verb that writes holds store-io's lock on the file it writes, from its fence
-stat through its last rename or prune, the lock the vendored CLIs hold around their own
-load-to-rename, and refuses `busy` when the lock is still held after two seconds; every clock a
-reply carries (`storeMtimeNs`, `configMtimeNs`) is taken before the bytes it describes are read,
-never at reply time (decisions 49 and 50). When `findVaultRoot` finds no landmark above the file (`store-io.mjs:43-54` walks up to forty
+before any write. Every verb that rewrites the sidecar or `config.json` (`comment`, `reply`,
+`resolve`, `retarget`, `accept`, `reject` and `save` the sidecar; `set-tracked` the config) holds
+store-io's lock on the file it rewrites, from its fence stat through its last rename or prune, the
+lock the vendored CLIs hold around their own load-to-rename, and refuses `busy` when the lock is
+still held after two seconds; `log-edit` and `log-send`, which only append to the comments log,
+hold none, since the log is appended an entry at a time by the host script alone and never
+rewritten, so it has no load-to-rename for a second writer to erase; every clock a reply carries
+(`storeMtimeNs`, `configMtimeNs`) is taken before the bytes it describes are read, never at reply
+time (decisions 49 and 50). When `findVaultRoot` finds no landmark above the file (`store-io.mjs:43-54` walks up to forty
 parents and returns null), `status` answers `root: null, storePath: null, trackedBy: null, store:
 null` and the panel still offers Comment on this file and Track changes; `comment` and `set-tracked` then create `.trackchanges/` beside the file
 and call `findVaultRoot` again, which now returns the file's directory, and the CLIs resolve the
@@ -2821,7 +2825,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `ui/webview/file-comments-changes-review2.test.ts` (Accept refused `busy`: one retry by id with the fresh fence,
   the row verbatim with Reload on a second; Accept all refused `busy`: re-read, nothing decided);
   `tools/file-review-plan-sidecar.test.mjs` (decisions 49 and 50, the host paragraph, the codes list, the
-  Vendoring sentence, this bullet and the ADR held to the source and the tree).
+  Vendoring sentence, this bullet and the ADR held to the source and the tree);
+  `tools/file-review-plan-lock-verbs.test.mjs` (the host paragraph's lock sentence held to the host's verb
+  table: the eight verbs route through the lock, `status`, `log-edit` and `log-send` take none, the log is
+  appended an entry at a time and never rewritten, and nothing vendored names it).
 
 ## Docs
 
