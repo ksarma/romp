@@ -78,19 +78,25 @@ while (!fs.existsSync(go) && Date.now() < deadline) { /* spin */ }
 // once in several runs. The CLI's first O_EXCL create of its lock fails ENOENT (no `.trackchanges/`
 // yet) and, before the CLI looks at the folder, the peer's making of it lands. Everything else is
 // the real fs. store-io calls fs.openSync through the module's default export, so the wrapper is
-// what it calls.
+// what it calls. It arms on any exclusive create of the lock's name (flags with `x`: 'wx' as first
+// built, 'ax+' since review round 2) and writes the file TRACK_COMMENT_RACE_PEER_FIRED names when it
+// fires, so the case can tell it ran: armed on the literal 'wx' after the flags changed, it never
+// fired and the case ran as a plain first comment (review round 4, 2026-09-11).
 const PEER = `
 import fs from 'node:fs';
 import path from 'node:path';
 const real = fs.openSync;
 let armed = true;
 fs.openSync = function (p, flags, ...rest) {
-  if (!armed || flags !== 'wx' || typeof p !== 'string' || !p.endsWith('.json.lock')) return real.call(fs, p, flags, ...rest);
+  if (!armed || typeof flags !== 'string' || !flags.includes('x') || typeof p !== 'string' || !p.endsWith('.json.lock')) return real.call(fs, p, flags, ...rest);
   armed = false;
   try {
     return real.call(fs, p, flags, ...rest);
   } catch (e) {
-    if (e && e.code === 'ENOENT') fs.mkdirSync(path.dirname(p), { recursive: true });
+    if (e && e.code === 'ENOENT') {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(process.env.TRACK_COMMENT_RACE_PEER_FIRED, '');
+    }
     throw e;
   }
 };
@@ -125,8 +131,8 @@ function world() {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // One CLI run as a session runs it (its name and id in the environment, no root override). With a
-// gate, the process reports ready and waits at it before the CLI runs; with a preload, that module
-// runs first (the peer above).
+// gate, the process reports ready and waits at it before the CLI runs; with a preload ({ url, fired }),
+// that module runs first (the peer above) and writes `fired` when it fires.
 function cli(name, args, session, { gate, preload } = {}) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
@@ -134,7 +140,7 @@ function cli(name, args, session, { gate, preload } = {}) {
     env.ROMP_SESSION_NAME = session.name;
     env.ROMP_SID = session.sid;
     const nodeArgs = [];
-    if (preload) nodeArgs.push('--import', preload);
+    if (preload) { nodeArgs.push('--import', preload.url); env.TRACK_COMMENT_RACE_PEER_FIRED = preload.fired; }
     if (gate) {
       nodeArgs.push('--import', GATE_URL);
       env.TRACK_COMMENT_RACE_WARM = STORE_IO;
@@ -261,7 +267,9 @@ test('three track-comment and three track-reply processes, each another session,
 test('a first comment whose folder another writer makes between its lock create and its look lands: the ENOENT is tried again, not refused', async () => {
   const w = world();
   assert.equal(fs.existsSync(w.dir), false);
-  const r = await cli('track-comment', ['--file', w.note, '--anchor', 'Step two', '--note', 'Which list?'], SESSIONS[1], { preload: PEER_URL });
+  const fired = path.join(SCRATCH, 'peer-fired');
+  const r = await cli('track-comment', ['--file', w.note, '--anchor', 'Step two', '--note', 'Which list?'], SESSIONS[1], { preload: { url: PEER_URL, fired } });
+  assert.ok(fs.existsSync(fired), 'the peer fired: the lock create met ENOENT and the folder was made before the CLI looked (armed on flags store-io no longer passes, the peer never fired and the case ran as a plain first comment; review round 4, 2026-09-11)');
   assert.equal(r.status, 0, `exited ${r.status}: ${r.stderr || r.stdout}`);
   assert.equal(r.stdout, LINE['track-comment']);
   assert.equal(r.stderr, '');
