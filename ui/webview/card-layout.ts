@@ -42,23 +42,30 @@
 // change cards by position (`from`) then time (`ts`), the list's order for them, so a later edit to the left of an
 // earlier one on the same line reads in text order; two comment cards by time; and the key last, so the order is
 // total. So the placement is a function of the cards alone, every pass over the same cards lays them the same, and at
-// every pass a tie lays as the list shows it: a comment about a change after the change it is about. The panel gives
-// the pass the cards as its list stands (file-comments.ts, placeCards): the model's order after a render, and after
-// every other pass (a resize, a card's growth, a figure's load, a comment composer's open or Cancel) the order the
-// LAST pass left, since a pass re-appends the cards in placement order. A tie broken by that order, as first built,
-// made the placement depend on which pass ran last: under a focus, with the tied pair straddling the spill, each pass
-// reversed the pair, and a comment card and a change card whose marks shared a line swapped places at every composer
-// open, Cancel and paint pass, every card below moving by their height difference (the Slice 4 review of
-// plans/markdown-viewer.md, round 16, 2026-09-10). The fields are ones the panel reads off its model for every card
-// it lays (the change's hunk, the comment's card), so no order is fed to the pass or held between renders; a rank
-// stamped on each card at render and read by the pass would have been the other exact fix, and these make it moot.
-// The focus rule works on the sorted order as it does for any two cards: a same-line comment card keeps the list's
-// side of a focused change card, below it, and a same-line change card lays above a focused comment card, pulled up
-// where there is room; of a tied pair above the focus with room for one, the first of the pair, the change, is the one
-// laid below the focus. An item with no `kind` (a bare test item) ranks as a comment card at time 0, so two of them
-// tie by key. The loose group keeps the list's order: a pass never reorders loose cards among themselves (a spilled
-// suffix follows the focus, the rest keep their places), so the order a pass reads back is the model's, and the two
-// orders agree.
+// every pass a tie lays as the list shows it, a comment about a change after the change it is about, but for two cases:
+// a tied pair above the focus with room for the comment but not for both, where the change is the one laid below the
+// focus and the comment holds the start (the focus rule, below); and two cards the fields do not part, two comment
+// cards saved in the same millisecond on one line or two change cards at one position and time, which lay by key, an
+// order the list need not share, since it sorts comments by time and changes by position then time, stably
+// (file-comments-model.ts, cardModel and changeCards), and so keeps the store's order for them. The panel gives the
+// pass the cards as its list stands (file-comments.ts, placeCards): the model's order after a render, and after every
+// other pass (a resize, a card's growth, a figure's load, a comment composer's open or Cancel) the order the LAST pass
+// left, since a pass re-appends the cards in placement order. A tie broken by that order, as first built, made the
+// placement depend on which pass ran last: under a focus, with the tied pair straddling the spill, each pass reversed
+// the pair, and a comment card and a change card whose marks shared a line swapped places at every composer open,
+// Cancel and paint pass, every card below moving by their height difference (the Slice 4 review of
+// plans/markdown-viewer.md, round 16, 2026-09-10). The fields are ones the panel reads off its model for every card it
+// lays (the change's hunk, the comment's card), so no order is fed to the pass or held between renders; a rank stamped
+// on each card at render and read by the pass would have been the other exact fix, and these make it moot. The focus
+// rule works on the sorted order as it does for any two cards: a same-line comment card keeps the list's side of a
+// focused change card, below it, and a same-line change card lays above a focused comment card, pulled up where there
+// is room; of a tied pair above the focus, the chain reaches the comment first, so with room for the comment but not
+// for both the change, first of the pair, is the one laid below the focus and the comment holds the start: there the
+// comment displays above the change it is about, the case above (card-layout.test.ts and file-comments-margin.test.ts
+// pin the scene); a comment too tall for the room spills itself and a change that fits holds the start, the list's
+// order. An item with no `kind` (a bare test item) ranks as a comment card at time 0, so two of them tie by key. The
+// loose group keeps the list's order: a pass never reorders loose cards among themselves (a spilled suffix follows the
+// focus, the rest keep their places), so the order a pass reads back is the model's, and the two orders agree.
 export type LayoutItem = {
   key: string; desired: number | null; height: number;
   /** the tie on a shared desired top (the module comment): a change card lays before a comment card, two change cards

@@ -1234,8 +1234,10 @@ Every card is absolutely positioned at its mark's top in the body's content, les
 under: a comment highlight, a framed figure, a region rectangle on a picture or a PDF page, a change mark. Cards are
 laid by that top (a tie in the list's order by the cards' own fields since 2026-09-10: a change card before a comment
 card, two changes by position then time, two comments by time, the key last, and never by the order the pass was given
-the cards in, so a comment about a change lays after the change at every pass; as first built, by that order, which is
-the model's after a render and the last placement's after any other pass, so under a focus each pass reversed a comment
+the cards in, so a comment about a change lays after the change at every pass, but for a tied pair above a focus with
+room for the comment but not for both, where the change, first of the pair, is the one laid below the focus and the
+comment holds the start (`card-layout.ts`; the focus follow-on, below); as first built, by that order, which is the
+model's after a render and the last placement's after any other pass, so under a focus each pass reversed a comment
 card and a change card whose marks shared a line, and every card below moved by their height difference: the Slice 4
 review of `plans/markdown-viewer.md`, round 16) and each takes the larger of it and the previous card's bottom plus the
 gap, so cards never overlap and, without a focus, only ever move down from their marks (with one — the card the person
@@ -1891,9 +1893,10 @@ the panel's slot anchored over the change's span in the current text, the presel
 deletion, whose text is not in the file, takes the comment by id alone, the reference row saying "About the change …"
 and, in one line, that the comment is laid at the change's point (`markTop`'s fallback lays an anchorless comment's card
 level with the first pending change it names, and after that change's card, since a tie on the top lays in the list's
-order: the margin-layout record above) or, in the list layout, where no card is laid at any point, that the comment
-names the change instead of a passage (the review's second round, 2026-09-10). For a spanned change, an insertion or a
-substitution, the card offers
+order, but for a tied pair above a focus with room for the comment but not for both, where the change is the one laid
+below the focus and the comment holds the start: the margin-layout record above) or, in the list layout, where no card
+is laid at any point, that the comment names the change instead of a passage (the review's second round, 2026-09-10).
+For a spanned change, an insertion or a substitution, the card offers
 Comment on this change only while the view carries the change's text (`spanCarried`: the view's bytes are the status's,
 whose offsets place the span (`textCurrent`); there is a text to cut it from (`indexedText`: the view's, or while the
 editor is up the file as the editor loaded it, never the buffer); and the view shows text at all, not the picture of a
