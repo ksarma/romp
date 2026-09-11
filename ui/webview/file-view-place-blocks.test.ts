@@ -450,9 +450,10 @@ test("readPlace / seatPlace: an html wrapper the browser nests the following mar
   // the block table (anchor-map.ts, Slice 5): paragraph 8 is its own block's, the wrapper's block holds the wrapper and its summary
   // and names the wrapper as its wrapper, the nested paragraph's block holds its <p> and is no wrapper's
   assert.equal(renderedBlockIndex(El(r.md), doc, El(r.p8)), b8, "paragraph 8's element is its own block's (before: the wrapper's)");
-  assert.deepEqual(renderedBlockElements(El(r.md), doc, wb), [r.det, r.summary], "the wrapper's block holds the wrapper and its summary (before: every element from itself on)");
-  assert.deepEqual(renderedBlockWrappers(El(r.md), doc, wb), [r.det], "the wrapper alone is the block's wrapper");
-  assert.deepEqual([renderedBlockElements(El(r.md), doc, bIn), renderedBlockWrappers(El(r.md), doc, bIn)], [[r.inner], []], "the nested paragraph's block: its own <p>, no wrapper");
+  sameNodes(renderedBlockElements(El(r.md), doc, wb), [r.det, r.summary], "the wrapper's block holds the wrapper and its summary (before: every element from itself on)");   // by identity (ui/test-dom-shim.ts sameNodes)
+  sameNodes(renderedBlockWrappers(El(r.md), doc, wb), [r.det], "the wrapper alone is the block's wrapper");
+  sameNodes(renderedBlockElements(El(r.md), doc, bIn), [r.inner], "the nested paragraph's block: its own <p>");
+  assert.deepEqual(renderedBlockWrappers(El(r.md), doc, bIn), [], "the nested paragraph's block: no wrapper");
   assert.equal(renderedBlockIndex(El(r.md), doc, El(r.summary)), wb, "the summary is the wrapper's block's");
   assert.deepEqual(renderedBlockWrappers(El(r.md), doc, b8), [], "a paragraph's block has no wrapper");
   // paragraph 8 straddling the edge, 20px in: its own block, partway in (before: no place, the swallowed run; the review round 2
@@ -506,7 +507,8 @@ test("readPlace / seatPlace: an html wrapper the browser nests the following mar
   const rp = rendered(docPD, 0, stack(6, { 4: 88 }));
   assert.deepEqual(rp.blocks.map((k) => k.tagName), ["H1", "P", "P", "P", "DIV", "P"], "the fixture: Alpha's <p> then the div at the top level, paragraphs 3 and 4 nested in the div");
   const [n3, n4] = nestBoxes(rp.blocks[4]);
-  assert.deepEqual([renderedBlockElements(El(rp.md), docPD, bPD), renderedBlockWrappers(El(rp.md), docPD, bPD)], [[rp.blocks[3], rp.blocks[4]], [rp.blocks[4]]], "the html block holds Alpha's <p> and the div; the div alone is its wrapper");
+  sameNodes(renderedBlockElements(El(rp.md), docPD, bPD), [rp.blocks[3], rp.blocks[4]], "the html block holds Alpha's <p> and the div");
+  sameNodes(renderedBlockWrappers(El(rp.md), docPD, bPD), [rp.blocks[4]], "the div alone is its wrapper");
   assert.equal(renderedBlockIndex(El(rp.md), docPD, El(n4)), blockIndexAt(spansPD, docPD.indexOf(PARA(4))), "the second nested paragraph is its own block's");
   toEdge(rp.md, rp.blocks[3], 20);
   const qp = readPlace(H(rp.body), docPD)!;
@@ -600,7 +602,8 @@ test("readPlace / seatPlace: an html wrapper the browser nests the following mar
   const spansAB = sourceBlockSpans(docAB);
   const rab = rendered(docAB, 0, 40);
   const bAlpha = spansAB.findIndex((sp) => docAB.slice(sp.start, sp.end) === "<p>Alpha</p>"), bBeta = spansAB.findIndex((sp) => docAB.slice(sp.start, sp.end) === "<p>Beta</p>");
-  assert.deepEqual([renderedBlockElements(El(rab.md), docAB, bAlpha), renderedBlockElements(El(rab.md), docAB, bBeta)], [[rab.blocks[3]], [rab.blocks[4]]], "one element each (before: nothing and both)");
+  sameNodes(renderedBlockElements(El(rab.md), docAB, bAlpha), [rab.blocks[3]], "Alpha's block: its one element (before: nothing)");
+  sameNodes(renderedBlockElements(El(rab.md), docAB, bBeta), [rab.blocks[4]], "Beta's block: its one element (before: both)");
   const qa = readPlace(H(rendered(docAB, 100 - 3 * 48 - 20, 40).body), docAB)!;
   assert.deepEqual([docAB.slice(qa.start, qa.end), qa.top], ["<p>Alpha</p>", -20], "Alpha's element at the edge: its block (before: no place)");
   const qb = readPlace(H(rendered(docAB, 100 - 4 * 48 - 20, 40).body), docAB)!;
@@ -621,11 +624,11 @@ test("readPlace / seatPlace: a wrapper whose closing tag is the document's last 
     assert.equal(r.div.tagName, "DIV", what);
     assert.equal(r.nested.length, 8, what + ": the eight paragraphs after the wrapper are nested in it");
     sameNodes(renderedBlockElements(El(r.md), doc, wb), [r.div], what + ": the wrapper's block is paired to the one element");   // by identity (ui/test-dom-shim.ts sameNodes)
-    assert.deepEqual(renderedBlockWrappers(El(r.md), doc, wb), [r.div], what + ": which is its wrapper");
+    sameNodes(renderedBlockWrappers(El(r.md), doc, wb), [r.div], what + ": which is its wrapper");
     const b8 = blockIndexAt(spans, doc.indexOf("Paragraph 8:")), b5 = blockIndexAt(spans, doc.indexOf("Paragraph 5:"));
     const p8 = r.nested[3];
     assert.equal(p8.textContent, PARA(8), what);
-    assert.deepEqual(renderedBlockElements(El(r.md), doc, b8), [p8], what + ": a nested paragraph's block owns its <p> (before: no element of its own)");
+    sameNodes(renderedBlockElements(El(r.md), doc, b8), [p8], what + ": a nested paragraph's block owns its <p> (before: no element of its own)");
     assert.equal(renderedBlockIndex(El(r.md), doc, El(p8)), b8, what);
     // the div's box at the edge, its first nested paragraph straddling it 20px in: paragraph 5's block (before: the wrapper at the edge
     // read as no place; the third round read the wrapper's block, 20px in, and seated that depth as a fraction of its one Raw row)
