@@ -964,7 +964,7 @@ class AuthErrorClass(unittest.TestCase):
     def test_it_is_an_on_you_class_end_to_end(self):
         import inspect
         # the classification lives in _api_error_pass, the one-pass scanner both _api_error and the latched
-        # _api_last_failed read through (review round 1, 2026-09-07), so the pin reads that function
+        # _api_last_failed read through, so the pin reads that function
         self.assertIn('"authErr": _is_auth_error(text)', inspect.getsource(km._api_error_pass))
         self.assertIn('"apiAuthErr": bool(aerr and aerr.get("authErr"))', inspect.getsource(km.build_session))
         feed = inspect.getsource(km.build_feed)

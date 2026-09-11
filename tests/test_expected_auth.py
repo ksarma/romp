@@ -624,8 +624,9 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
                     fresh = "login" if pick == "login" else ("key" if key else (declared or "login"))
                     self.assertEqual(self.be.new_session_auth(), fresh, tag)
                     self.assertEqual(km._auth_avail()["default"], fresh, tag)
-                    self.assertEqual(km._bills_login({"state": "idle"}), fresh == "login", tag)
-                    self.assertEqual(km._bills_login(None), fresh == "login", tag)
+                    # _bills_login's fallback for a row that reports nothing left this rule at the 2026-09-10 fold
+                    # (ruling K2): it reads `not _auth_key_present()`, pinned by LimitPauseLift's
+                    # ..._this_machine_holds_no_key in tests/test_retry_pause_autoresume.py; the two pins retired
                     sid = self.be.spawn("n", "/tmp")
                     self.assertEqual(self.be.default_auth(sb.read_reg(self.be.state_dir, sid)), fresh,
                                      tag + ": the picker default IS what a spawn without a pick bills")
@@ -638,7 +639,7 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
         self.assertEqual(sb.unpicked_auth(Path(self.d), True), "key")
         self.assertEqual(self.be.new_session_auth(), "key")
         self.assertEqual(km._auth_avail()["default"], "key")
-        self.assertFalse(km._bills_login({"state": "idle"}))
+        # _bills_login's fallback pin retired (the 2026-09-10 fold, ruling K2): its fallback is `not _auth_key_present()`
 
     def test_a_row_that_reports_still_wins(self):
         self._world("key")
@@ -665,7 +666,8 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
         self._world("key")
         self.assertEqual(self.be.new_session_auth(), "key")
         self.assertEqual(km._unpicked_default(), "key")
-        self.assertFalse(km._bills_login({"state": "idle"}))
+        # the _bills_login pin retired here too (the 2026-09-10 fold, ruling K2): its fallback is `not _auth_key_present()`,
+        # True on this world's keyless backend, not the declaration's key; the binding under test is _unpicked_default's
         self.assertEqual(km._auth_avail()["default"], "key")
         km._sdk = lambda: type("B", (), {"key_available": False})()   # a backend without the method
         with self.assertRaises(AttributeError):

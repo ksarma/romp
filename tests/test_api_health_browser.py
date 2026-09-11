@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""The bottom bar's API health cell, driven in a real browser (review round 1, 2026-09-07).
+"""The bottom bar's API health cell, driven in a real browser.
 
 The shell page is kernel-served HTML with inline CSS and JS, so it has no jsdom harness: the source pins in
 tests/test_api_health_rail.py and tests/test_kernel_pane_rail.py hold the SHAPE, and this module holds the
 BEHAVIOR those pins approximate. A scratch copy of km._landing() is served from a temp directory over plain
-HTTP with no kernel behind it (every fetch 404s and the shell socket never opens, which is exactly the
-pre-frame world the cell's hidden rule exists for), and playwright's chromium drives it: frames are handed
-to window.__rompApiHealth directly, presses are dispatched as pointer events, and the driver reports what
-the DOM did. The page's WebSocket is a shim installed before load (review round 3): it never opens on its
-own, so the first two phases see the same never-connected socket a refused connection gives, without the
-real socket's close-and-redial every two seconds; the third phase opens it, feeds it frames, drops it and
-watches the redial, the way a kernel behind a dropped tunnel would. Skips LOUDLY without the extension's node deps or a browser (CI installs none), the way
+HTTP with no kernel behind it (every fetch 404s, which is exactly the pre-frame world the cell's hidden rule
+exists for), and playwright's chromium drives it: frames are handed to window.__rompApiHealth directly,
+presses are dispatched as pointer events, and the driver reports what the DOM did. The page's WebSocket is a
+shim installed before load: it never opens on its own, so the first two phases see the same never-connected
+socket a refused connection gives, without the real socket's close-and-redial every two seconds; the third
+phase opens it, feeds it frames, drops it and watches the redial, the way a kernel behind a dropped tunnel
+would. Skips LOUDLY without the extension's node deps or a browser (CI installs none), the way
 tests/test_awaiting_box_sync.py does.
 
 Synthetic only: an invented sid family, the notes-api demo's session names, no real data."""
@@ -18,14 +18,15 @@ import functools
 import http.server
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
 import unittest
 from romp_load import load_source
 
-# Hermetic state BEFORE the loads: they resolve their state root at import time, and only
-# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+# Hermetic state BEFORE the loads: they resolve their state root at import time, and only pytest runs
+# conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
@@ -65,6 +66,7 @@ await page.goto(cfg.url);
 await page.waitForFunction(() => typeof window.__rompApiHealth === "function", null, { timeout: 20000 });
 const R = await page.evaluate((SID) => {
   const R = { err: {} };
+  window.__realShellSend = window.__rompShellSend;             // the page's own binding, before the steps stub it
   const step = (name, fn) => { try { fn(); } catch (e) { R.err[name] = String(e && e.stack || e); } };
   const el = document.getElementById("rail-api"), txt = el.querySelector(".ah-text");
   const tip = () => document.getElementById("ah-tip");
@@ -75,7 +77,7 @@ const R = await page.evaluate((SID) => {
   const frame = (over) => Object.assign({ type: "apiHealth", state: "degraded", cls: "529", reason: "",
     text: "overloaded · 1 waiting", waiting: 1, retrying: 0, blocked: 1, since: 1700000000, tmux: 0,
     sessions: [row(1)], seq: 1 }, over || {});
-  window.__frame = frame; window.__row = row;                 // the driver's second phase reuses them
+  window.__frame = frame; window.__row = row;                 // the driver's later phases reuse them
   const bg = (n) => n ? getComputedStyle(n).backgroundColor : "";
   const btn = () => tip().querySelector("button[data-act=pause]");
   // 1. before any frame: the cell is not displayed (the hidden attribute must beat .ru-w's display rule)
@@ -146,7 +148,7 @@ const R = await page.evaluate((SID) => {
   step('resumeLimit', () => {
   // 7b. Resume during a usage-limit pause: the kernel lifts, the limit re-engages within the cycle, and the frame
   //     that answers is paused again with a new since and a moved seq. The button must read that truth (enabled
-  //     Resume), not hold a disabled 'Stop' for the rest of the window (review round 2).
+  //     Resume), not hold a disabled 'Stop' for the rest of the window.
   const sentR = []; window.__rompShellSend = (o) => { sentR.push(o); return true; };
   window.__rompApiHealth(frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 5 }));
   const br = btn(); R.resumeBefore = { disabled: br.disabled, label: br.textContent };
@@ -184,6 +186,19 @@ const R = await page.evaluate((SID) => {
   if (r0) { r0.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); r0.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); r0.click(); }
   R.rowSent = sent2; R.rowToggled = toggled; R.rowClosed = tip().style.display === "none";
   });
+  step('rowDead', () => {
+  // 9b. the same row through the page's OWN send while no socket is open (the shim never opened the one shellWS
+  //     dialed at load): the row says so under the button and the detail stays open. A frame first: it clears the
+  //     failed step's hint, so the hint read here is this row's own.
+  window.__rompShellSend = window.__realShellSend;
+  window.__rompApiHealth(frame({ state: "paused", reason: "manual", text: "paused by you · 2 waiting", waiting: 2, blocked: 2, sessions: [row(1), row(2)], seq: 7 }));
+  el.click();                                              // pin the detail again (the row step closed it)
+  const hintBefore = (tip().querySelector(".ah-hint") || {}).textContent || "";
+  const rd = tip().querySelector(".ah-row[data-act=reveal]");
+  rd.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); rd.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); rd.click();
+  R.rowDead = { hintBefore, open: tip().style.display === "block", hint: (tip().querySelector(".ah-hint") || {}).textContent || "" };
+  if (tip().style.display === "block") el.click();        // close it again (only if it is still open)
+  });
   step('light', () => {
   // 10. the light theme's ok dot
   document.body.classList.add("theme-light");
@@ -192,8 +207,8 @@ const R = await page.evaluate((SID) => {
   R.lightDotOpacity = getComputedStyle(el.querySelector(".ah-dot")).opacity;
   });
   step('lightState', () => {
-  // 11. light theme, degraded and paused: the detail's headline dot wears the rail dot's color (review round 2:
-  //     the bare light rule outranked the state rules and painted it the label gray)
+  // 11. light theme, degraded and paused: the detail's headline dot wears the rail dot's color (a bare light rule
+  //     would outrank the state rules and paint it the label gray)
   window.__rompApiHealth(frame({ seq: 8 }));
   el.click();                                              // pin the detail (the row step closed it)
   const head = () => tip().querySelector(".ah-head .ah-dot");
@@ -207,8 +222,8 @@ const R = await page.evaluate((SID) => {
   });
   return R;
 }, cfg.sid);
-// ── phase 2: a real keyboard and a real mouse (review round 2). Synthetic key events do not move focus, and a
-// synthetic right button fires no contextmenu, so these ride playwright's input instead of page.evaluate. ──
+// phase 2: a real keyboard and a real mouse. Synthetic key events do not move focus, and a synthetic right button
+// fires no contextmenu, so these ride playwright's input instead of page.evaluate.
 R.err2 = {};
 const step2 = async (name, fn) => { try { await fn(); } catch (e) { R.err2[name] = String(e && e.stack || e); } };
 const active = () => page.evaluate(() => { const a = document.activeElement, t = document.getElementById("ah-tip");
@@ -279,9 +294,9 @@ await step2('rightButton', async () => {
   R.primaryReleasedPainted = await page.evaluate(() => /6 waiting/.test(document.getElementById("ah-tip").textContent));
 });
 await step2('pressFocus', async () => {
-  // 16. a keyboard press on the pause button (review round 3): the button is disabled at once, and a disabled
-  //     element cannot hold focus, so focus fell to BODY, where the card's Tab trap no longer saw the keys and a
-  //     Shift+Tab walked out of the aria-modal dialog. Focus moves to the card before the disable; the trap holds.
+  // 16. a keyboard press on the pause button: the button is disabled at once, and a disabled element cannot hold
+  //     focus, so focus would fall to BODY, where the card's Tab trap no longer sees the keys and a Shift+Tab walks
+  //     out of the aria-modal dialog. Focus moves to the card before the disable; the trap holds.
   await page.evaluate(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     window.__sent3 = []; window.__rompShellSend = (o) => { window.__sent3.push(o); return true; };
     window.__rompApiHealth(window.__frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 12 }));
@@ -304,14 +319,15 @@ await step2('pressFocus', async () => {
   R.pressAnswerTab = await active();
   await page.keyboard.press("Escape");
 });
-// ── phase 3: the shell socket itself (review round 3). The shim stands in for the kernel's end: the driver opens the
-// socket shellWS dialed at load, feeds it frames, presses through the REAL __rompShellSend, drops the socket and
-// waits for the redial. ──
+// phase 3: the shell socket itself. The shim stands in for the kernel's end: the driver opens the socket shellWS
+// dialed at load, feeds it frames, presses through the REAL __rompShellSend, drops the socket and waits for the
+// redial. The shell's own client-diag rows may ride the same socket; only the frames the cell cares about are read.
 await step2('socket', async () => {
   // 17. a press acknowledged on a socket that then dies: the redial's ready re-sends the last frame verbatim (same
   //     seq), so nothing else would clear the acknowledgment; the close clears it and says why, the re-sent frame
   //     repaints the truth, and the next press rides the new socket
-  const sock = (i) => page.evaluate((i) => { const s = window.__socks[i]; return s ? { url: s.url, state: s.readyState, sent: s.sent.slice() } : null; }, i);
+  const sock = (i) => page.evaluate((i) => { const s = window.__socks[i]; return s ? { url: s.url, state: s.readyState,
+    sent: s.sent.filter((d) => !/"clientDiag"/.test(d)) } : null; }, i);
   const open = (i) => page.evaluate((i) => { window.__socks[i].__open(); }, i);
   const drop = (i) => page.evaluate((i) => { window.__socks[i].__drop(); }, i);
   const feed = (i, over) => page.evaluate(([i, over]) => { window.__socks[i].__msg(window.__frame(over)); }, [i, over]);
@@ -323,7 +339,9 @@ await step2('socket', async () => {
   const PAUSED = { state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 20 };
   R.sockCount = await page.evaluate(() => window.__socks.length);
   R.sock0 = await sock(0);
-  // the steps above replaced window.__rompShellSend with stubs; the redial binds the real one to the new socket
+  // the steps above replaced window.__rompShellSend with stubs; the page's own binding sends on the live shell socket
+  await page.evaluate(() => { window.__rompShellSend = window.__realShellSend; });
+  R.shellSendRestored = await page.evaluate(() => typeof window.__rompShellSend);
   await drop(0);
   await redial(2);
   R.sockRedialed = await page.evaluate(() => window.__socks.length);
@@ -337,6 +355,8 @@ await step2('socket', async () => {
   R.sockAcked = await btnState();
   await drop(1);
   R.sockDropped = await btnState();
+  await press();                                           // no socket is open now: the page's own send refuses
+  R.sockDeadPress = await btnState();
   await redial(3);
   R.sock2 = await sock(2);
   await open(2);
@@ -375,10 +395,13 @@ class ServedCell(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here): the served cell needs a browser")
         cls.lab = tempfile.mkdtemp(prefix="apih-browser-")
+        # class cleanups run when setUpClass raises too (a failed driver), where tearDownClass would not
+        cls.addClassCleanup(shutil.rmtree, cls.lab, ignore_errors=True)
         html = km._landing()
         with open(os.path.join(cls.lab, "index.html"), "w") as f:
             f.write(html if isinstance(html, str) else html.decode("utf-8"))
         cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(_Quiet, directory=cls.lab))
+        cls.addClassCleanup(cls.srv.server_close)
         cls.thr = threading.Thread(target=cls.srv.serve_forever, daemon=True)
         cls.thr.start()
         cfg = os.path.join(cls.lab, "cfg.json")
@@ -388,11 +411,13 @@ class ServedCell(unittest.TestCase):
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
-        p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=180,
-                           env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
-        cls.srv.shutdown()
+        try:
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=180,
+                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
+        finally:
+            cls.srv.shutdown()
         if p.returncode == 3:
-            raise unittest.SkipTest("no playwright browser on this box: the served cell needs one (CI installs none)")
+            raise unittest.SkipTest("no playwright browser on this machine: the served cell needs one (CI installs none)")
         if p.returncode != 0:
             raise AssertionError("driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
@@ -401,8 +426,8 @@ class ServedCell(unittest.TestCase):
         cls.R = json.loads(line[len("RESULT:"):])
 
     def test_the_cell_is_not_displayed_before_the_first_frame(self):
-        # the HIGH finding: the UA's [hidden]{display:none} loses to the author rule .ru-w{display:flex},
-        # so without an author [hidden] rule the rail showed a gray 'API ok' from page load
+        # the UA's [hidden]{display:none} loses to the author rule .ru-w{display:flex}, so without an author
+        # [hidden] rule the rail would show a gray 'API ok' from page load, and forever on a kernel that sends no frame
         self.assertTrue(self.R["preFrameHidden"], "the markup ships the attribute")
         self.assertEqual(self.R["preFrameDisplay"], "none", "and the attribute must actually hide it: %r" % self.R)
         self.assertEqual(self.R["firstFrameDisplay"], "flex", "the first frame reveals the cell")
@@ -412,12 +437,12 @@ class ServedCell(unittest.TestCase):
         self.assertEqual(self.R["err"], {})
 
     def test_the_light_theme_gives_the_ok_dot_the_label_color(self):
-        # .ah-dot's dark label gray at .55 blended into the light rail (about 1.4:1), so the ok glyph vanished
+        # .ah-dot's dark label gray at .55 blends into the light rail (about 1.4:1), so the ok glyph would vanish
         self.assertEqual(self.R["lightDot"], "rgb(93, 87, 78)", "errors: %r" % self.R.get("err"))
         self.assertEqual(self.R["lightDotOpacity"], "0.55")
 
     def test_an_emptied_usage_cell_takes_no_gap(self):
-        # renderRows empties #rail-usage on a login-only machine; as a zero-width flex item it still paid the
+        # renderRows empties #rail-usage on a login-only machine; as a zero-width flex item it would still pay the
         # scroll group's gap on both sides, so the API cell sat 28px from the pane buttons instead of 16px
         self.assertEqual(self.R["usageEmptyDisplay"], "none")
 
@@ -455,9 +480,9 @@ class ServedCell(unittest.TestCase):
         self.assertEqual(self.R["confirmed"], {"disabled": False, "label": "Resume all auto-retries", "acted": False})
 
     def test_a_resume_during_a_usage_limit_pause_reads_the_truth_when_the_pause_re_engages(self):
-        # review round 2 (2026-09-07): the old rule cleared the acknowledgment only on a frame whose state matched
-        # the press, and a limit pause re-engages within the cycle, so the button sat disabled and read 'Stop all
-        # auto-retries' for the rest of the window
+        # a rule that cleared the acknowledgment only on a frame whose state matched the press would leave the
+        # button disabled and reading 'Stop all auto-retries' for the rest of the window, since a limit pause
+        # re-engages within the cycle
         self.assertEqual(self.R["resumeBefore"], {"disabled": False, "label": "Resume all auto-retries"}, "errors: %r" % self.R.get("err"))
         self.assertEqual(self.R["resumeSent"], ["setGlobalRetryPaused:false"])
         self.assertEqual(self.R["resumePending"], {"disabled": True, "label": "Stop all auto-retries", "acted": True})
@@ -478,9 +503,14 @@ class ServedCell(unittest.TestCase):
         self.assertEqual(self.R["rowToggled"], 0, "no pane toggle, nothing persisted")
         self.assertTrue(self.R["rowClosed"])
 
+    def test_a_row_on_a_dead_socket_says_so_and_keeps_the_detail_open(self):
+        # the page's own __rompShellSend, not a stub: no socket was ever opened, so it refuses and the row says why
+        self.assertEqual(self.R["rowDead"], {"hintBefore": "", "open": True, "hint": "Not sent: the dashboard is disconnected. Try again."},
+                         "errors: %r" % self.R.get("err"))
+
     def test_the_light_theme_keeps_the_head_dot_s_state_colors(self):
-        # review round 2 (2026-09-07): the bare light rule outranked the state rules, so the detail's headline dot
-        # was the label gray while the rail's id-scoped dot kept amber and red
+        # a bare light rule on the dot would outrank the state rules, so the detail's headline dot would read the
+        # label gray while the rail's id-scoped dot kept amber and red
         amber, red, gray = "rgb(230, 126, 34)", "rgb(229, 72, 77)", "rgb(93, 87, 78)"
         self.assertEqual(self.R["lightDegraded"], {"rail": amber, "head": amber, "headOpacity": "1"}, "errors: %r" % self.R.get("err"))
         self.assertEqual(self.R["lightPaused"], {"rail": red, "head": red})
@@ -490,8 +520,6 @@ class ServedCell(unittest.TestCase):
         self.assertEqual(self.R["err2"], {})
 
     def test_tab_cycles_within_the_open_dialog(self):
-        # review round 2 (2026-09-07): the second Tab used to leave the dialog for the page; rows and footer links
-        # were not focusable at all
         self.assertTrue(self.R["tabOpened"], "errors: %r" % self.R.get("err2"))
         self.assertEqual(self.R["tabAria"], "true")
         self.assertEqual(self.R["tabSeq"], ["BUTTON.pause", "DIV.reveal", "SPAN.usage", "SPAN.log", "BUTTON.pause", "DIV.reveal"])
@@ -506,8 +534,6 @@ class ServedCell(unittest.TestCase):
         self.assertTrue(self.R["usageClosedTip"])
 
     def test_a_keyboard_press_on_the_pause_button_keeps_focus_inside_the_dialog(self):
-        # review round 3 (2026-09-07): the button was disabled with focus still on it, so focus fell to BODY, the
-        # card's Tab trap no longer saw the keys, and a Shift+Tab left the aria-modal dialog for the bottom bar
         self.assertEqual(self.R["pressFocusBefore"], "BUTTON.pause", "errors: %r" % self.R.get("err2"))
         self.assertEqual(self.R["pressSent"], ["setGlobalRetryPaused:false"], "Space ran the button once")
         self.assertEqual(self.R["pressButton"], {"disabled": True, "label": "Stop all auto-retries"}, "acknowledged")
@@ -521,39 +547,31 @@ class ServedCell(unittest.TestCase):
         self.assertNotIn("socket", self.R["err2"], self.R["err2"].get("socket"))
 
     def test_a_press_the_socket_lost_is_cleared_on_the_close_and_the_redial_repaints_the_truth(self):
-        # review round 3 (2026-09-07): pending was cleared only by a failed send or a frame with a moved seq; the
-        # redial's ready re-sends the last frame verbatim, so a press the kernel never received kept the button
-        # disabled and relabeled across the reconnect until an unrelated pause write moved the seq
+        # pending is cleared by a failed send or a frame with a moved seq; the redial's ready re-sends the last
+        # frame verbatim, so a press the kernel never received would keep the button disabled and relabeled across
+        # the reconnect until an unrelated pause write moved the seq
         R = self.R
         ready, pressed = '{"type":"ready"}', '{"type":"setGlobalRetryPaused","value":false}'
-        # The shell's own client-diag rows ride this socket too since the 2026-09-09 fold (upstream #1127): the
-        # tap-landing script files 'deeplink' at boot and 'tap-resume' at boot and on pageshow, queued until the
-        # socket opens and flushed after ready. They are the shell's breadcrumbs, not the detail's ops, so the
-        # frame lists below are read without them; the rows themselves are pinned once (surface, and ready first)
-        def ops(frames):
-            return [f for f in frames if json.loads(f).get("type") != "clientDiag"]
-        def diag(frames):
-            return [json.loads(f) for f in frames if json.loads(f).get("type") == "clientDiag"]
         self.assertEqual(R["sockCount"], 1, "shellWS dialed once at load, and the shim let it stay unopened: %r" % R.get("err2"))
         self.assertIn("/ws?app=shell", R["sock0"]["url"])
+        self.assertEqual(R["shellSendRestored"], "function", "the shell's own send survives the driver's stubs")
         self.assertEqual(R["sockRedialed"], 2, "a close redials")
-        self.assertEqual(R["sock1Ready"][:1], [ready], "the open sends ready first, before the queued breadcrumbs")
-        self.assertEqual(ops(R["sock1Ready"]), [ready], "the open sends ready")
-        self.assertTrue(diag(R["sock1Ready"]), "the rows that waited for the socket flushed on its open")
-        self.assertEqual({d["surface"] for d in diag(R["sock1Ready"])}, {"shell"}, "and they are the shell's own")
+        self.assertEqual(R["sock1Ready"], [ready], "the open sends ready")
         self.assertEqual(R["sockPainted"], "paused · usage limit · 1 waiting", "a frame on the socket paints the cell")
-        self.assertEqual(ops(R["sockPressSent"]), [ready, pressed], "the press rode the real socket")
+        self.assertEqual(R["sockPressSent"], [ready, pressed], "the press rode the real socket")
         self.assertEqual(R["sockAcked"], {"disabled": True, "label": "Stop all auto-retries", "acted": True, "hint": ""})
         self.assertEqual(R["sockDropped"], {"disabled": False, "label": "Resume all auto-retries", "acted": False,
                                             "hint": "Connection lost before the answer arrived. When it is back, the button shows the current state."},
                          "the close clears the acknowledgment and says why")
+        self.assertEqual(R["sockDeadPress"], {"disabled": False, "label": "Resume all auto-retries", "acted": False,
+                                              "hint": "Not sent: the dashboard is disconnected. Try again."},
+                         "a press while no socket is open: the shell's own send refuses (shellSock is null until the redial opens)")
         self.assertIn("/ws?app=shell", R["sock2"]["url"])
-        self.assertEqual(R["sock2Ready"][:1], [ready], "the redial sends ready first")
-        self.assertEqual(ops(R["sock2Ready"]), [ready], "the redial sends ready")
+        self.assertEqual(R["sock2Ready"], [ready], "the redial sends ready")
         self.assertEqual(R["sockResent"], {"disabled": False, "label": "Resume all auto-retries", "acted": False, "hint": ""},
                          "the re-sent frame (same seq) repaints the truth and drops the hint")
-        self.assertEqual(ops(R["sock2Sent"]), [ready, pressed], "the next press rides the new socket")
-        self.assertEqual(ops(R["sock1After"]), [ready, pressed], "and nothing more reached the dead one")
+        self.assertEqual(R["sock2Sent"], [ready, pressed], "the next press rides the new socket")
+        self.assertEqual(R["sock1After"], [ready, pressed], "and nothing more reached the dead one")
         self.assertEqual(R["sockMoved"], {"disabled": False, "label": "Stop all auto-retries", "acted": False, "hint": ""},
                          "a re-sent frame with a moved seq (the kernel took the press) repaints that truth")
 

@@ -2545,21 +2545,15 @@ pre-restart state is not carried over: an empty ring is no
 evidence. A state file, or an entry in it, that cannot be read is skipped and
 logged, and never keeps the Claude Code backend from starting.
 
-Earlier builds appended one row per transition to `STATE/api-health.jsonl`. A
-kernel that boots without a state file seeds one from that ledger's last 64 KB,
-once, and leaves the ledger alone; once the state file exists the ledger is
-never read again and can be deleted.
-
 ### The bottom bar's indicator
 
 The dashboard's bottom bar carries an API cell (a dot and a word beside the
-spend figures) that is computed independently of this signal, from two things
+usage readout) that is computed independently of this signal, from two things
 the kernel owns directly:
 
 - Each alive session's newest transcript API-error record, latched until the
   session produces assistant output again (a user prompt does not clear it,
-  romp's own retry included), plus the live retrying state of Claude Code
-  sessions.
+  romp's own retry included), plus the live retrying state of SDK sessions.
 - The retry-pause file (`retry-paused.json` under the state directory). A
   pause writes `paused`, `t` (when it began, the auto-resume floor) and its
   `reason`: `limit`, `spend`, or none for a manual stop. A spend pause adds
@@ -2571,11 +2565,14 @@ the kernel owns directly:
   reads it); both ride every later write until a newer spend un-pause
   replaces them, and a spend-limit record older than `liftedAt` engages
   nothing, since the lift already ruled on it. A limit or manual un-pause
-  records neither. When a limit pause lifts while a spend-limit record is
-  standing, the file reads unpaused for one cycle before the spend pause
-  engages: each writer rules on one signal per cycle, and the spend engage
-  runs before the lift in the pusher's order, so it sees a paused file and
-  rules on the record the next cycle.
+  records neither. A limit pause lifts when the usage report stops naming an
+  account-wide window at 100%, a manual pause when any live session not
+  blocked on an API error writes to its transcript after the pause began.
+  When a limit pause lifts while a spend-limit record is standing, the file
+  reads unpaused for one cycle before the spend pause engages: each writer
+  rules on one signal per cycle, and the spend engage runs before the lift in
+  the pusher's order, so it sees a paused file and rules on the record the
+  next cycle.
 
 The kernel pushes the cell's frame to shell clients only when it changed, and
 again to a shell that sends `ready`:
@@ -2594,11 +2591,11 @@ on the detail's pause button writes that file, so the frame that answers the
 press carries a moved `seq` whatever state it brings, and the shell clears
 the button's acknowledgment on it; a frame from before the press carries the
 old one. It is an event counter, not a clock, and restarts at 0 with the
-kernel. `waiting` is `retrying` plus `blocked`. `cls` is the plurality class over the
-affected sessions, ties resolved 429, then 529, then offline, then errors.
-`since` is the pause's time when paused, else the earliest affected session's
-event (a record's timestamp, or the retrying turn's start), else 0. `tmux`
-counts alive Claude Code (tmux) sessions, which the cell sees through their
+kernel. `waiting` is `retrying` plus `blocked`. `cls` is the plurality class
+over the affected sessions, ties resolved 429, then 529, then offline, then
+errors. `since` is the pause's time when paused, else the earliest affected
+session's event (a record's timestamp, or the retrying turn's start), else 0.
+`tmux` counts alive tmux-backed sessions, which the cell sees through their
 transcripts only. Every timestamp is an event's time, never the clock, so an
 unchanged world sends nothing. On-you failures (a too-long prompt, a spent
 model allowance, a dead credential, a refusal) are not counted; a spend cap is,
@@ -2628,8 +2625,9 @@ hold from before `bootAt` ends at the boot, since every bucket comes back
 restarted`; where the tail crosses `bootAt` without such a row (the bucket
 was already `unknown` when the previous kernel stopped, so the boot filed
 nothing), a `kernel restarted` divider is inserted, and it takes none of the
-six slots. A read that fails (a non-2xx, or no answer) shows one line saying
-so in place of the rows, never the previous numbers.
+six slots. A read that fails (a non-2xx, no answer, or an answer without
+the signal's shape) shows one line saying so in place of the rows,
+never the previous numbers.
 
 ## Where things live
 

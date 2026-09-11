@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""The bottom bar's API health cell (the user 2026-09-07): one dot and one word beside the spend cell,
-answering 'is the API serving my sessions'. The kernel builds one apiHealth frame per pusher cycle from the
-merged live map's retrying state, each alive transcript's LATCHED newest API error (_api_last_failed) and
-the retry-pause file, and pushes it to the shells only when it changed; the shell paints the cell from the
-frame and builds the click detail from it, with no fetch and no timer.
+"""The bottom bar's API health cell: one dot and one word beside the usage readout, answering 'is the API
+serving my sessions'. The kernel builds one apiHealth frame per pusher cycle from the merged live map's
+retrying state, each alive transcript's LATCHED newest API error (_api_last_failed) and the retry-pause
+file, and pushes it to the shells only when it changed; the shell paints the cell from the frame and builds
+the click detail from it, with no fetch and no timer.
 
 The rule these tests pin: every field moves on one named event and never on a clock, so two computes over
-the same world are byte-identical and send nothing. Synthetic fixtures only (private synthetic sids, the
-notes-api demo's web / api / tests names, no paths or error text in any frame)."""
+the same world are byte-identical and send nothing. Synthetic fixtures only (a private synthetic sid family,
+the notes-api demo's web / api / tests names, no paths or error text in any frame)."""
 import inspect
 import json
 import os
@@ -15,13 +15,14 @@ import tempfile
 import unittest
 from romp_load import load_source
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
-# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
-# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+# Hermetic state BEFORE the loads: they resolve their state root at import time, and only pytest runs
+# conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_apih", os.path.join(BIN, "romp-kernel"))
@@ -40,8 +41,7 @@ def _frame_keys():
 
 
 class Reference(unittest.TestCase):
-    """docs/reference.md's subsection on the cell documents the frame and the pause file the code writes
-    (review round 3, 2026-09-07: the frame block lacked seq and the file paragraph bills)."""
+    """docs/reference.md's subsection on the cell documents the frame and the pause file the code writes."""
 
     def _section(self):
         doc = Path(os.path.dirname(HERE), "docs", "reference.md").read_text()
@@ -65,8 +65,8 @@ class Reference(unittest.TestCase):
 
 
 class _Fixture(unittest.TestCase):
-    """Fixture sessions: `self.sess` is the alive roster, `self.live` the merged live map, `self.errs`
-    the latched error per transcript path. Everything the frame reads is patched at the module seam."""
+    """Fixture sessions: `self.sess` is the alive roster, `self.live` the merged live map, `self.errs` the
+    latched error per transcript path. Everything the frame reads is patched at the module seam."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -114,6 +114,11 @@ class _Fixture(unittest.TestCase):
             e.update(err)
             self.errs[path] = e
         return SID[i]
+
+    def reset(self):
+        self.sess.clear()
+        self.live.clear()
+        self.errs.clear()
 
     def frame(self, now=10):
         return km._api_health_frame(now, self.live)
@@ -167,18 +172,18 @@ class States(_Fixture):
         self.add(0, retry={"status": 429})
         self.add(1, err={"status": 529, "category": "overloaded"})
         self.assertEqual(self.frame()["cls"], "429", "429 before 529")
-        self.sess.clear(); self.live.clear(); self.errs.clear()
+        self.reset()
         self.add(0, err={"status": 529, "category": "overloaded"})
         self.add(1, err={"status": 500, "category": "server_error"})
         self.assertEqual(self.frame()["cls"], "529", "529 before errors")
-        self.sess.clear(); self.live.clear(); self.errs.clear()
+        self.reset()
         self.add(0, retry={"status": None, "networkDown": True})
         self.add(1, err={"status": 500, "category": "server_error"})
         self.assertEqual(self.frame()["cls"], "offline", "offline before errors")
 
     def test_on_you_failures_do_not_count(self):
         for flag in ("tooLong", "modelLimit", "authErr", "refusal"):
-            self.sess.clear(); self.live.clear(); self.errs.clear()
+            self.reset()
             self.add(0, err={"status": 400, "category": "invalid_request", flag: True})
             f = self.frame()
             self.assertEqual((f["state"], f["waiting"]), ("ok", 0), flag + " is the session's own, not the API's")
@@ -193,14 +198,16 @@ class States(_Fixture):
         self.add(1, retry={"status": 429})
         km._set_retry_paused(True, reason="spend")
         f = self.frame()
-        self.assertEqual((f["state"], f["reason"], f["text"]), ("paused", "spend", "paused %s spend cap %s 2 waiting" % (MDOT, MDOT)))
+        self.assertEqual((f["state"], f["reason"], f["text"]),
+                         ("paused", "spend", "paused %s spend cap %s 2 waiting" % (MDOT, MDOT)))
         self.assertEqual(f["cls"], "429", "the class still rides along for the detail")
 
     def test_a_limit_pause_names_the_usage_limit(self):
         self.add(0, retry={"status": 429})
         km._set_retry_paused(True, reason="limit")
         f = self.frame()
-        self.assertEqual((f["state"], f["reason"], f["text"]), ("paused", "limit", "paused %s usage limit %s 1 waiting" % (MDOT, MDOT)))
+        self.assertEqual((f["state"], f["reason"], f["text"]),
+                         ("paused", "limit", "paused %s usage limit %s 1 waiting" % (MDOT, MDOT)))
 
     def test_a_manual_pause_reads_paused_by_you(self):
         self.add(0, err={"status": 500, "category": "server_error"})
@@ -227,7 +234,9 @@ class States(_Fixture):
         self.assertEqual(self.frame()["waiting"], 2, "the interrupt says nothing about the API: still counted")
 
     def test_tmux_backed_sessions_are_counted_for_the_coverage_line(self):
-        self.add(0); self.add(1); self.add(2, err={"status": 500, "category": "server_error"})
+        self.add(0)
+        self.add(1)
+        self.add(2, err={"status": 500, "category": "server_error"})
         self.tmux_sids = {SID[1], SID[2]}
         self.assertEqual(self.frame()["tmux"], 2)
 
@@ -240,12 +249,13 @@ class States(_Fixture):
     def test_a_latched_row_reads_retrying_while_its_session_is_working(self):
         # The retry prompt (romp's own, or a human's) was accepted and the turn is open, no api_retry frame yet;
         # for a tmux session that is the whole internal retry. The word follows the live state; the latch only
-        # keeps the row counted, and its since stays the record's time (review round 1, 2026-09-07).
+        # keeps the row counted, and its since stays the record's time.
         self.add(0, state="working", err={"status": 529, "category": "overloaded"})
         f = self.frame()
         r = f["sessions"][0]
         self.assertEqual((r["kind"], r["cls"], r["status"], r["since"]), ("retrying", "529", 529, T_REC))
-        self.assertEqual((f["waiting"], f["retrying"], f["blocked"], f["text"]), (1, 1, 0, "overloaded %s 1 waiting" % MDOT))
+        self.assertEqual((f["waiting"], f["retrying"], f["blocked"], f["text"]),
+                         (1, 1, 0, "overloaded %s 1 waiting" % MDOT))
         self.add(1, state="idle", err={"status": 529, "category": "overloaded"})
         f = self.frame()
         self.assertEqual([x["kind"] for x in f["sessions"]], ["retrying", "blocked"])
@@ -317,9 +327,9 @@ class NoFlap(_Fixture):
         self.assertEqual(len(self.sent), 1)
 
     def test_seq_moves_on_every_pause_write_and_only_then(self):
-        # review round 2 (2026-09-07): a press on the detail's pause button writes the pause file; the frame
-        # after it must differ from every frame before it even when the cycle's auto-pause put the same state
-        # back, so the shell can clear its acknowledgment on the frame that answers the press
+        # a press on the detail's pause button writes the pause file; the frame after it must differ from every
+        # frame before it even when the cycle's auto-pause put the same state back, so the shell can clear its
+        # acknowledgment on the frame that answers the press
         self.add(0, retry={"status": 429})
         km._api_health_push(self.frame())
         km._api_health_push(self.frame(now=99))
@@ -329,23 +339,30 @@ class NoFlap(_Fixture):
         km._api_health_push(self.frame())
         self.assertEqual(len(self.sent), 2, "the write is the event, whatever state it left")
         self.assertEqual(self.sent[1][1]["seq"], seq0 + 1)
-        self.assertEqual((self.sent[1][1]["state"], self.sent[1][1]["text"]), (self.sent[0][1]["state"], self.sent[0][1]["text"]))
+        self.assertEqual((self.sent[1][1]["state"], self.sent[1][1]["text"]),
+                         (self.sent[0][1]["state"], self.sent[0][1]["text"]))
         km._set_retry_paused(True, reason="limit")
         km._set_retry_paused(False)
         km._api_health_push(self.frame())
         self.assertEqual(self.sent[2][1]["seq"], seq0 + 3, "every write counts, including one lifted within the cycle")
 
     def test_the_ready_handler_resends_the_last_frame_to_a_shell_only(self):
+        # recording sinks on every client: _apih_resend guards the send with a try/except, so a sink that raised
+        # to fail the test would be swallowed by the very function under test
         self.add(0, retry={"status": 429})
         km._api_health_push(self.frame())
-        got = []
+        got, got_chat, got_feed = [], [], []
         km._apih_resend({"app": "shell", "send": got.append})
-        km._apih_resend({"app": "chat", "send": lambda s: self.fail("a chat client owns no rail")})
+        km._apih_resend({"app": "chat", "send": got_chat.append})
+        km._apih_resend({"app": "feed", "send": got_feed.append})
         self.assertEqual(len(got), 1)
         self.assertEqual(json.loads(got[0]), self.sent[0][1], "verbatim: the client diffs state and text")
+        self.assertEqual((got_chat, got_feed), ([], []), "a chat or pane client owns no rail")
 
     def test_nothing_to_resend_before_the_first_frame(self):
-        km._apih_resend({"app": "shell", "send": lambda s: self.fail("nothing sent since boot")})
+        got = []
+        km._apih_resend({"app": "shell", "send": got.append})
+        self.assertEqual(got, [], "nothing sent since boot")
 
 
 class FrameShape(_Fixture):
@@ -374,55 +391,89 @@ class FrameShape(_Fixture):
                                          "errors": "errors", "limit": "paused %s usage limit" % MDOT,
                                          "spend": "paused %s spend cap" % MDOT, "manual": "paused by you"})
         for v in km._APIH_TEXT.values():
-            self.assertNotIn("fleet", v)
             self.assertNotIn("blocked", v)
-            self.assertNotIn("—", v)
         self.assertEqual(km._APIH_ORDER, ("429", "529", "offline", "errors"))
 
 
 class Wiring(unittest.TestCase):
+    # the cycle's other jobs, stubbed quiet when the jobs block runs here (tests/test_wire_once_per_build.py's list)
+    OTHER_JOBS = ("_apply_pending_ops", "_push_all", "_turn_notify_tick", "_lift_spent_awaiting", "_death_sweep_tick",
+                  "_end_on_idle_sweep", "_deferral_sweep_tick", "_auto_nudge_tick", "_interrupt_block_tick",
+                  "_usage_poll_tick", "_auto_resume_session_retry", "_auto_retry_tick", "_idle_queue_drive_tick",
+                  "_clear_done_working_notes",
+                  "_unreadable_store_warns", "_tab_list_tmux")   # the two further cycle jobs this kernel runs, quiet too
+
     def test_the_frame_is_built_in_the_jobs_block_after_this_cycle_s_pause_decisions(self):
         src = inspect.getsource(km._pusher_cycle_jobs)
         self.assertIn("_api_health_push(_api_health_frame(now, tmux))", src)
         self.assertLess(src.index("_auto_resume_retry(now, tmux)"), src.index("_api_health_push(_api_health_frame"))
         self.assertNotIn("_api_health", inspect.getsource(km._cached_feed), "not gated by the feed's sig / rebuild floor")
 
+    def test_the_jobs_block_runs_the_frame_after_the_pause_decisions(self):
+        # the executing twin of the pin above: a frame built before _auto_resume_retry would carry the pause the
+        # same cycle lifts, so the cell would read paused one cycle late on every lift
+        order = []
+        quiet = {nm: (lambda *a, **k: None) for nm in self.OTHER_JOBS}
+        with mock.patch.multiple(km, **quiet), \
+                mock.patch.object(km, "_auto_pause_on_limit", side_effect=lambda: order.append("limit")), \
+                mock.patch.object(km, "_auto_pause_on_spend_limit", side_effect=lambda now, tmux: order.append("spend")), \
+                mock.patch.object(km, "_auto_resume_retry", side_effect=lambda now, tmux: order.append("resume")), \
+                mock.patch.object(km, "_api_health_frame", side_effect=lambda now, tmux: order.append("frame") or {"type": "apiHealth"}), \
+                mock.patch.object(km, "_api_health_push", side_effect=lambda f: order.append("push:" + f["type"])):
+            km._pusher_cycle_jobs(T_STORM, {}, True)
+        self.assertEqual(order, ["limit", "spend", "resume", "frame", "push:apiHealth"])
+
     def test_the_ready_handler_resends_beside_the_badge(self):
         src = Path(BIN, "romp-kernel").read_text()
         i = src.index('client["send"](json.dumps({"type": "badge", "n": _BADGE_LAST[0]}))')
-        j = src.index("_apih_resend(client)          #", i)   # the CALL in the ready handler, not the def
+        j = src.index("_apih_resend(client)", i)          # the CALL in the ready handler, after the def
         self.assertLess(j - i, 400, "right beside the badge re-send, in the same ready branch")
         self.assertIn("def _apih_resend(client):", src)
 
     def test_auto_pause_on_limit_latches_reason_limit(self):
         self.assertIn('_set_retry_paused(True, reason="limit")', inspect.getsource(km._auto_pause_on_limit))
 
+    def test_the_global_retry_paused_frame_still_carries_the_reason(self):
+        # the chat card's paused line reads `reason` off the globalRetryPaused frame (render.ts retryPausedText
+        # checks spend first and otherwise renders the resumeAt countdown, so a latched "limit" reason draws the
+        # countdown exactly as an unlabeled limit pause did); the latch changes the file, not the frame
+        src = Path(BIN, "romp-kernel").read_text()
+        self.assertIn('"reason": _retry_pause_reason()})', src)
+
     def test_the_cell_s_kernel_prose_carries_no_em_dashes(self):
-        # the style rule for new prose covers the comments this feature added (review round 1, 2026-09-07)
-        for fn in (km._api_error_pass, km._api_error_scan, km._api_error_read, km._api_error, km._api_last_failed,
-                   km._api_last_output_t, km._bills_login, km._apih_status, km._apih_class, km._api_health_frame,
-                   km._api_health_push, km._apih_resend):
+        # the writing rule for new prose covers the comments this feature added. _api_error_pass and _api_error_read
+        # are not in the list: the em dashes in their source are the base text's punctuation on lines this feature
+        # kept (the record's identity comments, the tail-first note), not prose it wrote.
+        for fn in (km._api_error_scan, km._api_error, km._api_last_failed, km._api_last_output_t, km._bills_login,
+                   km._apih_status, km._apih_class, km._api_health_frame, km._api_health_push, km._apih_resend):
             self.assertNotIn("\u2014", inspect.getsource(fn), fn.__name__)
         src = Path(BIN, "romp-kernel").read_text()
-        block = src[src.index("The bottom bar's API health cell (the user 2026-09-07): one glance"):src.index("_APIH_TEXT = {")]
+        block = src[src.index("The bottom bar's API health cell: one glance answers 'is the API serving my sessions', beside the usage"):
+                    src.index("_APIH_TEXT = {")]
         self.assertNotIn("\u2014", block, "the block comment above the text table")
-        block = src[src.index("# The bottom bar's API health cell (the user 2026-09-07): one dot and one word"):src.index('_LANDING_APIH_JS = """')]
+        block = src[src.index("# The bottom bar's API health cell: one dot and one word beside the usage readout, painted from the kernel's"):
+                    src.index('_LANDING_APIH_JS = """')]
         self.assertNotIn("\u2014", block, "the comment above the shell JS")
-        i = src.index("# the API health cell (the user 2026-09-07): its own label")
+        i = src.index("# the API health cell: its own label, a 7px dot, one word, painted by _LANDING_APIH_JS from the")
         self.assertNotIn("\u2014", src[i:src.index("<div id=rail-api", i)], "the markup's comment")
-        self.assertNotIn("\u2014", src[src.index("_api_last_failed_cache = {}"):src.index("\n", src.index("_api_last_failed_cache = {}"))])
+        j = src.index("_api_last_failed_cache = {}")
+        self.assertNotIn("\u2014", src[j:src.index("\n", j)])
+
 
 
 class Detail(unittest.TestCase):
-    """The click detail's content, pinned at source (no jsdom for the shell page)."""
-    JS = km._LANDING_APIH_JS
+    """The click detail's content, pinned at source (no jsdom for the shell page); the served behaviour is
+    tests/test_api_health_browser.py."""
+
+    def setUp(self):
+        self.JS = km._LANDING_APIH_JS
 
     def test_the_plain_words_sentences_are_present_verbatim(self):
         for s in ("Auto-retry and the judges are paused until your usage limit resets.",
                   "Auto-retry and the judges are paused: you have reached the monthly spend limit. Raise it at claude.ai/settings/usage.",
                   "Auto-retry and the judges are paused: you stopped them.",
                   "No session is waiting on the API. Auto-retry and the judges are running.",
-                  "API · this machine", "Sessions waiting", "since "):
+                  "API %s this machine" % MDOT, "Sessions waiting", "since "):
             self.assertIn(s, self.JS)
 
     def test_the_pause_button_is_the_chat_card_s_and_acknowledges_before_the_round_trip(self):
@@ -438,9 +489,8 @@ class Detail(unittest.TestCase):
         self.assertIn("var NOTSENT='Not sent: the dashboard is disconnected. Try again.';", self.JS)
 
     def test_a_session_row_opens_that_session_the_way_the_feed_s_links_do(self):
-        # feed.ts openOrReviveSession posts openSession for a live session; the old route posted revealCard with
-        # an empty itemId (which matched no card and fell to openSession anyway) after forcing the feed pane on,
-        # a layout change persisted to localStorage for no visible reason (review round 1, 2026-09-07)
+        # feed.ts openOrReviveSession posts openSession for a live session; the row does the same on the shell
+        # socket, toggles no pane and persists nothing about the layout
         row = self.JS[self.JS.index("else if(act==='reveal')"):self.JS.index("else if(act==='usage')")]
         self.assertIn("__rompShellSend({type:'openSession',id:sid})", row)
         self.assertNotIn("__rompPaneToggle", self.JS, "never a pane toggle from the card")
@@ -454,9 +504,9 @@ class Detail(unittest.TestCase):
         self.assertIn(", so a retry in progress there shows only when it fails or recovers.", self.JS)
 
     def test_the_detail_renders_from_the_last_frame_and_the_history_is_the_one_read(self):
-        # the cell and the frame's reading render from the last frame only; the History section (2026-09-08) is the
-        # one fetch, GET /api-health at show time, and there is still no timer anywhere (test_api_health_hover.py
-        # holds the section's own pins)
+        # the cell and the frame's reading render from the last frame only; the History section is the one fetch,
+        # GET /api-health at show time, and there is still no timer anywhere (test_api_health_hover.py holds the
+        # section's own pins)
         self.assertEqual(self.JS.count("fetch("), 1, "one read: the history's")
         self.assertIn("fetch('/api-health',{cache:'no-store'})", self.JS)
         self.assertNotIn("setInterval", self.JS)
@@ -471,7 +521,6 @@ class Detail(unittest.TestCase):
         self.assertIn("if(tip.style.display!=='block')return;", self.JS)
         self.assertIn("if(held){dirty=true;return;}render();};", self.JS)
 
-    # ── review round 1 (2026-09-07): the detail's click safety, acknowledgment, hover, keyboard and modal rules ──
     def test_the_hover_renders_no_controls_and_the_pinned_detail_does(self):
         self.assertIn("function html(m,full)", self.JS)
         self.assertIn("if(full)h+=btnHTML(m);", self.JS)
@@ -480,8 +529,8 @@ class Detail(unittest.TestCase):
         self.assertIn("tip.innerHTML=html(LAST,pinned);", self.JS, "pinned = full; the hover = the reading only")
 
     def test_a_frame_under_a_held_pointer_is_painted_on_release_never_under_the_press(self):
-        # review round 2 (2026-09-07): only a PRIMARY press arms the defer. No click follows a right or middle
-        # button, so a frame deferred under one stayed unpainted until the next frame changed something.
+        # only a PRIMARY press arms the defer: no click follows a right or middle button, so a frame deferred
+        # under one would stay unpainted until the next frame changed something
         self.assertIn("tip.addEventListener('pointerdown',function(ev){if(ev.button===0)held=true;});", self.JS)
         self.assertIn("document.addEventListener('pointerup',release);", self.JS)
         self.assertIn("document.addEventListener('pointercancel',release);", self.JS)
@@ -492,17 +541,16 @@ class Detail(unittest.TestCase):
                       "the click handler flushes last")
 
     def test_the_acknowledgment_holds_until_the_frame_that_answers_the_press(self):
-        # review round 2 (2026-09-07): the frame's seq is the pause file's write count; the press writes it, so
-        # the frame after the press carries a moved seq whatever state it brings (paused again, when a limit or
-        # spend pause re-engaged within the cycle). The old rule cleared only on a frame whose state matched the
-        # press, so a Resume during a usage-limit pause left the button disabled and mislabeled for the window.
+        # the frame's seq is the pause file's write count; the press writes it, so the frame after the press
+        # carries a moved seq whatever state it brings (paused again, when a limit or spend pause re-engaged
+        # within the cycle). A rule keyed on a matching state would leave a Resume during a usage-limit pause
+        # disabled and mislabeled for the rest of the window.
         self.assertIn("pending=v?1:0;pendSeq=LAST?LAST.seq:null;", self.JS)
         self.assertIn("if(pending!==null)return '<button class=\"ah-btn romp-acted\" disabled data-act=pause", self.JS)
         self.assertIn("if(pending!==null&&(m.seq==null||m.seq!==pendSeq))pending=null;", self.JS)
-        self.assertNotIn("(pending===1)===(m.state==='paused')", self.JS, "state matching is gone")
+        self.assertNotIn("(pending===1)===(m.state==='paused')", self.JS, "no state matching")
 
     def test_the_rows_and_footer_links_are_keyboard_buttons_inside_a_focus_trap(self):
-        # review round 2 (2026-09-07): only the pause button was keyboard-operable, and Tab left the dialog
         self.assertIn("<span class=ah-link role=button tabindex=0 data-act=usage>Usage and spend</span>", self.JS)
         self.assertIn("<span class=ah-link role=button tabindex=0 data-act=log>Log</span>", self.JS)
         self.assertIn("tip.setAttribute('aria-modal','true')", self.JS)
@@ -523,31 +571,30 @@ class Detail(unittest.TestCase):
         self.assertIn("(hint?'<div class=ah-hint>'+esc(hint)+'</div>':'')", self.JS)
         self.assertIn("LAST=m;hint='';", self.JS, "a frame means the socket is alive: the notice retires")
 
-    # ── review round 3 (2026-09-07): a press the socket lost, and focus across the disable ──
     def test_a_press_the_socket_lost_clears_on_the_close_and_says_why(self):
-        # pending was cleared only by a failed send or a frame with a moved seq; the redial's ready re-sends the last
-        # frame verbatim, so a press the kernel never received held the button disabled and relabeled across the
-        # reconnect until an unrelated pause write moved the seq. The shell's onclose tells the detail (the socket
-        # that carried the press is gone) and the re-sent frame repaints the truth either way.
+        # the redial's ready re-sends the last frame verbatim, so a press the kernel never received would keep
+        # the button disabled and relabeled across the reconnect until an unrelated pause write moved the seq;
+        # the shell's onclose tells the detail, and the re-sent frame repaints the truth either way
         self.assertIn("window.__rompApiSocketLost=function(){if(pending===null)return;pending=null;pendSeq=null;hint=LOST;", self.JS)
         self.assertIn("var LOST='Connection lost before the answer arrived. When it is back, the button shows the current state.';", self.JS)
         self.assertIn("hint=LOST;\nif(tip.style.display!=='block')return;if(held){dirty=true;return;}render();};", self.JS,
                       "painted on release under a held pointer, like a frame")
         html = km._landing()
-        self.assertIn("ws.onclose=function(){if(shellSock===ws)shellSock=null;"
-                      "try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}setTimeout(shellWS,2000);};", html,
-                      "the shell socket's close clears the shared handle, tells the detail, then redials")
+        self.assertIn("ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}"
+                      "if(shellSock===ws)shellSock=null;setTimeout(shellWS,2000);};", html,
+                      "the shell socket's close tells the detail before the redial")
 
     def test_focus_moves_to_the_card_before_the_pressed_button_is_disabled(self):
-        # a disabled element cannot hold focus: it fell to BODY, where the card's Tab trap no longer saw the keys and
-        # a Shift+Tab left the aria-modal dialog
+        # a disabled element cannot hold focus: left on the button, focus fell to BODY, where the card's Tab trap
+        # no longer saw the keys and a Shift+Tab left the aria-modal dialog
         press = self.JS[self.JS.index("if(act==='pause')"):self.JS.index("else if(act==='reveal')")]
         self.assertIn("try{tip.focus();}catch(e){}", press)
         self.assertLess(press.index("try{tip.focus();}catch(e){}"), press.index("t.disabled=true"), "focus first, then the disable")
 
     def test_the_hover_re_anchors_after_a_re_render(self):
         self.assertIn("tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();", self.JS)
-        # measured after a reset (left 0, the cap), then placed: the hover history's review round 1
+        # measured after a reset (left 0, the height cap), then placed: a fixed element's shrink-to-fit width is
+        # taken against where it last sat, and the History rows make the tip wider than the frame's reading
         self.assertIn("var w=tip.offsetWidth,h=tip.offsetHeight;\ntip.style.left=Math.max(6,Math.min(window.innerWidth-w-6,x-w/2))+'px';\ntip.style.top=Math.max(6,r.top-h-8)+'px';}", self.JS)
         self.assertIn("lastX=(ev&&typeof ev.clientX==='number')?ev.clientX:null;", self.JS)
 
@@ -565,22 +612,18 @@ class Detail(unittest.TestCase):
         self.assertIn("try{window.__rompApiClose&&window.__rompApiClose();}catch(e){}", km._LANDING_USAGE_JS)
 
     def test_actions_are_delegated_on_the_stable_tip_node(self):
+        self.assertIn("var el=document.getElementById('rail-api');", self.JS)
+        self.assertIn("el.addEventListener('click',function(){if(pinned)close();else open();});", self.JS)
+        self.assertNotIn("el.innerHTML", self.JS, "the frame handler writes the cell's children, never the cell")
         self.assertIn("tip.addEventListener('click',function(ev){", self.JS)
         self.assertEqual(self.JS.count("addEventListener('click'"), 2, "one on #rail-api, one on #ah-tip; none per row")
         self.assertEqual(self.JS.count("addEventListener('keydown'"), 2, "one on #rail-api, one on #ah-tip; none per row")
         self.assertEqual(self.JS.count("function run(t){var act=t.getAttribute('data-act');"), 1, "one action switch for click and key")
-        self.assertNotIn("onclick=", self.JS.split("back.onclick")[0].split("function open")[0], "no inline handlers in the markup")
+        self.assertNotIn(".onclick=function", self.JS, "no per-row inline handlers")
 
-    def test_the_words_are_plain_american_and_free_of_romp_nouns(self):
-        shown = [s for s in self.JS.split("'") if len(s) > 2]
-        for s in shown:
-            self.assertNotIn("fleet", s.lower())
+    def test_the_amber_state_is_never_called_blocked(self):
         self.assertNotIn("'blocked'", self.JS)
-        self.assertNotIn("blocked", self.JS.split("data-act=reveal")[0].split("var PAUSE")[1] if "var PAUSE" in self.JS else "", "the amber state is never called blocked")
-        self.assertNotIn("—", self.JS)
-        for british in ("colour", "behaviour", "cancelled", "summarise"):
-            self.assertNotIn(british, self.JS)
-        self.assertIn("(r.kind==='retrying'?'retrying':'stopped')", self.JS)
+        self.assertIn("(r.kind==='retrying'?'retrying':'stopped')", self.JS, "the amber state is never called blocked")
 
     def test_the_footer_reaches_the_usage_modal_and_the_log(self):
         self.assertIn("data-act=usage>Usage and spend<", self.JS)
@@ -593,6 +636,17 @@ class Detail(unittest.TestCase):
         self.assertIn("back.classList.add('on')", self.JS)
         self.assertIn("window.__rompApiClose=close;back.onclick=close;", self.JS)
         self.assertIn("window.__rompApiClose=null;", self.JS)
+
+    def test_the_words_are_plain_american_and_free_of_romp_nouns(self):
+        shown = [s for s in self.JS.split("'") if len(s) > 2]
+        for s in shown:
+            self.assertNotIn("fleet", s.lower())
+        self.assertNotIn("'blocked'", self.JS)
+        self.assertNotIn("blocked", self.JS.split("data-act=reveal")[0].split("var PAUSE")[1] if "var PAUSE" in self.JS else "", "the amber state is never called blocked")
+        self.assertNotIn("\u2014", self.JS)
+        for british in ("colour", "behaviour", "cancelled", "summarise"):
+            self.assertNotIn(british, self.JS)
+        self.assertIn("(r.kind==='retrying'?'retrying':'stopped')", self.JS)
 
 
 if __name__ == "__main__":

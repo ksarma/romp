@@ -1212,32 +1212,6 @@ class TransitionLedger(unittest.TestCase):
         self.assertEqual(b["state"], "thrashing", "no restart: the same reading holds thrashing by hysteresis")
         self.assertTrue(0.10 < b["windows"]["900"]["rate429"] < 0.15, b["windows"]["900"])
 
-    def test_a_malformed_legacy_ledger_row_is_skipped_never_the_backends_death(self):
-        """Finding 6: only json.loads was guarded; a non-numeric `t` or an unhashable `bucket` raised
-        out of ApiHealth.__init__, out of SdkBackend.__init__, and the kernel then pinned the SDK
-        backend unavailable for its whole life. Such rows are skipped and logged once. The ledger is
-        now the first cut's legacy file, read once at the first boot without a state file."""
-        d = tempfile.mkdtemp()
-        p = os.path.join(d, sb.API_HEALTH_LEGACY_LEDGER)
-        good = {"t": T0, "bucket": KEY, "auth": LABEL, "family": "fable", "from": "unknown", "to": "thrashing", "why": "x"}
-        with open(p, "w") as f:
-            f.write(json.dumps({"t": "yesterday", "bucket": KEY, "to": "thrashing"}) + "\n")
-            f.write(json.dumps({"t": T0, "bucket": ["not", "a", "key"], "to": "thrashing"}) + "\n")
-            f.write(json.dumps({"t": T0, "bucket": {"k": 1}, "to": "thrashing"}) + "\n")
-            f.write("not json at all\n")
-            f.write(json.dumps(good) + "\n")
-        lines = []
-        ah = sb.ApiHealth(d, log=lines.append, boot_at=T0 + 10)
-        self.assertEqual(ah._last_state[KEY]["state"], "unknown", "the good row seeded; the bad ones did not")
-        hits = [l for l in lines if "malformed" in l]
-        self.assertEqual(len(hits), 1, "logged once: %r" % lines)
-        self.assertIn("4", hits[0])
-        self.assertEqual([(r["from"], r["to"]) for r in ah.snapshot(T0 + 11)["transitions"]],
-                         [("unknown", "thrashing"), ("thrashing", "unknown")])
-        # …and a backend over that state dir constructs
-        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
-        self.assertIn(KEY, be.api_health_snapshot(T0 + 12)["buckets"])
-
     def test_state_since_is_the_first_read_that_observed_it(self):
         ah = sb.ApiHealth(tempfile.mkdtemp())
         for e in _storm(T0 - 600, T0):
@@ -1394,44 +1368,6 @@ class StateFile(unittest.TestCase):
         self.assertEqual(_rows(d)[-1]["t"], T0 + 39 * 5000 + 2000, "newest last")
         self.assertEqual(sizes[-1], sizes[-10], "full tail: the file stopped growing")
         self.assertLess(sizes[-1], 32 * 1024)
-
-    def test_a_legacy_jsonl_seeds_once_including_the_row_at_the_64kb_mark(self):
-        """The first cut's api-health.jsonl is read at the first boot without a state file, from its
-        last 64 KB, starting at the first row boundary at or after the mark. The first cut sought to
-        the mark and dropped its first LINE — a complete row whenever the mark fell on a boundary: one
-        invisible transition per boot past 64 KB, and a bucket whose newest row it was fell out of the
-        seed. Here the quiet bucket's only row begins exactly at the mark."""
-        d = tempfile.mkdtemp()
-        quiet = "key:aaaaaaaaaaaa|haiku"
-
-        def row(bucket, t, to, why="w"):
-            a, f = bucket.split("|")
-            return json.dumps({"t": t, "bucket": bucket, "auth": a, "family": f, "from": "unknown", "to": to,
-                               "why": why, "evidence": {"window": 300, "rate429": 0.4, "rate5xx": 0.0, "n": 20}}) + "\n"
-        head = "".join(row(KEY, T0 - 1000 + i, "healthy") for i in range(5))
-        q = row(quiet, T0 - 100, "thrashing", "the quiet neighbour's only row")
-        tail_rows = [row(KEY, T0 - 90 + i, "thrashing" if i % 2 else "healthy") for i in range(280)]
-        pad = 65536 - len(q) - sum(map(len, tail_rows)) - len(row(KEY, T0 - 1, "healthy", ""))
-        self.assertGreater(pad, 0, "the fixture must fit under 64 KB before padding: shorten the tail")
-        blob = head + q + "".join(tail_rows) + row(KEY, T0 - 1, "healthy", "x" * pad)
-        self.assertEqual(len(blob) - 65536, len(head), "the quiet row begins exactly at the 64 KB mark")
-        p = os.path.join(d, sb.API_HEALTH_LEGACY_LEDGER)
-        with open(p, "w") as f:
-            f.write(blob)
-        ah = sb.ApiHealth(d, boot_at=T0 + 10)
-        self.assertIn(quiet, ah._last_state, "the row at the mark seeds its bucket")
-        self.assertEqual(ah._last_state[quiet]["state"], "unknown")
-        self.assertEqual(ah._last_state[KEY]["state"], "unknown")
-        rows = _rows(d)
-        self.assertEqual({r["bucket"] for r in rows if r["to"] == "unknown"}, {quiet, KEY}, "continuity rows for both")
-        self.assertEqual(rows[-3]["t"], T0 - 1, "the newest legacy row precedes the boot rows")
-        # the state file exists; the jsonl is untouched and no longer read
-        self.assertEqual(sorted(os.listdir(d)), sorted([sb.API_HEALTH_STATE_FILE, sb.API_HEALTH_LEGACY_LEDGER]))
-        with open(p) as f:
-            self.assertEqual(f.read(), blob, "left as it was")
-        os.unlink(p)
-        ah3 = sb.ApiHealth(d, boot_at=T0 + 20)
-        self.assertIn(quiet, ah3._last_state, "seeded from the state file, not the jsonl")
 
     def test_a_malformed_state_file_is_logged_and_never_the_backends_death(self):
         d = tempfile.mkdtemp()
