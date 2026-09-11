@@ -37,9 +37,13 @@ function between(doc, from, to) {
 }
 // The Decisions list's numbers, in document order. Compared to the whole run 1..N, never to a tail: a tail check
 // (the first form of this pin compared the last four) let a renumbered or duplicated entry anywhere before it pass.
-const DECISIONS_END = 48;
+// RESERVED holds the numbers a sibling branch is writing while this one lands (2026-09-11: 49 and 50 beside the
+// tie-break's 51, each branch given its number up front so the merge renumbers nothing); the merge that brings
+// them empties it, and the run is whole again.
+const DECISIONS_END = 51;
+const RESERVED = [49, 50];
 const decisionNumbers = (doc) => Array.from(between(doc, '\n## Decisions', '\n## Open questions').matchAll(/(?:^| )(\d+)\. \*\*/g), (m) => Number(m[1]));
-const consecutive = (n) => Array.from({ length: n }, (_, i) => i + 1);
+const consecutive = (n) => Array.from({ length: n }, (_, i) => i + 1).filter((k) => !RESERVED.includes(k));
 const LABEL = 'The about follow-on (2026-09-10):';
 const note = between(plan, LABEL, '### Slice 3: region comments on images');
 const tests = between(plan, '\n## Tests', '\n## Docs');
@@ -59,7 +63,7 @@ test('the paragraph stands under Slice 2 after the arrivals note, and the two de
   for (const text of [note, d45, d46]) {
     assert.ok(!/"[^"]*\b(I|my|me)\b[^"]*"/.test(text.replace(/"about [^"]*"/g, '').replace(/"Resolve the N comments[^"]*"/g, '')), 'no quoted utterance of the user\'s');
   }
-  assert.deepEqual(decisionNumbers(plan), consecutive(DECISIONS_END), 'the list stays consecutive and ends at 48');
+  assert.deepEqual(decisionNumbers(plan), consecutive(DECISIONS_END), 'the list stays consecutive apart from the reserved numbers and ends at 51');
   assert.ok(d45.includes('(2026-09-10)') && d46.includes('(2026-09-10)'));
 });
 

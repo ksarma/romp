@@ -178,7 +178,7 @@ test('the records and the code say each carries a tag for the other, never linke
 });
 
 test('the format\'s key is not called a thread: the ADR\'s consequences bullet and the host\'s changeIds note say what the other editors set it for (CONTEXT.md, File comment and About: Avoid)', () => {
-  const bullet = between(adr, '- Under that rule the sidecar now carries three additive fields on a comment', '- A romp-only field is read defensively');
+  const bullet = between(adr, '- Under that rule the sidecar now carries six additive fields on a comment', '- A romp-only field is read defensively');
   assert.ok(bullet.includes('romp never writes the format\'s own `suggestionId`, the key the other editors set on a comment their change answers, and reads one it finds as the change that answered the comment.'));
   assert.doesNotMatch(bullet, /\bthreads?\b/i, 'the ADR');
   const note = between(host, '// `changeIds` is the person\'s own pick of the changes a comment is ABOUT', 'function readChangeIds(args) {').replace(/ \/\/ /g, ' ');

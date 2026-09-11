@@ -494,9 +494,11 @@ the same object, and the two other editors that read the format see them too. Ea
 is a card in the panel: click it to expand or resolve it, and **Reply** opens the reply box inside
 the card, under the comment and its replies. The passage it
 refers to is highlighted in the file, and a comment on text that occurs more than once stays
-on the occurrence you chose. When the file has changed around that occurrence and the panel can
-no longer tell which copy the comment meant, its highlight is dashed and the card carries a
-**passage recurs** tag: the copy shown is a guess, and the card says so. When the session has
+on the occurrence you chose. When the file has changed around that occurrence, the comment's own
+record of where it was, which copy it is and the heading above it places it again. When none of
+those can tell which copy the comment meant, its highlight is dashed and the card carries a
+**passage recurs** tag: the copy shown is a guess, the card says so, and saving it again from the
+right copy confirms it. When the session has
 rewritten the passage, the card
 says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
 show it.
