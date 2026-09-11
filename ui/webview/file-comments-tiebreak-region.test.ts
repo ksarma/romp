@@ -311,6 +311,12 @@ const STATE_POSITION = "This passage occurs in the file more than once with the 
 const UNSURE_POSITION = STATE_POSITION + " Reveal it and save again from the right copy to confirm.";
 const REGION_CONFIRM = "To confirm the copy, draw a new region on the figure you mean; this comment keeps its tag until you resolve it. Re-place redraws the rectangle on the figure shown and does not move the comment to another figure. Drawing a region needs a mouse.";
 const UNSURE_REGION = STATE_POSITION + " " + REGION_CONFIRM;
+// the sweep after round 3 (2026-09-11): a pictured region's card on a coarse pointer offers no Re-place (no overlay takes a
+// drag there), so its words leave out the sentence about it; the panel's REGION_CONFIRM_TOUCH, mirrored here the way
+// REGION_CONFIRM is (file-comments-tiebreak-touch.test.ts drives the rewording; the coarse leg below wears it, so the two
+// modules never pin different words for the same card)
+const REGION_CONFIRM_TOUCH = "To confirm the copy, draw a new region on the figure you mean; this comment keeps its tag until you resolve it. Drawing a region needs a mouse.";
+const UNSURE_REGION_TOUCH = STATE_POSITION + " " + REGION_CONFIRM_TOUCH;
 // round 3 (2026-09-11): a region whose picture the view does not show (Raw) is told which view has it, and its words name
 // no Re-place, since that card offers none; the panel's REGION_CONFIRM_UNSEEN, mirrored here the way REGION_CONFIRM is
 // (file-comments-tiebreak-shown.test.ts drives the rewording; the Raw leg below wears it, so the two modules never pin
@@ -422,15 +428,18 @@ test("Rendered view, a region on the second embed with the title edited unrecord
   h.dispose();
 });
 
-test("the same region on a coarse pointer (a phone): no Re-place and still no Reveal, and the words on the open card name the mouse a new region needs, so the card does not dead-end", async () => {
+test("the same region on a coarse pointer (a phone): no Re-place and still no Reveal, and the words on the open card leave out the sentence about the Re-place the card lacks and name the mouse a new region needs, so the card does not dead-end", async () => {
   coarse = true;
   try {
     const h = await harness({ mode: "rendered", src: REVISED, html: html("Report, revised") });
     await h.open(mdStatus([regionOnSecond]));
-    assert.deepEqual(h.tags(regionOnSecond.id).map((t) => t.textContent), ["passage recurs"]);
+    const tags = h.tags(regionOnSecond.id);
+    assert.deepEqual(tags.map((t) => t.textContent), ["passage recurs"]);
+    assert.equal(tags[0].title, UNSURE_REGION_TOUCH, "the tag's title: the pictured view's words less the sentence about Re-place");
     const card = h.openCard(regionOnSecond.id);
-    assert.deepEqual(notesOf(card), [UNSURE_REGION]);
-    assert.ok(UNSURE_REGION.endsWith("Drawing a region needs a mouse."), "the words say drawing needs a mouse, where the pointer cannot draw");
+    assert.deepEqual(notesOf(card), [UNSURE_REGION_TOUCH], "the open card says the same: nothing about a button this card lacks");
+    assert.ok(!UNSURE_REGION_TOUCH.includes("Re-place"), "the words name no Re-place, since the card offers none");
+    assert.ok(UNSURE_REGION_TOUCH.endsWith("Drawing a region needs a mouse."), "the words say drawing needs a mouse, where the pointer cannot draw");
     assert.deepEqual(buttonsOf(card), ["Reply", "Resolve"], "a finger draws nothing: no Re-place; and no Reveal either");
     h.dispose();
   } finally { coarse = null; }

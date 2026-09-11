@@ -285,3 +285,14 @@ test('the rounds\' modules exist, and the note, the Tests section and decision 5
     assert.ok(!text.includes('\u2014'), `${name} has no em dash`);
   }
 });
+
+// ── the consolidation after the round ───────────────────────────────
+
+test('the consolidation: the Tests section says the region module\'s coarse leg wears the phone\'s words, and that module mirrors the panel\'s REGION_CONFIRM_TOUCH', () => {
+  assert.ok(tests.includes("On the coarse pointer the words are the pictured view's less the sentence about the Re-place the card lacks (`REGION_CONFIRM_TOUCH`, mirrored from the panel as `REGION_CONFIRM` is; the sweep after the third round, 2026-09-11)."));
+  const region = read('ui', 'webview', 'file-comments-tiebreak-region.test.ts');
+  const touch = constant(panel, 'REGION_CONFIRM_TOUCH');
+  assert.ok(region.includes('const REGION_CONFIRM_TOUCH = ' + JSON.stringify(touch) + ';'), 'the region module holds the panel\'s literal, so a rewording fails a driven test there too');
+  assert.ok(region.includes('assert.deepEqual(notesOf(card), [UNSURE_REGION_TOUCH]'), 'its coarse leg wears the phone\'s words');
+  assert.ok(!region.includes('assert.deepEqual(notesOf(card), [UNSURE_REGION]);'), 'the coarse leg no longer pins the pictured view\'s words, which named a Re-place the phone\'s card lacks');
+});

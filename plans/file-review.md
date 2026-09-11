@@ -2525,7 +2525,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   Resolve and Re-place on a pointer that draws, Reply and Resolve on a coarse one, and no Reveal in either
   view; a passage comment on the same line, guessed, carries the words that ask for the save and a line under
   them saying what the save does (the Reveal's title ends with the same words, and Reveal switches to Raw at
-  the guessed copy), and a passage whose position names its copy carries neither.
+  the guessed copy), and a passage whose position names its copy carries neither. On the coarse pointer the
+  words are the pictured view's less the sentence about the Re-place the card lacks (`REGION_CONFIRM_TOUCH`,
+  mirrored from the panel as `REGION_CONFIRM` is; the sweep after the third round, 2026-09-11).
   `tools/file-review-plan-tiebreak-review-3.test.mjs` holds the record's account of the second round (the
   region card's words and its missing Reveal, the passage card's line, the round's modules) to the panel
   (`copyUnsureWords`, `REGION_CONFIRM`, `renderCard`, `reveal`), the host (`doRetarget`) and the tree. The
