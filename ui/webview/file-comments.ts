@@ -101,7 +101,13 @@ import { layoutCards, CARD_GAP, type LayoutItem, type PlacedItem } from "./card-
 
 const POLL_MS = 2500;
 // The refusals a fresh status and one retry answer: a moved fence (the panel's copy is stale), and `busy` (another
-// writer held the host's lock past its wait, decision 49: the re-read shows what it wrote, and the retry lands after it).
+// writer held the host's lock past its wait, decision 49). The retry after `busy` is the moved-fence path reused, not a
+// wait for the holder: `busy` comes back while the lock is STILL held (the holder releases after its last rename, and
+// `status` takes no lock), so the re-read shows the holder's write only when it landed in the gap before the re-read,
+// and only then does the retry carry a fence that lands. A holder that finishes during the retry's own wait moves the
+// fence under it (the retry refuses `store-moved`); one still writing refuses `busy` again; either is the second
+// refusal, shown verbatim with Reload (file-comments-busy-retry-fence.test.ts). Nothing is decided over unseen text
+// either way: the fence catches every stale copy, and the lock only serializes the writers.
 const MOVED = new Set(["store-moved", "file-moved", "config-moved", "busy"]);
 /** Whether a scroller stands at its end (within the pixel a fractional scrollTop can fall short of the integer heights). */
 const atEnd = (el: HTMLElement): boolean => el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
@@ -2205,9 +2211,11 @@ class Panel {
   /** The editor's Save through the host: `save` with the text, the records as the editor holds them and its decisions,
    *  fenced on the sidecar the records came from (editSeed; the latest status when none rode in), the config, and the
    *  file as the viewer loaded it. One retry, as every mutating verb gets (mutateOnce), when the sidecar or config moved,
-   *  or the host's lock on the sidecar was still held past its wait (`busy`, decision 49: the holder's write is on disk by
-   *  the time the refusal arrives, so the same re-read shows it), but the records the editor carries are still the
-   *  sidecar's own — a reply a session wrote mid-edit, a toggle from another browser; never for a moved file (the editor's
+   *  or the host's lock on the sidecar was still held past its wait (`busy`, decision 49: the same re-read and retry, which
+   *  land only when the holder released before the re-read, since `busy` arrives while it is still writing; a holder that
+   *  finishes under the retry moves the fence, and that `store-moved` reaches the viewer as the second refusal; see MOVED
+   *  and file-comments-busy-retry-fence.test.ts), but the records the editor carries are still the sidecar's own — a reply
+   *  a session wrote mid-edit, a toggle from another browser; never for a moved file (the editor's
    *  text is from the old bytes) or a sidecar whose records changed (file-comments-save-busy.test.ts drives the `busy`
    *  leg; file-comments-panel.test.ts the moved fences). The reply is applied as the status (it is one), so onSaved has
    *  nothing left to re-read — and it re-seeds the fence, since the editor may stay up past a landed save (the viewer

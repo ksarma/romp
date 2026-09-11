@@ -399,14 +399,20 @@ export function saveStore(vaultRoot, storePath, obj, currentText) {
 // claim took away the fresh claim another breaker had put at the name since, and the two broke
 // the lock together. The breaker in turn unlinks the lock only while the claim at the name is
 // still its own (a waiter may have removed it as dead, this breaker suspended past the bound) and
-// only the inode it judged. A holder releases only while the entry at the lock's name is still
-// the inode it created (kept open for the length of the hold, so its number is not reused): a
-// holder broken as stale while alive (a machine suspended mid-write, a writer stalled past the
-// bound) would otherwise remove the breaker's fresh lock on its way out and admit a third writer.
-// Every removal here is a look and then an unlink by name, the two a few microseconds apart in
-// one process: an unlink conditional on the inode is not a call the filesystem offers, so that
-// window is what stays. A lock this process cannot read (another account's, under a mode this one
-// lacks) is one it cannot take: refused with the OS error, never thrown raw.
+// only the inode it judged, kept open from the judgment through the unlink: an inode with a
+// descriptor open is not freed, so its number cannot pass to a fresh lock at the name in between,
+// and a look that finds the number has found the file judged. Compared by number alone
+// (2026-09-11, the review), a breaker suspended past the bound between its claim check and its
+// look removed the fresh live lock a waiter had put at the name, which the filesystem had given
+// the dead lock's number, and entered beside it; a dead claim is kept open the same way while it
+// is removed. A holder releases only while the entry at the lock's name is still the inode it
+// created (kept open for the length of the hold, so its number is not reused): a holder broken as
+// stale while alive (a machine suspended mid-write, a writer stalled past the bound) would
+// otherwise remove the breaker's fresh lock on its way out and admit a third writer. Every
+// removal here is a look and then an unlink by name, the two a few microseconds apart in one
+// process: an unlink conditional on the inode is not a call the filesystem offers, so that window
+// is what stays. A lock this process cannot read (another account's, under a mode this one lacks)
+// is one it cannot take: refused with the OS error, never thrown raw.
 //
 // Held for one write and never across a wait on a person; not reentrant (a nested take waits out
 // its own lock and fails). The `.trackchanges/` directory is created for the lock when it does
@@ -422,9 +428,19 @@ export function saveStore(vaultRoot, storePath, obj, currentText) {
 // back through the holder's own descriptor after the unlink, from the inode itself, so a line
 // landing between the holder's look and its unlink is seen too; and the maker checks after the
 // line that the name still leads to the inode it wrote, else that holder is gone with the line
-// unread and the folder is looked at again. A folder the lock did not make is never removed. A pid is judged on this machine only: a lock written from another
-// machine over a shared filesystem names a pid this machine does not know, so it reads as a dead
-// writer's and is broken at once; the lock serializes the writers of one machine.
+// unread and the folder is looked at again. A folder the lock did not make is never removed. An
+// entry at the folder's name that is not a directory (a link to nothing) is a lock that cannot be
+// created: refused at once, held false, naming the entry.
+//
+// A pid is judged on this machine, and from its own pid namespace, only. A lock written from
+// another machine over a shared filesystem names a pid this machine does not know, so it reads
+// as a dead writer's and is broken at once: the lock serializes the writers of one machine. A
+// writer inside a child pid namespace (a sandboxed tool shell: bubblewrap's --unshare-pid) sees
+// no process outside it, alive or dead, so there a lock is judged by its stamp's age alone
+// (judged by pid, 2026-09-11, the review, a CLI in such a sandbox read an editor host's live lock
+// as a dead writer's and broke it at once). The stamp does not name the namespace that wrote it,
+// so a lock stamped inside such a sandbox names a pid its readers outside cannot tell from one
+// of their own: known to none of them, it reads there as a dead writer's.
 export const STORE_LOCK_WAIT_MS = 2000;
 export const STORE_LOCK_STALE_MS = 15000;
 const STORE_LOCK_SUFFIX = '.lock';
@@ -463,10 +479,30 @@ function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
 }
 
+// Whether a stamp's pid is one this process can judge at all: pids are per namespace, and from a
+// child pid namespace (a sandboxed tool shell) every process outside is ESRCH, alive or not (the
+// header says so). Read once, from /proc/self/ns/pid: the initial namespace has one inode number
+// on every Linux (PROC_PID_INIT_INO); where the link cannot be read (no /proc; another OS, which
+// has no pid namespaces) every pid is judged.
+const PROC_PID_INIT_INO = 0xEFFFFFFC;
+let pidsJudgeable;
+function canJudgePids() {
+  if (pidsJudgeable === undefined) {
+    let ns = null;
+    try { ns = /^pid:\[(\d+)\]$/.exec(fs.readlinkSync('/proc/self/ns/pid')); } catch { /* no /proc */ }
+    pidsJudgeable = !ns || Number(ns[1]) === PROC_PID_INIT_INO;
+  }
+  return pidsJudgeable;
+}
+
 // What is at `p`: its stat (bigint fields) and content, read from one open of the name without
-// following a link, so the file judged is the file read; null when nothing is there. A name held
-// by something that is not a regular file (a link, a directory, a pipe) is refused, never followed
-// and never removed. Any other failure to open or read it is a lock this process cannot take.
+// following a link, so the file judged is the file read, with that descriptor kept open on the
+// entry (`fd`) until the caller closes it (closeEntry): an inode with a descriptor open is not
+// freed, so its number cannot pass to a fresh entry at the name while the caller holds it, and a
+// later look that finds the number has found the file judged (the header says why that matters).
+// Null when nothing is there. A name held by something that is not a regular file (a link, a
+// directory, a pipe) is refused, never followed and never removed. Any other failure to open or
+// read it is a lock this process cannot take.
 function inspectLock(p) {
   let fd;
   try {
@@ -481,19 +517,35 @@ function inspectLock(p) {
     if (!st.isFile()) throw new StoreLockError(p, false);
     let raw;
     try { raw = fs.readFileSync(fd, 'utf8'); } catch (e) { throw new StoreLockError(p, false, e, 'read'); }
-    return { st, raw };
-  } finally {
+    return { fd, st, raw };
+  } catch (e) {
     try { fs.closeSync(fd); } catch { /* ignore */ }
+    throw e;
   }
 }
 
-// Whether a held lock is a dead writer's: its pid gone, or its stamp (its mtime, when the stamp
-// is not written yet) older than staleMs. The stamp is the "pid ts" line wherever it is in the
-// file: a handover line appended before it (handOverDir) comes first.
+// Let go of the descriptor an entry of inspectLock keeps; a no-op for null or once closed.
+function closeEntry(entry) {
+  if (!entry || entry.fd === undefined) return;
+  try { fs.closeSync(entry.fd); } catch { /* ignore */ }
+  entry.fd = undefined;
+}
+
+// A look that keeps nothing open: the entry at `p` as inspectLock reads it, its descriptor closed.
+function peekLock(p) {
+  const entry = inspectLock(p);
+  closeEntry(entry);
+  return entry;
+}
+
+// Whether a held lock is a dead writer's: its pid gone (where a pid can be judged; canJudgePids),
+// or its stamp (its mtime, when the stamp is not written yet) older than staleMs. The stamp is the
+// "pid ts" line wherever it is in the file: a handover line appended before it (handOverDir)
+// comes first.
 function lockIsStale(entry, staleMs, now) {
   const m = /^(\d+) (\d+)$/m.exec(entry.raw);
   if (!m) return now - Number(entry.st.mtimeMs) > staleMs;
-  if (!pidAlive(Number(m[1]))) return true;
+  if (canJudgePids() && !pidAlive(Number(m[1]))) return true;
   return now - Number(m[2]) > staleMs;
 }
 
@@ -506,18 +558,20 @@ const hasHandover = (raw) => raw.split('\n').includes(STORE_LOCK_HANDOVER);
 // null. Never throws: it runs on the way out of a write.
 function unlinkOwn(p, mine) {
   let cur = null;
-  try { cur = inspectLock(p); } catch { return null; }
+  try { cur = peekLock(p); } catch { return null; }
   if (!cur || cur.st.ino !== mine.ino || cur.st.dev !== mine.dev) return null;
   try { fs.unlinkSync(p); } catch { return null; }
   return cur.raw;
 }
 
 // Unlink the dead lock or claim at `p` while the entry at the name is still `judged`, the inode
-// read and found stale; another writer's fresh entry at the name since then is left alone.
-// Returns the content the entry held as it was removed (a handover line on it passes to the
-// caller), else null. A name that cannot be read or removed is a lock that cannot be taken.
+// read and found stale, which the caller keeps open (inspectLock's descriptor) until this returns,
+// so its number cannot have passed to another writer's fresh entry at the name in between: a
+// fresh entry there is another inode, and is left alone. Returns the content the entry held as it
+// was removed (a handover line on it passes to the caller), else null. A name that cannot be read
+// or removed is a lock that cannot be taken.
 function unlinkJudged(p, judged) {
-  const cur = inspectLock(p);
+  const cur = peekLock(p);
   if (!cur || !sameInode(cur.st, judged)) return null;
   try {
     fs.unlinkSync(p);
@@ -567,9 +621,13 @@ function breakStaleLock(lockPath, staleMs) {
     if (e && e.code === 'EEXIST') {
       const other = inspectLock(claim);
       if (other && lockIsStale(other, staleMs, Date.now())) {
-        const held = unlinkJudged(claim, other.st);
+        // `other` stays open until the claim is removed: a fresh claim another breaker puts at the
+        // name in between cannot get its inode number (the header says why).
+        let held = null;
+        try { held = unlinkJudged(claim, other.st); } finally { closeEntry(other); }
         if (held != null && hasHandover(held)) out.handover = true;   // the dead breaker held the folder's removal
       }
+      closeEntry(other);
       return out;
     }
     if (e && e.code === 'ENOENT') return out;   // the folder went with the last lock: the caller makes it again
@@ -585,16 +643,23 @@ function breakStaleLock(lockPath, staleMs) {
     }
     const entry = inspectLock(lockPath);
     if (entry && lockIsStale(entry, staleMs, Date.now())) {
-      // Still under the claim: a waiter that judged it dead (this breaker suspended past the bound)
-      // has removed it, and the break is another's by now.
-      const cur = inspectLock(claim);
-      if (cur && sameInode(cur.st, mine)) {
-        const held = unlinkJudged(lockPath, entry.st);
-        if (held != null) {
-          out.removed = true;
-          if (hasHandover(held)) out.handover = true;   // the dead writer held the folder's removal
+      try {
+        // Still under the claim: a waiter that judged it dead (this breaker suspended past the bound)
+        // has removed it, and the break is another's by now. `entry` stays open until the lock is
+        // removed, so a fresh lock at the name cannot get the judged inode's number in between.
+        const cur = peekLock(claim);
+        if (cur && sameInode(cur.st, mine)) {
+          const held = unlinkJudged(lockPath, entry.st);
+          if (held != null) {
+            out.removed = true;
+            if (hasHandover(held)) out.handover = true;   // the dead writer held the folder's removal
+          }
         }
+      } finally {
+        closeEntry(entry);
       }
+    } else {
+      closeEntry(entry);   // a live lock, or none: nothing judged, nothing to keep open
     }
   } finally {
     const held = mine ? unlinkOwn(claim, mine) : null;
@@ -658,6 +723,19 @@ function removeDirUnlessUsed(dir) {
   }
 }
 
+// What keeps `dir` from being a directory, as an Error naming it; null when it is one (a link to
+// one counts), or when nothing is at the name any more (for the caller to look again).
+function notADirectory(dir) {
+  let st;
+  try { st = fs.lstatSync(dir); } catch { return null; }
+  if (st.isDirectory()) return null;
+  if (!st.isSymbolicLink()) return new Error(`${dir} is not a directory`);
+  let target = null;
+  try { target = fs.statSync(dir); } catch { /* a link to nothing */ }
+  if (target && target.isDirectory()) return null;
+  return new Error(`${dir} is a symbolic link to ${target ? 'a file' : 'nothing'}, not a directory`);
+}
+
 // Take the lock of `storePath`'s sidecar, run `fn`, release. Returns what `fn` returns; `fn`'s
 // throw releases the lock and propagates. `opts.waitMs` and `opts.staleMs` override the bounds
 // (tests); callers in the loop use the defaults.
@@ -681,15 +759,22 @@ export function withStoreLock(storePath, fn, opts) {
           // is this writer's to take away; made by another, that writer's, which hands the duty over
           // when it leaves first. Either way the create is tried again: judged by a look at the folder
           // instead (2026-09-11), a create that lost to a peer's mkdir by microseconds was refused
-          // with the OS error, with nothing contended.
+          // with the OS error, with nothing contended. An entry at the folder's name that is not a
+          // directory (a link to nothing: the create says ENOENT through it, mkdir says EEXIST at it)
+          // is what no retry changes, and is refused at once, naming it: retried until the wait ran
+          // out (2026-09-11, the review), it was reported as a writer where there was none.
           if (Date.now() - start >= waitMs) throw new StoreLockError(lockPath, true);
-          try { fs.mkdirSync(dir); ownsDir = true; } catch (e2) { if (!e2 || e2.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e2); }
+          try { fs.mkdirSync(dir); ownsDir = true; } catch (e2) {
+            if (!e2 || e2.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e2);
+            const bad = notADirectory(dir);
+            if (bad) throw new StoreLockError(lockPath, false, bad);
+          }
           continue;
         }
         if (!e || e.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e);
       }
       const now = Date.now();
-      const entry = inspectLock(lockPath);
+      const entry = peekLock(lockPath);
       if (!entry) continue;   // released between the create and the look: try again at once
       if (lockIsStale(entry, staleMs, now)) {
         const broke = breakStaleLock(lockPath, staleMs);

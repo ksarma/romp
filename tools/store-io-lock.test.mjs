@@ -1,6 +1,6 @@
 // store-io's lock, `<sidecar>.lock` (withStoreLock; plans/file-review.md, decision 49; vendor patch
-// 0008), on the paths the review of 2026-09-11 found open. Each case here failed against the lock as
-// first built and holds now:
+// 0008), on the paths the review of 2026-09-11 found open. Each case here failed against the lock before
+// the review round that added it and holds now:
 //   * the break of a dead writer's lock has ONE winner. Judged and removed by name alone, two waiters
 //     that read one dead lock together both removed it, the second taking away the first's fresh
 //     lock, and both wrote: three real writers on a dead pid's lock held together in 54 rounds of 100.
@@ -19,6 +19,16 @@
 //     stays.
 //   * a lock this process cannot read refuses as a StoreLockError with the OS error, naming the lock,
 //     so a CLI prints its one line and a host refuses; the lock is left alone.
+//   * (second round) a dead lock or claim is removed only while the entry at its name is still the inode
+//     judged: a fresh entry another writer put there between the judging look and the unlink is left
+//     alone, so a waiter never breaks beside a live breaker, nor a breaker beside a fresh writer.
+//   * (second round) a maker that gives up waiting takes the folder it made away, or hands it to the lock
+//     that outwaited it; left out, an empty folder stayed behind such a maker.
+//   * (second round) the stamp appends (O_APPEND) and a holder reads its lock back through its own
+//     descriptor after the unlink, so a handover line put on the lock, or on the breaker's claim, between
+//     its create and its stamp, or between the release's look and its unlink, is honored, and a waiter
+//     finds the stamp behind the line; written at the start of the file, the stamp took the line's place
+//     and the folder stayed.
 // Real writers here are node processes importing the vendored store-io and spinning to one shared
 // instant; the in-process cases drive one interleaving by hand. Synthetic paths only, under a scratch
 // directory.
@@ -309,4 +319,243 @@ test('a lock this process cannot read refuses as a StoreLockError with held fals
   assert.match(err.message, new RegExp(`^cannot read ${w.lockPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: EACCES`));
   assert.equal(err.cause.code, 'EACCES');
   assert.ok(fs.existsSync(w.lockPath), 'left alone');
+});
+
+// ── a removal only of the inode judged (second round) ───────────────
+// The hooks below stand in for another process at the one instant that matters: a public `fs` function
+// (or `Date.now`) the lock calls at that step, wrapped to do the other writer's work there and then carry
+// on. Tests in this file run one at a time, and every hook is restored in `finally`.
+
+// Put a fresh entry at `p` under a NEW inode, as another writer's O_EXCL create after its remove would:
+// created beside the old entry first, while the old inode still holds its number, and renamed over the
+// name. An unlink and then a create hands the new file the old number back on this filesystem, and the
+// inode check under test would pass it as the entry judged.
+function replaceAt(p, content) {
+  const tmp = `${p}.fresh`;
+  fs.writeFileSync(tmp, content, { flag: 'wx' });
+  fs.renameSync(tmp, p);
+}
+
+test('a dead breaker\'s claim replaced by another breaker\'s fresh claim after the judging look is left alone: the waiter waits behind the live breaker instead of breaking beside it', () => {
+  const w = world(false);
+  const claim = `${w.lockPath}.break`;
+  const gone = deadPid();
+  const t = Date.now();
+  const deadLock = `${gone} ${t}\n`;
+  const deadClaim = `${gone} ${t + 1}\n`;   // not the lock's text, so the hook tells the claim's read from the lock's
+  const fresh = `${process.pid} ${t}\n`;   // the other breaker's claim, live
+  fs.writeFileSync(w.lockPath, deadLock);
+  fs.writeFileSync(claim, deadClaim);
+  const real = fs.readFileSync;
+  let armed = true;
+  fs.readFileSync = function (target, ...rest) {
+    const out = real.call(fs, target, ...rest);
+    // the judging look at the dead claim has read it: before this waiter's unlink, another breaker
+    // removes the dead claim and puts its own at the name
+    if (armed && typeof target === 'number' && out === deadClaim) { armed = false; replaceAt(claim, fresh); }
+    return out;
+  };
+  let ran = false;
+  let err = null;
+  try { withStoreLock(w.storePath, () => { ran = true; }, { waitMs: 150 }); } catch (e) { err = e; } finally { fs.readFileSync = real; }
+  assert.equal(armed, false, 'the dead claim was judged');
+  assert.equal(ran, false, 'the waiter took the lock beside the live breaker');
+  assert.ok(err instanceof StoreLockError, String(err));
+  assert.equal(err.held, true, 'held: a live breaker holds the claim');
+  assert.equal(fs.readFileSync(claim, 'utf8'), fresh, 'the fresh claim was removed');
+  assert.equal(fs.readFileSync(w.lockPath, 'utf8'), deadLock, 'the dead lock is untouched under the live claim');
+  assert.deepEqual(fs.readdirSync(w.dir).sort(), [path.basename(w.lockPath), path.basename(claim)]);
+});
+
+test('a stale lock replaced by a fresh writer\'s lock after the breaker\'s judging look is left alone under the claim: the breaker waits behind that writer', () => {
+  const w = world(false);
+  const claim = `${w.lockPath}.break`;
+  const deadLock = `${deadPid()} ${Date.now()}\n`;
+  const fresh = `${process.pid} ${Date.now()}\n`;   // the writer that took the lock next, live
+  fs.writeFileSync(w.lockPath, deadLock);
+  const real = fs.readFileSync;
+  let armed = true;
+  fs.readFileSync = function (target, ...rest) {
+    const out = real.call(fs, target, ...rest);
+    // the breaker's judging look, under its claim (the waiter's own look before the claim is not it):
+    // the stale holder releases and a fresh writer takes the lock before the breaker's unlink
+    if (armed && typeof target === 'number' && out === deadLock && fs.existsSync(claim)) { armed = false; replaceAt(w.lockPath, fresh); }
+    return out;
+  };
+  let ran = false;
+  let err = null;
+  try { withStoreLock(w.storePath, () => { ran = true; }, { waitMs: 150 }); } catch (e) { err = e; } finally { fs.readFileSync = real; }
+  assert.equal(armed, false, 'the lock was judged under the claim');
+  assert.equal(ran, false, 'the breaker removed the fresh lock and entered beside its writer');
+  assert.ok(err instanceof StoreLockError, String(err));
+  assert.equal(err.held, true, 'held: a live writer holds the lock');
+  assert.equal(fs.readFileSync(w.lockPath, 'utf8'), fresh, 'the fresh lock stands');
+  assert.equal(fs.existsSync(claim), false, 'the breaker released its claim');
+  assert.deepEqual(fs.readdirSync(w.dir), [path.basename(w.lockPath)]);
+});
+
+// ── the folder made for a lock, at a wait given up (second round) ───
+
+test('a maker that gives up waiting hands the folder it made to the lock that outwaited it: the line lands on that lock, and the folder goes with that lock', () => {
+  const w = world(true);
+  const foreign = `${process.pid} ${Date.now()}\n`;   // a live writer's stamp (this process's pid), never judged dead
+  const real = fs.mkdirSync;
+  let made = 0;
+  fs.mkdirSync = function (target, ...rest) {
+    const r = real.call(fs, target, ...rest);
+    // another writer's first write on this sidecar takes the lock in the folder this maker just made
+    if (target === w.dir) { made++; fs.writeFileSync(w.lockPath, foreign, { flag: 'wx' }); }
+    return r;
+  };
+  let ran = false;
+  let err = null;
+  const t0 = Date.now();
+  try { withStoreLock(w.storePath, () => { ran = true; }, { waitMs: 100 }); } catch (e) { err = e; } finally { fs.mkdirSync = real; }
+  assert.equal(made, 1, 'the maker made the folder once');
+  assert.equal(ran, false);
+  assert.ok(err instanceof StoreLockError, String(err));
+  assert.equal(err.held, true);
+  assert.ok(Date.now() - t0 >= 100, 'the maker waited out the bound');
+  assert.ok(fs.existsSync(w.dir), 'the folder stays while the other lock is in it');
+  assert.equal(fs.readFileSync(w.lockPath, 'utf8'), `${foreign}made-dir\n`, 'the handover line is on the lock that outwaited the maker');
+  assert.deepEqual(fs.readdirSync(w.dir), [path.basename(w.lockPath)], 'nothing else of the maker\'s is left');
+  // that holder dies with the line on its lock: the next writer breaks it, inherits the duty and takes the folder away
+  fs.writeFileSync(w.lockPath, `${deadPid()} ${Date.now()}\nmade-dir\n`);
+  withStoreLock(w.storePath, () => 'ran');
+  assert.equal(fs.existsSync(w.dir), false, 'the folder went with the handed lock');
+});
+
+test('a maker that gives up waiting as the lock that outwaited it is released takes the empty folder away', () => {
+  const w = world(true);
+  const realNow = Date.now;
+  const foreign = `${process.pid} ${realNow()}\n`;
+  const realMkdir = fs.mkdirSync;
+  const realRead = fs.readFileSync;
+  let made = false;
+  let jumped = false;
+  let released = false;
+  fs.mkdirSync = function (target, ...rest) {
+    const r = realMkdir.call(fs, target, ...rest);
+    if (target === w.dir) { made = true; fs.writeFileSync(w.lockPath, foreign, { flag: 'wx' }); }
+    return r;
+  };
+  // The clock the wait reads jumps past the bound (and short of the stale bound) at the first look after
+  // the folder was made, so that look is the maker's last and it gives up right after it, whatever the
+  // box's pace ...
+  Date.now = function () {
+    const t = realNow();
+    if (made && !jumped) { jumped = true; return t + 1000; }
+    return t;
+  };
+  // ... and the other holder releases between that look and the give-up.
+  fs.readFileSync = function (target, ...rest) {
+    const out = realRead.call(fs, target, ...rest);
+    if (jumped && !released && typeof target === 'number' && out === foreign) { released = true; fs.unlinkSync(w.lockPath); }
+    return out;
+  };
+  let ran = false;
+  let err = null;
+  try {
+    withStoreLock(w.storePath, () => { ran = true; }, { waitMs: 100 });
+  } catch (e) {
+    err = e;
+  } finally {
+    Date.now = realNow; fs.mkdirSync = realMkdir; fs.readFileSync = realRead;
+  }
+  assert.deepEqual({ made, jumped, released }, { made: true, jumped: true, released: true }, 'the interleaving ran as written');
+  assert.equal(ran, false);
+  assert.ok(err instanceof StoreLockError, String(err));
+  assert.equal(err.held, true);
+  assert.equal(fs.existsSync(w.dir), false, 'an empty folder stayed behind the maker that gave up');
+});
+
+// ── a line before the stamp, a line after the look (second round) ───
+
+test('a handover line put on the lock between its create and its stamp keeps its place: the stamp appends after it, the holder honors it, and a waiter finds the stamp behind it', () => {
+  // the maker's release lands the line on this writer's lock the instant the name appears, before the stamp
+  const w = world(false);   // a folder this writer did not make: only the line makes it this writer's to remove
+  const real = fs.fstatSync;
+  let armed = true;
+  fs.fstatSync = function (target, ...rest) {
+    const st = real.call(fs, target, ...rest);
+    // the first fstat on the lock's inode is the holder's own, between the create and the stamp
+    if (armed && typeof target === 'number' && fs.existsSync(w.lockPath) && Number(st.ino) === fs.statSync(w.lockPath).ino) {
+      armed = false;
+      fs.appendFileSync(w.lockPath, 'made-dir\n');
+    }
+    return st;
+  };
+  let seen = null;
+  try { withStoreLock(w.storePath, () => { seen = fs.readFileSync(w.lockPath, 'utf8'); }); } finally { fs.fstatSync = real; }
+  assert.equal(armed, false, 'the line landed before the stamp');
+  assert.match(seen, /^made-dir\n\d+ \d+\n$/, 'the stamp took the line\'s place');
+  assert.equal(fs.existsSync(w.lockPath), false);
+  assert.equal(fs.existsSync(w.dir), false, 'the holder did not honor the line put before its stamp');
+  // a waiter judges such a lock by the stamp behind the line: a dead pid's is broken at once, not held to the
+  // bound by its fresh mtime, and the breaker inherits the line
+  const w2 = world(false);
+  fs.writeFileSync(w2.lockPath, `made-dir\n${deadPid()} ${Date.now()}\n`);
+  let ran = false;
+  let err = null;
+  const t0 = Date.now();
+  try { withStoreLock(w2.storePath, () => { ran = true; }, { waitMs: 1000 }); } catch (e) { err = e; }
+  assert.equal(err, null, `the waiter did not find the stamp behind the line and held the dead lock to the bound: ${err && err.message}`);
+  assert.equal(ran, true);
+  assert.ok(Date.now() - t0 < 1000, `the waiter waited ${Date.now() - t0} ms behind a dead lock`);
+  assert.equal(fs.existsSync(w2.dir), false, 'the breaker of the dead lock inherited the line on it');
+});
+
+test('a handover line landing between the holder\'s look and its unlink is read back through the holder\'s own descriptor and honored', () => {
+  const w = world(false);   // a folder this writer did not make
+  const real = fs.unlinkSync;
+  let armed = true;
+  fs.unlinkSync = function (target, ...rest) {
+    // the release's look has passed; the maker's line lands as the unlink is called
+    if (armed && target === w.lockPath) { armed = false; fs.appendFileSync(w.lockPath, 'made-dir\n'); }
+    return real.call(fs, target, ...rest);
+  };
+  try { assert.equal(withStoreLock(w.storePath, () => 'ran'), 'ran'); } finally { fs.unlinkSync = real; }
+  assert.equal(armed, false, 'the line landed at the unlink');
+  assert.equal(fs.existsSync(w.lockPath), false, 'released');
+  assert.equal(fs.existsSync(w.dir), false, 'the line landing after the look was not read back, and the folder stayed');
+});
+
+test('the breaker\'s claim honors the line the same way: put on it between its create and its stamp, or between the breaker\'s look at it and its unlink', () => {
+  // between the claim's create and its stamp
+  const w = world(false);
+  const claim = `${w.lockPath}.break`;
+  fs.writeFileSync(w.lockPath, `${deadPid()} ${Date.now()}\n`);
+  const realFstat = fs.fstatSync;
+  let armed = true;
+  fs.fstatSync = function (target, ...rest) {
+    const st = realFstat.call(fs, target, ...rest);
+    // the first fstat on the claim's inode is the breaker's own, between the create and the stamp
+    if (armed && typeof target === 'number' && fs.existsSync(claim) && Number(st.ino) === fs.statSync(claim).ino) {
+      armed = false;
+      fs.appendFileSync(claim, 'made-dir\n');
+    }
+    return st;
+  };
+  let ran = false;
+  try { withStoreLock(w.storePath, () => { ran = true; }); } finally { fs.fstatSync = realFstat; }
+  assert.equal(armed, false, 'the line landed before the claim\'s stamp');
+  assert.equal(ran, true);
+  assert.equal(fs.existsSync(claim), false);
+  assert.equal(fs.existsSync(w.dir), false, 'the stamp took the line\'s place on the claim, and the folder stayed');
+  // between the breaker's look at its claim and its unlink
+  const w2 = world(false);
+  const claim2 = `${w2.lockPath}.break`;
+  fs.writeFileSync(w2.lockPath, `${deadPid()} ${Date.now()}\n`);
+  const realUnlink = fs.unlinkSync;
+  let armed2 = true;
+  fs.unlinkSync = function (target, ...rest) {
+    if (armed2 && target === claim2) { armed2 = false; fs.appendFileSync(claim2, 'made-dir\n'); }
+    return realUnlink.call(fs, target, ...rest);
+  };
+  let ran2 = false;
+  try { withStoreLock(w2.storePath, () => { ran2 = true; }); } finally { fs.unlinkSync = realUnlink; }
+  assert.equal(armed2, false, 'the line landed at the claim\'s unlink');
+  assert.equal(ran2, true);
+  assert.equal(fs.existsSync(claim2), false);
+  assert.equal(fs.existsSync(w2.dir), false, 'the line landing after the breaker\'s look was not read back, and the folder stayed');
 });

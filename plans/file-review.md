@@ -2854,11 +2854,11 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tools/file-comments-host-read-under-lock.test.mjs` (a comment sent while a `track-edit` has renamed its sidecar
   and not yet written the file waits and is placed in the text the edit left, a whole-file comment carrying the
   edited file's clock and fingerprint); `tools/track-comment-race.test.mjs` (six real `track-comment` processes on
-  one note at one instant, the first round on a root with no `.trackchanges/` yet: every comment lands and the
-  folder holds the sidecar alone; three comments and three replies to one thread at once; the source: the save
-  inside the lock); `tests/test_kernel_file_comments_host_env.py` (the kernel hands the host its environment minus
-  `TRACKCHANGES_ROOT` and every `FILE_COMMENTS_*` variable, so a pause seam exported in the kernel's shell never
-  reaches a reject or a save: against the function, a stub host and the real host);
+  one file at one instant, the first round on a root with no `.trackchanges/` yet: every comment lands and the
+  folder holds the sidecar alone; three comments and three replies to one earlier comment at once; the source:
+  the save inside the lock); `tests/test_kernel_file_comments_host_env.py` (the kernel hands the host its environment
+  minus `TRACKCHANGES_ROOT` and every `FILE_COMMENTS_*` variable, so a pause seam exported in the kernel's shell
+  never reaches a reject or a save: against the function, a stub host and the real host);
   `ui/webview/file-comments-save-busy.test.ts` (the editor's Save through the panel refused `busy`: one status
   re-read and one retry with the fresh fence, the success applied as the status; no retry on a second `busy` or
   when the re-read shows other records, the refusal handed to the viewer with its code and the host's words);
@@ -2869,11 +2869,24 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   anchor is found exactly once; `tools/file-comments-host-landed.test.mjs` reads the sidecar's lock as the first
   thing a save creates under `.trackchanges/`, so a folder that cannot be written to refuses `unreadable` on the
   lock; `tools/file-comments-host-store-lock.test.mjs` holds its header's 220 ms before-figure equal to decision
-  49's. `tools/file-review-plan-sidecar-records.test.mjs` holds this bullet's inventory to the tree both ways:
-  every module it names is in the tree, and every test module under `tools/`, `ui/webview/` or `tests/` that cites
-  decision 49 or 50 is named here, so a later round's module cannot land unrecorded; it also holds the panel
+  49's; `tools/0002-file-comments-in-the-track-changents-sidecar-lock-names.test.mjs` (the second round's module
+  for the ADR's lock bullet, `docs/adr/0002`, which the first round had left naming one file: the bullet's two
+  names, `<name>.lock` and `<name>.lock.break`, and its one `made-dir` line held to the constants `store-io.mjs`
+  defines, so a name or a line that one side has and the other lacks fails; and the lock run in a scratch root:
+  a live claim beside a dead lock governs the waiter and a dead claim goes with the break, the write seeing the
+  lock alone, and the maker of the folder writes the line into a real holder's lock, which that holder honors at
+  its own release). `tools/file-review-plan-sidecar-records.test.mjs` holds this bullet's inventory to the tree both
+  ways: every module it names is in the tree, and every test module under `tools/`, `ui/webview/` or `tests/` that
+  cites decision 49 or 50 is named here, so a later round's module cannot land unrecorded; it also holds the panel
   section's Errors bullet (the codes that offer Reload) to the panel and the viewer, and the Security posture's two
-  lock names and one line to `store-io.mjs`.
+  lock names and one line to `store-io.mjs`. That scan goes by citation, and the ADR's module cites the ADR and
+  not the decision, so it landed in the commit that built the scan and was named nowhere in this plan (found in
+  the review's third round, 2026-09-11): `tools/file-review-plan-sidecar-adr-modules.test.mjs` holds every module
+  named for an ADR (under `tools/`, an ADR's number and slug and then what the module tests) to this bullet and
+  to decision 49 by its name, whatever it cites, and holds this bullet and decision 49 to the plan's vocabulary:
+  the `track-comment` race is run on a file and its replies land on a comment, and the two words `CONTEXT.md`
+  sets aside under File comment (the forked side session's and the send's paragraph's) appear in neither record,
+  where the second round had written both.
 
 ## Docs
 
@@ -3259,8 +3272,10 @@ document stands on its own, each with the reasoning it was given.
     another non-file at the lock's name, or at the claim's while a stale lock stands, is a lock that cannot be
     taken: the host refuses `unreadable` naming it, the CLIs print its line and exit 1, and nothing is followed or
     removed. The two names and that line are everything the lock leaves under `.trackchanges/`
-    (`tools/store-io-lock.test.mjs`). `track-edit`, `track-comment` and
-    `track-reply` take it around their load-to-rename (`track-edit` from the file read through the file write and
+    (`tools/store-io-lock.test.mjs`; the ADR's lock bullet, `docs/adr/0002`, is held to the same names and line
+    and to the lock run in a scratch root by
+    `tools/0002-file-comments-in-the-track-changents-sidecar-lock-names.test.mjs`). `track-edit`, `track-comment`
+    and `track-reply` take it around their load-to-rename (`track-edit` from the file read through the file write and
     the edit turn it adds to the comment it answers) and, when it is not obtained, print `another editor is writing this file; retry` and exit 1
     with nothing written; their `fail()` throws to the entry point so a held lock is released. That part is
     vendor patch 0008, written as offerable to the engine's author and held back from the offer by the
@@ -3284,11 +3299,13 @@ document stands on its own, each with the reasoning it was given.
     fence and never `unreadable`; `tools/file-comments-host-read-under-lock.test.mjs` a comment sent between a
     `track-edit`'s two writes, placed in the text the edit left; `tools/file-comments-host-config-lock.test.mjs`
     `set-tracked` against a held `config.json.lock`; `tools/track-comment-race.test.mjs` six real `track-comment`
-    processes on one note at one instant, every comment landing; `tools/vendor-patches.test.mjs` (P8) the CLIs' refusal and
+    processes on one file at one instant, every comment landing; `tools/vendor-patches.test.mjs` (P8) the CLIs' refusal and
     their release on a failure; `ui/webview/file-comments-changes-review2.test.ts` the panel's `busy`;
     `ui/webview/file-comments-save-busy.test.ts` the editor's Save through the panel refused `busy`, one retry and
-    no more; `tools/file-review-plan-sidecar.test.mjs` holds this record and decision 50 to the source, and
-    `tools/file-review-plan-sidecar-records.test.mjs` the records' inventory to the tree.
+    no more; `tools/file-review-plan-sidecar.test.mjs` holds this record and decision 50 to the source,
+    `tools/file-review-plan-sidecar-records.test.mjs` the records' inventory to the tree, and
+    `tools/file-review-plan-sidecar-adr-modules.test.mjs` the ADR-named modules to the Tests bullet and to this
+    record by name, and both records to the glossary's words for a file and a comment.
 50. **The clock a reply carries is taken before the read** (2026-09-11). The same probe found the panel's poll
     blind to a write 11 times in 147 rounds. The host read the sidecar and then stat'ed it for the reply's
     `storeMtimeNs`, so a write landing between the two gave the panel the writer's clock over the earlier bytes;
