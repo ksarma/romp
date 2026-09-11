@@ -4485,11 +4485,13 @@ def seeded_auth(defaults: dict, key: bool, unavailable=None) -> str:
 
 def new_session_auth(state_dir, key: bool, unavailable=None) -> str:
     """The side a session spawned now with no explicit pick would bill: the seed spawn would write
-    (seeded_auth), else the unpicked rule (unpicked_auth). The kernel's readers of a row that reports
-    nothing take this (_bills_login's fallback, _auth_avail's picker default), one function, one order
-    (review round 1, 2026-09-09: the two kernel readers read the declaration before the key while the
-    backend read it after, so a keyed box declaring login seeded the picker on Login for sessions that
-    launched keyed). `unavailable`: the backend's pick_unavailable when the caller has one (seeded_auth)."""
+    (seeded_auth), else the unpicked rule (unpicked_auth). The kernel's one reader of a row that reports
+    nothing takes this (_auth_avail's picker default), one function, one order (review round 1, 2026-09-09:
+    the two kernel readers of the time read the declaration before the key while the backend read it after,
+    so a keyed box declaring login seeded the picker on Login for sessions that launched keyed);
+    _bills_login, the spend pause's reader of such a row, reads not _auth_key_present() instead (the
+    2026-09-10 fold, ruling K2). `unavailable`: the backend's pick_unavailable when the caller has one
+    (seeded_auth)."""
     return seeded_auth(read_sdk_defaults(Path(state_dir)), key, unavailable) or unpicked_auth(state_dir, key)
 
 
@@ -12603,10 +12605,10 @@ class SdkBackend:
 
     def new_session_auth(self) -> str:
         """new_session_auth over this backend's state dir, key availability (key_available) and availability check
-        (pick_unavailable): the side a session spawned now with no explicit pick would bill, for the kernel's
-        readers of a row that reports nothing (_bills_login's fallback, _auth_avail's picker default). Called
-        directly there, never through a getattr guard: a backend without this method is a bug to surface, not a
-        login box."""
+        (pick_unavailable): the side a session spawned now with no explicit pick would bill, for the kernel's one
+        reader of a row that reports nothing (_auth_avail's picker default; _bills_login's fallback reads not
+        _auth_key_present() instead). Called directly there, never through a getattr guard: a backend without
+        this method is a bug to surface, not a login box."""
         return new_session_auth(self.state_dir, self.key_available, self.pick_unavailable)
 
     def auth_unavailable_why(self, side: str) -> str:

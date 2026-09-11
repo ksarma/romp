@@ -17712,8 +17712,10 @@ def _auth_key_present():
     Claude Code's settings (the SDK backend's key_available: read, never run). A bool on purpose: romp holds
     no key since 2026-09-08, and before that no fragment of one ever left the kernel for a label (the user
     2026-08-08). Cheap: four stats behind the backend singleton, safe per-push.
-    Readers that need the side a session BILLS take the CLI's own report (authLive) first and the backend's
-    unpicked rule (_unpicked_default) for a row with none (fork, review round 1, 2026-09-09)."""
+    Readers that need the side a session BILLS take the CLI's own report (authLive) first and the registry's
+    auth next; a row with none bills the login only when this is false (_bills_login, the spend pause's
+    reader). The backend's unpicked rule (_unpicked_default) has one kernel reader, _auth_avail's picker
+    default (fork, review round 1, 2026-09-09; the 2026-09-10 fold, ruling K2)."""
     be = _sdk()
     return bool(getattr(be, "key_available", False)) if be else False
 
