@@ -42,5 +42,12 @@ must live in the second file.
   whole by the other editors. romp never writes the format's own `suggestionId`, the key the other
   editors set on a comment their change answers, and reads one it finds as the change that answered
   the comment.
+- Since 2026-09-11 one transient file sits beside a sidecar, or beside `config.json`, for the length
+  of a write: `<name>.lock`, holding the writer's pid and a timestamp. The vendored CLIs and romp's
+  host take it around their load-to-rename, so a writer arriving mid-write waits for the other's
+  rename instead of erasing its write (vendor patch 0008; decision 49 in `plans/file-review.md`).
+  It is outside the format (its name does not end in `.json`, so no host reads it as a sidecar), it
+  is broken when its writer is dead or it is older than fifteen seconds, and it is removed when the
+  write ends.
 - A romp-only field is read defensively wherever it is read: the sidecar is JSON anyone can edit,
   and a field of the wrong shape must claim nothing rather than fail the panel.

@@ -357,7 +357,8 @@ figure's hash, `comment` with a `target` and `retarget`, also fence on the figur
 and a mismatch refuses `figure-changed`. This key is optional where the mtime keys are not: a
 caller has no hash for a figure no reply has hashed yet, so a request naming none is checked on the
 mtime fences alone, and a value that is not a sha256 hex is a caller bug, refused before any disk
-read. A moved fence refuses, and the client re-issues `status`, re-renders, and retries by stable
+read. A moved fence refuses, as does `busy` (another writer held the host's lock past its wait, decision
+49), and the client re-issues `status`, re-renders, and retries by stable
 change or comment id, surfacing a second refusal verbatim. `figure-changed` is not retried, because
 a retry would stamp the new bytes: the person is told to reload and draw the region on the picture
 as it is now. Nothing merges. Two limits on the retry, from the Slice 2 build (2026-09-06):
@@ -376,7 +377,9 @@ containing the phrase "file editing is off", the regex the viewer already matche
 comments: cannot write the comments for the file, dashboard file editing is off on this machine),
 `store-moved`, `file-moved`, `config-moved`, `unsupported-version`, `corrupt`, `unreadable` (with
 the OS error text), `anchor-not-found`, `anchor-ambiguous`, `tracked-inherited`, `no-comment`,
-`too-large`, and from Slice 3 `figure-mismatch` (the anchored passage does not embed the `src` the
+`too-large`, `busy` (the lock on the sidecar, or on `config.json` for `set-tracked`, still held by another
+writer after the host's two-second wait; the client handles it as a moved fence, decision 49), and from
+Slice 3 `figure-mismatch` (the anchored passage does not embed the `src` the
 target names), `no-figure` (a re-place of a src-less anchored target whose passage embeds no
 figure, or several distinct ones) and `figure-changed` (the figure's bytes are not the ones the
 request's `figureHash` says were shown). There is no `no-root` code: a file with no landmark above
@@ -454,7 +457,11 @@ file, and restores the prior sidecar bytes (or removes the sidecar it created, w
 if the file write fails, the order `track-edit` uses (`cli/track-edit.mjs:108-128`); its file
 write is atomic (temp file and rename in the same directory, through the realpath, mode
 preserved, with a temporary name that does not end in `.json` so the other hosts' scans skip it) and applies the same 2 MB and UTF-8 checks as `_save_file`, refusing `too-large`
-before any write. When `findVaultRoot` finds no landmark above the file (`store-io.mjs:43-54` walks up to forty
+before any write. Every verb that writes holds store-io's lock on the file it writes, from its fence
+stat through its last rename or prune, the lock the vendored CLIs hold around their own
+load-to-rename, and refuses `busy` when the lock is still held after two seconds; every clock a
+reply carries (`storeMtimeNs`, `configMtimeNs`) is taken before the bytes it describes are read,
+never at reply time (decisions 49 and 50). When `findVaultRoot` finds no landmark above the file (`store-io.mjs:43-54` walks up to forty
 parents and returns null), `status` answers `root: null, storePath: null, trackedBy: null, store:
 null` and the panel still offers Comment on this file and Track changes; `comment` and `set-tracked` then create `.trackchanges/` beside the file
 and call `findVaultRoot` again, which now returns the file's directory, and the CLIs resolve the
@@ -622,7 +629,9 @@ a session runs through Bash, extracts the paths it would write (cp, mv, install 
 `>` and `>>` redirections, `sed -i` and `perl -i` files, a path a python or node inline script
 opens for writing), resolves them against the session's working directory, and refuses when one is
 a tracked text file, naming the file and track-edit; a read never trips it and a command it cannot
-read through passes (decision 47).
+read through passes (decision 47). An eighth patch (2026-09-11) adds the per-sidecar lock to `store-io.mjs` and its take to
+`track-edit`, `track-comment` and `track-reply` (decision 49); written as offerable, it is held back
+from the offer under the standing word of that day to open nothing new upstream.
 
 ### The comments log
 
@@ -2103,8 +2112,9 @@ the posture is unchanged in kind. `fileComments` is issuable from any authentica
 before any content check; the server-side gate is the enforcement and the UI's checks are
 convenience. The host script runs only on the owning kernel, on paths resolved by the kernel (and, from
 Slice 3, on the figure paths the next paragraph describes, the one class of path it resolves
-itself), and writes only the sidecar, the comments log, `config.json`, and (on reject or save) the
-commented file. The mtime fences refuse and never merge. Both ops route by `sid` to the owning
+itself), and writes only the sidecar, the comments log, `config.json`, (on reject or save) the
+commented file, and, for the length of one write, the lock beside the sidecar or the config
+(`<name>.lock`, decision 49), created with O_EXCL, which no link can redirect. The mtime fences refuse and never merge. Both ops route by `sid` to the owning
 kernel over the existing federation splice; nothing new is exempt from `_authorize`, and the
 panel's verdict rides the authenticated `/defaults` payload rather than `/version`. Nothing under
 `.trackchanges/` is read or written through a symbolic link: the sidecar, the comments log and
@@ -2204,7 +2214,9 @@ slice, pinned against the code by `ui/webview/file-review-posture.test.ts`:
 
 - **Two writers on one sidecar** (agent CLIs and the host script). Mitigation: one
   load-mutate-write per verb, mtime fences, refuse-and-reload, retry by stable id while the change
-  still reads as shown (the id-less verbs stop and re-read). The Obsidian
+  still reads as shown (the id-less verbs stop and re-read), and since 2026-09-11 one lock per
+  sidecar, shared with the CLIs, that serializes the writers (decision 49); the fences catch the
+  stale copy, the lock the concurrent writer. The Obsidian
   host spends several hundred lines on this race; the fence-plus-retry shape is the smaller
   alternative. The comments log has one writer, the host script, appending.
 - **Rendered markdown versus offsets.** Mitigation: Raw is exact; Rendered maps through the
@@ -2796,6 +2808,21 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   to one another; `tests/test_guide_files_bash_guard.py` holds the guide's Track changes sentence on the refusal
   to the hook's grammar.
 
+- The sidecar lock and the clocks (2026-09-11, decisions 49 and 50): `tools/file-comments-host-store-lock.test.mjs`
+  (the host's `comment` and the real `track-reply` against a writer mid-write, the `busy` refusal and the CLIs' one
+  line with nothing written, a dead writer's lock broken, and `withStoreLock` itself: the stamp, the release on
+  return and on throw, the folder made for the lock and taken away, a non-lock at its name refused);
+  `tools/file-comments-host-race.test.mjs` (a `track-edit` inside a reject's write through the
+  `FILE_COMMENTS_TEST_PAUSE_MS` seam: both land; the seam is read in one place, inert when unset, never set by the
+  kernel); `tools/file-comments-host-clocks.test.mjs` (a newer sidecar and a newer config landed right after the
+  first read, the read-back after a comment, a prune answering null with a null clock, and the source: every
+  reader clocks first and the reply stats nothing); `tools/vendor-patches.test.mjs` (P8: the three CLIs' refusal
+  under a held lock, the release on a failure, no folder left by a refused first comment);
+  `ui/webview/file-comments-changes-review2.test.ts` (Accept refused `busy`: one retry by id with the fresh fence,
+  the row verbatim with Reload on a second; Accept all refused `busy`: re-read, nothing decided);
+  `tools/file-review-plan-sidecar.test.mjs` (decisions 49 and 50, the host paragraph, the codes list, the
+  Vendoring sentence, this bullet and the ADR held to the source and the tree).
+
 ## Docs
 
 `docs/guide.md`: "Reviewing a document" (`:29-45`) becomes a section on file comments and tracked
@@ -3155,6 +3182,53 @@ document stands on its own, each with the reasoning it was given.
     asked, the person's own commits stay theirs, and nothing on the host stages or commits (the user did not
     choose staging). `tests/test_guide_files_commit_folder.py` holds the four texts to one another;
     `tests/test_session_prompt.py` pins the sentence.
+
+49. **One writer per sidecar at a time** (2026-09-11). The lost-update probe (2026-09-09) ran the real host and
+    the real vendored CLIs against one file and lost one write in five at a stagger of 4 to 20 ms. Every writer
+    loads the sidecar, changes the object and renames a temp over it; a second writer whose load fell before the
+    first's rename saved a store without the first's change, and its rename erased it. A `track-edit` between a
+    reject's sidecar rename and its file rename lost its text the same way, to the reject's rename. A stat before
+    the rename narrows the window without closing it, and a lock in the host alone leaves the CLIs overwriting, so
+    the user said yes to one lock per sidecar shared by both (2026-09-11). `withStoreLock(storePath, fn)` in the
+    vendored `store-io.mjs` creates `<sidecar>.lock` with O_EXCL holding `pid ts`, sleeps 2 to 5 ms and retries
+    for up to 2 s while it is held, breaks a lock whose writer is dead or whose stamp is older than 15 s (the
+    kernel kills a host at 10 s), and unlinks it in `finally`; the `.trackchanges/` folder is made for the lock
+    when it is missing and removed again when nothing else landed in it. `track-edit`, `track-comment` and
+    `track-reply` take it around their load-to-rename (`track-edit` from the file read through the file write and
+    the edit turn it adds to the comment it answers) and, when it is not obtained, print `another editor is writing this file; retry` and exit 1
+    with nothing written; their `fail()` throws to the entry point so a held lock is released. That part is
+    vendor patch 0008, written as offerable to the engine's author and held back from the offer by the
+    standing word of 2026-09-11 to open nothing new upstream. The host takes the same lock from its fence stat through its
+    last rename or prune (`underStoreLock`): the sidecar's for `comment`, `reply`, `resolve`, `retarget`,
+    `accept`, `reject` and `save`; `config.json`'s own for `set-tracked`, since that verb writes the root's list,
+    which every file under the root shares. A loose file takes it after its landmark and checks its `""` fence
+    again under it, and every reply is built after the release from a store read back under the lock. The mtime
+    fences stay: the lock serializes the writers, the fences catch the panel's stale copy, so every writer loads
+    after the previous writer's rename and a stale copy always refuses. A lock still held after the wait refuses
+    `busy` with nothing changed; the panel handles `busy` as it handles a moved fence (`MOVED`): a fresh status,
+    one retry by id (the id-less verbs re-read and say nothing was decided), and the refusal verbatim with Reload
+    on a second. `tools/file-comments-host-store-lock.test.mjs` drives the host and `track-reply` against a
+    writer mid-write (before the lock, each answered about 220 ms before the holder saved, and the holder's save
+    erased its write), the refusal and the stale lock; `tools/file-comments-host-race.test.mjs` a `track-edit`
+    inside a reject's write, through `FILE_COMMENTS_TEST_PAUSE_MS`, a test seam at the file's rename that is
+    inert unless set and that the kernel never sets; `tools/vendor-patches.test.mjs` (P8) the CLIs' refusal and
+    their release on a failure; `ui/webview/file-comments-changes-review2.test.ts` the panel's `busy`;
+    `tools/file-review-plan-sidecar.test.mjs` holds this record and decision 50 to the source.
+50. **The clock a reply carries is taken before the read** (2026-09-11). The same probe found the panel's poll
+    blind to a write 11 times in 147 rounds. The host read the sidecar and then stat'ed it for the reply's
+    `storeMtimeNs`, so a write landing between the two gave the panel the writer's clock over the earlier bytes;
+    the poll compared that clock with the disk's, saw no difference, and the panel kept a store one write
+    behind until something else moved it. `configMtimeNs` had the same shape. The user said yes to the host
+    clocking each file before it reads it (2026-09-11): `loadOrRefuse` and `loadFile` stat the sidecar first
+    (`loadFile` decides from that clock whether there is a sidecar to read), `configStatus` stats `config.json`
+    first, a prune sets the sidecar's clock to null as of the prune, and `set-tracked` stamps the config's with
+    its own write, under its lock. The reply carries those clocks (`clockOf`) and stats nothing under
+    `.trackchanges/`; a verb that reaches the reply without a clock is a program error, never a stat at reply
+    time. The clock the panel baselines from is therefore never newer than the bytes it was given, so a write in
+    the remaining gap makes the next poll refresh once, or the next write refuse `store-moved`.
+    `tools/file-comments-host-clocks.test.mjs` interposes the read so a newer sidecar, and a newer config, land
+    right after the first read (before: the reply carried the disk's newer clock over bytes without the write),
+    and a newer sidecar in the instant after a prune (before: a later writer's clock beside a null store).
 
 ## Open questions for the user
 
