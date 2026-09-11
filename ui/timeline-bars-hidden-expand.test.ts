@@ -207,6 +207,34 @@ test("two wire bars that spell the same id and fields take two expanded objects,
   done(panel);
 });
 
+test("a duplicate takes a fresh object whichever match found the original first, positional or by id", () => {
+  // The consumed set must cover both kinds of hit: a positional hit at k followed by a by-id lookup resolving to k,
+  // and a by-id hit at k followed by the positional match at k.
+  const { panel } = mk();
+  resetCounts();
+  panel.update(skeleton());
+  panel.applyBars(fullFrame());
+  // (i) [A0, A0', A1, ...]: A0 matches at its position, then A0' resolves by id to that same index
+  const b1 = board(); b1.turns[SIDS[2]].splice(1, 0, JSON.parse(JSON.stringify(b1.turns[SIDS[2]][0])));
+  panel.applyBars(fullFrame(b1, 1));
+  let lane = panel.data.turns[SIDS[2]];
+  assert.equal(lane.length, LANE_COUNTS[2] + 1);
+  assert.deepEqual(lane[0], lane[1]); assert.notEqual(lane[0], lane[1], "the duplicate is its own object");
+  assert.equal(new Set(lane).size, lane.length);
+  assert.deepEqual(counts(), { bars: TOTAL_BARS + 1, judging: TOTAL_JUDGING }, "the duplicate alone is expanded afresh");
+  assert.deepEqual(panel.data.turns, ref(() => expandBars(b1.turns)));
+  // (ii) [A1, A1', A2, ...]: A1 is found by id at index 1, then A1' would match index 1 positionally
+  const b2 = board(); const l2 = b2.turns[SIDS[2]]; l2.shift(); l2.splice(1, 0, JSON.parse(JSON.stringify(l2[0])));
+  panel.applyBars(fullFrame(b2, 2));
+  lane = panel.data.turns[SIDS[2]];
+  assert.equal(lane.length, LANE_COUNTS[2]);
+  assert.deepEqual(lane[0], lane[1]); assert.notEqual(lane[0], lane[1], "the duplicate is its own object");
+  assert.equal(new Set(lane).size, lane.length);
+  assert.deepEqual(counts(), { bars: TOTAL_BARS + 2, judging: TOTAL_JUDGING }, "again the duplicate alone");
+  assert.deepEqual(panel.data.turns, ref(() => expandBars(b2.turns)));
+  done(panel);
+});
+
 test("the judging band reuses its entries the same way: one changed entry expands one entry", () => {
   const { panel } = mk();
   panel.update(skeleton());

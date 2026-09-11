@@ -661,20 +661,27 @@ function sameWire(a, b) {
 // `keyField` when the lane was reordered; every other object is expanded by `expandOne`. When every position
 // reused, the previous expanded ARRAY comes back, so a per-lane cache keyed on it keeps hitting. Exact: nothing
 // is reused unless the wire says the same thing, and a previous expanded object is handed out once: two wire
-// bars that spell the same id and fields (a duplicate) take two distinct objects, as the eager expansion built.
+// bars that spell the same id and fields (a duplicate) take two distinct objects, as the eager expansion built,
+// whether the positional match or the by-key fallback found the first of them.
 function reuseLane(lane, prev, expandOne, keyField) {
   if (!prev || !Array.isArray(prev.wire) || !Array.isArray(prev.ex) || prev.wire.length !== prev.ex.length) return lane.map(expandOne);
   const pw = prev.wire, pe = prev.ex, out = new Array(lane.length);
+  // `taken` holds the previous indices already handed out. It exists only once a by-key lookup is needed (an
+  // unchanged lane matches every position and allocates nothing); it is seeded with the positional hits so far
+  // (out[k] === pe[k], since no by-key hit precedes it), and from then on every hit of either kind lands in it.
   let same = pw.length === lane.length, byKey = null, taken = null;
   for (let i = 0; i < lane.length; i++) {
     const b = lane[i];
-    let j = (i < pw.length && (pw[i] === b || sameWire(pw[i], b))) ? i : -1;
+    let j = (i < pw.length && !(taken && taken.has(i)) && (pw[i] === b || sameWire(pw[i], b))) ? i : -1;
     if (j < 0 && b && typeof b === 'object' && b[keyField] != null) {
-      if (!byKey) { byKey = new Map(); for (let k = 0; k < pw.length; k++) { const w = pw[k]; const kk = w && typeof w === 'object' ? w[keyField] : undefined; if (kk != null && !byKey.has(kk)) byKey.set(kk, k); } }
+      if (!byKey) {
+        byKey = new Map(); for (let k = 0; k < pw.length; k++) { const w = pw[k]; const kk = w && typeof w === 'object' ? w[keyField] : undefined; if (kk != null && !byKey.has(kk)) byKey.set(kk, k); }
+        taken = new Set(); for (let k = 0; k < i; k++) if (out[k] === pe[k]) taken.add(k);
+      }
       const k = byKey.get(b[keyField]);
-      if (k !== undefined && !(taken && taken.has(k)) && sameWire(pw[k], b)) { j = k; (taken ||= new Set()).add(k); }
+      if (k !== undefined && !taken.has(k) && sameWire(pw[k], b)) j = k;
     }
-    if (j >= 0) { out[i] = pe[j]; if (j !== i) same = false; } else { out[i] = expandOne(b); same = false; }
+    if (j >= 0) { out[i] = pe[j]; if (taken) taken.add(j); if (j !== i) same = false; } else { out[i] = expandOne(b); same = false; }
   }
   return same ? pe : out;
 }
