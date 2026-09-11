@@ -828,6 +828,7 @@ export class FederationManager {
   private perHostFeedAt: Record<string, number> = {}; // host -> local ms its snapshot ARRIVED (feed or the delta that updated it): the merged frame's clock anchor (mergeHostFeeds `nowAt`), so a re-emit anchors exactly as the arrival did
   private perHostTl: Record<string, any> = {}; //   last timeline lanes payload ({type:"data"}.data) per host
   private perHostTlBars: Record<string, any> = {}; // last timeline {type:"bars"} detail per host
+  private tlBarsHeld = false; // a bars emission waited for the LOCAL lanes skeleton: their arrival emits it (emitMergedTimeline)
   private hostSeq: string[] = [LOCAL]; // local first, then attach order — fixes the group order in the strip
   private downHosts = new Set<string>(); // attached, but its tunnel isn't up: what's on screen is a memory
   // each host's recovery counter as last seen (/tunnels upSeq, T291b): the kernel bumps it when a row that had
@@ -1156,6 +1157,7 @@ export class FederationManager {
       }
       this.ensureHost(host);
       this.emitMergedTimeline(false);
+      if (this.tlBarsHeld) this.emitMergedTimeline(true);   // the bars detail that arrived ahead of these lanes lands with them
       return;
     }
     if (m && m.type === "bars") {
@@ -1235,6 +1237,12 @@ export class FederationManager {
     // panel's fitWindow turned into a permanently-NaN window (every bar/axis x = NaN; the "stub lane
     // lines, no bars" bug, 2026-07-15). The local kernel pushes on connect, so the hold is momentary,
     // and the local arrival itself emits (event-based, no timer).
+    // A BARS emission held here is remembered, and the lanes' arrival emits it (2026-09-11). The pane shim's
+    // dispatch queue keeps one frame per whole-state type and a newer skeleton takes the queue's END, so a page
+    // that falls behind a burst (a slow machine, a throttled tab) receives [bars, data]: the bars were held here
+    // until the kernel's NEXT bars push and the pane showed its loader over the lanes meanwhile. The panel's own
+    // parking of a bars frame ahead of its skeleton (applyBars) sits below this hold and was never reached.
+    if (bars && !(LOCAL in this.perHostTl)) this.tlBarsHeld = true;
     if (!(LOCAL in this.perHostTl)) return;
     // The BARS emission holds for the LOCAL bars snapshot too (2026-08-17, the after-attach "most of
     // my sessions vanished" report): at page boot with hosts already attached, a remote's bars can
@@ -1248,6 +1256,7 @@ export class FederationManager {
       ? mergeHostBars(this.perHostTlBars, this.hostSeq, mergeHostTimelines(this.perHostTl, this.hostSeq, this.view()).sessions)
       : { type: "data", data: mergeHostTimelines(this.perHostTl, this.hostSeq, this.view(), this.deadHosts()) };
     this.emit(data);
+    if (bars) this.tlBarsHeld = false;   // spent: a later skeleton alone re-emits no bars
   }
 
   // Every caller re-emits WITHOUT touching the stored arrangement — a drag landing here through the

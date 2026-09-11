@@ -14,7 +14,7 @@
 //      data, so the output path must be under /tmp and outside any git checkout; the tool refuses
 //      anything else.
 //
-//   2. --replay <app> --frames FILE [--cpu-throttle K] [--iters N] [--fast] [--json OUT] [--cpu-profile OUT]
+//   2. --replay <app> --frames FILE [--cpu-throttle K] [--iters N] [--fast] [--hidden] [--json OUT] [--cpu-profile OUT]
 //      Serve the pane page and its bundles from the built dist and replay the recorded frames into a
 //      headless Chromium at their recorded pacing (or back-to-back with --fast), measuring per frame
 //      the bytes, the synchronous socket-handler time, the dispatch time (the shim's handoff of the frame
@@ -24,11 +24,23 @@
 //      entries with script attribution (the task's entry point: the message handler, a rAF, a timer,
 //      a script's evaluation; not the bundle function), JS heap after a forced GC, DOM size, and page
 //      console errors. --cpu-profile OUT.cpuprofile samples the page's JavaScript with the V8 profiler
-//      across the replay, writes a file Chrome DevTools loads, and prints the functions with the most
-//      self and total time (with their source positions through the dist's .map files, and for the
-//      hottest functions the lines that hold the time), overall and inside the first content frame and
-//      the largest frame of each type (a frame's window is its handler span joined with its dispatch
+//      across the replay, and under --hidden through the return step after it (the catch-up paint the
+//      hidden regime moves there), writes a file Chrome DevTools loads, and prints the functions with
+//      the most self and total time (with their source positions through the dist's .map files, and for
+//      the hottest functions the lines that hold the time), overall and inside the first content frame
+//      and the largest frame of each type (a frame's window is its handler span joined with its dispatch
 //      span): the attribution the long-animation-frame entries cannot give.
+//
+//      --hidden replays into a page that reports itself hidden (document.visibilityState "hidden",
+//      document.hidden true, from before any page script runs): the regime of a dashboard tab in the
+//      background, where the panes hold their paint and the timeline stops its live tick, so the
+//      per-frame columns hold the frame handling alone. Chromium itself still renders the page (the
+//      settle stamps land), so the numbers are the frame work under the hold, not the browser's
+//      background throttling. After the last frame the page is shown again (visibilitychange), and
+//      the report carries that return's synchronous dispatch: the panes' catch-up paint plus the pane
+//      shim's and federation's own return handlers (the stale decision, the watchdog pass). The report also
+//      carries the timeline view's count of expanded wire objects (bars, judging entries) where the
+//      page exposes it, before and after the return.
 //
 //      Serving design: the REAL kernel HTTP Handler runs in a python3 subprocess under an isolated
 //      environment, the pattern of tests/test_color_route.py with the floors tests/conftest.py applies:
@@ -58,7 +70,11 @@
 //      frame is not synthesized: build_session's shape is too rich to fake faithfully, so record it from
 //      the live kernel.
 //
-//   --compare A.json B.json prints the deltas between two replay reports.
+//   --compare A.json B.json prints the deltas between two replay reports, each side named with its
+//   regime (fast or paced, hidden or not), plus the timeline's expansion counts and the hidden return
+//   where the reports carry them. A hidden report against a visible one measures different work (the
+//   hidden page holds its paint and pays it at the return), so the compare prints one line saying so
+//   instead of deltas and exits 1.
 //
 // Run from the repo root; playwright and ws come from vscode-extension/node_modules. Examples:
 //   node tools/ui-bench.mjs --synthesize feed --cards 200 --out /tmp/romp-perf/synth-feed.jsonl
@@ -807,6 +823,10 @@ const INIT_SCRIPT = `
     return { start: e.startTime, duration: e.duration, blocking: e.blockingDuration, renderStart: e.renderStart, styleAndLayoutStart: e.styleAndLayoutStart,
       scripts: Array.from(e.scripts || [], (s) => ({ url: s.sourceURL || "", fn: s.sourceFunctionName || "", invoker: s.invoker || "", invokerType: s.invokerType || "", duration: s.duration, line: s.sourceCharPosition })) };
   }
+  // The timeline view's count of expanded wire objects, where the page exposes it: the kernel's timeline page
+  // evaluates the view through a page-level module shim (var module = {exports: {}}), so its exports are
+  // reachable as window.module.exports; other panes have no counter and report null.
+  R.expandCounts = () => { try { const m = window.module && window.module.exports && window.module.exports._expandCounts; return m ? { bars: m.bars, judging: m.judging } : null; } catch (e) { return null; } };
   R.collect = () => {
     if (R.obs) for (const e of R.obs.takeRecords()) R.loaf.push(R.loafKind === "long-animation-frame" ? loafRow(e) : { start: e.startTime, duration: e.duration, blocking: Math.max(0, e.duration - 50), scripts: [] });
     const mem = performance.memory ? { used: performance.memory.usedJSHeapSize, total: performance.memory.totalJSHeapSize, limit: performance.memory.jsHeapSizeLimit } : null;
@@ -816,6 +836,20 @@ const INIT_SCRIPT = `
   };
 })();
 //# sourceURL=ui-bench-instrument.js
+`;
+
+// --hidden: the page reports itself hidden from before any script runs. Document.prototype's accessors
+// are replaced so every reader (the shim, federation, the pane bundles) sees one answer, and
+// window.__rompBenchHidden.show() flips it for the return step, which then dispatches visibilitychange
+// the way the browser does on a tab's return.
+const HIDDEN_SCRIPT = `
+(() => {
+  const H = window.__rompBenchHidden = { state: "hidden", show() { this.state = "visible"; } };
+  const proto = Document.prototype;
+  Object.defineProperty(proto, "visibilityState", { configurable: true, enumerable: true, get() { return H.state; } });
+  Object.defineProperty(proto, "hidden", { configurable: true, enumerable: true, get() { return H.state === "hidden"; } });
+})();
+//# sourceURL=ui-bench-hidden.js
 `;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -863,7 +897,7 @@ export async function launchBrowser({ tmpRoot } = {}) {
   }
 }
 
-async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, token, cpuProfile = false, log }) {
+async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, token, cpuProfile = false, hidden = false, log }) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const consoleErrors = [], pageErrors = [];
@@ -872,6 +906,7 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, toke
   page.on("pageerror", (e) => pageErrors.push(String((e && e.message) || e)));
   const failedResources = [];
   page.on("response", (resp) => { if (resp.status() >= 400) failedResources.push(`${resp.status()} ${new URL(resp.url()).pathname}`); });
+  if (hidden) await page.addInitScript(HIDDEN_SCRIPT);
   await page.addInitScript(INIT_SCRIPT);
   const cdp = await context.newCDPSession(page);
   await cdp.send("Performance.enable");
@@ -953,6 +988,28 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, toke
   }
   await waitFor(async () => page.evaluate(() => { const R = window.__rompBench; return R.recs.every((r) => r.settle >= 0) && R.dispatches.every((d) => d.settleAt !== -1); }), 10_000, "every frame's settle stamp").catch((e) => log(`ui-bench: ${e.message}`));
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
+  // The expansion counts the replay itself produced, before any return step reads the held frames.
+  const expand = await page.evaluate(() => window.__rompBench.expandCounts());
+  // --hidden: the tab comes back. The synchronous cost of the visibilitychange dispatch is the panes'
+  // catch-up paint (the timeline's _releasePaintHold draws the held frames once) plus the pane shim's
+  // return handler (its stale decision and diag row) and federation's foreground watchdog pass, the
+  // same in every tree; the expansion counts after it say what that paint expanded.
+  let hiddenReturn = null;
+  if (hidden) {
+    hiddenReturn = await page.evaluate(() => {
+      const counts = window.__rompBench.expandCounts;
+      const before = counts();
+      window.__rompBenchHidden.show();
+      const t0 = performance.now();
+      document.dispatchEvent(new Event("visibilitychange"));
+      const ms = performance.now() - t0;
+      return { ms, before, after: counts() };
+    });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
+  }
+  // The profile ends here, after the return step: under --hidden the catch-up paint is the work the regime moves to
+  // the return, and a profile stopped before it held none of that work (2026-09-11). The frame windows are time
+  // ranges from the frames' own records, and the return lies outside every one of them.
   if (profiling) {
     profiling.profile = (await cdp.send("Profiler.stop")).profile;
     await cdp.send("Profiler.disable");
@@ -982,6 +1039,7 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, toke
       layoutMs: (met.LayoutDuration || 0) * 1000, recalcStyleMs: (met.RecalcStyleDuration || 0) * 1000, scriptMs: (met.ScriptDuration || 0) * 1000,
       taskMs: (met.TaskDuration || 0) * 1000, heapUsed: met.JSHeapUsedSize, heapTotal: met.JSHeapTotalSize },
     consoleErrors, pageErrors, warnings, failedResources,
+    hidden: !!hidden, expand, hiddenReturn,
   };
 }
 
@@ -1126,6 +1184,16 @@ const roundStats = (s) => ({ n: s.n, p50: round1(s.p50), p90: round1(s.p90), max
 
 /** Fold one or more replay runs into the report shape --json writes and --compare reads. */
 export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser, runs, cpuProfileFiles = [], sourceMapDir = null }) {
+  const hidden = runs.some((r) => r.hidden);
+  const expandRuns = runs.map((r) => r.expand).filter(Boolean);
+  const meanOf = (xs) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null);
+  const expand = expandRuns.length ? { bars: meanOf(expandRuns.map((e) => e.bars)), judging: meanOf(expandRuns.map((e) => e.judging)) } : null;
+  const returns = runs.map((r) => r.hiddenReturn).filter(Boolean);
+  const hiddenReturn = returns.length ? {
+    ms: round1(returns.reduce((a, r) => a + r.ms, 0) / returns.length), maxMs: round1(Math.max(...returns.map((r) => r.ms))),
+    expandBars: returns.every((r) => r.before && r.after) ? meanOf(returns.map((r) => r.after.bars - r.before.bars)) : null,
+    expandJudging: returns.every((r) => r.before && r.after) ? meanOf(returns.map((r) => r.after.judging - r.before.judging)) : null,
+  } : null;
   const frames = runs.flatMap((r) => r.perFrame);
   const byType = {};
   let inline = 0, deferred = 0;
@@ -1152,8 +1220,11 @@ export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser
   const sum = (xs) => xs.reduce((a, b) => a + (b || 0), 0);
   const disp = runs.map((r) => r.dispatch || {});
   return {
-    tool: "ui-bench", version: 1, app, framesFile, cpuThrottle: cpuThrottle || 1, fast: !!fast, iters: runs.length, browser,
+    tool: "ui-bench", version: 1, app, framesFile, cpuThrottle: cpuThrottle || 1, fast: !!fast, hidden, iters: runs.length, browser,
     generatedAt: new Date().toISOString(),
+    // The timeline view's count of wire objects expanded during the replay (null where the page has no counter), and
+    // under --hidden the return step: the visibilitychange dispatch's synchronous ms and what its catch-up paint expanded.
+    expand, hiddenReturn,
     frames: { total: runs[0].perFrame.length, bytes: runs[0].perFrame.reduce((a, f) => a + f.bytes, 0), replayMs: round1(mean(runs.map((r) => r.replayMs))),
       readyMs: round1(mean(runs.map((r) => r.readyMs))), reconnects: runs.reduce((a, r) => a + r.reconnects, 0), misaligned: runs.reduce((a, r) => a + r.misaligned, 0),
       settleMissing, addListenerMessages: runs.reduce((a, r) => a + (r.addListenerMessages || 0), 0),
@@ -1187,7 +1258,7 @@ export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser
   };
 }
 
-export async function replay({ app, framesFile, cpuThrottle = 1, iters = 1, fast = false, dist, jsonOut, cpuProfile, log = console.error }) {
+export async function replay({ app, framesFile, cpuThrottle = 1, iters = 1, fast = false, hidden = false, dist, jsonOut, cpuProfile, log = console.error }) {
   if (!APP_CAPS[app]) throw new Error(`unknown app ${app}; one of ${APPS.join(", ")}`);
   const { frames } = loadFrames(framesFile);
   if (!frames.length) throw new Error(`no frames in ${framesFile}`);
@@ -1208,8 +1279,8 @@ export async function replay({ app, framesFile, cpuThrottle = 1, iters = 1, fast
     browser = await launchBrowser({ tmpRoot: pageServer.tmp });
     const runs = [];
     for (let i = 0; i < iters; i++) {
-      log(`ui-bench: replaying ${frames.length} frames into app=${app} (${fast ? "back-to-back" : "recorded pacing"}, cpu x${cpuThrottle})${iters > 1 ? ` iteration ${i + 1}/${iters}` : ""}`);
-      runs.push(await replayOnce({ browser, app, frames, fast, cpuThrottle, front, token: pageServer.token, cpuProfile: !!cpuProfile, log }));
+      log(`ui-bench: replaying ${frames.length} frames into app=${app} (${fast ? "back-to-back" : "recorded pacing"}, cpu x${cpuThrottle}${hidden ? ", page hidden" : ""})${iters > 1 ? ` iteration ${i + 1}/${iters}` : ""}`);
+      runs.push(await replayOnce({ browser, app, frames, fast, cpuThrottle, front, token: pageServer.token, cpuProfile: !!cpuProfile, hidden: !!hidden, log }));
     }
     const cpuProfileFiles = cpuProfile ? writeProfiles(cpuProfile, runs) : [];
     const report = buildReport({ app, framesFile, cpuThrottle, fast, iters, browser: browser.version(), runs, cpuProfileFiles, sourceMapDir: dist || path.join(EXT_DIR, "dist") });
@@ -1592,7 +1663,7 @@ const stats3 = (s) => `${fmtMs(s.p50)} / ${fmtMs(s.p90)} / ${fmtMs(s.max)}`;
 
 export function renderReport(r) {
   const out = [];
-  out.push(`ui-bench ${r.app}: ${r.frames.total} frames, ${fmtBytes(r.frames.bytes)}, replay ${fmtMs(r.frames.replayMs)} ms (${r.fast ? "back-to-back" : "recorded pacing"}), cpu x${r.cpuThrottle}, ${r.iters} iteration${r.iters === 1 ? "" : "s"}, ${r.browser}`);
+  out.push(`ui-bench ${r.app}: ${r.frames.total} frames, ${fmtBytes(r.frames.bytes)}, replay ${fmtMs(r.frames.replayMs)} ms (${r.fast ? "back-to-back" : "recorded pacing"}${r.hidden ? ", page hidden" : ""}), cpu x${r.cpuThrottle}, ${r.iters} iteration${r.iters === 1 ? "" : "s"}, ${r.browser}`);
   out.push(`page ready (navigation to the bundle's handshake): ${fmtMs(r.frames.readyMs)} ms${r.frames.reconnects ? `; shim reconnects during replay: ${r.frames.reconnects}` : ""}${r.frames.misaligned ? `; frames whose page record did not match in length: ${r.frames.misaligned}` : ""}`);
   if (r.first) out.push(`first content frame: ${r.first.type}, ${fmtBytes(r.first.bytes)}, handler ${fmtMs(r.first.handlerMs)} ms, dispatch ${r.first.dispatchMs == null ? "-" : fmtMs(r.first.dispatchMs) + " ms"}, settled ${fmtMs(r.first.settleMs)} ms`);
   out.push("");
@@ -1614,6 +1685,8 @@ export function renderReport(r) {
   for (const s of r.loaf.topScripts) out.push(`  ${fmtMs(s.durationMs).padStart(8)} ms  x${String(s.count).padEnd(4)} ${s.key}`);
   out.push(`end state: JS heap ${fmtBytes(r.end.heapUsed)} used of ${fmtBytes(r.end.heapTotal)} after a forced GC; DOM ${r.end.domElements} elements (${r.end.cdpNodes} nodes, ${r.end.jsEventListeners} listeners)`);
   out.push(`  cumulative since navigation (page load and idle timers included; the timeline redraws every animation frame while it follows now): ${r.end.layoutCount} layouts ${fmtMs(r.end.layoutMs)} ms; ${r.end.recalcStyleCount} style recalcs ${fmtMs(r.end.recalcStyleMs)} ms; script ${fmtMs(r.end.scriptMs)} ms; tasks ${fmtMs(r.end.taskMs)} ms`);
+  if (r.expand) out.push(`timeline expansion during the replay (wire objects the view long-named): ${r.expand.bars} bars, ${r.expand.judging} judging entries per run`);
+  if (r.hiddenReturn) out.push(`return of the hidden page (the visibilitychange dispatch: the catch-up paint plus the shim's and federation's return handlers): ${fmtMs(r.hiddenReturn.ms)} ms mean, ${fmtMs(r.hiddenReturn.maxMs)} ms max${r.hiddenReturn.expandBars != null ? `; it expanded ${r.hiddenReturn.expandBars} bars, ${r.hiddenReturn.expandJudging} judging entries` : ""}`);
   out.push(`console: ${r.console.errors.length} errors, ${r.console.pageErrors.length} uncaught exceptions, ${r.console.warnings} warnings`);
   for (const e of r.console.errors.slice(0, 10)) out.push(`  error: ${e.slice(0, 300)}`);
   for (const e of r.console.pageErrors.slice(0, 10)) out.push(`  uncaught: ${e.slice(0, 300)}`);
@@ -1633,7 +1706,10 @@ function delta(a, b) {
 }
 
 /** The differences between two replay reports: per-type timing percentiles, long-animation-frame
- *  totals, and end state. Pure arithmetic over the JSON shape, no browser. */
+ *  totals, end state, and the timeline's expansion counts and hidden return where the reports carry
+ *  them. Pure arithmetic over the JSON shape, no browser. Each side's regime rides along (hidden); two
+ *  reports from different regimes measure different work, so sameRegime is false and renderCompare
+ *  prints no deltas for them. */
 export function compareReports(a, b) {
   const types = {};
   for (const type of new Set([...Object.keys(a.types || {}), ...Object.keys(b.types || {})])) {
@@ -1649,9 +1725,14 @@ export function compareReports(a, b) {
   // long the page sat there: a percentage between runs of different pacing or length says nothing.
   const replayMs = [a.frames?.replayMs ?? null, b.frames?.replayMs ?? null];
   const sameLength = replayMs[0] > 0 && replayMs[1] > 0 && Math.max(replayMs[0] / replayMs[1], replayMs[1] / replayMs[0]) <= 1.25;
-  const endComparable = !!a.fast === !!b.fast && sameLength;
+  // The regime: a report written before --hidden existed carries no field and reads as a visible page, so two
+  // older reports still compare. A hidden page holds its paint and pays it at the return, so its per-frame
+  // columns and its cumulative counters measure different work from a visible page's.
+  const hidden = [!!a.hidden, !!b.hidden];
+  const sameRegime = hidden[0] === hidden[1];
+  const endComparable = sameRegime && !!a.fast === !!b.fast && sameLength;
   return {
-    apps: [a.app, b.app], cpuThrottle: [a.cpuThrottle, b.cpuThrottle], fast: [a.fast, b.fast], replayMs, endComparable,
+    apps: [a.app, b.app], cpuThrottle: [a.cpuThrottle, b.cpuThrottle], fast: [a.fast, b.fast], hidden, sameRegime, replayMs, endComparable,
     first: { bytes: delta(a.first?.bytes, b.first?.bytes), handlerMs: delta(a.first?.handlerMs, b.first?.handlerMs), dispatchMs: delta(a.first?.dispatchMs ?? null, b.first?.dispatchMs ?? null),
       settleMs: delta(a.first?.settleMs, b.first?.settleMs) },
     types,
@@ -1659,6 +1740,10 @@ export function compareReports(a, b) {
     end: { heapUsed: delta(a.end?.heapUsed, b.end?.heapUsed), domElements: delta(a.end?.domElements, b.end?.domElements), layoutCount: delta(a.end?.layoutCount, b.end?.layoutCount),
       scriptMs: delta(a.end?.scriptMs, b.end?.scriptMs), taskMs: delta(a.end?.taskMs, b.end?.taskMs) },
     console: { errors: [a.console?.errors?.length ?? 0, b.console?.errors?.length ?? 0] },
+    // the timeline view's expansion counts and the hidden return: both sides null where neither report carries them
+    expand: { bars: delta(a.expand?.bars ?? null, b.expand?.bars ?? null), judging: delta(a.expand?.judging ?? null, b.expand?.judging ?? null) },
+    hiddenReturn: { ms: delta(a.hiddenReturn?.ms ?? null, b.hiddenReturn?.ms ?? null), maxMs: delta(a.hiddenReturn?.maxMs ?? null, b.hiddenReturn?.maxMs ?? null),
+      expandBars: delta(a.hiddenReturn?.expandBars ?? null, b.hiddenReturn?.expandBars ?? null), expandJudging: delta(a.hiddenReturn?.expandJudging ?? null, b.hiddenReturn?.expandJudging ?? null) },
   };
 }
 
@@ -1673,9 +1758,17 @@ const fmtDelta = (d, unit = "", { pct = true } = {}) => {
 // A field neither report carries (the dispatch columns of reports written before they existed) prints n/a.
 const fmtOpt = (d, unit = "") => (!d || (d.a == null && d.b == null) ? "n/a" : fmtDelta(d, unit));
 
+const regimeOf = (c, i) => `cpu x${c.cpuThrottle[i]}, ${c.fast[i] ? "fast" : "paced"}${c.hidden && c.hidden[i] ? ", hidden" : ""}`;
+
 export function renderCompare(c) {
   const out = [];
-  out.push(`compare: ${c.apps[0]} (cpu x${c.cpuThrottle[0]}, ${c.fast[0] ? "fast" : "paced"}) → ${c.apps[1]} (cpu x${c.cpuThrottle[1]}, ${c.fast[1] ? "fast" : "paced"})`);
+  out.push(`compare: ${c.apps[0]} (${regimeOf(c, 0)}) → ${c.apps[1]} (${regimeOf(c, 1)})`);
+  if (c.sameRegime === false) {
+    // One line, no deltas: a hidden page holds its paint and pays it at the return, so every column measures
+    // different work from a visible page's; a percentage across the two would read as a change in the code.
+    out.push(`the two reports are from different regimes (${c.hidden[0] ? "hidden" : "visible"} page → ${c.hidden[1] ? "hidden" : "visible"} page): a hidden page holds its paint and pays it at the return, so the frame columns and the counters measure different work; no deltas are printed`);
+    return out.join("\n");
+  }
   out.push(`first content frame: bytes ${fmtDelta(c.first.bytes)}; handler ${fmtDelta(c.first.handlerMs, " ms")}; dispatch ${fmtOpt(c.first.dispatchMs, " ms")}; settled ${fmtDelta(c.first.settleMs, " ms")}`);
   for (const [type, t] of Object.entries(c.types)) {
     out.push(`${type.padEnd(14)} count ${fmtDelta(t.count)}; settle p50 ${fmtDelta(t.settleP50, " ms")}, p90 ${fmtDelta(t.settleP90, " ms")}, max ${fmtDelta(t.settleMax, " ms")}; handler p50 ${fmtDelta(t.handlerP50, " ms")}; dispatch p50 ${fmtOpt(t.dispatchP50, " ms")}`);
@@ -1684,6 +1777,10 @@ export function renderCompare(c) {
   const pct = { pct: c.endComparable !== false };
   out.push(`end state: heap ${fmtDelta(c.end.heapUsed, " B")}; DOM elements ${fmtDelta(c.end.domElements)}; layouts ${fmtDelta(c.end.layoutCount, "", pct)}; script ${fmtDelta(c.end.scriptMs, " ms", pct)}; tasks ${fmtDelta(c.end.taskMs, " ms", pct)}`);
   if (c.endComparable === false) out.push(`  layouts, script and tasks are cumulative since navigation and the runs differ in pacing or length (replay ${fmtNum(c.replayMs?.[0])} → ${fmtNum(c.replayMs?.[1])} ms), so they carry no percentage`);
+  // the timeline's expansion counts, and under --hidden the return: printed where either report carries them
+  const carried = (d) => d && (d.a != null || d.b != null);
+  if (c.expand && carried(c.expand.bars)) out.push(`timeline expansion during the replay: bars ${fmtOpt(c.expand.bars)}; judging entries ${fmtOpt(c.expand.judging)}`);
+  if (c.hiddenReturn && carried(c.hiddenReturn.ms)) out.push(`return of the hidden page: ${fmtOpt(c.hiddenReturn.ms, " ms")} mean, ${fmtOpt(c.hiddenReturn.maxMs, " ms")} max; it expanded bars ${fmtOpt(c.hiddenReturn.expandBars)}, judging entries ${fmtOpt(c.hiddenReturn.expandJudging)}`);
   out.push(`console errors: ${c.console.errors[0]} → ${c.console.errors[1]}`);
   return out.join("\n");
 }
@@ -1692,7 +1789,7 @@ export function renderCompare(c) {
 
 const USAGE = `usage:
   node tools/ui-bench.mjs --record <app> --seconds N --out /tmp/…/frames.jsonl [--port P]
-  node tools/ui-bench.mjs --replay <app> --frames FILE [--cpu-throttle K] [--iters N] [--fast] [--json OUT] [--dist DIR] [--cpu-profile OUT.cpuprofile]
+  node tools/ui-bench.mjs --replay <app> --frames FILE [--cpu-throttle K] [--iters N] [--fast] [--hidden] [--json OUT] [--dist DIR] [--cpu-profile OUT.cpuprofile]
   node tools/ui-bench.mjs --synthesize <app> --cards N --out FILE [--seed S]
   node tools/ui-bench.mjs --compare A.json B.json
 apps: ${APPS.join(", ")} (synthesize: feed, fleet, waiting, timeline)`;
@@ -1703,7 +1800,7 @@ export function parseArgs(argv) {
     const a = argv[i];
     if (!a.startsWith("--")) { o._.push(a); continue; }
     const key = a.slice(2);
-    const flags = new Set(["fast", "help"]);
+    const flags = new Set(["fast", "hidden", "help"]);
     if (flags.has(key)) { o[key] = true; continue; }
     const v = argv[i + 1];
     if (v === undefined || v.startsWith("--")) throw new Error(`--${key} needs a value`);
@@ -1733,7 +1830,7 @@ async function main(argv) {
   }
   if (o.replay) {
     if (!o.frames) throw new Error("--replay needs --frames FILE");
-    const report = await replay({ app: o.replay, framesFile: o.frames, cpuThrottle: num("cpu-throttle", 1), iters: num("iters", 1), fast: !!o.fast, dist: o.dist, jsonOut: o.json, cpuProfile: o["cpu-profile"] });
+    const report = await replay({ app: o.replay, framesFile: o.frames, cpuThrottle: num("cpu-throttle", 1), iters: num("iters", 1), fast: !!o.fast, hidden: !!o.hidden, dist: o.dist, jsonOut: o.json, cpuProfile: o["cpu-profile"] });
     console.log(renderReport(report));
     return 0;
   }
@@ -1741,8 +1838,9 @@ async function main(argv) {
     const b = o._[0];
     if (!b) throw new Error("--compare needs two report files: --compare A.json B.json");
     const A = JSON.parse(fs.readFileSync(o.compare, "utf8")), B = JSON.parse(fs.readFileSync(b, "utf8"));
-    console.log(renderCompare(compareReports(A, B)));
-    return 0;
+    const c = compareReports(A, B);
+    console.log(renderCompare(c));
+    return c.sameRegime === false ? 1 : 0;   // a hidden report against a visible one: the line above says so, no deltas
   }
   console.log(USAGE);
   return 2;

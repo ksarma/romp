@@ -608,15 +608,19 @@ function dragAxis(dx, dy, threshold) {
 // and the work-bar click so the two landings can never drift apart again.
 // THE WIRE BAR (T278c): the kernel sends a bar as {id, start, end} plus one-letter keys with every default
 // omitted, and the judging band per lane as compact entries (see kernel/kernel.py _BAR_WIRE / _JUDGING_WIRE);
-// the expanders below give every reader the long names it always had, once per frame at the boundary
-// (_mergeBars). A lane array the shim hands back unchanged across a delta expands once and is reused: the
-// per-lane caches keyed on array identity keep working. A long-named bar (an older kernel, a test fixture)
-// passes through with its defaults filled. BAR_WIRE is the kernel's table, byte for byte (a test compares).
+// the expanders below give every reader the long names it always had. Since 2026-09-11 the expansion runs when
+// something first READS data.turns or data.judging (draw(), a hover, a focus jump), not when the frame lands
+// (_bindBars): a pane under the paint hold merges the wire payload and expands nothing until the hold's release
+// draws it once. A lane array the shim hands back unchanged across a delta expands once and is reused (the
+// WeakMap), and a lane that spells the same bars as the last expansion reuses those (reuseLane), so a full frame
+// re-expands only what changed. A long-named bar (an older kernel, a test fixture) passes through with its
+// defaults filled. BAR_WIRE is the kernel's table, byte for byte (a test compares).
 const BAR_WIRE = { p: ['promptId', null], w: ['workId', null], r: ['replyUuid', null], q: ['prompt', ''], c: ['summary', ''],
   m: ['msgCaption', ''], s: ['src', 'typed'], d: ['mids', []], u: ['open', false], t: ['cont', false], a: ['nudgeAuto', false], o: ['romp', false] };
 const JUDGING_WIRE = { j: ['judge', null], kd: ['kind', 'run'], x: ['text', ''], ms: ['ms', 0], in: ['in', 0], out: ['out', 0], s: ['sent', null], r: ['recv', null], u: ['open', false] };
 function expandBar(b) {
   if (!b || typeof b !== 'object') return b;
+  _expandCounts.bars++;
   const out = { id: b.id, start: b.start, end: b.end };
   for (const short in BAR_WIRE) {
     const [name, dflt] = BAR_WIRE[short];
@@ -627,32 +631,107 @@ function expandBar(b) {
   return out;
 }
 const _lanesExpanded = new WeakMap();   // wire lane array -> its expanded array: an untouched lane keeps its identity
-function expandBars(turns) {
-  const out = {};
+// How many wire objects the expanders built since the page loaded: bars (expandBar) and judging entries. Read by
+// the tests and the bench; the cost is one increment per object built.
+const _expandCounts = { bars: 0, judging: 0 };
+// Do two wire objects spell the same fields? Every key of each present in the other with an identical value; a
+// list field (a bar's mids) elementwise. Anything nested deeper says no, so a doubtful pair is expanded afresh,
+// never reused wrongly. The compare allocates nothing, where an expansion allocates the long-named object.
+function sameWire(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  let n = 0;
+  for (const k in b) {
+    n++;
+    const x = a[k], y = b[k];
+    if (x === y) continue;
+    if (Array.isArray(x) && Array.isArray(y) && x.length === y.length) {
+      let same = true;
+      for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) { same = false; break; }
+      if (same) continue;
+    }
+    return false;
+  }
+  for (const k in a) n--;
+  return n === 0;   // a key one has and the other lacks (a default now omitted) is a change
+}
+// One lane of wire objects, expanded against the lane's previous expansion `prev` ({wire, ex}, or null): an object
+// the shim kept (a delta leaves untouched bar objects in place) or one that spells the same fields (sameWire: a
+// full frame is a fresh parse, every object new) takes its expanded twin, found at its old position first and by
+// `keyField` when the lane was reordered; every other object is expanded by `expandOne`. When every position
+// reused, the previous expanded ARRAY comes back, so a per-lane cache keyed on it keeps hitting. Exact: nothing
+// is reused unless the wire says the same thing, and a previous expanded object is handed out once: two wire
+// bars that spell the same id and fields (a duplicate) take two distinct objects, as the eager expansion built,
+// whether the positional match or the by-key fallback found the first of them.
+function reuseLane(lane, prev, expandOne, keyField) {
+  if (!prev || !Array.isArray(prev.wire) || !Array.isArray(prev.ex) || prev.wire.length !== prev.ex.length) return lane.map(expandOne);
+  const pw = prev.wire, pe = prev.ex, out = new Array(lane.length);
+  // `taken` holds the previous indices already handed out. It exists only once a by-key lookup is needed (an
+  // unchanged lane matches every position and allocates nothing); it is seeded with the positional hits so far
+  // (out[k] === pe[k], since no by-key hit precedes it), and from then on every hit of either kind lands in it.
+  let same = pw.length === lane.length, byKey = null, taken = null;
+  for (let i = 0; i < lane.length; i++) {
+    const b = lane[i];
+    let j = (i < pw.length && !(taken && taken.has(i)) && (pw[i] === b || sameWire(pw[i], b))) ? i : -1;
+    if (j < 0 && b && typeof b === 'object' && b[keyField] != null) {
+      if (!byKey) {
+        byKey = new Map(); for (let k = 0; k < pw.length; k++) { const w = pw[k]; const kk = w && typeof w === 'object' ? w[keyField] : undefined; if (kk != null && !byKey.has(kk)) byKey.set(kk, k); }
+        taken = new Set(); for (let k = 0; k < i; k++) if (out[k] === pe[k]) taken.add(k);
+      }
+      const k = byKey.get(b[keyField]);
+      if (k !== undefined && !taken.has(k) && sameWire(pw[k], b)) j = k;
+    }
+    if (j >= 0) { out[i] = pe[j]; if (taken) taken.add(j); if (j !== i) same = false; } else { out[i] = expandOne(b); same = false; }
+  }
+  return same ? pe : out;
+}
+// The lanes, expanded, with `memo` the Map (sid -> {wire, ex}) the previous call built, so a lane that says the
+// same thing as last time is not expanded twice: a full frame after a hold, or one whose lanes did not change,
+// costs a compare per bar and no allocation (2026-09-11: the expansion ran on every frame before the paint hold,
+// and a hidden dashboard paid for it). Returns {out, memo}; expandBars is the memo-less form. The reuse does not
+// reach the lanes of an attached host whose clock skew federation rebases (rebaseHostTimes copies every bar with
+// a per-merge offset that moves with arrival jitter, so start and end differ frame to frame): those expand per
+// visible frame, as before this change; under the hold they still expand nothing.
+function expandBarsMemo(turns, memo) {
+  const out = {}, next = new Map();
   for (const sid in (turns || {})) {
     const lane = turns[sid];
     if (!Array.isArray(lane)) { out[sid] = lane; continue; }
     let ex = _lanesExpanded.get(lane);
-    if (!ex) { ex = lane.map(expandBar); _lanesExpanded.set(lane, ex); }
+    if (!ex) { ex = reuseLane(lane, memo ? memo.get(sid) : null, expandBar, 'id'); _lanesExpanded.set(lane, ex); }
+    next.set(sid, { wire: lane, ex });
     out[sid] = ex;
   }
-  return out;
+  return { out, memo: next };
 }
-function expandJudging(j) {
-  if (Array.isArray(j)) return j;                    // the legacy flat list (an older kernel), or an empty band
-  const out = [];
+function expandBars(turns) { return expandBarsMemo(turns, null).out; }
+function expandJudgingEntry(sid, c) {
+  _expandCounts.judging++;
+  const e = { judge: c.j, sid, t: c.t };
+  if ('t1' in c) e.t1 = c.t1;
+  for (const short in JUDGING_WIRE) { if (short === 'j') continue; const [name, dflt] = JUDGING_WIRE[short]; e[name] = (short in c) ? c[short] : dflt; }
+  return e;
+}
+// The judging band, expanded to its flat list, with `memo` ({lanes: Map sid -> {wire, ex}, order, out}) from the
+// previous call: a lane's entries are reused as reuseLane reuses bars, and when every lane and the lane order came
+// back unchanged the previous flat list itself is returned. Returns {out, memo}; expandJudging is the memo-less form.
+function expandJudgingMemo(j, memo) {
+  if (Array.isArray(j)) return { out: j, memo: null };   // the legacy flat list (an older kernel), or an empty band
+  const out = [], lanes = new Map(), order = [];
+  let same = !!(memo && memo.out);
   for (const sid in (j || {})) {
     const lane = j[sid];
     if (!Array.isArray(lane)) continue;
-    for (const c of lane) {
-      const e = { judge: c.j, sid, t: c.t };
-      if ('t1' in c) e.t1 = c.t1;
-      for (const short in JUDGING_WIRE) { if (short === 'j') continue; const [name, dflt] = JUDGING_WIRE[short]; e[name] = (short in c) ? c[short] : dflt; }
-      out.push(e);
-    }
+    const prev = memo ? memo.lanes.get(sid) : null;
+    const ex = (prev && prev.wire === lane) ? prev.ex : reuseLane(lane, prev, (c) => expandJudgingEntry(sid, c), 'k');
+    if (!prev || ex !== prev.ex) same = false;
+    lanes.set(sid, { wire: lane, ex }); order.push(sid);
+    for (let i = 0; i < ex.length; i++) out.push(ex[i]);
   }
-  return out;
+  if (same && memo.order.length === order.length) { for (let i = 0; i < order.length; i++) if (order[i] !== memo.order[i]) { same = false; break; } } else same = false;
+  return { out: same ? memo.out : out, memo: { lanes, order, out: same ? memo.out : out } };
 }
+function expandJudging(j) { return expandJudgingMemo(j, null).out; }
 function workAnchorOf(t) { return (t && (t.replyUuid || t.workId || t.promptId)) || null; }   // T278b: workId/promptId ARE the work/prompt uuids; the wire no longer repeats them as workUuid/uuid
 
 // Which ATOM of a turn a highlight set covers — `hit(id)` = membership in the active DAG-journey
@@ -1097,6 +1176,13 @@ class TimelinePanel {
     this.host = host;
     this.data = null;
     this.fitted = false;
+    // The bars frame most recently merged, as the wire carried it, and the expanded shape once anything asked for it
+    // (_bindBars, 2026-09-11): {turnsWire, judgingWire, turns, judging}, turns/judging null until read. null while
+    // data.turns is a plain property (no bars frame yet, or an unavailable payload). The memos are what the last
+    // expansion built, so the next reuses whatever the wire repeats (expandBarsMemo / expandJudgingMemo).
+    this._barsLazy = null;
+    this._lanesMemo = null;
+    this._judgingMemo = null;
     // The kernel ships the timeline as a LANES skeleton ({type:"data"}, no turns) then the heavy BARS
     // ({type:"bars"} → applyBars). Until the bars land, the plot area (right of the lane labels) is empty,
     // so draw() paints the romp swirl loader there. Set true the instant applyBars runs (or a full one-shot
@@ -2178,9 +2264,29 @@ class TimelinePanel {
     if (!Number.isFinite(this.data && this.data.now)) return false;
     let e = this.data.now;
     this.data.messages.forEach((m) => { if (m.sent) e = Math.min(e, m.sent); });
-    Object.values(this.data.turns).forEach((ts) => ts.forEach((t) => { if (t.start) e = Math.min(e, t.start); }));
+    Object.values(this._turnsRaw()).forEach((ts) => { if (Array.isArray(ts)) ts.forEach((t) => { if (t.start) e = Math.min(e, t.start); }); });
     this._winSec = Math.min(12 * 3600, Math.max(3600, Math.round((this.data.now - e) * 1.15)));
     return true;
+  }
+  // The lanes as held: the wire payload while nothing has asked for the expanded shape, else the expanded lanes.
+  // Both spell the lane keys and every bar's `start`, which is all the loader latch and the window fit read, so
+  // neither forces the expansion a held pane has not paid for.
+  _turnsRaw() {
+    const L = this._barsLazy;
+    if (L && L.turns === null) return L.turnsWire;
+    return (this.data && this.data.turns) || {};
+  }
+  // Make data.turns and data.judging read from this._barsLazy: the wire payload expands on the first read, through
+  // the memos, and the result is kept for every later read until the next frame rebinds. A write through either
+  // (update()'s carry, a test) lands in the record too. Accessors, so every reader keeps its `this.data.turns`.
+  _bindBars(data) {
+    const L = this._barsLazy;
+    Object.defineProperty(data, 'turns', { configurable: true, enumerable: true,
+      get: () => { if (L.turns === null) { const r = expandBarsMemo(L.turnsWire, this._lanesMemo); this._lanesMemo = r.memo; L.turns = r.out; } return L.turns; },
+      set: (v) => { L.turns = v; } });
+    Object.defineProperty(data, 'judging', { configurable: true, enumerable: true,
+      get: () => { if (L.judging === null) { const r = expandJudgingMemo(L.judgingWire, this._judgingMemo); this._judgingMemo = r.memo; L.judging = r.out; } return L.judging; },
+      set: (v) => { L.judging = v; } });
   }
 
   // Tell the shell the dashboard has first content so it can drop the boot splash (the user 2026-06-26).
@@ -2192,7 +2298,7 @@ class TimelinePanel {
   }
 
   update(data) {
-    if (!data || data.unavailable || !data.sessions) { this.data = data; this.drawMessage(data && data.unavailable ? 'Timeline needs a desktop Obsidian with tmux.' : 'No romp activity.'); this._signalReady(); return; }
+    if (!data || data.unavailable || !data.sessions) { this.data = data; this._barsLazy = null; this.drawMessage(data && data.unavailable ? 'Timeline needs a desktop Obsidian with tmux.' : 'No romp activity.'); this._signalReady(); return; }
     const _only = _rompOnlyTag();   // demo/recording view filter: keep only matching-name lanes (the user 2026-07-14)
     if (_only) data = Object.assign({}, data, { sessions: data.sessions.filter((s) => _rompMatchesOnly(s.name, _only)) });
     // The kernel ships the timeline as TWO messages (the user 2026-06-25): {type:"data"} carries the LANES
@@ -2204,16 +2310,21 @@ class TimelinePanel {
     // applyBars lands. Read the RAW turns BEFORE the prev-carry below back-fills them.
     const ownBars = !!(data.turns && Object.keys(data.turns).length);
     if (ownBars) this._barsLoaded = true;
-    // the wire's shapes are expanded HERE for every payload (T278c), as _mergeBars does for the two-message path:
-    // a full one-shot payload carries compact bars and per-lane judging, and the lanes SKELETON carries judging
-    // as an empty map, which the judge band's draw would otherwise read as a list on a cold start
-    if (ownBars) data.turns = expandBars(data.turns);
-    if (data.judging !== undefined) data.judging = expandJudging(data.judging);
+    // the wire's shapes are expanded for every payload (T278c), as _mergeBars does for the two-message path: a full
+    // one-shot payload carries compact bars and per-lane judging, bound here to expand on their first read
+    // (_bindBars, 2026-09-11); the lanes SKELETON carries judging as an empty map, which the judge band's draw
+    // would otherwise read as a list on a cold start
     if (data.turns) for (const k of Object.keys(data.turns)) this._barsSeen.add(k);
     const prev = this.data;
-    if (prev && (!data.turns || !Object.keys(data.turns).length)) {
-      data.turns = prev.turns || {}; data.judging = prev.judging || [];
+    if (ownBars) {
+      this._barsLazy = { turnsWire: data.turns, judgingWire: data.judging === undefined ? [] : data.judging, turns: null, judging: null };
+      this._bindBars(data);
+    } else if (prev && this._barsLazy) {
+      this._bindBars(data);   // the skeleton carries no bars: the held frame, expanded or not, rides along as it is
       data.messages = prev.messages || [];
+    } else {
+      if (data.judging !== undefined) data.judging = expandJudging(data.judging);
+      if (prev) { data.turns = prev.turns || {}; data.judging = prev.judging || []; data.messages = prev.messages || []; }
     }
     this.data = data;
     if (data.cmapGrad) this._cmapGrad = data.cmapGrad;   // compaction-sweep colormap gradient (persists across the lighter {type:bars} pushes)
@@ -2245,7 +2356,7 @@ class TimelinePanel {
     // BEFORE the fit + draw below so the first paint carries the bars. A skeleton that brought its own turns
     // (a full one-shot) is newer than anything parked before it, so the parked frame is dropped (2026-09-07).
     if (this._pendingBars) { const pb = this._pendingBars; this._pendingBars = null; if (!ownBars) this._mergeBars(pb); }
-    if (!this.fitted && Object.keys(this.data.turns || {}).length && this.fitWindow()) this.fitted = true;   // fit once bars exist (a skeleton-only first paint waits for applyBars); no latch without a clock sample
+    if (!this.fitted && Object.keys(this._turnsRaw()).length && this.fitWindow()) this.fitted = true;   // fit once bars exist (a skeleton-only first paint waits for applyBars); no latch without a clock sample
     // first paint with a chat already open → seed the highlight from it (don't override a later local pick)
     if (this.selectedSid == null) { const sid = this._sidForActiveChat(data.activeChat); if (sid) this.selectedSid = sid; }
     // Feed→timeline HOVER from the FILE (timeline-hover.json — the cross-front-end broadcast channel,
@@ -2323,9 +2434,12 @@ class TimelinePanel {
   // turns/judging/messages, the loader latch, the live edge's clock (2026-09-07). applyBars() paints after
   // it; update() runs it for a frame that was parked ahead of its skeleton.
   _mergeBars(m) {
-    this.data.turns = expandBars(m.turns || {});      // the wire's compact bars, long-named for every reader (T278c)
-    for (const k of Object.keys(this.data.turns)) this._barsSeen.add(k);
-    this.data.judging = expandJudging(m.judging || []);
+    // the wire's compact bars and judging, held as received and long-named for every reader on the first read
+    // (_bindBars, T278c / 2026-09-11): a pane under the paint hold pays the merge and nothing else
+    const turnsWire = m.turns || {};
+    this._barsLazy = { turnsWire, judgingWire: m.judging || [], turns: null, judging: null };
+    this._bindBars(this.data);
+    for (const k of Object.keys(turnsWire)) this._barsSeen.add(k);
     this.data.messages = m.messages || [];
     // (nudges array retired 2026-07-07 payload audit: auto-nudges render from the bar's nudgeAuto)
     // Keep the romp loader up through the COLD warm-up rather than flashing "no romp activity" (the user
@@ -2335,7 +2449,7 @@ class TimelinePanel {
     // real content — a live lane or any turn — or a SETTLED (non-warming) build finalizes the load; a
     // warming-and-empty one leaves _barsLoaded false so draw() keeps showing the loader. A backstop timer
     // drops it regardless, so a genuinely-empty fleet can never trap the loader (CLAUDE.md loader rule).
-    const hasContent = Object.keys(this.data.turns).some((k) => (this.data.turns[k] || []).length)
+    const hasContent = Object.keys(turnsWire).some((k) => (turnsWire[k] || []).length)
       || (this.data.sessions || []).some((s) => s.live);
     if (!(m && m.warming) || hasContent) {
       this._barsLoaded = true;
@@ -2350,7 +2464,7 @@ class TimelinePanel {
       this.data.now = (this._newestNow != null) ? this._newestNow : m.now;
       this._anchorNow(this.data.now);
     }
-    if (!this.fitted && Object.keys(this.data.turns).length && this.fitWindow()) this.fitted = true;   // no latch without a clock sample (see fitWindow)
+    if (!this.fitted && Object.keys(turnsWire).length && this.fitWindow()) this.fitted = true;   // no latch without a clock sample (see fitWindow)
   }
 
   // Direct hover push from the kernel (server.ts pushHover) — the FAST path that skips the
@@ -2372,7 +2486,6 @@ class TimelinePanel {
   // it; bars carry no tid of their own since T278b), else by name. null if no lane matches.
   _sidForActiveChat(ac) {
     if (!ac || !this.data || !this.data.sessions) return null;
-    const turns = this.data.turns || {};
     if (ac.tid) {
       if (this.data.sessions.some((s) => s.id === ac.tid)) return ac.tid;
     }
@@ -6863,4 +6976,4 @@ class TimelinePanel {
   body(s) { return s ? '<div class="b">' + s + '</div>' : ''; }
 }
 
-module.exports = { TimelinePanel, expandBar, expandBars, expandJudging, BAR_WIRE, JUDGING_WIRE, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, laneDeviations, viewVisible, viewLabel, viewMoreCount, viewToggleMember, viewTagUnion, lensAll, lensToggle, lensVisible, lensLabel, lensSummary, timelineLens, loadModelChoices, MODEL_CHOICES };
+module.exports = { TimelinePanel, expandBar, expandBars, expandJudging, expandBarsMemo, expandJudgingMemo, sameWire, _expandCounts, BAR_WIRE, JUDGING_WIRE, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, laneDeviations, viewVisible, viewLabel, viewMoreCount, viewToggleMember, viewTagUnion, lensAll, lensToggle, lensVisible, lensLabel, lensSummary, timelineLens, loadModelChoices, MODEL_CHOICES };
