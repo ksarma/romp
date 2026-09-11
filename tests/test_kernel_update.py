@@ -2377,7 +2377,8 @@ class Wiring(unittest.TestCase):
         # Not-now silences THE dismissed tag; a strictly newer release found by a later pass is
         # new information and re-offers
         self.assertIn("if(waiting||!tag||tag===dismissedTag)return;", self.src)
-        self.assertIn("dm.onclick=function(){dismissedTag=curTag;", self.src)
+        self.assertIn("dm.onclick=function(){box.classList.remove('show');if(failedEnd||!curTag)return;dismissedTag=curTag;", self.src,
+                      "the poll's failed ending posts nothing whatever the window offers (review round 8), and no empty tag is posted")
 
     def test_the_landing_ships_the_banner_and_the_shell_relay(self):
         self.assertIn("_stale_block(v) + _update_block() + _rdrift_block()", self.src)

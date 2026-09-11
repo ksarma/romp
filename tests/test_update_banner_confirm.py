@@ -459,10 +459,15 @@ GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: at
         # text promises the next check's re-offer; the dismissal is durable (the drift check pushes nothing for a
         # dismissed sha and every page load filters it), so the promised re-offer never came, anywhere. A window the
         # running push flipped into the wait had offered nothing and posted an empty tag, which the kernel ignores,
-        # so one message's Not now dismissed durably in one window and nothing in another. The failed ending now
-        # clears curTag: Not now hides the message and posts nothing, in every window, whether or not an offer still
-        # stands, and the next push of the same identifier shows again. The plain offer's Not now and the updated
-        # ending's (in the window that clicked) still post the identifier: those dismissals are the ones meant
+        # so one message's Not now dismissed durably in one window and nothing in another. The failed ending's Not
+        # now hides the message and posts nothing, in every window, whether or not an offer still stands, and the
+        # next push of the same identifier shows again. The plain offer's Not now and the updated ending's (in the
+        # window that clicked) still post the identifier: those dismissals are the ones meant. Review round 8
+        # (2026-09-10): round 7 had the failed branch clear curTag, the identifier the window offers, even while the
+        # offer stood and Update was re-shown, so a retry from that Update whose wait ended updated had a Not now
+        # that posted nothing, against the updated ending's own rule. The failed branch now sets a flag the Not now
+        # keys on and clears curTag only when no offer stands; the retry's updated ending posts the identifier once,
+        # a second failure posts nothing, and Update then Cancel after a failure leaves a Not now that posts nothing
         refused_pull = ("CHECK.tag = ''; CHECK.drift = ''; CHECK.driftSha = ''; "
                         "CHECK.failed = 'the romp checkout has uncommitted work, so it was left alone. Commit or stash it; the next check offers the update again';")
         refused_request = "CHECK.tag = ''; CHECK.drift = 'restart'; CHECK.driftSha = 'abcdef01'; CHECK.failed = 'romp is updated on disk but the restart request failed (HTTP 500)';"
@@ -500,6 +505,34 @@ GO.onclick(); var atOnce = state(); await tick(); await tick(); out({ atOnce: at
         s = run_banner("window.__rompUpdateOffer('', '', '', 'b1', 'running'); CHECK.tag = ''; CHECK.updated = 'abcdef01'; await tick(); await tick(); DM.onclick(); out(state());",
                        check={"tag": ""})
         self.assertEqual((s["shown"], s["dismissals"]), (False, []), "a pushed window offered nothing, so its Not now after the updated ending posts nothing")
+        # review round 8: a failed ending with the offer standing, then a retry from the re-shown Update whose wait
+        # ends updated: the clicking window still holds the identifier it offers, and its Not now dismisses it once
+        click = "GO.onclick(); await tick(); await tick(); CF.onclick(); await tick(); await tick(); await tick();"
+        failed_tag = "CHECK.failed = 'the fetch, fast-forward or install failed';"
+        updated_tag = "CHECK.failed = ''; CHECK.tag = ''; CHECK.updated = 'v0.2.0'; CHECK.why = 'no manager is running this kernel';"
+        s = run_banner(failed_tag + click + " var failedAgain = state(); " + updated_tag + click
+                       + " var ended = state(); DM.onclick(); out({ failedAgain: failedAgain, ended: ended, after: state() });")
+        self.assertEqual((s["failedAgain"]["goHidden"], s["failedAgain"]["dismissals"]), (False, []), "the tag door: the offer stands, Update re-shown")
+        self.assertTrue(s["ended"]["msg"].startswith("romp updated to v0.2.0 on disk"), s["ended"]["msg"])
+        self.assertEqual(len(s["ended"]["posts"]), 2, "two confirmed clicks")
+        self.assertEqual((s["after"]["shown"], s["after"]["dismissals"]), (False, [{"tag": "v0.2.0"}]),
+                         "the retry's updated ending: Not now dismisses the identifier this window offered, once")
+        updated_drift = "CHECK.failed = ''; CHECK.drift = ''; CHECK.driftSha = ''; CHECK.updated = 'abcdef01'; CHECK.why = 'no manager is running this kernel';"
+        s = run_banner(refused_request + click + " var failedAgain = state(); " + updated_drift + click
+                       + " var ended = state(); DM.onclick(); out({ failedAgain: failedAgain, ended: ended, after: state() });",
+                       check={"tag": "", "drift": "restart", "driftSha": "abcdef01"})
+        self.assertEqual((s["failedAgain"]["goHidden"], s["failedAgain"]["dismissals"]), (False, []), "the drift twin: the offer stands, Update re-shown")
+        self.assertTrue(s["ended"]["msg"].startswith("romp updated to abcdef01 on disk"), s["ended"]["msg"])
+        self.assertEqual((s["after"]["shown"], s["after"]["dismissals"]), (False, [{"tag": "abcdef01"}]),
+                         "the retry's updated ending dismisses the drift sha this window offered")
+        # a second failure posts nothing, and Update then Cancel after a failure leaves the failure text with a Not now that posts nothing
+        s = run_banner(failed_tag + click + click + " DM.onclick(); out(state());")
+        self.assertEqual((s["shown"], s["dismissals"], len(s["posts"])), (False, [], 2), "failed twice: Not now dismisses nothing")
+        s = run_banner(failed_tag + click + " GO.onclick(); var armed = state(); CX.onclick(); var cancelled = state(); DM.onclick();"
+                       " out({ armed: armed, cancelled: cancelled, after: state() });")
+        self.assertEqual((s["armed"]["armed"], s["armed"]["msg"]), (True, "The update did not finish: the fetch, fast-forward or install failed"), "armed over the failure text")
+        self.assertEqual((s["cancelled"]["armed"], s["cancelled"]["notNowHidden"], s["cancelled"]["shown"]), (False, False, True), "Cancel leaves the text and its Not now")
+        self.assertEqual((s["after"]["shown"], s["after"]["dismissals"]), (False, []), "that Not now still dismisses nothing")
 
     def test_the_wait_text_promises_no_restart_and_no_reload_when_no_manager_started_the_kernel(self):
         # review round 6 (2026-09-10): on a kernel no manager started, the wait copy promised a restart and a

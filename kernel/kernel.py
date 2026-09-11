@@ -56310,7 +56310,7 @@ _UPD_JS = (
     "(function(){var box=document.getElementById('rupd');if(!box)return;"
     "var msg=box.querySelector('.rup-msg'),go=document.getElementById('rupd-go'),dm=document.getElementById('rupd-dismiss'),"
     "cx=document.getElementById('rupd-cancel'),lbl=document.getElementById('rupd-armed'),cf=document.getElementById('rupd-confirm');"
-    "var dismissedTag='',curTag='',waiting=false,bootNow='',armed=false,impact=null,press=false,arms=0,plain=null;"
+    "var dismissedTag='',curTag='',waiting=false,bootNow='',armed=false,impact=null,press=false,arms=0,plain=null,failedEnd=false;"
     # Two clicks, never one (2026-09-10): a single click POSTed /update, and a click that only meant to
     # focus the dashboard window landed on the button and restarted every session on the box, cutting
     # every turn in flight. The first click ARMS the banner: the Update button gives its place to a
@@ -56497,7 +56497,7 @@ _UPD_JS = (
     "if(state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
     "show(manager===false?'romp is updating on disk; restart it yourself when it finishes':'romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
     "if(boot&&bootNow&&boot!==bootNow)return;"
-    "if(waiting||!tag||tag===dismissedTag)return;curTag=tag;go.hidden=false;go.disabled=false;dm.hidden=false;"
+    "if(waiting||!tag||tag===dismissedTag)return;curTag=tag;failedEnd=false;go.hidden=false;go.disabled=false;dm.hidden=false;"
     "if(drift==='pull')show('new romp commits are on main ('+tag+') \\u2014 Update pulls them and restarts romp.');"
     "else if(drift==='restart')show('romp '+tag+' is ready on disk \\u2014 Update restarts romp onto it.');"
     "else show('romp '+tag+' is available'+(cur?' \\u2014 you are on '+cur:'')+'.');}"
@@ -56508,7 +56508,7 @@ _UPD_JS = (
     # an existing beat, not a new timer.
     "window.__rompUpdBoot=function(b){if(!b)return;if(!bootNow){bootNow=b;return;}"
     "if(b!==bootNow){bootNow=b;impact=null;if(waiting){location.reload();return;}"
-    "if(!go.hidden){disarm();box.classList.remove('show');curTag='';}}};"
+    "if(!go.hidden){disarm();box.classList.remove('show');curTag='';failedEnd=false;}}};"
     "function poll(){fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){"
     "if(!waiting)return;"
     "if(d.boot&&bootNow&&d.boot!==bootNow){location.reload();return;}"
@@ -56529,14 +56529,19 @@ _UPD_JS = (
     # nothing, in every window: the failure's own text promises the next check's re-offer (a refused pull
     # re-arms the drift slot; a refused restart request keeps its offer), and a durable dismissal of the
     # refused target would stop that re-offer everywhere, on every page load and in the drift check's push.
-    # curTag is cleared here, so dm.onclick posts nothing and the page-local dismissedTag stays empty, and the
-    # next push of the same identifier shows in this window too. Round 6 had that Not now post the tag the
+    # The ending itself is what dm.onclick keys on (failedEnd, set here and cleared by the next offer, the
+    # next confirm and the updated ending; review round 8, 2026-09-10): it posts nothing and leaves the
+    # page-local dismissedTag alone, so the next push of the same identifier shows in this window too. curTag
+    # is cleared only when no offer stands; while Update is re-shown the window keeps the identifier it
+    # offers, so a retry from that Update whose wait ends updated has its Not now dismiss that identifier
+    # durably, as the updated ending's rule above says (round 7 cleared curTag at every failed ending, and
+    # the retry's updated ending posted nothing). Round 6 had the failed ending's Not now post the tag the
     # clicking window had offered (the refused target) and an empty tag from a pushed window, which the
     # kernel ignores, so one message dismissed durably in one window and nothing in another
-    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;curTag='';show('The update did not finish: '+d.failed);return;}"
+    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;failedEnd=true;if(!again)curTag='';show('The update did not finish: '+d.failed);return;}"
     # the kernel words the step by case (`romp refresh` exits 1 with no manager, where `romp up` is
     # the step; review find, 2026-09-08); the fallback is the manager case, for an older kernel
-    "if(d.updated){waiting=false;go.hidden=true;dm.hidden=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
+    "if(d.updated){waiting=false;failedEnd=false;go.hidden=true;dm.hidden=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
     "+' \\u2014 '+(d.hint||'restart romp yourself (romp refresh) to run it')+'.');return;}"
     "setTimeout(poll,3000);}).catch(function(){if(waiting)setTimeout(poll,3000);});}"
     # a held Enter or Space repeats its keydown with repeat:true; only the first may activate. Scoped to
@@ -56547,7 +56552,7 @@ _UPD_JS = (
     # the confirm posts, unless it is the second or third click of one gesture (e.detail: the browser's
     # click count), which the layout already keeps off this button
     "cf.onclick=function(e){if(!armed)return;if(e&&e.detail>1)return;"
-    "waiting=true;disarm();go.disabled=true;dm.hidden=true;"
+    "waiting=true;failedEnd=false;disarm();go.disabled=true;dm.hidden=true;"
     "show((impact&&impact.manager===false)?'Updating romp on disk, this can take a minute; restart it yourself when it finishes':'Updating romp \\u2014 this can take a minute; the dashboard reloads when it restarts\\u2026');"
     "fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true})}).then(function(r){"
     "if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});poll();})"
@@ -56555,7 +56560,7 @@ _UPD_JS = (
     # 'nothing known' is not an error — it means the update this prompt offered already ran (another
     # window, a converge, a peer's push): retire quietly, file the fact in the Log, and let the reload
     # banner (already raised by that very restart) carry the one action left (the user 2026-08-15).
-    "if(/no newer release or main commit/.test(em)){box.classList.remove('show');curTag='';"
+    "if(/no newer release or main commit/.test(em)){box.classList.remove('show');curTag='';failedEnd=false;"
     "if(window.__rompNotify)window.__rompNotify('sync','the update this prompt offered already ran \\u2014 nothing left to do');return;}"
     "go.disabled=false;dm.hidden=false;"
     "show('Could not start the update: '+em);});};"
@@ -56606,10 +56611,13 @@ _UPD_JS = (
     "box.addEventListener('focusout',function(e){if(!armed)return;var t=e&&e.relatedTarget;if(t&&box.contains(t))return;if(!t&&press)return;disarm();});"
     "window.addEventListener('blur',function(){press=false;disarm();});"
     "document.addEventListener('visibilitychange',function(){if(document.hidden)disarm();});"
-    "dm.onclick=function(){dismissedTag=curTag;box.classList.remove('show');if(!curTag)return;"
+    "dm.onclick=function(){box.classList.remove('show');if(failedEnd||!curTag)return;dismissedTag=curTag;"
     # persist the Not-now (the user 2026-08-31): page loads and kernel restarts stop re-offering. Nothing is
-    # posted without an identifier (review round 7, 2026-09-10): the kernel ignores an empty tag, and the poll's
-    # failed ending clears curTag so that its Not now hides the message and dismisses nothing (its comment says why)
+    # posted without an identifier (review round 7, 2026-09-10): the kernel ignores an empty tag. Nothing is
+    # posted after the poll's failed ending either (failedEnd, review round 8, 2026-09-10): that Not now hides the
+    # message and dismisses nothing, whether or not the window still holds the identifier it offers (the failed
+    # branch's comment says why), and the page-local dismissedTag is left alone, so the same identifier's next
+    # push shows here again
     "try{fetch('/update-dismiss',{method:'POST',headers:{'Content-Type':'application/json'},"
     "body:JSON.stringify({tag:curTag})}).catch(function(){});}catch(e){}};"
     # a page loaded while the update runs records no counts: the kernel answers none in that state (the
