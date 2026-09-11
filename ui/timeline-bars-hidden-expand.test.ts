@@ -47,9 +47,16 @@ g.performance = { now: () => 5000 };
 
 const viewPath = path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js");
 const { TimelinePanel, expandBars, expandJudging } = createRequire(__filename)(viewPath);
-// The view's own count of wire objects expanded; a view without it (the tree before this change) reads NaN, so
-// every count assertion fails there for the reason it should while the paint pins below still run.
-const _expandCounts = createRequire(__filename)(viewPath)._expandCounts || { bars: NaN, judging: NaN };
+// The view's own count of wire objects expanded. The tree before this change exports no counter, so there the
+// fallback below stands in and resetCounts leaves it at NaN: each case with a count assertion fails at its first
+// one on that tree, for the counter's ABSENCE, which is no evidence of what that tree does under the hold (an
+// eager expansion is exactly what a counter would have shown). Setting the counts aside, what fails there on
+// behaviour is the reuse: the assertions that a kept bar, a lane array or a judging entry is the object already
+// held see new objects where the reuse keeps the old ones. Every other case passes there without its counts (that
+// tree held its paint too, and built two objects for a duplicate), and the SVG case passes on both trees and pins
+// that drawing is unchanged.
+const _expandCountsExport = createRequire(__filename)(viewPath)._expandCounts;
+const _expandCounts = _expandCountsExport || { bars: NaN, judging: NaN };
 
 // ---- a synthetic board in the T278c wire shape: three lanes of compact bars, a compact judging band ----
 const NOW = 1_781_000_000;
@@ -100,7 +107,7 @@ function setVisibility(state: "hidden" | "visible") {
   for (const fn of [...(docListeners.visibilitychange || [])]) fn({ type: "visibilitychange" });
 }
 function done(panel: any) { g.document.removeEventListener("visibilitychange", panel._onVis); g.document.visibilityState = "visible"; }
-function resetCounts() { _expandCounts.bars = 0; _expandCounts.judging = 0; }
+function resetCounts() { if (!_expandCountsExport) return; _expandCounts.bars = 0; _expandCounts.judging = 0; }   // no counter: the fallback stays NaN
 function counts() { return { bars: _expandCounts.bars, judging: _expandCounts.judging }; }
 // A reference expansion for an assertion, without it counting: the exported expanders run the same counted functions.
 function ref<T>(f: () => T): T { const c = counts(); const r = f(); _expandCounts.bars = c.bars; _expandCounts.judging = c.judging; return r; }
@@ -147,6 +154,29 @@ test("a reader under the hold gets the expanded shape on demand, and the hold's 
   setVisibility("visible");
   assert.equal(c.draws, 1);
   assert.deepEqual(counts(), { bars: TOTAL_BARS, judging: TOTAL_JUDGING }, "the draw expanded the judging band and reused the bars");
+  done(panel);
+});
+
+test("a full one-shot payload (turns and judging on the data frame) landing on a hidden tab expands nothing; the return expands it once", () => {
+  // update()'s own-bars branch binds the payload lazily as _mergeBars does for the two-message path; the cases
+  // above deliver every bars frame through applyBars, so this is the one that reaches that branch under the hold.
+  const { panel, c } = mk();
+  setVisibility("hidden");
+  resetCounts();
+  const b = board();
+  panel.update(JSON.parse(JSON.stringify({ ...skeleton(), turns: b.turns, judging: b.judging })));
+  assert.equal(c.draws, 0, "held: no paint");
+  assert.deepEqual(counts(), { bars: 0, judging: 0 }, "held: the payload's bars and judging stay as the wire spelled them");
+  assert.equal(panel._barsLoaded, true, "the loader latch flips on the payload");
+  assert.equal(panel.fitted, true, "the window fit reads the wire payload");
+  panel.update(JSON.parse(JSON.stringify({ ...skeleton(1), turns: b.turns, judging: b.judging })));
+  assert.deepEqual(counts(), { bars: 0, judging: 0 }, "a second one-shot under the hold: still nothing expanded");
+  setVisibility("visible");
+  assert.equal(c.draws, 1, "the return paints one catch-up");
+  assert.deepEqual(counts(), { bars: TOTAL_BARS, judging: TOTAL_JUDGING }, "which expands the held payload exactly once");
+  assert.deepEqual(panel.data.turns, ref(() => expandBars(b.turns)), "and every reader sees the long-named bars");
+  assert.deepEqual(panel.data.judging, ref(() => expandJudging(b.judging)));
+  assert.deepEqual(counts(), { bars: TOTAL_BARS, judging: TOTAL_JUDGING }, "reading again expands nothing more");
   done(panel);
 });
 
@@ -252,16 +282,74 @@ test("the judging band reuses its entries the same way: one changed entry expand
   done(panel);
 });
 
-test("a lane array the shim hands back unchanged (a delta) still expands nothing, as before", () => {
+test("a lane array the shim hands back unchanged (a delta) keeps its expanded array and expands nothing, as before", () => {
   const { panel } = mk();
   panel.update(skeleton());
   const f = fullFrame();
   panel.applyBars(f);
   resetCounts();
+  const lanes1 = SIDS.map((s) => panel.data.turns[s]);   // the expanded lanes the first draw built
   const delta = { type: "bars", turns: { ...f.turns }, judging: { ...f.judging }, messages: [], nudges: [], now: NOW + 1 };   // the same lane arrays
   delta.turns[SIDS[1]] = f.turns[SIDS[1]].concat([wireBar(SIDS[1], 5)]);   // one touched lane: its kept bars are the same objects
   panel.applyBars(delta);
-  assert.deepEqual(counts(), { bars: 1, judging: 0 });
+  assert.deepEqual(counts(), { bars: 1, judging: 0 }, "the appended bar alone is expanded");
+  assert.equal(panel.data.turns[SIDS[0]], lanes1[0], "an untouched lane keeps its expanded array");
+  assert.equal(panel.data.turns[SIDS[2]], lanes1[2]);
+  assert.notEqual(panel.data.turns[SIDS[1]], lanes1[1], "the touched lane is a new array");
+  assert.equal(panel.data.turns[SIDS[1]].length, LANE_COUNTS[1] + 1);
+  assert.equal(panel.data.turns[SIDS[1]][0], lanes1[1][0], "holding the bar objects it kept");
+  done(panel);
+});
+
+test("a bar whose mids list changes, by one element or by its length, is expanded afresh: the list compare is elementwise", () => {
+  // sameWire compares a list field element by element and a list of another length is a change; a compare that
+  // stopped at the length, or at the first elements, would hand the old bar back with the old list.
+  const { panel } = mk();
+  panel.update(skeleton());
+  panel.applyBars(fullFrame());
+  resetCounts();
+  const lanes1 = SIDS.map((s) => panel.data.turns[s]);
+  const b1 = board(); b1.turns[SIDS[0]][3].d[1] = "m-elsewhere";   // bar 3 of lane 0 carries d = [m-3, m-4]: one element replaced
+  panel.applyBars(fullFrame(b1, 1));
+  assert.deepEqual(counts(), { bars: 1, judging: 0 }, "the replaced element is a change: that bar alone is expanded");
+  assert.deepEqual(panel.data.turns[SIDS[0]][3].mids, ["m-3", "m-elsewhere"], "carrying the new list");
+  assert.equal(panel.data.turns[SIDS[0]][2], lanes1[0][2], "its neighbours are the objects already held");
+  assert.equal(panel.data.turns[SIDS[1]], lanes1[1]); assert.equal(panel.data.turns[SIDS[2]], lanes1[2]);
+  const b2 = JSON.parse(JSON.stringify(b1)); b2.turns[SIDS[0]][3].d.push("m-more");   // the same list, one element longer
+  panel.applyBars(fullFrame(b2, 2));
+  assert.deepEqual(counts(), { bars: 2, judging: 0 }, "a longer list is a change too");
+  assert.deepEqual(panel.data.turns[SIDS[0]][3].mids, ["m-3", "m-elsewhere", "m-more"]);
+  const b3 = JSON.parse(JSON.stringify(b2)); b3.turns[SIDS[0]][3].d.pop();   // and one element shorter
+  panel.applyBars(fullFrame(b3, 3));
+  assert.deepEqual(counts(), { bars: 3, judging: 0 }, "a shorter list as well");
+  panel.applyBars(fullFrame(b3, 4));   // the same lists again, as a fresh parse
+  assert.deepEqual(counts(), { bars: 3, judging: 0 }, "a list that spells the same elements is the same bar");
+  assert.deepEqual(panel.data.turns, ref(() => expandBars(b3.turns)));
+  done(panel);
+});
+
+test("a judging map whose lanes arrive in a new order rebuilds the flat list in that order from the entries already held", () => {
+  // expandJudgingMemo hands the previous flat list back only when every lane AND the lane order came back the
+  // same; a reordered map costs a new list in the new order and no expansion, the entries being found again.
+  const { panel } = mk();
+  panel.update(skeleton());
+  panel.applyBars(fullFrame());
+  resetCounts();
+  const list1 = panel.data.judging;
+  const b = board();
+  const rev: any = {}; for (const sid of [...SIDS].reverse()) rev[sid] = b.judging[sid];
+  b.judging = rev;
+  panel.applyBars(fullFrame(b, 1));
+  const list2 = panel.data.judging;
+  assert.deepEqual(counts(), { bars: 0, judging: 0 }, "no entry is expanded: every lane's entries are found again");
+  assert.notEqual(list2, list1, "the flat list is rebuilt");
+  assert.deepEqual(list2.map((e: any) => e.sid), [2, 1, 0].flatMap((i) => new Array(JUDGING_COUNTS[i]).fill(SIDS[i])), "in the new lane order");
+  assert.deepEqual(list2, ref(() => expandJudging(rev)), "as a plain expansion of the reordered map gives");
+  assert.equal(list2.every((e: any) => list1.includes(e)), true, "each entry is the object already held");
+  assert.equal(new Set(list2).size, list2.length);
+  panel.applyBars(fullFrame(b, 2));   // the reordered map again, as a fresh parse
+  assert.equal(panel.data.judging, list2, "the order came back unchanged: the list keeps its identity");
+  assert.deepEqual(counts(), { bars: 0, judging: 0 });
   done(panel);
 });
 
