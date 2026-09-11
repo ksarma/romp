@@ -229,10 +229,10 @@ test('the contract names anchorAt as the second optional field with its rule, an
   assert.ok(contract.includes('A comment without an anchor never carries it'));
   // the host: set at creation after the widened anchor; refreshed first thing in the one function every sidecar
   // write goes through; skipped for a comment with no usable anchor
-  assert.ok(/anchor: uniqueAnchor\(text, loc\.from, loc\.to\)\.anchor,\s*\n\s*anchorAt: loc\.from,/.test(host), 'set at creation, after the anchor');
+  assert.ok(/anchor: stored\.anchor,\s*\n\s*anchorAt: loc\.from,/.test(host) && /const stored = uniqueAnchor\(text, loc\.from, loc\.to\);/.test(host), 'set at creation, after the widened anchor');
   assert.ok(/function stageSidecar\(root, storePath, store, text\) \{\s*\n\s*refreshAnchorAts\(store, text\);/.test(host), 'stageSidecar, the one function every sidecar write goes through, calls refreshAnchorAts first');
   assert.ok(/if \(!c \|\| !c\.anchor \|\| typeof c\.anchor !== 'object' \|\| typeof c\.anchor\.quote !== 'string' \|\| !c\.anchor\.quote\) continue;/.test(host), 'never on a comment without an anchor');
-  assert.ok(/const loc = locateExact\(text, c\.anchor, undefined\);\s*\n\s*if \(!loc\.error\) c\.anchorAt = loc\.from;/.test(host), "an anchor that sits in whole nowhere is placed by the engine's scoring, hintless (unique or an error), under the write's scan budget");
+  assert.ok(/const loc = locateExact\(text, c\.anchor, undefined\);\s*\n\s*if \(!loc\.error\) \{ c\.anchorAt = loc\.from;/.test(host), "an anchor that sits in whole nowhere is placed by the engine's scoring, hintless (unique or an error), under the write's scan budget");
   // the model and the panel: the field rides on the store comment and the card beside an anchor, and is the painter's hint
   assert.ok(model.includes('anchor?: Anchor | null; anchorAt?: number;'), 'the store comment type');
   assert.ok(/const anchorAt = anchor && typeof c\.anchorAt === "number" && Number\.isFinite\(c\.anchorAt\) \? c\.anchorAt : null;/.test(model), 'the card carries it only beside an anchor');
@@ -245,7 +245,8 @@ test('the host paragraph and the commenting section state the widening and the r
   assert.ok(op.includes("with the smallest context, from 24 characters in steps of 24 up to a cap of 480 or the file's bounds, at which the anchor has one best hit in the whole text"));
   assert.ok(op.includes("`anchor-ambiguous` when two candidates tie and the request's offset cannot settle it: no offset was sent"));
   assert.ok(op.includes("a stored comment's anchor is located with its `anchorAt` as the hint"));
-  assert.ok(/locateExact\(text, validateAnchor\(c\.anchor\), hintOf\(c\)\)/.test(host) && /locateExact\(text, anchor, hintOf\(c\)\)/.test(host), 'retarget and the passage-figure read use the stored hint');
+  assert.ok(/locateStored\(text, \{ \.\.\.c, anchor: validateAnchor\(c\.anchor\) \}, ctx\.markdown\)/.test(host) && /locateStored\(text, \{ \.\.\.c, anchor \}, ctx\.markdown\)/.test(host), 'retarget and the passage-figure read place the stored comment by its position first (locateStored: sitsAt, then the tie-break, then the engine hinted by it)');
+  assert.ok(/if \(at !== undefined && sitsAt\(text, anchor, at\)\) return span\(at, true, 'position'\);/.test(host) && /const loc = locateExact\(text, anchor, at\);/.test(host), 'the stored position first, and the engine hinted by it');
   assert.deepEqual([ANCHOR_CTX, ANCHOR_CTX_STEP, ANCHOR_CTX_CAP], [24, 24, 480]);
   assert.ok(ux.includes("widens the stored anchor's context until it is unique in the file, stores the offset beside it as `anchorAt`, and refuses when the located text differs from the quote, or when two candidates tie and the offset cannot settle it"));
   // behavior, on the fixture whose "Ship it." recurs with the same 24 characters either side

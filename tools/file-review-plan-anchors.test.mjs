@@ -93,21 +93,21 @@ test('the contract states the refresh by where the whole anchor sits, and refres
   inOrder(refresh, [
     'const budget = refreshBudget;',
     'const recorded = !!store && store[TEXT_AS_WRITTEN] === true;',
-    'if (at !== undefined && sitsAt(text, c.anchor, at)) continue;',
+    'if (at !== undefined && sitsAt(text, c.anchor, at)) { seated.push(c); continue; }',
     'if (!affordableScan(budget, text, c.anchor)) { budget.unscanned++; continue; }',
     'const { hits, more, cut } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX, budget);',
-    'if (hits.length === 1 && at === undefined) { c.anchorAt = hits[0]; continue; }',
+    'if (hits.length === 1 && at === undefined) { c.anchorAt = hits[0]; seated.push(c); continue; }',
     'if (hits.length >= 1) {',
     'const whole = movedCopy(hits, at, bounds);',
     '} else if (hits.length > 1) {',
     'const q = quoteHits(text, c.anchor.quote, budget);',
-    'if (hits.length === 1 && q.count === 1) { c.anchorAt = hits[0]; continue; }',
+    'if (hits.length === 1 && q.count === 1) { c.anchorAt = hits[0]; seated.push(c); continue; }',
     'if (!recorded) continue;',
     'const moved = movedCopy(hits, at, bounds, q.positions);',
-    'if (moved !== null) c.anchorAt = moved;',
+    'if (moved !== null) { c.anchorAt = moved; seated.push(c); }',
     'if (!affordable(budget, text, c.anchor)) continue;',
     'const loc = locateExact(text, c.anchor, undefined);',
-    'if (!loc.error) c.anchorAt = loc.from;',
+    'if (!loc.error) { c.anchorAt = loc.from; c[ENGINE_PLACED] = true; seated.push(c); }',
   ], 'the refresh');
   // the budget is per write: one module-level object (the process is one verb; checkReplyFits and stageSidecar draw
   // on the same figure), which the refresh takes and never remakes, its counts reset per pass

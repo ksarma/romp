@@ -409,7 +409,8 @@ def test_a_comment_on_the_second_of_two_identical_lines_keeps_its_place_and_its_
     c = r["store"]["comments"][0]
     assert c["anchorAt"] == second
     assert c["id"] == "%d-%d" % (c["ts"], second)
-    assert set(c) == set(KEEP) | {"anchor", "anchorAt"}
+    assert set(c) == set(KEEP) | {"anchor", "anchorAt", "ordinal", "copies", "section"}
+    assert (c["ordinal"], c["copies"], c["section"]) == (1, 1, "Findings > Day 2"), "the copy fields: 1 of 1 under the heading path (the tie-break, 2026-09-11)"
     assert c["anchor"] != anchor, "not the browser's anchor: 24 characters tied"
     assert c["anchor"] == make_anchor(TWICE, second, second + len("Ship it."), 48), "widened one step, no more"
     assert "2\n\nThe tests" in c["anchor"]["prefix"], "the prefix now reaches into the heading that differs"
@@ -1121,7 +1122,7 @@ def test_a_region_on_an_embedded_figure_carries_the_embed_anchor_and_src_and_a_s
     r = world.ok("comment", md, {"note": "Label the axes.", "anchor": anchor, "hintOffset": start,
                                  "target": {"kind": "image", "region": dict(REGION), "src": "fig.png"}}, NO_STORE)
     c = r["store"]["comments"][0]
-    assert set(c) == set(KEEP) | {"anchor", "anchorAt", "target"}, "an anchored comment carries its stored position too"
+    assert set(c) == set(KEEP) | {"anchor", "anchorAt", "ordinal", "copies", "section", "target"}, "an anchored comment carries its stored position and copy fields too"
     assert c["anchorAt"] == start
     assert c["anchor"] == anchor, "placed like a passage comment, so every host shows it on the embed line"
     assert list(c["target"]) == ["kind", "region", "hash", "src"]

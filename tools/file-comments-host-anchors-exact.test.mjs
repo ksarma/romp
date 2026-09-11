@@ -410,12 +410,26 @@ test('status tells the figure of a src-less region comment on a tied anchor from
   st = status(w, md);
   const re2 = ok(w, { verb: 'retarget', path: md, args: { commentId: c.id, target: { kind: 'image', region, src: 'fig.png' } }, fence: fenceFor(st) }).json;
   assert.deepEqual(re2.store.comments[0].target.region, region);
-  // the contrast that pins hintOf: with no stored position the tie cannot be settled on either read path
+  // with no stored position the copy fields settle the tie (the tie-break, 2026-09-11): the ordinal's copy, the count
+  // being unchanged, tells the figure on both read paths
+  const disk1 = readSidecar(r.storePath);
+  delete disk1.comments[0].anchorAt;
+  delete disk1.comments[0].target.src;
+  assert.deepEqual([disk1.comments[0].ordinal, disk1.comments[0].copies], [2, 3], 'the fixture: the host wrote the copy fields');
+  fs.writeFileSync(r.storePath, JSON.stringify(disk1, null, 2) + '\n');
+  st = status(w, md);
+  assert.equal(st.derivedSrcs[c.id], 'fig.png', 'told from the copy the ordinal names');
+  assert.deepEqual(st.placed, { [c.id]: { at: e.idx, confirmed: true, by: 'ordinal' } });
+  ok(w, { verb: 'retarget', path: md, args: { commentId: c.id, target: { kind: 'image', region: region2 } }, fence: fenceFor(st) });
+  // the contrast that pins the refusal: with no stored position and no copy fields the tie cannot be settled on
+  // either read path
   const disk2 = readSidecar(r.storePath);
   delete disk2.comments[0].anchorAt;
+  for (const k of ['ordinal', 'copies', 'section']) delete disk2.comments[0][k];
   delete disk2.comments[0].target.src;
   fs.writeFileSync(r.storePath, JSON.stringify(disk2, null, 2) + '\n');
   st = status(w, md);
+  assert.deepEqual(st.placed, {}, 'a refused tie has no entry');
   assert.equal(st.derivedSrcs[c.id], undefined);
   assert.deepEqual(st.embeddedHashes, {});
   assert.match(st.derivedSrcReasons[c.id], /anchor-ambiguous/);
