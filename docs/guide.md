@@ -419,22 +419,19 @@ leaves the page wider than the pane, and a picture sized in pixels by its `width
 the height it names.
 
 **How a markdown file reads.** The Rendered view shows a markdown file the way GitHub
-shows a README. The text is a little larger than the dashboard's own (15 pixels where the
-chat is 13), in the same sans face in both themes. Headings step down from twice the text
-size for a top-level heading to the text size for the fourth level and below, with a rule
-under the first two levels; the fifth and sixth levels are dimmed. A task list shows its
-boxes without bullets, ticked where the file says so. A table's header row is bold on a
-faint fill, every second row is tinted, and a column the file aligns with `:---:` or
-`---:` is centred or right-aligned. A `<kbd>` key reads as a key. Every fenced code block
-is numbered by line, wraps long lines and carries a **Copy** button that copies the
-block's text; a block that names its language is coloured when the language is one the
-viewer knows: bash, python, javascript, typescript, json, xml and html, css, markdown,
-diff, yaml, rust, go, c, java, sql and toml (an ini file's grammar). A block that names
-any other language stays plain rather than being guessed at. Comments in coloured code are
-readable against the block. TeX math renders wherever the file is shown: `$x^2$` inline and a
-`$$` block on its own, the same in the chat, the feed and the Files pane. Printing the page
-while a markdown file is open prints the file alone, black on white, across as many pages as
-it needs, without the title bar, the Comments panel or the Copy buttons.
+shows a README, set for reading as *Opening a markdown document* in the chat chapter
+describes: the face and size, the headings, task lists, keys and tables, the numbered
+code blocks with their **Copy** buttons, the highlighted fences and the print layout.
+The details that paragraph leaves out: the text is a little larger than the dashboard's
+own (15 pixels where the chat is 13); headings step down from twice the text size to the
+text size at the fourth level, with a rule under the first two and the fifth and sixth
+dimmed; a table's header row is bold on a faint fill and every second row is tinted; the
+languages the viewer colours are bash, python, javascript, typescript, json, xml and html,
+css, markdown, diff, yaml, rust, go, c, java, sql and toml (an ini file's grammar), a block
+that names any other language stays plain rather than being guessed at, and comments in
+coloured code are readable against the block. TeX math renders wherever the file is shown:
+`$x^2$` inline and a `$$` block on its own, the same in the chat, the feed and the Files
+pane. The printed page leaves out the title bar, the Comments panel and the Copy buttons.
 
 **Files written for Obsidian.** The constructs an Obsidian vault uses render as they do there.
 Front matter, the `---` block of keys at the top of a file, folds under a **Front matter** line;
