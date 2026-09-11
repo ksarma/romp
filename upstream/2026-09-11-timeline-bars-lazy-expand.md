@@ -1,7 +1,7 @@
 ---
 title: Timeline: a bars frame expands on its first read, not on arrival, and reuses the last expansion for unchanged bars
 status: candidate
-where: ui/romp-timeline-view.js (_bindBars, expandBarsMemo, expandJudgingMemo, reuseLane, sameWire), ui/timeline-bars-hidden-expand.test.ts, tools/ui-bench.mjs (--hidden)
+where: ui/romp-timeline-view.js (_bindBars, expandBarsMemo, expandJudgingMemo, reuseLane, sameWire), ui/timeline-bars-hidden-expand.test.ts, ui/webview/timeline-warming-loader.test.ts, tools/ui-bench.mjs (--hidden, --compare), tests/ui-bench.test.mjs, CONTRIBUTING.md
 added: 2026-09-11
 pr: 746
 tier: fix
