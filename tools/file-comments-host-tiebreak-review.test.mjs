@@ -10,11 +10,13 @@
 //     line of a BOM file (a heading, a front-matter rule, a fence) behind the U+FEFF this script keeps, and took any
 //     leading `---` for an open front-matter block, so a notes file opening with a thematic break had every heading
 //     swallowed. Now the lines are read as the viewer renders them, and a front-matter block is one by the viewer's own
-//     test (ui/webview/md-config.ts: closed, not blank after the opener, a YAML mapping).
+//     test (ui/webview/md-config.ts: closed by a later `---`, not blank after the opener, a YAML mapping; the review's
+//     third round dropped YAML's `...` as a closer, which the viewer never took, and this module's fixture says so too).
 //   * locateStored's nearest fallback ran the engine's whole scan per comment, uncharged and unmemoized, on every reply:
 //     a status on a file of repeated text with 400 stale comments took 13 s, past the kernel's 10 s deadline, so the
 //     file's comments could not be opened. Now the nearest copy is read off the whole matches already enumerated, and a
-//     tie past REFRESH_COPIES_MAX is charged to the budget like the engine's placing of a nowhere anchor.
+//     tie past REFRESH_COPIES_MAX is charged to the budget like the engine's placing of a nowhere anchor (driven from a
+//     position that holds no quote: one the quote sits at is `position` since the third round, before any tie rule).
 //   * The stamping pass skipped a comment's copy fields past the budget silently, on every write, the same comments
 //     each time. Now the comments without the fields are stamped first and stderr says how many were left, once per write.
 //   * `section` had no bound, so nine CLI-written comments under a heading line of a megabyte made every write refuse
@@ -137,7 +139,7 @@ test('sectionAt: a CRLF file\'s headings are read (the CR is not part of the lin
   assert.equal(sectionAt(`${BOM}#hashtag\n\nbody\n`, 12, true), '', 'a hash run with no space is still no heading');
 });
 
-test('sectionAt: a file opening with a thematic break is not front matter (a blank line after the opener, prose between two rules, no closing rule), so its headings are read; a YAML mapping between two rules is front matter, closed by --- or ...; the same as the viewer\'s test', () => {
+test('sectionAt: a file opening with a thematic break is not front matter (a blank line after the opener, prose between two rules, no closing rule), so its headings are read; a YAML mapping between two rules is front matter, closed by --- alone (YAML\'s document-end marker closes no block, as in the viewer); the same as the viewer\'s test', () => {
   const t1 = '---\n\n# Title\n\n## Part\n\nBody text here.\n';
   assert.equal(sectionAt(t1, t1.indexOf('Body'), true), 'Title > Part', 'a rule then a blank line is a break, not an opener (pandoc\'s rule)');
   const t2 = '---\n# Title\n\n## Part\n\nBody\n';
@@ -151,9 +153,18 @@ test('sectionAt: a file opening with a thematic break is not front matter (a bla
   assert.equal(sectionAt(t5, t5.indexOf('body'), true), 'Title', 'a YAML mapping between two rules is front matter, and the heading after it is read');
   assert.equal(sectionAt(t5, t5.indexOf('title:'), true), '', 'inside it, nothing above');
   assert.equal(sectionAt(t5, t5.indexOf('# a comment'), true), '', 'its comment line is no heading');
-  const t6 = '---\ntitle: Dots\n# not a heading\n...\n\n# Alpha\n\nUnder alpha.\n';
-  assert.equal(sectionAt(t6, t6.indexOf('Under'), true), 'Alpha', 'YAML\'s document-end marker still closes a block');
-  assert.equal(sectionAt(t6, t6.indexOf('# not'), true), '', 'and the block\'s hash line is no heading');
+  // YAML's document-end marker: the review's third round (2026-09-11) made `...` no closer, as it is none in the viewer
+  // (FRONT_MATTER_RE names `---` alone), so a block closed only by `...` is body and the hash line in it a heading the
+  // person sees; the first round's fixture here said the opposite (tools/file-comments-host-tiebreak-review-3.test.mjs
+  // holds the rule in full, and against the two readers' source)
+  const t6 = '---\ntitle: Dots\n# Read as a heading\n...\n\n# Alpha\n\nUnder alpha.\n';
+  assert.equal(sectionAt(t6, t6.indexOf('Under'), true), 'Alpha', 'a block closed only by ... is body, and the heading after it is read');
+  assert.equal(sectionAt(t6, t6.indexOf('# Read'), true), 'Read as a heading', 'the hash line inside it is a heading, under itself');
+  assert.equal(sectionAt(t6, t6.indexOf('...'), true), 'Read as a heading', 'and the dots line is body under that heading');
+  assert.equal(sectionAt(t6, t6.indexOf('title:'), true), '', 'nothing above the line after the opener, a thematic break');
+  const t6d = t6.replace('\n...\n', '\n---\n');
+  assert.equal(sectionAt(t6d, t6d.indexOf('Under'), true), 'Alpha', 'the same block closed by --- is front matter, and the heading after it is read');
+  assert.equal(sectionAt(t6d, t6d.indexOf('# Read'), true), '', 'and its hash line is no heading');
   const t7 = '---\n---\n\n# Title\n\nbody\n';
   assert.equal(sectionAt(t7, t7.indexOf('body'), true), 'Title', 'an empty block is front matter, as the viewer folds it');
   assert.equal(sectionAt('---', 0, true), '', 'a file of one rule');
@@ -314,7 +325,7 @@ test('every write\'s reply carries the placed map the status carries, so the pan
 
 // ── the nearest fallback costs no scan ──────────────────────────────
 
-test('the nearest copy is read off the whole matches, the engine\'s own pick (nearest the position, the earlier of two at one distance); a tie past REFRESH_COPIES_MAX under a budget answers nothing', () => {
+test('the nearest copy is read off the whole matches, the engine\'s own pick (nearest the position, the earlier of two at one distance); a tie past REFRESH_COPIES_MAX from a position holding no quote answers nothing under a budget, and the engine\'s pick without one', () => {
   const m = nth(TIED, MARKER, 1);
   const anchor = engine.makeAnchor(TIED, m, m + MARKER.length, ANCHOR_CTX_CAP);
   const moved = `${OPENING}One short line above.\n\n${TIED.slice(OPENING.length)}`;
@@ -327,17 +338,27 @@ test('the nearest copy is read off the whole matches, the engine\'s own pick (ne
     assert.equal(loc.from, engine.locateAnchor(moved, anchor, at).from, `the engine's pick from ${at}`);
   }
   assert.equal((copies[0] + copies[1]) % 2 === 0 ? locateStored(moved, { anchor, anchorAt: mid }, true).from : copies[0], copies[0], 'at one distance from two copies: the earlier');
-  // past the cap: a whole anchor at nearly every offset of a text of one character
+  // past the cap: a whole anchor at nearly every offset of a text of one character. The position must hold no quote to
+  // reach the tie at all: a position the quote sits at is `position`, confirmed, before any tie rule (the third round's
+  // quoteSitsAt, 2026-09-11; the first round's fixture here put the position on the quote and answered nearest only
+  // while that rule was absent). Two positions that hold none: the character under it edited raw, and one past the
+  // last quote.
   const flat = 'a'.repeat(100000);
   const cli = engine.makeAnchor(flat, 50000, 50001);
-  const budget = { left: REFRESH_SCAN_BUDGET, skipped: 0, unscanned: 0 };
-  assert.equal(locateStored(flat, { anchor: cli, anchorAt: 5 }, false, budget), null, 'nothing known, rather than the engine\'s scan of every occurrence');
-  assert.ok(budget.left < REFRESH_SCAN_BUDGET, 'the classification was charged');
-  const loc = locateStored(flat, { anchor: cli, anchorAt: 5 }, false);
-  assert.deepEqual(loc, { from: engine.locateAnchor(flat, cli, 5).from, to: engine.locateAnchor(flat, cli, 5).from + 1, confirmed: false, by: 'nearest' }, 'without a budget (one comment: passageFigure, retarget) the engine answers');
+  assert.deepEqual(locateStored(flat, { anchor: cli, anchorAt: 5 }, false), { from: 5, to: 6, confirmed: true, by: 'position' }, 'a position on the quote: the quote alone sits there, and no tie rule runs');
+  const gone = `${flat.slice(0, 5)}\n${flat.slice(6)}`;
+  for (const [text, at, what] of [[gone, 5, 'the character under the position edited raw'], [flat, flat.length, 'the position past the last quote']]) {
+    const budget = { left: REFRESH_SCAN_BUDGET, skipped: 0, unscanned: 0 };
+    assert.equal(locateStored(text, { anchor: cli, anchorAt: at }, false, budget), null, `${what}: nothing known, rather than the engine's scan of every occurrence`);
+    assert.ok(budget.left < REFRESH_SCAN_BUDGET, 'the classification was charged');
+    assert.equal(budget.skipped, 1, 'and the engine\'s scan refused and counted, as the placing of a nowhere anchor is');
+    const want = engine.locateAnchor(text, cli, at).from;
+    assert.notEqual(want, at, 'the fixture: the position holds no quote, so the engine\'s pick is elsewhere');
+    assert.deepEqual(locateStored(text, { anchor: cli, anchorAt: at }, false), { from: want, to: want + 1, confirmed: false, by: 'nearest' }, `${what}: without a budget (one comment: passageFigure, retarget) the engine answers`);
+  }
 });
 
-test('a status on a file of repeated text with hundreds of stale tied comments answers well inside the kernel\'s deadline, with every guess on the copy nearest its position; on a text of one character the tie past the cap has no entry and the reply is as quick', () => {
+test('a status on a file of repeated text with hundreds of stale tied comments answers well inside the kernel\'s deadline, with every guess on the copy nearest its position; on a text of one character, from positions holding no quote, the tie past the cap has no entry and the reply is as quick', () => {
   const w = world();
   // (a) a near-cap file of one paragraph repeated, 300 comments whose positions sit 7 characters into their copy
   const para = `${'Every paragraph of this file is the same, and each one holds the marker sentence. '.repeat(11)}Here is the marker phrase to comment on. ${'The rest of the paragraph is the same too. '.repeat(3)}`.trim();
@@ -363,13 +384,21 @@ test('a status on a file of repeated text with hundreds of stale tied comments a
   const placed = st.json.placed;
   assert.equal(Object.keys(placed).length, 300, 'every stale comment has a verdict');
   for (const [i, c] of disk.comments.slice(1).entries()) assert.deepEqual(placed[c.id], { at: copies[i], confirmed: false, by: 'nearest' }, `comment ${i}`);
-  // (b) a text of one character: the whole anchor sits at nearly every offset
+  // (b) a text of one character: the whole anchor sits at nearly every offset, and the positions hold no quote (the
+  // character under them edited raw), so every comment reaches the tie past the cap and the budget's refusal of the
+  // engine's scan, which this leg is for. The first round's fixture built each anchor AT its position with
+  // track-comment's width, so the whole anchor sat there (the prefix is the five characters before) and the status
+  // answered `position` with no scan at all; a whole anchor built elsewhere with the position on the quote is the
+  // third round's `position` (quoteSitsAt), no scan past the classification. Neither reaches the refusal.
   const flat = 'a'.repeat(100000);
+  const gone = `${flat.slice(0, 5)}\n${flat.slice(6)}`;
   const flatPath = path.join(w.docs, 'flat.txt');
-  fs.writeFileSync(flatPath, flat);
+  fs.writeFileSync(flatPath, gone);
   const rf = comment(w, flatPath, { note: 'Overall.' });
   const df = readSidecar(rf.storePath);
-  for (let i = 0; i < 400; i++) df.comments.push(hostComment(flat, 'a', 5, i, 24));   // track-comment's width, a position holding no whole anchor
+  for (let i = 0; i < 400; i++) df.comments.push({ ...hostComment(gone, 'a', 50000, i, 24), anchorAt: 5 });   // track-comment's width, the anchor whole at 50000; the position on the edited character
+  const one = locateStored(gone, df.comments[1], false);
+  assert.deepEqual([one.by, one.confirmed], ['nearest', false], 'the fixture: a tie past the cap that one comment\'s reader answers with the engine\'s guess');
   fs.writeFileSync(rf.storePath, JSON.stringify(df));
   const sf = host(w, { verb: 'status', path: flatPath, args: {} });
   assert.equal(sf.code, 0, sf.stderr);

@@ -615,13 +615,17 @@ const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew thi
  *  review, 2026-09-11). */
 type PanelCard = Card & { confirmedAt?: number };
 /** What the render a card's words are for shows of it, stamped by renderCard on the card it hands copyUnsureWords
- *  (WordedCard): whether the editor holds the body, and for a region whether this view shows its picture (regionImageFor).
- *  The words for a guessed copy end with the recourse, and the recourse names controls (Reveal, Re-place, the composer's
- *  save, a region drawn on the figure) that the editor and a view with no picture do not offer; handed the card alone,
- *  the words need these two facts to name the way there instead (the review, round 3, 2026-09-11: with the editor up
- *  the card said to Reveal and save while it offered Reply and Resolve, and in Raw a region's card said to draw on a
- *  figure the view did not show). */
-type Shown = { editing: boolean; pictured: boolean };
+ *  (WordedCard): whether the editor holds the body, for a region whether this view shows its picture (regionImageFor),
+ *  and whether an overlay in view takes a drag (drawsRegions: the panel open on a pointer that draws; a phone's layers
+ *  are inert), which is the pointer half of the Re-place gate (replaceOffered) and, for these words, whether the card
+ *  offers Re-place at all: the paint never marks a resolved card's copy as guessed, so the gate's other half is the
+ *  card's `pictured`. The words for a guessed copy end with the recourse, and the recourse names controls (Reveal,
+ *  Re-place, the composer's save, a region drawn on the figure) that the editor, a view with no picture and a coarse
+ *  pointer do not offer; handed the card alone, the words need these facts to name the way there instead (the review,
+ *  round 3, 2026-09-11: with the editor up the card said to Reveal and save while it offered Reply and Resolve, and in
+ *  Raw a region's card said to draw on a figure the view did not show; then, the same day, a phone's pictured region
+ *  card still said what Re-place does while its actions were Reply and Resolve). */
+type Shown = { editing: boolean; pictured: boolean; draws: boolean };
 type WordedCard = PanelCard & { shown: Shown };
 /** What the save copyUnsureWords asks for does, for a passage comment: the host's comment verb mints a NEW comment on the
  *  copy the selection is made in, so the guessed card keeps its tag until it is resolved (docs/guide.md says the same).
@@ -632,8 +636,15 @@ type WordedCard = PanelCard & { shown: Shown };
 const SAVE_FROM_COPY = "a comment saved from the copy you mean is placed on that copy, and this one keeps its tag until you resolve it";
 const SAVE_FROM_COPY_NOTE = "A" + SAVE_FROM_COPY.slice(1) + ".";
 /** The ending of a REGION comment's words for a guessed copy (copyUnsureWords): the recourse a region has, and why the
- *  two controls its card offers are not it. For the view that shows the region's picture. */
+ *  two controls its card offers are not it. For the view that shows the region's picture, on a pointer that draws, where
+ *  the card offers the Re-place the middle sentence explains. */
 const REGION_CONFIRM = "To confirm the copy, draw a new region on the figure you mean; this comment keeps its tag until you resolve it. Re-place redraws the rectangle on the figure shown and does not move the comment to another figure. Drawing a region needs a mouse.";
+/** The same ending on a coarse pointer (a phone) with the picture in view: no overlay takes a drag there (drawsRegions),
+ *  so the card offers no Re-place (replaceOffered) and the sentence saying what Re-place does has no button to explain;
+ *  it is left out, and the words end with the pointer drawing takes, as regionRecourse tells a phone about a stale
+ *  region. Before it the phone's card wore REGION_CONFIRM and named a Re-place it did not have, the class the round-3
+ *  fixes closed for the editor and for Raw (the review, 2026-09-11). */
+const REGION_CONFIRM_TOUCH = "To confirm the copy, draw a new region on the figure you mean; this comment keeps its tag until you resolve it. Drawing a region needs a mouse.";
 /** The same ending where the view shows no picture of the region's (Raw for a markdown embed, whose card highlights the
  *  embed line instead; the editor, which shows text alone): the figure to draw on is in the view that shows the image,
  *  so the words name that view, as regionRecourse does for a stale region there, and say what re-placing does from
@@ -669,7 +680,10 @@ const UNSURE_IN_EDITOR = "This passage occurs in the file more than once with th
  *  is on the card, so the words say the state without a paint and name the way there (UNSURE_IN_EDITOR, then
  *  PASSAGE_CONFIRM_AFTER_EDIT or REGION_CONFIRM_AFTER_EDIT); a region whose picture this view does not show (Raw) is told
  *  which view has it (REGION_CONFIRM_UNSEEN). Before it the card in the editor asked for a Reveal and a save it did not
- *  offer, and the Raw card said to draw on a figure the view did not show (the review, round 3, 2026-09-11). */
+ *  offer, and the Raw card said to draw on a figure the view did not show (the review, round 3, 2026-09-11). A pictured
+ *  region card on a coarse pointer offers no Re-place either (`draws`: a phone's overlays take no drag), so its words
+ *  leave out the sentence about Re-place (REGION_CONFIRM_TOUCH); before it the phone's card named that button too (the
+ *  review, 2026-09-11). The view with no picture is judged first: in Raw the pointer changes nothing. */
 function copyUnsureWords(c: WordedCard): string {
   if (c.shown.editing) return UNSURE_IN_EDITOR + (c.target ? REGION_CONFIRM_AFTER_EDIT : PASSAGE_CONFIRM_AFTER_EDIT);
   const state = "This passage occurs in the file more than once with the same surroundings, and "
@@ -679,6 +693,7 @@ function copyUnsureWords(c: WordedCard): string {
       ? "the comment stores no position to tell the copies apart, so the first copy is highlighted"
       : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted");
   if (c.target && !c.shown.pictured) return state + ", not a confirmed one. " + REGION_CONFIRM_UNSEEN;
+  if (c.target && !c.shown.draws) return state + ", not a confirmed one. " + REGION_CONFIRM_TOUCH;
   if (c.target) return state + ", not a confirmed one. " + REGION_CONFIRM;
   return state + ", not a confirmed one. Reveal it and save again from the right copy to confirm.";
 }
@@ -5600,8 +5615,10 @@ class Panel {
     const editing = this.ctx.editing();
     const picture = given.target ? this.regionImageFor(given) : null;   // the picture the region is on, in this view; null when it shows none
     // the card as its words see it (WordedCard): what this render shows of it rides on the card, since the words for a
-    // guessed copy are handed the card alone (copyUnsureWords) and name the recourse by the controls this render offers
-    const c: WordedCard = { ...given, shown: { editing, pictured: !!picture } };
+    // guessed copy are handed the card alone (copyUnsureWords) and name the recourse by the controls this render offers;
+    // `draws` is the pointer half of the Re-place gate (replaceOffered, below), read the same way, so the words and the
+    // button agree on whether this card has a Re-place
+    const c: WordedCard = { ...given, shown: { editing, pictured: !!picture, draws: this.drawsRegions() } };
     const isOpen = this.openCards.has(c.id) || this.replyTo() === c.id;   // open while its reply is written: the box stands in it (placeComposer)
     const loc = this.located.get(c.id);
     const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : "") + (this.openBodies.has(c.id) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)

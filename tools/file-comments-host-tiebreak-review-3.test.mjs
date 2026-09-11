@@ -8,7 +8,9 @@
 //     same state held from the tracked edit to the next host write, with the disk's position two characters stale
 //     and no quote at it: while every change is on record, a verdict the recorded changes carry elsewhere is not
 //     forwarded either (placedFor, carriedTo), and one they carry to the same copy is, so a tracked insertion above
-//     keeps its confirmation in that window;
+//     keeps its confirmation in that window. The panel's half of that split (the nearest whole copy in the dashed cue
+//     with the stored-position words, nothing at the quote) is driven in
+//     ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts, over the stand-in and over this scenario's real reply;
 //   * the ordinal rule confirmed a copy under another heading after an unrecorded edit that kept the count (one copy
 //     deleted, one pasted): the ordinal now yields where the stored heading path names other copies and not its own,
 //     and the tie is a guess; a heading renamed or deleted above the copies still leaves the ordinal confirmed;
@@ -150,6 +152,13 @@ test('a comment the refresh carried to the quote\'s own occurrence, two copies u
   assert.equal(after.anchorAt, quoteAt, 'followed: the recorded change carried the position to where it left the quote');
   assert.deepEqual(copyFields(after), [1, 3, 'Report > Alpha'], 'the fields stand: the position is not among the whole matches');
   assert.deepEqual(r2.placed, {}, 'the write\'s reply: no entry either (before the fix: the second copy, confirmed by section)');
+  // the ground for the dropped entry, pinned: the engine the panel's locateComment wraps scores a whole copy over the
+  // edited one, and from the position, carried or stale, picks the second copy under the heading, not the quote at the
+  // position; the panel's paint of that pick (dashed, the stored-position words, nothing at the quote) is driven in
+  // ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts over this scenario's real reply
+  assert.equal(engine.locateAnchor(edited, c.anchor, quoteAt).from, whole[0], 'from the carried position: the second copy under the heading');
+  assert.equal(engine.locateAnchor(edited, c.anchor, m.idx).from, whole[0], 'from the stale one: the same');
+  assert.notEqual(whole[0], quoteAt, 'a copy other than the one the host places the comment on');
   st = status(w, w.alpha);
   assert.deepEqual(st.placed, {}, 'and every later status the same');
   // the one reader of a stored anchor (passageFigure, doRetarget): the position's own occurrence, never a whole copy

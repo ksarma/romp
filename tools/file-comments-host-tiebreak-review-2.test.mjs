@@ -6,7 +6,10 @@
 //     null off it to its readers without a budget; passageFigure read `.error` off the null, so every write on a file
 //     holding a src-less region comment whose scan the budget had cut died with a TypeError (the kernel's host-error)
 //     until the sidecar was edited by hand. Now a cut result serves no caller without a budget: the scan runs whole and
-//     the whole result replaces it, and the budgeted callers after it have it for free.
+//     the whole result replaces it, and the budgeted callers after it have it for free. The stale position the case
+//     places from lands on a line above the run, off the quote: the third round made a position the quote itself sits
+//     at the passage's own (locateStored's `position`), which reaches no tie rule, and the fixture's first form, the
+//     quote at every offset of a text of one character, could then reach none.
 //   * The heading regex and the front-matter key regex paired a lazy quantifier with a trailing whitespace class and
 //     backtracked quadratically over a run of whitespace inside a line: a heading line of 120k spaces held a `comment`
 //     on a 120 KB file 13 s, past the kernel's 10 s deadline. Now both take the line greedily, for the same words.
@@ -140,10 +143,20 @@ function timed(fn) {
 // ── a classification the budget cut short serves no reader without a budget ──
 
 test('fullMatches: a result the budget cut short answers the budgeted callers and no caller without a budget, which runs the scan whole and leaves the whole result for the rest; locateStored without a budget places the comment off it', () => {
-  const flat = 'a'.repeat(30000);   // the whole anchor at the cap sits at every offset but the last 960: 29,040 copies, under REFRESH_COPIES_MAX
-  const anchor = engine.makeAnchor(flat, 15000, 15001, ANCHOR_CTX_CAP);
+  // the run: the whole anchor at the cap sits at every offset of it but the last 960, 29,040 copies, under
+  // REFRESH_COPIES_MAX. The line above it holds no `a`, so the stale position on it is off the quote: a position the
+  // quote itself sits at names the passage (locateStored's `position`, the review's third round) and reaches no tie
+  // rule, so a text of the one character alone, the fixture's first form, could reach none from any position inside it
+  const head = 'The line the person put here, on no record.\n';
+  const RUN = 30000;
+  const flat = head + 'a'.repeat(RUN);
+  const stale = 5;   // a stored position the write above left on the line
+  const anchor = engine.makeAnchor(flat, head.length + 15000, head.length + 15001, ANCHOR_CTX_CAP);
+  assert.equal(anchor.quote, 'a');
+  assert.equal(flat.indexOf(anchor.quote), head.length, 'the fixture: the quote occurs nowhere on the line');
+  assert.ok(stale < head.length, 'the fixture: the stale position is on the line, off the quote');
   const needle = anchor.prefix + anchor.quote + anchor.suffix;
-  const copies = flat.length - needle.length + 1;
+  const copies = RUN - needle.length + 1;
   const pass = Math.ceil(flat.length / REFRESH_PASS_DIVISOR);
   const budget = { left: pass + needle.length * 100, skipped: 0, unscanned: 0 };   // room for a hundred hits, not the rest
   const cut = fullMatches(flat, anchor, REFRESH_COPIES_MAX, budget);
@@ -154,7 +167,7 @@ test('fullMatches: a result the budget cut short answers the budgeted callers an
   const again = { left: REFRESH_SCAN_BUDGET, skipped: 0, unscanned: 0 };
   assert.equal(fullMatches(flat, anchor, REFRESH_COPIES_MAX, again), cut, 'the memo, for a caller with a budget');
   assert.equal(again.left, REFRESH_SCAN_BUDGET, 'nothing charged for the memo');
-  assert.equal(locateStored(flat, { anchor, anchorAt: 5 }, false, again), null, 'under a budget: nothing known');
+  assert.equal(locateStored(flat, { anchor, anchorAt: stale }, false, again), null, 'under a budget: nothing known');
   // a caller without one (locateStored for passageFigure and doRetarget): the scan runs whole
   const whole = fullMatches(flat, anchor, REFRESH_COPIES_MAX);
   assert.equal(whole.cut, undefined, 'not cut');
@@ -163,12 +176,19 @@ test('fullMatches: a result the budget cut short answers the budgeted callers an
   assert.equal(fullMatches(flat, anchor, REFRESH_COPIES_MAX, again), whole, 'and the whole result now serves the budgeted callers too');
   assert.equal(again.left, REFRESH_SCAN_BUDGET, 'for free');
   // locateStored without a budget: the tie is broken, never null (before the fix: null, and passageFigure read .error off it)
-  const nearest = engine.locateAnchor(flat, anchor, 5).from;
-  const loc = locateStored(flat, { anchor, anchorAt: 5 }, false);
+  const nearest = engine.locateAnchor(flat, anchor, stale).from;
+  assert.equal(nearest, whole.hits[0], 'the fixture: the engine\'s pick from the stale position is the first copy');
+  const loc = locateStored(flat, { anchor, anchorAt: stale }, false);
   assert.deepEqual(loc, { from: nearest, to: nearest + 1, confirmed: false, by: 'nearest' }, 'the nearest copy, a guess');
-  assert.deepEqual(locateStored(flat, { anchor, anchorAt: 5, ordinal: 3, copies }, false), { from: whole.hits[2], to: whole.hits[2] + 1, confirmed: true, by: 'ordinal' }, 'the fields tell, once the copies are counted');
-  assert.deepEqual(locateStored(flat, { anchor, anchorAt: 5, ordinal: 3, copies }, false, again), { from: whole.hits[2], to: whole.hits[2] + 1, confirmed: true, by: 'ordinal' }, 'and so they do for the budgeted reader (placedFor) off the whole memo');
+  assert.deepEqual(locateStored(flat, { anchor, anchorAt: stale, ordinal: 3, copies }, false), { from: whole.hits[2], to: whole.hits[2] + 1, confirmed: true, by: 'ordinal' }, 'the fields tell, once the copies are counted');
+  assert.deepEqual(locateStored(flat, { anchor, anchorAt: stale, ordinal: 3, copies }, false, again), { from: whole.hits[2], to: whole.hits[2] + 1, confirmed: true, by: 'ordinal' }, 'and so they do for the budgeted reader (placedFor) off the whole memo');
   assert.equal(again.left, REFRESH_SCAN_BUDGET);
+  // a position inside the run, where the quote itself sits (the fixture's first form): the passage is there, and no
+  // tie rule is reached, whatever the fields say (the review's third round; before it the rules ran on this state)
+  const onQuote = head.length + 5;
+  assert.ok(flat.startsWith(anchor.quote, onQuote) && !whole.hits.includes(onQuote), 'the fixture: the quote at the position, and no whole copy there');
+  assert.deepEqual(locateStored(flat, { anchor, anchorAt: onQuote }, false), { from: onQuote, to: onQuote + 1, confirmed: true, by: 'position' }, 'the quote at the position: the position, and the tie rules are not reached');
+  assert.deepEqual(locateStored(flat, { anchor, anchorAt: onQuote, ordinal: 3, copies }, false), { from: onQuote, to: onQuote + 1, confirmed: true, by: 'position' }, 'and the fields do not move it off the quote');
 });
 
 test('a src-less region comment on a passage whose whole anchor sits at more copies than one write\'s budget enumerates: after a raw write above it every write on the file lands (before the fix: a TypeError off a null placement, the kernel\'s host-error, until the sidecar was edited by hand)', () => {

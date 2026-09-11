@@ -110,7 +110,7 @@ const PASSAGE_KEYS = ['id', 'author', 'ts', 'anchor', 'anchorAt', 'ordinal', 'co
 
 // ── the section helper ──────────────────────────────────────────────
 
-test('sectionAt: the heading path from the top level down, a lower level closed by a later heading of a higher one, a heading line under itself; not a heading: a line inside a fenced block, a hash line inside a front-matter block (closed by --- or ..., and opening no section for the passage after it), a hash with no space; closing hashes and extra spaces stripped; empty for no headings and for a non-markdown file', () => {
+test('sectionAt: the heading path from the top level down, a lower level closed by a later heading of a higher one, a heading line under itself; not a heading: a line inside a fenced block, a hash line inside a front-matter block (closed by --- alone, as the viewer folds it, and opening no section for the passage after it; YAML\'s document-end marker closes none, so a block only ... closes is body and its hash line a heading), a hash with no space; closing hashes and extra spaces stripped; empty for no headings and for a non-markdown file', () => {
   const text = [
     '---', 'title: Front matter', '# not a heading: inside the front matter', '---', '',
     'After the front matter, before any heading.', '',
@@ -135,8 +135,13 @@ test('sectionAt: the heading path from the top level down, a lower level closed 
   assert.equal(sectionAt(text, at('# Omega') + 2, true), 'Omega', 'a passage on the heading line itself is under that heading');
   assert.equal(sectionAt(text, at('# Alpha'), true), 'Alpha', 'the heading from its first character');
   assert.equal(sectionAt(text, 0, true), '', 'the top of the file');
-  const dots = '---\ntitle: Dots\n# not a heading: inside a block the document-end marker closes\n...\n\nAfter a front matter closed by three dots.\n\n# Alpha\n\nUnder alpha.\n';
-  assert.equal(sectionAt(dots, dots.indexOf('After a front matter'), true), '', 'a front matter closed by the YAML document-end marker is skipped the same way');
+  // YAML's document-end marker, `...`, closes no block, since it closes none in the viewer (FRONT_MATTER_RE names --- as
+  // the closer and nothing else): a block only `...` closes is body, its hash line is the heading the person sees, and
+  // the passage after it is under that heading. The host read `...` as a closer until the review's third round
+  // (2026-09-11), and stored '' for a passage the viewer showed under the heading.
+  const dots = '---\ntitle: Dots\n# A heading: the document-end marker closes no block\n...\n\nAfter a rule the document-end marker fails to close.\n\n# Alpha\n\nUnder alpha.\n';
+  assert.equal(sectionAt(dots, dots.indexOf('title: Dots'), true), '', 'before the hash line nothing is above: the opening rule is a thematic break, not a front-matter opener');
+  assert.equal(sectionAt(dots, dots.indexOf('After a rule'), true), 'A heading: the document-end marker closes no block', 'a block closed only by the YAML document-end marker is body, as the viewer renders it, so its hash line is a heading and the passage after it is under that heading');
   assert.equal(sectionAt(dots, dots.indexOf('Under alpha.'), true), 'Alpha', 'and the headings after it are read');
   assert.equal(sectionAt(PLAIN, PLAIN.indexOf('unique'), true), '', 'a markdown file with no headings');
   assert.equal(sectionAt(text, at('Under gamma.'), false), '', 'a non-markdown file: no heading path however the text reads');

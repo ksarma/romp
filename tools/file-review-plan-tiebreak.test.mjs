@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { sectionAt, locateStored, ANCHOR_CTX_CAP } from './file-comments-host.mjs';
+import { sectionAt, locateStored, fullMatches, ANCHOR_CTX_CAP } from './file-comments-host.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -127,21 +127,35 @@ test('the contract names the three fields beside anchorAt with their rule, and t
 
 test('the host paragraph states locateStored\'s order, and the host takes the rules in that order for every reader of a stored anchor and for the reply\'s placed map', () => {
   assert.ok(op.includes('Every reader of a stored anchor in the host (the figure a passage names, a re-place, the reply\'s `placed`) goes through `locateStored` since the tie-break (2026-09-11, decision 51): the position first, where the whole anchor still sits at it; then, when the whole anchor sits at several places and the position names none, the copy fields, `ordinal` while `copies` equals the count of matches now, else the one match under the stored `section`, both confirmed; else the match nearest the position, a guess, and a tie with no position refuses `anchor-ambiguous` as before; an anchor whole nowhere is the engine\'s.'));
+  // The source's order, one line per step (the review's third round, 2026-09-11, rewrote the fields' step: the copies
+  // under the stored heading path are read off one grouping per anchor, copiesUnder, and the ordinal's copy is
+  // confirmed only where that path names no copy or names its own; a path naming other copies and not the ordinal's
+  // is two fields that disagree, and neither confirms, so the tie falls to the nearest copy, a guess). A pin of the
+  // line before the rewrite kept this module red for a round: the lines below are the host's as it stands, and the
+  // block after them holds the order by what locateStored answers, whatever the lines become.
   const locate = fn(host, 'locateStored');
   inOrder(locate, [
     "if (at !== undefined && sitsAt(text, anchor, at)) return span(at, true, 'position');",
     'if (budget && !affordableScan(budget, text, anchor)) return null;',
     'const { hits, more, cut } = fullMatches(text, anchor, REFRESH_COPIES_MAX, budget);',
     'if (hits.length === 0) {',
+    "if (at !== undefined && quoteSitsAt(text, anchor, at)) return span(at, true, 'position');",
     "if (hits.length === 1 && !more) return span(hits[0], true, 'whole');",
+    'if (!more) {',
     'const o = ordinalOf(c);',
-    "if (o && o.copies === hits.length) return span(hits[o.ordinal - 1], true, 'ordinal');",
     'const s = sectionOf(c);',
-    'const under = hits.filter((h) => sectionAt(text, h, markdown) === s);',
-    "if (under.length === 1) return span(under[0], true, 'section');",
+    'const under = s !== null && markdown ? copiesUnder(text, anchor, hits, markdown, s, budget) : [];',
+    'if (under === null) return null;',
+    'if (o && o.copies === hits.length) {',
+    'const pick = hits[o.ordinal - 1];',
+    "if (!under.length || sectionAt(text, pick, markdown) === s) return span(pick, true, 'ordinal');",
+    '} else if (under.length === 1) {',
+    "return span(under[0], true, 'section');",
     "if (at === undefined) return { error: 'anchor-ambiguous' };",
+    "if (!more) return span(nearestOf(hits, at), false, 'nearest');",
     "return span(engine.locateAnchor(text, anchor, at).from, false, 'nearest');",
   ], 'locateStored');
+  assert.ok(!locate.includes('hits.filter('), 'the copies under a heading path come from the grouping, not a filter of every copy per comment (the review\'s third round, 2026-09-11)');
   assert.ok(fn(host, 'ordinalOf').includes('if (!c || !Number.isInteger(c.ordinal) || !Number.isInteger(c.copies) || c.ordinal < 1 || c.copies < c.ordinal) return null;'), 'the pair is read together, defensively');
   assert.ok(fn(host, 'passageFigure').includes('const loc = locateStored(text, { ...c, anchor }, ctx.markdown);'), 'the figure a passage names');
   assert.ok(fn(host, 'doRetarget').includes('const loc = locateStored(text, { ...c, anchor: validateAnchor(c.anchor) }, ctx.markdown);'), 'a re-place');
@@ -157,6 +171,27 @@ test('the host paragraph states locateStored\'s order, and the host takes the ru
   assert.equal(sectionAt(text, second, false), '', 'a non-markdown file has no heading path');
   const cap = { quote: 'Ship it.', prefix: text.slice(Math.max(0, second - ANCHOR_CTX_CAP), second), suffix: text.slice(second + 8, second + 8 + ANCHOR_CTX_CAP) };
   assert.deepEqual(locateStored(text, { anchor: cap, anchorAt: second, ordinal: 2, copies: 2, section: 'Latency report > Day 2' }, true), { from: second, to: second + 8, confirmed: true, by: 'position' });
+  // behaviour, on a synthetic tied text: three copies of one paragraph under three headings, the position (0) naming
+  // none. The rules answer in the order the paragraph states, and the third round's yield holds: a stored heading
+  // path that names another copy and not the ordinal's makes the tie a guess.
+  const para = 'The retry on timeout was observed across every run of the suite, and it held. Nothing else moved.';
+  const tied = `# Report\n\n## First pass\n\n${para}\n\n## Second pass\n\n${para}\n\n## Third pass\n\n${para}\n`;
+  const quote = 'it held.';
+  const q0 = tied.indexOf(quote);
+  const anchor = { quote, prefix: tied.slice(q0 - 24, q0), suffix: tied.slice(q0 + quote.length, q0 + quote.length + 20) };
+  const copies = fullMatches(tied, anchor, 10).hits;
+  assert.equal(copies.length, 3, 'the fixture: the whole anchor sits at three places');
+  assert.deepEqual(copies.map((h) => sectionAt(tied, h, true)), ['Report > First pass', 'Report > Second pass', 'Report > Third pass'], 'the fixture: one copy under each heading');
+  const verdict = (k, confirmed, by) => ({ from: copies[k], to: copies[k] + quote.length, confirmed, by });
+  assert.deepEqual(locateStored(tied, { anchor, anchorAt: 0, ordinal: 2, copies: 3, section: 'Report > Second pass' }, true), verdict(1, true, 'ordinal'), 'the count unchanged and the path its own: the ordinal\'s copy, confirmed');
+  assert.deepEqual(locateStored(tied, { anchor, anchorAt: 0, ordinal: 2, copies: 3 }, true), verdict(1, true, 'ordinal'), 'the count unchanged and no path stored: the ordinal\'s copy, confirmed');
+  assert.deepEqual(locateStored(tied, { anchor, anchorAt: 0, ordinal: 3, copies: 2, section: 'Report > Third pass' }, true), verdict(2, true, 'section'), 'the count changed: the one copy under the stored path, confirmed');
+  assert.deepEqual(locateStored(tied, { anchor, ordinal: 3, copies: 2, section: 'Report > Third pass' }, true), verdict(2, true, 'section'), 'the same with no position at all: the fields answer before the refusal');
+  assert.deepEqual(locateStored(tied, { anchor, anchorAt: 0, ordinal: 1, copies: 3, section: 'Report > Third pass' }, true), verdict(0, false, 'nearest'), 'the count unchanged but the path names another copy and not the ordinal\'s: the fields disagree, a guess on the nearest');
+  assert.deepEqual(locateStored(tied, { anchor, anchorAt: 0, ordinal: 3, copies: 2 }, true), verdict(0, false, 'nearest'), 'the count changed and no path: the nearest copy, a guess');
+  assert.deepEqual(locateStored(tied, { anchor, anchorAt: 0, ordinal: 3, copies: 2, section: 'Report > Third pass' }, false), verdict(0, false, 'nearest'), 'a non-markdown file: the path never confirms, so a guess');
+  assert.deepEqual(locateStored(tied, { anchor, ordinal: 3, copies: 2 }, true), { error: 'anchor-ambiguous' }, 'no position and no rule that settles it: refused, as before');
+  assert.deepEqual(locateStored(tied, { anchor }, true), { error: 'anchor-ambiguous' }, 'no position and no fields (a comment the CLI made): refused, as before');
 });
 
 // ── the painting paragraph, the note, the panel and the model ───────

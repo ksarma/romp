@@ -15,7 +15,12 @@
 // reads the note's source and the plan says what stderr says. The third round found this module's decision-51 pin still
 // spelling the first cut's clause on the CLI comment (a stamp on the next host write), which the second round had
 // reworded in the plan and pinned in its own module; the pin here now holds the correction's own clauses around it and
-// that the old clause is gone. Synthetic: the repo's own text and an invented report, no session data.
+// that the old clause is gone. The sweep after the third round found this module's source pin over locateStored still
+// spelling the first cut's one-line ordinal and section rules, which that round's host fix made block form (the copies
+// under the stored heading path are grouped once per anchor, copiesUnder, and the ordinal yields where that path names
+// other copies and not its own, so the two fields disagree and neither confirms), red on the branch; the pin now reads
+// the third round's form and holds the positionless disagreement refused. Synthetic: the repo's own text and an
+// invented report, no session data.
 // Run: node --test tools/file-review-plan-tiebreak-review.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -158,14 +163,27 @@ test('decision 51 says a tie with no position refuses only when neither field te
   assert.ok(op.includes('else the match nearest the position, a guess, and a tie with no position refuses `anchor-ambiguous` as before'));
 });
 
-test('locateStored runs the ordinal rule and the section rule before the hintless refusal, so a positionless comment is confirmed from its fields and refused only without them', () => {
+test('locateStored runs the ordinal rule and the section rule before the hintless refusal, so a positionless comment is confirmed from its fields and refused only without them, or when the two disagree', () => {
   const src = fn(host, 'locateStored');
+  // The third round's form: the copies under the stored heading path are grouped once per anchor and text (copiesUnder),
+  // the ordinal's copy is confirmed unless that grouping names other copies and not it (the two fields then disagree,
+  // and neither confirms), the section rule runs only where the count changed, and the nearest among the enumerated
+  // copies is a binary search (nearestOf); the engine's own nearest stays for an anchor at more copies than are enumerated.
   inOrder(src, [
-    "if (o && o.copies === hits.length) return span(hits[o.ordinal - 1], true, 'ordinal');",
-    "if (under.length === 1) return span(under[0], true, 'section');",
+    'const o = ordinalOf(c);',
+    'const s = sectionOf(c);',
+    'const under = s !== null && markdown ? copiesUnder(text, anchor, hits, markdown, s, budget) : [];',
+    'if (o && o.copies === hits.length) {',
+    'const pick = hits[o.ordinal - 1];',
+    "if (!under.length || sectionAt(text, pick, markdown) === s) return span(pick, true, 'ordinal');",
+    '} else if (under.length === 1) {',
+    "return span(under[0], true, 'section');",
     "if (at === undefined) return { error: 'anchor-ambiguous' };",
+    "if (!more) return span(nearestOf(hits, at), false, 'nearest');",
     "return span(engine.locateAnchor(text, anchor, at).from, false, 'nearest');",
   ], 'locateStored');
+  assert.ok(!src.includes('if (o && o.copies === hits.length) return span('), 'the first cut\'s one-line ordinal rule, which confirmed the ordinal\'s copy against a stored heading path naming another, is gone');
+  assert.ok(!src.includes('hits.filter((h) => sectionAt('), 'and the copies under the stored path are no longer walked per comment');
   // on the tied text, with no anchorAt at all
   assert.deepEqual(locateStored(TEXT, { anchor: ANCHOR, ordinal: 2, copies: 3 }, true), span(COPIES[1], true, 'ordinal'), 'the count unchanged: the ordinal\'s copy, confirmed');
   assert.equal(sectionAt(TEXT, COPIES[2], true), 'Report > Third pass', 'the fixture: the third copy\'s heading path');
@@ -173,4 +191,11 @@ test('locateStored runs the ordinal rule and the section rule before the hintles
   assert.deepEqual(locateStored(TEXT, { anchor: ANCHOR, ordinal: 3, copies: 2 }, true), { error: 'anchor-ambiguous' }, 'the count changed and no heading path: refused');
   assert.deepEqual(locateStored(TEXT, { anchor: ANCHOR, section: 'Report > Third pass' }, false), { error: 'anchor-ambiguous' }, 'a non-markdown file: the section rule never confirms, so refused');
   assert.deepEqual(locateStored(TEXT, { anchor: ANCHOR }, true), { error: 'anchor-ambiguous' }, 'neither position nor field (a comment the CLI made): refused, as before');
+  // the two fields disagreeing (the third round: the count unchanged, and the stored heading path names another copy and
+  // not the ordinal's): neither tells, so with no position the tie is refused, and with one the nearest copy is a guess
+  const disagreeing = { anchor: ANCHOR, ordinal: 2, copies: 3, section: 'Report > Third pass' };
+  assert.equal(sectionAt(TEXT, COPIES[1], true), 'Report > Second pass', 'the fixture: the ordinal\'s copy is under another heading than the stored path');
+  assert.deepEqual(locateStored(TEXT, disagreeing, true), { error: 'anchor-ambiguous' }, 'the fields disagree and there is no position: refused, confirmed by neither');
+  const inside = COPIES[2] + 5;   // inside the third copy's quote: the anchor sits at no copy from there, and it is nearest
+  assert.deepEqual(locateStored(TEXT, { ...disagreeing, anchorAt: inside }, true), span(COPIES[2], false, 'nearest'), 'the fields disagree and a position stands: the copy nearest it, a guess');
 });

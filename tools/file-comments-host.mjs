@@ -134,12 +134,19 @@
 //     read off the whole matches already enumerated with no further scan (a hintless tie still refuses), a guess
 //     the panel shows as one; the matches are grouped by heading path once per anchor (copiesUnder) and the
 //     nearest is a binary search, so a sidecar of thousands of comments on one recurring passage costs a lookup
-//     a comment. A position the QUOTE alone sits at, its surroundings edited (the state the refresh leaves when a
-//     recorded change edited the chosen copy's context, and the state a raw edit of the surroundings leaves),
-//     names the passage before any rule runs, and the copies whole elsewhere are the other copies, never placed
-//     on; and while every change to the text is on record, a verdict the reply would carry is dropped where the
-//     recorded changes carry the stored position elsewhere (placedFor, carriedTo: the refresh settles it on the
-//     next write, and the panel paints a guess with its cue meanwhile). The heading path is read as the viewer
+//     a comment. A position the quote sits at with ONE side of its context whole beside it, the other side edited
+//     (quoteSitsAt: the state the refresh leaves when a recorded change edited the chosen copy's context, and the
+//     state a raw edit of the surroundings leaves), names the passage before any rule runs, and the copies whole
+//     elsewhere are the other copies, never placed on; a bare occurrence of the quoted words at the position,
+//     neither side beside it, is what a stale position lands on by a coincidence of distance (a raw insertion above
+//     of exactly the gap to a passing mention), and the rules run as for any stale position (the review's fourth
+//     round, 2026-09-11; the third took the quote alone, and quoteSitsAt's note weighs the two). While every change
+//     to the text is on record, a verdict the reply would carry is dropped where the recorded changes carry the
+//     stored position elsewhere (placedFor, carriedTo: the refresh settles it on the next write, and the panel
+//     paints by its own engine meanwhile); the walk over the copies the recorded changes can have carried a position
+//     to (reachable) reads the changes off one sorted index and is charged to the same budget, so a sidecar of many
+//     pending changes and many stale comments on a recurring passage cannot hold a status past the deadline (the
+//     fourth round). The heading path is read as the viewer
 //     renders the file (headings: a leading BOM, CRLF line
 //     ends, a front-matter block by the viewer's own test, each heading's text capped at SECTION_HEADING_CAP), so
 //     the path stamped and the path read agree with what the person sees; whether the file is markdown is judged
@@ -313,8 +320,13 @@ export const ANCHOR_CTX_CAP = 480;
 // and the map carries no engine verdict, so locateStored under a budget answers it unplaced with no further
 // scan: the review's second round, 2026-09-11, found a hundred such comments on a near-cap file spending the
 // budget on a status, and every tied comment behind them losing its confirmed verdict, silently); a tie's
-// nearest copy is read off the whole matches already enumerated (locateStored). About half a second of
-// scanning on the machine the figure was taken on, at the engine's rate.
+// nearest copy is read off the whole matches already enumerated (locateStored), and the walk over the copies
+// the recorded changes can have carried a tied position to (reachable, for the refresh and for the map's
+// carriedTo) costs a compare per change to index the changes once and a compare per copy inside the changes'
+// window per comment (the review's fourth round, 2026-09-11: uncharged, and summing every change per copy, the
+// walk held a status on a sidecar of ten thousand pending changes and twenty stale tied comments on a
+// recurring character 18 s). About half a second of scanning on the machine the figure was taken on, at the
+// engine's rate.
 export const REFRESH_SCAN_BUDGET = 48_000_000;
 export const REFRESH_PASS_DIVISOR = 32;
 // The most copies of a whole anchor (and the most occurrences of a quote) the refresh enumerates for
@@ -1852,17 +1864,28 @@ function stampCopy(c, text, at, hits, markdown) {
 // (decision 51). `c` carries the anchor (validated by the caller) and, when it has them, `anchorAt` and the copy
 // fields. Answers {from, to, confirmed, by} or {error} with locateExact's codes:
 //   * `position`: the whole anchor sits at the stored position, which therefore names the copy (sitsAt, no scan); or
-//     the QUOTE alone sits there while the whole anchor sits elsewhere (quoteSitsAt, after the one classification scan
-//     that says it does; an anchor whole nowhere is the engine's, below): the passage whose own surroundings were
-//     edited, the state the refresh leaves on purpose when a recorded change edited the chosen copy's
-//     context and not its text (refreshAnchorAts, movedCopy's occurrences: the position follows the quote and the copy
-//     fields stand) and the state a raw edit of the surroundings alone leaves. The copies still whole elsewhere are then
-//     the OTHER copies, and no rule below may place the comment on one: before the review's third round (2026-09-11)
-//     the rules ran on this state, and a tracked edit inside the first of two copies under one heading had the section
-//     rule confirm the second, which the panel painted plainly as the copy chosen while the host's own reply carried
-//     the position on the first. The reply's placed map has no entry for it (placedFor, as for the first case), and the
-//     panel's engine, which scores a whole copy over an edited one, paints the nearest whole copy as a guess, the cue
-//     from before the tie-break;
+//     the quote sits there with ONE side of its context whole beside it while the whole anchor sits elsewhere
+//     (quoteSitsAt, after the one classification scan that says it does; an anchor whole nowhere is the engine's,
+//     below): the passage whose own surroundings were edited on the other side, the state the refresh leaves on purpose
+//     when a recorded change edited the chosen copy's context and not its text (refreshAnchorAts, movedCopy's
+//     occurrences: the position follows the quote and the copy fields stand) and the state a raw edit of the
+//     surroundings alone leaves. The copies still whole elsewhere are then the OTHER copies, and no rule below may place
+//     the comment on one: before the review's third round (2026-09-11) the rules ran on this state, and a tracked edit
+//     inside the first of two copies under one heading had the section rule confirm the second, which the panel painted
+//     plainly as the copy chosen while the host's own reply carried the position on the first. The third round took the
+//     quote alone at the position as the passage; the fourth asks for one side of its context too, since a bare
+//     occurrence of the quoted words is what a stale position lands on by a coincidence of distance, a raw insertion
+//     above of exactly the gap to it, and the quote alone took the comment off the copy the fields named (the
+//     ordinal's, the count unchanged) for the mention (quoteSitsAt's note weighs the two and states the cost).
+//     The reply's placed map has no entry for a `position` (placedFor, as for the first case), and the panel paints by
+//     its own engine, which scores a whole copy over an edited one: with three or more copies the two or more still
+//     whole tie and the nearest is a guess with its cue, the cue from before the tie-break; with exactly two copies the
+//     one still whole is the engine's one best hit, and the panel paints it plainly, on the copy the person never
+//     commented, as it has since the anchors follow-on (2026-09-07) and before the tie-break (the third round's note
+//     here said a guess for both counts; the fourth corrected it). This script answers the position to its own readers
+//     either way (passageFigure and doRetarget read the right copy); painting the quote at a position the host vouches
+//     for is the panel's, and needs the verdict carried to it, which the placed map's contract (a tie the position
+//     names no copy of) does not today;
 //   * `whole`: the whole anchor sits at exactly one place, the engine's one best hit, whatever the position;
 //   * a tie (the whole anchor sits at several places and the position names none of them), broken in the contract's
 //     order: `ordinal` when the count of copies is unchanged since the fields were written (the ordinal's copy: an
@@ -2010,8 +2033,16 @@ function copiesUnder(text, anchor, hits, markdown, section, budget) {
 // (2026-09-11) a status between a session's edit inside the first of two copies under one heading and the next host
 // write confirmed the second copy by section, from a position two characters stale that the recorded edit accounted
 // for, and the panel painted the copy the person never commented plainly for as long as the person reviewed the
-// edit; with no entry the panel paints as before the tie-break, a guess with its cue, until the write settles it.
-// After a raw write (unrecorded) the changes vouch for nothing and every verdict is forwarded, as before.
+// edit; with no entry the panel paints by its own engine, as before the tie-break, until the write settles it: a guess
+// with its cue where two or more copies are still whole, and where one is (two copies, one edited) that copy, plainly,
+// the paint of the anchors follow-on (locateStored's note on `position`). After a raw write (unrecorded) the changes
+// vouch for nothing and every verdict is forwarded, as before. The walk over the copies the changes can have carried
+// a position to (carriedTo, reachable) is charged to the same budget, a compare per copy inside the changes' window,
+// and a comment whose walk does not fit is one the changes say nothing about (carriedTo answers null, as for a
+// classification the budget cut), its verdict forwarded as after a raw write: before the review's fourth round
+// (2026-09-11) the walk summed every pending change for every copy of every tied comment, uncharged, and a status on a
+// file of REFRESH_COPIES_MAX one-character copies with ten thousand pending insertions and twenty stale tied comments
+// took 18 s, past the kernel's deadline, after which the file's comments could not be opened at all.
 function placedFor(store, text, markdown) {
   const out = {};
   if (!store || typeof text !== 'string') return out;
@@ -2037,17 +2068,22 @@ function placedFor(store, text, markdown) {
 // to no one place, or nothing is known (the classification the budget cut or the copies past REFRESH_COPIES_MAX, and a
 // quote count the budget cut). A comment with no position is carried nowhere, as the refresh leaves it (the fields
 // place it). For placedFor alone, on a comment locateStored has just placed by a tie rule, so the classification scan
-// is memoized and the quote's occurrences are charged once per quote, as the refresh charges them.
+// is memoized and the quote's occurrences are charged once per quote, as the refresh charges them. The walk over the
+// copies (movedCopy, reachable) is charged to the same `budget`, and a walk that does not fit (movedCopy's undefined)
+// is nothing known, null here like a classification the budget cut: the changes say nothing about the position, and
+// placedFor forwards the verdict as it does after a raw write (the review's fourth round, 2026-09-11).
 function carriedTo(text, c, bounds, budget) {
   const at = hintOf(c);
   if (at === undefined) return null;
   const { hits, more, cut } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX, budget);
   if (cut || more || !hits.length) return null;
-  const whole = movedCopy(hits, at, bounds);
+  const whole = movedCopy(hits, at, bounds, undefined, budget);
+  if (whole === undefined) return null;   // the walk did not fit the budget: nothing known
   if (whole !== null) return whole;
   const q = quoteHits(text, c.anchor.quote, budget);
   if (q.more) return null;
-  return movedCopy(hits, at, bounds, q.positions);
+  const moved = movedCopy(hits, at, bounds, q.positions, budget);
+  return moved === undefined ? null : moved;
 }
 
 // What one native pass of indexOf over `text` costs the refresh's budget (REFRESH_SCAN_BUDGET's note).
@@ -2065,13 +2101,31 @@ function sitsAt(text, anchor, at) {
   return at >= prefix.length && text.startsWith(anchor.quote, at) && text.startsWith(suffix, at + anchor.quote.length) && text.startsWith(prefix, at - prefix.length);
 }
 
-// Whether the QUOTE alone sits at `at`, whatever its surroundings: the passage whose own context was edited, the
-// second case of locateStored's `position`. A compare of the quote's length, no scan. A position that is not a whole
-// number inside the text sits nowhere, as for sitsAt (startsWith would read a negative one as 0). Not the refresh's
-// test of a seated comment: a comment here keeps the copy fields it has (stampCopy writes none for a position among
-// no whole match), and the refresh moved it here itself where a recorded change vouched (movedCopy's occurrences).
+// Whether the quote sits at `at` with ONE side of its context whole beside it, the prefix ending right before it or the
+// suffix starting right after (a side the anchor lacks counts for nothing): the passage whose surroundings on the other
+// side were edited, the second case of locateStored's `position`. A compare of the anchor's own length, no scan. A
+// position that is not a whole number inside the text sits nowhere, as for sitsAt (startsWith would read a negative one
+// as 0). The review's third round (2026-09-11) asked for the quote alone here; the fourth asks for a side: the engine
+// scores an occurrence of the quote by the sides that sit beside it (locateAnchor, 2 a side, so a whole copy outscores a
+// half and a half a bare occurrence), and a bare occurrence of the quoted words, a passing mention of them, a table cell
+// or one character of a run, is what a stale position lands on by a coincidence of distance, a raw insertion above of
+// exactly the gap to it; the quote alone then took the mention for the passage, and the copy the fields would have
+// confirmed (the ordinal's, the count unchanged) was a guess on the panel, with its cue, where a confirmation was due.
+// A passage still at its position with its context edited keeps a side in every ordinary case: an edit after the quote
+// leaves the prefix, and an edit before it that keeps the quote at its position is one of the same length, or a recorded
+// one the refresh followed the quote through (movedCopy's occurrences), which leaves the suffix. What the side costs,
+// stated in the record: a recorded rewrite of both sides around the quoted words, followed the same way, is a position
+// no rule takes for the passage, and the copies whole elsewhere fall to the rules as after any edit (two copies, the
+// other one, `whole`; more, the fields); and a near copy whose one side matches to the anchor's width, at exactly the
+// coincidence's distance, is still taken. Not the refresh's test of a seated comment: a comment here keeps the copy
+// fields it has (stampCopy writes none for a position among no whole match), and the refresh moved it here itself where a
+// recorded change vouched.
 function quoteSitsAt(text, anchor, at) {
-  return Number.isInteger(at) && at >= 0 && at <= text.length && text.startsWith(anchor.quote, at);
+  if (!Number.isInteger(at) || at < 0 || at > text.length || !text.startsWith(anchor.quote, at)) return false;
+  const prefix = typeof anchor.prefix === 'string' ? anchor.prefix : '';
+  const suffix = typeof anchor.suffix === 'string' ? anchor.suffix : '';
+  return (prefix.length > 0 && at >= prefix.length && text.startsWith(prefix, at - prefix.length))
+    || (suffix.length > 0 && text.startsWith(suffix, at + anchor.quote.length));
 }
 
 // Every offset at which the WHOLE anchor sits in `text` — prefix immediately before, quote at, suffix
@@ -2173,15 +2227,87 @@ function shiftBounds(store) {
   return out;
 }
 
-// The places among `cands` that the recorded changes (shiftBounds) can have carried the stored
-// position `at` to: each one's distance from `at` lies within the summed bounds of the changes ending
-// at or before it.
-function reachable(cands, at, bounds) {
+// The recorded changes' bounds (shiftBounds) indexed for reachable: sorted by where each ends, with the running sums
+// of the bounds ending at or before each, so the shift the changes can have given a position is two sums read off a
+// binary search rather than a walk of every change per candidate; and the widest the sums get over any prefix
+// (`minLo`, `maxHi`), the window a position can have moved within at all. Built once per bounds list (a WeakMap on
+// the list, which shiftBounds makes once per verb) and charged to the `budget`, when one is given, as a compare per
+// change; null when that does not fit what is left.
+const boundsIndexMemo = new WeakMap();
+function boundsIndex(bounds, budget) {
+  let ix = boundsIndexMemo.get(bounds);
+  if (ix) return ix;
+  if (budget) {
+    if (budget.left < bounds.length) return null;
+    budget.left -= bounds.length;
+  }
+  const sorted = bounds.slice().sort((a, b) => a.end - b.end);
+  const ends = new Array(sorted.length);
+  const lo = new Array(sorted.length + 1);
+  const hi = new Array(sorted.length + 1);
+  lo[0] = 0;
+  hi[0] = 0;
+  let minLo = 0;
+  let maxHi = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    ends[i] = sorted[i].end;
+    lo[i + 1] = lo[i] + sorted[i].lo;
+    hi[i + 1] = hi[i] + sorted[i].hi;
+    if (lo[i + 1] < minLo) minLo = lo[i + 1];
+    if (hi[i + 1] > maxHi) maxHi = hi[i + 1];
+  }
+  ix = { ends, lo, hi, minLo, maxHi };
+  boundsIndexMemo.set(bounds, ix);
+  return ix;
+}
+
+// The first index in the ascending `arr` whose value is at least `v` (lowerBound) or past it (upperBound), or
+// arr.length: the binary searches reachable makes over the candidates and over the bounds index.
+function lowerBound(arr, v) {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] < v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+function upperBound(arr, v) {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] <= v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+// The places among `cands` (ascending offsets: the whole matches, or the quote's spare occurrences, both in order)
+// that the recorded changes (`bounds`, shiftBounds) can have carried the stored position `at` to: each one's distance
+// from `at` lies within the summed bounds of the changes ending at or before it. Only the candidates inside the
+// window the sums ever span (boundsIndex) are looked at, found by binary search, and each costs the two sums read off
+// the index: before the review's fourth round (2026-09-11) every candidate summed every bound, and a status on a file
+// of REFRESH_COPIES_MAX copies with a sidecar of ten thousand pending changes and twenty stale tied comments spent 17 s
+// of its 18 in this walk, past the kernel's deadline, after which the file's comments could not be opened. With a
+// `budget` the candidates looked at are charged, a compare each as copiesUnder charges its matches, and null is
+// answered when they do not fit what is left: nothing known, as for a scan that does not fit.
+function reachable(cands, at, bounds, budget) {
+  const ix = boundsIndex(bounds, budget);
+  if (ix === null) return null;
+  const from = lowerBound(cands, at + ix.minLo);
+  const to = upperBound(cands, at + ix.maxHi);
+  if (budget) {
+    if (budget.left < to - from) return null;
+    budget.left -= to - from;
+  }
   const out = [];
-  for (const p of cands) {
-    let lo = 0;
-    let hi = 0;
-    for (const b of bounds) if (b.end <= p) { lo += b.lo; hi += b.hi; }
+  for (let i = from; i < to; i++) {
+    const p = cands[i];
+    const k = upperBound(ix.ends, p);   // the changes ending at or before p: the first k of the index
+    const lo = ix.lo[k];
+    const hi = ix.hi[k];
     const d = p - at;
     if (d < lo || d > hi) continue;
     out.push(p);
@@ -2205,14 +2331,24 @@ function reachable(cands, at, bounds) {
 // occurrences that are not whole copies are read once per anchor and quote (spareOf): a set of the
 // hits built per comment held a write on a sidecar of two thousand comments on one recurring
 // character 27 s, past the kernel's deadline (the tie-break review's third round, 2026-09-11).
-function movedCopy(hits, at, bounds, occurrences) {
+// Answers the one place, null for none or several, and undefined when the walk did not fit the
+// `budget` (reachable): nothing known, which the callers treat as a position the changes say nothing
+// about (the refresh keeps it and counts the comment as unscanned; placedFor forwards the verdict).
+// The budget is the refresh's unless a caller names one: the process is one verb and has the one
+// budget (refreshBudget), and every caller here is charged to it; exported for the tests, which name
+// their own to hold the refusal.
+export function movedCopy(hits, at, bounds, occurrences, budget = refreshBudget) {
+  const whole = reachable(hits, at, bounds, budget);
+  if (whole === null) return undefined;
   let found = null;
-  for (const p of reachable(hits, at, bounds)) {
+  for (const p of whole) {
     if (found !== null) return null;
     found = p;
   }
   if (found !== null || !occurrences) return found;
-  for (const p of reachable(spareOf(hits, occurrences), at, bounds)) {
+  const spare = reachable(spareOf(hits, occurrences), at, bounds, budget);
+  if (spare === null) return undefined;
+  for (const p of spare) {
     if (found !== null) return null;
     found = p;
   }
@@ -2327,6 +2463,7 @@ function refreshAnchorAts(store, text) {
       if (recorded) {
         if (!bounds) bounds = shiftBounds(store);
         const whole = movedCopy(hits, at, bounds);
+        if (whole === undefined) { budget.unscanned++; continue; }   // the walk over the copies did not fit the budget (movedCopy's, this one): the position stands, and stderr counts it
         if (whole !== null) { c.anchorAt = whole; seated.push(c); continue; }
       } else if (hits.length > 1) {
         continue;   // a tie after an edit nobody recorded: the changes vouch for nothing, and the quote's other occurrences add nothing
@@ -2336,6 +2473,7 @@ function refreshAnchorAts(store, text) {
       if (hits.length === 1 && q.count === 1) { c.anchorAt = hits[0]; seated.push(c); continue; }
       if (!recorded) continue;
       const moved = movedCopy(hits, at, bounds, q.positions);
+      if (moved === undefined) { budget.unscanned++; continue; }
       if (moved !== null) { c.anchorAt = moved; seated.push(c); }   // to the quote's other occurrence: the whole anchor sits elsewhere, so the copy fields stand (stampCopy)
       continue;
     }

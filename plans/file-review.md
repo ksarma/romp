@@ -267,13 +267,20 @@ Four properties of the contract shape the design:
   headings from the top level down, each heading's text cut at 200 characters, `SECTION_HEADING_CAP`,
   joined with " > "; empty for a file without headings or a non-markdown file, the file's kind judged
   from its name, `.md` or `.markdown`, never from the sidecar's own `path` field). The host writes them
-  at creation and refreshes them with the position on every
+  at creation (none for a passage whole at more places than the refresh enumerates, where no count is
+  known; the review's third round, 2026-09-11) and refreshes them with the position on every
   sidecar write for a comment whose position names its copy, and reads them when the whole anchor ties
-  and the position names none of the copies: the ordinal's copy while the count of copies is unchanged,
-  else the one copy under the stored heading path, confirmed either way; else the nearest copy to the
-  position, a guess. Every reply carries the verdicts (`placed`, per comment id), and the panel paints a
-  confirmed copy plainly. The other editors and the CLIs write the whole object back, so the six fields
-  survive them.
+  and the position names none of the copies, not even by the quote with one side of its context whole
+  beside it (such a position, the other side edited, names the passage, and the copies whole elsewhere
+  are the other copies; the same round, and the review's fourth, which asks for the one side: a bare
+  occurrence of the quoted words is a stale position like any other): the ordinal's copy while the count of copies is unchanged, unless the stored
+  heading path names other copies and not the ordinal's, when the two fields disagree and the tie is a
+  guess (the same round; decision 51 says why); else, the count changed, the one copy under the stored
+  heading path; confirmed either way; else the nearest copy to the position, a guess. Every reply
+  carries the verdicts (`placed`, per comment id), except that while every change to the text is on
+  record a verdict the recorded changes carry to another place is left to the next write's refresh (the
+  same round), and the panel paints a confirmed copy plainly. The other editors and the CLIs write the
+  whole object back, so the six fields survive them.
 - **A file created through `track-edit` is one insertion** spanning the whole file, and while any
   same-author insertion is pending, that author's further edits inside or beside it coalesce
   into it (`engine.js:204-218`) and do not appear as separate changes. A first look at a file the
@@ -471,13 +478,36 @@ before it refreshes the fields it has (`noteUnstamped` is the note; the review's
 2026-09-11: before it the skip was silent, and a comment past the budget never gained the fields). Every
 reader of a stored anchor in the host (the figure a passage names, a re-place, the reply's `placed`)
 goes through `locateStored` since the tie-break (2026-09-11,
-decision 51): the position first, where the whole anchor still sits at it; then, when the whole anchor
-sits at several places and the position names none, the copy fields, `ordinal` while `copies` equals
-the count of matches now, else the one match under the stored `section`, both confirmed; else the match
+decision 51): the position first, where the whole anchor still sits at it, and where the quote sits at it
+with one side of its context whole beside it while the whole anchor sits elsewhere (`quoteSitsAt`: the
+passage whose surroundings on the other side were edited, the state the refresh leaves when a recorded
+change edited the chosen copy's context and not its text; the copies whole elsewhere are then the other
+copies, no rule below places the comment on one, and the reply's map carries no verdict for it, so the
+panel paints by its own engine, the nearest whole copy as a guess with its cue, or, with exactly two
+copies, the one still whole, plainly, as since the anchors follow-on; the review's third round,
+2026-09-11, which took the quote alone, and its fourth, which asks for the one side, since a bare
+occurrence of the quoted words is what a stale position lands on by a coincidence of distance);
+then, when the whole anchor sits at several places and the position names none, the copy fields,
+`ordinal` while `copies` equals the count of matches now, unless the stored `section` names other
+matches and not the ordinal's, when the two fields disagree and neither confirms (the same round); else,
+the count changed, the one match under the stored `section`; both confirmed; else the match
 nearest the position, a guess, and a tie with no position refuses `anchor-ambiguous` as before; an
-anchor whole nowhere is the engine's. The refresh stamps the three fields on every comment whose
-position names its copy once its pass is done (`stampCopy`), under the same budget, and the decisions'
-self-check carves them out with `anchorAt`. Reject writes the sidecar first, then the
+anchor whole nowhere is the engine's. The reply's map (`placedFor`) carries the verdict of every such
+tie, except that while every change to the text is on record (the text as the sidecar's last writer left
+it) a verdict the recorded changes carry to another copy, or to the quote's own occurrence, is dropped
+for the next write's refresh to settle (`carriedTo`; the same round: before it a status between a
+tracked edit inside the first of two copies under one heading and the next host write confirmed the
+second copy by section, from a position the recorded edit accounted for); the walk over the copies the
+recorded changes can have carried a position to (`reachable`, the refresh's and the map's) reads the
+changes off one sorted index and is charged to the same budget, and a comment whose walk does not fit
+is one the changes say nothing about, its position kept and counted by the refresh, its verdict
+forwarded by the map (the fourth round: uncharged, the walk held a status on ten thousand pending
+changes past the deadline). The refresh stamps the three
+fields on every comment whose position names its copy once its pass is done (`stampCopy`), under the
+same budget, and the decisions' self-check carves them out with `anchorAt`. Creation stamps them alone
+where the whole anchor is at no more places than the refresh enumerates (`REFRESH_COPIES_MAX`): past
+that no count is known and none is written, as the stamping pass already refused to (the same round;
+before it the cap itself was written as the count). Reject writes the sidecar first, then the
 file, and restores the prior sidecar bytes (or removes the sidecar it created, when none existed)
 if the file write fails, the order `track-edit` uses (`cli/track-edit.mjs:108-128`); its file
 write is atomic (temp file and rename in the same directory, through the realpath, mode
@@ -887,10 +917,14 @@ outscore it, so the engine's nearest-wins pick from such a position, or its earl
 none, is a guess and is shown as one, never as the copy that was chosen (the anchors follow-on's
 review, 2026-09-07; before it the guess was painted as located). Since the tie-break (2026-09-11,
 decision 51) the status carries the host's verdict for every such comment (`placed`): a copy the host
-confirmed from the fields stored with the comment (the ordinal while the count of copies is unchanged,
-else the one copy under the stored heading path) is the painter's hint in place of the stale position
-(`placedAt`), so it is painted as the chosen one, with no dashed ring and no tag; a guessed verdict, or
-none, paints as before, and the card's words end by saying how to confirm the copy. A passage comment's guessed
+confirmed from the fields stored with the comment (the ordinal's copy while the count of copies is
+unchanged, unless the stored heading path names other copies and not that one; else, the count changed,
+the one copy under the stored heading path; decision 51 has the rules) is the painter's hint in place of
+the stale position (`placedAt`), so it is painted as the chosen one, with no dashed ring and no tag; a
+guessed verdict, or none (a tie whose verdict the recorded changes carry elsewhere has none until the
+next write settles it, and a position the quote sits at with one side of its context whole beside it
+has none, the panel painting that comment by its own engine as before the tie-break; the review's third
+round, 2026-09-11, and its fourth), paints as before, and the card's words end by saying how to confirm the copy. A passage comment's guessed
 copy has its card offer the Reveal those words name (the review's first round, 2026-09-11; before it the card
 offered Reveal only for a passage it could not paint, and named a button it did not have): it switches to Raw and
 scrolls to the guessed copy, and its title says that a comment saved from the copy you mean is placed on that copy
@@ -902,6 +936,17 @@ A region comment on an embed line that recurs is in the same state, its rectangl
 the hint; its words end with the recourse a region has, a new region drawn on the figure meant, with a
 mouse (Reveal for a region scrolls to its picture, never to Raw, and Re-place keeps the anchor and its
 fields), and its card offers no Reveal (the review's second round, 2026-09-11).
+Those are the words of a view that paints the copy: with the editor up (Slice 5) no highlight of ours is
+painted and the card offers neither Reveal nor the composer, so a guessed card's words say only that the
+copy is a guess and name the way there first, leave edit mode, then reveal it and save again from the
+right copy (`UNSURE_IN_EDITOR`, `PASSAGE_CONFIRM_AFTER_EDIT`; a region's, leave edit mode, then draw a
+new region in the view that shows the image, `REGION_CONFIRM_AFTER_EDIT`), a passage's save line
+standing under them as in the read view; a region whose picture the view does not show (Raw) is told
+which view has it (`REGION_CONFIRM_UNSEEN`); and a pictured region's card on a coarse pointer, which
+offers no Re-place, ends with the pictured view's words less the sentence about Re-place
+(`REGION_CONFIRM_TOUCH`). Before it the card in the editor named a Reveal and a save it did not offer,
+the Raw card said to draw on a figure the view did not show, and the phone's card named a Re-place it
+did not have (the review's third round, 2026-09-11, and the sweep after it).
 The stored position is an offset
 into the text the host read, which keeps a leading UTF-8 BOM the fetch strips from the viewer's
 text, so the reply says whether it does (`bom`) and the panel maps the position into the view's
@@ -1672,14 +1717,25 @@ refresh leaves open: after an edit nobody recorded, the position names no copy a
 for nothing, so the copy nearest the stale position was painted as a guess for good. The host now
 writes `ordinal`, `copies` and `section` beside the position (`stampCopy`, at creation and with every
 refresh) and breaks the tie by them (`locateStored`, the one reader of a stored anchor): the ordinal's
-copy while the count of copies is unchanged, else the one copy under the stored heading path,
+copy while the count of copies is unchanged, confirmed, unless the stored heading path names other
+copies and not the ordinal's, when the two fields disagree and the tie is a guess (the review's third
+round, 2026-09-11); else, the count changed, the one copy under the stored heading path,
 confirmed; else the nearest, a guess, whose words on the card end with "Reveal it and save again from
 the right copy to confirm." and whose card offers that Reveal (the review's first round, 2026-09-11).
 That is a passage comment's card: a region comment whose embed line ties is guessed by the same rules,
 and since Reveal for a region scrolls to its picture, never to Raw, and Re-place keeps the anchor, its
 position and its fields, its words end with the recourse a region has, a new region drawn on the figure
 meant, with a mouse, and its card offers no Reveal (the review's second round, 2026-09-11; decision 51
-says why).
+says why). Both are the read view's card: with the editor up the words say only that the copy is a
+guess and name the way there first, leave edit mode, then reveal it and save again from the right copy
+(a region's: then draw a new region in the view that shows the image), and the card offers no Reveal; in
+Raw a region's words name the view that shows its picture, and on a coarse pointer they leave out the
+sentence about the Re-place the card lacks (the review's third round, 2026-09-11, and the sweep after
+it). A position the quote sits at with one side of its context whole beside it, the other side edited,
+names the passage before any rule runs, and the copies whole elsewhere are the other copies, never placed
+on (the same round, whose test took the quote alone, and the review's fourth, which asks for the one side;
+before the third a tracked edit inside one of two copies under one heading had the section rule confirm
+the other).
 Tests: `tools/file-comments-host-tiebreak.test.mjs` (the section helper,
 creation, the refresh, the rules in order, a read that rewrites nothing, the decisions' carve-out),
 `ui/webview/file-comments-tiebreak.test.ts` (the confirmed and the guessed paint),
@@ -1690,8 +1746,10 @@ and the guide against the host, the panel and the model; and from the review's f
 `tools/file-comments-host-tiebreak-review.test.mjs`, `ui/webview/file-comments-tiebreak-recourse.test.ts`,
 `tests/test_guide_files_comments_confirm.py` and `tools/file-review-plan-tiebreak-review.test.mjs`, and from
 its second `tools/file-comments-host-tiebreak-review-2.test.mjs`, `ui/webview/file-comments-tiebreak-region.test.ts`,
-`tools/file-review-plan-tiebreak-review-2.test.mjs` and `tools/file-review-plan-tiebreak-review-3.test.mjs` (the Tests
-section says what each drives).
+`tools/file-review-plan-tiebreak-review-2.test.mjs` and `tools/file-review-plan-tiebreak-review-3.test.mjs`, and from
+its third `tools/file-comments-host-tiebreak-review-3.test.mjs`, `ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts`,
+`ui/webview/file-comments-tiebreak-shown.test.ts`, `ui/webview/file-comments-tiebreak-touch.test.ts` and
+`tools/file-review-plan-tiebreak-review-4.test.mjs` (the Tests section says what each drives).
 
 The todo-file follow-on (2026-09-07): after the end-to-end walk the user asked that the link between a
 user todo and its file be structured, not a path in the detail's free text, and that any Send on the
@@ -2470,7 +2528,41 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   the guessed copy), and a passage whose position names its copy carries neither.
   `tools/file-review-plan-tiebreak-review-3.test.mjs` holds the record's account of the second round (the
   region card's words and its missing Reveal, the passage card's line, the round's modules) to the panel
-  (`copyUnsureWords`, `REGION_CONFIRM`, `renderCard`, `reveal`), the host (`doRetarget`) and the tree.
+  (`copyUnsureWords`, `REGION_CONFIRM`, `renderCard`, `reveal`), the host (`doRetarget`) and the tree. The
+  third round wrote it for the second's account; its own account is held below. From that third round
+  (2026-09-11), `tools/file-comments-host-tiebreak-review-3.test.mjs` drives the real host as a child process, or
+  its exported readers, over the round's findings on the host: a comment the refresh carried to the quote's own
+  occurrence, one side of its context still beside it, answers the position and the reply carries no verdict
+  for it (`locateStored`, `quoteSitsAt`, `placedFor`); a verdict the recorded changes carry elsewhere is dropped while every change is on record and
+  one they carry to the same copy stands (`carriedTo`); the ordinal yields to a stored heading path that names
+  other copies and not its own, while a heading renamed or deleted above the copies leaves it confirmed;
+  creation writes no copy fields for a passage whole at more places than `REFRESH_COPIES_MAX`, and a later
+  write adds none; a front-matter block closes on `---` alone, so a heading in a block closed only by `...` is
+  the passage's path; and a status on `REFRESH_COPIES_MAX` copies with two thousand tied comments answers
+  inside the kernel's deadline (`copiesUnder`, `nearestOf`). `ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts`
+  drives the panel's half of that state, over the tie-break stand-in and over the real host's reply: with no entry
+  the panel paints the nearest whole copy in the dashed cue with the stored position's words and nothing at the
+  quote, after a tracked edit inside the chosen copy's context and after a raw edit of the surroundings alone,
+  and an entry the host declines to forward would close nothing, since the panel paints no confirmed copy from
+  an offset the whole anchor is not at. `ui/webview/file-comments-tiebreak-shown.test.ts`
+  drives the words for what the render shows, over the recourse module's stand-in with a viewer that flips
+  into edit mode as `enterEdit` does: with the editor up a guessed passage card names the way there (leave
+  edit mode, then reveal it and save again) and offers no Reveal, the save's line under the words, and the
+  read view's words and Reveal return when the edit ends; a comment with no verdict, one whose confirmed
+  place the view moved past and one with no position wear the same words while editing, and each its own
+  after; a confirmed copy and a unique passage carry no tag and no note in the editor; and in Raw a region
+  on the second of two embeds after an unrecorded title edit has the embed line as its guess and words that
+  name the view showing the image, not a figure Raw lacks or the Re-place it does not offer, the editor's
+  words naming the way there first. `ui/webview/file-comments-tiebreak-touch.test.ts` drives the same region
+  on a coarse pointer with the picture in view: the words leave out the sentence about the Re-place the card
+  lacks and end with what drawing takes, the fine pointer's card names the Re-place it offers, word for
+  word, Raw's words are the same on either pointer, and the words name Re-place exactly when the card has
+  the button. `tools/file-review-plan-tiebreak-review-4.test.mjs` holds the record's account of the third
+  round (decision 51, the contract, the host and painting paragraphs, the note) to the host
+  (`locateStored`'s order with the position the quote names with one side of its context and the yield,
+  `placedFor`'s recorded window and the budgeted walk, `buildComment`'s cap, the front-matter reader), the
+  panel (`copyUnsureWords` and its words) and the tree, and drives the yield and that position on synthetic
+  markdown.
   `tools/file-review-plan-attribution.test.mjs` holds the margin-layout note to the
   record: the ask as the user made it, with its hedges, and the layout as the build's reading of
   it, awaiting the user's word (a review of the follow-on found the note had folded the build's
@@ -3296,11 +3388,13 @@ document stands on its own, each with the reasoning it was given.
     every stamp and every read, never from the sidecar's own `path` field (the same round: the refresh had
     judged by that field once, stamped an empty path on a markdown file, and a later read took the empty path
     for the copies above every heading and confirmed one of those). When the
-    host must choose among several copies and the position names none (`locateStored`, which every reader of a
-    stored anchor in the host goes through, and the `placed` map every reply carries for the panel), the rules
-    run in order: the count of copies unchanged since the fields were written, the ordinal's copy, confirmed;
-    else exactly one copy under the stored heading path, that copy, confirmed; else the copy nearest the
-    position, a guess, as before. The panel paints a confirmed copy plainly (no dashed cue, no tag) and a
+    host must choose among several copies and the position names none, not even by the quote with one side
+    of its context whole beside it (`locateStored`, which every reader of a stored anchor in the host goes
+    through, and the `placed` map every reply carries for the panel), the rules run in order: the count of copies unchanged since the fields were
+    written, the ordinal's copy, confirmed, unless the stored heading path names other copies and not the
+    ordinal's, when the two fields disagree and the tie is a guess (the review's third round, 2026-09-11, said
+    below); else, the count changed, exactly one copy under the stored heading path, that copy, confirmed; else
+    the copy nearest the position, a guess, as before. The panel paints a confirmed copy plainly (no dashed cue, no tag) and a
     guessed one as before, for a passage comment with the card's words now ending "Reveal it and save again from
     the right copy to confirm." and for a region comment with the card's words ending in the recourse a region
     has, said below. A passage comment's guessed copy has its card offer the Reveal those words name (the review's
@@ -3331,6 +3425,68 @@ document stands on its own, each with the reasoning it was given.
     body, `tools/file-comments-host-tiebreak-review-2.test.mjs` the round's findings on the host, and
     `tools/file-review-plan-tiebreak-review-3.test.mjs` holds this account of the round to the panel, the host and
     the tree (the Tests section says what each drives).
+    The review's third round (2026-09-11) qualified the first rule, the position's, and the reply's map. The
+    ordinal's copy is confirmed where the stored heading path names no copy at all (a heading renamed or deleted
+    above the copies; a non-markdown file, whose paths are all empty) or names the ordinal's copy, among others or
+    alone; where it names other copies and not the ordinal's, the two fields disagree, neither confirms, and the
+    tie is a guess: an unchanged count does not say that no copy was added or removed (one copy deleted and another
+    pasted under a different heading keep the count and move the ordinal onto a copy the person never commented,
+    which the round found confirmed and painted plainly), a heading moved among the copies misleads the heading
+    path the same way, so a tie the two fields read two ways is left to the person, and the section rule runs
+    once the count has changed. The contract the user said yes to confirmed the ordinal's copy whenever the count
+    was unchanged, with no such condition; the code and this record hold the qualified rule, and the user's word
+    on it is open (Open questions). A position the quote sits at with ONE side of its context whole beside it, the
+    other side edited (the state the refresh leaves when a recorded change edited the chosen copy's context and
+    not its text, and the state a raw edit of the surroundings alone leaves), names the passage before any rule
+    runs (`quoteSitsAt`), the copies whole elsewhere being the other copies: before it the rules ran over those,
+    and a tracked edit inside the first of two copies under one heading had the section rule confirm the second,
+    which the panel painted plainly while the reply's own `anchorAt` named the first. The third round took the
+    quote alone; the review's fourth round (2026-09-11) asks for the one side, since a bare occurrence of the
+    quoted words (a passing mention, a table cell, one character of a run) is what a stale position lands on by a
+    coincidence of distance, a raw insertion above of exactly the gap to it, and the quote alone took the comment
+    off the copy the fields named for the mention. The reply carries no verdict for such a comment, and the panel
+    paints by its own engine, which scores a whole copy over an edited one: with three or more copies the nearest
+    whole copy as a guess with its cue, the cue from before the tie-break; with exactly two, the one still whole,
+    plainly, the paint of the anchors follow-on, on the copy the person did not comment, since the map's contract
+    (a tie the position names no copy of) does not carry a position verdict today
+    (`ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts` drives the panel's half). While every change
+    to the text is on record (the text is as the sidecar's last writer left it, so the pending changes are the
+    whole difference), the reply's map forwards a tie's verdict only where the recorded changes carry the stored
+    position to that very copy (a tracked insertion above moved every copy alike) or to no one place, and drops
+    one they carry elsewhere (`placedFor`, `carriedTo`), since the next write's refresh moves the position there:
+    between a session's edit inside the first of two copies and the next host write, the status had confirmed
+    the second copy by section from a position two characters stale that the recorded edit accounted for. After
+    a raw write the changes vouch for nothing and every verdict is forwarded, as before. The walk over the copies
+    the recorded changes can have carried a position to (`reachable`, for the refresh and for `carriedTo`) reads
+    the changes off one sorted index, a compare per change to build it and a compare per copy inside the changes'
+    window, charged to the budget; a walk that does not fit is nothing known, the refresh keeping the position and
+    counting the comment among the unscanned, the map forwarding the verdict (the fourth round: uncharged and
+    summing every change per copy, the walk held a status on ten thousand pending changes and twenty stale tied
+    comments 18 s). Two more corrections
+    from the round: creation writes no copy fields for a passage whole at more places than the refresh
+    enumerates (`REFRESH_COPIES_MAX`), as the stamping pass already refused to (before it the cap itself was
+    written as the count, and a later text of exactly that many copies had the ordinal rule confirm from a false
+    count); and the front-matter reader closes a block on `---` alone, as the viewer's test does (a block closed
+    only by YAML's `...` is body, and a heading in it is the passage's path; before it such a heading was shown to
+    the person and absent from the stored path). The section rule and the nearest pick read the matches grouped
+    by heading path once per anchor and by binary search (`copiesUnder`, `nearestOf`), so a status on thousands
+    of tied comments sharing one anchor stays inside the kernel's deadline. On the panel's side the recourse is
+    worded for what the render shows: with the editor up (Slice 5) no highlight of ours is painted and the card
+    offers neither Reveal nor the composer, so a guessed card's words say only that the copy is a guess and name
+    the way there first, leave edit mode, then reveal it and save again from the right copy (`UNSURE_IN_EDITOR`,
+    `PASSAGE_CONFIRM_AFTER_EDIT`; a region's, leave edit mode, then draw a new region in the view that shows the
+    image, `REGION_CONFIRM_AFTER_EDIT`), a passage's save line standing under them as in the read view, and offer
+    no Reveal; a region whose picture the view does not show (Raw) is told which view has it
+    (`REGION_CONFIRM_UNSEEN`); and a pictured region's card on a coarse pointer, where no overlay takes a drag and
+    the card offers no Re-place, ends with the pictured view's words less the sentence about Re-place
+    (`REGION_CONFIRM_TOUCH`; the sweep after the round, the same day). Before them the card in the editor named a
+    Reveal and a save it did not offer, the Raw card said to draw on a figure the view did not show, and the
+    phone's card named a Re-place it did not have. `tools/file-comments-host-tiebreak-review-3.test.mjs` drives
+    the round's findings on the host, `ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts` the panel's
+    half of the position the quote names, `ui/webview/file-comments-tiebreak-shown.test.ts` the words over the
+    editor and Raw, `ui/webview/file-comments-tiebreak-touch.test.ts` the words on a coarse pointer, and
+    `tools/file-review-plan-tiebreak-review-4.test.mjs` holds this account of the round to the host, the panel
+    and the tree (the Tests section says what each drives).
     The contract named two fields; `copies` is the third,
     since the first rule compares the count of
     copies with the count at the time the ordinal was written, and the ordinal alone does not carry it. Setext
@@ -3357,12 +3513,24 @@ document stands on its own, each with the reasoning it was given.
     reply), `ui/webview/file-comments-tiebreak-recourse.test.ts` (the guessed card's Reveal, the confirmed place
     the view moved past) and `tests/test_guide_files_comments_confirm.py` (the guide's sentence on saving again,
     walked on the real host); from its second round, `tools/file-review-plan-tiebreak-review-2.test.mjs` holds
-    this record's account of the first round to the code.
+    this record's account of the first round to the code; from its third round,
+    `tools/file-comments-host-tiebreak-review-3.test.mjs` (the real host: the position the quote names with one
+    side of its context, the recorded window's dropped verdict, the ordinal's yield, no copy fields at creation
+    past the cap, front matter closed on `---` alone, a status on thousands of tied comments inside the deadline),
+    `ui/webview/file-comments-host-tiebreak-review-3-panel.test.ts` (the panel's half of that position),
+    `ui/webview/file-comments-tiebreak-shown.test.ts` (the words with the editor up and in Raw),
+    `ui/webview/file-comments-tiebreak-touch.test.ts` (the words on a coarse pointer) and
+    `tools/file-review-plan-tiebreak-review-4.test.mjs`, which holds this record's account of the third round to
+    the code.
 
 ## Open questions for the user
 
 Every question raised by this document, by its reviews, or in the design interview has been ruled
-on; see Decisions. The margin layout (the follow-on note under Slice 2) awaits the user's word: it
+on; see Decisions. The tie-break's first rule as the review's third round qualified it (decision 51: the
+ordinal's copy is confirmed unless the stored heading path names other copies and not the ordinal's, when
+the tie is a guess) departs from the contract the user said yes to, which confirmed the ordinal's copy
+whenever the count of copies was unchanged; it awaits the user's word, and the code and the record hold
+the qualified rule meanwhile. The margin layout (the follow-on note under Slice 2) awaits the user's word: it
 is the build's reading of the ask, not a ruling, and the walk answers it. With it, the loose group's
 place: a card with no mark (a whole-file comment, a change the Rendered view cannot paint, a detached
 anchor, a region whose figure has not loaded) stands at the top of the track, which the lock keeps out
