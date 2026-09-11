@@ -282,3 +282,112 @@ test("in a browser, the real viewer and panel: the same passages in the chat mod
     await page.close();
   });
 });
+
+// ── the Slice 5 review, round 3: the pairing shapes the round found, over the real viewer ──────────
+const P003 = "Para 003 delta echo.", P004 = "Para 004 foxtrot golf.", A005 = "After 005 hotel india.", A006 = "After 006 juliet kilo.";
+type R3Note = { name: string; src: string; passages: string[]; refused?: string[]; blocks?: Array<[string, string[]]> };
+/** The notes: each passage must map to its own offsets; a `refused` passage must be refused as an HTML block; `blocks` are html blocks
+ *  with the tag names of the elements they must own (the regions layer's span reads as IMG with the panel open; these legs keep it closed). */
+const R3_NOTES: R3Note[] = [
+  { name: "an open <p> then <br>, <img> and <span class=w> blocks, which nest in it, and a later top-level <img>", src: `<p>Lead 002 charlie.\n\n<br>\n\n<img src="a.png">\n\n<span class="w">\n\n${P003}\n\n${P004}\n\n<img src="b.png">\n\n${A005}\n\n${A006}\n`, passages: [P003, P004, A005, A006], blocks: [["<p>Lead", ["P"]], ["<br>", []], ["<img src=\"a.png\">", []], ["<span class", []], ["<img src=\"b.png\">", ["IMG"]]] },
+  { name: "an open <p> then a markdown table, which nests in it in DOMPurify's quirks-mode document", src: `<p>Lead 002 charlie.\n\n| a | b |\n|---|---|\n| c | d |\n\n${A005}\n\n${A006}\n`, passages: [A005, A006], blocks: [["<p>Lead", ["P"]]] },
+  { name: "two </p> blocks after an open <p>, then a heading, a paragraph, an image paragraph and a paragraph", src: `Intro 001 alpha bravo.\n\n<p>Lead 002 charlie.\n\n</p>\n\n</p>\n\n## Head 003 delta.\n\nPara 004 echo foxtrot.\n\n![pic](pic.png)\n\nAfter 005 golf hotel.\n`, passages: ["Head 003 delta.", "Para 004 echo foxtrot.", "After 005 golf hotel."], blocks: [["</p>", []], ["## Head", ["H2"]], ["![pic]", ["P"]]] },
+  { name: "one </p> block after an open <p>, then the same", src: `Intro 001 alpha bravo.\n\n<p>Lead 002 charlie.\n\n</p>\n\n## Head 003 delta.\n\nPara 004 echo foxtrot.\n\n![pic](pic.png)\n\nAfter 005 golf hotel.\n`, passages: ["Head 003 delta.", "Para 004 echo foxtrot.", "After 005 golf hotel."] },
+  { name: "a README's centred <p> of a picture closed by its own </p> block, then prose and an image paragraph", src: `<p align="center">\n<img src="logo.png" alt="">\n\n</p>\n\n## Head 003 delta.\n\nPara 004 echo foxtrot.\n\n![pic](pic.png)\n\nAfter 005 golf hotel.\n`, passages: ["Head 003 delta.", "Para 004 echo foxtrot.", "After 005 golf hotel."] },
+  { name: "a wrapper whose raw holds a closed child of the next html block's tag", src: `Intro 001 alpha bravo.\n\n<div align="center"><div>Lead 002 charlie.</div>\n\n<div class="in">\n\n${P003}\n\n</div>\n\n</div>\n\nAfter 004 foxtrot golf.\n\n${A005}\n`, passages: [P003, "After 004 foxtrot golf.", A005], blocks: [["<div class=\"in\">", ["DIV"]]] },
+  { name: "a <label> closed inline on its paragraph (the parser ignores the closer), then an html <p></p> block", src: `Intro 001 alpha bravo.\n\n<label>\n\n${P003} </label>\n\n<p></p>\n\n${A005}\n\n${A006}\n`, passages: [P003, A005, A006], blocks: [["<p></p>", ["P"]]] },
+  { name: "a <button> opener whose paragraph's own <button> closes it, then a <div> block and paragraphs", src: `Intro one here.\n\n<button>\n\n<button>probe xray quebec</button>\n\nNovember table bravo.\n\nLast line kilo.\n\n<div>marker</div>\n\nAfter one lima.\n\nAfter two mike.\n`, passages: ["After one lima.", "After two mike."], refused: ["November table bravo."], blocks: [["<div>marker", ["DIV"]]] },
+];
+type R3Read = { maps: any[]; refusedMaps: any[]; blocks: string[][]; painted: Painted[]; tops: string[] };
+/** In the page: each passage mapped through the probe from a Selection-like over the text nodes holding its head and its tail (a paint
+ *  may have split it), the named blocks' elements, the comments' marks and cards, and the top-level tags. */
+function readR3(args: { src: string; passages: string[]; refused: string[]; ids: string[]; blocks: string[] }): R3Read {
+  const am = (window as any).__am;
+  const md = document.querySelector(".fileview-md") as HTMLElement;
+  const texts: Text[] = [];
+  const w = document.createTreeWalker(md, NodeFilter.SHOW_TEXT);
+  for (let t = w.nextNode(); t; t = w.nextNode()) texts.push(t as Text);
+  const mapP = (p: string) => {
+    // the text node holding the passage whole, else (a paint split it) the first holding the longest head some node holds, the tail
+    // found from there
+    let head = p, si = -1;
+    for (const len of [p.length, 12, 8]) { head = p.slice(0, Math.min(len, p.length)); si = texts.findIndex((t) => t.data.includes(head)); if (si >= 0) break; }
+    const tail = p.slice(-Math.min(8, p.length));
+    if (si < 0) return { ok: false, reason: "not in the rendered text: " + p };
+    const s = texts[si], sOff = s.data.indexOf(head);
+    for (let i = si; i < texts.length; i++) {
+      const j = texts[i].data.indexOf(tail, i === si ? sOff : 0);
+      if (j >= 0) return am.mapRenderedSelection({ anchorNode: s, anchorOffset: sOff, focusNode: texts[i], focusOffset: j + tail.length, isCollapsed: false }, md, args.src);
+    }
+    return { ok: false, reason: "the tail is not in the rendered text after the head: " + p };
+  };
+  const spans: Array<{ start: number; end: number }> = am.sourceBlockSpans(args.src);
+  const blocks = args.blocks.map((head) => { const b = spans.findIndex((sp) => args.src.slice(sp.start, sp.end).startsWith(head)); return b < 0 ? ["no block " + head] : (am.renderedBlockElements(md, args.src, b) as Element[]).map((e) => e.classList.contains("fc-imgwrap") ? "IMG" : e.tagName); });
+  const painted = args.ids.map((id) => {
+    const marks = Array.from(md.querySelectorAll('.fc-hl[data-act="fcopen"][data-id="' + id + '"]')) as HTMLElement[];
+    const card = document.querySelector('.fileview-aside .fc-card[data-id="' + id + '"]');
+    return { marks: marks.length, text: marks.map((m) => m.textContent).join("").replace(/\s+/g, " ").trim(), card: !!card, goto: !!card && !!card.querySelector('[data-act="fcgoto"]') };
+  });
+  return { maps: args.passages.map(mapP), refusedMaps: args.refused.map(mapP), blocks, painted, tops: Array.from(md.children).map((k) => k.tagName) };
+}
+
+test("in a browser, the real viewer: the pairing shapes the review's round 3 found, each a regression from main or from round 1, map over the real DOM: an open html <p> that <br>, <img> and <span> blocks nest in (and a table, in DOMPurify's quirks-mode document), a stray </p> that closes such a p, a wrapper's own same-tag child before the next html block, a <label>'s ignored inline closer before an html <p></p>, and a <button> opener whose paragraph's own <button> closes it (every passage after the next html block maps, the ones inside its run refused as an HTML block)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const probe = probeBundle();
+    for (const note of R3_NOTES) {
+      const { page, errors } = await openViewer(browser, "pane", 900, 800, { docs: { [REPORT]: note.src } });
+      await page.addScriptTag({ content: probe });
+      const r: R3Read = await page.evaluate(readR3, { src: note.src, passages: note.passages, refused: note.refused || [], ids: [], blocks: (note.blocks || []).map(([h]) => h) });
+      note.passages.forEach((p, i) => {
+        assert.equal(r.maps[i].ok, true, note.name + ": " + JSON.stringify(p) + " maps: " + JSON.stringify(r.maps[i]) + " (tops " + JSON.stringify(r.tops) + ")");
+        assert.deepEqual(r.maps[i].range, { start: note.src.indexOf(p), end: note.src.indexOf(p) + p.length }, note.name + ": " + JSON.stringify(p) + " to its own offsets");
+      });
+      (note.refused || []).forEach((p, i) => { assert.equal(r.refusedMaps[i].ok, false, note.name + ": " + JSON.stringify(p) + " is refused"); assert.match(r.refusedMaps[i].reason, /an HTML block/, note.name + ": " + JSON.stringify(p)); });
+      (note.blocks || []).forEach(([head, tags], i) => assert.deepEqual(r.blocks[i], tags, note.name + ": the block " + JSON.stringify(head) + " owns " + JSON.stringify(tags)));
+      assert.deepEqual(errors, [], note.name + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, the real viewer and panel: a comment on a wrapper's own leftover (a details' summary, a centred div's lead line, a README banner's tagline and heading) paints with a Scroll link (HIGH, the review's round 3: the fallback counted the passage twice against the block's rendering once and refused; main painted each); and a comment spanning from the paragraph before a <form>'s lead into its nested paragraph, served before a fresh open, paints, after which every passage still maps (the run check reads the mark over the hoisted lead as that text; before: every later selection refused as an HTML block at the dropped <tr> block)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const probe = probeBundle();
+    const LEFTOVERS = `Intro 001 alpha.\n\n<details><summary>Sum 002 charlie.</summary>\n\n${P003}\n\n</details>\n\n<details>\n<summary>Click to expand</summary>\n\nHidden 004 text here.\n\n</details>\n\n<div align="center">Lead 005 bravo.\n\nPara 006 golf hotel.\n\n</div>\n\n<div align="center"><img src="logo.png" alt="logo"><h1>Project</h1><p>A tagline here.</p>\n\nIntro 007 text.\n\n</div>\n\nAfter 008 foxtrot.\n`;
+    const HOIST = `Intro 001 alpha bravo.\n\n<tr><td>Cell 002 charlie.</td></tr>\n\n${P003}\n\n<form>Lead 004 foxtrot.\n\nPara 005 golf hotel.\n\nPara 006 india juliet. </form>\n\nAfter 007 kilo lima.\n\nAfter 008 mike november.`;
+    const scenes: Array<{ name: string; src: string; quotes: Array<{ q: string; text: string }>; passages: string[] }> = [
+      { name: "leftovers", src: LEFTOVERS, quotes: [{ q: "Sum 002 charlie.", text: "Sum 002 charlie." }, { q: "Click to expand", text: "Click to expand" }, { q: "Lead 005 bravo.", text: "Lead 005 bravo." }, { q: "A tagline here.", text: "A tagline here." }, { q: "Project", text: "Project" }, { q: P003, text: P003 }, { q: "After 008 foxtrot.", text: "After 008 foxtrot." }], passages: [P003, "Hidden 004 text here.", "Para 006 golf hotel.", "Intro 007 text.", "After 008 foxtrot."] },
+      { name: "a span into the form's lead", src: HOIST, quotes: [{ q: "delta echo.\n\n<form>Lead 004 foxtrot.\n\nPara 005", text: "delta echo. Lead 004 foxtrot. Para 005" }, { q: "After 008 mike november.", text: "After 008 mike november." }], passages: [P003, "Para 005 golf hotel.", "Para 006 india juliet.", "After 007 kilo lima.", "After 008 mike november."] },
+    ];
+    for (const scene of scenes) {
+      const comments = scene.quotes.map(({ q }, k) => commentOn(scene.src, q, k + 1));
+      const status = { ...STATUS, store: { ...STATUS.store, comments }, storeMtimeNs: "17571456000000000" + (50 + comments.length) };
+      const page = await browser.newPage({ viewport: { width: 900, height: 800 } });
+      const errors: string[] = [];
+      page.on("pageerror", (e: Error) => { errors.push(e.message); });
+      const html = pageHtml("pane", { [REPORT]: scene.src }, MT);
+      await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+      await page.goto(ORIGIN + "/");
+      await page.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, status]);
+      await page.waitForFunction(() => !!document.querySelector(".fileview-md > p, .fileview-md > div, .fileview-md > details"), null, { timeout: 10000 });
+      await frames(page, 2);
+      await page.addScriptTag({ content: probe });
+      await openPanel(page);
+      const last = comments[comments.length - 1].id as string;
+      await page.waitForFunction((c: string) => !!document.querySelector('.fileview-body [data-act="fcopen"][data-id="' + c + '"]'), last, { timeout: 10000 });
+      await frames(page, 3);
+      const r: R3Read = await page.evaluate(readR3, { src: scene.src, passages: scene.passages, refused: [], ids: comments.map((c) => c.id as string), blocks: [] });
+      scene.quotes.forEach(({ q, text }, i) => {
+        assert.ok(r.painted[i].marks >= 1, scene.name + ": the comment on " + JSON.stringify(q) + " paints (before: 0 marks): " + JSON.stringify(r.painted[i]));
+        assert.equal(r.painted[i].text.replace(/\s+/g, ""), text.replace(/\s+/g, ""), scene.name + ": the marks read the passage");
+        assert.equal(r.painted[i].card && r.painted[i].goto, true, scene.name + ": its card offers Scroll (before: Reveal)");
+      });
+      scene.passages.forEach((p, i) => {
+        assert.equal(r.maps[i].ok, true, scene.name + ": " + JSON.stringify(p) + " maps with the comments painted: " + JSON.stringify(r.maps[i]));
+        assert.deepEqual(r.maps[i].range, { start: scene.src.indexOf(p), end: scene.src.indexOf(p) + p.length }, scene.name + ": " + JSON.stringify(p) + " to its own offsets");
+      });
+      assert.deepEqual(errors, [], scene.name + ": no script error");
+      await page.close();
+    }
+  });
+});

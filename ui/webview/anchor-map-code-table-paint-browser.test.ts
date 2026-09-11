@@ -245,3 +245,59 @@ test("in a browser, the real viewer and panel: the same comments served before a
     }
   });
 });
+
+// ── the Slice 5 review, round 3: the pipeline as the needle, over the real viewer and sanitizer ──
+const R3_NOTE = "# Cells\n\n| Cell | Note |\n|------|------|\n| _snake_case_ | n01 |\n| **5 * 3 = 15** | n02 |\n| ~~a ~ b~~ | n03 |\n| _a_b_ | n04 |\n| ___a___ | n05 |\n| **a*b** | n06 |\n| _max_retries_ | n07 |\n| **bold with * star** | n08 |\n| Edit <path/to/file> first | n09 |\n| Map<K, V> | n10 |\n| see[^9] | n11 |\n| [whiskey][nodef] | n12 |\n| set matrix[i][j] to zero | n13 |\n| https://x.test/a/__init__.py | n14 |\n| <https://x.test/_draft_> | n15 |\n| <ftp://x.test/lagoon> | n16 |\n| <vscode://file/whiskey> | n17 |\n| <user:pass> jade | n18 |\n| é_birch_ | n19 |\n| 日本_版_ | n20 |\n| amber <script>alert(1)</script> amberx | n21 |\n| amber <noscript>fallback</noscript> amberx | n22 |\n| amber <template>tpl</template> amberx | n23 |\n| amber ![birch][idef] amberx | n24 |\n| [wildcard](http://x.test/files/*)* | n25 |\n| `x\\` | n26 |\n| see foo\\*bar here | n27 |\n| **bold words** more | n28 |\n| [alpha][rdef] | n29 |\n| see[^1] | n30 |\n\n<div>costs \\$5 raw here</div>\n\n<div>path C:\\Temp\\</div>\n\n<div>a <script>x</script> b</div>\n\nStreet 1  \nCity &amp; Co.\n\nFish &amp; **an important\nphrase** here.\n\nFish &amp; lima 2024. It was romeo.\n\nFish &amp; It was released in\n3. The third cut was last.\n\nFish &amp; chips at https://x.test/pkg/__init__.py for lunch.\n\nLast paragraph here.\n\n[rdef]: http://x.test/r\n[idef]: http://x.test/i.png\n\n[^1]: A footnote.\n";
+/** The round 3 quotes: the exact source slice a Raw comment stores (`k`-th occurrence where the text recurs), the text the marks must read
+ *  (whitespace aside), and where it sits. */
+const ROUND3: Array<{ q: string; text: string; from?: string }> = [
+  { q: "_snake_case_", text: "snake_case" }, { q: "**5 * 3 = 15**", text: "5 * 3 = 15" }, { q: "~~a ~ b~~", text: "a ~ b" }, { q: "_a_b_", text: "a_b" }, { q: "___a___", text: "a" }, { q: "**a*b**", text: "a*b" },
+  { q: "_max_retries_", text: "max_retries" }, { q: "**bold with * star**", text: "bold with * star" }, { q: "Edit <path/to/file> first", text: "Edit <path/to/file> first" }, { q: "Map<K, V>", text: "Map<K, V>" },
+  { q: "see[^9]", text: "see[^9]" }, { q: "[whiskey][nodef]", text: "[whiskey][nodef]" }, { q: "set matrix[i][j] to zero", text: "set matrix[i][j] to zero" }, { q: "https://x.test/a/__init__.py", text: "https://x.test/a/__init__.py" },
+  { q: "<https://x.test/_draft_>", text: "https://x.test/_draft_" }, { q: "<ftp://x.test/lagoon>", text: "ftp://x.test/lagoon" }, { q: "<vscode://file/whiskey>", text: "vscode://file/whiskey" }, { q: "<user:pass> jade", text: "user:pass jade" },
+  { q: "é_birch_", text: "é_birch_" }, { q: "日本_版_", text: "日本_版_" },
+  { q: "amber <script>alert(1)</script> amberx", text: "amber amberx" }, { q: "amber <noscript>fallback</noscript> amberx", text: "amber amberx" }, { q: "amber <template>tpl</template> amberx", text: "amber amberx" }, { q: "amber ![birch][idef] amberx", text: "amber amberx" },
+  { q: "[wildcard](http://x.test/files/*)*", text: "wildcard*" }, { q: "`x\\`", text: "x\\" }, { q: "see foo\\", text: "see foo", from: "| see foo" }, { q: "bold words** more", text: "bold words more" }, { q: "**bold words", text: "bold words" },
+  { q: "[alpha][rdef]", text: "alpha" }, { q: "see[^1]", text: "see1" },
+  { q: "costs \\$5 raw", text: "costs \\$5 raw" }, { q: "C:\\Temp\\", text: "C:\\Temp\\" }, { q: "a <script>x</script> b", text: "a b" },
+  { q: "Street 1  \nCity", text: "Street 1City" }, { q: "**an important\nphrase**", text: "an important phrase" }, { q: "2024. It was romeo.", text: "2024. It was romeo." }, { q: "released in\n3. The third cut", text: "released in 3. The third cut" },
+  { q: "https://x.test/pkg/__init__.py", text: "https://x.test/pkg/__init__.py" },
+];
+function round3Comment(c: { q: string; from?: string }, k: number): Record<string, unknown> {
+  const at = c.from ? R3_NOTE.indexOf(c.q, R3_NOTE.indexOf(c.from)) : R3_NOTE.indexOf(c.q);
+  assert.ok(at >= 0, "the note holds " + JSON.stringify(c.q));
+  return { id: (T0 + 200 + k) + "-" + at, author: "you", ts: T0 + 200 + k, body: NOTE, anchor: makeAnchor(R3_NOTE, { start: at, end: at + c.q.length }), anchorAt: at, replies: [], resolved: false };
+}
+
+test("in a browser, the real viewer, sanitizer and panel: Raw comments on the round 3 shapes, served before a fresh open, paint in Rendered as the passages show them and their cards offer Scroll: emphasis holding a lone delimiter of its own kind, intraword underscores, literal angle brackets, an undefined footnote and reference link, URLs and autolinks of every scheme, non-ASCII neighbours of an underscore, tags the sanitizer drops with their text, a reference image, a quote cut inside an escape or an emphasis pair, an html block's raw escape and its backslash before a tag, a quote across a hard break, an emphasis across a soft break, a mid-line `2024. ` and a `3. ` continuation line (before: 0 marks and Reveal for each)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const sentinelAt = R3_NOTE.indexOf("Last paragraph here.");
+    const sentinel = { id: (T0 + 199) + "-" + sentinelAt, author: "you", ts: T0 + 199, body: NOTE, anchor: makeAnchor(R3_NOTE, { start: sentinelAt, end: sentinelAt + "Last paragraph here.".length }), anchorAt: sentinelAt, replies: [], resolved: false };
+    const comments = [sentinel, ...ROUND3.map((c, k) => round3Comment(c, k))];
+    const status = { ...STATUS, store: { ...STATUS.store, comments }, storeMtimeNs: "1757145600000000061", unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null } };
+    const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    const errors: string[] = [];
+    page.on("pageerror", (e: Error) => { errors.push(e.message); });
+    const html = pageHtml("pane", { [REPORT]: R3_NOTE }, MT);
+    await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+    await page.goto(ORIGIN + "/");
+    await page.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, status]);
+    await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+    await frames(page, 2);
+    await openPanel(page);
+    await markPainted(page, sentinel.id);
+    await frames(page, 3);
+    // the cells render as the cases expect (the gated picture's label, a control, left out as the hay leaves it)
+    const shown: string[] = await page.evaluate(() => Array.from(document.querySelectorAll(".fileview-md td:first-child")).map((td) => { const c = td.cloneNode(true) as HTMLElement; c.querySelectorAll(".fv-gate, .katex, .md-fnback").forEach((e) => e.remove()); return (c.textContent || "").replace(/\s+/g, " ").trim(); }));
+    assert.deepEqual(shown.slice(0, 26), ["snake_case", "5 * 3 = 15", "a ~ b", "a_b", "a", "a*b", "max_retries", "bold with * star", "Edit <path/to/file> first", "Map<K, V>", "see[^9]", "[whiskey][nodef]", "set matrix[i][j] to zero", "https://x.test/a/__init__.py", "https://x.test/_draft_", "ftp://x.test/lagoon", "vscode://file/whiskey", "user:pass jade", "é_birch_", "日本_版_", "amber amberx", "amber amberx", "amber amberx", "amber amberx", "wildcard*", "x\\"], "the cells render as the cases expect");
+    for (let k = 0; k < ROUND3.length; k++) {
+      const { q, text } = ROUND3[k];
+      const r = await readMarks(page, round3Comment(ROUND3[k], k).id as string);
+      assert.ok(r.marks > 0, JSON.stringify(q) + ": painted (before: 0 marks): " + JSON.stringify(r));
+      assert.equal(r.text.replace(/\s+/g, ""), text.replace(/\s+/g, ""), JSON.stringify(q) + ": the marks read the passage as shown");
+      assert.equal(r.card && r.goto, true, JSON.stringify(q) + ": the card offers Scroll to the passage (before: Reveal)");
+    }
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});

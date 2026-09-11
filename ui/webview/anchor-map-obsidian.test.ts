@@ -913,6 +913,31 @@ test("a paragraph that OPENS with a formula, selected whole (a triple-click: its
   }
 });
 
+test("a selection of whitespace alone beside a formula is only whitespace, not a formula touched: the one space right after `$E = mc^2$`, the gap between the paragraph before and a formula-first paragraph's start, the gap before and the gap after a paragraph that is a formula alone, in each of the fill's three shapes (the Slice 5 review, round 3: formulaBeside read the first non-blank thing on the boundary's side without asking whether it lay between the two boundaries, so these refused as touching the formula with the Raw offer at it); a selection that does cover the formula from outside still does", () => {
+  for (const [name, tex] of [["rendered", "E = mc^2"], ["katex-error", "E\\BROKEN"], ["md-math-src", "\\HUGE" + "x".repeat(40)]] as const) {
+    const src = "# Title\n\nIntro para.\n\n$" + tex + "$ opens this paragraph.\n\nMiddle para.\n\n$" + tex + "$\n\nNext para.\n";
+    const box = buildRendered(src);
+    const only = (r: MapResult, what: string) => { const b = bad(r, name + ": " + what); assert.equal(b.reason, "The selection is only whitespace.", name + ": " + what + " (was: touches a formula)"); assert.equal(b.rawHasQuote, false, name + ": " + what + ": no Raw offer at the formula"); };
+    const after = allText(box).find((t) => t.data.startsWith(" opens this"))!;
+    only(mapRenderedSelection(sel({ node: after, offset: 0 }, { node: after, offset: 1 }), El(box), src), "the space after the inline formula");
+    const intro = allText(box).find((t) => t.data === "Intro para.")!;
+    const pFirst = topEl(box, 2), middle = allText(box).find((t) => t.data === "Middle para.")!, pAlone = topEl(box, 4), next = allText(box).find((t) => t.data === "Next para.")!;
+    only(mapRenderedSelection(sel({ node: intro, offset: intro.data.length }, { node: pFirst, offset: 0 }), El(box), src), "the gap before the formula-first paragraph, ending at (p, 0)");
+    only(mapRenderedSelection(sel({ node: pFirst, offset: 0 }, { node: intro, offset: intro.data.length }), El(box), src), "the same gap, the boundaries reversed");
+    only(mapRenderedSelection(sel({ node: middle, offset: middle.data.length }, { node: pAlone, offset: 0 }), El(box), src), "the gap before the formula-alone paragraph");
+    only(mapRenderedSelection(sel({ node: pAlone, offset: pAlone.childNodes.length }, { node: next, offset: 0 }), El(box), src), "the gap after the formula-alone paragraph");
+    const gap = pAlone.parentNode!.childNodes[pAlone.parentNode!.childNodes.indexOf(pAlone) - 1];
+    if (gap.nodeType === 3 && (gap as FakeText).data.trim() === "") only(mapRenderedSelection(sel({ node: gap, offset: 0 }, { node: gap, offset: (gap as FakeText).data.length }), El(box), src), "the whitespace node before it, whole");
+    // the covering shapes stand: (p, 0) to the next block's start covers the formula-first paragraph whole; the formula-alone paragraph
+    // covered with the paragraph after it is prose holding a formula; the space plus a word maps the word
+    assert.equal(ok(mapRenderedSelection(sel({ node: pFirst, offset: 0 }, { node: topEl(box, 3), offset: 0 }), El(box), src), name + ": (p, 0) to the next start").quote, "$" + tex + "$ opens this paragraph.");
+    assert.equal(ok(mapRenderedSelection(sel({ node: middle, offset: middle.data.length }, { node: next, offset: next.data.length }), El(box), src), name + ": across the formula-alone paragraph into the next").quote, "$" + tex + "$\n\nNext para.");
+    assert.equal(ok(mapRenderedSelection(sel({ node: after, offset: 0 }, { node: after, offset: 6 }), El(box), src), name + ": the space and a word").quote, "opens");
+    const alone = bad(mapRenderedSelection(sel({ node: middle, offset: middle.data.length }, { node: next, offset: 0 }), El(box), src), name + ": the formula-alone paragraph covered whole, no prose beside it");
+    assert.match(alone.reason, /touches a formula/);
+  }
+});
+
 test("a display block written with indent (one to three spaces before `$$` or `\\[`): blockStartOffset stays at the hole's raw start, the indent, and rawRange begins past it at the opener, on the same line, so the two coincide only for the unindented shape the test above pins; the range's slice first occurs at the range when searched from blockStartOffset, the search the Raw switch runs (rawTarget, file-comments.ts), so the preselection is the formula either way", () => {
   const shapes = [["one space, dollars", " ", "$$", "$$"], ["two spaces, dollars", "  ", "$$", "$$"], ["three spaces, brackets", "   ", "\\[", "\\]"]] as const;
   for (const [name, indent, open, close] of shapes) {

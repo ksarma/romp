@@ -403,15 +403,41 @@ test("readPlace in Raw: a row of a closing tag alone (`</details>`, `</div>`, a 
   assert.deepEqual([qb.start, qb.top, !!qb.line], [spansB[bB].start, -29, true], "the html block, its first row 29px above the edge, the closing row the line kept");
 });
 
-test("seatPlace: a Raw place inside a fold that carries the blocks after it (Place.after) stands on the first of them the Rendered view shows when the fold is shut, at that block's carried row top (before: no seat, the numeric scrollTop standing, off by the fold's source height); the fold open in the DOM, the source shut or not, seats the kept block itself at its own box, the carried blocks unused; a carried block that is not shown itself (a fold after a fold, both shut) is passed over for the next", () => {
+test("seatPlace: a Raw place inside a fold that carries the blocks after it (Place.after) stands on the first of them the Rendered view shows when the fold is shut, at that block's carried row top and no lower than the fold's summary at the edge (the review's round 3: the seat stands on what is shown; round 2 stood at the carried top alone, and a long fold's source put the summary off the pane; before round 2: no seat, the numeric scrollTop standing, off by the fold's source height); the fold open in the DOM, the source shut or not, seats the kept block itself at its own box, the carried blocks unused; a carried block that is not shown itself (a fold after a fold, both shut) is passed over for the next; and a block after a shut fold read through the fold's closing row keeps its row's distance under the same cap", () => {
   const doc = fold(false), spans = sourceBlockSpans(doc);
   const b5 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(5)), b6 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(6)), b7 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(7));
   const carried = (...ks: number[]): Place => ({ source: doc, view: "raw", start: spans[b6].start, end: spans[b6].end, top: -4, height: 20, atTop: false, prev: spans[b6 - 1], next: spans[b6 + 1], line: { start: spans[b6].start, end: spans[b6].end, top: -4 }, after: ks.map((k, i) => ({ ...spans[k], top: 76 + i * 60 })) });
-  // the fold shut: paragraph 6 has its elements but none is shown, so the seat stands on paragraph 7 where its Raw row was, 76px below
-  // the edge (the read of the third test)
+  // the fold shut: paragraph 6 has its elements but none is shown, so the seat stands on paragraph 7, carried 76px below the edge (the
+  // read of the third test), and no lower than the fold's summary at the edge: the shut details is 40px tall and paragraph 7 starts 48
+  // below its top, so paragraph 7 goes 48px below the edge and the summary sits at it (round 2: 76, the summary 28px under the edge and
+  // the tail of the block before the fold above it)
   const c = scene(false, 0); c.body.scrollTop = 500;
+  assert.equal(c.p7.box!.top - c.summary.box!.top, 48, "the fixture: paragraph 7 starts 48px below the summary's top");
   assert.equal(seatPlace(H(c.body), doc, carried(b7)), true, "the shut fold: seated (before: refused)");
-  assert.equal(c.body.scrollTop, 500 + (c.p7.box!.top - EDGE) - 76, "paragraph 7's box 76px below the edge, where its row was");
+  assert.equal(c.body.scrollTop, 500 + (c.p7.box!.top - EDGE) - 48, "paragraph 7's box 48px below the edge, the summary at the edge (round 2: 76px, where the row was)");
+  // a carried top under the cap keeps its distance: 30px, which leaves the summary 18px above the edge, partway (the round trip from a
+  // wrapped summary partway in stays exact)
+  const c2 = scene(false, 0); c2.body.scrollTop = 500;
+  assert.equal(seatPlace(H(c2.body), doc, { ...carried(b7), after: [{ ...spans[b7], top: 30 }] }), true, "a carried top under the cap: seated");
+  assert.equal(c2.body.scrollTop, 500 + (c2.p7.box!.top - EDGE) - 30, "paragraph 7's box 30px below the edge, where its row was: the summary 18px above the edge and the cap unmet");
+  // the same cap for a Raw place read through the fold's closing row (readPlace's third test: paragraph 7 at its row's distance, 31px,
+  // no block carried): under the cap, 31 stands; a closer followed by rows that render nothing (a comment) puts the row 67px down, and
+  // the cap holds paragraph 7 at 48
+  const viaCloser = (top: number): Place => ({ source: doc, view: "raw", start: spans[b7].start, end: spans[b7].end, top, height: 20, atTop: false, prev: spans[b7 - 1], next: spans[b7 + 1], line: null });
+  const c3 = scene(false, 0); c3.body.scrollTop = 500;
+  assert.equal(seatPlace(H(c3.body), doc, viaCloser(31)), true);
+  assert.equal(c3.body.scrollTop, 500 + (c3.p7.box!.top - EDGE) - 31, "paragraph 7 31px below the edge, where its row was (the closing row 9px in)");
+  const c4 = scene(false, 0); c4.body.scrollTop = 500;
+  assert.equal(seatPlace(H(c4.body), doc, viaCloser(67)), true);
+  assert.equal(c4.body.scrollTop, 500 + (c4.p7.box!.top - EDGE) - 48, "paragraph 7 48px below the edge, the summary at it (round 2: 67, the block before the fold's tail under the edge and the way back by its fraction, the fold's source between)");
+  // the fold OPEN in the DOM: no shut fold before paragraph 7, and the distance stands (the recorded residual of an open fold's closing row)
+  const c5 = scene(false, 0); c5.det.setAttribute("open", ""); c5.body.scrollTop = 500;
+  assert.equal(seatPlace(H(c5.body), doc, viaCloser(67)), true);
+  assert.equal(c5.body.scrollTop, 500 + (c5.p7.box!.top - EDGE) - 67, "the fold open: paragraph 7 67px below the edge, where its row was");
+  // a place read in Rendered (a reflow) is not capped: the block keeps its distance whatever stands before it
+  const c6 = scene(false, 0); c6.body.scrollTop = 500;
+  assert.equal(seatPlace(H(c6.body), doc, { ...viaCloser(67), view: "rendered", height: H_BLOCK }), true);
+  assert.equal(c6.body.scrollTop, 500 + (c6.p7.box!.top - EDGE) - 67, "a Rendered place: 67px, its own distance");
   // the fold OPEN in the DOM though the source says shut (the person opened it before the switch; file-view.ts restores it after the
   // paint, before the seat): paragraph 6 is shown and its own box is seated at the row's depth scaled, the carried block unused
   const o = scene(false, 0); o.det.setAttribute("open", ""); o.body.scrollTop = 500;
@@ -419,12 +445,90 @@ test("seatPlace: a Raw place inside a fold that carries the blocks after it (Pla
   assert.equal(seatPlace(H(o.body), doc, carried(b7)), true, "the opened fold: seated");
   assert.equal(o.body.scrollTop, 500 + (o.hidden[1].box!.top - EDGE) - (-4 * H_BLOCK / 20), "paragraph 6's own box at the row's depth scaled (the carried paragraph 7 unused)");
   // a carried block not shown itself (paragraph 5, inside the same shut fold, standing for the first block of a second shut fold) is
-  // passed over for the next carried block, paragraph 7
+  // passed over for the next carried block, paragraph 7, whose carried top, 136px, the cap brings to 48
   const s2 = scene(false, 0); s2.body.scrollTop = 500;
   assert.equal(seatPlace(H(s2.body), doc, carried(b5, b7)), true, "two carried blocks, the first hidden: seated on the second");
-  assert.equal(s2.body.scrollTop, 500 + (s2.p7.box!.top - EDGE) - (76 + 60), "paragraph 7's box at ITS carried top, 136px below the edge");
+  assert.equal(s2.body.scrollTop, 500 + (s2.p7.box!.top - EDGE) - 48, "paragraph 7's box under the cap, 48px below the edge (round 2: at ITS carried top, 136px)");
   // nothing carried, or every carried block hidden: the refusal of the second test stands
   const n = scene(false, 0); n.body.scrollTop = 500;
   assert.equal(seatPlace(H(n.body), doc, carried(b5)), false, "only a hidden block carried: no seat");
   assert.equal(n.body.scrollTop, 500, "the body stands");
+});
+
+// ── round 3: a wrapper's own picture (reader-place.ts Place.pic), over the same stand-in ──────────────────────
+/** A README's centred header led by a picture: paragraphs 1 and 2, `<div align="center">` with `lead` on its own line (an `<img>`, or a
+ *  linked logo `<a><img></a>`), a heading and paragraphs 3 and 4 nested in the div, `</div>`, paragraph 5. */
+const readmeDoc = (lead: string) => "# Report\n\n" + paras(1, 2) + "\n\n<div align=\"center\">\n" + lead + "\n\n## Centred title\n\n" + paras(3, 4) + "\n\n</div>\n\n" + PARA(5) + "\n";
+const IMG_LINE = '<img src="logo.svg" alt="logo">';
+const IMG_H = 120;
+type Readme = { body: FakeElement; md: FakeElement; div: FakeElement; img: FakeElement; h2: FakeElement };
+/** `.fileview-body > div.fileview-md > marked output` for a README: the top-level blocks 40px tall, 8 apart, from `top0`; the div's
+ *  children stacked inside it the same way, the picture (and the link around it) 120px tall, the div as tall as they are. */
+function readmeScene(doc: string, top0 = 0): Readme {
+  const d = new FakeDocument();
+  const body = d.createElement("div"); body.setAttribute("class", "fileview-body"); body.box = { top: EDGE, bottom: EDGE + 600 };
+  const md = d.createElement("div"); md.setAttribute("class", "fileview-md");
+  for (const n of parseHTML(d, marked.parse(doc) as string)) md.appendChild(n);
+  body.appendChild(md);
+  const blocks = md.elements();
+  const div = blocks[3];
+  assert.equal(div.tagName, "DIV", "the fixture: the div is the fourth top-level element");
+  const img = div.querySelector("img")!, h2 = div.elements().find((e) => e.tagName === "H2")!;   // the stand-in's selector grammar has no digits
+  assert.ok(img && h2, "the fixture: the div holds the picture and the heading");
+  let y = top0;
+  for (const b of blocks) {
+    if (b !== div) { b.box = { top: y, bottom: y + H_BLOCK }; y += H_BLOCK + GAP; continue; }
+    const start = y;
+    for (const k of div.elements()) {
+      const pic = k === img || k.querySelector("img") !== null, h = pic ? IMG_H : H_BLOCK;
+      k.box = { top: y, bottom: y + h };
+      if (pic && k !== img) img.box = { top: y, bottom: y + h };
+      y += h + GAP;
+    }
+    div.box = { top: start, bottom: y - GAP };
+  }
+  return { body, md, div, img, h2 };
+}
+
+test("readPlace / seatPlace: a picture of a wrapper's block's own (a README's logo on its own line inside `<div align=\"center\">`, or a linked logo) with the reader's edge inside it travels with the place as Place.pic: the Rendered read names the first nested block, as ruling 13 has it, and carries the picture's tag line with the picture's box; the Raw seat puts that line's row at the picture's fraction of its height, and the way back, from the row, puts the picture at the row's fraction (round 3; round 2 seated the heading where its row was, so a picture taller above the edge than the wrapper's rows put a block before the wrapper on top of Raw and the way back was that block's fraction seat, 36 to 442px off); a picture ending above the edge carries nothing; a picture the view does not show leaves the seat to the nested block at the row's distance", () => {
+  for (const [what, lead] of [["an <img> on its own line", IMG_LINE], ["a linked logo", `<a href="https://example.test">${IMG_LINE}</a>`]] as const) {
+    const doc = readmeDoc(lead), spans = sourceBlockSpans(doc);
+    const bDiv = spans.findIndex((sp) => doc.slice(sp.start, sp.end).startsWith("<div align")), bH2 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === "## Centred title");
+    const kImg = lineOf(doc, lead), kH2 = lineOf(doc, "## Centred title");
+    const lineStart = doc.split("\n").slice(0, kImg).join("\n").length + 1;
+    const picLine = { start: lineStart, end: lineStart + lead.length };
+    assert.equal(doc.slice(picLine.start, picLine.end), lead, what + ": the fixture: the picture's tag line");
+    // the fixture: the map pairs the picture (or the link around it) to the div's block as a row of its own, the div being the block's wrapper
+    const c = readmeScene(doc);
+    sameNodes(renderedBlockWrappers(El(c.md), doc, bDiv), [c.div], what + ": the fixture: the div is its block's wrapper");
+    assert.equal(renderedBlockIndex(El(c.md), doc, El(c.div.elements()[0])), bDiv, what + ": the fixture: the picture's element is paired to the div's block");
+    assert.equal(renderedBlockIndex(El(c.md), doc, El(c.h2)), bH2, what + ": the fixture: the heading is its own block");
+    // Rendered, the edge 30px into the picture: the heading is the place (the picture passed over), 98px below the edge, and the picture
+    // travels with it: its tag line, its top 30px above the edge, its height
+    toEdge(c.md, c.img, 30); c.body.scrollTop = 400;   // scrolled: a body at its very top reads atTop, and its seat goes to the top
+    const q = readPlace(H(c.body), doc)!;
+    assert.deepEqual([textOf(doc, q), q.top, q.pic], ["## Centred title", IMG_H - 30 + GAP, { ...picLine, top: -30, height: IMG_H }], what + ": the heading at its distance, the picture's tag line and box carried");
+    // the Raw seat: the picture's row at the same fraction of its height, 30/120 of a 20px row, 5px above the edge (round 2: the heading's
+    // row 98px below the edge, the paragraph before the wrapper on top)
+    const r = raw(doc, 0); r.body.scrollTop = 500;
+    assert.equal(seatPlace(H(r.body), doc, q), true, what + ": seated in Raw");
+    assert.equal(r.body.scrollTop, 500 + (r.rows[kImg].box!.top - EDGE) - (-30 * 20 / IMG_H), what + ": the picture's tag row 5px above the edge (round 2: the heading's row at 98)");
+    // the Raw read from that row, 5px in: the heading's block at its row's distance, the row carried as pic
+    const rr = rawRow(doc, kImg, 5); rr.body.scrollTop = 400;
+    const qr = readPlace(H(rr.body), doc)!;
+    assert.deepEqual([textOf(doc, qr), qr.top, qr.line, qr.pic], ["## Centred title", -5 + (kH2 - kImg) * 20, null, { ...picLine, top: -5, height: 20 }], what + ": the heading at its row's distance, the row carried as pic");
+    // the Rendered seat from it: the picture at the row's fraction, 5/20 of 120px, 30px above the edge (round 2: the heading where its row
+    // was, 35px below the edge, the picture 93px above it)
+    const c2 = readmeScene(doc); c2.body.scrollTop = 500;
+    assert.equal(seatPlace(H(c2.body), doc, qr), true, what + ": seated in Rendered");
+    assert.equal(c2.body.scrollTop, 500 + (c2.img.box!.top - EDGE) - (-5 * IMG_H / 20), what + ": the picture 30px above the edge (round 2: the heading 35px below it)");
+    // the picture ending above the edge (the edge 10px into the heading): nothing carried, the heading partway in
+    const c3 = readmeScene(doc); toEdge(c3.md, c3.h2, 10);
+    const q3 = readPlace(H(c3.body), doc)!;
+    assert.deepEqual([textOf(doc, q3), q3.top, q3.pic], ["## Centred title", -10, undefined], what + ": the heading partway in, nothing carried");
+    // the view does not show the picture (no layout, as a gated or dropped picture): the Raw place's seat falls to the heading at the row's distance
+    const c4 = readmeScene(doc); c4.body.scrollTop = 500; c4.img.box = null;
+    assert.equal(seatPlace(H(c4.body), doc, qr), true, what + ": seated without the picture");
+    assert.equal(c4.body.scrollTop, 500 + (c4.h2.box!.top - EDGE) - qr.top, what + ": the heading at the row's distance (the rule below the picture's)");
+  }
 });

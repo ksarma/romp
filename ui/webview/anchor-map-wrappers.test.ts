@@ -81,8 +81,16 @@ function decodeEntities(s: string): string {
     return e in NAMED ? NAMED[e] : m;
   });
 }
+/** The end tags the HTML parser honours through an open `<p>` (anchor-map.ts P_CLOSERS and FORMATTING): any other end tag met with
+ *  a `<p>` open above its element is IGNORED by the parser ("any other end tag" in body: a special element on the way stops the
+ *  walk), so `</label>` or `</span>` inside a paragraph closes nothing and mints no `<p>` (the Slice 5 review, round 3). */
+const HONOURED_END = /^(?:ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|BUTTON|CENTER|DETAILS|DIALOG|DIR|DIV|DL|FIELDSET|FIGCAPTION|FIGURE|FOOTER|FORM|HEADER|HGROUP|LISTING|MAIN|MENU|NAV|OL|PRE|SEARCH|SECTION|SUMMARY|UL|TABLE|H[1-6]|LI|DD|DT|P|A|B|BIG|CODE|EM|FONT|I|NOBR|S|SMALL|STRIKE|STRONG|TT|U)$/;
 /** marked's HTML into the stand-in, as a browser's parser reads a fragment: an unclosed tag stays open and the nodes after it
- *  nest inside it (the wrapper shape this file is about); an end tag closes down to its element; one with no open element is dropped. */
+ *  nest inside it (the wrapper shape this file is about); an end tag closes down to its element, unless a `<p>` stands open above
+ *  that element and the tag is one the parser ignores there (HONOURED_END); one with no open element is dropped, a `</p>` minting
+ *  the parser's empty `<p>`; a block-level start tag closes the nearest open `<p>` in button scope, whatever inline elements stand
+ *  open inside it (the review's round 3: `<p>Lead` then `<br>`, `<img>` and `<span class="w">` blocks nest in the p, and the next
+ *  paragraph's `<p>` closes it through the span). */
 function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
   html = html.replace(/\r\n?/g, "\n");
   const root = doc.createElement("#fragment");
@@ -95,9 +103,12 @@ function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
       if (html[i + 1] === "/") {
         const e = html.indexOf(">", i);
         const name = html.slice(i + 2, e).trim().toUpperCase();
-        let found = false;
-        for (let k = stack.length - 1; k > 0; k--) { if (stack[k].tagName === name) { stack.length = k; found = true; break; } }
-        if (!found && name === "P") top().appendChild(doc.createElement("p"));   // the parser mints an empty <p></p> for a stray </p>
+        let found = false, ignored = false;
+        for (let k = stack.length - 1; k > 0; k--) {
+          if (stack[k].tagName === name) { stack.length = k; found = true; break; }
+          if (stack[k].tagName === "P" && !HONOURED_END.test(name)) { ignored = true; break; }   // the parser's "any other end tag" met a special element
+        }
+        if (!found && !ignored && name === "P") top().appendChild(doc.createElement("p"));   // the parser mints an empty <p></p> for a stray </p>
         i = e + 1; continue;
       }
       const m = /^<([a-zA-Z][\w:-]*)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/.exec(html.slice(i));
@@ -106,8 +117,12 @@ function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
       const attrRe = /([^\s"'>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
       let a: RegExpExecArray | null;
       while ((a = attrRe.exec(m[2]))) el.setAttribute(a[1], decodeEntities(a[2] ?? a[3] ?? a[4] ?? ""));
-      // the parser closes an open <p> when a block-level tag starts (so marked's next block never nests in an author's `<p>`)
-      if (/^(?:p|div|details|h[1-6]|ul|ol|pre|blockquote|table|hr|section|figure|summary)$/i.test(m[1]) && top().tagName === "P") stack.length--;
+      // the parser closes an open <p> when a block-level tag starts (so marked's next block never nests in an author's `<p>`): the
+      // nearest <p> in button scope, through any inline element open inside it (a table closes none in DOMPurify's quirks-mode
+      // document, which the browser legs cover; the stand-in keeps the standards reading for it)
+      if (/^(?:p|div|details|h[1-6]|ul|ol|pre|blockquote|table|hr|section|figure|summary)$/i.test(m[1])) {
+        for (let k = stack.length - 1; k > 0; k--) { if (stack[k].tagName === "P") { stack.length = k; break; } if (/^(?:BUTTON|TABLE|TD|TH|CAPTION|TEMPLATE|OBJECT)$/.test(stack[k].tagName)) break; }
+      }
       top().appendChild(el);
       i += m[0].length;
       if (!m[3] && !VOID.has(m[1].toLowerCase())) {
@@ -824,4 +839,137 @@ test("Rendered paint inside a document-wide wrapper reads the nested blocks a ra
     assert.ok(many.length >= 3, what);
     sameNodes(ps.filter((p) => reads.has(p)), ps.slice(20, 23), what + ": the paragraphs between the two ends and no other; read " + ps.filter((p) => reads.has(p)).map((p) => ps.indexOf(p)).join(",") + " where 20..22 were expected");
   }
+});
+
+// ── the Slice 5 review, round 3 ──────────────────────────────────────────────────────────────────
+
+/** A DOM built from HTML written by hand, as the browser's parser and the sanitizer leave it (for a shape the stand-in's parser does
+ *  not model: a start tag's implied end tags). */
+function domOf(html: string): FakeElement {
+  const doc = new FakeDocument();
+  const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
+  for (const n of parseHTML(doc, html)) box.appendChild(n);
+  return box;
+}
+/** A selection over a passage's first two and last two words (a passage a paint may have split over several text nodes), mapped. */
+const mapWords = (box: FakeElement, src: string, text: string): MapResult => { const w = text.split(" "); return mapSpan(box, src, w.slice(0, 2).join(" "), w.slice(-2).join(" ")); };
+const mapsWholeWords = (box: FakeElement, src: string, text: string): void => {
+  const r = ok(mapWords(box, src, text), text);
+  assert.deepEqual(r.range, { start: at(src, text), end: at(src, text) + text.length }, text + ": its own offsets");
+};
+
+test("a comment on a wrapper's own leftover, a `<details>` summary, a centred div's lead line, a README banner's heading and tagline, paints in Rendered (HIGH, the review's round 3: the fallback's scope held the wrapper AND the leftover the block owns beside it, so the hay counted the passage twice against the block's rendering once and the count guard refused; main had painted each); the nested paragraph still paints", () => {
+  const DET = "Intro 001 alpha.\n\n<details><summary>Sum 002 charlie.</summary>\n\nPara 003 delta echo.\n\n</details>\n\nAfter 004 foxtrot.\n";
+  assert.deepEqual(paintedIn(buildRendered(DET), DET, "Sum 002 charlie.", "Sum 002 charlie."), ["Sum 002 charlie."], "the summary (was nothing)");
+  const TWO_LINE = "Intro 001 alpha.\n\n<details>\n<summary>Click to expand</summary>\n\nHidden 003 text here.\n\n</details>\n\nAfter 004 foxtrot.\n";
+  assert.deepEqual(paintedIn(buildRendered(TWO_LINE), TWO_LINE, "Click to expand", "Click to expand"), ["Click to expand"], "the two-line details' summary");
+  const LEAD = "Intro 001 alpha.\n\n<div align=\"center\">Lead 002 bravo.\n\nPara 003 delta echo.\n\n</div>\n\nAfter 004 foxtrot.\n";
+  assert.deepEqual(paintedIn(buildRendered(LEAD), LEAD, "Lead 002 bravo.", "Lead 002 bravo."), ["Lead 002 bravo."], "the lead text (was nothing)");
+  const BANNER = "<div align=\"center\"><img src=\"logo.png\" alt=\"logo\"><h1>Project</h1><p>A tagline here.</p>\n\nIntro 002 text.\n\n</div>\n\nAfter 003 foxtrot.\n";
+  assert.deepEqual(paintedIn(buildRendered(BANNER), BANNER, "A tagline here.", "A tagline here."), ["A tagline here."], "the banner's tagline (was nothing)");
+  assert.deepEqual(paintedIn(buildRendered(BANNER), BANNER, "Project", "Project"), ["Project"], "the banner's heading");
+  assert.deepEqual(paintedIn(buildRendered(BANNER), BANNER, "Intro 002 text.", "Intro 002 text."), ["Intro 002 text."], "the nested paragraph still paints");
+  assert.deepEqual(paintedIn(buildRendered(DET), DET, "Para 003 delta echo.", "Para 003 delta echo."), ["Para 003 delta echo."]);
+});
+
+test("the run check reads a comment's mark over an unwrapped element's hoisted text as that text: a comment spanning from the paragraph before a `<form>Lead` into its nested paragraph paints, and after the paint every passage still maps (the review's round 3: the read accepted a Text node alone, so the re-analysis met the top-level `<mark>` where the text was expected, no end confirmed, and the dropped `<input>` block before took every node, every later selection refused as an HTML block); a comment over part of the lead splits the text, and the run reads the pieces", () => {
+  const HOIST = "Intro 001 alpha bravo.\n\n<input type=\"text\">\n\nPara 003 delta echo.\n\n<form>Lead 004 foxtrot.\n\nPara 005 golf hotel.\n\nPara 006 india juliet. </form>\n\nAfter 007 kilo lima.\n\nAfter 008 mike november.";
+  const PASSAGES = ["Para 003 delta echo.", "Para 005 golf hotel.", "Para 006 india juliet.", "After 007 kilo lima.", "After 008 mike november."];
+  let box = buildRendered(HOIST);
+  for (const t of PASSAGES) mapsWholeWords(box, HOIST, t);
+  const span = { start: at(HOIST, "delta echo."), end: at(HOIST, "Para 005") + "Para 005".length };
+  let marks = paintRendered(El(box), HOIST, span, "fc-hl") as unknown as FakeElement[] | null;
+  assert.deepEqual((marks || []).map((m) => m.textContent.trim()), ["delta echo.", "Lead 004 foxtrot.", "Para 005"], "the span paints across the hoisted lead");
+  assert.ok(box.childNodes.some((n) => n instanceof FakeElement && n.tagName === "MARK"), "the lead's mark is a top-level node");
+  for (const t of PASSAGES) mapsWholeWords(box, HOIST, t);
+  assert.deepEqual(tagsOf(box, HOIST, blockAt(HOIST, "<form>")), ["MARK"], "the form block owns the mark over its hoisted text");
+  // a comment over part of the lead: the text node splits around the mark, and the run reads the run of pieces as the block's text
+  box = buildRendered(HOIST);
+  marks = paintRendered(El(box), HOIST, { start: at(HOIST, "004 foxtrot"), end: at(HOIST, "004 foxtrot") + 3 }, "fc-hl") as unknown as FakeElement[] | null;
+  assert.deepEqual((marks || []).map((m) => m.textContent), ["004"]);
+  for (const t of PASSAGES) mapsWholeWords(box, HOIST, t);
+});
+
+test("an html `<p>` left open followed by html blocks whose tags do not close a `<p>` (`<br>`, `<img>`, `<span class=\"w\">`): the parser nests them inside the open `<p>`, the pairing gives them no top-level node, and every paragraph after maps, a later top-level `<img>` block owning its own picture (the review's round 3, a regression from main: the `<img>` block's forward scan found the later picture, refused every nearer end, and the `<p>`'s block took the paragraphs between, all four refused as an HTML block)", () => {
+  const OPENP = "<p>Lead 002 charlie.\n\n<br>\n\n<img src=\"a.png\">\n\n<span class=\"w\">\n\nPara 003 delta echo.\n\nPara 004 foxtrot golf.\n\n<img src=\"b.png\">\n\nAfter 005 hotel india.\n\nAfter 006 juliet kilo.\n";
+  const box = buildRendered(OPENP);
+  assert.deepEqual(kidsOf(box).map((k) => tagOf(k) + "[" + kidsOf(k).map(tagOf).join(",") + "]"), ["P[BR,IMG,SPAN.w]", "P[]", "P[]", "IMG[]", "P[]", "P[]"], "the stand-in nests the inline-level blocks in the open p, as the browser does");
+  for (const t of ["Para 003 delta echo.", "Para 004 foxtrot golf.", "After 005 hotel india.", "After 006 juliet kilo."]) mapsWhole(box, OPENP, t);
+  assert.deepEqual(tagsOf(box, OPENP, blockAt(OPENP, "<p>Lead")), ["P"], "the open p's block: its one element");
+  for (const head of ["<br>", "<img src=\"a.png\">", "<span class"]) assert.deepEqual(tagsOf(box, OPENP, blockAt(OPENP, head)), [], head + ": nested in the p, no top-level node");
+  assert.deepEqual(tagsOf(box, OPENP, blockAt(OPENP, "<img src=\"b.png\">")), ["IMG"], "the later picture is its own block's");
+  assert.match(bad(mapText(box, OPENP, "Lead 002 charlie."), "the p's own text").reason, /an HTML block/);
+  // the same with a markdown paragraph closing the p at once: as before
+  const CLOSED = "<p>Lead 002 charlie.\n\nPara 003 delta echo.\n\n<img src=\"b.png\">\n\nAfter 005 hotel india.\n";
+  const box2 = buildRendered(CLOSED);
+  for (const t of ["Para 003 delta echo.", "After 005 hotel india."]) mapsWhole(box2, CLOSED, t);
+});
+
+test("a stray `</p>` block after an html `<p>` left open closes that p and mints nothing; a second one mints the parser's empty `<p>`; and an image paragraph's `<p>` is not that empty `<p>` (it holds an element), so the run confirms at the right end and the heading, the paragraph and the passage after the picture all map (the review's round 3, a regression from main: every `</p>` was read as minting, the image paragraph's `<p>` passed for the minted one, and the first `</p>` block took every block up to the picture)", () => {
+  const TWO = "Intro 001 alpha bravo.\n\n<p>Lead 002 charlie.\n\n</p>\n\n</p>\n\n## Head 003 delta.\n\nPara 004 echo foxtrot.\n\n![pic](pic.png)\n\nAfter 005 golf hotel.";
+  let box = buildRendered(TWO);
+  assert.deepEqual(kidsOf(box).map(tagOf), ["P", "P", "P", "H2", "P", "P", "P"], "the first </p> closes the open p; the second mints an empty <p>");
+  for (const t of ["Head 003 delta.", "Para 004 echo foxtrot.", "After 005 golf hotel."]) mapsWhole(box, TWO, t);
+  assert.deepEqual(tagsOf(box, TWO, blockAt(TWO, "</p>")), [], "the closer of the open p owns nothing");
+  assert.deepEqual(tagsOf(box, TWO, sourceBlockSpans(TWO).findIndex((sp) => sp.start === TWO.lastIndexOf("</p>"))), ["P"], "the stray closer owns the minted <p>");
+  assert.deepEqual(tagsOf(box, TWO, blockAt(TWO, "![pic]")), ["P"], "the picture's paragraph owns its own <p>");
+  const ONE = TWO.replace("</p>\n\n</p>", "</p>");
+  box = buildRendered(ONE);
+  for (const t of ["Head 003 delta.", "Para 004 echo foxtrot.", "After 005 golf hotel."]) mapsWhole(box, ONE, t);
+  // a README shape: a centred p of pictures, closed by its own block, then prose and a picture paragraph
+  const README = "<p align=\"center\">\n<img src=\"logo.png\" alt=\"\">\n\n</p>\n\n## Head 003 delta.\n\nPara 004 echo foxtrot.\n\n![pic](pic.png)\n\nAfter 005 golf hotel.\n";
+  box = buildRendered(README);
+  for (const t of ["Head 003 delta.", "Para 004 echo foxtrot.", "After 005 golf hotel."]) mapsWhole(box, README, t);
+});
+
+test("a wrapper whose raw holds a closed child of the SAME tag as the next html block's element (`<div align=\"center\"><div>Lead</div>` then `<div class=\"in\">`; `<span>Lead</span>` then `<span class=\"w\">`): the raw's own children are the block's and read past, so the inner block takes its own element and the nested and following paragraphs map (the review's round 3, a regression from round 1: the inner block took the leftover, its real element fell to the paragraph after the wrapper as a mismatch, and the last paragraph was no block's); round 1's recorded edge, `<div><p>Lead</p>` then an html `<p>Alpha</p>`, now pairs the leftover to the wrapper's block", () => {
+  const SAME = "Intro 001 alpha bravo.\n\n<div align=\"center\"><div>Lead 002 charlie.</div>\n\n<div class=\"in\">\n\nPara 003 delta echo.\n\n</div>\n\n</div>\n\nAfter 004 foxtrot golf.\n\nAfter 005 hotel india.";
+  let box = buildRendered(SAME);
+  for (const t of ["Para 003 delta echo.", "After 004 foxtrot golf.", "After 005 hotel india."]) mapsWhole(box, SAME, t);
+  assert.deepEqual(elems(box, SAME, blockAt(SAME, "<div align")), ['DIV:"Lead 002 charlie."', 'DIV:"Lead 002 charlie."'], "the outer block: its wrapper and the leftover div");
+  assert.deepEqual(elems(box, SAME, blockAt(SAME, "<div class=\"in\">")), ['DIV.in:"Para 003 delta"'], "the inner block: its own element (was the leftover)");
+  assert.equal(owner(box, SAME, kidsOf(box)[kidsOf(box).length - 1]), blockAt(SAME, "After 005"), "the last paragraph is its block's");
+  const SPAN = "Intro 001 alpha bravo.\n\n<div align=\"center\"><span>Lead 002 charlie.</span>\n\n<span class=\"w\">\n\nPara 003 delta echo.\n\n</span>\n\n</div>\n\nAfter 004 foxtrot golf.\n\nAfter 005 hotel india.";
+  box = buildRendered(SPAN);
+  for (const t of ["After 004 foxtrot golf.", "After 005 hotel india."]) mapsWhole(box, SPAN, t);
+  const EDGE = "<div><p>Lead</p>\n\n<p>Alpha</p>\n\nAfter one.\n\nAfter two.\n";
+  box = buildRendered(EDGE);
+  for (const t of ["After one.", "After two."]) mapsWhole(box, EDGE, t);
+  assert.deepEqual(elems(box, EDGE, blockAt(EDGE, "<div>")), ['DIV:"Lead Alpha After"', 'P:"Lead"'], "the wrapper keeps its own <p>");
+  assert.deepEqual(elems(box, EDGE, blockAt(EDGE, "<p>Alpha")), ['P:"Alpha"'], "the html <p> block takes its own element");
+});
+
+test("a closer the parser ignores inside an open `<p>` (`</label>`, `</legend>`, `</option>`) closes nothing and mints nothing: after a `<label>` opened as its own block and closed inline on a paragraph, an html `<p></p>` block owns its own empty element and the paragraphs after it map (the review's round 3, a regression from main: the closer was read as minting, the pairing stepped over the `<p></p>` block's element as the minted one, and that block took the next paragraph); a `</div>` closed inline mints as before", () => {
+  for (const tag of ["label", "legend", "option"]) {
+    const IGN = `Intro 001 alpha bravo.\n\n<${tag}>\n\nPara 003 delta echo. </${tag}>\n\n<p></p>\n\nAfter 005 hotel india.\n\nAfter 006 juliet kilo.\n`;
+    const box = buildRendered(IGN);
+    assert.deepEqual(kidsOf(box).map(tagOf), ["P", "P", "P", "P", "P"], tag + ": the stand-in ignores the closer inside the p, unwraps the element, and mints no <p>");
+    for (const t of ["Para 003 delta echo.", "After 005 hotel india.", "After 006 juliet kilo."]) mapsWhole(box, IGN, t);
+    assert.deepEqual(elems(box, IGN, blockAt(IGN, "<p></p>")), ['P:""'], tag + ": the html <p></p> block owns its own element");
+  }
+  const DIV = "Intro 001 alpha bravo.\n\n<div>\n\nPara 003 delta echo. </div>\n\n<p></p>\n\nAfter 005 hotel india.\n\nAfter 006 juliet kilo.\n";
+  const box = buildRendered(DIV);
+  for (const t of ["Para 003 delta echo.", "After 005 hotel india.", "After 006 juliet kilo."]) mapsWhole(box, DIV, t);
+  assert.equal(kidsOf(box).filter((k) => k.tagName === "P" && k.childNodes.length === 0).length, 2, "the minted <p> and the block's own");
+});
+
+test("a block whose scan took nothing and whose run no end confirms hands the nodes back at the next html block's own element, not at the document's end: a `<button>` opened as its own block, whose paragraph's own `<button>` start tag closes it (the parser's implied end tags, the DOM here as the browser and the sanitizer leave it), loses the paragraphs up to the next html block and no more, and every paragraph after that block maps (the review's round 3, a regression from main: everything to the end was refused as an HTML block)", () => {
+  const BTN = "Intro one here.\n\n<button>\n\n<button>probe xray quebec</button>\n\nNovember table bravo.\n\nLast line kilo.\n\n<div>marker</div>\n\nAfter one lima.\n\nAfter two mike.\n";
+  const box = domOf("<p>Intro one here.</p>\n<p></p>probe xray quebec<p></p>\n<p>November table bravo.</p>\n<p>Last line kilo.</p>\n<div>marker</div>\n<p>After one lima.</p>\n<p>After two mike.</p>\n");
+  for (const t of ["After one lima.", "After two mike."]) mapsWhole(box, BTN, t);
+  assert.deepEqual(elems(box, BTN, blockAt(BTN, "<div>marker")), ['DIV:"marker"'], "the next html block owns its own element (before: nothing)");
+  assert.deepEqual(elems(box, BTN, blockAt(BTN, "<button>")), ['P:""', 'P:""', 'P:"November table bravo."', 'P:"Last line kilo."'], "the button block's run ends at the marker (the opener is the first block starting so)");
+  for (const t of ["November table bravo.", "Last line kilo."]) assert.match(bad(mapText(box, BTN, t), t).reason, /an HTML block/, t + ": inside the swallowed run, refused at the button's block");
+});
+
+test("a whole-paragraph selection right before a bare text node the parser hoisted (an unwrapped `<option>`'s text, a dropped `<td>`'s) maps: an end boundary is placed by the last character it selects, not by the node that starts where it ends (main's rule, and round 2's: the end read as the next node at offset 0, a refused block's, and the selection was refused as touching it while one stopping a character short mapped; the same after a comment's mark absorbed the whitespace node before the hoisted text)", () => {
+  const OPT = "Para 001 bravo mike delta.\n\n<option>Opt 002 x.</option>\n\n## Head\n\nPara 003 hotel india.\n";
+  const box = buildRendered(OPT);
+  const t1 = allText(box).find((t) => t.data === "Para 001 bravo mike delta.")!;
+  const whole = ok(mapRenderedSelection(sel({ node: t1, offset: 0 }, { node: t1, offset: t1.data.length }), El(box), OPT), "the whole paragraph, ending at its text's end");
+  assert.equal(whole.quote, "Para 001 bravo mike delta.");
+  const atP = ok(mapRenderedSelection(sel({ node: t1, offset: 0 }, { node: t1.parentNode!, offset: 1 }), El(box), OPT), "the whole paragraph, ending at its element's end");
+  assert.equal(atP.quote, "Para 001 bravo mike delta.");
+  assert.equal(ok(mapRenderedSelection(sel({ node: t1, offset: 9 }, { node: t1, offset: t1.data.length }), El(box), OPT), "the tail").quote, "bravo mike delta.");
+  assert.match(bad(mapText(box, OPT, "Opt 002 x."), "the hoisted text itself").reason, /an HTML block/);
 });

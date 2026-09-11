@@ -15,8 +15,11 @@
 // lone-child mark does not), so the listener never saw the collapse and the float stood beside nothing until a click on it hid it
 // and opened no composer. Now paintAll ends by hiding a passage's float it left beside no selection (afterPaint, passageGone). Legs
 // await the DOM's own states (the peer's mark appearing, the selectionchange count moving) and frames, never a timer; the poll's own
-// interval is the panel's. Skips LOUDLY without a playwright browser (CI installs none). Synthetic values only: an invented report, /repo/notes-api
-// paths, the placeholder sid, invented comment ids.
+// interval is the panel's. Each leg asserts what the browser fired for the paint's move of the selection, its premise: one or more
+// events for the prefix highlight, none for the lone-child mark (the Slice 5 review, round 3: a browser firing one there would hide
+// the float through the listener's own collapsed-selection guard, and the leg would pass without reaching afterPaint's hide; the
+// count read into an assertion message pinned nothing). Skips LOUDLY without a playwright browser (CI installs none). Synthetic
+// values only: an invented report, /repo/notes-api paths, the placeholder sid, invented comment ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, frames, REPORT, STATUS } from "./real-viewer-leg";
@@ -183,7 +186,13 @@ test("in a browser, the real viewer and panel: a highlight that is its paragraph
     s = await scene(page);
     assert.equal(s.collapsed, true, "the paint's unwrap and wrap again of the lone-child mark collapsed the selection");
     assert.equal(s.anchorIsP, true, "...to the paragraph itself"); assert.equal(s.pChildren, "MARK", "whose mark is its only child again");
-    assert.equal(s.hidden, true, "the float went with the paint that left it beside no selection (before: shown, a Comment button that opened nothing; selectionchange events fired by the paint: " + (s.selChanges - changes) + ")");
+    // the leg's premise, asserted as the first test's leg 1 asserts its own (Chromium fired for the prefix mark's move): NO selectionchange
+    // for the lone-child mark's unwrap and wrap again, so the hide below is afterPaint's and not the listener's; a browser that fires one
+    // here hides the float through onSelectionChange's collapsed-selection guard, and this leg then tests the paint-time hide no longer
+    // (the shim's file-comments-paint-offer.test.ts does, with a fake that fires nothing): the title and the slice's record of the count
+    // would be stale, and this says so instead of passing
+    assert.equal(s.selChanges - changes, 0, "Chromium fired no selectionchange for the paint's collapse of the selection (the leg's premise: the float's hide below is the paint's own, afterPaint, not the listener's; a browser that fires one here makes the paint-time hide the shim test's to pin, and the title's and the record's count stale)");
+    assert.equal(s.hidden, true, "the float went with the paint that left it beside no selection (before: shown, a Comment button that opened nothing)");
     // the paint left a caret, which Chromium's Shift+Arrow does not widen without an existing selection or caret browsing (the
     // keyboard-offer browser test's header), so the person's next gesture is a drag: the seam's mouseup offers again, and the keyboard
     // change after it offers beside the widened selection

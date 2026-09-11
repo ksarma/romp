@@ -19,13 +19,17 @@
 // hay between two adjacent table parts; the stored quote stays the exact source slice (the owner's ruling 5: the
 // plan's "strip cell delimiters" is a paint-time rule). The browser leg anchor-map-code-table-paint-browser.test.ts
 // drives both through the real viewer and panel, a Raw save and a fresh open.
+// Round 3 of the Slice 5 review retired the hand-written strip (regexes per inline construct, line by line) for the markdown
+// pipeline itself: the needle is the text marked's tokens show for the scope's blocks, written out with a source position per
+// character (anchor-map.ts renderedBlocks), cut to the range. Part 5 below is that ruling's pin: a corpus of 300 seeded cells and
+// every hand case of the three rounds, each read equal to marked's rendered text through the stand-in, and painted whole.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { marked } from "marked";
-import { applyMdConfig } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
+import { applyMdConfig, resolveWikilink } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
 import {
-  mapRawSelection, paintRendered, paintChangesRendered, unpaintChanges, stripMarkupMapped,
+  mapRawSelection, paintRendered, paintChangesRendered, unpaintChanges, stripMarkupMapped, renderedQuote,
   type ChangePaint, type SelLike,
 } from "./anchor-map";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
@@ -132,11 +136,23 @@ function buildRaw(text: string): FakeElement {
   for (const n of parseHTML(doc, lines.map((ln) => `<span class="fv-cl"><span class="fv-ct">${escapeHtml(ln)}</span></span>`).join(""))) code.appendChild(n);
   return code;
 }
-/** The viewer's Rendered body: `div.fileview-md > marked output`. */
+/** The elements the sanitizer removes WITH their text (md-sanitize.ts against DOMPurify's FORBID_CONTENTS), stood in for: the
+ *  stand-in parser keeps every element, so the cases that hold one drop it here as the viewer's DOM would. */
+const DROP_WITH_TEXT = new Set(["SCRIPT", "STYLE", "IFRAME", "NOSCRIPT", "TEMPLATE"]);
+function standInSanitize(root: FakeElement): void {
+  for (const c of root.childNodes.slice()) {
+    if (!(c instanceof FakeElement)) continue;
+    if (DROP_WITH_TEXT.has(c.tagName)) { root.removeChild(c); continue; }
+    standInSanitize(c);
+  }
+}
+/** The viewer's Rendered body: `div.fileview-md > marked output`, the file kind's wikilink stamp applied as file-view-links.ts applies
+ *  it (so `[[Note]]` shows `Note`, the surface comments are made on), the sanitizer's drops stood in for. */
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, marked.parse(text, { walkTokens: (t) => { resolveWikilink(t); } }) as string)) box.appendChild(n);
+  standInSanitize(box);
   return box;
 }
 const El = (n: FakeNode) => n as unknown as Element;
@@ -172,55 +188,75 @@ function highlight(source: string, range: { start: number; end: number }, tag = 
   return { box, marks, text: marks ? marks.map((m) => m.textContent).join("") : null, cell: marks && marks.length ? cellOf(marks[0], tag) : null };
 }
 
-// ── 1. the mapped strip ────────────────────────────────────────────────────────────────────────────
+// ── 1. the mapped strip: the rendering's own text ────────────────────────────────────────────────
 
-test("stripMarkupMapped: the text is the flat strip's, byte for byte, and every surviving character maps to its own index in the source, in order", () => {
-  const cases: [string, string][] = [
-    ["> quoted *text* here", "quoted text here"],
-    ["- [x] a task **done**", "a task done"],
-    ["1) numbered _item_", "numbered item"],
-    ["## Heading with `code` ##", "Heading with code"],
-    ["```python", ""],
-    ["![alt](img.png) and [label](http://x) and [ref][r]", " and label and ref"],
-    ["<https://example.com/x> and __also__ and ~~del~~", "https://example.com/x and also and del"],
-    ["\\*escaped\\* and \\#", "*escaped* and #"],   // an escaped delimiter is the character it shows (before: the pair read as emphasis and the strip gave `\escaped\`)
-    ["trailing two  ", "trailing two"],
-    ["trailing backslash\\", "trailing backslash"],
-    ["| `GET /notes` | GET /notes lists notes |", "| GET /notes | GET /notes lists notes |"],
-    ["| **cache** | cache |", "| cache | cache |"],
-    ["a * b * c", "a * b * c"],   // no emphasis: the asterisks are not flanking (they were read as a pair around " b " before)
-    ["*em* and a * b", "em and a * b"],
-    ["`__init__` and `f(*args, **kwargs)` and `a*b*c`", "__init__ and f(*args, **kwargs) and a*b*c"],   // a code span's content is the rendering's
-    ["`` a ` b `` and **`x`**", " a ` b  and x"],
-    ["\\`not code\\` *em*", "`not code` em"],   // an escaped backtick opens no span and is the backtick it shows (before: the backticks went and the backslashes stayed)
-    // the Slice 5 review, round 2: nested emphasis of one delimiter, innermost first; a delimiter at a strong's or a link's edge
-    ["*a *b* c*", "a b c"], ["**a **b** c**", "a b c"], ["_a _b_ c_", "a b c"], ["***a***", "a"], ["*a **b***", "a b"],
-    ["**a**_b_", "ab"], ["_a_**b**", "ab"], ["[link](http://x)_b_", "linkb"], ["**Note:**_draft_", "Note:draft"],
-    // escapes before the emphasis rules, and every ASCII punctuation character escapable
-    ["\\*\\*kwargs", "**kwargs"], ["\\*required\\*", "*required*"], ["*a\\*b*", "a*b"], ["\\*a*b*", "*ab"], ["**a\\*\\*b**", "a**b"],
-    ["costs \\$5", "costs $5"], ["\\<b\\>", "<b>"], ["\\&", "&"], ["\\=a \\^2 \\%", "=a ^2 %"], ["5 \\* 3", "5 * 3"],
-    // inline html, a highlight, a wikilink, a footnote reference, an email autolink, a link with a paren in its URL
-    ["Ctrl<kbd>C</kbd>", "CtrlC"], ["H<sub>2</sub>O", "H2O"], ["a<br>b", "ab"], ["a <!-- c --> b", "a  b"], ["<span style=\"color:red\">r</span>", "r"],
-    ["==hl== and a ==b== c", "hl and a b c"], ["[[Topic]] and see[^1]", "Topic and see1"], ["<a@b.c> <mailto:a@b.c>", "a@b.c mailto:a@b.c"],
-    ["[l](http://x/(a)) [m](http://y \"t (u)\")", "l m"],
-    ["-\tTab after the marker", "Tab after the marker"],
-    ["# T\n\n| a | b |\n|---|---|\n| `x` | x |\n```\nfence\n```\n", "T\n\n| a | b |\n|---|---|\n| x | x |\n\nfence\n\n"],
+/** The classes of the controls the viewer parks in the rendered markup, whose text is not the note's (anchor-map.ts CONTROL_CLASSES):
+ *  every read of the rendered text below skips them, as the fallback's hay does. */
+const CONTROL_CLASSES = ["code-copy", "katex", "katex-error", "md-math-src", "md-fnback", "md-frontmatter-head", "fv-gate"];
+const isControl = (n: FakeNode): boolean => n instanceof FakeElement && (n.getAttribute("class") || "").split(" ").some((c) => CONTROL_CLASSES.includes(c));
+/** The text under `n` less the controls': what the hay reads. */
+const textShown = (n: FakeNode): string => n.nodeType === 3 ? (n as FakeText).data : isControl(n) ? "" : n.childNodes.map(textShown).join("");
+/** The text the stand-in's DOM shows for `s`, whitespace runs collapsed (the fallback's match is whitespace-tolerant). */
+const shownText = (s: string): string => norm(textShown(buildRendered(s)));
+const norm = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+test("stripMarkupMapped: the text is what the rendering shows for the source (marked's tokens under the one configuration, written out; the Slice 5 review's round 3 retired the hand-written strip), and every character maps to its origin in the source, never decreasing: the hand cases of rounds 1 and 2, and the shapes the rounds found the strip wrong on", () => {
+  const cases: string[] = [
+    "> quoted *text* here", "- [x] a task **done**", "1) numbered _item_", "## Heading with `code` ##", "```python",
+    "![alt](img.png) and [label](http://x) and [ref][r]", "<https://example.com/x> and __also__ and ~~del~~", "\\*escaped\\* and \\#",
+    "trailing two  ", "trailing backslash\\", "| `GET /notes` | GET /notes lists notes |", "| **cache** | cache |",
+    "a * b * c", "*em* and a * b", "`__init__` and `f(*args, **kwargs)` and `a*b*c`", "`` a ` b `` and **`x`**", "\\`not code\\` *em*",
+    // the review's round 2: nested emphasis of one delimiter, a delimiter at a strong's or a link's edge, the escapes
+    "*a *b* c*", "**a **b** c**", "_a _b_ c_", "***a***", "*a **b***", "**a**_b_", "_a_**b**", "[link](http://x)_b_", "**Note:**_draft_",
+    "\\*\\*kwargs", "\\*required\\*", "*a\\*b*", "\\*a*b*", "**a\\*\\*b**", "costs \\$5", "\\<b\\>", "\\&", "\\=a \\^2 \\%", "5 \\* 3",
+    "Ctrl<kbd>C</kbd>", "H<sub>2</sub>O", "a<br>b", "a <!-- c --> b", "<span style=\"color:red\">r</span>",
+    "==hl== and a ==b== c", "[[Topic]] and see[^1]\n\n[^1]: A note.", "<a@b.c> <mailto:a@b.c>", "[l](http://x/(a)) [m](http://y \"t (u)\")",
+    // the review's round 3: the shapes the hand-written strip read differently from marked (each a finding, now the pipeline's own reading)
+    "_snake_case_", "_my_var_ here", "__my_var__", "_a_b_", "___a___", "**5 * 3 = 15**", "**bold with * star**", "*use * as wildcard*", "~~a ~ b~~", "**a*b**",
+    "*a * b*", "**a * b** and **c**", "*rate * time*", "_a _ b_", "~~a ~~b~~ c~~", "*a ** b*", "** not bold **", "*a**b* c*",
+    "see `x\\`\nnext", "the path is `C:\\Users\\`\nmore", "foo\\\\\nnext",
+    "Edit <path/to/file> first", "use <name, email> format", "x <a.b> y", "<key=value>", "<x.y.z>", "Map<K, V>", "List<String>", "set <VAR> to",
+    "see[^9]", "cite[^missing] here", "[a][nodef] and matrix[i][j]", "[config][settings]", "![logo][idef] here", "knoll [![tango][idef]][rdef] knollx",
+    "https://x.test/a/__init__.py zulu", "<https://x.test/_draft_>", "www.x.test/_isle_", "https://x.test/*star*", "https://x.test/~~strike~~",
+    "<ftp://x.test/lagoon>", "<file:///cedar/a.md>", "<tel:+1555whiskey>", "<obsidian://open?vault=oscar>", "<vscode://file/whiskey>", "<user:pass> jade",
+    "é_a_ and 日本_版_ and _b_é", "٣_a_", "2_a_ and a_b_",
+    "Run this <script>alert(1)</script> then", "a <style>p{}</style> b <noscript>n</noscript> c <template>t</template> d", "<kbd>C</kbd> and <textarea>kept</textarea>",
+    "a  \nb and c\\\nd", "It was released in\n2024. It was the last version.", "Count the # of items and > 5 means overflow and - beta gamma",
+    "**an important\nphrase** and [the design\nnotes](http://x) and `sierra *zulu*\nuniform`", "[wildcard](http://x.test/files/*)*", "*[a](http://x.test/*)",
+    "<div>costs \\$5 &amp; see \\& x and C:\\Temp\\</div>", "<div>path C:\\Temp\\<br>next</div>", "<div>a <script>x</script> b <template>t</template> c</div>",
+    "<div>&#110;ote note</div>", "Fish &amp; chips &lt;3 &#120;",
+    "# T\n\n| a | b |\n|---|---|\n| `x` | x |\n```\nfence\n```\n\nAfter.\n",
+    "- one\n- two\n\n  more\n\n> quoted\n> lines\n\n1. first\n2. second\n",
   ];
-  for (const [s, want] of cases) {
+  for (const s of cases) {
     const m = stripMarkupMapped(s);
-    assert.equal(m.text, want, JSON.stringify(s));
+    // the delimiter row of a table is kept as its dashes on purpose (a quote spanning it paints nothing, Slice 5 item 8): the stand-in shows none
+    const shown = shownText(s).replace(/\|---\|---\| ?/g, "");
+    assert.equal(norm(m.text).replace(/\|---\|---\| ?/g, ""), shown, JSON.stringify(s));
     assert.equal(m.map.length, m.text.length, JSON.stringify(s) + ": one origin per character");
     for (let i = 0; i < m.text.length; i++) {
-      assert.equal(s[m.map[i]], m.text[i], JSON.stringify(s) + ": character " + i + " maps to itself");
-      if (i > 0) assert.ok(m.map[i] > m.map[i - 1], JSON.stringify(s) + ": the map is strictly increasing at " + i);
+      assert.ok(m.map[i] >= 0 && m.map[i] <= s.length, JSON.stringify(s) + ": character " + i + " maps into the source");
+      if (i > 0) assert.ok(m.map[i] >= m.map[i - 1], JSON.stringify(s) + ": the map never decreases at " + i);
     }
   }
+  // a few readings spelled out: what the rendering shows, byte for byte (the whitespace the DOM holds included)
+  for (const [s, want] of [
+    ["_snake_case_", "snake_case\n"], ["**5 * 3 = 15**", "5 * 3 = 15\n"], ["**a*b**", "a*b\n"], ["trailing backslash\\", "trailing backslash\\\n"],
+    ["a  \nb", "ab\n"], ["see `x\\`\nnext", "see x\\\nnext\n"], ["Edit <path/to/file> first", "Edit <path/to/file> first\n"], ["see[^9]", "see[^9]\n"],
+    ["<ftp://x.test/lagoon>", "ftp://x.test/lagoon\n"], ["Run this <script>alert(1)</script> then", "Run this  then\n"], ["<div>costs \\$5 &amp; x</div>", "costs \\$5 & x\n"],
+    ["[[Topic]] here", "Topic here\n"], ["![alt](img.png) and [label](http://x)", " and label\n"],
+  ] as const) assert.equal(stripMarkupMapped(s).text, want, JSON.stringify(s));
   // the map tells the two "GET /notes" apart: the first lives inside the backticks, the second is the plain one
   const row = "| `GET /notes` | GET /notes lists notes |";
   const m = stripMarkupMapped(row);
   const a = m.text.indexOf("GET /notes"), b = m.text.indexOf("GET /notes", a + 1);
   assert.equal(m.map[a], row.indexOf("`") + 1);
   assert.equal(m.map[b], row.lastIndexOf("GET /notes"));
+  // an entity's decoded character maps to the entity's first character, an escape's to the character it escaped
+  const ent = stripMarkupMapped("Fish &amp; \\*chips\\*");
+  assert.equal(ent.text, "Fish & *chips*\n");
+  assert.equal(ent.map[ent.text.indexOf("&")], "Fish &amp;".indexOf("&"));
+  assert.equal(ent.map[ent.text.indexOf("*")], "Fish &amp; \\*".length - 1);
 });
 
 // ── 2. the finding: a marked-up quote whose plain text recurs in the block ─────────────────────────
@@ -304,18 +340,25 @@ test("Rendered fallback: a change whose new text is the marked-up cell paints, i
   }
 });
 
-test("Rendered fallback: the count guard still holds for a marked-up quote — an HTML block whose attribute repeats the text paints nothing; a code-span quote with no plain recurrence paints as before", () => {
-  // the rendering shows two "x" (the entity's, decoded by the parser, and the one inside the literal "**x**"); the stripped source
-  // holds one, the entity keeping its source form (the review's round 2 moved this scene off an attribute's text, which the strip now
-  // drops with its tag, as the rendering does)
-  const html = "# Notes\n\n<div>&#120; **x**</div>\n";
-  const box = buildRendered(html);
+test("Rendered fallback: the count guard still holds where the rendering shows the quote's text more often than the source's rendering does (a rendering that gained a copy of the passage): nothing is painted and the DOM is untouched; an HTML block's entity is the character it shows, so a quote on the plain `note` beside `&#110;ote` paints the plain one by ordinal and one on the entity's paints the first (the review's round 2 had refused both: the strip kept the entity's source form, so the counts disagreed); a code-span quote with no plain recurrence paints as before", () => {
+  // the block is refused (an entity), so the paint takes the fallback; the DOM's paragraph for it shows the passage twice
+  const source = "Alpha one.\n\nBeta &amp; two.\n\nGamma three.\n";
+  const box = buildRendered("Alpha one.\n\nBeta &amp; two. Beta &amp; two.\n\nGamma three.\n");
   const before = serialize(box);
-  assert.equal(paintRendered(El(box), html, rangeOf(html, "**x**"), "fc-hl"), null, "the counts disagree, so nothing is painted");
+  assert.equal(paintRendered(El(box), source, rangeOf(source, "Beta &amp; two."), "fc-hl"), null, "two shown, one rendered from the source: the counts disagree in the block's node and over the whole text, so nothing is painted");
   assert.equal(serialize(box), before);
-  // the control: the quote's plain text occurs once in the rendering and once, stripped, in the source
+  // the entity in an html block: the rendering shows `note note`, and so does the block's reading now
+  const html = "# Notes\n\n<div>&#110;ote note</div>\n";
+  let h = highlight(html, rangeOf(html, "note"), "DIV");   // the plain word, after the entity
+  assert.ok(h.marks && h.marks.length === 1, "the plain `note` paints (was null)");
+  assert.equal(h.text, "note");
+  assert.equal(textBefore(h.box, h.marks![0]), "Notes\nnote ", "the second shown `note`, the range's own");
+  h = highlight(html, rangeOf(html, "&#110;ote"), "DIV");
+  assert.ok(h.marks && h.marks.length === 1, "the entity's `note` paints too");
+  assert.equal(textBefore(h.box, h.marks![0]), "Notes\n", "the first shown `note`");
+  // the control: the quote's plain text occurs once in the rendering and once, rendered, in the source
   const one = "# Routes\n\n| Route | Note |\n|---|---|\n| `GET /notes` | lists notes |\n";
-  const h = highlight(one, rangeOf(one, "`GET /notes`"));
+  h = highlight(one, rangeOf(one, "`GET /notes`"));
   assert.ok(h.marks && h.marks.length);
   assert.equal(h.text, "GET /notes");
   assert.equal(h.cell!.index, 0);
@@ -329,7 +372,6 @@ function textBefore(root: FakeNode, n: FakeNode): string {
   for (const x of docOrder(root)) { if (x === n) break; if (x.nodeType === 3) out += (x as FakeText).data; }
   return out;
 }
-const norm = (s: string): string => s.replace(/\s+/g, " ").trim();
 const TOTALS = "# Totals\n\nIntro paragraph with several words in it.\n\n```python\ntotal = a * b * 2\nname_ = under_score  # trailing comment\n```\n\nAfter paragraph.\n";
 const FENCED = "# Handler notes\n\nBefore paragraph.\n\n```python\n# a comment\ndef f(x):\n    return x + 1  # trailing\n\nvalue = f(2)\n```\n\nAfter paragraph.\n";
 
@@ -538,12 +580,12 @@ test("Rendered fallback, a table hole: a code span holding an escaped pipe in a 
   assert.ok(h.marks && h.marks.length, "the split row paints");
   const tm = textMarks(h.marks!);
   assert.deepEqual(tm.map((m) => cellOf(m, "TD").index), [0, 1], "one mark in each cell of the split");
-  assert.equal(norm(tm.map((m) => m.textContent).join(" ")), "a \\ b", "the cells' text, the unmatched backticks unread as before");
+  assert.equal(norm(tm.map((m) => m.textContent).join(" ")), "`a \\ b`", "the cells' text as shown, the unmatched backticks with it (the strip's backtick rule had dropped them from the needle, round 3 reads the cells as marked shows them)");
 });
 
 const ESCAPES = "# Escapes\n\n| Cell | Note |\n|------|------|\n| \\*\\*kwargs | py |\n| \\*required\\* | req |\n| \\*escaped\\* | esc |\n| *a\\*b* | in |\n| costs \\$5 | price |\n| \\<b\\> | tag |\n| **Note:**_draft_ | adj |\n| _path_**index** | adj2 |\n| Ctrl<kbd>C</kbd> | kbd |\n| H<sub>2</sub>O | sub |\n| ==important== | mark |\n| C:\\Users\\ | path |\n| a\\ | bs |\n| *a | b* |\n\n<div>path C:\\Temp\\ here</div>\n\nAfter.\n";
 
-test("Rendered fallback, a table hole: an escaped `*` or `_` is the character it shows (`\\*\\*kwargs`, `\\*required\\*`, `\\*escaped\\*`, `*a\\*b*`; before: the emphasis rules ran first and paired the escaped asterisks), every ASCII punctuation character is escapable (`costs \\$5`, `\\<b\\>`), an underscore emphasis beside a strong opens (`**Note:**_draft_`), inline html tags render nothing of their own (`Ctrl<kbd>C</kbd>`), a highlight's delimiters go (a wikilink's in test 1: the stand-in here renders the chat's unresolved span, which shows the source), a cell ending in a backslash keeps it (`C:\\Users\\`, `a\\`: the hard break is a line's, not a cell's), an asterisk in one cell pairs with none in another, and a quote in an html block cut mid-line keeps its trailing backslash", () => {
+test("Rendered fallback, a table hole: an escaped `*` or `_` is the character it shows (`\\*\\*kwargs`, `\\*required\\*`, `\\*escaped\\*`, `*a\\*b*`; before: the emphasis rules ran first and paired the escaped asterisks), every ASCII punctuation character is escapable (`costs \\$5`, `\\<b\\>`), an underscore emphasis beside a strong opens (`**Note:**_draft_`), inline html tags render nothing of their own (`Ctrl<kbd>C</kbd>`), a highlight's delimiters go (a wikilink's in test 1), a cell ending in a backslash keeps it (`C:\\Users\\`, `a\\`: the hard break is a line's, not a cell's), an asterisk in one cell pairs with none in another, and a quote in an html block cut mid-line keeps its trailing backslash", () => {
   const box = buildRendered(ESCAPES);
   const shownIn = (quote: string): string => { const tds = elements(box).filter((e) => e.tagName === "TD"); const i = ESCAPES.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| Cell")).findIndex((l) => l.startsWith("| " + quote + " |")); assert.ok(i >= 0, "a row for " + quote); return tds[i * 2].textContent; };
   for (const [quote, shown] of [["\\*\\*kwargs", "**kwargs"], ["\\*required\\*", "*required*"], ["\\*escaped\\*", "*escaped*"], ["*a\\*b*", "a*b"], ["costs \\$5", "costs $5"], ["\\<b\\>", "<b>"],
@@ -587,6 +629,181 @@ test("Rendered fallback: when the range's blocks are paired to nodes that do not
   const box2 = buildRendered("Alpha one.\n\nChanged.\n\nBeta two.\n\nGamma three.\n\nBeta two.\n");
   assert.equal(paintRendered(El(box2), source + "\n\nDelta four.\n", rangeOf(source + "\n\nDelta four.\n", "Delta four."), "fc-hl"), null);
   assert.equal(serialize(box2), before);
+});
+
+// ── 5. the Slice 5 review, round 3: the pipeline as the needle's oracle ────────────────────────────
+//
+// The hand-written strip is gone (anchor-map.ts, "the rendered text of the source"): the needle for a cell or a refused prose block is
+// the text marked's tokens show, written out with a source position per character and cut to the range. The pin is a corpus: 300
+// seeded cells over every inline construct the rounds argued about, plus every hand case they named, each read equal to the
+// stand-in's rendered text and painted whole, as cells and as refused paragraphs; then the shapes only a cut range shows.
+
+/** A small seeded generator (mulberry32), so the corpus is the same on every run and a failing cell can be named by its index. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+/** The inline constructs a corpus cell may hold, each over the cell's own words (so no cell's text recurs in another's): the emphasis
+ *  shapes of rounds 1 and 2 and the lone-delimiter and intraword shapes of round 3, code spans, escapes, entities, links defined and
+ *  not, images, autolinks of every scheme and bare URLs holding delimiters, inline tags kept, unwrapped and dropped, footnotes,
+ *  highlights, wikilinks, non-ASCII neighbours of an underscore, lead-like text, stray delimiters. No construct holds a bare `|`
+ *  (which cuts the row) or a line feed (a cell is one line). */
+const CONSTRUCTS: Array<(a: string, b: string, c: string) => string> = [
+  (a) => `*${a}*`, (a) => `**${a}**`, (a) => `_${a}_`, (a) => `__${a}__`, (a) => `~~${a}~~`, (a) => `***${a}***`,
+  (a, b, c) => `*${a} *${b}* ${c}*`, (a, b, c) => `**${a} **${b}** ${c}**`, (a, b, c) => `_${a} _${b}_ ${c}_`, (a, b) => `*${a} **${b}***`,
+  (a, b) => `**${a} * ${b}**`, (a, b) => `_${a}_${b}_`, (a, b) => `~~${a} ~ ${b}~~`, (a, b) => `**${a}*${b}**`, (a, b) => `*${a} * ${b}*`, (a) => `___${a}___`,
+  (a, b, c) => `${a} * ${b} * ${c}`, (a, b, c) => `${a}_${b}_${c}`, (a, b) => `**${a}**_${b}_`, (a, b) => `_${a}_**${b}**`, (a, b) => `**${a}:**_${b}_`,
+  (a, b) => `\`${a}_${b}_\``, (a, b) => `\`${a} \\| ${b}\``, (a, b) => `\`f(*${a}, **${b})\``, (a) => `\`${a}\\\``, (a, b) => `\`\` ${a} \` ${b} \`\``, (a) => `**\`${a}\`**`,
+  (a) => `\\*${a}\\*`, (a) => `\\*\\*${a}`, (a, b) => `${a} \\$5 ${b}`, (a) => `\\<${a}\\>`, (a, b) => `${a} \\& ${b}`, (a, b) => `${a} \\| ${b}`, (a, b) => `${a}\\\` ${b}`, (a, b) => `*${a}\\*${b}*`,
+  (a, b) => `${a} &amp; ${b}`, (a) => `&lt;${a}&gt;`, (a) => `&quot;${a}&quot;`, (a) => `&#39;${a}&#39;`, (a) => `&#120;${a}`,
+  (a, b) => `[${a}](http://x.test/${b})`, (a) => `[${a}][rdef]`, (a) => `[${a}][nodef]`, (a, b) => `${a}[${b}][${b}]`, (a, b) => `[${a}](http://x.test/(${b}))`, (a, b) => `[${a}](http://x.test/${b} "t (u)")`,
+  (a, b) => `<https://x.test/${a}_${b}_>`, (a) => `<${a}@x.test>`, (a) => `<mailto:${a}@x.test>`, (a) => `https://x.test/__${a}__.py`, (a) => `www.x.test/_${a}_`, (a) => `https://x.test/*${a}*`, (a) => `https://x.test/~~${a}~~`,
+  (a) => `![${a}](http://x.test/i.png)`, (a) => `![${a}][idef]`, () => `![idef][]`, (a) => `[![${a}][idef]][rdef]`, (a) => `![[${a}.png]]`,
+  (a) => `<ftp://x.test/${a}>`, (a) => `<file:///${a}/a.md>`, (a) => `<tel:+1555${a}>`, (a) => `<obsidian://open?vault=${a}>`, (a) => `<vscode://file/${a}>`, (a) => `<user:pass> ${a}`,
+  (a) => `Ctrl<kbd>${a}</kbd>`, (a) => `H<sub>2</sub>${a}`, (a, b) => `${a}<br>${b}`, (a, b, c) => `${a} <!-- ${b} --> ${c}`, (a, b) => `<b>${a}</b> ${b}`, (a, b) => `<i>${a}</i><em>${b}</em>`,
+  (a) => `Edit <path/to/${a}> first`, (a) => `Map<K, ${a}>`, (a) => `use <name, ${a}> format`, (a) => `<${a}=value>`, (a) => `List<${a}>`, (a, b) => `${a} <span style="color:red">${b}</span>`,
+  (a, b, c) => `${a} <script>${b}</script> ${c}`, (a, b) => `${a} <style>p{}</style> ${b}`, (a, b) => `<noscript>${a}</noscript> ${b}`, (a, b, c) => `${a} <template>${b}</template> ${c}`, (a, b) => `<iframe>${a}</iframe> ${b}`,
+  (a, b) => `<kbd>${a}</kbd> <textarea>${b}</textarea>`, (a, b) => `<button>${a}</button> ${b}`, (a, b) => `<label>${a}</label> ${b}`,
+  (a) => `${a}[^1]`, (a, b) => `${a}[^${b}]`, (a, b) => `==${a}== ${b}`, (a, b) => `[[${a}]] ${b}`, (a, b) => `[[${a}\\|${b}]]`,
+  (a) => `é_${a}_`, (a) => `日本_${a}_`, (a) => `_${a}_é`, (a) => `٣_${a}_`, (a) => `2_${a}_`, (a, b) => `${a}_${b}_`,
+  (a) => `- ${a}`, (a) => `# ${a}`, (a) => `> ${a}`, (a) => `1. ${a}`, (a) => `2024. ${a}`, (a) => `10) ${a}`, (a) => `${a} ##`, (a) => `\`\`\`${a}\`\`\``, (a) => `~~~${a}~~~`,
+  (a) => `${a}**`, (a) => `*${a}`, (a, b) => `${a} ** ${b}`, () => `** not bold **`, (a, b) => `*${a}**${b}* c*`, (a, b) => `${a}* ${b}*`, (a, b) => `[${a}](http://x.test/${b}*)*`, (a) => `*[${a}](http://x.test/*)`,
+];
+/** `n` corpus cells from `seed`: each its own nonce word, then one to three constructs over words of its own. */
+function corpusCells(seed: number, n: number): string[] {
+  const r = mulberry32(seed);
+  const pick = <T>(xs: T[]): T => xs[Math.floor(r() * xs.length)];
+  const out: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const w = "cell" + String(i).padStart(3, "0");
+    const parts = [w];
+    const k = 1 + Math.floor(r() * 3);
+    for (let j = 0; j < k; j++) parts.push(pick(CONSTRUCTS)(w + "a" + j, w + "b" + j, w + "c" + j));
+    out.push(parts.join(" "));
+  }
+  return out;
+}
+/** The hand cases of rounds 1, 2 and 3, as cells: each finding's shape with a word of its own. */
+const HAND_CELLS: string[] = [
+  "_snake_case_", "_my_var_ here", "__my_var__", "_a_b_", "___a___", "**5 * 3 = 15**", "**bold with * star**", "*use * as wildcard*", "~~a ~ b~~", "**a*b**",
+  "*a * b*", "**a * b** and **c**", "*rate * time*", "_a _ b_", "~~a ~~b~~ c~~", "*a ** b*", "** not bold **", "_max_retries_",
+  "*a *b* c*", "**a **b** c**", "_a _b_ c_", "x * y * z", "**Note:**_draft_", "_path_**index**", "`__init__`", "`f(*args, **kwargs)`", "`_private_`", "`a*b*c`", "**bold** `__x__`",
+  "`a \\| b`", "`string \\| number`", "`a\\|b`", "a \\| b", "c \\\\\\| d", "\\*\\*kwargs", "\\*required\\*", "\\*escaped\\*", "*a\\*b*", "costs \\$5", "\\<b\\>", "\\&", "\\=a \\^2 \\%",
+  "Ctrl<kbd>C</kbd>", "H<sub>2</sub>O", "==important==", "C:\\Users\\", "a\\", "`x\\`",
+  "Edit <path/to/file> first", "use <name, email> format", "x <a.b> y", "<key=value>", "<x.y.z>", "Map<K, V>", "List<String>", "set <VAR> to",
+  "see[^9]", "cite[^missing] here", "see[^1]", "[whiskey][nodef]", "set matrix[i][j] to zero", "[alpha][rdef]", "[config][settings]",
+  "amber ![birch][idef] amberx", "fjord ![idef][] fjordx", "alpha ![idef] alphax", "knoll [![tango][idef]][rdef] knollx", "lima ![lima](http://x.test/i.png) limax",
+  "https://x.test/a/__init__.py", "<https://x.test/_draft_>", "www.x.test/_isle_", "https://x.test/*star*", "https://x.test/~~strike~~", "https://x.test/plain.py",
+  "<ftp://x.test/lagoon>", "<file:///cedar/a.md>", "<tel:+1555whiskey>", "<irc://x.test/alpha>", "<obsidian://open?vault=oscar>", "<vscode://file/whiskey>", "<user:pass> jade", "<http://x.test/W>", "<W@x.test>", "<mailto:W@x.test>",
+  "é_birch_", "日本_tango_", "_nectar_é", "日本_版_", "café_menu_v2_", "2_a_", "a_b_",
+  "amber <script>alert(1)</script> amberx", "amber <style>p{}</style> amberx", "amber <iframe>frame</iframe> amberx", "amber <noscript>fallback</noscript> amberx", "amber <template>tpl</template> amberx", "amber <select><option>Opt</option></select> amberx",
+  "[wildcard](http://x.test/files/*)*", "see [glob](http://x.test/p/*)* here", "[a](http://x.test/b)*", "*[a](http://x.test/b)*",
+  "**bold words** more", "2024. It was romeo", "# of items", "> 5 means overflow", "- beta gamma", "a b ##", "```papa```", "#romeo", "2.0 romeo",
+];
+const DEFS = "\n[rdef]: http://x.test/r\n[idef]: http://x.test/i.png\n[settings]: http://x.test/s\n\n[^1]: A footnote.\n";
+/** A note holding `cells` in a two-column table, with the definitions the reference forms need and a closing paragraph. */
+const tableNote = (cells: string[]): string => "# Corpus\n\n| Cell | Note |\n|------|------|\n" + cells.map((c, i) => `| ${c} | nz${String(i).padStart(3, "0")} |`).join("\n") + "\n\nLast paragraph here.\n" + DEFS;
+/** A note holding each of `cells` as a paragraph the walk refuses (an entity at its head), so a paint on it takes the fallback. */
+const proseNote = (cells: string[]): string => "# Corpus\n\n" + cells.map((c) => `Fish &amp; chips ${c}`).join("\n\n") + "\n\nLast paragraph here.\n" + DEFS;
+const cellsOf = (box: FakeNode): FakeElement[] => elements(box).filter((e) => e.tagName === "TD");
+const parasOf = (box: FakeNode): FakeElement[] => box.childNodes.filter((n): n is FakeElement => n instanceof FakeElement && n.tagName === "P");
+/** Every cell of `cells` in the table note and in the prose note: the needle (renderedQuote over the cell's source range) equals the
+ *  shown text, and a paint over the range marks that text whole; a cell whose shown text is empty (a picture alone) is checked to
+ *  have an empty needle and left unpainted. Returns the failures, one line each. */
+function checkCorpus(cells: string[], what: string): string[] {
+  const bad: string[] = [];
+  const TABLE = tableNote(cells), PROSE = proseNote(cells);
+  const tbox = buildRendered(TABLE), pbox = buildRendered(PROSE);
+  const tds = cellsOf(tbox), ps = parasOf(pbox);
+  assert.equal(tds.length, cells.length * 2, what + ": one row per cell");
+  assert.equal(ps.length, cells.length + 1, what + ": one paragraph per cell, and the closing one");
+  cells.forEach((c, i) => {
+    for (const [note, root, shownEl, range] of [
+      ["cell", tbox, tds[i * 2], rangeOf(TABLE, `| ${c} |`)] as const,
+      ["prose", pbox, ps[i], rangeOf(PROSE, `Fish &amp; chips ${c}`)] as const,
+    ]) {
+      const r = note === "cell" ? { start: range.start + 2, end: range.end - 2 } : range;   // the cell's source, the delimiters left out
+      const shown = norm(textShown(shownEl));
+      const needle = norm(renderedQuote(note === "cell" ? TABLE : PROSE, r));
+      if (needle !== shown) { bad.push(`${what} ${note} ${i} ${JSON.stringify(c)}: needle ${JSON.stringify(needle)}, shown ${JSON.stringify(shown)}`); continue; }
+      if (shown === "") continue;
+      const marks = paintRendered(El(root), note === "cell" ? TABLE : PROSE, r, "fc-hl", { act: "fcopen", id: "k" + i }) as unknown as FakeElement[] | null;
+      const text = marks ? norm(marks.map((m) => m.textContent).join(" ")) : null;
+      if (text === null) bad.push(`${what} ${note} ${i} ${JSON.stringify(c)}: not painted (shown ${JSON.stringify(shown)})`);
+      else if (text.replace(/\s+/g, "") !== shown.replace(/\s+/g, "")) bad.push(`${what} ${note} ${i} ${JSON.stringify(c)}: painted ${JSON.stringify(text)}, shown ${JSON.stringify(shown)}`);
+      else if (note === "cell" && marks!.some((m) => cellOf(m, "TD").el !== shownEl)) bad.push(`${what} cell ${i} ${JSON.stringify(c)}: a mark outside the cell`);
+      for (const m of marks || []) { const p = m.parentNode as FakeElement; while (m.childNodes.length) p.insertBefore(m.childNodes[0], m); p.removeChild(m); }   // unwrap, so the next cell's paint reads the same DOM
+    }
+  });
+  return bad;
+}
+
+test("the corpus: 300 seeded cells over every inline construct, as table cells and as refused paragraphs, each read as the stand-in's rendering shows it (renderedQuote) and painted whole; the strip that served before read 40 of them differently from marked (the review's round 3 census: lone delimiters, intraword underscores, undefined references, literal angle brackets, URLs holding delimiters, dropped tags)", () => {
+  const cells = corpusCells(20260911, 300);
+  assert.equal(new Set(cells).size, 300, "every cell its own");
+  const bad = checkCorpus(cells, "corpus");
+  assert.deepEqual(bad, [], bad.length + " of 300 cells read or paint differently from the rendering");
+});
+
+test("the hand cases of rounds 1, 2 and 3 as cells and as refused paragraphs: every seeded strip regression (`_snake_case_`, `**5 * 3 = 15**`, `~~a ~ b~~`, `_a_b_`, `___a___`, `**a*b**`, the escapes of every ASCII punctuation, the entities, `Edit <path/to/file> first`, `Map<K, V>`, the undefined footnote and reference link, the reference images, the URLs holding delimiters, the autolinks of every scheme, the non-ASCII neighbours of an underscore, the tags the sanitizer drops with their text) reads as the rendering shows it and paints whole (before: nothing painted, or a partial mark, the card offering Reveal)", () => {
+  const bad = checkCorpus(HAND_CELLS, "hand");
+  assert.deepEqual(bad, [], bad.length + " of " + HAND_CELLS.length + " hand cases read or paint differently from the rendering");
+  // a few spelled out, as the cells show them
+  const TABLE = tableNote(HAND_CELLS);
+  for (const [cell, shown] of [["_snake_case_", "snake_case"], ["**5 * 3 = 15**", "5 * 3 = 15"], ["~~a ~ b~~", "a ~ b"], ["**a*b**", "a*b"], ["Edit <path/to/file> first", "Edit <path/to/file> first"], ["Map<K, V>", "Map<K, V>"],
+                              ["see[^9]", "see[^9]"], ["[whiskey][nodef]", "[whiskey][nodef]"], ["https://x.test/a/__init__.py", "https://x.test/a/__init__.py"], ["<ftp://x.test/lagoon>", "ftp://x.test/lagoon"], ["<user:pass> jade", "user:pass jade"],
+                              ["é_birch_", "é_birch_"], ["amber <script>alert(1)</script> amberx", "amber amberx"], ["amber ![birch][idef] amberx", "amber amberx"], ["[wildcard](http://x.test/files/*)*", "wildcard*"], ["C:\\Users\\", "C:\\Users\\"], ["`x\\`", "x\\"]] as const) {
+    const r = rangeOf(TABLE, `| ${cell} |`);
+    const h = highlight(TABLE, { start: r.start + 2, end: r.end - 2 });
+    assert.ok(h.marks && h.marks.length, cell + ": painted");
+    assert.equal(norm(h.text!), shown, cell + ": the cell's text");
+    assert.equal(h.cell!.index, 0, cell + ": the first cell");
+  }
+});
+
+test("prose shapes a cell cannot hold, in refused paragraphs: a quote across a hard break (two spaces or a backslash) paints, the break showing nothing (before: the needle kept the line feed against a hay with none); an emphasis pair, a link label and a link destination wrapped across a soft break strip (before: the strip read one line at a time and kept their markup); a code span across the wrap keeps its content; a code span ending in a backslash at a line end keeps it (round 2's HARD_BREAK had taken it)", () => {
+  const P = (body: string): string => "# T\n\nFish &amp; " + body + "\n\nLast paragraph here.\n";
+  for (const [body, quote, shown] of [
+    ["Street 1  \nCity here.", "Street 1  \nCity", "Street 1City"], ["Street 1\\\nCity here.", "Street 1\\\nCity", "Street 1City"], ["orchid **ridge**   \nmike here.", "orchid **ridge**   \nmike", "orchid ridgemike"],
+    ["xray\ngolf here.", "xray\ngolf", "xray golf"],
+    ["uniform *nectar\ngolf* here.", "uniform *nectar\ngolf*", "uniform nectar golf"], ["**yankee\nvalley** here.", "**yankee\nvalley**", "yankee valley"],
+    ["[charlie\npapa](http://x.test/bravo) here.", "[charlie\npapa](http://x.test/bravo)", "charlie papa"], ["[whiskey](http://x.test/grove\n\"T\") here.", "[whiskey](http://x.test/grove\n\"T\")", "whiskey"],
+    ["`sierra *zulu*\nuniform` here.", "`sierra *zulu*\nuniform`", "sierra *zulu* uniform"],
+    ["see `x\\`\nnext here.", "see `x\\`\nnext", "see x\\ next"], ["the path is `C:\\Users\\`\nmore here.", "`C:\\Users\\`", "C:\\Users\\"],
+  ] as const) {
+    const src = P(body);
+    const h = highlight(src, rangeOf(src, quote), "P");
+    assert.ok(h.marks && h.marks.length, JSON.stringify(quote) + ": painted (was null or one short)");
+    assert.equal(norm(h.text!).replace(/\s+/g, " "), shown, JSON.stringify(quote) + ": the marks read what the paragraph shows");
+  }
+});
+
+test("a range cut inside a construct reads as the rendering shows those characters, the block having been read whole (before: the raw slice was stripped on its own): a Raw drag begun after `**` or ended before it paints the words, in a cell and in a refused paragraph; one begun mid-line at `2024. `, `# `, `> ` or `- ` keeps them (the lead rules read the slice's start as a line's); a paragraph continuation line beginning `3. ` or `10) `, text to marked, stays; a quote over a cut escape keeps the character shown", () => {
+  const CELL = "# T\n\n| Cell | Note |\n|---|---|\n| **bold words** more | n |\n| see foo\\*bar here | e |\n\nAfter.\n";
+  let h = highlight(CELL, rangeOf(CELL, "bold words** more"));
+  assert.ok(h.marks && h.marks.length, "after the opener (was null)"); assert.equal(norm(h.text!), "bold words more");
+  h = highlight(CELL, rangeOf(CELL, "**bold words"));
+  assert.ok(h.marks && h.marks.length, "before the closer (was null)"); assert.equal(norm(h.text!), "bold words");
+  h = highlight(CELL, rangeOf(CELL, "see foo\\"));
+  assert.ok(h.marks && h.marks.length, "cut inside the escape"); assert.equal(norm(h.text!), "see foo");
+  const PROSE = "# T\n\nIntro &amp; lima 2024. It was romeo.\n\nCount &amp; the # of items today.\n\nA value &amp; > 5 means overflow.\n\nalpha &amp; - beta gamma.\n\nIt was &amp; released in\n3. The third cut was last.\n\nfirst &amp; line\n10) then more.\n\nTom &amp; **bold words** more here.\n\nLead &amp; ```papa``` tail.\n\nAfter.\n";
+  for (const [quote, shown] of [["2024. It was romeo.", "2024. It was romeo."], ["# of items", "# of items"], ["> 5 means overflow", "> 5 means overflow"], ["- beta gamma", "- beta gamma"],
+                                ["released in\n3. The third cut", "released in 3. The third cut"], ["3. The third cut was last.", "3. The third cut was last."], ["10) then more.", "10) then more."],
+                                ["bold words** more", "bold words more"], ["**bold words", "bold words"], ["```papa```", "papa"]] as const) {
+    h = highlight(PROSE, rangeOf(PROSE, quote), "P");
+    assert.ok(h.marks && h.marks.length, JSON.stringify(quote) + ": painted (was null or missing its head)");
+    assert.equal(norm(h.text!), shown, JSON.stringify(quote) + ": the whole quote as shown");
+  }
+});
+
+test("an html block's text is the text between its tags as written, entities decoded and the elements the sanitizer drops with their text left out: a backslash escape there is the two characters it shows (`costs \\$5`, `see \\& x`; round 2 read them as escapes), a backslash right before a tag stays (`C:\\Temp\\</div>`, `C:\\Temp\\<br>`; round 2's mask read `\\<` as an escape and the needle and the scope disagreed), a `<script>` or `<template>` inside shows nothing, and a raw html table's cell reads the same", () => {
+  const HTML = "# T\n\n<div>costs \\$5 raw here</div>\n\n<div>see \\& x here</div>\n\n<div>path C:\\Temp\\</div>\n\n<div>path C:\\Temp\\<br>next</div>\n\n<table><tr><td>C:\\Users\\</td><td>x</td></tr></table>\n\n<div>a <script>x</script> b <template>t</template> c</div>\n\n<div>\n\ncosts \\$5 nested here\n\n</div>\n\nAfter.\n";
+  for (const [quote, shown, tag] of [["costs \\$5 raw", "costs \\$5 raw", "DIV"], ["see \\& x", "see \\& x", "DIV"], ["C:\\Temp\\", "C:\\Temp\\", "DIV"], ["path C:\\Temp\\<br>next", "path C:\\Temp\\next", "DIV"], ["C:\\Users\\", "C:\\Users\\", "TD"],
+                                     ["a <script>x</script> b <template>t</template> c", "a b c", "DIV"], ["costs \\$5 nested", "costs $5 nested", "P"]] as const) {
+    const h = highlight(HTML, rangeOf(HTML, quote), tag);
+    assert.ok(h.marks && h.marks.length, JSON.stringify(quote) + ": painted (was null)");
+    assert.equal(norm(h.text!), shown, JSON.stringify(quote) + ": the text as the block shows it");
+  }
 });
 
 // ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────

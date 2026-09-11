@@ -449,7 +449,7 @@ function readFirstEndpoints(source: string) {
   };
 }
 
-test("a paragraph that opens with a formula over the real Files bundle: the triple-click's shape (the formula's first glyph to the next paragraph's start) and a range from the first glyph to a word map with the formula's source inside the quote, a range begun strictly inside the glyphs is the formula's, a drag ending at a closing formula's last glyph covers it (the Slice 5 review's round 2 ruling: a formula covered whole is prose holding a formula; before: refused as the formula, the Raw view preselecting the formula alone); and a REAL triple-click on the paragraph maps its whole source", { timeout: 180000 }, async (t) => {
+test("a paragraph that opens with a formula over the real Files bundle: the triple-click's shape (the formula's first glyph to the next paragraph's start) and a range from the first glyph to a word map with the formula's source inside the quote, a range begun strictly inside the glyphs is the formula's, a drag ending at a closing formula's last glyph covers it (the Slice 5 review's round 2 ruling: a formula covered whole is prose holding a formula; before: refused as the formula, the Raw view preselecting the formula alone); and a REAL triple-click on the paragraph selects the words after the formula and maps them, the formula's source outside the quote (Chromium's paragraph selection leaves the leading inline-block out of its range: the anchor is the text node after the formula at 0; the whole-source mapping stands on the synthetic shapes)", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openFile(browser, filesBundle(), DIR + "first.md", { width: 900, height: 900 });
     const src = FIRST_NOTE;
@@ -465,18 +465,30 @@ test("a paragraph that opens with a formula over the real Files bundle: the trip
     assert.deepEqual([e.toInside.ok, e.toInside.reason], [false, "This selection touches a formula; comment on it from the Raw view."], "to inside the closing formula: the formula's");
     // a selection begun on the text right after the formula does not cover it: the formula stands before the selection's start
     assert.equal(e.afterFormula.ok, true, JSON.stringify(e.afterFormula)); assert.equal(e.afterFormula.quote, "opens this paragraph with prose after it.", "the words alone, the formula outside the selection");
-    // the real gesture: a triple-click on the formula-first paragraph. Chromium's paragraph selection leaves the leading inline-block out
-    // of its range (probed: the anchor is the text node after the formula at 0, the focus the next paragraph's start), so the words alone
-    // are selected and map, the formula outside the selection; a triple-click landing on the formula's own glyphs anchors inside it at
-    // its first character and covers it. Either way the gesture maps (before: refused as the formula, the Raw view preselecting it).
+    // the real gesture: a triple-click on the formula-first paragraph's words. Chromium's paragraph selection leaves the leading
+    // inline-block out of its range: the anchor is the text node after the formula at 0, the focus the next paragraph's start, so the
+    // words alone are selected and map, the formula outside the selection and its source outside the quote (probed at ten positions
+    // across the paragraph's width, the words' shape at every one past the glyphs; a click on the glyphs themselves selects the formula
+    // alone, refused as the formula, which leg 6 reads). The whole-source mapping stands on the synthetic shapes above (e.triple,
+    // e.onParagraph). The anchor is pinned here, as the footnote leg pins its back-link anchor, so a browser that changes the gesture's
+    // shape fails this line and the records naming the shape (the plan's item 5 note, the build report) are revisited; and the quote is
+    // read against what the selection covers, not derived from the anchor (the review's round 3: the assertion that stood here took the
+    // formula's presence in the quote from the anchor's own description, so it accepted the words alone under a title claiming the
+    // paragraph's whole source, and could not fail on the difference).
     await page.evaluate(() => window.getSelection()!.removeAllRanges());
     const b = await page.locator("#romp-fileview .fileview-md p:has(.katex)").first().boundingBox();
     await page.mouse.click(b.x + b.width * 0.7, b.y + b.height / 2, { clickCount: 3 });
     const triple = await page.evaluate(readLiveSelection, src);
-    assert.ok(triple.text.includes("opens this paragraph with prose after it."), "the triple-click selected the paragraph: " + JSON.stringify(triple.text));
+    const coversFormula = await page.evaluate(() => {
+      const s = window.getSelection()!;
+      const katex = document.querySelector("#romp-fileview .fileview-md p .katex")!;
+      return s.rangeCount > 0 && s.getRangeAt(0).intersectsNode(katex);
+    });
+    assert.equal(triple.text.trim(), "opens this paragraph with prose after it.", "the triple-click selected the paragraph's words, none of the formula's glyphs: " + JSON.stringify(triple.text));
+    assert.deepEqual([triple.anchorIsText, triple.anchor, triple.anchorOffset], [true, "p", 0], "Chromium anchors the triple-click on the text node after the formula at 0, the leading inline-block outside its range (a different anchor is a new gesture shape: check the map's rules for it and the records that name this one): " + JSON.stringify({ anchor: triple.anchor, anchorOffset: triple.anchorOffset, anchorIsText: triple.anchorIsText, focus: triple.focus }));
+    assert.equal(coversFormula, false, "the selection's range leaves the formula out: " + JSON.stringify(triple.text));
     assert.equal(triple.result.ok, true, "the formula-first paragraph maps under a triple-click (anchor " + triple.anchor + " at " + triple.anchorOffset + ", focus " + triple.focus + "): " + JSON.stringify(triple.result));
-    const covered = /katex/.test(triple.anchor) || (!triple.anchorIsText && /^p$/.test(triple.anchor) && triple.anchorOffset === 0);   // inside the formula, or on the paragraph before its first child
-    assert.equal(triple.result.quote, (covered ? "$E = mc^2$ " : "") + "opens this paragraph with prose after it.", "the paragraph's words, the formula's source with them when the gesture's anchor covers it (anchor " + (triple.anchorIsText ? "text under " : "") + triple.anchor + " at " + triple.anchorOffset + ")");
+    assert.equal(triple.result.quote, "opens this paragraph with prose after it.", "the words the gesture selected, the formula's source outside the quote as the formula is outside the selection: " + JSON.stringify(triple.result));
     assert.deepEqual(errors, [], "no page errors");
     await page.context().close();
   });
