@@ -294,8 +294,8 @@ const byCli: StoreComment = {
 };
 assert.notEqual(locateComment(DOC, byCli.anchor!, 0).range!.start, locateComment(DOC, byCli.anchor!, DOC.length).range!.start, "the CLI's anchor ties");
 // the panel's words, copied here so a swap or a rewording fails a driven test
-const UNSURE_POSITION = "This passage occurs in the file more than once with the same surroundings, and the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted — not a confirmed one.";
-const UNSURE_NONE = "This passage occurs in the file more than once with the same surroundings, and the comment stores no position to tell the copies apart, so the first copy is highlighted — not a confirmed one.";
+const UNSURE_POSITION = "This passage occurs in the file more than once with the same surroundings, and the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted, not a confirmed one. Reveal it and save again from the right copy to confirm.";
+const UNSURE_NONE = "This passage occurs in the file more than once with the same surroundings, and the comment stores no position to tell the copies apart, so the first copy is highlighted, not a confirmed one. Reveal it and save again from the right copy to confirm.";
 const MARK_UNSURE_POSITION = "Open the comment; this passage recurs, and this copy is the nearest to the comment's stored position, not a confirmed one";
 const MARK_UNSURE_NONE = "Open the comment; this passage recurs, and the comment stores no position to tell the copies apart, so this is the first copy, not a confirmed one";
 const MARK_PLAIN = "Open the comment on this passage";

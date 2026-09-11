@@ -607,13 +607,14 @@ const EMBED_ELSEWHERE = "The file changed where you drew this region, and the li
 const PASSAGE_ELSEWHERE_SAVE = "Nothing saved: the file changed where you selected this passage, and its text now occurs only elsewhere in the file. Select the passage again.";
 const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file. Draw the region again.";
 /** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
- *  open card, since a tag's title never reaches touch. */
+ *  open card, since a tag's title never reaches touch. They end by saying how to confirm the copy (the tie-break,
+ *  2026-09-11): a comment saved from the right copy stores the position, ordinal and heading path the host confirms by. */
 function copyUnsureWords(c: Card): string {
   return "This passage occurs in the file more than once with the same surroundings, and "
     + (c.anchorAt === null
       ? "the comment stores no position to tell the copies apart, so the first copy is highlighted"
       : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted")
-    + " — not a confirmed one.";
+    + ", not a confirmed one. Reveal it and save again from the right copy to confirm.";
 }
 /** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branch as
  *  copyUnsureWords, so the mark and the card never disagree about whether a position is stored (the review,
@@ -3219,8 +3220,10 @@ class Panel {
       if (card.resolved || !card.anchor) continue;
       // the stored position is the engine's tie-break (nearest wins), so a comment on text that recurs with the same
       // surroundings past the anchor's context is painted on the copy that was chosen — in the VIEW's coordinates
-      // (viewAt: the host's text keeps a BOM the fetch strips, so its offsets run one ahead on such a file)
-      const at = this.viewAt(card);
+      // (viewAt: the host's text keeps a BOM the fetch strips, so its offsets run one ahead on such a file); where the
+      // position names no copy any more and the host's tie-break confirmed one from the copy fields it stores (the
+      // status's `placed`, the tie-break, 2026-09-11), that copy is the hint instead, so it is painted as the chosen one
+      const at = this.placedAt(card) ?? this.viewAt(card);
       const loc = locateComment(src, card.anchor, at);
       // ...and where the anchor ties and the position names none of the tied copies, the copy painted is the engine's
       // guess: painted in the dashed cue and said on the card (copyUnsure), never shown as the copy that was chosen
@@ -3310,6 +3313,19 @@ class Panel {
   private viewAt(card: Card): number | undefined {
     if (card.anchorAt === null) return undefined;
     return this.status && this.status.bom ? card.anchorAt - 1 : card.anchorAt;
+  }
+  /** The copy the host's tie-break CONFIRMED for a card whose anchor ties and whose stored position names none of the copies
+   *  (the status's `placed`, the tie-break, 2026-09-11: the ordinal's copy while the count of copies is unchanged, else the
+   *  one copy under the stored heading path), in the view's coordinates like viewAt; undefined when the status has no
+   *  verdict for the card (an older host, a comment the position or the anchor alone places), when the verdict is a guess
+   *  (`confirmed` false: the copy nearest the position, painted as a guess by the path viewAt feeds), or when the entry is
+   *  not of the shape the host writes (docs/adr/0002: a field of the wrong shape claims nothing). The hint is trusted only
+   *  as a hint: copyUnsure still compares it with the copy the engine paints, so a confirmed position into text the view
+   *  has since moved past falls back to the guess it would have made, never to a plain paint on the wrong copy. */
+  private placedAt(card: Card): number | undefined {
+    const p = this.status && this.status.placed && typeof this.status.placed === "object" ? this.status.placed[card.id] : undefined;
+    if (!p || typeof p !== "object" || p.confirmed !== true || typeof p.at !== "number" || !Number.isFinite(p.at)) return undefined;
+    return this.status!.bom ? p.at - 1 : p.at;
   }
   /** Whether the copy the engine found a comment at (`at`, the pick with the stored position as the hint) is a guess:
    *  the anchor has more than one best hit in the text — its earliest and latest (hint 0, hint length) differ, the
