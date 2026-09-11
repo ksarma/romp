@@ -1,7 +1,6 @@
 import { marked } from "marked";
 import { sanitizeMd, userContentTarget } from "./md-sanitize";   // the one sanitizer every markdown surface shares, and the lookup for a message's own `#` links
 import hljs from "highlight.js/lib/core";
-import { wrapCodeLines, addCopyBtn } from "./code-block";   // the per-line rows and the Copy button, shared with the viewer's mdBlock (code-block.ts)
 import bash from "highlight.js/lib/languages/bash";
 import python from "highlight.js/lib/languages/python";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -99,6 +98,7 @@ import { perfFrameHandler } from "./perf-telemetry";
 import { listenForFrames } from "./frame-listener";
 import { watchChatVisibility, browserChatVisibilityDeps } from "./chat-visibility";   // the shim's hidden word for the chat page (no paint gate here)
 import { highlightHtml } from "./highlight-cache";
+import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, shared with the file viewer
 import { turnWorkedSecs as workedSecsOf, workedFooterPlan } from "./worked-footer";
 import { reconcileRewindPass, type RewindEvent } from "./rewind-reconcile";
 
@@ -1278,9 +1278,6 @@ function highlight(container: HTMLElement, lineNos = true) {
     if (pre && pre.tagName === "PRE") addCopyBtn(pre as HTMLElement, raw);   // an automatic "Copy" button per block
   });
 }
-
-// copyText, addCopyBtn and wrapCodeLines live in code-block.ts since Slice 3 of plans/markdown-viewer.md (2026-09-08):
-// the viewer's mdBlock (file-view.ts) dresses its fences the same way, and file-view.ts cannot import this module.
 
 function dot(kind: "green" | "ring" | "user" | "red" | "romp" | "working" | "tag"): HTMLElement { return el("span", "dot " + kind); }
 

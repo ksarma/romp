@@ -91,6 +91,7 @@ class El {
   get isConnected(): boolean { return doc.body.contains(this); }
   get ownerDocument(): typeof doc { return doc; }
   get parentElement(): El | null { return this.parentNode; }
+  get children(): El[] { return this.childNodes.filter((c): c is El => c instanceof El); }   // the element children (file-view.ts watchBodyWidth stamps md.children)
   get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
   get className(): string { return this.attrs.get("class") || ""; }
   set className(v: string) { this.attrs.set("class", v); }

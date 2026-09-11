@@ -76,7 +76,13 @@ file served from the dashboard's own address (a published report, an evidence do
 and links inside the document resolve relative to the document, so a `![fig](fig.png)`
 beside it shows, and a link to a sibling document opens in the same viewer. Links to files
 on other sites open in a new tab, as before — and a ctrl- or ⌘-click still opens the file in
-a tab.
+a tab. The document is set for reading: a sans face at a slightly larger size, headings in
+proportion, a centred column about 80 characters wide, and task lists, keyboard keys and
+aligned table columns as GitHub shows them. Every code block is numbered by line and carries a
+**Copy** button that copies the block as the file holds it, tabs included; fences labelled
+`rust`, `go`, `c`, `java`, `sql` or `toml` are highlighted, in addition to the languages the
+chat already knows. Printing the page while a rendered file is open prints the file alone,
+black on white, across as many pages as it needs.
 
 **Opening a PDF.** A PDF the session mentions, or one you click in the file browser, opens
 inside the dashboard like an image: the chat's PDF card opens it full-view, a path or a
@@ -394,12 +400,13 @@ rather than opens.
 
 **Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
 the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown
-file's Rendered and Raw views, and the code view of every other text file. They appear
-on every surface that shows the viewer (over the chat, over the feed, in this pane), and
-not for a picture or a PDF, which have no text to size. Ctrl (or Cmd) and the mouse
-wheel over the text do the same. Once the size is off 100%, the percentage appears
-between the buttons; click it to go back. The choice is kept in this browser and applies
-to every file you open here. The prose of a rendered markdown file is a column of about
+file's Rendered and Raw views, the code view of every other text file, and a document
+opened from a link on the dashboard's own address. They appear wherever the viewer opens
+(over the chat, over the feed, in this pane), and not for a picture or a PDF, which have
+no text to size. Ctrl (or Cmd) and the mouse wheel over the text do the same. Once the
+size is off 100%, the percentage appears between the buttons; click it to go back. The
+choice is kept in this browser and applies to every file you open here. The prose of a
+rendered markdown file is a column of about
 eighty characters, centred in the pane. A step up in text size widens the column to keep
 its eighty characters while the pane has room for them; in a pane too narrow for that, the
 column fills the pane, leaving a small gutter on each side, and each step up fits fewer

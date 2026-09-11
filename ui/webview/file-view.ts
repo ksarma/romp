@@ -36,9 +36,9 @@ const gclock = require("./gesture-clock.js");   // the gesture clock every setti
 import { delegate, pressHold } from "./actions";   // pressHold: a fetch landing waits while a pointer is pressed over the body (the reload under a press)
 import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, XLINK_NS, linkHref } from "./md-links";
 import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
-import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, the chat's own (code-block.ts; Slice 3 of plans/markdown-viewer.md)
-import { fenceCopyQueue, type Fence } from "./fence-source";   // what Copy copies: the fence's text as the note holds it, tabs and all (the Slice 3 review)
-import "./viewer-grammars";   // decision 5's six grammars, registered on the bundle's hljs core (rust, go, c, java, sql, toml)
+import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, the chat's own
+import { fenceCopyQueue, type Fence } from "./fence-source";   // what Copy copies: the fence's text as the file holds it, tabs and all
+import "./viewer-grammars";   // six more grammars for a viewed file, registered on the bundle's hljs core (rust, go, c, java, sql, toml)
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
 // the browser's frame with a line saying so — ui/CLAUDE.md's loading-state rule: the loader fades on the event, with a
@@ -81,7 +81,7 @@ const LANG: Record<string, string> = {
   yaml: "yaml", yml: "yaml", sh: "bash", bash: "bash", zsh: "bash", bats: "bash",
   html: "xml", htm: "xml", xml: "xml", svg: "xml", vue: "xml", css: "css", scss: "css",
   md: "markdown", markdown: "markdown", diff: "diff", patch: "diff",
-  rs: "rust", go: "go", c: "c", h: "c", java: "java", sql: "sql", toml: "ini", ini: "ini",
+  rs: "rust", go: "go", c: "c", h: "c", java: "java", sql: "sql", toml: "ini", ini: "ini",   // viewer-grammars.ts (toml is hljs's ini grammar)
 };
 
 function langFor(path: string): string | null {
@@ -142,30 +142,36 @@ function saveFmt(f: FileViewFmt): void {
   try { localStorage.setItem(FMT_KEY, JSON.stringify(f)); } catch { /* storage full */ }
 }
 
-// ── text size (the user 2026-09-07: the rendered markdown had to be zoomable) ──────────────────────
+function el(tag: string, cls?: string): HTMLElement {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  return e;
+}
+
+// ── text size (A−, A+, Ctrl/Cmd + wheel) ───────────────────────────────────────────────────────────
 // The viewer's text sizes, as percentages of the page's own size: a FIXED table with ends, not a free
 // multiplier, so the buttons, the wheel and the stored value all land on the same few sizes and a size can
-// never run away or go negative. 100 is the default and leaves every size exactly as before. The chosen
-// step rides the viewer root as `data-fv-text`, and the sheets turn it into the ONE property the text
-// views read (`--fv-scale`; the "text size and measure" block in styles.css / feed.css). Persisted like
-// the Rendered ⇄ Raw choice above: per browser, in localStorage, under its own key, and any malformed or
+// never run away. 100 is the default and leaves every size exactly as it was. The chosen step rides the
+// viewer root as `data-fv-text`, and the sheets turn it into the ONE property the text views read
+// (`--fv-scale`; the "text size and measure" block in styles.css and feed.css). Persisted like the
+// Rendered ⇄ Raw choice above: per browser, in localStorage, under its own key, and any malformed or
 // foreign value reads as the default (parseFmt's contract). The value stays a percentage, never a
 // multiplier, so the stored text and the readout say the same thing.
 export const TEXT_SIZES: readonly number[] = [70, 80, 90, 100, 115, 130, 150, 175, 200];
 export const TEXT_SIZE_DEFAULT = 100;
 const TEXT_SIZE_KEY = "romp:fileviewTextSize";
 /** A stored value back to a step of the table; anything else (absent, garbage, a size the table does not
- *  hold) is the default, so a corrupt entry may cost the preference, never the viewer. */
+ *  hold, a multiplier) is the default, so a corrupt entry may cost the preference, never the viewer. */
 export function parseTextSize(raw: string | null | undefined): number {
-  if (raw === null || raw === undefined) return TEXT_SIZE_DEFAULT;
-  const n = Number(String(raw).trim());
+  const n = Number(raw ?? NaN);
   return TEXT_SIZES.includes(n) ? n : TEXT_SIZE_DEFAULT;
 }
-/** The next step from `pct` in `dir`, clamped at the table's ends: at 200 a +1 answers 200. A `pct` off the
- *  table (never stored, but the function is pure) steps from the default. */
+/** The step next to `pct` in `dir`, clamped at the table's ends (from 200, +1 answers 200). A `pct` the table
+ *  does not hold (never stored, but the function is pure) steps from the default. */
 export function stepTextSize(pct: number, dir: 1 | -1): number {
-  const at = TEXT_SIZES.indexOf(TEXT_SIZES.includes(pct) ? pct : TEXT_SIZE_DEFAULT);
-  return TEXT_SIZES[Math.max(0, Math.min(TEXT_SIZES.length - 1, at + dir))];
+  const from = TEXT_SIZES.includes(pct) ? pct : TEXT_SIZE_DEFAULT;
+  const i = TEXT_SIZES.indexOf(from) + dir;
+  return TEXT_SIZES[Math.min(TEXT_SIZES.length - 1, Math.max(0, i))];
 }
 function loadTextSize(): number {
   try { return parseTextSize(localStorage.getItem(TEXT_SIZE_KEY)); } catch { return TEXT_SIZE_DEFAULT; }
@@ -174,26 +180,80 @@ function saveTextSize(pct: number): void {
   try { localStorage.setItem(TEXT_SIZE_KEY, String(pct)); } catch { /* storage full */ }
 }
 // Ctrl/Cmd + wheel over the text is the pointer's way to the same steps. A wheel notch is one event of about
-// 100 pixels (Chrome) or a few LINES (Firefox, deltaMode 1); a trackpad pinch (which browsers report as a
-// ctrlKey wheel) is a burst of events a few pixels each. Stepping once per event would run a pinch through the
-// whole table in a moment, so the deltas are FOLDED: normalized to pixels, summed, and a step is taken each time
-// the sum passes WHEEL_STEP_PX (then cleared); a change of direction clears it too, so a reversal does not have to
-// pay off the other way's remainder first. Pure over the event's fields, so the fold is testable: `acc` is the
-// running sum the caller keeps, `dir` the step to take now (0 for none). Events without the modifier are not
-// the gesture (the caller lets them scroll) and never reach this.
+// 100 pixels (Chrome) or a few LINES (Firefox, deltaMode 1); a trackpad pinch, which browsers report as a
+// ctrlKey wheel, is a burst of events a few pixels each. Stepping once per event would run a pinch through
+// the whole table in a moment, so the deltas are SUMMED: normalized to pixels, added up, and a step is taken
+// each time the sum passes WHEEL_STEP_PX (then cleared); a change of direction clears it too, so a reversal
+// does not first pay off the other way's remainder. Pure over the event's fields, so the summing is testable:
+// `acc` is the running sum the caller keeps, `dir` the step to take now (0 for none). Events without the
+// modifier are not the gesture (the caller lets them scroll) and never reach this.
 export const WHEEL_STEP_PX = 40;
 export function foldWheel(e: { deltaY: number; deltaMode: number }, acc: number): { acc: number; dir: 0 | 1 | -1 } {
-  const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
-  if (!px) return { acc, dir: 0 };
-  const sum = (acc === 0 || Math.sign(acc) === Math.sign(px)) ? acc + px : px;
+  const px = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);   // lines and pages as pixels
+  if (px === 0) return { acc, dir: 0 };
+  const sum = acc !== 0 && Math.sign(acc) !== Math.sign(px) ? px : acc + px;         // a reversal starts over
   if (Math.abs(sum) < WHEEL_STEP_PX) return { acc: sum, dir: 0 };
-  return { acc: 0, dir: sum < 0 ? 1 : -1 };   // wheel up (negative deltaY) is larger, as in every zooming surface
+  return { acc: 0, dir: sum < 0 ? 1 : -1 };                                           // wheel up is larger
 }
-
-function el(tag: string, cls?: string): HTMLElement {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  return e;
+// The control: A−, the current size as the reset between them, A+. Built once per open by BOTH viewers (a
+// file on disk and a document opened from a link on the dashboard's own address), so the two honour one
+// stored size and a step in either is kept for both. The readout is said only once the size is off the
+// default (at 100% there is nothing to reset and nothing to say), but its SLOT is there from the start: the
+// sheet empties it by visibility, not display, so neither A− nor A+ moves under the pointer when it fills
+// after the first press, and the empty slot leaves the tab order. An end of the table is said with
+// aria-disabled, not `disabled`: a button that disables under keyboard focus drops it (the ring would vanish
+// on the press that reached the end), while an aria-disabled one keeps the focus, wears the sheet's disabled
+// dress, and its press is the no-op set() already makes of a step to the size in force. The three hide until
+// `textShowing` says a text body is up: each viewer's renderBody calls sync() on every paint, the first of them
+// before the fetch, so the loader, a picture, a PDF and the editor never show them. Direct listeners are
+// click-safe here: the buttons are built once and never rebuilt by a paint (the format toggles' idiom), and
+// every press acknowledges in the same tick (the attribute, the readout, the dimmed end; the sheets reflow
+// from the attribute alone). A caller may bracket the apply (the third argument; the identity default runs it bare): both
+// viewers read the reader's place before it and seat it after, and the local viewer's bracket also re-places the comments
+// panel's cards (the seam's reflow).
+function textSizeControl(root: HTMLElement, textShowing: () => boolean, step: (apply: () => void) => void = (apply) => apply()): { buttons: HTMLButtonElement[]; sync: () => void; bindWheel: (body: HTMLElement) => void } {
+  let pct = loadTextSize();
+  const down = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
+  down.type = "button"; down.textContent = "A−"; down.title = "Smaller text (Ctrl/Cmd + wheel)";
+  down.setAttribute("aria-label", "Smaller text");
+  const reset = el("button", "fileview-btn fileview-size fileview-size-reset") as HTMLButtonElement;
+  reset.type = "button"; reset.title = "Reset the text size";
+  const up = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
+  up.type = "button"; up.textContent = "A+"; up.title = "Larger text (Ctrl/Cmd + wheel)";
+  up.setAttribute("aria-label", "Larger text");
+  const buttons = [down, reset, up];
+  const atEnd = (b: HTMLButtonElement, end: boolean) => { if (end) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled"); };
+  // the property on the root, and the control's own state, from pct
+  const apply = () => {
+    root.dataset.fvText = String(pct);
+    reset.textContent = pct + "%";
+    reset.setAttribute("aria-label", "Text size " + pct + "%, reset to " + TEXT_SIZE_DEFAULT + "%");
+    reset.classList.toggle("fileview-size-default", pct === TEXT_SIZE_DEFAULT);   // the empty slot
+    atEnd(down, pct === TEXT_SIZES[0]);
+    atEnd(up, pct === TEXT_SIZES[TEXT_SIZES.length - 1]);
+  };
+  apply();                                                    // on the root before the bytes land: the first paint is at size
+  // one step: store it and apply it; a step that changes nothing (an end of the table, a reset at the default) does nothing
+  const set = (n: number) => { if (n === pct) return; pct = n; saveTextSize(n); step(apply); };
+  down.addEventListener("click", () => set(stepTextSize(pct, -1)));
+  up.addEventListener("click", () => set(stepTextSize(pct, 1)));
+  reset.addEventListener("click", () => set(TEXT_SIZE_DEFAULT));
+  // Ctrl/Cmd + wheel over the BODY (not the bar): the browser's page zoom is the same gesture, so it is taken
+  // over the viewer's text only, and only with the modifier held over a text body; a plain wheel scrolls as
+  // ever, and the keyboard's Ctrl+plus/minus stays the browser's. Non-passive, so the page zoom can be
+  // prevented; the summing is foldWheel's.
+  let acc = 0;
+  const bindWheel = (body: HTMLElement) => {
+    body.addEventListener("wheel", (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || !textShowing()) return;
+      e.preventDefault();
+      const r = foldWheel(e, acc);
+      acc = r.acc;
+      if (r.dir) set(stepTextSize(pct, r.dir));
+    }, { passive: false });
+  };
+  const sync = () => { const hide = !textShowing(); for (const b of buttons) b.hidden = hide; };
+  return { buttons, sync, bindWheel };
 }
 
 // The romp loader (swirl + wordmark + three pulsing accent dots), per the loading-state rule: the
@@ -305,6 +365,43 @@ function dropUrlRead(): void {
 /** Why the seam's onRendered fired: "paint", the body's nodes are new; "reflow", the same nodes at a new width or text size
  *  (a hook keeps its wraps and re-measures). */
 export type FileViewRenderWhy = "paint" | "reflow";
+
+// ── the body's content width, for the sheets ──────────────────────────────────────────────────────
+// A table of the rendered document's own (a direct child of the .fileview-md root) may grow past the prose column, up to
+// the body's content width less the root's inset (`.fileview-md > table` in both sheets reads --fv-body-w; the rule there
+// says how). The value is the body's content width as its ResizeObserver reports it (the layout's own event, never a
+// timer; a scrollbar's width is taken), written on EACH TOP-LEVEL TABLE rather than on the body it describes: the property
+// is registered non-inherited (`@property --fv-body-w { inherits: false }`), so a write restyles the tables alone and not
+// every node under the body, as a write to an inherited property on the body would. mdBlock rebuilds the root on every
+// paint and no report follows a paint, so renderBody stamps the fresh tables itself (the returned function)
+// with the width last reported; before the first report the property is unset and the sheet's fallback holds (the cap is
+// the column). Absent ResizeObserver (a stand-in, an old engine) nothing is written and the fallback holds. One watch at a
+// time: the next open, or the close, drops the last. An optional `onWidth` runs after each changed report with the new
+// width: the local viewer's reflow, which re-places the comments panel's cards once per animation frame, hangs on it; the
+// URL viewer passes none.
+let dropWidthWatch: () => void = () => { /* no watch up */ };
+function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): () => void {
+  dropWidthWatch();
+  let width = -1;                                      // the body's content width as last reported, -1 before the first report
+  const stamp = (): void => {
+    if (width < 0) return;
+    const md = body.querySelector(".fileview-md");
+    if (!md) return;
+    for (const n of Array.from(md.children)) if (n.tagName === "TABLE") (n as HTMLElement).style.setProperty("--fv-body-w", width + "px");
+  };
+  if (typeof ResizeObserver === "function") {
+    const ro = new ResizeObserver((entries) => {
+      const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
+      if (w === width) return;
+      width = w;
+      stamp();
+      if (onWidth) onWidth(w);
+    });
+    ro.observe(body);
+    dropWidthWatch = () => { ro.disconnect(); dropWidthWatch = () => { /* dropped */ }; };
+  }
+  return stamp;
+}
 
 // ── viewer action registry (the user 2026-08-22) ── INTERNAL SEAM, no compatibility promise:
 // reshape freely. Anything acting on the OPEN file declares itself here instead of hand-wiring into
@@ -620,6 +717,7 @@ export function closeFileView(): void {
   gitHooks = null;                                     // a reply landing after the close decorates nothing
   dropOnKey();                                         // the closing viewer's handler leaves with it
   dropMediaUrl();                                      // an image/PDF view's bytes leave with the viewer
+  dropWidthWatch();                                    // …and the body's width watch (watchBodyWidth)
   dropUrlRead();                                       // …and a URL view's in-flight read is cancelled
   runCloseHooks();                                     // the panel's poll and listeners leave with the viewer
   wrap.remove();
@@ -886,46 +984,28 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       acts.appendChild(b);
     }
   }
-  // ── text size (the user 2026-09-07) ── A− and A+ step the text views through TEXT_SIZES; between them the
-  // current size, said only once it is not the default, is the reset (progressive disclosure: at 100% there is
-  // nothing to reset and nothing to say). The readout's SLOT is there from the start, empty at the default
-  // (the sheet's .fileview-size-default, visibility not display): a slot that appeared after the first press
-  // moved A− under the pointer, and the second press landed on the reset and undid the first (review
-  // 2026-09-07). Built once per open like the format toggles above, so direct listeners are click-safe; each
-  // click acknowledges in the same tick (the readout, the dimmed end, the reflow itself). An end of the table
-  // is said with aria-disabled, not `disabled`: a button that disables under keyboard focus drops it (the ring
-  // vanished on the third Enter, and a fourth did nothing with no visible reason), while an aria-disabled one
-  // keeps the focus, wears the sheet's disabled dress, and its click is the no-op setTextSize already makes of
-  // a step to the size in force. The three hide until a TEXT body is known (renderBody, off the fetch that
-  // brought the kernel's Content-Type: a picture or a PDF opened over a slow link showed them beside the
-  // loader and then took them away), with the format toggles in edit mode (the editor keeps its own size) and
-  // over a media body (nothing there reads the property); the SVG Source view is a text view and keeps them.
-  // The step is applied as `data-fv-text` on the viewer root, which the sheets read (the "text size and
-  // measure" block).
-  let sizePct = loadTextSize();
-  const sizeDown = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
-  sizeDown.type = "button"; sizeDown.textContent = "A−"; sizeDown.title = "Smaller text (Ctrl/Cmd + wheel)";
-  sizeDown.setAttribute("aria-label", "Smaller text");
-  const sizeReset = el("button", "fileview-btn fileview-size fileview-size-reset") as HTMLButtonElement;
-  sizeReset.type = "button"; sizeReset.title = "Reset the text size";
-  const sizeUp = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
-  sizeUp.type = "button"; sizeUp.textContent = "A+"; sizeUp.title = "Larger text (Ctrl/Cmd + wheel)";
-  sizeUp.setAttribute("aria-label", "Larger text");
-  sizeDown.hidden = true; sizeReset.hidden = true; sizeUp.hidden = true;   // until renderBody knows a text body
-  // an end of the table: dimmed and inert, focus kept (the sheet dresses [aria-disabled="true"] as :disabled)
-  const atEnd = (b: HTMLButtonElement, end: boolean) => { if (end) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled"); };
-  // the property on the root, and the control's own state, from sizePct
-  const applyTextSize = () => {
-    box.dataset.fvText = String(sizePct);
-    sizeReset.textContent = sizePct + "%";
-    sizeReset.setAttribute("aria-label", "Text size " + sizePct + "%, reset to " + TEXT_SIZE_DEFAULT + "%");
-    atEnd(sizeDown, sizePct === TEXT_SIZES[0]);
-    atEnd(sizeUp, sizePct === TEXT_SIZES[TEXT_SIZES.length - 1]);
-    sizeReset.classList.toggle("fileview-size-default", sizePct === TEXT_SIZE_DEFAULT);   // the empty slot
-  };
-  applyTextSize();
-  acts.appendChild(sizeDown); acts.appendChild(sizeReset); acts.appendChild(sizeUp);
-
+  // ── text size ── A− and A+ step every text view through TEXT_SIZES, Ctrl/Cmd + wheel over the body
+  // does the same, and the percentage between them (said once the size is off the default) is the reset;
+  // textSizeControl above has the shape. Shown over a TEXT view only: the editor does not hold the body,
+  // and the text the current view shows has landed (viewText: the fetch pipeline's text, or the decoded
+  // XML while the SVG Source view is up; a picture or a PDF frame leaves both null). The text lands with
+  // the kernel's Content-Type verdict, so a picture opened over a slow link never shows the control
+  // beside the loader and then takes it away.
+  // The step is bracketed by this viewer's place and reflow keeping (the third argument): the reader's place is read
+  // before the size changes, and after it the seam's onRendered runs with `why` "reflow" (fireRenderedKeepingSelection)
+  // and the place is seated again. One step of the text size lets the panel re-measure over the reflowed text (the
+  // seam's onRendered with `why` "reflow": the highlights stand and the cards are re-placed over them, and the floating
+  // Comment button hides, since the passage it sat by has moved; a standing selection is kept across the pass, see
+  // fireRenderedKeepingSelection). A step that changes nothing (the table's end) fires nothing: a card may move only on
+  // new information (CLAUDE.md), and no paint happened (the factory's set returns before the bracket on an unchanged step).
+  // textShowing, the predicate the control and the bracket read, is declared below with the seam (its media gate is the
+  // clause upstream's lacks); the thunks defer the reads to the first paint and the first press.
+  const textSize = textSizeControl(box, () => textShowing(), (apply) => {
+    const kept = textShowing() ? keptPlace() : null;   // the top block before the text grows or shrinks around it
+    apply();
+    if (textShowing()) { fireRenderedKeepingSelection(); seat(kept); }
+  });
+  for (const b of textSize.buttons) acts.appendChild(b);
   // ── the SVG Source toggle ── an SVG is served (and shown) as an image, but it IS also XML worth
   // reading; the toggle swaps in the existing highlighted-code view (langFor maps svg → xml) built
   // from the SAME fetched bytes — no second request. Appears only once an image/svg+xml body landed.
@@ -1200,35 +1280,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (typeof requestAnimationFrame === "function") placeFrame = requestAnimationFrame(read); else read();
   }, { passive: true });
   ctx.onClose(() => { if (placeFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placeFrame); placeFrame = 0; });
-  // One step of the text size: store it, apply it, and let the panel re-measure over the reflowed text (the
-  // seam's onRendered with `why` "reflow": the highlights stand and the cards are re-placed over them, and the
-  // floating Comment button hides, since the passage it sat by has moved; a standing selection is kept across the
-  // pass, see fireRenderedKeepingSelection). A step that changes nothing (the table's end) fires nothing: a card may
-  // move only on new information (CLAUDE.md), and no paint happened.
-  const setTextSize = (pct: number) => {
-    if (pct === sizePct) return;
-    sizePct = pct;
-    saveTextSize(pct);
-    const kept = textShowing() ? keptPlace() : null;   // the top block before the text grows or shrinks around it
-    applyTextSize();
-    if (textShowing()) { fireRenderedKeepingSelection(); seat(kept); }
-  };
-  sizeDown.addEventListener("click", () => setTextSize(stepTextSize(sizePct, -1)));
-  sizeUp.addEventListener("click", () => setTextSize(stepTextSize(sizePct, 1)));
-  sizeReset.addEventListener("click", () => setTextSize(TEXT_SIZE_DEFAULT));
-  // Ctrl/Cmd + wheel over the BODY (not the bar, not the aside): the browser's page zoom is the same gesture, so it
-  // is taken over the viewer's text only, and only with the modifier held; a plain wheel scrolls as ever, and the
-  // keyboard's Ctrl+plus/minus stays the browser's. Non-passive so the page zoom can be prevented; the fold is
-  // foldWheel's (a pinch is a burst of small deltas).
-  let wheelAcc = 0;
-  body.addEventListener("wheel", (e: WheelEvent) => {
-    if (!(e.ctrlKey || e.metaKey)) return;
-    if (!textShowing()) return;
-    e.preventDefault();
-    const r = foldWheel(e, wheelAcc);
-    wheelAcc = r.acc;
-    if (r.dir) setTextSize(stepTextSize(sizePct, r.dir));
-  }, { passive: false });
+  textSize.bindWheel(body);                            // Ctrl/Cmd + wheel over the text steps the size (textSizeControl)
   // The body's WIDTH: the Files pane dragged narrower or wider, the aside opening or closing, the window resized.
   // The text reflows (the prose measure follows the pane up to its cap, a table takes the room or scrolls in its
   // own box) and every position measured from it has moved, so the hooks run again with `why` "reflow", off the
@@ -1243,48 +1295,27 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // blocked the whole dashboard for the drag. Media bodies have their own observers (the figure layer's, the PDF chunk's), and the editor its own
   // layout, so textShowing gates this too. Absent ResizeObserver (a stand-in, an old engine) there is no width
   // event to key on, so nothing fires; absent requestAnimationFrame the report itself is the frame.
-  // The body's CONTENT WIDTH, for the sheets: the pane-wide table's cap (`.fileview-md > table` reads --fv-body-w) is the body
-  // less the root's inset, a width the table's own percentages cannot reach (its 100% is the column). The value is the width
-  // observer's report (below), and it is written on EACH TOP-LEVEL TABLE, not on the body it describes: the property is
-  // registered non-inherited (`@property --fv-body-w { inherits: false }` in styles.css and feed.css), so a write restyles the
-  // tables alone. Until 2026-09-09 it sat on the body as an ordinary (inherited) custom property, and Chromium recomputed the
-  // style of every node under the body on each write: 27 ms a step at 24k nodes, 138 ms at 79k, 259 ms at 134k (a fence-heavy
-  // note), on every width change of the pane (M4 of the 2026-09-09 viewer-resize measurements). mdBlock
-  // rebuilds the root on every render and no report follows a render, so renderBody stamps the fresh tables itself with the
-  // width last reported; before the first report the property is unset and the sheet's fallback holds (the cap is the column).
-  let bodyWidth = -1;        // the body's content width as last reported, -1 before the first report
-  const stampBodyWidth = () => {
-    if (bodyWidth < 0) return;
-    const md = body.querySelector(".fileview-md");
-    if (!md) return;
-    const v = bodyWidth + "px";
-    for (const n of Array.from(md.childNodes)) if (n.nodeType === 1 && (n as Element).tagName === "TABLE") (n as HTMLElement).style.setProperty("--fv-body-w", v);
+  // The body's CONTENT WIDTH, for the sheets (the pane-wide table's cap, `.fileview-md > table` reads --fv-body-w): the one
+  // observer is watchBodyWidth's above, which stamps each top-level table (its comment says why) and hands back the stamp.
+  // Until 2026-09-09 it sat on the body as an ordinary (inherited) custom property, and Chromium recomputed the style of every
+  // node under the body on each write: 27 ms a step at 24k nodes, 138 ms at 79k, 259 ms at 134k (a fence-heavy note), on every
+  // width change of the pane (M4 of the 2026-09-09 viewer-resize measurements).
+  let paintedWidth = -1;   // the width the last repaint (or the first report) saw
+  let seenWidth = -1;      // the latest report's width
+  let frame = 0;           // the pending frame's handle, 0 for none
+  const repaint = () => {
+    frame = 0;
+    if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
+    paintedWidth = seenWidth;
+    if (textShowing()) { fireRenderedKeepingSelection(); seat(place); }   // the place read before the width moved (see notePlace)
   };
-  if (typeof ResizeObserver !== "undefined") {
-    let paintedWidth = -1;   // the width the last repaint (or the first report) saw
-    let seenWidth = -1;      // the latest report's width
-    let frame = 0;           // the pending frame's handle, 0 for none
-    const repaint = () => {
-      frame = 0;
-      if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
-      paintedWidth = seenWidth;
-      if (textShowing()) { fireRenderedKeepingSelection(); seat(place); }   // the place read before the width moved (see notePlace)
-    };
-    const widthObserver = new ResizeObserver((entries) => {
-      const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
-      // the body's content width, for the sheets (the pane-wide table's cap, `.fileview-md > table`), from the layout's own
-      // report, stamped on the top-level tables (stampBodyWidth above) when it moved; a scrollbar's width is taken, a
-      // reserved gutter is none (Slice 3 review, round 2: `scrollbar-gutter: stable` reserved a blank strip on every body
-      // that never scrolls)
-      if (w !== bodyWidth) { bodyWidth = w; stampBodyWidth(); }
-      if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }
-      seenWidth = w;
-      if (w === paintedWidth || frame) return;
-      if (typeof requestAnimationFrame === "function") frame = requestAnimationFrame(repaint); else repaint();
-    });
-    widthObserver.observe(body);
-    ctx.onClose(() => { widthObserver.disconnect(); if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame); frame = 0; });
-  }
+  const stampBodyWidth = watchBodyWidth(body, (w) => {
+    if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }   // the first report describes the size at observe(), not a change
+    seenWidth = w;
+    if (w === paintedWidth || frame) return;
+    if (typeof requestAnimationFrame === "function") frame = requestAnimationFrame(repaint); else repaint();
+  });
+  ctx.onClose(() => { dropWidthWatch(); if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame); frame = 0; });
 
   // Registered actions render after the built-ins — the registry walk is the ONE place row
   // conventions live (see registerFileViewAction above). The GitHub link and Comments mount here.
@@ -1386,13 +1417,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       b.hidden = editing;                       // format choices leave with edit mode; Save/Cancel own the bar
     }
     editBtn.hidden = editing || text === null || !isText || !mtimeNs;
-    // the text-size control shows over a text view only, and only once one is KNOWN (textShowing: the bytes and
-    // the kernel's Content-Type landed, no editor, no picture or PDF frame; renderBody is every paint, so this
-    // follows every flip: the fetch landing, Source on an SVG, the editor taking the body, the exit handing it
-    // back). The readout's slot goes with the two buttons; the slot's own emptiness at the default is applyTextSize's
-    const sizeHidden = !textShowing();
-    sizeDown.hidden = sizeHidden; sizeUp.hidden = sizeHidden;
-    sizeReset.hidden = sizeHidden;
+    textSize.sync();                          // the text-size control follows every paint: shown over a text view only
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
@@ -1458,14 +1483,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let seedSeq = 0;                                 // last gesture wins if two fresh reads race
   const onSelect = (ev: Event) => {
     if (editing) return;   // CodeMirror selections are edit gestures, not quotes
-    // A press on a title-bar CONTROL (A−, A+, the readout, Raw, Copy path, the GitHub link...) settles no selection:
-    // the mouseup lands on the button while a passage may still stand selected in the body, and running the hooks
-    // again re-seeded the quote chip and re-fetched the file for its label on every step of the text size (review
-    // 2026-09-07, round 1). The gate is the control under the lift, not the bar: a drag that starts in the body and
-    // is released over the bar's path or its padding (the overshoot when selecting back to a file's first line) is a
-    // selection like any other and settles (round 2: the round-1 guard read the whole bar and swallowed it, so the
-    // passage stood selected with no Comment button and no quote chip). The listener sits on the viewer root so a
-    // drag that ends over the aside or the margins settles too.
+    // A press on a title-bar CONTROL (A−, A+, the readout, Raw, Copy path, the GitHub link) settles no
+    // selection: the mouseup lands on the button while a passage may still stand selected in the body,
+    // and the seed below would re-read the file and re-seed the quote chip on every step of the text
+    // size. The gate is the control under the lift, not the bar: a drag that starts in the body and is
+    // released over the bar's path or its padding (the overshoot when selecting back to a file's first
+    // line) is a selection like any other and settles.
+    // The listener sits on the viewer root so a drag that ends over the aside or the margins settles too.
     const at = ev.target as Element | null;
     if (at && bar.contains(at) && typeof at.closest === "function" && at.closest("button, a")) return;
     // RENDERED media has no honest text to quote — an <img>/iframe body owns its own selection
@@ -2320,6 +2344,16 @@ export function openUrlView(href: string): void {
     segBtns.push([mode, b]);
     acts.appendChild(b);
   }
+  // the text-size control the local viewer has (textSizeControl): a document opened from a link honours
+  // the same stored size as a file on disk, and a step here is kept for both. The step is bracketed by this viewer's own
+  // keptPlace and seat (declared below; the closure defers the reads to the press): a text-size step is a reflow the reader
+  // did not ask to lose their place over, as in the local viewer (file-view-url-place-bottom-browser.test.ts).
+  const textSize = textSizeControl(box, () => text !== null, (apply) => {
+    const kept = keptPlace();                          // the reader's place before the text grows or shrinks around it
+    apply();
+    seat(kept);                                        // the same passage at the same height, as across the Rendered/Raw switch
+  });
+  for (const b of textSize.buttons) acts.appendChild(b);
   // The way OUT to the URL itself, in a new tab — an anchor wearing the button treatment, the
   // GitHub link's dress: the browser owns the tab. It is also every failure pane's exit below.
   // data-new-tab: this href IS a same-origin .md, exactly what the chat's anchor delegate routes
@@ -2347,6 +2381,8 @@ export function openUrlView(href: string): void {
   bar.appendChild(name); bar.appendChild(acts);
 
   const body = el("div", "fileview-body");
+  const stampBodyWidth = watchBodyWidth(body);        // the body's content width, for a top-level table's cap (the sheets read --fv-body-w)
+  textSize.bindWheel(body);                            // Ctrl/Cmd + wheel over the text steps the size
   // In-document links land on their heading (mdBlock's fv-anchor stamp): one delegated listener, the
   // local viewer's pattern. No fv-open here — a URL document's sibling links are made absolute and
   // the chat's own anchor delegate routes them.
@@ -2382,8 +2418,10 @@ export function openUrlView(href: string): void {
   // reader's passage. Without the hold the round trip from the end of the taller view came back a paragraph early or tens of
   // pixels off here after review round 1 had given it to the local viewer alone (the Slice 3 review, round 3, 2026-09-09;
   // file-view-url-place-bottom-browser.test.ts). The first scroll that moves the body ends the hold (the seat's own scroll
-  // event reports the held scrollTop and changes nothing); no timers. The switch is the one swap this viewer's place crosses:
-  // no reload, no aside, no text-size control, so none of the local viewer's reflow bookkeeping is needed here.
+  // event reports the held scrollTop and changes nothing); no timers. The switch and a text-size step are the swaps this
+  // viewer's place crosses: no reload and no aside, so a width change re-places nothing; a text-size step keeps the reader's
+  // place as the local viewer's does (the bracket on textSizeControl above), and none of the local viewer's comments-panel
+  // bookkeeping is needed here.
   let heldPlace: Place | null = null;
   let heldScrollTop = -1;
   const folds = foldKeeper(body);                      // the folds' state across the switch, as the local viewer keeps it (foldKeeper)
@@ -2399,6 +2437,7 @@ export function openUrlView(href: string): void {
       b.classList.toggle("on", on);
       b.setAttribute("aria-pressed", String(on));
     }
+    textSize.sync();                                   // shown once the document's text is up
     if (text === null) return;                         // the loader holds the body until the bytes land
     folds.note();                                      // the folds under the view about to go
     const kept = keptPlace();                          // the reader's place under the view about to go (the held one across a clamp)
@@ -2409,6 +2448,7 @@ export function openUrlView(href: string): void {
     shownText = text;
     seat(kept);                                        // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
     landFragment();                                    // after the paint, and only a rendered one lands
+    if (fmt.md === "rendered") stampBodyWidth();       // a fresh root's tables take the width last reported
   };
   renderBody();
 
@@ -2759,9 +2799,12 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // A task item wears GitHub's class (Slice 3 of plans/markdown-viewer.md): marked emits the checkbox as the li's first
   // child with no hook on the li (inside its first paragraph in a loose list), and the sheets' `li.task-list-item` rule
   // drops the bullet that sat beside the box and pulls the box into the gutter. After the sanitize, and only for the
-  // disabled checkbox the sanitizer's post-pass leaves (every other input is removed there); an author who writes the
-  // class on an li of their own gets the same bullet-less item GitHub would give them.
+  // disabled checkbox the sanitizer's post-pass leaves (every other input is removed there), and only for a checkbox that
+  // is the item's FIRST NODE: :first-child counts elements alone, so a checkbox an author's raw HTML puts after the item's
+  // text matches the selector, and the previousSibling check leaves it, and its item's bullet, where the file put them.
+  // An author who writes the class on an li of their own gets the same bullet-less item GitHub would give them.
   box.querySelectorAll('li > input[type="checkbox"]:first-child:disabled, li > p:first-child > input[type="checkbox"]:first-child:disabled').forEach((input) => {
+    if (input.previousSibling) return;                 // text before the box: an author's checkbox mid-item, not a task item
     const li = input.closest("li");
     if (li) li.classList.add("task-list-item");
   });
@@ -2848,16 +2891,15 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
       a.setAttribute("rel", "noopener");
     });
   }
-  // Fenced blocks: highlight only a language the fence NAMES and this bundle registers — the same
-  // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random. Then, for EVERY
-  // fence, named or not, the chat's own dress (code-block.ts; Slice 3 of plans/markdown-viewer.md): the per-line rows
-  // that number the lines and make a soft-wrap read distinctly from a real newline, and the Copy button. Copy copies
-  // the fence's text AS THE NOTE HOLDS IT (fence-source.ts, off the code tokens the parse collected): the raw text
-  // captured here is read before the rows drop the newlines, but after marked's lexer turned the note's leading tabs
-  // into four spaces each, so a Makefile recipe copied from the rendered text pasted back with spaces (the Slice 3
-  // review); a fence the module does not find in the note copies the raw text as before. The math fill's source
-  // fallback (a code element wearing md-math-src, math.ts; spelled, not imported, since this module carries no KaTeX)
-  // is not code: it keeps the Copy button and nothing else, as in the chat's highlight().
+  // Fenced blocks: highlight only a language the fence NAMES and this bundle registers (the same no-guessing rule as
+  // langFor; an unnamed block stays plain rather than being painted at random). Then, for EVERY fence, named or not, the
+  // chat's own dress (code-block.ts): the per-line rows that number the lines and make a soft-wrap read distinctly from a
+  // real newline, and the Copy button. Copy copies the fence's text AS THE FILE HOLDS IT (fence-source.ts, off the code
+  // tokens the parse collected): the raw text captured here is read before the rows drop the newlines, but after marked's
+  // lexer turned the file's leading tabs into four spaces each, so a Makefile recipe copied from the rendered text pasted
+  // back with spaces; a fence the module does not find in the file copies the raw text as before.
+  // The math fill's source fallback (a code element wearing md-math-src, math.ts; spelled, not imported, since this module
+  // carries no KaTeX) is not code: it keeps the Copy button and nothing else, as in the chat's highlight().
   const copySources = fenceCopyQueue(text, fences);
   box.querySelectorAll("pre code").forEach((node) => {
     const codeEl = node as HTMLElement;

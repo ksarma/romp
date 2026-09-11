@@ -68,8 +68,8 @@ const PAIRS: Array<[string, string, number]> = [
   ["--hl-kw", "--bg", 4.5],
   ["--hl-str", "--bg", 4.5],
   ["--hl-num", "--bg", 4.5],
-  ["--hl-cmt", "--bg", 3],          // comments are deliberately quiet — the dark set sits just above 3
-  ["--hl-cmt", "--box-bg", 4.5],    // ...but readable on a code block (Slice 3 of plans/markdown-viewer.md: 2.85 dark / 4.39 light before; --box-bg is the fence's fill, composited over --bg)
+  ["--hl-cmt", "--bg", 3],          // comments are deliberately quiet
+  ["--hl-cmt", "--box-bg", 4.5],    // ...but readable on the code block they sit in (the fence's fill is --box-bg over --bg)
   ["--hl-title", "--bg", 4.5],
   ["--hl-meta", "--bg", 4.5],
   ["--hl-attr", "--bg", 4.5],

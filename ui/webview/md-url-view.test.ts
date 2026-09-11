@@ -188,7 +188,7 @@ test("the fetch and the body read ride one AbortController, registered module-le
 });
 
 test("closeFileView and BOTH replace paths call dropUrlRead — a stale read never keeps pulling for a gone modal", () => {
-  assert.match(CLOSE_FN, /dropMediaUrl\(\);[^\n]*\n\s*dropUrlRead\(\);/, "close: right beside the media-URL revoke");
+  assert.match(CLOSE_FN, /dropMediaUrl\(\);[^\n]*\n\s*dropWidthWatch\(\);[^\n]*\n\s*dropUrlRead\(\);/, "close: right beside the media-URL revoke, the body's width watch dropped between the two (watchBodyWidth, since the text-size offer came home)");
   assert.match(OPEN_FN, /dropMediaUrl\(\);[^\n]*\n\s*dropUrlRead\(\);[^\n]*\n\s*document\.getElementById\("romp-fileview"\)\?\.remove\(\);/,
     "the local viewer's replace path: before the old viewer is torn down");
   assert.match(URL_FN, /dropMediaUrl\(\);\s*\n\s*dropUrlRead\(\);[^\n]*\n\s*document\.getElementById\("romp-fileview"\)\?\.remove\(\);/,
